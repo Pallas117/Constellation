@@ -1,0 +1,8 @@
+---
+description: 
+alwaysApply: true
+---
+
+Keep the code lean and consistently test for RAM optimisation and network usage.
+
+Also try and keep the UI/UX experience as smooth as possible.

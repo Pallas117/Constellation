@@ -1,0 +1,40 @@
+{
+  "models": [
+    {
+      "version": "unet-baseline-v0",
+      "trained_at": "2026-02-17T00:00:00Z",
+      "epochs": 0,
+      "metrics": {
+        "loss": null,
+        "samples": 0,
+        "message": "Bootstrap registry entry"
+      },
+      "dataset": "ml/data/train_dataset.jsonl",
+      "status": "bootstrap"
+    },
+    {
+      "version": "unet-baseline-v1",
+      "trained_at": "2026-02-19T14:55:29.621109+00:00",
+      "epochs": 20,
+      "metrics": {
+        "loss": null,
+        "samples": 0,
+        "message": "No data"
+      },
+      "dataset": "ml/data/train_dataset.jsonl",
+      "status": "ready"
+    },
+    {
+      "version": "unet-baseline-v1",
+      "trained_at": "2026-02-19T16:30:26.847182+00:00",
+      "epochs": 20,
+      "metrics": {
+        "loss": null,
+        "samples": 0,
+        "message": "No data"
+      },
+      "dataset": "ml/data/train_dataset.jsonl",
+      "status": "ready"
+    }
+  ]
+}

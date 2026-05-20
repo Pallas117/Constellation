@@ -1,0 +1,61 @@
+name: Dev cycle via email
+
+on:
+  # Triggered by an external webhook (e.g. from an email processing service)
+  repository_dispatch:
+    types: [dev-cycle-email]
+
+  # Optional: lets you run the same pipeline manually from the Actions UI
+  workflow_dispatch:
+
+jobs:
+  build-and-test:
+    name: Lint and build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Run lint
+        run: npm run lint
+
+      - name: Build app
+        run: npm run build
+
+  notify-on-failure:
+    name: Notify on failure
+    needs: build-and-test
+    if: failure()
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Send failure email
+        # NOTE: review this third‑party action before enabling in a high‑trust environment.
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: ${{ secrets.SMTP_SERVER }}
+          server_port: ${{ secrets.SMTP_PORT }}
+          username: ${{ secrets.SMTP_USERNAME }}
+          password: ${{ secrets.SMTP_PASSWORD }}
+          subject: "Gauss Aurora dev cycle FAILED"
+          to: ${{ secrets.NOTIFY_EMAIL }}
+          from: ${{ secrets.NOTIFY_FROM }}
+          secure: true
+          body: |
+            The email‑triggered dev cycle failed.
+
+            Repo: ${{ github.repository }}
+            Run:  ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+            Please review the logs and fix the issues.
+

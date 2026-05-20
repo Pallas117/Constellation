@@ -1,0 +1,56 @@
+[
+  {
+    "timestamp": "2026-03-14T22:00:00Z",
+    "flux": 50000.0,
+    "altitude": 400.0,
+    "L_shell": 1.5,
+    "orbitType": "LEO",
+    "particleType": "proton",
+    "energyRange": { "min": 10, "max": 100 }
+  },
+  {
+    "timestamp": "2026-03-14T22:00:00Z",
+    "flux": 45000.0,
+    "altitude": 420.0,
+    "L_shell": 1.6,
+    "orbitType": "LEO",
+    "particleType": "proton",
+    "energyRange": { "min": 10, "max": 100 }
+  },
+  {
+    "timestamp": "2026-03-14T22:00:00Z",
+    "flux": 80000.0,
+    "altitude": 20000.0,
+    "L_shell": 4.0,
+    "orbitType": "MEO",
+    "particleType": "electron",
+    "energyRange": { "min": 0.5, "max": 2.0 }
+  },
+  {
+    "timestamp": "2026-03-14T22:00:00Z",
+    "flux": 85000.0,
+    "altitude": 20200.0,
+    "L_shell": 4.1,
+    "orbitType": "MEO",
+    "particleType": "electron",
+    "energyRange": { "min": 0.5, "max": 2.0 }
+  },
+  {
+    "timestamp": "2026-03-14T22:00:00Z",
+    "flux": 120000.0,
+    "altitude": 35786.0,
+    "L_shell": 6.6,
+    "orbitType": "GEO",
+    "particleType": "electron",
+    "energyRange": { "min": 2.0, "max": 5.0 }
+  },
+  {
+    "timestamp": "2026-03-14T22:00:00Z",
+    "flux": 115000.0,
+    "altitude": 35800.0,
+    "L_shell": 6.7,
+    "orbitType": "GEO",
+    "particleType": "electron",
+    "energyRange": { "min": 2.0, "max": 5.0 }
+  }
+]

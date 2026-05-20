@@ -1,0 +1,4 @@
+interface:
+  display_name: "Astrophysics Expert"
+  short_description: "Expert help with astrophysics analysis workflows"
+  default_prompt: "Use this skill when users need rigorous astrophysics reasoning, calculations, or observational planning."

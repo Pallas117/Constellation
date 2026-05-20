@@ -1,0 +1,153 @@
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    /* Skunkworks Monochromatic Palette - Phosphor Green Basis */
+    --background: 0 0% 0%;       /* Pure Deep Black */
+    --foreground: 142 100% 50%; /* Classic Phosphor Green */
+
+    --card: 0 0% 4%;            /* Near Black for panels */
+    --card-foreground: 142 100% 50%;
+
+    --popover: 0 0% 2%;
+    --popover-foreground: 142 100% 50%;
+
+    --primary: 142 100% 50%;    /* Phosphor Green */
+    --primary-foreground: 0 0% 0%;
+
+    --secondary: 0 0% 10%;
+    --secondary-foreground: 142 100% 70%;
+
+    --muted: 0 0% 8%;
+    --muted-foreground: 142 30% 50%;
+
+    --accent: 142 100% 50%;
+    --accent-foreground: 0 0% 0%;
+
+    --destructive: 0 100% 50%;  /* Red for emergency only */
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 142 100% 50% / 0.2;
+    --input: 142 100% 50% / 0.1;
+    --ring: 142 100% 50%;
+
+    --radius: 0px;              /* SHARP EDGES ONLY */
+
+    /* Analogue Tones */
+    --amber: 45 100% 50%;
+    --crt-scanline: rgba(0, 255, 65, 0.03);
+    
+    /* Fonts */
+    --font-mono: 'JetBrains Mono', monospace;
+    --font-sans: 'JetBrains Mono', monospace; /* Enforce mono everywhere for Skunkworks feel */
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border rounded-none;
+    cursor: crosshair; /* Operational precision cursor */
+  }
+
+  body {
+    @apply bg-background text-foreground font-mono antialiased overflow-hidden;
+    background-color: #000;
+  }
+
+  /* Fixed CRT Scanline Overlay */
+  body::before {
+    content: " ";
+    display: block;
+    position: absolute;
+    top: 0; left: 0; bottom: 0; right: 0;
+    background: linear-gradient(rgba(18, 16, 16, 0) 50%, rgba(0, 0, 0, 0.25) 50%), 
+                linear-gradient(90deg, rgba(255, 0, 0, 0.06), rgba(0, 255, 0, 0.02), rgba(0, 0, 255, 0.06));
+    z-index: 9999;
+    background-size: 100% 2px, 3px 100%;
+    pointer-events: none;
+    opacity: 0.2;
+  }
+}
+
+@layer components {
+  .hud-panel {
+    @apply bg-black/80 border-primary/40;
+    border-width: 1px;
+    position: relative;
+    box-shadow: 0 0 10px rgba(0, 255, 65, 0.05);
+  }
+
+  /* Phosphor text glow */
+  .phosphor-text {
+    color: hsl(var(--primary));
+    text-shadow: 0 0 4px hsl(var(--primary) / 0.5);
+  }
+
+  /* Flat SQL Grid Utility */
+  .sql-grid {
+    display: grid;
+    border-collapse: collapse;
+    width: 100%;
+  }
+
+  .sql-row {
+    display: grid;
+    grid-template-columns: 1fr 2fr;
+    border-bottom: 1px solid hsl(var(--primary) / 0.15);
+    padding: 0.25rem 0.5rem;
+  }
+
+  .sql-header {
+    background: hsl(var(--primary) / 0.1);
+    color: hsl(var(--primary));
+    font-weight: bold;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    font-size: 0.65rem;
+  }
+
+  .sql-label {
+    color: hsl(var(--primary) / 0.6);
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    padding-right: 1rem;
+  }
+
+  .sql-value {
+    color: hsl(var(--primary));
+    font-size: 0.75rem;
+    text-align: right;
+  }
+
+  .scanline {
+    width: 100%;
+    height: 100px;
+    z-index: 100;
+    background: linear-gradient(0deg, rgba(0, 0, 0, 0) 0%, rgba(0, 255, 65, 0.05) 50%, rgba(0, 0, 0, 0) 100%);
+    opacity: 0.1;
+    position: absolute;
+    bottom: 100%;
+    animation: scanline 8s linear infinite;
+    pointer-events: none;
+  }
+
+  @keyframes scanline {
+    0% { bottom: 100%; }
+    100% { bottom: -100px; }
+  }
+}
+
+@layer utilities {
+  .glow-border {
+    box-shadow: 0 0 8px hsl(var(--primary) / 0.3);
+  }
+  
+  .mono-amber {
+    color: hsl(var(--amber));
+    text-shadow: 0 0 4px hsl(var(--amber) / 0.5);
+  }
+}

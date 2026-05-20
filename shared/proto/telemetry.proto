@@ -1,0 +1,100 @@
+syntax = "proto3";
+
+package space.telemetry;
+
+message Vector3 {
+  float x = 1;
+  float y = 2;
+  float z = 3;
+}
+
+message Vector3WithMag {
+  float x = 1;
+  float y = 2;
+  float z = 3;
+  float magnitude = 4;
+}
+
+message UncertaintyEnvelope {
+  float lower = 1;
+  float upper = 2;
+  float sigma = 3;
+}
+
+message QualityFlags {
+  bool outlier = 1;
+  bool stale = 2;
+  bool interpolated = 3;
+  bool extrapolated = 4;
+  bool low_confidence = 5;
+  int32 tier = 6;
+}
+
+message CanonicalPoint {
+  string timestamp = 1;
+  string source = 2;
+  float rho = 3;
+  Vector3WithMag velocity = 4;
+  
+  message MagneticField {
+    float x = 1;
+    float y = 2;
+    float z = 3;
+    float bt = 4;
+  }
+  MagneticField magnetic_field = 5;
+
+  message ElectricField {
+    float x = 1;
+    float y = 2;
+    float z = 3;
+    float ey = 4;
+  }
+  ElectricField electric_field = 6;
+
+  message SolarWind {
+    float speed = 1;
+    float density = 2;
+    float dynamic_pressure = 3;
+  }
+  SolarWind solar_wind = 7;
+
+  message Indices {
+    float kp = 1;
+    float dst = 2;
+  }
+  Indices indices = 8;
+
+  message Coupling {
+    float newell = 1;
+    float epsilon = 2;
+  }
+  Coupling coupling = 9;
+
+  message Propagation {
+    float l1_delay_seconds = 1;
+    string eta_earth_arrival = 2;
+  }
+  Propagation propagation = 10;
+
+  message Alerts {
+    string storm_tier = 1;
+    string reason = 2;
+  }
+  Alerts alerts = 11;
+
+  QualityFlags quality = 12;
+
+  message Uncertainty {
+    UncertaintyEnvelope speed = 1;
+    UncertaintyEnvelope density = 2;
+    UncertaintyEnvelope bz = 3;
+  }
+  Uncertainty uncertainty = 13;
+}
+
+message MhdState {
+  float rho = 1;
+  Vector3 velocity = 2;
+  Vector3 magnetic_field = 3;
+}

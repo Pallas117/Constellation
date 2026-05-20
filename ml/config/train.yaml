@@ -1,0 +1,36 @@
+model:
+  name: unet_temporal_encoder
+  version: unet-baseline-v1
+
+training:
+  epochs: 20
+  batch_size: 32
+  learning_rate: 0.0005
+  optimizer: adamw
+  loss: huber
+
+features:
+  sequence_length: 24
+  feature_names:
+    - V
+    - n
+    - Bx
+    - By
+    - Bz
+    - Bt
+    - E_y
+    - Newell
+    - epsilon
+    - Kp
+    - Dst
+
+targets:
+  - ground_perturbation
+  - aurora_intensity
+
+schedule:
+  retrain_cron: "0 3 * * *"
+  backfill_days: 30
+
+registry:
+  path: ml/models/registry.json
