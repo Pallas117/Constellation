@@ -1,6 +1,6 @@
 import { defineConfig, devices } from "@playwright/test";
 
-const baseURL = process.env.PW_BASE_URL || "http://127.0.0.1:4173";
+const baseURL = process.env.PW_BASE_URL || "http://127.0.0.1:8080";
 
 export default defineConfig({
   testDir: "./tests/e2e",
@@ -17,10 +17,14 @@ export default defineConfig({
     video: "retain-on-failure",
   },
   webServer: {
-    command: "npm run dev -- --host 127.0.0.1 --port 4173",
+    command: "npm run dev -- --host 127.0.0.1 --port 8080",
     url: baseURL,
     reuseExistingServer: false,
     timeout: 120_000,
+    env: {
+      VITE_GAUSS_RAG_URL: "http://127.0.0.1:3002",
+      VITE_HELIO_PROXY_URL: "http://127.0.0.1:3001",
+    },
   },
   projects: [
     {

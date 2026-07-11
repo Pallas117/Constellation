@@ -18,14 +18,17 @@ Pre-release builds:
    - release from `main`.
    - working tree clean (no unstaged/untracked release artifacts).
 2. Quality gates:
+   - `npm run release:prepare` (recommended)
    - `npm run audit:adherence`
 3. Security gates:
+   - `npm run security:full`
    - `npm run check:security-compliance`
    - optional runtime RBAC check:
      - `npm run test:rbac`
 4. Data/backend gates:
-   - Supabase migrations are applied in target environment.
+   - Supabase migrations are applied in the target environment.
    - backend starts and `/health` responds.
+   - release preflight executes the backend and verifies `/health` in runtime.
 5. CI gates:
    - `CI Tests` workflow green on release commit.
 6. Secrets:
@@ -37,6 +40,9 @@ Pre-release builds:
 ```bash
 # Run full release preflight
 npm run release:check
+
+# Run comprehensive release preparation (quality + security + tests)
+npm run release:prepare
 
 # Create and push an annotated tag
 npm run release:tag -- v0.1.0

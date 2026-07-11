@@ -1,0 +1,64 @@
+{
+  "mergeThreshold": 90,
+  "alphaThreshold": 95,
+  "categories": [
+    {
+      "id": "codeQuality",
+      "name": "Code Quality",
+      "weight": 25,
+      "criteria": [
+        { "id": "typeErrors", "name": "No TypeScript errors", "points": 10 },
+        { "id": "lintClean", "name": "No lint issues", "points": 10 },
+        { "id": "styleMatch", "name": "Style and idioms match repo", "points": 5 }
+      ]
+    },
+    {
+      "id": "testing",
+      "name": "Testing & Coverage",
+      "weight": 25,
+      "criteria": [
+        { "id": "unitCoverage", "name": "Unit tests for new logic", "points": 10 },
+        { "id": "integration", "name": "Integration/E2E coverage when applicable", "points": 5 },
+        { "id": "regression", "name": "Regression tests for relevant issues", "points": 5 },
+        { "id": "ciPass", "name": "CI tests pass", "points": 5 }
+      ]
+    },
+    {
+      "id": "architecture",
+      "name": "Architecture & Fit",
+      "weight": 20,
+      "criteria": [
+        { "id": "architectureFit", "name": "Fits existing architecture", "points": 10 },
+        { "id": "sideEffects", "name": "No hidden side effects", "points": 5 },
+        { "id": "designNote", "name": "Architecture note for non-trivial change", "points": 5 }
+      ]
+    },
+    {
+      "id": "documentation",
+      "name": "Documentation & Communication",
+      "weight": 15,
+      "criteria": [
+        { "id": "prDescription", "name": "Clear PR description", "points": 5 },
+        { "id": "docsUpdated", "name": "Relevant docs updated", "points": 5 },
+        { "id": "rolloutNotes", "name": "Deployment/rollback notes included when needed", "points": 5 }
+      ]
+    },
+    {
+      "id": "security",
+      "name": "Security & Compliance",
+      "weight": 10,
+      "criteria": [
+        { "id": "securityChecks", "name": "Security automation passes", "points": 5 },
+        { "id": "safeDefaults", "name": "No insecure defaults introduced", "points": 5 }
+      ]
+    },
+    {
+      "id": "readiness",
+      "name": "Release Readiness",
+      "weight": 5,
+      "criteria": [
+        { "id": "singleScope", "name": "Change is focused and reviewable", "points": 5 }
+      ]
+    }
+  ]
+}

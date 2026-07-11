@@ -6,20 +6,20 @@ test.beforeEach(async ({ page }) => {
 });
 
 test("smoke: control rail and centered LLM chat interactions", async ({ page }) => {
-  await page.goto("/?e2e=1");
+  await page.goto("/operator?e2e=1");
 
   await expect(
-    page.getByRole("heading", { name: /gauss aurora/i }),
+    page.getByRole("heading", { name: /gauss.*aurora/i }),
   ).toBeVisible();
-  await expect(page.getByRole("heading", { name: /logic engine/i })).toBeVisible();
+  await expect(page.getByRole("heading", { name: /logic[_ ]engine/i })).toBeVisible();
 
   const layerNames = [
     /earth layer/i,
-    /van allen belts layer/i,
-    /magnetopause layer/i,
-    /field lines layer/i,
-    /mhd waves layer/i,
-    /mms reconnection layer/i,
+    /vbelt layer/i,
+    /mopause layer/i,
+    /flines layer/i,
+    /mhdwav layer/i,
+    /recon layer/i,
   ];
 
   for (const layerName of layerNames) {
@@ -49,7 +49,7 @@ test("smoke: control rail and centered LLM chat interactions", async ({ page }) 
 
   const themeTrigger = page.getByRole("button", { name: /current theme:/i });
   await themeTrigger.click();
-  await page.getByRole("menuitem", { name: /dark/i }).click();
+  await page.getByRole("menuitem", { name: /mode_drk/i }).click();
   await expect
     .poll(async () =>
       page.evaluate(() => document.documentElement.classList.contains("dark")),
@@ -57,14 +57,14 @@ test("smoke: control rail and centered LLM chat interactions", async ({ page }) 
     .toBe(true);
 
   await themeTrigger.click();
-  await page.getByRole("menuitem", { name: /light/i }).click();
+  await page.getByRole("menuitem", { name: /mode_lit/i }).click();
   await expect
     .poll(async () =>
       page.evaluate(() => document.documentElement.classList.contains("dark")),
     )
     .toBe(false);
 
-  const screenshotButton = page.getByRole("button", { name: /^export$/i });
+  const screenshotButton = page.getByRole("button", { name: /sec_cap/i });
   const downloadPromise = page
     .waitForEvent("download", { timeout: 5_000 })
     .catch(() => null);
@@ -77,13 +77,13 @@ test("smoke: control rail and centered LLM chat interactions", async ({ page }) 
 
   await expect(page.getByText(/42 knowledge chunks/i)).toBeVisible();
 
-  await page.getByRole("button", { name: /index lightbound/i }).click();
+  await page.getByRole("button", { name: /r_index_lgb/i }).click();
   await expect(page.getByText(/42 knowledge chunks/i)).toBeVisible();
 
   await page
-    .getByPlaceholder(/ask gauss about mission concepts, threats, or documents/i)
+    .getByPlaceholder(/\[ENTER_QUERY_INPUT\.\.\.\]/i)
     .fill("What is the synthetic status?");
-  await page.getByRole("button", { name: /ask gauss rag/i }).click();
+  await page.getByRole("button", { name: /exec_query_rag/i }).click();
 
   await expect(page.getByText(/synthetic answer from playwright mock/i)).toBeVisible();
   await expect(page.getByText(/\/tmp\/mock-source\.pdf/i)).toBeVisible();

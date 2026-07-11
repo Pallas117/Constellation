@@ -1,0 +1,98 @@
+# Pre-commit hooks for security & quality checks
+# Install: pip install pre-commit && pre-commit install
+# Run manually: pre-commit run --all-files
+
+repos:
+  # TruffleHog secret scanning
+  - repo: https://github.com/trufflesecurity/trufflehog
+    rev: v3.63.0
+    hooks:
+      - id: trufflehog
+        name: TruffleHog
+        description: Detect secrets in git commits
+        entry: trufflehog filesystem . --json --only-verified
+        language: system
+        types: [text]
+        stages: [commit]
+
+  # Git secrets as fallback
+  - repo: https://github.com/Yelp/detect-secrets
+    rev: v1.4.0
+    hooks:
+      - id: detect-secrets
+        name: Detect secrets
+        description: Detect secrets using entropy-based scanning
+        entry: detect-secrets scan
+        language: python
+        types: [text]
+        args: ['--baseline', '.secrets.baseline']
+
+  # Prevent large files
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.5.0
+    hooks:
+      - id: check-added-large-files
+        name: Check for large files
+        args: ['--maxkb=2048']
+      - id: check-case-conflict
+        name: Check for case conflicts
+      - id: check-json
+        name: Check JSON files
+      - id: check-yaml
+        name: Check YAML files
+      - id: check-merge-conflict
+        name: Check merge conflicts
+      - id: end-of-file-fixer
+        name: Fix end of file
+      - id: trailing-whitespace
+        name: Trim trailing whitespace
+
+  # TypeScript & JavaScript
+  - repo: https://github.com/pre-commit/mirrors-eslint
+    rev: v9.3.0
+    hooks:
+      - id: eslint
+        name: ESLint
+        files: \.(ts|tsx|js|jsx)$
+        types: [text]
+        additional_dependencies:
+          - eslint
+          - typescript
+          - "@typescript-eslint/parser"
+          - "@typescript-eslint/eslint-plugin"
+        args: ['--fix']
+        stages: [commit]
+
+  # Commit message linting (Conventional Commits)
+  - repo: https://github.com/compilerla/conventional-pre-commit
+    rev: v3.0.0
+    hooks:
+      - id: conventional-pre-commit
+        name: Conventional commit message
+        stages: [commit-msg]
+
+  # Environment file validation
+  - repo: local
+    hooks:
+      - id: no-commit-env-secrets
+        name: Prevent committing .env with secrets
+        entry: bash -c 'if [ -f .env ]; then echo ".env file detected - ensure no secrets are present"; if git diff --cached .env 2>/dev/null | grep -qE "(KEY|TOKEN|SECRET|PASS)"; then echo "❌ Detected secrets in .env"; exit 1; fi; fi'
+        language: system
+        stages: [commit]
+        always_run: true
+        pass_filenames: false
+
+# Configuration
+default_language_version:
+  python: python3.11
+
+# Skip certain checks for specific files
+exclude: |
+  (?x)^(
+    build/|
+    dist/|
+    node_modules/|
+    \.git/|
+    frontend/dist/|
+    package-lock\.json
+  )

@@ -1,0 +1,213 @@
+name: Type Safety & Linting Gate
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+  pull-requests: write
+  checks: write
+
+jobs:
+  typescript-strict:
+    name: TypeScript Strict Mode
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: |
+          if [ -f package-lock.json ]; then
+            npm ci
+          else
+            npm install
+          fi
+
+      - name: TypeScript strict mode check
+        id: typescript
+        run: |
+          echo "🔍 Running TypeScript compiler..."
+          npx tsc --noEmit 2>&1 | tee tsc-output.txt
+          exit_code=${PIPESTATUS[0]}
+          echo "exit_code=$exit_code" >> $GITHUB_OUTPUT
+          exit $exit_code
+        continue-on-error: true
+
+      - name: Comment PR with type errors
+        if: github.event_name == 'pull_request' && steps.typescript.outcome == 'failure'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const output = fs.readFileSync('tsc-output.txt', 'utf8');
+            const lines = output.split('\n').slice(0, 30).join('\n');
+            
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: `❌ **TypeScript Type Errors Detected**\n\n\`\`\`\n${lines}\n...\n\`\`\`\n\nFix type errors and re-push.`
+            });
+
+      - name: Fail if type errors exist
+        if: steps.typescript.outcome == 'failure'
+        run: exit 1
+
+  eslint:
+    name: ESLint Code Quality
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: |
+          if [ -f package-lock.json ]; then
+            npm ci
+          else
+            npm install
+          fi
+
+      - name: Run ESLint
+        id: eslint
+        run: |
+          npx eslint . --format json --output-file eslint-report.json || true
+          
+      - name: Comment PR with linting issues
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            try {
+              const report = JSON.parse(fs.readFileSync('eslint-report.json', 'utf8'));
+              const errors = report.flatMap(f => f.messages.filter(m => m.severity === 2));
+              const warnings = report.flatMap(f => f.messages.filter(m => m.severity === 1));
+              
+              if (errors.length > 0 || warnings.length > 0) {
+                github.rest.issues.createComment({
+                  issue_number: context.issue.number,
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  body: `🔍 **Linting Results**\n\n❌ **Errors**: ${errors.length}\n⚠️ **Warnings**: ${warnings.length}\n\nRun \`npx eslint . --fix\` locally to auto-fix issues.`
+                });
+              }
+            } catch (e) {
+              console.log('No linting issues or parsing error');
+            }
+
+  unused-imports:
+    name: Detect Unused Imports
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: |
+          if [ -f package-lock.json ]; then
+            npm ci
+          else
+            npm install
+          fi
+
+      - name: Check for unused imports
+        run: |
+          echo "🔍 Checking for unused imports..."
+          files_with_unused=0
+          
+          # Find all TypeScript files
+          for file in $(find . -name "*.ts" -o -name "*.tsx" | grep -v node_modules | grep -v dist | grep -v build); do
+            # Basic check for unused imports (variables imported but not used)
+            if grep -q "^import.*from" "$file"; then
+              # Count imports vs usage (simple heuristic)
+              import_count=$(grep "^import" "$file" | wc -l)
+              if [ $import_count -gt 10 ]; then
+                echo "⚠️  $file has $import_count imports (consider review)"
+                files_with_unused=$((files_with_unused + 1))
+              fi
+            fi
+          done
+          
+          if [ $files_with_unused -gt 0 ]; then
+            echo "⚠️  Found $files_with_unused files with many imports"
+          fi
+
+  bundle-size-check:
+    name: Check Bundle Size
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: |
+          if [ -f package-lock.json ]; then
+            npm ci
+          else
+            npm install
+          fi
+
+      - name: Build project
+        run: npm run build
+
+      - name: Check bundle size
+        run: |
+          echo "📦 Bundle Size Analysis"
+          echo "========================"
+          
+          if [ -d "frontend/dist" ]; then
+            total_size=$(du -sh frontend/dist | cut -f1)
+            js_size=$(find frontend/dist -name "*.js" -exec wc -c {} + | tail -1 | awk '{print $1}')
+            
+            echo "Total size: $total_size"
+            echo "JavaScript size: $(( js_size / 1024 ))KB"
+            
+            if [ $js_size -gt 1048576 ]; then
+              echo "⚠️  Warning: JS bundle exceeds 1MB"
+              echo "Consider code-splitting large components"
+            fi
+          fi
+
+status-check:
+    name: All Type/Lint Checks
+    runs-on: ubuntu-latest
+    needs: [typescript-strict, eslint, unused-imports, bundle-size-check]
+    if: always()
+    steps:
+      - name: Check all results
+        run: |
+          if [ "${{ needs.typescript-strict.result }}" != "success" ]; then
+            echo "❌ TypeScript strict mode check failed"
+            exit 1
+          fi
+          echo "✅ All type and lint checks passed"

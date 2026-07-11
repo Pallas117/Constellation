@@ -1,4 +1,5 @@
 import http from "node:http";
+import { pathToFileURL } from "node:url";
 import cors from "cors";
 import express from "express";
 import { WebSocket, WebSocketServer } from "ws";
@@ -12,7 +13,6 @@ import {
 } from "./auth.js";
 import { CyberTigerDaemon } from "./cybertiger/daemon.js";
 import { inferNowcast, inferAnomalyForecast, triggerTraining } from "./ml-client/client.js";
-import { getSupabaseAdminClient, getSupabaseAnonClient } from "./supabase.js";
 import {
   getAuroraMap,
   getCanonicalFeed,
@@ -30,12 +30,15 @@ import { IngestionWorker } from "./worker/ingest-loop.js";
 import { NotebookLMClient } from "./services/notebooklm-client.js";
 import { GraphDBClient } from "./services/graphdb-client.js";
 import { AgenticReasoningEngine } from "./services/agentic-reasoning.js";
+import { createSwapPlan, rebalanceDeviceNetwork } from "./services/device-swap-manager.js";
 import { encodeCanonicalPoint } from "./lib/proto.js";
 import { linkGuardian } from "./lib/connectivity.js";
 import { bedrock } from "./lib/local-db.js";
+import { SPACE_OBJECT_CATALOG } from "./lib/space-object-catalog.js";
 import { auth } from "./better-auth.js";
 import { toNodeHandler } from "better-auth/node";
 import { SelfHealerAgent } from "./cybertiger/self-healer.js";
+import deviceRegistryRouter from "./device-registry.js";
 
 const app = express();
 const cyberTiger = new CyberTigerDaemon();
@@ -86,9 +89,17 @@ const allowedOriginSet = new Set(allowedOrigins);
 
 function isAllowedOrigin(origin: string | null | undefined): boolean {
   if (!origin) {
+    return true; // Allow requests without Origin header
+  }
+  // Check if origin is in allowed list
+  if (allowedOriginSet.has(origin)) {
     return true;
   }
-  return allowedOriginSet.has(origin);
+  // In development, be more permissive
+  if (process.env.NODE_ENV !== "production" && origin?.includes("localhost") || origin?.includes("127.0.0.1")) {
+    return true;
+  }
+  return false;
 }
 
 app.use(
@@ -98,8 +109,10 @@ app.use(
         callback(null, true);
         return;
       }
+      console.warn(`[CORS] Blocked origin: ${origin}`);
       callback(new Error("CORS blocked"));
     },
+    credentials: true,
   }),
 );
 
@@ -139,55 +152,22 @@ function filterByLookback<T extends { timestamp: string }>(
   return filtered.slice(Math.max(0, filtered.length - limit));
 }
 
-async function fetchCanonicalFromSupabase(
+async function fetchCanonicalFromDb(
   lookbackMs: number,
   limit: number,
   accessToken?: string,
 ): Promise<CanonicalSpaceWeatherPoint[] | null> {
-  const supabase = accessToken
-    ? getSupabaseAnonClient(accessToken)
-    : getSupabaseAdminClient();
-  if (!supabase) {
-    return null;
-  }
-  const since = new Date(Date.now() - lookbackMs).toISOString();
-  const { data, error } = await supabase
-    .from("sw_nowcast_5s")
-    .select("point,timestamp")
-    .gte("timestamp", since)
-    .order("timestamp", { ascending: true })
-    .limit(limit);
-
-  if (error) {
-    return null;
-  }
-  return (data ?? [])
-    .map((row) => row.point as CanonicalSpaceWeatherPoint)
-    .filter((point): point is CanonicalSpaceWeatherPoint => Boolean(point));
+  // Supabase database access has been removed; memory and bedrock are the current sources.
+  return null;
 }
 
-async function fetchMmsFromSupabase(
+async function fetchMmsFromDb(
   lookbackMs: number,
   limit: number,
   accessToken?: string,
 ): Promise<any[] | null> {
-  const supabase = accessToken
-    ? getSupabaseAnonClient(accessToken)
-    : getSupabaseAdminClient();
-  if (!supabase) {
-    return null;
-  }
-  const since = new Date(Date.now() - lookbackMs).toISOString();
-  const { data, error } = await supabase
-    .from("mms_recon_vectors_5s")
-    .select("vector,timestamp")
-    .gte("timestamp", since)
-    .order("timestamp", { ascending: true })
-    .limit(limit);
-  if (error) {
-    return null;
-  }
-  return (data ?? []).map((row) => row.vector).filter(Boolean);
+  // Supabase database access has been removed; memory and bedrock are the current sources.
+  return null;
 }
 
 app.get("/health", (_req, res) => {
@@ -281,12 +261,15 @@ app.post("/api/rag/query", async (req: express.Request, res: express.Response) =
 
 app.use("/api", withAsyncMiddleware(authenticateRequest));
 
+// Device lifecycle endpoints (requires operator session)
+app.use("/api/device", deviceRegistryRouter);
+
 app.get("/api/feed/space-weather/5s", async (req: AuthenticatedRequest, res) => {
   const lookbackMs = parseLookback(req.query.lookback, 24 * 60 * 60 * 1000);
   const limit = Math.max(1, Math.min(Number(req.query.limit ?? 17280), 17280));
   const token = req.auth?.token;
 
-  const fromDb = await fetchCanonicalFromSupabase(lookbackMs, limit, token);
+  const fromDb = await fetchCanonicalFromDb(lookbackMs, limit, token);
   const points = fromDb ?? filterByLookback(getCanonicalFeed(), lookbackMs, limit);
 
   // LEVEL 4 REDUNDANCY: Bedrock Fallback if both DB and Memory are insufficient
@@ -300,14 +283,14 @@ app.get("/api/feed/space-weather/5s", async (req: AuthenticatedRequest, res) => 
   }
 
   res.json({
-    source: fromDb ? "supabase" : "memory",
+    source: "memory",
     count: points.length,
     points,
   });
 });
 
 app.get("/api/feed/space-weather/latest", async (req: AuthenticatedRequest, res) => {
-  const fromDb = await fetchCanonicalFromSupabase(5 * 60 * 1000, 1, req.auth?.token);
+  const fromDb = await fetchCanonicalFromDb(5 * 60 * 1000, 1, req.auth?.token);
   let point = fromDb && fromDb.length > 0 ? fromDb[fromDb.length - 1] : getLatestCanonical();
 
   // LEVEL 4 REDUNDANCY: Bedrock Fallback for latest
@@ -324,6 +307,14 @@ app.get("/api/feed/space-weather/latest", async (req: AuthenticatedRequest, res)
   res.json(point);
 });
 
+app.get("/api/feed/space-objects", (_req, res) => {
+  res.json({
+    source: "catalog",
+    count: SPACE_OBJECT_CATALOG.length,
+    objects: SPACE_OBJECT_CATALOG,
+  });
+});
+
 // 72-hour LSTM Anomaly Forecast endpoint
 app.get("/api/forecast/anomaly", async (_req, res) => {
   try {
@@ -335,7 +326,7 @@ app.get("/api/forecast/anomaly", async (_req, res) => {
 });
 
 app.get("/api/feed/space-weather/latest/proto", async (req: AuthenticatedRequest, res) => {
-  const fromDb = await fetchCanonicalFromSupabase(5 * 60 * 1000, 1, req.auth?.token);
+  const fromDb = await fetchCanonicalFromDb(5 * 60 * 1000, 1, req.auth?.token);
   let point = fromDb && fromDb.length > 0 ? fromDb[fromDb.length - 1] : getLatestCanonical();
   
   // Bedrock fallback for proto
@@ -363,7 +354,7 @@ app.get("/api/feed/mms/reconnection", async (req: AuthenticatedRequest, res) => 
   const limit = Math.max(1, Math.min(Number(req.query.limit ?? 1440), 5000));
   const token = req.auth?.token;
 
-  const fromDb = await fetchMmsFromSupabase(lookbackMs, limit, token);
+  const fromDb = await fetchMmsFromDb(lookbackMs, limit, token);
   const vectors = fromDb ?? filterByLookback(getMmsFeed(), lookbackMs, limit);
 
   // LEVEL 4 REDUNDANCY: Bedrock Fallback for MMS
@@ -377,14 +368,14 @@ app.get("/api/feed/mms/reconnection", async (req: AuthenticatedRequest, res) => 
   }
 
   res.json({
-    source: fromDb ? "supabase" : "memory",
+    source: "memory",
     count: vectors.length,
     vectors,
   });
 });
 
 app.get("/api/feed/mms/reconnection/latest", async (req: AuthenticatedRequest, res) => {
-  const fromDb = await fetchMmsFromSupabase(30 * 60 * 1000, 1, req.auth?.token);
+  const fromDb = await fetchMmsFromDb(30 * 60 * 1000, 1, req.auth?.token);
   let vector = fromDb && fromDb.length > 0 ? fromDb[fromDb.length - 1] : getLatestMms();
 
   // LEVEL 4 REDUNDANCY: Bedrock Fallback for latest MMS
@@ -527,8 +518,6 @@ app.post("/api/ai/nowcast/train", requireRole("admin"), async (_req, res) => {
   }
 });
 
-const port = Number(process.env.PROXY_PORT ?? 3001);
-const host = (process.env.PROXY_HOST ?? "127.0.0.1").trim() || "127.0.0.1";
 const server = http.createServer(app);
 
 const wsSpaceWeather = new WebSocketServer({ server, path: "/ws/feed/space-weather" });
@@ -627,18 +616,93 @@ const worker = new IngestionWorker((result: IngestionTickResult) => {
     broadcast(wsMmsRecon, "mms-reconnection", result.mmsVector);
   }
 });
-worker.start();
 
-server.listen(port, host, () => {
-  console.log(`[backend] listening on ${host}:${port}`);
-  if (host === "0.0.0.0") {
-    console.warn(
-      "[backend] warning: PROXY_HOST=0.0.0.0 exposes API on all interfaces. Prefer loopback or Tailscale IP.",
-    );
-  }
+selfHealer.register({
+  onRequestTraining: async () => {
+    return triggerTraining();
+  },
+  onResetIngestion: () => {
+    worker.stop();
+    worker.start();
+  },
 });
+
+const swapIntervalMs = Number(process.env.SWAP_BALANCE_INTERVAL_MS ?? 45_000);
+let swapInterval: NodeJS.Timeout | null = null;
+let backendStarted = false;
+
+export async function startBackend(options?: { host?: string; port?: number }): Promise<{ app: express.Express; server: http.Server; host: string; port: number }> {
+  const host = (options?.host ?? ((process.env.PROXY_HOST ?? "127.0.0.1").trim())) || "127.0.0.1";
+  const port = options?.port ?? Number(process.env.PROXY_PORT ?? 3001);
+
+  if (server.listening) {
+    const address = server.address();
+    const actualPort = typeof address === "object" && address?.port ? address.port : port;
+    return { app, server, host, port: actualPort };
+  }
+
+  return new Promise((resolve, reject) => {
+    server.listen(port, host, () => {
+      swapInterval = setInterval(() => {
+        const result = rebalanceDeviceNetwork();
+        if (result.plan.summary.critical > 0) {
+          console.warn("[SwapManager] critical device health detected; rebalance suggested", result.plan.summary);
+        }
+      }, swapIntervalMs);
+
+      selfHealer.start();
+      worker.start();
+
+      const address = server.address();
+      const actualPort = typeof address === "object" && address?.port ? address.port : port;
+      backendStarted = true;
+      console.log(`[backend] listening on ${host}:${actualPort}`);
+      if (host === "0.0.0.0") {
+        console.warn(
+          "[backend] warning: PROXY_HOST=0.0.0.0 exposes API on all interfaces. Prefer loopback or Tailscale IP.",
+        );
+      }
+      resolve({ app, server, host, port: actualPort });
+    });
+    server.on("error", reject);
+  });
+}
+
+export async function stopBackend(): Promise<void> {
+  if (!backendStarted && !server.listening) {
+    return;
+  }
+
+  worker.stop();
+  selfHealer.stop();
+  linkGuardian.stop();
+  if (swapInterval) {
+    clearInterval(swapInterval);
+    swapInterval = null;
+  }
+
+  await new Promise<void>((resolve, reject) => {
+    server.close((error) => {
+      if (error) {
+        reject(error);
+        return;
+      }
+      resolve();
+    });
+  });
+
+  backendStarted = false;
+}
 
 app.use((error: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
   console.error("[backend] unhandled error", error);
   res.status(500).json({ error: "Internal server error" });
 });
+
+const isMain = import.meta.url === pathToFileURL(process.argv[1] ?? "").href;
+if (isMain) {
+  void startBackend().catch((error) => {
+    console.error("[backend] failed to start", error);
+    process.exit(1);
+  });
+}

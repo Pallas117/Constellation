@@ -4,8 +4,11 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
+    "dev": "vite --config frontend/vite.config.ts",
     "dev:proxy": "node --env-file-if-exists=.env --import tsx backend/server.ts",
+    "backend:log": "bash scripts/start-backend-logging.sh",
+    "parse:logs": "node scripts/log-parser.js",
+    "alerts:watch": "node scripts/log-alerts.js",
     "dev:infer": "python3 ml/infer/infer_server.py",
     "dev:all": "concurrently -k \"npm run dev\" \"npm run dev:proxy\"",
     "dev:tailscale": "bash scripts/tailscale/dev-mobile.sh",
@@ -27,15 +30,26 @@
     "audit:adherence": "node --env-file-if-exists=.env --import tsx backend/scripts/full-adherence-audit.ts",
     "setup:rbac": "node --env-file-if-exists=.env --import tsx backend/scripts/rbac-bootstrap.ts",
     "test:rbac": "node --env-file-if-exists=.env --import tsx backend/scripts/rbac-smoke.ts",
+    "test:backend:harness": "node --import tsx --test backend/server.harness.test.ts",
     "test:ui": "playwright test",
     "test:ui:mobile": "playwright test tests/e2e/ui-mobile-layout.spec.ts",
     "test:ui:headed": "playwright test --headed",
     "test:ui:debug": "playwright test --debug",
     "test": "node --import tsx --test \"backend/**/*.test.ts\"",
-    "build": "vite build",
-    "build:dev": "vite build --mode development",
+    "build": "vite build --config frontend/vite.config.ts",
+    "build:dev": "vite build --mode development --config frontend/vite.config.ts",
     "lint": "tsc --noEmit",
-    "preview": "vite preview"
+    "preview": "vite preview --config frontend/vite.config.ts",
+    "security:audit": "npm audit --audit-level=moderate",
+    "security:secrets": "bash scripts/check-secrets-local.sh",
+    "security:setup-hooks": "bash scripts/setup-pre-commit.sh",
+    "security:full": "npm run security:audit && npm run security:secrets && npm run check:security-compliance",
+    "quality:types": "tsc --noEmit --strict",
+    "quality:lint": "eslint . --format compact",
+    "quality:full": "npm run quality:types && npm run quality:lint",
+    "test:all": "npm test && npm run test:ui",
+    "perf:check": "npm run build && du -sh frontend/dist",
+    "release:prepare": "npm run quality:full && npm run security:full && npm test"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",
@@ -81,6 +95,7 @@
     "cmdk": "^1.1.1",
     "cors": "^2.8.5",
     "date-fns": "^3.6.0",
+    "dotenv": "^17.4.2",
     "embla-carousel-react": "^8.6.0",
     "express": "^4.21.2",
     "flatgeobuf": "^4.4.0",
@@ -126,6 +141,11 @@
     "typescript": "^5.8.3",
     "vite": "^7.3.1"
   },
+  "workspaces": [
+    "frontend",
+    "backend",
+    "ml"
+  ],
   "overrides": {
     "three-mesh-bvh": "^0.8.0"
   }

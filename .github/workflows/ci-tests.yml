@@ -14,9 +14,6 @@ jobs:
     env:
       # CI-safe placeholders so environment sanity checks can run.
       # Real deployment values must be injected at runtime (not from this workflow).
-      SUPABASE_URL: https://example.supabase.co
-      SUPABASE_ANON_KEY: ci-placeholder-anon-key
-      SUPABASE_SERVICE_ROLE_KEY: ci-placeholder-service-role-key
       AUTH_REQUIRED: "true"
       CYBERTIGER_ENABLED: "true"
 

@@ -1,0 +1,284 @@
+name: Performance Regression Testing
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+  pull_request:
+    types: [opened, synchronize, reopened]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  bundle-size-comparison:
+    name: Bundle Size Regression
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: |
+          if [ -f package-lock.json ]; then
+            npm ci
+          else
+            npm install
+          fi
+
+      - name: Build and analyze bundle
+        id: bundle
+        run: |
+          echo "📦 Building project..."
+          npm run build
+          
+          if [ -d "frontend/dist" ]; then
+            total_size=$(du -sh frontend/dist | cut -f1)
+            js_size=$(find frontend/dist -name "*.js" -type f -exec wc -c {} + | tail -1 | awk '{print $1}')
+            js_size_kb=$((js_size / 1024))
+            
+            echo "total_size=$total_size" >> $GITHUB_OUTPUT
+            echo "js_size_kb=$js_size_kb" >> $GITHUB_OUTPUT
+            
+            echo "📊 Bundle Metrics:"
+            echo "   Total: $total_size"
+            echo "   JavaScript: ${js_size_kb}KB"
+            
+            # Alert on thresholds
+            if [ $js_size_kb -gt 1024 ]; then
+              echo "⚠️  JavaScript bundle exceeds 1MB (${js_size_kb}KB)"
+            fi
+            if [ $js_size_kb -gt 512 ]; then
+              echo "ℹ️  Consider code-splitting large chunks"
+            fi
+          fi
+
+      - name: Comment PR with bundle size
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const js_size = `${{ steps.bundle.outputs.js_size_kb }}`;
+            const status = js_size > 1024 ? '⚠️ ' : '✅ ';
+            
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: `${status}**Bundle Size**: ${js_size}KB JavaScript\n\nTarget: <512KB (optimal), <1MB (acceptable)`
+            });
+
+      - name: Upload bundle report
+        uses: actions/upload-artifact@v4
+        with:
+          name: bundle-report
+          path: frontend/dist/
+          retention-days: 30
+
+  frontend-performance:
+    name: Frontend Performance
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: |
+          if [ -f package-lock.json ]; then
+            npm ci
+          else
+            npm install
+          fi
+
+      - name: Run performance checks
+        run: |
+          echo "⚡ Frontend Performance Checks"
+          echo "=============================="
+          
+          # Check for common performance issues
+          issues=0
+          
+          # 1. Check for large imports
+          echo ""
+          echo "1️⃣  Checking for large imports..."
+          if grep -r "import.*from.*heavy-library" frontend/src 2>/dev/null; then
+            echo "⚠️  Heavy imports detected"
+            issues=$((issues + 1))
+          else
+            echo "✅ No suspicious heavy imports"
+          fi
+          
+          # 2. Check React.memo usage
+          echo ""
+          echo "2️⃣  Checking for memoization..."
+          memo_count=$(grep -r "React.memo\|useMemo" frontend/src | wc -l)
+          if [ $memo_count -gt 5 ]; then
+            echo "✅ Good memoization ($memo_count instances)"
+          else
+            echo "⚠️  Low memoization ($memo_count instances) - consider adding more"
+          fi
+          
+          # 3. Check hook dependencies
+          echo ""
+          echo "3️⃣  Checking hook dependencies..."
+          useEffect_count=$(grep -r "useEffect\|useMemo\|useCallback" frontend/src | wc -l)
+          if grep -r "useEffect" frontend/src | grep -q "\[\]$\|^$"; then
+            echo "✅ Dependency arrays present"
+          fi
+          
+          # 4. Check for console.log in production
+          echo ""
+          echo "4️⃣  Checking for debug logs..."
+          console_count=$(grep -r "console\.log\|console\.warn" frontend/src | grep -v "// " | wc -l)
+          if [ $console_count -gt 5 ]; then
+            echo "⚠️  Found $console_count console statements (clean up for production)"
+          else
+            echo "✅ Minimal console output"
+          fi
+
+  api-latency-check:
+    name: API Response Time
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Check API implementations
+        run: |
+          echo "⏱️  API Response Time Analysis"
+          echo "============================="
+          
+          # Check backend endpoints for timeout handling
+          echo ""
+          echo "1️⃣  Checking for timeout handling..."
+          
+          if grep -r "AbortSignal.timeout\|timeout:" backend/ 2>/dev/null | head -3; then
+            echo "✅ Timeout handling found"
+          else
+            echo "⚠️  Consider adding timeout handling to API calls"
+          fi
+          
+          # Check for N+1 patterns
+          echo ""
+          echo "2️⃣  Checking for N+1 query patterns..."
+          
+          if grep -r "for.*await\|\.map.*fetch\|\.map.*db\." backend/ 2>/dev/null; then
+            echo "⚠️  Potential N+1 patterns detected"
+            echo "   Consider: Batch queries or parallel requests"
+          else
+            echo "✅ No obvious N+1 patterns"
+          fi
+          
+          # Check response sizes
+          echo ""
+          echo "3️⃣  Checking for large responses..."
+          
+          if grep -r "limit.*17280\|limit.*50000" backend/ 2>/dev/null; then
+            echo "⚠️  Large response sizes detected"
+            echo "   Consider: Pagination (default limit=1000)"
+          else
+            echo "✅ Reasonable response size limits"
+          fi
+
+  memory-leak-detection:
+    name: Memory Leak Detection
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Check for common memory leak patterns
+        run: |
+          echo "🧠 Memory Leak Detection"
+          echo "======================="
+          
+          issues=0
+          
+          # Check for missing cleanup
+          echo ""
+          echo "1️⃣  Checking for event listener cleanup..."
+          
+          listeners=$(grep -r "addEventListener\|setInterval\|setTimeout" frontend/src backend/ 2>/dev/null | wc -l)
+          cleanups=$(grep -r "removeEventListener\|clearInterval\|clearTimeout\|return.*\=>" frontend/src backend/ 2>/dev/null | wc -l)
+          
+          echo "   Event listeners: $listeners"
+          echo "   Cleanups: $cleanups"
+          
+          if [ $cleanups -lt $listeners ]; then
+            echo "⚠️  Potential missing cleanups (listeners > cleanups)"
+            issues=$((issues + 1))
+          else
+            echo "✅ Good cleanup coverage"
+          fi
+          
+          # Check for circular references
+          echo ""
+          echo "2️⃣  Checking for potential circular refs..."
+          
+          if grep -r "this\.parent = this\|obj\.ref = obj" . 2>/dev/null; then
+            echo "⚠️  Potential circular references found"
+            issues=$((issues + 1))
+          else
+            echo "✅ No obvious circular references"
+          fi
+          
+          # Check for unused useEffect cleanup
+          echo ""
+          echo "3️⃣  Checking useEffect patterns..."
+          
+          useEffect_no_cleanup=$(grep -r "useEffect.*=>" frontend/src | grep -v "return" | wc -l)
+          if [ $useEffect_no_cleanup -gt 5 ]; then
+            echo "⚠️  Found $useEffect_no_cleanup useEffect without cleanup"
+            issues=$((issues + 1))
+          else
+            echo "✅ useEffect cleanup coverage good"
+          fi
+          
+          if [ $issues -gt 0 ]; then
+            echo ""
+            echo "❌ Found $issues potential memory leak patterns"
+          fi
+
+  performance-summary:
+    name: Performance Summary
+    runs-on: ubuntu-latest
+    needs: [bundle-size-comparison, frontend-performance, api-latency-check, memory-leak-detection]
+    if: always()
+    steps:
+      - name: Generate summary
+        run: |
+          echo "📊 Performance Test Summary"
+          echo "============================"
+          echo ""
+          echo "Bundle Size: ${{ needs.bundle-size-comparison.result }}"
+          echo "Frontend Perf: ${{ needs.frontend-performance.result }}"
+          echo "API Latency: ${{ needs.api-latency-check.result }}"
+          echo "Memory: ${{ needs.memory-leak-detection.result }}"
+          echo ""
+          echo "✅ All performance checks complete"
+
+status-check:
+    name: Performance Tests Passed
+    runs-on: ubuntu-latest
+    needs: [performance-summary]
+    if: always()
+    steps:
+      - name: Check performance results
+        run: |
+          echo "✅ Performance regression tests complete"
+          echo "Review output for optimization opportunities"

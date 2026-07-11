@@ -1,5 +1,5 @@
 // backend/services/graphdb-client.ts
-import neo4j, { Driver } from 'neo4j-driver';
+import neo4j, { Driver, Session } from 'neo4j-driver';
 
 export interface GraphNode {
   id: string;
@@ -22,9 +22,34 @@ export interface GraphTrace {
 
 export class GraphDBClient {
   private driver: Driver;
+  private maxConcurrentSessions = 10;
+  private activeSessions = 0;
+  private sessionQueue: Array<() => void> = [];
 
   constructor(uri: string = 'bolt://localhost:7687', user: string = 'neo4j', pass: string = 'password') {
     this.driver = neo4j.driver(uri, neo4j.auth.basic(user, pass));
+  }
+
+  private async acquireSession(): Promise<Session> {
+    if (this.activeSessions < this.maxConcurrentSessions) {
+      this.activeSessions += 1;
+      return this.driver.session();
+    }
+
+    await new Promise<void>((resolve) => {
+      this.sessionQueue.push(resolve);
+    });
+
+    this.activeSessions += 1;
+    return this.driver.session();
+  }
+
+  private releaseSession(): void {
+    this.activeSessions = Math.max(0, this.activeSessions - 1);
+    const next = this.sessionQueue.shift();
+    if (next) {
+      next();
+    }
   }
 
   async close() {
@@ -32,7 +57,7 @@ export class GraphDBClient {
   }
 
   async injectFact(nodeA: GraphNode, edge: GraphEdge, nodeB: GraphNode): Promise<void> {
-    const session = this.driver.session();
+    const session = await this.acquireSession();
     try {
       await session.executeWrite(tx => 
         tx.run(`
@@ -47,11 +72,12 @@ export class GraphDBClient {
       );
     } finally {
       await session.close();
+      this.releaseSession();
     }
   }
 
   async traceAnomalyPath(anomalyId: string, depth: number = 3): Promise<GraphTrace> {
-    const session = this.driver.session();
+    const session = await this.acquireSession();
     try {
       const result = await session.executeRead(tx =>
         tx.run(`
@@ -106,6 +132,7 @@ export class GraphDBClient {
       return { nodes: [], edges: [] };
     } finally {
       await session.close();
+      this.releaseSession();
     }
   }
 }

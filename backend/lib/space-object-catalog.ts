@@ -1,0 +1,99 @@
+export interface SpaceObjectCatalogEntry {
+  id: string;
+  name: string;
+  category: 'satellite' | 'rocket_body' | 'debris' | 'unknown';
+  orbitType: 'LEO' | 'MEO' | 'GEO';
+  altitude: number;
+  inclination: number;
+  raan: number;
+  meanMotion: number;
+  latitude?: number;
+  longitude?: number;
+  owner?: string;
+  agency?: string;
+  signalProfile?: string;
+  tags?: string[];
+  lastSeen?: string;
+}
+
+export const SPACE_OBJECT_CATALOG: SpaceObjectCatalogEntry[] = [
+  {
+    id: 'GOES-17',
+    name: 'GOES-T',
+    category: 'satellite',
+    orbitType: 'GEO',
+    altitude: 35786,
+    inclination: 0.2,
+    raan: 120,
+    meanMotion: 1.0027,
+    latitude: 0,
+    longitude: -137.2,
+    owner: 'NOAA',
+    agency: 'NOAA',
+    signalProfile: 'telemetry',
+    tags: ['weather', 'solar-monitoring', 'GEO'],
+    lastSeen: new Date().toISOString(),
+  },
+  {
+    id: 'SES-15',
+    name: 'SES-15',
+    category: 'satellite',
+    orbitType: 'GEO',
+    altitude: 35786,
+    inclination: 0.1,
+    raan: 130,
+    meanMotion: 1.0027,
+    latitude: 0,
+    longitude: -129.0,
+    owner: 'SES',
+    agency: 'Commercial',
+    signalProfile: 'telemetry',
+    tags: ['communications', 'GEO'],
+    lastSeen: new Date().toISOString(),
+  },
+  {
+    id: 'NOAA-20',
+    name: 'NOAA-20',
+    category: 'satellite',
+    orbitType: 'LEO',
+    altitude: 824,
+    inclination: 98.7,
+    raan: 45,
+    meanMotion: 14.2,
+    owner: 'NOAA',
+    agency: 'NOAA',
+    signalProfile: 'telemetry',
+    tags: ['weather', 'earth-observation', 'LEO'],
+    lastSeen: new Date().toISOString(),
+  },
+  {
+    id: 'IRIDIUM-91',
+    name: 'Iridium NEXT 91',
+    category: 'satellite',
+    orbitType: 'LEO',
+    altitude: 780,
+    inclination: 86.4,
+    raan: 290,
+    meanMotion: 15.3,
+    owner: 'Iridium',
+    agency: 'Commercial',
+    signalProfile: 'telemetry',
+    tags: ['communications', 'LEO'],
+    lastSeen: new Date().toISOString(),
+  },
+  {
+    id: 'ROCKET_BODY-2024A',
+    name: 'Orbital Debris Candidate',
+    category: 'rocket_body',
+    orbitType: 'MEO',
+    altitude: 20500,
+    inclination: 55.0,
+    raan: 310,
+    meanMotion: 11.3,
+    owner: 'Unknown',
+    agency: 'Unknown',
+    signalProfile: 'unknown',
+    tags: ['debris', 'MEO'],
+    lastSeen: new Date().toISOString(),
+  },
+];

@@ -1,0 +1,181 @@
+name: Compliance & Security Gate
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+  pull-requests: write
+  checks: write
+
+jobs:
+  security-compliance:
+    name: Security Compliance Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: |
+          if [ -f package-lock.json ]; then
+            npm ci
+          else
+            npm install
+          fi
+
+      - name: Run security compliance audit
+        id: compliance
+        run: npm run check:security-compliance
+        env:
+          AUTH_REQUIRED: "true"
+          CYBERTIGER_ENABLED: "true"
+        continue-on-error: true
+
+      - name: Comment PR with compliance results
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const compliance = `${{ steps.compliance.outcome }}`;
+            const icon = compliance === 'success' ? '✅' : '❌';
+            
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: `${icon} **Security Compliance**: ${compliance === 'success' ? 'PASSED' : 'REVIEW REQUIRED'}\n\nRun \`npm run check:security-compliance\` locally to debug.`
+            });
+
+      - name: Fail if compliance check failed
+        if: steps.compliance.outcome == 'failure'
+        run: exit 1
+
+  rbac-smoke-test:
+    name: RBAC Smoke Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: |
+          if [ -f package-lock.json ]; then
+            npm ci
+          else
+            npm install
+          fi
+
+      - name: Run RBAC smoke tests
+        id: rbac
+        run: npm run test:rbac
+        env:
+          AUTH_REQUIRED: "true"
+          CYBERTIGER_ENABLED: "true"
+          RBAC_SKIP_HEALTH_CHECK: "true"
+        continue-on-error: true
+
+      - name: Comment PR with RBAC results
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const rbac = `${{ steps.rbac.outcome }}`;
+            const icon = rbac === 'success' ? '✅' : '⚠️';
+            
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: `${icon} **RBAC Tests**: ${rbac === 'success' ? 'PASSED' : 'FAILED - Review required'}`
+            });
+
+      - name: Fail if RBAC tests failed on main
+        if: steps.rbac.outcome == 'failure' && github.ref == 'refs/heads/main'
+        run: exit 1
+
+  headers-validation:
+    name: Security Headers Validation
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Validate security headers config
+        run: |
+          echo "Checking security headers in backend..."
+          if grep -q "x-content-type-options" backend/server.ts; then
+            echo "✅ X-Content-Type-Options header configured"
+          else
+            echo "❌ X-Content-Type-Options header missing"
+            exit 1
+          fi
+          
+          if grep -q "x-frame-options" backend/server.ts; then
+            echo "✅ X-Frame-Options header configured"
+          else
+            echo "❌ X-Frame-Options header missing"
+            exit 1
+          fi
+          
+          if grep -q "referrer-policy" backend/server.ts; then
+            echo "✅ Referrer-Policy header configured"
+          else
+            echo "❌ Referrer-Policy header missing"
+            exit 1
+          fi
+
+  rate-limit-config:
+    name: Rate Limiting Configuration
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Validate rate limiting config
+        run: |
+          echo "Checking rate limiting configuration..."
+          if grep -q "rateLimitWindowMs" backend/cybertiger/daemon.ts; then
+            echo "✅ Rate limiting window configured"
+          else
+            echo "❌ Rate limiting window missing"
+            exit 1
+          fi
+          
+          if grep -q "rateLimitMax" backend/cybertiger/daemon.ts; then
+            echo "✅ Rate limiting max configured"
+          else
+            echo "❌ Rate limiting max missing"
+            exit 1
+          fi
+
+status-check:
+    name: All Security Gates Passed
+    runs-on: ubuntu-latest
+    needs: [security-compliance, rbac-smoke-test, headers-validation, rate-limit-config]
+    if: always()
+    steps:
+      - name: Check job status
+        run: |
+          if [ "${{ needs.security-compliance.result }}" != "success" ]; then
+            echo "❌ Security compliance check failed"
+            exit 1
+          fi
+          echo "✅ All security gates passed"

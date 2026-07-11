@@ -16,7 +16,6 @@ class LinkGuardian {
   private currentLatency: number = 0;
   private checkInterval: NodeJS.Timeout | null = null;
   private readonly PING_HOST = "8.8.8.8"; // Standard DNS ping for general health
-  private readonly SUPABASE_HOST = process.env.SUPABASE_URL ? new URL(process.env.SUPABASE_URL).hostname : "supabase.co";
 
   constructor() {
     this.start();

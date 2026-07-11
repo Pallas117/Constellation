@@ -1,0 +1,66 @@
+name: Developer Score Check
+
+on:
+  pull_request:
+    types: [opened, edited, reopened, synchronize]
+
+jobs:
+  validate-developer-score:
+    name: Validate Developer Score Section
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate PR body
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const body = context.payload.pull_request.body || '';
+            const missingBody = body.trim().length === 0;
+            if (missingBody) {
+              core.setFailed('Pull request body is empty. Please provide a description and Developer Score section.');
+              return;
+            }
+
+            const scoreHeader = /###\s*Developer Score/i;
+            if (!scoreHeader.test(body)) {
+              core.setFailed('Missing `### Developer Score` section in PR description.');
+              return;
+            }
+
+            const requiredLines = [
+              /Code Quality:\s*\d+\/?25/i,
+              /Testing & Coverage:\s*\d+\/?25/i,
+              /Architecture & Fit:\s*\d+\/?20/i,
+              /Documentation & Communication:\s*\d+\/?15/i,
+              /Security & Compliance:\s*\d+\/?10/i,
+              /Release Readiness:\s*\d+\/?5/i,
+              /Total:\s*\d+\/?100/i
+            ];
+
+            const missing = requiredLines.filter((regex) => !regex.test(body));
+            if (missing.length > 0) {
+              core.setFailed(`Developer Score section is incomplete. Missing or malformed entries: ${missing.length}. Please include all required score lines.`);
+              return;
+            }
+
+            const totalMatch = body.match(/Total:\s*(\d+)/i);
+            if (!totalMatch) {
+              core.setFailed('Total score line is missing or malformed.');
+              return;
+            }
+
+            const total = Number(totalMatch[1]);
+            if (Number.isNaN(total) || total < 0 || total > 100) {
+              core.setFailed('Total score must be a number between 0 and 100.');
+              return;
+            }
+
+            const labels = (context.payload.pull_request.labels || []).map((label) => label.name.toLowerCase());
+            const isAlphaOrRoadmap = labels.some((name) => /alpha|roadmap/.test(name));
+            const minimumRequired = isAlphaOrRoadmap ? 95 : 90;
+
+            if (total < minimumRequired) {
+              const labelInfo = isAlphaOrRoadmap ? ' (alpha/roadmap PR)' : '';
+              core.setFailed(`Total score is ${total}/100, which is below the minimum required ${minimumRequired}${labelInfo}. Please improve the PR quality before merging.`);
+              return;
+            }
+          github-token: ${{ secrets.GITHUB_TOKEN }}

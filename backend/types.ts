@@ -18,6 +18,57 @@ export interface QualityFlags {
   tier: ResilienceTier;
 }
 
+export interface DeviceFingerprint {
+  hash: string;
+  buildAt: string;
+  signals: Record<string, string | number>;
+}
+
+export interface DeviceTelemetry {
+  temperatureC: number;
+  batteryPercent: number;
+  powerWatts: number;
+  computeLoadPercent: number;
+  networkLatencyMs: number;
+  signalStrength?: number;
+  lastReportedAt: string;
+}
+
+export interface DeviceSwapAssignment {
+  deviceId: string;
+  tier: "L1" | "L2" | "L3";
+  recommendedLoadPercent: number;
+  activeJobs: number;
+  jobCapacity: number;
+  score: number;
+  reason: string;
+}
+
+export interface DeviceRecord {
+  id: string;
+  userId: string;
+  name?: string;
+  fingerprintHash: string;
+  fingerprintSignals?: Record<string, string | number>;
+  registeredAt: string;
+  lastSeen: string;
+  status: "trusted" | "untrusted" | "needs_reauth";
+  telemetry?: DeviceTelemetry;
+  swap?: {
+    tier: "L1" | "L2" | "L3";
+    assignedLoadPercent: number;
+    activeJobs: number;
+    jobCapacity: number;
+    updatedAt: string;
+  };
+  quality?: {
+    score: number;
+    sampleCount: number;
+    networkStabilityMs: number;
+    updatedAt: string;
+  } | null;
+}
+
 export interface UncertaintyEnvelope {
   lower: number;
   upper: number;

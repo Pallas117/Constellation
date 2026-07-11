@@ -1,0 +1,10 @@
+{
+  "name": "gauss-backend",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "node --env-file-if-exists=.env --import tsx server.ts",
+    "test": "node --import tsx --test \"backend/**/*.test.ts\""
+  }
+}

@@ -3,7 +3,6 @@ import { fetchJaxaReadout, getJaxaStatus, type JAXAReadout } from "../adapters/j
 import { fetchMmsCdawebSamples, getMmsCdawebStatus } from "../adapters/mms-cdaweb.js";
 import { fetchMmsBurstWindows, getMmsLaspStatus } from "../adapters/mms-lasp.js";
 import { fetchNoaaReadout, getNoaaStatus, type NOAAReadout } from "../adapters/noaa-swpc.js";
-import type { SupabaseClient } from "@supabase/supabase-js";
 import { buildAuroraGrid } from "../physics/healpix.js";
 import {
   computeCanonicalPoint,
@@ -15,7 +14,6 @@ import {
   withinSkewWindow,
   type MMSSpacecraftSample,
 } from "../physics/reconnection.js";
-import { getSupabaseAdminClient } from "../supabase.js";
 import {
   pushCanonical,
   pushMms,
@@ -58,12 +56,35 @@ export class IngestionWorker {
 
   constructor(private onTick?: (result: IngestionTickResult) => void) {}
 
+  private async tickWithRetry(attempt = 0): Promise<void> {
+    try {
+      await this.tick();
+    } catch (error) {
+      const maxAttempts = 5;
+      const baseDelay = 2000;
+      const delay = baseDelay * Math.pow(2, attempt);
+
+      if (attempt < maxAttempts) {
+        console.error(
+          `[IngestionWorker] Initial tick failed (attempt ${attempt + 1}/${maxAttempts}), retrying in ${delay}ms`,
+          error,
+        );
+        setTimeout(() => {
+          void this.tickWithRetry(attempt + 1);
+        }, delay);
+      } else {
+        console.error(
+          `[IngestionWorker] Initial tick failed after ${maxAttempts} attempts, pipeline offline`,
+          error,
+        );
+      }
+    }
+  }
+
   start(): void {
     if (this.running) return;
     this.running = true;
-    this.tick().catch((error) => {
-      console.error("[IngestionWorker] Initial tick failed", error);
-    });
+    void this.tickWithRetry();
     this.timer = setInterval(() => {
       this.tick().catch((error) => {
         console.error("[IngestionWorker] Tick failed", error);
@@ -130,6 +151,14 @@ export class IngestionWorker {
   }
 
   private sourceStatus(): SourceStatus[] {
+    const officialOnly = String(process.env.OFFICIAL_SOURCES_ONLY ?? "false").toLowerCase() === "true";
+    if (officialOnly) {
+      console.log('[IngestionWorker] OFFICIAL_SOURCES_ONLY=true — preferring official data adapters (NOAA/MMS)');
+    }
+    if (officialOnly) {
+      return [getNoaaStatus(), getMmsCdawebStatus(), getMmsLaspStatus()];
+    }
+
     return [
       getNoaaStatus(),
       getEsaStatus(),
@@ -139,62 +168,7 @@ export class IngestionWorker {
     ];
   }
 
-  private async writeRawToSupabase(stream: string, observedAt: string, payload: unknown): Promise<void> {
-    const supabase = getSupabaseAdminClient();
-    if (!supabase) {
-      return;
-    }
-
-    await supabase
-      .from("sw_raw_samples")
-      .insert({
-        source: "fusion",
-        stream,
-        observed_at: observedAt,
-        payload,
-      })
-      .throwOnError();
-  }
-
-  private async writeMmsRaw(samples: MMSSpacecraftSample[]): Promise<void> {
-    const supabase = getSupabaseAdminClient();
-    if (!supabase || samples.length === 0) {
-      return;
-    }
-    const fgmRows = samples.map((sample) => ({
-      sc_id: sample.id,
-      observed_at: sample.timestamp,
-      payload: {
-        magneticFieldNt: sample.magneticFieldNt,
-      },
-    }));
-    const mecRows = samples.map((sample) => ({
-      sc_id: sample.id,
-      observed_at: sample.timestamp,
-      payload: {
-        positionGsmRe: sample.positionGsmRe,
-      },
-    }));
-    await supabase.from("mms_raw_fgm").upsert(fgmRows, { onConflict: "sc_id,observed_at" }).throwOnError();
-    await supabase.from("mms_raw_mec").upsert(mecRows, { onConflict: "sc_id,observed_at" }).throwOnError();
-  }
-
-  private async invokeCleanupRpc(nowIso: string): Promise<void> {
-    const supabase = getSupabaseAdminClient();
-    if (!supabase) {
-      return;
-    }
-    const start = new Date(Date.parse(nowIso) - 2 * 60 * 1000).toISOString();
-
-    await supabase.rpc("clean_raw_window", { start_ts: start, end_ts: nowIso }).throwOnError();
-    await supabase.rpc("generate_nowcast_5s", { start_ts: start, end_ts: nowIso }).throwOnError();
-    await supabase
-      .rpc("compute_mms_recon_vectors_5s", { start_ts: start, end_ts: nowIso })
-      .throwOnError();
-    await this.invokeAuroraMapRpcCompat(supabase, nowIso);
-  }
-
-  private isAuroraRpcSignatureError(error: unknown): boolean {
+  private async isAuroraRpcSignatureError(error: unknown): Promise<boolean> {
     if (!error || typeof error !== "object") {
       return false;
     }
@@ -208,47 +182,9 @@ export class IngestionWorker {
     );
   }
 
-  private async invokeAuroraMapRpcCompat(supabase: SupabaseClient, nowIso: string): Promise<void> {
-    const candidatePayloads: Array<Record<string, unknown>> = [
-      { ts: nowIso, nside: 64 },
-      { p_ts: nowIso, p_nside: 64 },
-      { p_nside: 64, p_ts: nowIso },
-    ];
-
-    let lastError: unknown = null;
-    for (const payload of candidatePayloads) {
-      try {
-        await supabase.rpc("build_aurora_healpix_map", payload).throwOnError();
-        return;
-      } catch (error) {
-        lastError = error;
-        if (!this.isAuroraRpcSignatureError(error)) {
-          throw error;
-        }
-      }
-    }
-
-    throw lastError ?? new Error("build_aurora_healpix_map RPC failed for all known signatures");
-  }
-
-  private async writeSourceHealth(status: SourceStatus[]): Promise<void> {
-    const supabase = getSupabaseAdminClient();
-    if (!supabase || status.length === 0) {
-      return;
-    }
-    const rows = status.map((item) => ({
-      source: item.source,
-      last_seen: item.lastSeen,
-      latency_seconds: item.latencySeconds,
-      healthy: item.healthy,
-      message: item.message ?? null,
-      updated_at: new Date().toISOString(),
-    }));
-    await supabase.from("source_health").upsert(rows).throwOnError();
-  }
-
   async tick(): Promise<IngestionTickResult> {
     const nowIso = new Date().toISOString();
+    const officialOnly = String(process.env.OFFICIAL_SOURCES_ONLY ?? "false").toLowerCase() === "true";
 
     // Redundancy 2: Adapter Circuit-Breaker & Synthetic Fallback
     const link = linkGuardian.getStatus();
@@ -257,6 +193,7 @@ export class IngestionWorker {
     // AIRGAP MODE: Skip all external API fetches
     if (link.mode !== "AIRGAP") {
       try {
+        // Always attempt NOAA as a primary official source
         if (this.shouldFetch("noaa", NOAA_MS)) {
           const result = await fetchNoaaReadout();
           if (result) {
@@ -264,19 +201,26 @@ export class IngestionWorker {
             apiSuccess = true;
           }
         }
-        if (this.shouldFetch("esa", ESA_MS)) {
-          const result = await fetchEsaReadout();
-          if (result) {
-            this.esa = result;
-            apiSuccess = true;
+
+        // If not restricted to official-only, also fetch ESA/JAXA auxiliary sources
+        if (!officialOnly) {
+          if (this.shouldFetch("esa", ESA_MS)) {
+            const result = await fetchEsaReadout();
+            if (result) {
+              this.esa = result;
+              apiSuccess = true;
+            }
           }
-        }
-        if (this.shouldFetch("jaxa", JAXA_MS)) {
-          const result = await fetchJaxaReadout();
-          if (result) this.jaxa = result;
+
+          if (this.shouldFetch("jaxa", JAXA_MS)) {
+            const result = await fetchJaxaReadout();
+            if (result) this.jaxa = result;
+          }
+        } else {
+          // Official-only mode: skip ESA/JAXA to prioritize NOAA/MMS/GOES-like sources
         }
       } catch (err) {
-        console.warn("[IngestionWorker] Primary AI fetch failed, engaging redundancy layers.");
+        console.warn("[IngestionWorker] Primary API fetch failed, engaging redundancy layers.", err);
       }
     } else {
       console.log("[IngestionWorker] AIRGAP mode active. Bypassing external API fetches.");
@@ -371,13 +315,7 @@ export class IngestionWorker {
 
       // Cloud Sync only if link is CLOUD or SAT
       if (link.mode !== "AIRGAP") {
-        await this.writeRawToSupabase("canonical", point.timestamp, point);
-        await this.writeMmsRaw(mmsSamples);
-        if (mmsVector) {
-          await this.writeRawToSupabase("mms_recon", mmsVector.timestamp, mmsVector);
-        }
-        await this.writeSourceHealth(status);
-        await this.invokeCleanupRpc(point.timestamp);
+        console.log("[IngestionWorker] Cloud persistence disabled; local bedrock buffering remains active.");
       }
     } catch (error) {
       console.warn(`[IngestionWorker] Persistence throttled (Link: ${link.mode}). Data safely buffered in Bedrock.`);

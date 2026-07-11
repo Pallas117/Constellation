@@ -1,0 +1,9 @@
+{
+  "name": "gauss-ml",
+  "private": true,
+  "version": "0.0.0",
+  "scripts": {
+    "train": "python3 ml/train/train_unet.py",
+    "infer": "python3 ml/infer/infer_server.py"
+  }
+}

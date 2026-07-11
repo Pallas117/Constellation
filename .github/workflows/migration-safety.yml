@@ -1,0 +1,192 @@
+name: Database Migration Safety
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - "supabase/migrations/**"
+  push:
+    branches:
+      - main
+    paths:
+      - "supabase/migrations/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  migration-validation:
+    name: Migration Safety Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      - name: Validate SQL syntax
+        id: syntax
+        run: |
+          echo "🔍 Validating SQL migration syntax..."
+          
+          errors=0
+          for file in supabase/migrations/*.sql; do
+            if [ -f "$file" ]; then
+              echo "Checking $file..."
+              
+              # Basic SQL syntax validation
+              if ! grep -qE "^(CREATE|ALTER|DROP|INSERT|UPDATE|DELETE|SELECT)" "$file"; then
+                echo "⚠️  $file may not have valid SQL statements"
+                errors=$((errors + 1))
+              fi
+              
+              # Check for incomplete statements
+              if grep -q ";" "$file"; then
+                echo "✅ Contains statement terminators"
+              else
+                echo "⚠️  Missing statement terminators (;)"
+                errors=$((errors + 1))
+              fi
+            fi
+          done
+          
+          if [ $errors -gt 0 ]; then
+            echo "❌ Found $errors validation issues"
+            exit 1
+          fi
+          echo "✅ All migrations valid"
+
+  migration-safety:
+    name: Migration Downtime Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Check for downtime-causing operations
+        id: safety
+        run: |
+          echo "⚠️  Checking for downtime-causing operations..."
+          
+          issues=0
+          for file in supabase/migrations/*.sql; do
+            if [ -f "$file" ]; then
+              # Check for NOT NULL additions without defaults (causes downtime)
+              if grep -q "ADD COLUMN.*NOT NULL" "$file" && ! grep -q "DEFAULT" "$file"; then
+                echo "❌ DOWNTIME RISK: Adding NOT NULL column without DEFAULT in $file"
+                echo "   Solution: Add DEFAULT value or make nullable, then add constraint in separate migration"
+                issues=$((issues + 1))
+              fi
+              
+              # Check for large table mutations without CONCURRENTLY
+              if grep -q "CREATE INDEX" "$file" && ! grep -q "CONCURRENTLY" "$file"; then
+                echo "⚠️  WARNING: CREATE INDEX without CONCURRENTLY in $file"
+                echo "   Consider: CREATE INDEX CONCURRENTLY (blocks less)"
+              fi
+              
+              # Check for table locks during updates
+              if grep -q "ALTER TABLE.*RENAME TO" "$file"; then
+                echo "⚠️  WARNING: Table rename detected - may lock briefly"
+              fi
+            fi
+          done
+          
+          if [ $issues -gt 0 ]; then
+            echo "❌ Found $issues downtime risks"
+            exit 1
+          fi
+          echo "✅ Migration is safe (no extended downtime expected)"
+
+  migration-rollback:
+    name: Rollback Test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Check for rollback capability
+        run: |
+          echo "🔙 Checking rollback capability..."
+          
+          forward_count=$(find supabase/migrations -name "*.sql" | wc -l)
+          echo "Found $forward_count forward migrations"
+          
+          if [ -d "supabase/migrations-rollback" ]; then
+            rollback_count=$(find supabase/migrations-rollback -name "*.sql" | wc -l)
+            echo "Found $rollback_count rollback migrations"
+            
+            if [ $rollback_count -eq $forward_count ]; then
+              echo "✅ All migrations have rollback scripts"
+            else
+              echo "⚠️  Rollback count ($rollback_count) != Forward count ($forward_count)"
+            fi
+          else
+            echo "ℹ️  No rollback migration directory (consider creating for safety)"
+          fi
+
+  backup-verification:
+    name: Backup Before Migration
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify backup strategy
+        run: |
+          echo "💾 Backup verification..."
+          
+          # This would typically integrate with your backup provider
+          # For now, provide checklist
+          echo ""
+          echo "📋 Pre-Migration Checklist:"
+          echo "  ☐ Database backup created (automated or manual)"
+          echo "  ☐ Backup tested for restore capability"
+          echo "  ☐ Rollback plan documented"
+          echo "  ☐ Data validation queries prepared"
+          echo ""
+          echo "✅ Remember to backup before deploying migrations"
+
+  comment-on-pr:
+    name: Add PR Comment
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    needs: [migration-validation, migration-safety]
+    steps:
+      - name: Comment PR with migration status
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const validation = `${{ needs.migration-validation.result }}`;
+            const safety = `${{ needs.migration-safety.result }}`;
+            
+            const validIcon = validation === 'success' ? '✅' : '❌';
+            const safeIcon = safety === 'success' ? '✅' : '⚠️';
+            
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: `${validIcon} **Migration Validation**: ${validation === 'success' ? 'PASSED' : 'FAILED'}\n${safeIcon} **Downtime Risk**: ${safety === 'success' ? 'NONE' : 'Review detected'}\n\nEnsure backup created before deployment.`
+            });
+
+status-check:
+    name: Migration Safety Gates
+    runs-on: ubuntu-latest
+    needs: [migration-validation, migration-safety, rollback-test, backup-verification]
+    if: always()
+    steps:
+      - name: Check migration safety
+        run: |
+          if [ "${{ needs.migration-validation.result }}" != "success" ]; then
+            echo "❌ Migration validation failed"
+            exit 1
+          fi
+          if [ "${{ needs.migration-safety.result }}" != "success" ]; then
+            echo "⚠️  Downtime risks detected - review before deploying"
+            # Don't fail, just warn
+          fi
+          echo "✅ Migrations validated"

@@ -14,11 +14,11 @@
     - generic [ref=e9]:
       - generic [ref=e10]:
         - generic [ref=e11]: Operator ID (Email)
-        - textbox [ref=e12]: operator@gauss.space
+        - textbox [ref=e12]
       - generic [ref=e13]:
         - generic [ref=e14]: Passkey
-        - textbox [ref=e15]: skunkworks-alpha
-      - button "Authenticate" [active] [ref=e16] [cursor=pointer]:
+        - textbox [ref=e15]
+      - button "Authenticate" [ref=e16] [cursor=pointer]:
         - img [ref=e17]
         - text: Authenticate
 ```

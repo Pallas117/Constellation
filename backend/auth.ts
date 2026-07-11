@@ -1,6 +1,5 @@
 import type { IncomingMessage } from "node:http";
 import type { NextFunction, Request, Response } from "express";
-import { getSupabaseAdminClient } from "./supabase.js";
 import { auth } from "./better-auth.js";
 
 function getWebHeaders(req: Request): Headers {
@@ -148,38 +147,10 @@ export async function authenticateRequest(
       return;
     }
   } catch (err) {
-    // Ignore internal auth errors, proceed to Supabase fallback
+    // Ignore internal auth errors; no legacy fallback is configured.
   }
 
-  // 2. Fallback to Supabase bearer token
-  const token = getTokenFromRequest(req);
-  if (!token) {
-    unauthorized(res, "Missing bearer token or active session");
-    return;
-  }
-
-  const supabase = getSupabaseAdminClient();
-  if (!supabase) {
-    res.status(500).json({ error: "Supabase admin credentials not configured" });
-    return;
-  }
-
-  const { data, error } = await supabase.auth.getUser(token);
-  if (error || !data.user) {
-    unauthorized(res, "Invalid or expired token");
-    return;
-  }
-
-  const roles = extractRoles(data.user);
-  req.auth = {
-    userId: data.user.id,
-    email: data.user.email ?? null,
-    role: highestRole(roles),
-    rawRoles: roles,
-    token,
-  };
-
-  next();
+  unauthorized(res, "Missing active better-auth session");
 }
 
 export function requireRole(minRole: AuthRole) {
@@ -226,28 +197,28 @@ export async function authenticateSocket(req: IncomingMessage): Promise<AuthCont
     }
   }
 
-  if (!token) {
+  const headers = new Headers();
+  for (const [key, value] of Object.entries(req.headers)) {
+    if (typeof value === "string") headers.set(key, value);
+    else if (Array.isArray(value)) headers.set(key, value.join(", "));
+  }
+
+  try {
+    const sessionResponse = await auth.api.getSession({ headers });
+    if (sessionResponse && sessionResponse.session && sessionResponse.user) {
+      return {
+        userId: sessionResponse.user.id,
+        email: sessionResponse.user.email ?? null,
+        role: "admin",
+        rawRoles: ["admin"],
+        token: sessionResponse.session.token ?? "better-auth-session",
+      };
+    }
+  } catch {
     return null;
   }
 
-  const supabase = getSupabaseAdminClient();
-  if (!supabase) {
-    return null;
-  }
-
-  const { data, error } = await supabase.auth.getUser(token);
-  if (error || !data.user) {
-    return null;
-  }
-
-  const roles = extractRoles(data.user);
-  return {
-    userId: data.user.id,
-    email: data.user.email ?? null,
-    role: highestRole(roles),
-    rawRoles: roles,
-    token,
-  };
+  return null;
 }
 
 export function roleSatisfies(current: AuthRole, required: AuthRole): boolean {

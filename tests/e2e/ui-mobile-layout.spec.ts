@@ -10,23 +10,23 @@ test.beforeEach(async ({ page }) => {
 });
 
 test("mobile: layout and controls remain usable at 390x844", async ({ page }) => {
-  await page.goto("/?e2e=1");
+  await page.goto("/operator?e2e=1");
 
   const viewport = page.viewportSize();
   if (!viewport) throw new Error("Viewport not available");
 
-  const appHeading = page.getByRole("heading", { name: /gauss aurora/i });
-  const dataFeedHeading = page.getByRole("heading", { name: /space weather/i });
-  const logicHeading = page.getByRole("heading", { name: /logic engine/i });
+  const appHeading = page.getByRole("heading", { name: /gauss.*aurora/i });
+  const sensorHeading = page.getByText(/gauss \/\/ sensor_array/i);
+  const logicHeading = page.getByRole("heading", { name: /logic[_ ]engine/i });
   const themeTrigger = page.getByRole("button", { name: /current theme:/i });
   const earthLayerButton = page.getByRole("button", { name: /earth layer/i });
   const colorEncodingButton = page.getByRole("button", {
     name: /use color encoding for radiation flux/i,
   });
-  const askButton = page.getByRole("button", { name: /ask gauss rag/i });
+  const askButton = page.getByRole("button", { name: /exec_query_rag/i });
 
   await expect(appHeading).toBeVisible();
-  await expect(dataFeedHeading).toBeVisible();
+  await expect(sensorHeading).toBeVisible();
   await expect(logicHeading).toBeVisible();
   await expect(themeTrigger).toBeVisible();
   await expect(earthLayerButton).toBeVisible();
@@ -35,7 +35,7 @@ test("mobile: layout and controls remain usable at 390x844", async ({ page }) =>
 
   const criticalLocators = [
     appHeading,
-    dataFeedHeading,
+    sensorHeading,
     logicHeading,
     themeTrigger,
     earthLayerButton,
@@ -58,7 +58,7 @@ test("mobile: layout and controls remain usable at 390x844", async ({ page }) =>
   await expect(earthLayerButton).toHaveAttribute("aria-pressed", "true");
 
   await themeTrigger.click();
-  await page.getByRole("menuitem", { name: /dark/i }).click();
+  await page.getByRole("menuitem", { name: /mode_drk/i }).click();
   await expect
     .poll(async () =>
       page.evaluate(() => document.documentElement.classList.contains("dark")),
@@ -66,7 +66,7 @@ test("mobile: layout and controls remain usable at 390x844", async ({ page }) =>
     .toBe(true);
 
   await page
-    .getByPlaceholder(/ask gauss about mission concepts, threats, or documents/i)
+    .getByPlaceholder(/\[ENTER_QUERY_INPUT\.\.\.\]/i)
     .fill("Mobile layout interaction test");
   await askButton.click();
 
