@@ -9,10 +9,13 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+    <script src="./brand-system.js"></script>
     
     <style>
         :root {
             --bg: #000000;
+            --deck-bg: radial-gradient(circle at top, rgba(204, 255, 0, 0.08), transparent 28%), linear-gradient(180deg, #050505 0%, #000000 100%);
             --panel: rgba(6, 6, 6, 0.86);
             --panel-soft: rgba(255, 255, 255, 0.045);
             --border: rgba(255, 255, 255, 0.08);
@@ -22,6 +25,13 @@
             --accent: #ccff00;
             --accent-strong: #e4ff67;
             --danger: #ff4d00;
+            --font-body: 'Inter', sans-serif;
+            --font-display: 'Space Grotesk', sans-serif;
+            --font-mono: 'JetBrains Mono', monospace;
+            --slide-pad-x: clamp(1.3rem, 4vw, 3.6rem);
+            --slide-pad-y: clamp(1.15rem, 3vw, 2.25rem);
+            --header-letterspacing: 0.4em;
+            --panel-radius: 1.5rem;
         }
 
         *, *::before, *::after {
@@ -29,18 +39,18 @@
         }
 
         body {
-            font-family: 'Inter', sans-serif;
+            font-family: var(--font-body);
             background-color: var(--bg);
             overflow: hidden;
             color: var(--text);
         }
         h1, h2, h3, h4, .font-serif {
-            font-family: 'Inter', sans-serif;
+            font-family: var(--font-display);
             letter-spacing: -0.04em;
             text-wrap: balance;
         }
         .font-mono {
-            font-family: 'JetBrains Mono', monospace;
+            font-family: var(--font-mono);
             letter-spacing: 0.02em;
         }
         
@@ -57,7 +67,7 @@
             display: flex;
             flex-direction: column;
             justify-content: space-between;
-            padding: clamp(1.15rem, 3vw, 2.25rem) clamp(1.3rem, 4vw, 3.6rem);
+            padding: var(--slide-pad-y) var(--slide-pad-x);
             z-index: 10;
             overflow-y: auto;
             overflow-x: hidden;
@@ -75,6 +85,7 @@
             -webkit-backdrop-filter: blur(18px);
             border: 1px solid var(--border);
             box-shadow: 0 24px 60px rgba(0, 0, 0, 0.72);
+            border-radius: var(--panel-radius);
         }
 
         /* Elegant Emerald Borders */
@@ -201,14 +212,49 @@
             color: var(--accent) !important;
             border-color: var(--accent) !important;
         }
+
+        .deck-shell {
+            background: var(--deck-bg);
+        }
+
+        .deck-shell[data-alignment="agency"] {
+            --font-display: 'Inter', sans-serif;
+            --panel: rgba(5, 10, 20, 0.86);
+            --border: rgba(190, 208, 255, 0.12);
+            --accent: #2f6bff;
+            --accent-strong: #ff5a3d;
+            --deck-bg: radial-gradient(circle at top, rgba(47, 107, 255, 0.18), transparent 30%), linear-gradient(180deg, #04070d 0%, #000000 100%);
+            --slide-pad-x: clamp(1.35rem, 4vw, 3.9rem);
+            --slide-pad-y: clamp(1.2rem, 3vw, 2.3rem);
+        }
+
+        .deck-shell[data-alignment="tech"] {
+            --font-display: 'Space Grotesk', sans-serif;
+            --panel: rgba(8, 9, 12, 0.84);
+            --border: rgba(255, 255, 255, 0.10);
+            --accent: #ccff00;
+            --accent-strong: #6ae3ff;
+            --deck-bg: radial-gradient(circle at top, rgba(106, 227, 255, 0.14), transparent 30%), linear-gradient(180deg, #050505 0%, #000000 100%);
+            --slide-pad-x: clamp(1.1rem, 3.4vw, 3.35rem);
+            --slide-pad-y: clamp(1.05rem, 2.7vw, 2.05rem);
+        }
+
+        .brand-pill {
+            background: rgba(255, 255, 255, 0.06);
+            border: 1px solid rgba(255, 255, 255, 0.10);
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
+        }
+
+        .qr-shell {
+            min-height: 10rem;
+        }
     </style>
 </head>
 <body class="text-stone-100 select-none antialiased min-h-screen relative flex justify-center items-center">
 
     <!-- GLOBAL MAIN DECK CONTAINER -->
-    <div class="relative w-full h-screen max-w-[1920px] max-h-[1080px] overflow-hidden shadow-2xl" style="background:
-        radial-gradient(circle at top, rgba(204, 255, 0, 0.08), transparent 28%),
-        linear-gradient(180deg, #050505 0%, #000000 100%);">
+    <div id="deck-shell" class="deck-shell relative w-full h-screen max-w-[1920px] max-h-[1080px] overflow-hidden shadow-2xl">
         
         <!-- ============================================== -->
         <!-- SLIDE 1: COVER SLIDE -->
@@ -223,7 +269,7 @@
             </header>
 
             <div class="my-auto max-w-4xl space-y-6 relative z-30 mt-20 md:mt-auto">
-                <span class="px-3 py-1 bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-[10px] tracking-widest font-mono uppercase rounded-full">
+                <span id="alignment-pill" class="brand-pill px-3 py-1 bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-[10px] tracking-widest font-mono uppercase rounded-full">
                     Future Event Template • Private Co-Creation Launch — Bangi, Selangor
                 </span>
                 
@@ -431,27 +477,27 @@
                 <div class="lg:col-span-7 space-y-4">
                     <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
                         <div class="partner-logo-box flex items-center justify-center text-center aspect-[4/3] bg-stone-200 relative overflow-hidden">
-                            <img src="loho+to+web-01.png.webp" alt="ATSB Logo" class="asset-logo asset-logo--wide" onerror="this.onerror=null; this.src='https://placehold.co/120x40/ffffff/010103?text=ATSB';">
+                            <img data-brand-sample="true" src="loho+to+web-01.png.webp" alt="ATSB Logo" class="asset-logo asset-logo--wide" onerror="this.onerror=null; this.src='https://placehold.co/120x40/ffffff/010103?text=ATSB';">
                         </div>
 
                         <div class="partner-logo-box flex items-center justify-center text-center aspect-[4/3] bg-stone-200 relative overflow-hidden">
-                            <img src="Logo.png" alt="Constellation Space Community Group Logo" class="asset-logo asset-logo--tight" onerror="this.onerror=null; this.src='https://placehold.co/120x40/ffffff/010103?text=Constellation';">
+                            <img data-brand-sample="true" src="Logo.png" alt="Constellation Space Community Group Logo" class="asset-logo asset-logo--tight" onerror="this.onerror=null; this.src='https://placehold.co/120x40/ffffff/010103?text=Constellation';">
                         </div>
 
                         <div class="partner-logo-box flex items-center justify-center text-center aspect-[4/3] bg-stone-200 relative overflow-hidden">
-                            <img src="CRISM Logo.png" alt="Astroterran Logo" class="asset-logo asset-logo--wide" onerror="this.onerror=null; this.src='https://placehold.co/120x40/ffffff/010103?text=Astroterran';">
+                            <img data-brand-sample="true" src="CRISM Logo.png" alt="Astroterran Logo" class="asset-logo asset-logo--wide" onerror="this.onerror=null; this.src='https://placehold.co/120x40/ffffff/010103?text=Astroterran';">
                             <span class="text-[9px] font-mono tracking-wider text-stone-800 uppercase font-bold absolute bottom-2 w-full text-center">Astroterran</span>
                         </div>
 
                         <div class="partner-logo-box flex items-center justify-center text-center aspect-[4/3] bg-stone-200 relative overflow-hidden">
-                            <img src="University_of_Malaya-Logo.wine.png" alt="University of Malaya Logo" class="asset-logo asset-logo--wide" onerror="this.onerror=null; this.src='https://placehold.co/120x40/ffffff/010103?text=UM';">
+                            <img data-brand-sample="true" src="University_of_Malaya-Logo.wine.png" alt="University of Malaya Logo" class="asset-logo asset-logo--wide" onerror="this.onerror=null; this.src='https://placehold.co/120x40/ffffff/010103?text=UM';">
                         </div>
                     </div>
 
                     <div class="p-4 bg-stone-200 border border-stone-300 rounded-2xl flex flex-col sm:flex-row items-center justify-between gap-6 shadow-lg">
                         <div class="flex items-center gap-4 text-center sm:text-left">
                             <div class="media-frame h-14 w-28 bg-stone-200 rounded-xl flex items-center justify-center p-2 border border-stone-300 flex-shrink-0 relative overflow-hidden">
-                                <img src="WhatsApp Image 1448-01-27 at 21.28.20.jpeg" alt="Adab Youth Garage Logo" class="w-full h-full object-contain" onerror="this.onerror=null; this.src='https://placehold.co/120x45/ffffff/010103?text=AYG';">
+                                <img data-brand-sample="true" src="WhatsApp Image 1448-01-27 at 21.28.20.jpeg" alt="Adab Youth Garage Logo" class="w-full h-full object-contain" onerror="this.onerror=null; this.src='https://placehold.co/120x45/ffffff/010103?text=AYG';">
                             </div>
                             <div>
                                 <h4 class="text-xs font-bold text-stone-900 uppercase font-serif">Adab Youth Garage (AYG)</h4>
@@ -682,11 +728,12 @@
 
                     <!-- Middle: Artemis Accords Verification Frame -->
                     <div class="lg:col-span-3 glass-shield p-4 rounded-3xl flex flex-col justify-between items-center text-center">
-                        <div class="media-frame w-full aspect-square min-h-[140px] bg-stone-100 rounded-2xl overflow-hidden relative flex-grow p-5 flex items-center justify-center border border-stone-300">
-                            <img src="Artemis_program_(solid_contrast_with_wordmark).svg_3.png" alt="Artemis Accords Logo" class="w-full h-full max-w-[88%] max-h-[88%] object-contain drop-shadow-[0_1px_3px_rgba(0,0,0,0.35)]" onerror="this.onerror=null; this.src='https://upload.wikimedia.org/wikipedia/commons/thumb/c/c5/Artemis_program_%28solid_contrast_with_wordmark%29.svg/512px-Artemis_program_%28solid_contrast_with_wordmark%29.svg.png';">
+                        <div class="media-frame qr-shell w-full aspect-square min-h-[140px] bg-stone-100 rounded-2xl overflow-hidden relative flex-grow p-5 flex items-center justify-center border border-stone-300">
+                            <div id="luma-qr" class="w-full h-full flex items-center justify-center"></div>
+                            <img id="luma-qr-fallback" src="See beyond.jpeg" alt="See Beyond QR Code fallback" class="absolute inset-0 w-full h-full object-contain p-3 opacity-0 pointer-events-none">
                         </div>
                         <div class="mt-3">
-                            <h4 class="text-xs font-bold text-emerald-400 uppercase tracking-wider">Malaysia signed!</h4>
+                            <h4 class="text-xs font-bold text-emerald-400 uppercase tracking-wider">Scan to RSVP</h4>
                         </div>
                     </div>
 
@@ -696,9 +743,10 @@
                             <h4 class="text-white font-bold text-base leading-tight font-serif mb-3">Sponsor, Collaborate and Sign Up!</h4>
                             
                             <!-- See Beyond QR Code Container -->
-                            <div class="media-frame w-32 h-32 mx-auto bg-white rounded-xl p-2 mb-3 shadow-[0_0_20px_rgba(204,255,0,0.12)]">
-                                <img src="See beyond.jpeg" alt="See Beyond QR Code" class="w-full h-full object-contain">
-                            </div>
+                            <div id="luma-qr-signup" class="media-frame qr-shell w-32 h-32 mx-auto bg-white rounded-xl p-2 mb-3 shadow-[0_0_20px_rgba(204,255,0,0.12)]"></div>
+                            <img id="luma-qr-signup-fallback" src="See beyond.jpeg" alt="See Beyond QR Code" class="hidden">
+                            
+                            <p id="luma-url" class="text-[10px] text-stone-500 font-mono uppercase tracking-widest mt-2 break-all"></p>
                             
                             <p class="text-[10px] text-stone-300 leading-relaxed font-light mb-2">
                                 Step forward to pioneer and collaborate on this boundaryless space-for-earth mission.
@@ -775,6 +823,8 @@
             venue: "Bangi, Selangor",
             format: "Hybrid Co-Creation",
             template: "Reusable Deck",
+            alignmentMode: new URLSearchParams(window.location.search).get('mode') || 'agency',
+            lumaUrl: "https://lu.ma/your-event-slug",
         };
 
         let currentSlide = 1;
@@ -784,8 +834,23 @@
             document.title = deckConfig.title;
             const heroTitle = document.getElementById('hero-title');
             const heroCopy = document.getElementById('hero-copy');
+            const deckShell = document.getElementById('deck-shell');
+            const alignmentPill = document.getElementById('alignment-pill');
+            const lumaUrl = document.getElementById('luma-url');
+
+            if (deckShell) deckShell.dataset.alignment = deckConfig.alignmentMode;
             if (heroTitle) heroTitle.dataset.deckTitle = deckConfig.heroTitle;
             if (heroCopy) heroCopy.textContent = deckConfig.heroCopy;
+            if (alignmentPill) alignmentPill.textContent = `${deckConfig.alignmentMode.toUpperCase()} ALIGNMENT • Future Event Template`;
+            if (lumaUrl) lumaUrl.textContent = deckConfig.lumaUrl;
+
+            if (window.BrandSystem) {
+                window.BrandSystem.applyThemeFromDeck(deckConfig, {
+                    logoSelector: '[data-brand-sample="true"]',
+                    qrTargetId: 'luma-qr',
+                    qrTargetIdAlt: 'luma-qr-signup',
+                }).catch((error) => console.warn('Brand theme failed to apply', error));
+            }
         }
 
         function updateSlideDeck() {
