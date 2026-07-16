@@ -241,6 +241,43 @@
         };
     }
 
+    function applyUniformLogoSizing(logoNodes) {
+        logoNodes.forEach((img) => {
+            const frame = img.closest('.partner-logo-box, .media-frame, .logo-frame, .brand-logo-frame');
+            const ratio = (img.naturalWidth && img.naturalHeight) ? img.naturalWidth / img.naturalHeight : 1;
+            let width = '82%';
+            let height = '82%';
+            let padding = '0.7rem';
+
+            if (ratio > 2.6) {
+                width = '90%';
+                height = '64%';
+                padding = '0.45rem';
+            } else if (ratio > 1.4) {
+                width = '84%';
+                height = '72%';
+                padding = '0.55rem';
+            } else if (ratio < 0.85) {
+                width = '66%';
+                height = '88%';
+                padding = '0.85rem';
+            }
+
+            img.style.width = width;
+            img.style.height = height;
+            img.style.maxWidth = '100%';
+            img.style.maxHeight = '100%';
+            img.style.margin = '0 auto';
+            img.style.display = 'block';
+            img.style.objectFit = 'contain';
+            img.style.objectPosition = 'center';
+
+            if (frame) {
+                frame.style.padding = padding;
+            }
+        });
+    }
+
     function inferSourceId(text) {
         const value = String(text || '').toLowerCase();
         if (value.includes('nasa')) return 'nasa';
@@ -291,12 +328,11 @@
             }
 
             img.style.filter = getLogoFrameStyle(tone, tokens).imageFilter;
-            img.style.objectFit = 'contain';
-            img.style.objectPosition = 'center';
             img.style.mixBlendMode = tone.luminance > 0.62 ? 'screen' : 'normal';
         });
 
         await Promise.all(tasks);
+        applyUniformLogoSizing(logoNodes);
     }
 
     function normalizePalette(samples, mode, sourceId) {
@@ -413,6 +449,10 @@
         const shell = document.getElementById('deck-shell');
         const pill = document.getElementById('alignment-pill');
         const qrUrl = document.getElementById('luma-url');
+        const qrLink = document.getElementById('luma-qr-link');
+        const qrLinkAlt = document.getElementById('luma-qr-signup-link');
+        const referencePanel = document.getElementById('reference-panel');
+        const referenceList = document.getElementById('reference-list');
         const displayLabel = `${deckConfig.alignmentMode.toUpperCase()} ALIGNMENT`;
 
         if (shell) {
@@ -425,6 +465,33 @@
         }
         if (qrUrl) {
             qrUrl.textContent = deckConfig.lumaUrl || '';
+        }
+        if (qrLink) {
+            qrLink.href = deckConfig.lumaUrl || '#';
+        }
+        if (qrLinkAlt) {
+            qrLinkAlt.href = deckConfig.lumaUrl || '#';
+        }
+        if (referencePanel && referenceList) {
+            referenceList.innerHTML = '';
+            const refs = Array.isArray(deckConfig.references) ? deckConfig.references : [];
+            if (refs.length > 0) {
+                referencePanel.classList.remove('hidden');
+                refs.forEach((ref) => {
+                    const anchor = document.createElement('a');
+                    anchor.href = ref.url;
+                    anchor.target = '_blank';
+                    anchor.rel = 'noopener noreferrer';
+                    anchor.className = 'px-3 py-1.5 rounded-full text-[10px] font-mono uppercase tracking-widest border transition-colors';
+                    anchor.style.background = 'rgba(255,255,255,0.05)';
+                    anchor.style.borderColor = tokens.border;
+                    anchor.style.color = tokens.accent;
+                    anchor.textContent = ref.label || ref.url;
+                    referenceList.appendChild(anchor);
+                });
+            } else {
+                referencePanel.classList.add('hidden');
+            }
         }
     }
 
