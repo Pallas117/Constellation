@@ -245,22 +245,22 @@
         logoNodes.forEach((img) => {
             const frame = img.closest('.partner-logo-box, .media-frame, .logo-frame, .brand-logo-frame');
             const ratio = (img.naturalWidth && img.naturalHeight) ? img.naturalWidth / img.naturalHeight : 1;
-            let width = '82%';
-            let height = '82%';
-            let padding = '0.7rem';
+            let width = '90%';
+            let height = '90%';
+            let padding = '0.55rem';
 
             if (ratio > 2.6) {
-                width = '90%';
-                height = '64%';
-                padding = '0.45rem';
-            } else if (ratio > 1.4) {
-                width = '84%';
+                width = '96%';
                 height = '72%';
-                padding = '0.55rem';
+                padding = '0.4rem';
+            } else if (ratio > 1.4) {
+                width = '94%';
+                height = '80%';
+                padding = '0.45rem';
             } else if (ratio < 0.85) {
-                width = '66%';
-                height = '88%';
-                padding = '0.85rem';
+                width = '74%';
+                height = '94%';
+                padding = '0.7rem';
             }
 
             img.style.width = width;
@@ -419,7 +419,7 @@
             const tone = logoToneFromPalette(palette);
             const frame = img.closest('.partner-logo-box, .media-frame, .logo-frame, .brand-logo-frame');
             const ratio = (img.naturalWidth && img.naturalHeight) ? img.naturalWidth / img.naturalHeight : 1;
-            const pad = ratio > 2.2 ? '0.45rem' : ratio < 0.9 ? '0.9rem' : '0.7rem';
+            const pad = ratio > 2.2 ? '0.35rem' : ratio < 0.9 ? '0.65rem' : '0.5rem';
 
             if (frame) {
                 const frameStyle = getLogoFrameStyle(tone, tokens);
@@ -464,6 +464,219 @@
                 seen.add(key);
                 return true;
             });
+    }
+
+    function normalizeUrl(input) {
+        if (!input) return '';
+        try {
+            const parsed = new URL(String(input).trim());
+            parsed.hash = '';
+            if (parsed.pathname.length > 1 && parsed.pathname.endsWith('/')) {
+                parsed.pathname = parsed.pathname.replace(/\/+$/, '');
+            }
+            parsed.host = parsed.host.toLowerCase();
+            parsed.protocol = parsed.protocol.toLowerCase();
+            return parsed.toString();
+        } catch (error) {
+            return String(input).trim();
+        }
+    }
+
+    function validateLumaUrl(url) {
+        const normalized = normalizeUrl(url);
+        const report = {
+            ok: false,
+            normalizedUrl: normalized,
+            host: '',
+            path: '',
+            checks: [],
+            warnings: [],
+            notes: [],
+        };
+
+        if (!normalized) {
+            report.checks.push({ ok: false, label: 'Luma URL is set' });
+            report.notes.push('Add a valid Luma URL to deckConfig.lumaUrl.');
+            return report;
+        }
+
+        let parsed = null;
+        try {
+            parsed = new URL(normalized);
+        } catch (error) {
+            report.checks.push({ ok: false, label: 'URL parses correctly' });
+            report.notes.push('The configured URL is not a valid absolute URL.');
+            return report;
+        }
+
+        report.host = parsed.host;
+        report.path = parsed.pathname;
+
+        const hostOk = /(^|\.)luma\.com$/i.test(parsed.host) || /(^|\.)lu\.ma$/i.test(parsed.host);
+        report.checks.push({ ok: hostOk, label: 'Hosted on Luma' });
+        if (!hostOk) {
+            report.warnings.push('This deck expects a Luma host, but the configured URL points elsewhere.');
+        }
+
+        const schemeOk = parsed.protocol === 'https:';
+        report.checks.push({ ok: schemeOk, label: 'Uses HTTPS' });
+        if (!schemeOk) {
+            report.warnings.push('Use https:// for the event link so QR scanners and backlinks stay consistent.');
+        }
+
+        const hasEventPath = /\/event\/(manage\/)?evt-[^/]+/i.test(parsed.pathname) || /\/r\/[^/]+/i.test(parsed.pathname) || parsed.pathname.length > 1;
+        report.checks.push({ ok: hasEventPath, label: 'Looks like an event page' });
+
+        const manageView = /\/event\/manage\/evt-[^/]+\/overview/i.test(parsed.pathname);
+        if (manageView) {
+            report.notes.push('This is a manage/overview link, so the flow can validate structure and consistency, but not fetch private dashboard content.');
+        }
+
+        report.ok = report.checks.every((check) => check.ok);
+        return report;
+    }
+
+    function validateDeckLumaConsistency(deckConfig) {
+        const normalizedUrl = normalizeUrl(deckConfig.lumaUrl);
+        const references = stageReferenceLinks(deckConfig.references);
+        const exactRefs = references.filter((ref) => normalizeUrl(ref.url) === normalizedUrl);
+        const lumaAnchors = Array.from(document.querySelectorAll('#luma-qr-link, #luma-qr-signup-link'));
+        const anchorMatches = lumaAnchors.every((anchor) => normalizeUrl(anchor.href) === normalizedUrl);
+        const referenceMatch = exactRefs.length > 0;
+        const urlReport = validateLumaUrl(normalizedUrl);
+        const panelExists = Boolean(document.getElementById('reference-panel'));
+        const qrTargetsPresent = lumaAnchors.length === 2;
+
+        const checks = [
+            { ok: Boolean(normalizedUrl), label: 'Deck has a Luma URL' },
+            { ok: urlReport.ok, label: 'Luma URL shape is valid' },
+            { ok: referenceMatch, label: 'References include the same URL' },
+            { ok: anchorMatches, label: 'QR links target the same URL' },
+            { ok: panelExists, label: 'Reference panel is available' },
+            { ok: qrTargetsPresent, label: 'Both QR anchors are present' },
+        ];
+
+        const warnings = [...urlReport.warnings];
+        if (!referenceMatch) warnings.push('The reference list should include the exact Luma URL to keep backlinks aligned.');
+        if (!anchorMatches) warnings.push('At least one QR anchor does not match deckConfig.lumaUrl.');
+        if (!qrTargetsPresent) warnings.push('One or both QR anchors were not found in the DOM.');
+
+        return {
+            ok: checks.every((check) => check.ok),
+            normalizedUrl,
+            checks,
+            warnings,
+            notes: urlReport.notes,
+            urlReport,
+            references,
+        };
+    }
+
+    function renderLumaValidation(report) {
+        const root = document.getElementById('luma-validation');
+        if (!root) return;
+
+        const tone = report.ok ? 'rgba(34,197,94,0.16)' : 'rgba(255,77,0,0.14)';
+        const border = report.ok ? 'rgba(34,197,94,0.28)' : 'rgba(255,77,0,0.28)';
+        const label = report.ok ? 'Luma link verified' : 'Luma link needs review';
+        const statusChip = report.ok ? 'PASS' : 'CHECK';
+
+        root.classList.remove('hidden');
+        root.innerHTML = `
+            <div class="rounded-2xl border px-3 py-2 space-y-1.5" style="background:${tone}; border-color:${border};">
+                <div class="flex items-center justify-between gap-4">
+                    <div>
+                        <div class="text-[9px] uppercase tracking-[0.3em] font-mono text-stone-300">Validation Flow</div>
+                        <h4 class="text-[12px] font-bold text-white mt-1">${label}</h4>
+                    </div>
+                    <span class="text-[9px] font-mono uppercase tracking-[0.28em] px-2.5 py-1 rounded-full border" style="border-color:${border}; color:${report.ok ? '#ccff00' : '#ffb199'}">${statusChip}</span>
+                </div>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-x-3 gap-y-1">
+                    ${report.checks.slice(0, 4).map((check) => `
+                        <div class="flex items-start gap-2 text-[10px] ${check.ok ? 'text-stone-200' : 'text-stone-400'}">
+                            <span class="mt-0.5 inline-flex h-4 w-4 flex-shrink-0 items-center justify-center rounded-full border text-[8px] font-bold ${check.ok ? 'border-emerald-400 text-emerald-400' : 'border-orange-300 text-orange-300'}">${check.ok ? '✓' : '!'}</span>
+                            <span class="leading-snug">${check.label}</span>
+                        </div>
+                    `).join('')}
+                </div>
+                <div class="flex flex-wrap items-center gap-2 pt-0.5">
+                    <span class="text-[9px] font-mono uppercase tracking-widest px-2.5 py-1 rounded-full border border-white/10 text-stone-300">URL ${report.normalizedUrl || 'missing'}</span>
+                    <span class="text-[9px] font-mono uppercase tracking-widest px-2.5 py-1 rounded-full border border-white/10 text-stone-300">Refs ${report.references.length}</span>
+                    ${report.warnings.length ? `<span class="text-[9px] font-mono uppercase tracking-widest px-2.5 py-1 rounded-full border border-orange-300/30 text-orange-200">Check ${report.warnings.length}</span>` : ''}
+                </div>
+                ${report.notes.length ? `<p class="text-[9px] text-stone-300 leading-snug">${report.notes[0]}</p>` : ''}
+            </div>
+        `;
+    }
+
+    function runDeckQA(deckConfig, context = {}) {
+        const slides = Array.from(document.querySelectorAll('.slide'));
+        const activeSlide = document.querySelector('.slide.active');
+        const slideCount = slides.length;
+        const currentSlide = Number(context.currentSlide || 0);
+        const qrLink = document.getElementById('luma-qr-link');
+        const qrLinkAlt = document.getElementById('luma-qr-signup-link');
+        const qaBadge = document.getElementById('deck-qa-badge');
+        const logoNodes = activeSlide
+            ? Array.from(activeSlide.querySelectorAll('[data-brand-sample="true"]'))
+            : [];
+
+        const normalizedUrl = normalizeUrl(deckConfig.lumaUrl);
+        const references = stageReferenceLinks(deckConfig.references);
+        const urlConsistency = validateDeckLumaConsistency(deckConfig);
+        const logoReady = logoNodes.length === 0 || logoNodes.every((img) => img.complete && img.naturalWidth > 0 && img.naturalHeight > 0);
+        const activeReady = Boolean(activeSlide);
+        const slideCountOk = slideCount === 7;
+        const qrOk = Boolean(qrLink) && Boolean(qrLinkAlt);
+        const expectedSlide = currentSlide >= 1 && currentSlide <= 7;
+        const activeSlideId = activeSlide ? activeSlide.id : '';
+        const issues = [];
+        const warnings = [];
+
+        if (!slideCountOk) issues.push(`Expected 7 slides, found ${slideCount}.`);
+        if (!activeReady) issues.push('No active slide is visible.');
+        if (!expectedSlide) issues.push(`Invalid current slide index: ${currentSlide}.`);
+        if (!qrOk) issues.push('QR anchors are missing.');
+        if (!logoReady) issues.push('At least one branded logo is still loading.');
+        if (!deckConfig.lumaUrl) issues.push('Luma URL is missing.');
+        if (!urlConsistency.ok) warnings.push('Luma link consistency checks need a review pass.');
+
+        const report = {
+            ok: issues.length === 0,
+            slideCount,
+            activeSlideId,
+            currentSlide,
+            normalizedUrl,
+            referencesCount: references.length,
+            issues,
+            warnings,
+            checks: [
+                { ok: slideCountOk, label: '7 slides present' },
+                { ok: activeReady, label: 'Active slide visible' },
+                { ok: expectedSlide, label: 'Slide index valid' },
+                { ok: qrOk, label: 'QR anchors wired' },
+                { ok: logoReady, label: 'Logos loaded' },
+                { ok: urlConsistency.ok, label: 'Luma consistency passes' },
+            ],
+            details: urlConsistency,
+        };
+
+        if (qaBadge) {
+            qaBadge.textContent = report.ok
+                ? `AUTO QA PASS • STAGE ${currentSlide || '?'}`
+                : `AUTO QA CHECK • ${issues.length} ISSUE${issues.length === 1 ? '' : 'S'}`;
+            qaBadge.dataset.state = report.ok ? 'pass' : 'warn';
+            qaBadge.dataset.slide = activeSlideId || '';
+            qaBadge.classList.toggle('text-emerald-300', report.ok);
+            qaBadge.classList.toggle('text-orange-200', !report.ok);
+            qaBadge.classList.toggle('border-emerald-400/25', report.ok);
+            qaBadge.classList.toggle('border-orange-300/25', !report.ok);
+            qaBadge.classList.toggle('bg-emerald-400/10', report.ok);
+            qaBadge.classList.toggle('bg-orange-400/10', !report.ok);
+        }
+
+        console.info('[Deck QA]', report);
+        return report;
     }
 
     function normalizePalette(samples, mode, sourceId) {
@@ -584,6 +797,7 @@
         const qrLinkAlt = document.getElementById('luma-qr-signup-link');
         const referencePanel = document.getElementById('reference-panel');
         const referenceList = document.getElementById('reference-list');
+        const validateButton = document.getElementById('luma-validate-button');
         const displayLabel = `${deckConfig.alignmentMode.toUpperCase()} ALIGNMENT`;
 
         if (shell) {
@@ -602,6 +816,9 @@
         }
         if (qrLinkAlt) {
             qrLinkAlt.href = deckConfig.lumaUrl || '#';
+        }
+        if (validateButton) {
+            validateButton.dataset.target = deckConfig.lumaUrl || '';
         }
         if (referencePanel && referenceList) {
             referenceList.innerHTML = '';
@@ -680,6 +897,9 @@
         setCssVars(tokens);
         updateAlignmentUI(tokens, deckConfig);
 
+        const validation = validateDeckLumaConsistency(deckConfig);
+        renderLumaValidation(validation);
+
         await formatLogoFrames(logoNodes, tokens);
 
         const targets = [
@@ -703,7 +923,12 @@
         inferSourceId,
         normalizePalette,
         stageReferenceLinks,
+        normalizeUrl,
         cleanLogoBackground,
+        validateLumaUrl,
+        validateDeckLumaConsistency,
+        renderLumaValidation,
+        runDeckQA,
         applyUniformLogoSizing,
     };
 })();

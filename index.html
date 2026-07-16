@@ -44,6 +44,21 @@
             overflow: hidden;
             color: var(--text);
         }
+
+        body::before {
+            content: '';
+            position: fixed;
+            inset: 0;
+            pointer-events: none;
+            background-image:
+                linear-gradient(rgba(255, 255, 255, 0.025) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(255, 255, 255, 0.025) 1px, transparent 1px);
+            background-size: 48px 48px;
+            mask-image: radial-gradient(circle at center, rgba(0, 0, 0, 0.95), transparent 78%);
+            opacity: 0.75;
+            z-index: 0;
+        }
+
         h1, h2, h3, h4, .font-serif {
             font-family: var(--font-display);
             letter-spacing: -0.04em;
@@ -54,37 +69,33 @@
             letter-spacing: 0.02em;
         }
         
-        /* Premium Cross-Fade Slide Transitions */
+        /* Stage Flow Layout */
         .slide {
-            position: absolute;
-            top: 0;
-            left: 0;
             width: 100%;
-            height: 100%;
-            opacity: 0;
-            pointer-events: none;
-            transition: opacity 0.8s cubic-bezier(0.4, 0, 0.2, 1);
+            min-height: 100vh;
+            opacity: 1;
+            pointer-events: auto;
             display: flex;
             flex-direction: column;
             justify-content: space-between;
             padding: var(--slide-pad-y) var(--slide-pad-x);
             z-index: 10;
-            overflow-y: auto;
-            overflow-x: hidden;
+            overflow: hidden;
+            scroll-snap-align: start;
+            scroll-snap-stop: always;
+            scroll-margin-top: 4rem;
         }
         .slide.active {
-            opacity: 1;
-            pointer-events: auto;
             z-index: 20;
         }
 
         /* Glassmorphic Content Shields */
         .glass-shield {
-            background: var(--panel);
-            backdrop-filter: blur(18px);
-            -webkit-backdrop-filter: blur(18px);
-            border: 1px solid var(--border);
-            box-shadow: 0 24px 60px rgba(0, 0, 0, 0.72);
+            background: color-mix(in srgb, var(--panel) 92%, #000 8%);
+            backdrop-filter: blur(22px) saturate(110%);
+            -webkit-backdrop-filter: blur(22px) saturate(110%);
+            border: 1px solid color-mix(in srgb, var(--border) 82%, #fff 18%);
+            box-shadow: 0 28px 70px rgba(0, 0, 0, 0.78);
             border-radius: var(--panel-radius);
         }
 
@@ -130,11 +141,14 @@
         }
 
         .partner-logo-box {
-            background: linear-gradient(180deg, rgba(214, 218, 223, 0.96), rgba(176, 182, 190, 0.94));
-            border: 1px solid rgba(255, 255, 255, 0.12);
+            background: linear-gradient(180deg, rgba(232, 236, 240, 0.88), rgba(188, 194, 202, 0.72));
+            border: 1px solid rgba(255, 255, 255, 0.16);
             transition: all 0.3s ease-in-out;
-            padding: clamp(0.75rem, 1.2vw, 1.1rem);
+            padding: clamp(0.6rem, 1vw, 0.9rem);
             border-radius: 1rem;
+            min-height: clamp(8.8rem, 12vw, 11.25rem);
+            backdrop-filter: blur(16px) saturate(120%);
+            -webkit-backdrop-filter: blur(16px) saturate(120%);
         }
         .logo-frame {
             position: relative;
@@ -161,15 +175,26 @@
         }
 
         .asset-logo {
-            padding: 0.4rem;
+            padding: 0.25rem;
         }
 
         .asset-logo--tight {
-            padding: 0.15rem;
+            padding: 0.05rem;
         }
 
         .asset-logo--wide {
-            padding: 0.55rem;
+            padding: 0.28rem;
+        }
+
+        .glass-note {
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(12px) saturate(120%);
+            -webkit-backdrop-filter: blur(12px) saturate(120%);
+        }
+
+        .partner-tile-glow {
+            box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.22), 0 12px 36px rgba(0, 0, 0, 0.22);
         }
 
         /* Style for the background video */
@@ -251,21 +276,70 @@
         }
 
         .brand-pill {
-            background: rgba(255, 255, 255, 0.06);
-            border: 1px solid rgba(255, 255, 255, 0.10);
-            backdrop-filter: blur(10px);
-            -webkit-backdrop-filter: blur(10px);
+            background: rgba(255, 255, 255, 0.045);
+            border: 1px solid rgba(255, 255, 255, 0.085);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
         }
 
         .qr-shell {
             min-height: 10rem;
+        }
+
+        .stage-automator {
+            position: sticky;
+            top: 0.75rem;
+            z-index: 60;
+            width: min(1120px, calc(100vw - 2rem));
+            margin: 0 auto 1rem;
+        }
+
+        .stage-automator button[data-stage-step][data-active="true"] {
+            background: rgba(204, 255, 0, 0.16);
+            border-color: rgba(204, 255, 0, 0.4);
+            color: #ccff00;
+        }
+
+        .status-kicker {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.45rem 0.75rem;
+            border-radius: 999px;
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            background: rgba(255, 255, 255, 0.04);
+            color: rgba(244, 247, 240, 0.8);
+            font-size: 0.62rem;
+            letter-spacing: 0.28em;
+            text-transform: uppercase;
+            font-family: var(--font-mono);
+        }
+
+        #deck-shell {
+            scroll-snap-type: y mandatory;
+            scroll-behavior: smooth;
+            scroll-padding-top: 4rem;
+            overscroll-behavior-y: contain;
+            overflow-y: auto;
+            overflow-x: hidden;
         }
     </style>
 </head>
 <body class="text-stone-100 select-none antialiased min-h-screen relative flex justify-center items-center">
 
     <!-- GLOBAL MAIN DECK CONTAINER -->
-    <div id="deck-shell" class="deck-shell relative w-full h-screen max-w-[1920px] max-h-[1080px] overflow-hidden shadow-2xl">
+    <div id="deck-shell" class="deck-shell relative w-full h-screen max-w-[1920px] max-h-none shadow-2xl">
+        <div class="stage-automator pointer-events-none">
+            <div class="glass-shield pointer-events-auto rounded-full px-3 py-2 flex flex-wrap items-center justify-between gap-2 md:gap-3">
+                <div class="flex flex-wrap items-center gap-2">
+                    <span class="text-[9px] uppercase tracking-[0.28em] font-mono text-stone-400 px-2">Event Flow</span>
+                    <button type="button" onclick="runAutomator()" class="px-3 py-2 rounded-full border border-emerald-400/25 bg-emerald-400/10 text-[9px] font-mono uppercase tracking-[0.28em] text-emerald-200 transition-transform hover:-translate-y-0.5">
+                        Run Automator
+                    </button>
+                </div>
+                <div id="stage-rail" class="flex flex-wrap items-center gap-2"></div>
+            </div>
+        </div>
         
         <!-- ============================================== -->
         <!-- SLIDE 1: COVER SLIDE -->
@@ -280,6 +354,10 @@
             </header>
 
             <div class="my-auto max-w-4xl space-y-6 relative z-30 mt-20 md:mt-auto">
+                <div class="status-kicker w-fit">
+                    <span class="inline-block h-1.5 w-1.5 rounded-full bg-emerald-400 shadow-[0_0_10px_rgba(204,255,0,0.65)]"></span>
+                    Initialising / Secure Event Network
+                </div>
                 <span id="alignment-pill" class="brand-pill px-3 py-1 bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-[10px] tracking-widest font-mono uppercase rounded-full">
                     Future Event Template • Private Co-Creation Launch — Bangi, Selangor
                 </span>
@@ -313,18 +391,15 @@
                 </div>
 
                 <div class="flex flex-wrap gap-3 pt-2">
-                    <button onclick="goToSlide(2)" class="px-5 py-3 rounded-full bg-emerald-400 text-black text-xs font-bold uppercase tracking-[0.2em] transition-transform hover:-translate-y-0.5">
-                        Enter Deck
-                    </button>
-                    <a href="mailto:Aidiel@astroterran.com" class="px-5 py-3 rounded-full border border-white/15 text-stone-100 text-xs font-bold uppercase tracking-[0.2em] hover:border-emerald-400 hover:text-emerald-400 transition-colors">
-                        Contact Team
+                    <a href="mailto:Aidiel@astroterran.com" class="mt-2 px-5 py-3 rounded-full border border-white/15 text-stone-100 text-xs font-bold uppercase tracking-[0.2em] hover:border-emerald-400 hover:text-emerald-400 transition-colors">
+                        Contact Organisers
                     </a>
                 </div>
             </div>
 
             <footer class="flex justify-between items-center text-xs text-stone-400 font-mono relative z-30 mb-20 md:mb-0">
                 <span>Backdrop: Deep Space</span>
-                <span>Slide 1 of 7</span>
+                <span>Stage 1 of 7</span>
             </footer>
         </section>
 
@@ -384,7 +459,7 @@
 
             <footer class="flex justify-between items-center text-xs text-stone-400 font-mono relative z-30 mb-16 md:mb-0">
                 <span>Backdrop: Earthrise Video</span>
-                <span>Slide 2 of 7</span>
+                <span>Stage 2 of 7</span>
             </footer>
         </section>
 
@@ -519,7 +594,7 @@
 
             <footer class="flex justify-between items-center text-xs text-stone-400 font-mono relative z-30 mb-16 md:mb-0">
                 <span>Backdrop: Orbital Horizon</span>
-                <span>Slide 3 of 7</span>
+                <span>Stage 3 of 7</span>
             </footer>
         </section>
 
@@ -540,7 +615,7 @@
                     <span class="text-emerald-400 text-[10px] tracking-widest uppercase font-mono block">Innovation Vector</span>
                     <h2 class="text-xl md:text-2xl font-bold tracking-wider text-white border-l-2 border-emerald-400 pl-3">The Quintuple Helix</h2>
                     <p class="text-xs text-stone-300 leading-relaxed font-light">
-                        We actively coordinate across the five main sectors of modern systemic development, uniting and aligning industry, academia, environment, civil society, and government to provide sustainable development through innovation!
+                        We are aligning the five main stakeholders for sustainable development across industry, academia, environment, civil society, and government through coordinated innovation.
                     </p>
                     <div class="border-t border-stone-800 pt-4 flex flex-wrap gap-4 text-[10px] text-stone-500 font-mono">
                         <span>🚀 3 ORGANISERS</span>
@@ -553,42 +628,44 @@
 
                 <div class="lg:col-span-7 space-y-4">
                     <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                        <div class="partner-logo-box flex items-center justify-center text-center aspect-[4/3] bg-stone-200 relative overflow-hidden w-full">
+                        <div class="partner-logo-box partner-tile-glow flex items-center justify-center text-center aspect-[4/3] relative overflow-hidden w-full">
                             <img data-brand-sample="true" src="loho+to+web-01.png.webp" alt="ATSB Logo" class="asset-logo asset-logo--wide" onerror="this.onerror=null; this.src='https://placehold.co/120x40/ffffff/010103?text=ATSB';">
                         </div>
 
-                        <div class="partner-logo-box flex items-center justify-center text-center aspect-[4/3] bg-stone-200 relative overflow-hidden w-full">
+                        <div class="partner-logo-box partner-tile-glow flex items-center justify-center text-center aspect-[4/3] relative overflow-hidden w-full">
                             <img data-brand-sample="true" src="Logo.png" alt="Constellation Space Community Group Logo" class="asset-logo asset-logo--tight" onerror="this.onerror=null; this.src='https://placehold.co/120x40/ffffff/010103?text=Constellation';">
                         </div>
 
-                        <div class="partner-logo-box flex items-center justify-center text-center aspect-[4/3] bg-stone-200 relative overflow-hidden w-full">
+                        <div class="partner-logo-box partner-tile-glow flex items-center justify-center text-center aspect-[4/3] relative overflow-hidden w-full">
                             <img data-brand-sample="true" src="CRISM Logo.png" alt="Astroterran Logo" class="asset-logo asset-logo--wide" onerror="this.onerror=null; this.src='https://placehold.co/120x40/ffffff/010103?text=Astroterran';">
-                            <span class="text-[9px] font-mono tracking-wider text-stone-800 uppercase font-bold absolute bottom-2 w-full text-center">Astroterran</span>
+                            <span class="glass-note absolute bottom-2 left-1/2 -translate-x-1/2 inline-flex items-center rounded-full px-2.5 py-1 text-[8px] font-mono tracking-[0.28em] text-stone-300 uppercase">
+                                Astroterran
+                            </span>
                         </div>
 
-                        <div class="partner-logo-box flex items-center justify-center text-center aspect-[4/3] bg-stone-200 relative overflow-hidden w-full">
+                        <div class="partner-logo-box partner-tile-glow flex items-center justify-center text-center aspect-[4/3] relative overflow-hidden w-full">
                             <img data-brand-sample="true" src="University_of_Malaya-Logo.wine.png" alt="University of Malaya Logo" class="asset-logo asset-logo--wide" onerror="this.onerror=null; this.src='https://placehold.co/120x40/ffffff/010103?text=UM';">
                         </div>
                     </div>
 
-                    <div class="p-4 bg-stone-200 border border-stone-300 rounded-2xl flex flex-col sm:flex-row items-center justify-between gap-6 shadow-lg">
+                    <div class="glass-note p-4 border border-white/10 rounded-2xl flex flex-col sm:flex-row items-center justify-between gap-6 shadow-[0_18px_45px_rgba(0,0,0,0.35)] partner-tile-glow">
                         <div class="flex items-center gap-4 text-center sm:text-left">
-                            <div class="media-frame h-14 w-28 bg-stone-200 rounded-xl flex items-center justify-center p-2 border border-stone-300 flex-shrink-0 relative overflow-hidden">
-                                <img data-brand-sample="true" src="WhatsApp Image 1448-01-27 at 21.28.20.jpeg" alt="Adab Youth Garage Logo" class="w-full h-full object-contain" onerror="this.onerror=null; this.src='https://placehold.co/120x45/ffffff/010103?text=AYG';">
+                            <div class="media-frame h-16 w-36 bg-white/8 rounded-xl flex items-center justify-center p-1.5 border border-white/10 flex-shrink-0 relative overflow-hidden">
+                                <img data-brand-sample="true" src="WhatsApp Image 1448-01-27 at 21.28.20.jpeg" alt="Adab Youth Garage Logo" class="w-[118%] h-[118%] object-contain scale-110" onerror="this.onerror=null; this.src='https://placehold.co/120x45/ffffff/010103?text=AYG';">
                             </div>
                             <div>
-                                <h4 class="text-xs font-bold text-stone-900 uppercase font-serif">Adab Youth Garage (AYG)</h4>
-                                <p class="text-[10px] text-stone-600 font-light leading-relaxed">Venue provider in Bangi, Selangor. Constellation Community remains the host and programme owner.</p>
+                                <h4 class="text-xs font-bold text-stone-100 uppercase font-serif">Adab Youth Garage (AYG)</h4>
+                                <p class="text-[10px] text-stone-300 font-light leading-relaxed">Venue provider in Bangi, Selangor. Constellation Community remains the host and programme owner.</p>
                             </div>
                         </div>
-                        <span class="text-[9px] font-mono px-3 py-1 bg-emerald-500/10 border border-emerald-500/20 text-emerald-700 rounded-full flex-shrink-0 uppercase font-bold tracking-wider">VENUE PROVIDER</span>
+                        <span class="text-[9px] font-mono px-3 py-1 bg-white/6 border border-white/10 text-stone-300 rounded-full flex-shrink-0 uppercase font-bold tracking-wider glass-note">VENUE PROVIDER</span>
                     </div>
                 </div>
             </div>
 
             <footer class="flex justify-between items-center text-xs text-stone-400 font-mono relative z-30 mb-16 md:mb-0">
                 <span>Backdrop: Deep Space</span>
-                <span>Slide 4 of 7</span>
+                <span>Stage 4 of 7</span>
             </footer>
         </section>
 
@@ -685,7 +762,7 @@
 
             <footer class="flex justify-between items-center text-xs text-stone-400 font-mono relative z-30 mb-16 md:mb-0">
                 <span>Backdrop: Earthrise</span>
-                <span>Slide 5 of 7</span>
+                <span>Stage 5 of 7</span>
             </footer>
         </section>
 
@@ -768,7 +845,7 @@
 
             <footer class="flex justify-between items-center text-xs text-stone-400 font-mono relative z-30 mb-16 md:mb-0">
                 <span>Backdrop: Orbital Horizon</span>
-                <span>Slide 6 of 7</span>
+                <span>Stage 6 of 7</span>
             </footer>
         </section>
 
@@ -830,12 +907,18 @@
                             <p class="text-[10px] text-stone-300 leading-relaxed font-light mb-2">
                                 Step forward to pioneer and collaborate on this boundaryless space-for-earth mission.
                             </p>
+                            <button id="luma-validate-button" type="button" onclick="runLumaValidation()" class="mt-3 inline-flex items-center justify-center gap-2 rounded-full border border-emerald-400/30 bg-emerald-400/10 px-4 py-2 text-[10px] font-mono uppercase tracking-[0.28em] text-emerald-200 transition-transform hover:-translate-y-0.5 hover:bg-emerald-400/15">
+                                <i class="fa-solid fa-circle-check text-[11px]"></i>
+                                Validate Luma Link
+                            </button>
                         </div>
                         <div class="pt-2 border-t border-white/5 w-full flex flex-col gap-1 text-[11px] font-mono mt-2">
                             <a href="mailto:Aidiel@astroterran.com" class="text-emerald-400 hover:underline">Aidiel@astroterran.com</a>
                         </div>
                     </div>
                 </div>
+
+                <div id="luma-validation" class="hidden"></div>
 
                 <div class="h-[1px] bg-stone-800 w-full my-2"></div>
 
@@ -854,14 +937,15 @@
 
             <footer class="flex justify-between items-center text-xs text-stone-400 font-mono relative z-30 mb-16 md:mb-0">
                 <span>Backdrop: Deep Space</span>
-                <span>Slide 7 of 7</span>
-            </footer>
+            <span id="deck-qa-badge" class="px-2.5 py-1 rounded-full border border-emerald-400/25 bg-emerald-400/10 text-[9px] uppercase tracking-[0.28em] text-emerald-300 font-mono">Auto QA pending</span>
+            <span>Stage 7 of 7</span>
+        </footer>
         </section>
 
         <!-- ============================================== -->
         <!-- PRESENTATION DECK HUD NAVIGATION BAR           -->
         <!-- ============================================== -->
-        <div class="absolute bottom-4 md:bottom-16 left-[6%] right-[6%] flex justify-between items-center z-50 pointer-events-auto">
+        <div class="hidden absolute bottom-4 md:bottom-16 left-[6%] right-[6%] flex justify-between items-center z-50 pointer-events-auto">
             <!-- Previous Button -->
             <button onclick="prevSlide()" class="h-10 w-10 border border-stone-800 hover:border-emerald-400 rounded-full flex items-center justify-center bg-stone-950/90 text-stone-400 hover:text-emerald-400 transition-all duration-300 shadow-lg flex-shrink-0">
                 <i class="fa-solid fa-arrow-left"></i>
@@ -882,7 +966,7 @@
                 <div class="hidden md:block w-24 h-[1px] bg-stone-850"></div>
                 
                 <!-- Progress Percentage Indicator -->
-                <span id="slide-indicator" class="text-[10px] font-mono uppercase text-stone-500 tracking-widest text-center">PAGE 1 / 7</span>
+                <span id="slide-indicator" class="text-[10px] font-mono uppercase text-stone-500 tracking-widest text-center">STAGE 1 / 7</span>
             </div>
 
             <!-- Next Button -->
@@ -892,7 +976,7 @@
         </div>
 
         <!-- Global Progress HUD Line (Bottom Edge) -->
-        <div class="absolute bottom-0 left-0 right-0 h-1 bg-stone-950 z-50">
+        <div class="hidden absolute bottom-0 left-0 right-0 h-1 bg-stone-950 z-50">
             <div id="deck-progress-bar" class="h-full bg-emerald-400 transition-all duration-500" style="width: 14.28%;"></div>
         </div>
 
@@ -940,8 +1024,26 @@
             ],
         };
 
-        let currentSlide = 1;
+        const initialStageParam = Number(
+            new URLSearchParams(window.location.search).get('stage')
+            || new URLSearchParams(window.location.search).get('slide')
+            || new URLSearchParams(window.location.search).get('page')
+            || 1
+        );
+        let currentSlide = Number.isFinite(initialStageParam) ? Math.min(Math.max(Math.trunc(initialStageParam), 1), 7) : 1;
         const totalSlides = 7;
+        const stageLabels = [
+            'Landing',
+            'Overview',
+            'Themes',
+            'Organisers',
+            'Community',
+            'Schedule',
+            'Sign-up',
+        ];
+        let automatorTimer = null;
+        let automatorRunning = false;
+        let stageObserver = null;
 
         function hydrateDeck() {
             document.title = deckConfig.title;
@@ -964,6 +1066,94 @@
                     qrTargetIdAlt: 'luma-qr-signup',
                 }).catch((error) => console.warn('Brand theme failed to apply', error));
             }
+
+            renderStageRail();
+        }
+
+        function scrollToStage(stageIdx, behavior = 'smooth') {
+            const stageEl = document.getElementById(`slide-${stageIdx}`);
+            if (!stageEl) return;
+            stageEl.scrollIntoView({ behavior, block: 'start', inline: 'nearest' });
+        }
+
+        function runLumaValidation() {
+            if (!window.BrandSystem) return;
+            const report = window.BrandSystem.validateDeckLumaConsistency(deckConfig);
+            window.BrandSystem.renderLumaValidation(report);
+        }
+
+        function runDeckQA() {
+            if (!window.BrandSystem) return;
+            const report = window.BrandSystem.runDeckQA(deckConfig, { currentSlide });
+            if (!report.ok) {
+                console.warn('Deck QA issues detected', report.issues);
+            }
+        }
+
+        function renderStageRail() {
+            const rail = document.getElementById('stage-rail');
+            if (!rail) return;
+
+            rail.innerHTML = stageLabels.map((label, index) => {
+                const stageNumber = index + 1;
+                const isActive = stageNumber === currentSlide;
+                return `
+                    <button
+                        type="button"
+                        data-stage-step="${stageNumber}"
+                        data-active="${isActive ? 'true' : 'false'}"
+                        onclick="goToSlide(${stageNumber})"
+                        class="px-3 py-1.5 rounded-full border text-[9px] font-mono uppercase tracking-[0.22em] transition-all duration-300 ${isActive ? 'bg-emerald-400/16 border-emerald-400/35 text-emerald-200' : 'bg-white/5 border-white/10 text-stone-400 hover:text-stone-100 hover:border-white/20'}"
+                    >${stageNumber}. ${label}</button>
+                `;
+            }).join('');
+        }
+
+        function setupStageObserver() {
+            const deckShell = document.getElementById('deck-shell');
+            if (!deckShell || stageObserver) return;
+
+            stageObserver = new IntersectionObserver((entries) => {
+                const visible = entries
+                    .filter((entry) => entry.isIntersecting)
+                    .sort((a, b) => b.intersectionRatio - a.intersectionRatio)[0];
+                if (!visible) return;
+
+                const stageIdx = Number(String(visible.target.id || '').replace('slide-', ''));
+                if (!Number.isFinite(stageIdx) || stageIdx === currentSlide) return;
+
+                currentSlide = stageIdx;
+                updateSlideDeck();
+            }, {
+                root: deckShell,
+                threshold: [0.4, 0.55, 0.7, 0.85],
+                rootMargin: '-6% 0px -6% 0px',
+            });
+
+            document.querySelectorAll('.slide').forEach((slide) => stageObserver.observe(slide));
+        }
+
+        function stopAutomator() {
+            if (automatorTimer) {
+                clearInterval(automatorTimer);
+                automatorTimer = null;
+            }
+            automatorRunning = false;
+        }
+
+        function runAutomator() {
+            stopAutomator();
+            automatorRunning = true;
+            let stage = 1;
+            goToSlide(stage, { fromAutomator: true });
+            automatorTimer = setInterval(() => {
+                stage += 1;
+                if (stage > totalSlides) {
+                    stopAutomator();
+                    return;
+                }
+                goToSlide(stage, { fromAutomator: true });
+            }, 900);
         }
 
         function updateSlideDeck() {
@@ -988,15 +1178,22 @@
                 }
             }
 
-            document.getElementById('slide-indicator').innerText = `PAGE ${currentSlide} / ${totalSlides}`;
+            document.getElementById('slide-indicator').innerText = `STAGE ${currentSlide} / ${totalSlides}`;
             const percentageProgress = (currentSlide / totalSlides) * 100;
             document.getElementById('deck-progress-bar').style.width = `${percentageProgress}%`;
+
+            renderStageRail();
+
+            if (window.BrandSystem) {
+                runDeckQA();
+            }
         }
 
         function nextSlide() {
             if (currentSlide < totalSlides) {
                 currentSlide++;
                 updateSlideDeck();
+                scrollToStage(currentSlide);
             }
         }
 
@@ -1004,12 +1201,17 @@
             if (currentSlide > 1) {
                 currentSlide--;
                 updateSlideDeck();
+                scrollToStage(currentSlide);
             }
         }
 
-        function goToSlide(slideIdx) {
+        function goToSlide(slideIdx, options = {}) {
+            if (!options.fromAutomator) {
+                stopAutomator();
+            }
             currentSlide = slideIdx;
             updateSlideDeck();
+            scrollToStage(slideIdx, options.behavior || 'smooth');
         }
 
         document.addEventListener('keydown', function(event) {
@@ -1022,7 +1224,11 @@
 
         window.onload = function() {
             hydrateDeck();
+            setupStageObserver();
+            scrollToStage(currentSlide, 'auto');
             updateSlideDeck();
+            runLumaValidation();
+            runDeckQA();
         };
     </script>
 </body>
