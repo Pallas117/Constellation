@@ -188,6 +188,59 @@
         return luminance(hex) > 0.45 ? '#050505' : '#f4f7f0';
     }
 
+    function logoToneFromPalette(palette) {
+        if (!palette.length) {
+            return {
+                luminance: 0.5,
+                saturation: 0.1,
+                dominant: '#9aa3b2',
+            };
+        }
+
+        const weights = palette.map((hex, index) => 1 / (index + 1));
+        const total = weights.reduce((sum, weight) => sum + weight, 0);
+        const blended = palette.reduce((acc, hex, index) => {
+            const weight = weights[index] / total;
+            const rgb = hexToRgb(hex);
+            acc.r += rgb.r * weight;
+            acc.g += rgb.g * weight;
+            acc.b += rgb.b * weight;
+            return acc;
+        }, { r: 0, g: 0, b: 0 });
+        const dominant = palette[0];
+        return {
+            luminance: luminance(rgbToHex(blended)),
+            saturation: saturation(dominant),
+            dominant,
+        };
+    }
+
+    function getLogoFrameStyle(tone, tokens) {
+        const isLightLogo = tone.luminance > 0.62;
+        const isDarkLogo = tone.luminance < 0.42;
+        const neutralSurface = isLightLogo
+            ? 'rgba(9, 11, 16, 0.94)'
+            : isDarkLogo
+                ? 'rgba(244, 246, 250, 0.98)'
+                : 'rgba(218, 223, 230, 0.96)';
+        const neutralBorder = isLightLogo
+            ? 'rgba(255, 255, 255, 0.10)'
+            : 'rgba(10, 12, 18, 0.12)';
+        const logoShadow = isLightLogo
+            ? '0 20px 35px rgba(0, 0, 0, 0.42)'
+            : '0 18px 30px rgba(0, 0, 0, 0.18)';
+        return {
+            background: neutralSurface,
+            borderColor: neutralBorder,
+            boxShadow: `${logoShadow}, 0 0 0 1px ${tokens.accent}20`,
+            imageFilter: isLightLogo
+                ? 'drop-shadow(0 1px 2px rgba(255,255,255,0.06)) brightness(1.02)'
+                : 'drop-shadow(0 1px 2px rgba(0,0,0,0.16))',
+            textColor: isLightLogo ? '#f4f7f0' : '#050505',
+            tone: isLightLogo ? 'dark' : isDarkLogo ? 'light' : 'neutral',
+        };
+    }
+
     function inferSourceId(text) {
         const value = String(text || '').toLowerCase();
         if (value.includes('nasa')) return 'nasa';
@@ -215,6 +268,35 @@
 
         if (topSat > 0.42 && topHue >= 160 && topHue <= 220) return 'tech-premium';
         return topLum > 0.55 ? 'tech-editorial' : 'tech-premium';
+    }
+
+    async function formatLogoFrames(logoNodes, tokens) {
+        const tasks = logoNodes.map(async (img) => {
+            const palette = await imagePaletteFromSrc(img.currentSrc || img.src);
+            const tone = logoToneFromPalette(palette);
+            const frame = img.closest('.partner-logo-box, .media-frame, .logo-frame, .brand-logo-frame');
+            const ratio = (img.naturalWidth && img.naturalHeight) ? img.naturalWidth / img.naturalHeight : 1;
+            const pad = ratio > 2.2 ? '0.45rem' : ratio < 0.9 ? '0.9rem' : '0.7rem';
+
+            if (frame) {
+                const frameStyle = getLogoFrameStyle(tone, tokens);
+                frame.dataset.logoTone = frameStyle.tone;
+                frame.style.background = frameStyle.background;
+                frame.style.borderColor = frameStyle.borderColor;
+                frame.style.boxShadow = frameStyle.boxShadow;
+                frame.style.padding = pad;
+                frame.style.setProperty('--logo-surface', frameStyle.background);
+                frame.style.setProperty('--logo-text', frameStyle.textColor);
+                frame.classList.add('logo-frame');
+            }
+
+            img.style.filter = getLogoFrameStyle(tone, tokens).imageFilter;
+            img.style.objectFit = 'contain';
+            img.style.objectPosition = 'center';
+            img.style.mixBlendMode = tone.luminance > 0.62 ? 'screen' : 'normal';
+        });
+
+        await Promise.all(tasks);
     }
 
     function normalizePalette(samples, mode, sourceId) {
@@ -399,6 +481,8 @@
         const tokens = normalizePalette(sampledColors, mode, sourceId);
         setCssVars(tokens);
         updateAlignmentUI(tokens, deckConfig);
+
+        await formatLogoFrames(logoNodes, tokens);
 
         const targets = [
             { id: options.qrTargetId, text: deckConfig.lumaUrl },

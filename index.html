@@ -136,6 +136,17 @@
             padding: clamp(0.75rem, 1.2vw, 1.1rem);
             border-radius: 1rem;
         }
+        .logo-frame {
+            position: relative;
+            overflow: hidden;
+            transition: background-color 0.25s ease, border-color 0.25s ease, box-shadow 0.25s ease, transform 0.25s ease;
+        }
+        .logo-frame[data-logo-tone="light"] {
+            background: rgba(245, 247, 250, 0.98) !important;
+        }
+        .logo-frame[data-logo-tone="dark"] {
+            background: rgba(8, 10, 15, 0.94) !important;
+        }
         .partner-logo-box:hover {
             border-color: rgba(204, 255, 0, 0.45);
             box-shadow: 0 0 18px rgba(204, 255, 0, 0.10);
