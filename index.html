@@ -409,44 +409,110 @@
                     </p>
                 </div>
 
-                <div class="lg:col-span-8 grid grid-cols-1 md:grid-cols-3 gap-4">
-                    <!-- DAN2030 -->
-                    <div class="p-5 glass-shield rounded-2xl flex flex-col justify-between border-l-2 border-l-emerald-400">
-                        <div>
-                            <div class="flex justify-between items-start mb-2">
-                                <span class="text-emerald-400 text-[10px] font-mono tracking-widest uppercase block">DAN2030 Policy</span>
-                                <span class="text-[9px] font-mono text-emerald-400/80 bg-emerald-500/10 px-1.5 py-0.5 rounded">7 Feb 2017</span>
+                <div class="lg:col-span-8 space-y-4">
+                    <div class="glass-shield rounded-3xl p-4 md:p-5 overflow-hidden relative">
+                        <div class="absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(204,255,0,0.14),transparent_30%),radial-gradient(circle_at_bottom_left,rgba(106,227,255,0.12),transparent_34%)]"></div>
+                        <div class="grid grid-cols-1 lg:grid-cols-[1.05fr_0.95fr] gap-4 items-center relative z-10">
+                            <div class="space-y-3">
+                                <div class="flex items-center justify-between gap-3">
+                                    <span class="text-purple-400 text-[10px] font-mono tracking-widest uppercase block">Artemis Accords</span>
+                                    <span class="text-[9px] font-mono text-purple-400/80 bg-purple-500/10 px-1.5 py-0.5 rounded">26 Oct 2025</span>
+                                </div>
+                                <h2 class="text-2xl md:text-3xl font-bold tracking-wider text-white">Shared Lunar Rules for a Long-Term Space Economy</h2>
+                                <p class="text-xs text-stone-300 leading-relaxed font-light max-w-xl">
+                                    The Artemis framework anchors the deck's international narrative: a rules-based, interoperable, and sustainable pathway for lunar operations, science, and commercial participation.
+                                </p>
+                                <div class="flex flex-wrap gap-2 pt-1 text-[9px] font-mono uppercase tracking-widest">
+                                    <span class="px-2.5 py-1 rounded-full bg-white/5 border border-white/10 text-stone-300">Interoperability</span>
+                                    <span class="px-2.5 py-1 rounded-full bg-white/5 border border-white/10 text-stone-300">Transparency</span>
+                                    <span class="px-2.5 py-1 rounded-full bg-white/5 border border-white/10 text-stone-300">Sustainability</span>
+                                </div>
                             </div>
-                            <h4 class="text-xs font-bold text-white uppercase mb-1">National Space Policy</h4>
-                            <p class="text-[10px] text-stone-400 leading-relaxed font-light">Cabinet Approved on 7 Feb 2017. MSE2030 Action Plan and SISP2030 officially launched on 24 May 2023.</p>
+
+                            <div class="relative min-h-[220px] rounded-3xl border border-white/10 bg-black/35 overflow-hidden">
+                                <svg viewBox="0 0 480 320" class="absolute inset-0 h-full w-full">
+                                    <defs>
+                                        <linearGradient id="artemisGlow" x1="0%" y1="0%" x2="100%" y2="100%">
+                                            <stop offset="0%" stop-color="#ccff00" stop-opacity="0.95" />
+                                            <stop offset="55%" stop-color="#8bb8ff" stop-opacity="0.9" />
+                                            <stop offset="100%" stop-color="#ffffff" stop-opacity="0.7" />
+                                        </linearGradient>
+                                        <radialGradient id="earthGrad" cx="40%" cy="35%" r="65%">
+                                            <stop offset="0%" stop-color="#8bb8ff" />
+                                            <stop offset="65%" stop-color="#2f6bff" />
+                                            <stop offset="100%" stop-color="#0b1020" />
+                                        </radialGradient>
+                                    </defs>
+                                    <circle cx="145" cy="168" r="82" fill="url(#earthGrad)" opacity="0.92" />
+                                    <circle cx="145" cy="168" r="104" fill="none" stroke="rgba(204,255,0,0.24)" stroke-width="2" stroke-dasharray="6 10" />
+                                    <ellipse cx="255" cy="158" rx="154" ry="96" fill="none" stroke="url(#artemisGlow)" stroke-width="2.5" opacity="0.92" />
+                                    <ellipse cx="245" cy="162" rx="196" ry="126" fill="none" stroke="rgba(255,255,255,0.14)" stroke-width="1.5" stroke-dasharray="4 10" />
+                                    <circle cx="352" cy="118" r="18" fill="#f4f7f0" opacity="0.95" />
+                                    <circle cx="355" cy="118" r="26" fill="none" stroke="rgba(255,255,255,0.25)" stroke-width="1.5" />
+                                    <circle cx="355" cy="118" r="34" fill="none" stroke="rgba(204,255,0,0.20)" stroke-width="1.25" />
+                                    <path d="M155 168 C205 140, 264 108, 352 118" fill="none" stroke="url(#artemisGlow)" stroke-width="3.5" stroke-linecap="round" />
+                                    <circle cx="155" cy="168" r="7" fill="#ffffff" />
+                                    <circle cx="352" cy="118" r="7" fill="#ccff00" />
+                                    <text x="48" y="56" fill="#ffffff" fill-opacity="0.9" font-size="22" font-weight="700" font-family="Inter, sans-serif" letter-spacing="2">ARTEMIS</text>
+                                    <text x="48" y="82" fill="#8bb8ff" fill-opacity="0.95" font-size="12" font-weight="600" font-family="JetBrains Mono, monospace" letter-spacing="3">ACCORDS</text>
+                                </svg>
+                                <div class="absolute bottom-4 left-4 right-4 grid grid-cols-3 gap-2">
+                                    <div class="rounded-2xl bg-black/55 border border-white/10 p-2">
+                                        <div class="text-[8px] font-mono uppercase tracking-widest text-stone-500">Moon</div>
+                                        <div class="text-xs font-semibold text-white mt-0.5">Gateway</div>
+                                    </div>
+                                    <div class="rounded-2xl bg-black/55 border border-white/10 p-2">
+                                        <div class="text-[8px] font-mono uppercase tracking-widest text-stone-500">Earth</div>
+                                        <div class="text-xs font-semibold text-white mt-0.5">Stewardship</div>
+                                    </div>
+                                    <div class="rounded-2xl bg-black/55 border border-white/10 p-2">
+                                        <div class="text-[8px] font-mono uppercase tracking-widest text-stone-500">Network</div>
+                                        <div class="text-xs font-semibold text-white mt-0.5">Cooperation</div>
+                                    </div>
+                                </div>
+                            </div>
                         </div>
-                        <span class="text-[8px] font-mono text-stone-500 uppercase mt-4">Local Capacity</span>
                     </div>
 
-                    <!-- ACT 834 -->
-                    <div class="p-5 glass-shield rounded-2xl flex flex-col justify-between border-l-2 border-l-sky-400">
-                        <div>
-                            <div class="flex justify-between items-start mb-2">
-                                <span class="text-sky-400 text-[10px] font-mono tracking-widest uppercase block">Act 834</span>
-                                <span class="text-[9px] font-mono text-sky-400/80 bg-sky-500/10 px-1.5 py-0.5 rounded">1 Jan 2025</span>
+                    <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        <!-- DAN2030 -->
+                        <div class="p-5 glass-shield rounded-2xl flex flex-col justify-between border-l-2 border-l-emerald-400">
+                            <div>
+                                <div class="flex justify-between items-start mb-2">
+                                    <span class="text-emerald-400 text-[10px] font-mono tracking-widest uppercase block">DAN2030 Policy</span>
+                                    <span class="text-[9px] font-mono text-emerald-400/80 bg-emerald-500/10 px-1.5 py-0.5 rounded">7 Feb 2017</span>
+                                </div>
+                                <h4 class="text-xs font-bold text-white uppercase mb-1">National Space Policy</h4>
+                                <p class="text-[10px] text-stone-400 leading-relaxed font-light">Cabinet Approved on 7 Feb 2017. MSE2030 Action Plan and SISP2030 officially launched on 24 May 2023.</p>
                             </div>
-                            <h4 class="text-xs font-bold text-white uppercase mb-1">Space Board Act</h4>
-                            <p class="text-[10px] text-stone-400 leading-relaxed font-light">Gazetted on 25 Jan 2022. Entered full legal enforcement on 1 Jan 2025 to govern space object worthiness.</p>
+                            <span class="text-[8px] font-mono text-stone-500 uppercase mt-4">Local Capacity</span>
                         </div>
-                        <span class="text-[8px] font-mono text-stone-500 uppercase mt-4">Regulatory Enforce</span>
-                    </div>
 
-                    <!-- Artemis Accords -->
-                    <div class="p-5 glass-shield rounded-2xl flex flex-col justify-between border-l-2 border-l-purple-400">
-                        <div>
-                            <div class="flex justify-between items-start mb-2">
-                                <span class="text-purple-400 text-[10px] font-mono tracking-widest block uppercase">Artemis Accords</span>
-                                <span class="text-[9px] font-mono text-purple-400/80 bg-purple-500/10 px-1.5 py-0.5 rounded">26 Oct 2025</span>
+                        <!-- ACT 834 -->
+                        <div class="p-5 glass-shield rounded-2xl flex flex-col justify-between border-l-2 border-l-sky-400">
+                            <div>
+                                <div class="flex justify-between items-start mb-2">
+                                    <span class="text-sky-400 text-[10px] font-mono tracking-widest uppercase block">Act 834</span>
+                                    <span class="text-[9px] font-mono text-sky-400/80 bg-sky-500/10 px-1.5 py-0.5 rounded">1 Jan 2025</span>
+                                </div>
+                                <h4 class="text-xs font-bold text-white uppercase mb-1">Space Board Act</h4>
+                                <p class="text-[10px] text-stone-400 leading-relaxed font-light">Gazetted on 25 Jan 2022. Entered full legal enforcement on 1 Jan 2025 to govern space object worthiness.</p>
                             </div>
-                            <h4 class="text-xs font-bold text-white uppercase mb-1">International Treaty</h4>
-                            <p class="text-[10px] text-stone-400 leading-relaxed font-light">Malaysia officially acceded to the Artemis Accords on 26 Oct 2025, committing to safe and sustainable space civil exploration.</p>
+                            <span class="text-[8px] font-mono text-stone-500 uppercase mt-4">Regulatory Enforce</span>
                         </div>
-                        <span class="text-[8px] font-mono text-stone-500 uppercase mt-4">Global Cooperation</span>
+
+                        <!-- Artemis Treaty -->
+                        <div class="p-5 glass-shield rounded-2xl flex flex-col justify-between border-l-2 border-l-purple-400">
+                            <div>
+                                <div class="flex justify-between items-start mb-2">
+                                    <span class="text-purple-400 text-[10px] font-mono tracking-widest block uppercase">Artemis Accords</span>
+                                    <span class="text-[9px] font-mono text-purple-400/80 bg-purple-500/10 px-1.5 py-0.5 rounded">26 Oct 2025</span>
+                                </div>
+                                <h4 class="text-xs font-bold text-white uppercase mb-1">International Treaty</h4>
+                                <p class="text-[10px] text-stone-400 leading-relaxed font-light">Malaysia officially acceded to the Artemis Accords on 26 Oct 2025, committing to safe and sustainable space civil exploration.</p>
+                            </div>
+                            <span class="text-[8px] font-mono text-stone-500 uppercase mt-4">Global Cooperation</span>
+                        </div>
                     </div>
                 </div>
             </div>

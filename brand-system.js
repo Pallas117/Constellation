@@ -278,6 +278,107 @@
         });
     }
 
+    function waitForImageLoad(img) {
+        return new Promise((resolve) => {
+            if (!img) {
+                resolve();
+                return;
+            }
+            if (img.complete && img.naturalWidth > 0) {
+                resolve();
+                return;
+            }
+            const finish = () => resolve();
+            img.addEventListener('load', finish, { once: true });
+            img.addEventListener('error', finish, { once: true });
+        });
+    }
+
+    async function cleanLogoBackground(img) {
+        if (!img || img.dataset.logoBackgroundCleaned === 'true') return null;
+        if (img.closest('#reference-panel')) return null;
+
+        const source = img.currentSrc || img.src;
+        if (!source || /^https?:\/\//i.test(source) && !source.includes(window.location.hostname)) {
+            return null;
+        }
+
+        return new Promise((resolve) => {
+            const probe = new Image();
+            probe.onload = () => {
+                try {
+                    const width = probe.naturalWidth || probe.width || 512;
+                    const height = probe.naturalHeight || probe.height || 512;
+                    const maxDim = 384;
+                    const scale = Math.min(1, maxDim / Math.max(width, height));
+                    const outW = Math.max(1, Math.round(width * scale));
+                    const outH = Math.max(1, Math.round(height * scale));
+                    const canvas = document.createElement('canvas');
+                    canvas.width = outW;
+                    canvas.height = outH;
+                    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+                    ctx.drawImage(probe, 0, 0, outW, outH);
+                    const imageData = ctx.getImageData(0, 0, outW, outH);
+                    const data = imageData.data;
+
+                    let edgeR = 255;
+                    let edgeG = 255;
+                    let edgeB = 255;
+                    let edgeCount = 0;
+                    const takeEdge = (x, y) => {
+                        const idx = (y * outW + x) * 4;
+                        edgeR += data[idx];
+                        edgeG += data[idx + 1];
+                        edgeB += data[idx + 2];
+                        edgeCount++;
+                    };
+
+                    for (let x = 0; x < outW; x++) {
+                        takeEdge(x, 0);
+                        takeEdge(x, outH - 1);
+                    }
+                    for (let y = 1; y < outH - 1; y++) {
+                        takeEdge(0, y);
+                        takeEdge(outW - 1, y);
+                    }
+
+                    edgeR /= edgeCount;
+                    edgeG /= edgeCount;
+                    edgeB /= edgeCount;
+                    const edgeLuma = (edgeR + edgeG + edgeB) / 3;
+                    const edgeSpread = Math.max(edgeR, edgeG, edgeB) - Math.min(edgeR, edgeG, edgeB);
+
+                    for (let i = 0; i < data.length; i += 4) {
+                        const r = data[i];
+                        const g = data[i + 1];
+                        const b = data[i + 2];
+                        const a = data[i + 3];
+                        if (a === 0) continue;
+                        const luma = (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
+                        const sat = saturation(rgbToHex({ r, g, b }));
+                        const closeToLightBg = edgeLuma > 225 && luma > 0.9 && sat < 0.18;
+                        const closeToDarkBg = edgeLuma < 60 && luma < 0.16 && sat < 0.2;
+                        const closeToEdgeBg = edgeSpread < 24 && Math.abs(r - edgeR) < 20 && Math.abs(g - edgeG) < 20 && Math.abs(b - edgeB) < 20;
+                        if (closeToLightBg || closeToDarkBg || closeToEdgeBg) {
+                            data[i + 3] = 0;
+                        }
+                    }
+
+                    ctx.putImageData(imageData, 0, 0);
+                    const cleaned = canvas.toDataURL('image/png');
+                    img.dataset.logoBackgroundCleaned = 'true';
+                    img.style.background = 'transparent';
+                    resolve(cleaned);
+                } catch (error) {
+                    resolve(null);
+                }
+            };
+            probe.onerror = () => resolve(null);
+            probe.crossOrigin = 'anonymous';
+            probe.src = source;
+        });
+    }
+
     function inferSourceId(text) {
         const value = String(text || '').toLowerCase();
         if (value.includes('nasa')) return 'nasa';
@@ -309,6 +410,11 @@
 
     async function formatLogoFrames(logoNodes, tokens) {
         const tasks = logoNodes.map(async (img) => {
+            const cleaned = await cleanLogoBackground(img);
+            if (cleaned) {
+                img.src = cleaned;
+                await waitForImageLoad(img);
+            }
             const palette = await imagePaletteFromSrc(img.currentSrc || img.src);
             const tone = logoToneFromPalette(palette);
             const frame = img.closest('.partner-logo-box, .media-frame, .logo-frame, .brand-logo-frame');
@@ -333,6 +439,31 @@
 
         await Promise.all(tasks);
         applyUniformLogoSizing(logoNodes);
+    }
+
+    function stageReferenceLinks(entries) {
+        if (!Array.isArray(entries)) return [];
+        const seen = new Set();
+        return entries
+            .map((entry) => {
+                if (!entry) return null;
+                if (typeof entry === 'string') {
+                    return { label: entry, url: entry };
+                }
+                const url = entry.url || entry.href || '';
+                if (!url) return null;
+                return {
+                    label: entry.label || entry.title || url,
+                    url,
+                };
+            })
+            .filter(Boolean)
+            .filter((entry) => {
+                const key = `${entry.label}::${entry.url}`;
+                if (seen.has(key)) return false;
+                seen.add(key);
+                return true;
+            });
     }
 
     function normalizePalette(samples, mode, sourceId) {
@@ -474,7 +605,7 @@
         }
         if (referencePanel && referenceList) {
             referenceList.innerHTML = '';
-            const refs = Array.isArray(deckConfig.references) ? deckConfig.references : [];
+            const refs = stageReferenceLinks(deckConfig.references);
             if (refs.length > 0) {
                 referencePanel.classList.remove('hidden');
                 refs.forEach((ref) => {
@@ -571,5 +702,8 @@
         imagePaletteFromSrc,
         inferSourceId,
         normalizePalette,
+        stageReferenceLinks,
+        cleanLogoBackground,
+        applyUniformLogoSizing,
     };
 })();
