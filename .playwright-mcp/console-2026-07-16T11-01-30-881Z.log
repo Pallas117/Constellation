@@ -1,0 +1,5 @@
+[     251ms] [WARNING] cdn.tailwindcss.com should not be used in production. To use Tailwind CSS in production, install it as a PostCSS plugin or use the Tailwind CLI: https://tailwindcss.com/docs/installation @ https://cdn.tailwindcss.com/:63
+[    4113ms] [INFO] [Deck QA] {ok: true, slideCount: 7, activeSlideId: slide-7, currentSlide: 7, normalizedUrl: https://luma.com/event/manage/evt-VJMPGd7ynRAUw3V/overview} @ http://127.0.0.1:4174/brand-system.js:677
+[    4119ms] [INFO] [Deck QA] {ok: true, slideCount: 7, activeSlideId: slide-7, currentSlide: 7, normalizedUrl: https://luma.com/event/manage/evt-VJMPGd7ynRAUw3V/overview} @ http://127.0.0.1:4174/brand-system.js:677
+[    4831ms] [INFO] [Deck QA] {ok: true, slideCount: 7, activeSlideId: slide-1, currentSlide: 1, normalizedUrl: https://luma.com/event/manage/evt-VJMPGd7ynRAUw3V/overview} @ http://127.0.0.1:4174/brand-system.js:677
+[    6642ms] [INFO] [Deck QA] {ok: true, slideCount: 7, activeSlideId: slide-7, currentSlide: 7, normalizedUrl: https://luma.com/event/manage/evt-VJMPGd7ynRAUw3V/overview} @ http://127.0.0.1:4174/brand-system.js:677

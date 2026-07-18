@@ -1,0 +1,23 @@
+[      95ms] [WARNING] cdn.tailwindcss.com should not be used in production. To use Tailwind CSS in production, install it as a PostCSS plugin or use the Tailwind CLI: https://tailwindcss.com/docs/installation @ https://cdn.tailwindcss.com/:63
+[    4446ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://127.0.0.1:4174/earthrise_2160p30.mp4:0
+[    5056ms] [INFO] [Deck QA] {ok: true, slideCount: 7, activeSlideId: slide-1, currentSlide: 1, normalizedUrl: https://luma.com/event/manage/evt-VJMPGd7ynRAUw3V/overview} @ http://127.0.0.1:4174/brand-system.js:677
+[    5060ms] [INFO] [Deck QA] {ok: true, slideCount: 7, activeSlideId: slide-1, currentSlide: 1, normalizedUrl: https://luma.com/event/manage/evt-VJMPGd7ynRAUw3V/overview} @ http://127.0.0.1:4174/brand-system.js:677
+[    5518ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://127.0.0.1:4174/favicon.ico:0
+[    5519ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://127.0.0.1:4174/Logo.png:0
+[    5622ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://127.0.0.1:4174/CRISM%20Logo.png:0
+[    5626ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://127.0.0.1:4174/University_of_Malaya-Logo.wine.png:0
+[    5633ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://127.0.0.1:4174/WhatsApp%20Image%201448-01-27%20at%2021.28.20.jpeg:0
+[    5733ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://127.0.0.1:4174/Logo.png:0
+[    5733ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://127.0.0.1:4174/CRISM%20Logo.png:0
+[    5733ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://127.0.0.1:4174/University_of_Malaya-Logo.wine.png:0
+[    5733ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://127.0.0.1:4174/WhatsApp%20Image%201448-01-27%20at%2021.28.20.jpeg:0
+[    6069ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://127.0.0.1:4174/Logo.png:0
+[    6069ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://127.0.0.1:4174/CRISM%20Logo.png:0
+[    6070ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://127.0.0.1:4174/University_of_Malaya-Logo.wine.png:0
+[    6072ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://127.0.0.1:4174/WhatsApp%20Image%201448-01-27%20at%2021.28.20.jpeg:0
+[   16897ms] [INFO] [Deck QA] {ok: true, slideCount: 7, activeSlideId: slide-2, currentSlide: 2, normalizedUrl: https://luma.com/event/manage/evt-VJMPGd7ynRAUw3V/overview} @ http://127.0.0.1:4174/brand-system.js:677
+[   19780ms] [INFO] [Deck QA] {ok: true, slideCount: 7, activeSlideId: slide-3, currentSlide: 3, normalizedUrl: https://luma.com/event/manage/evt-VJMPGd7ynRAUw3V/overview} @ http://127.0.0.1:4174/brand-system.js:677
+[   22013ms] [INFO] [Deck QA] {ok: true, slideCount: 7, activeSlideId: slide-4, currentSlide: 4, normalizedUrl: https://luma.com/event/manage/evt-VJMPGd7ynRAUw3V/overview} @ http://127.0.0.1:4174/brand-system.js:677
+[   23563ms] [INFO] [Deck QA] {ok: true, slideCount: 7, activeSlideId: slide-5, currentSlide: 5, normalizedUrl: https://luma.com/event/manage/evt-VJMPGd7ynRAUw3V/overview} @ http://127.0.0.1:4174/brand-system.js:677
+[   23753ms] [INFO] [Deck QA] {ok: true, slideCount: 7, activeSlideId: slide-6, currentSlide: 6, normalizedUrl: https://luma.com/event/manage/evt-VJMPGd7ynRAUw3V/overview} @ http://127.0.0.1:4174/brand-system.js:677
+[   24688ms] [INFO] [Deck QA] {ok: true, slideCount: 7, activeSlideId: slide-7, currentSlide: 7, normalizedUrl: https://luma.com/event/manage/evt-VJMPGd7ynRAUw3V/overview} @ http://127.0.0.1:4174/brand-system.js:677

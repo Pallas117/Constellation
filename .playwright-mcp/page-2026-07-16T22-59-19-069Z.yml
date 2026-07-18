@@ -1,0 +1,354 @@
+- generic [ref=e2]:
+  - generic [ref=e3]:
+    - generic [ref=e4]:
+      - generic [ref=e5]: Event Flow
+      - button "Run Automator" [ref=e6] [cursor=pointer]
+    - generic [ref=e7]:
+      - button "1. Landing" [ref=e8] [cursor=pointer]
+      - button "2. Overview" [ref=e9] [cursor=pointer]
+      - button "3. Themes" [ref=e10] [cursor=pointer]
+      - button "4. Organisers" [ref=e11] [cursor=pointer]
+      - button "5. Community" [ref=e12] [cursor=pointer]
+      - button "6. Schedule" [ref=e13] [cursor=pointer]
+      - button "7. Sign-up" [ref=e14] [cursor=pointer]
+  - generic [ref=e15]:
+    - img "Deep starry Milky Way panorama" [ref=e16]
+    - generic [ref=e18]:
+      - generic [ref=e19]: The Overview Summit Malaysia 🇲🇾
+      - generic [ref=e20]: Co-Creation Workshop 2026
+    - generic [ref=e21]:
+      - generic [ref=e22]: Initialising / Secure Event Network
+      - text: AGENCY ALIGNMENT • AGENCY-TECHNICAL • AGENCY TECHNICAL
+      - heading "THE OVERVIEW SUMMIT MALAYSIA 🇲🇾" [level=1] [ref=e24]
+      - paragraph [ref=e25]: Unifying national space capabilities and decentralized global open science networks to secure the long-term stewardship of our planet.
+      - generic [ref=e26]:
+        - generic [ref=e27]:
+          - generic [ref=e28]: Launch Date
+          - generic [ref=e29]: 25 Jul 2026
+        - generic [ref=e30]:
+          - generic [ref=e31]: Venue Provider
+          - generic [ref=e32]: ADAB / Bangi
+        - generic [ref=e33]:
+          - generic [ref=e34]: Host
+          - generic [ref=e35]: Constellation Community
+        - generic [ref=e36]:
+          - generic [ref=e37]: Format
+          - generic [ref=e38]: Hybrid Co-Creation
+      - link "Contact Organisers" [ref=e40] [cursor=pointer]:
+        - /url: mailto:Aidiel@astroterran.com
+    - generic [ref=e41]:
+      - generic [ref=e42]: "Backdrop: Deep Space"
+      - generic [ref=e43]: Stage 1 of 7
+  - generic [ref=e44]:
+    - generic [ref=e45]: Your browser does not support the video tag.
+    - generic [ref=e47]:
+      - generic [ref=e48]: The Overview Summit
+      - generic [ref=e49]: The Cognitive Shift
+    - generic [ref=e50]:
+      - generic [ref=e51]:
+        - generic [ref=e52]: Theoretical Paradigm
+        - heading "The Overview Effect" [level=2] [ref=e53]
+        - paragraph [ref=e54]:
+          - text: First coined by space philosopher
+          - strong [ref=e55]: Frank White
+          - text: in his seminal 1987 work, the Overview Effect describes the profound cognitive shift experienced by astronauts viewing the Earth from orbit.
+        - paragraph [ref=e56]: From deep space, national boundaries vanish, conflicts seem trivial, and the absolute necessity of establishing unified global structures to safeguard our fragile planetary capsule becomes instantly obvious. We operationalize this perspective on Earth.
+      - generic [ref=e58]:
+        - img "Frank White Headshot" [ref=e60]
+        - generic [ref=e61]:
+          - generic [ref=e62]: Inspirational Focal
+          - heading "Frank White" [level=4] [ref=e63]
+          - paragraph [ref=e64]: "\"To explore space is to change our relationship to the Earth and to each other.\""
+          - generic [ref=e65]: Author, The Overview Effect (1987)
+        - img "Scan me QR" [ref=e67]
+    - generic [ref=e68]:
+      - generic [ref=e69]: "Backdrop: Earthrise Video"
+      - generic [ref=e70]: Stage 2 of 7
+  - generic [ref=e71]:
+    - img "Modern Earthrise background photo" [ref=e72]
+    - generic [ref=e74]:
+      - generic [ref=e75]: The Overview Summit
+      - generic [ref=e76]: Sovereign Compliance
+    - generic [ref=e77]:
+      - generic [ref=e78]:
+        - generic [ref=e79]: Regulatory Frameworks
+        - heading "Sovereign Space Compliance" [level=2] [ref=e80]
+        - paragraph [ref=e81]: Our developmental and co-creation targets are meticulously aligned with Malaysia's historical legal acts, space policy roadmaps, and international treaties.
+      - generic [ref=e82]:
+        - generic [ref=e85]:
+          - generic [ref=e86]:
+            - generic [ref=e87]:
+              - generic [ref=e88]: Artemis Accords
+              - generic [ref=e89]: 26 Oct 2025
+            - heading "Shared Lunar Rules for a Long-Term Space Economy" [level=2] [ref=e90]
+            - paragraph [ref=e91]: "The Artemis framework anchors the deck's international narrative: a rules-based, interoperable, and sustainable pathway for lunar operations, science, and commercial participation."
+            - generic [ref=e92]:
+              - generic [ref=e93]: Interoperability
+              - generic [ref=e94]: Transparency
+              - generic [ref=e95]: Sustainability
+          - generic [ref=e96]:
+            - img [ref=e97]:
+              - generic [ref=e108]: ARTEMIS
+              - generic [ref=e109]: ACCORDS
+            - generic [ref=e110]:
+              - generic [ref=e111]:
+                - generic [ref=e112]: Moon
+                - generic [ref=e113]: Gateway
+              - generic [ref=e114]:
+                - generic [ref=e115]: Earth
+                - generic [ref=e116]: Stewardship
+              - generic [ref=e117]:
+                - generic [ref=e118]: Network
+                - generic [ref=e119]: Cooperation
+        - generic [ref=e120]:
+          - generic [ref=e121]:
+            - generic [ref=e122]:
+              - generic [ref=e123]:
+                - generic [ref=e124]: DAN2030 Policy
+                - generic [ref=e125]: 7 Feb 2017
+              - heading "National Space Policy" [level=4] [ref=e126]
+              - paragraph [ref=e127]: Cabinet Approved on 7 Feb 2017. MSE2030 Action Plan and SISP2030 officially launched on 24 May 2023.
+            - generic [ref=e128]: Local Capacity
+          - generic [ref=e129]:
+            - generic [ref=e130]:
+              - generic [ref=e131]:
+                - generic [ref=e132]: Act 834
+                - generic [ref=e133]: 1 Jan 2025
+              - heading "Space Board Act" [level=4] [ref=e134]
+              - paragraph [ref=e135]: Gazetted on 25 Jan 2022. Entered full legal enforcement on 1 Jan 2025 to govern space object worthiness.
+            - generic [ref=e136]: Regulatory Enforce
+          - generic [ref=e137]:
+            - generic [ref=e138]:
+              - generic [ref=e139]:
+                - generic [ref=e140]: Artemis Accords
+                - generic [ref=e141]: 26 Oct 2025
+              - heading "International Treaty" [level=4] [ref=e142]
+              - paragraph [ref=e143]: Malaysia officially acceded to the Artemis Accords on 26 Oct 2025, committing to safe and sustainable space civil exploration.
+            - generic [ref=e144]: Global Cooperation
+    - generic [ref=e145]:
+      - generic [ref=e146]: "Backdrop: Orbital Horizon"
+      - generic [ref=e147]: Stage 3 of 7
+  - generic [ref=e148]:
+    - img "Deep space background" [ref=e149]
+    - generic [ref=e151]:
+      - generic [ref=e152]: The Overview Summit
+      - generic [ref=e153]: The Quad-Alliance Partner Framework
+    - generic [ref=e154]:
+      - generic [ref=e155]:
+        - generic [ref=e156]: Innovation Vector
+        - heading "The Quintuple Helix" [level=2] [ref=e157]
+        - paragraph [ref=e158]: We are aligning the five main stakeholders for sustainable development across industry, academia, environment, civil society, and government through coordinated innovation.
+        - generic [ref=e159]:
+          - generic [ref=e160]: 🚀 3 ORGANISERS
+          - generic [ref=e161]: •
+          - generic [ref=e162]: 🎓 1 ACADEMIC ANCHOR
+          - generic [ref=e163]: •
+          - generic [ref=e164]: 🏡 1 HOST
+      - generic [ref=e165]:
+        - generic [ref=e166]:
+          - img "ATSB Logo" [ref=e168]
+          - img "Constellation Space Community Group Logo" [ref=e170]
+          - generic [ref=e171]:
+            - img "Astroterran Logo" [ref=e172]
+            - generic [ref=e173]: Astroterran
+          - img "University of Malaya Logo" [ref=e175]
+        - generic [ref=e176]:
+          - generic [ref=e177]:
+            - img "Adab Youth Garage Logo" [ref=e179]
+            - generic [ref=e180]:
+              - heading "Adab Youth Garage (AYG)" [level=4] [ref=e181]
+              - paragraph [ref=e182]: Venue provider in Bangi, Selangor. Constellation Community remains the host and programme owner.
+          - generic [ref=e183]: VENUE PROVIDER
+    - generic [ref=e184]:
+      - generic [ref=e185]: "Backdrop: Deep Space"
+      - generic [ref=e186]: Stage 4 of 7
+  - generic [ref=e187]:
+    - img "Classic Earthrise background photo" [ref=e188]
+    - generic [ref=e190]:
+      - generic [ref=e191]: The Overview Summit
+      - generic [ref=e192]: Global Connectivity
+    - generic [ref=e193]:
+      - generic [ref=e194]:
+        - generic [ref=e195]:
+          - generic [ref=e196]:
+            - generic [ref=e197]: International Alliance
+            - img "Constellation Community Logo" [ref=e200]
+          - heading "Deeper Integration into the International Space Community" [level=2] [ref=e202]
+          - paragraph [ref=e203]: Operating as a collaborative, geopolitically agnostic space network. We establish multi-cultural alignments to deploy resources dynamically across borders, connecting local efforts with global pioneers.
+        - generic [ref=e204]:
+          - generic [ref=e205]: Operational Mode
+          - text: Global Harmony & Local Autonomy
+      - generic [ref=e206]:
+        - generic [ref=e207]:
+          - generic [ref=e208]:
+            - generic [ref=e209]: The Western Bridge
+            - paragraph [ref=e210]: English-speaking regions, focused on technical scaling, rapid iteration, and open APIs.
+          - generic [ref=e211]: Silicon & Software
+        - generic [ref=e212]:
+          - generic [ref=e213]:
+            - generic [ref=e214]: The Dao-ist Bridge
+            - paragraph [ref=e215]: East Asian sectors, focused on long-term structural systems and organic balance.
+          - generic [ref=e216]: Systemic Coherence
+        - generic [ref=e217]:
+          - generic [ref=e218]:
+            - generic [ref=e219]: The Islamic Bridge
+            - paragraph [ref=e220]: Mid-East & SE Asian sectors, focused on ethical stewardship, equity, and welfare.
+          - generic [ref=e221]: Stewardship & Ethics
+        - generic [ref=e222]:
+          - generic [ref=e223]:
+            - generic [ref=e224]: The Vedic Bridge
+            - paragraph [ref=e225]: South Asian regions, focused on abstract mathematical models and logic.
+          - generic [ref=e226]: Mathematical Cosmos
+        - generic [ref=e227]:
+          - generic [ref=e228]:
+            - generic [ref=e229]: The Ubuntu Bridge
+            - paragraph [ref=e230]: African & Global South regions, centering collective progress and community innovation.
+          - generic [ref=e231]: Collective Progress
+        - generic [ref=e232]:
+          - generic [ref=e233]:
+            - generic [ref=e234]: The Pachamama Bridge
+            - paragraph [ref=e235]: Indigenous sectors, emphasizing ecological defense and sacred harmony with Earth.
+          - generic [ref=e236]: Ecological Symbiosis
+    - generic [ref=e237]:
+      - generic [ref=e238]: "Backdrop: Earthrise"
+      - generic [ref=e239]: Stage 5 of 7
+  - generic [ref=e240]:
+    - img "Modern Earthrise background photo" [ref=e241]
+    - generic [ref=e243]:
+      - generic [ref=e244]: The Overview Summit
+      - generic [ref=e245]: Workshop Matrix
+    - generic [ref=e246]:
+      - table [ref=e248]:
+        - rowgroup [ref=e249]:
+          - row [ref=e250]:
+            - columnheader "Time" [ref=e251]
+            - columnheader "Event Segment" [ref=e252]
+            - columnheader "Objective & Context" [ref=e253]
+        - rowgroup [ref=e254]:
+          - row [ref=e255]:
+            - cell "13:00 - 14:00" [ref=e256]
+            - cell "Arrival, Warm Lunch & Networking" [ref=e257]
+            - cell "Gather inside the ADAB-provided Bangi venue over fresh catering and organic connection, hosted by Constellation Community." [ref=e258]
+          - row [ref=e259]:
+            - cell "14:00 - 14:30" [ref=e260]
+            - cell "Welcome & Selected Pitching Session" [ref=e261]
+            - cell "Curated space-tech startups and seasoned professionals present high-conviction 8-minute pitches coupled with 2-minute live demonstrations." [ref=e262]
+          - row [ref=e263]:
+            - cell "14:30 - 15:00" [ref=e264]
+            - cell "Open Advisory Board Feedback" [ref=e265]
+            - cell "Ecosystem mentors, UM academic researchers, and ATSB experts provide constructive, product-market-fit reviews." [ref=e266]
+          - row [ref=e267]:
+            - cell "15:00 - 16:00" [ref=e268]
+            - cell "Synergy Discussion (Highlight)" [ref=e269]
+            - cell "AI, Quantum and R&D in Space for Sustainable, Social and Commercial Impact. National and International Policy Alignment." [ref=e270]
+          - row [ref=e271]:
+            - cell "16:00 - 17:00" [ref=e272]
+            - cell "Catered Dinner Break & Informal Connections" [ref=e273]
+            - cell "Informal networking and connection building over a catered dinner break." [ref=e274]
+          - row [ref=e275]:
+            - cell "17:00 - 18:00" [ref=e276]
+            - cell "Interactive Panel & Q&A Session" [ref=e277]
+            - cell "An unscripted fireside chat featuring esteemed guest speakers (TBC) exploring regional deep-tech expansion and geopolitical-agnostic collaboration." [ref=e278]
+          - row [ref=e279]:
+            - cell "18:00 - 19:00" [ref=e280]
+            - cell "Signing Ceremony & Formal Adjournment" [ref=e281]
+            - cell "Signatories formalize the Constellation Compact 2026 MoU, committing to shared principles of transparency, equity, and silent execution. Potential guest speakers from NASA, ESA & Exploration groups." [ref=e282]
+      - generic [ref=e283]:
+        - generic [ref=e284]:
+          - generic [ref=e285]: Registration Desk
+          - heading "30 Curated Delegates 🇲🇾" [level=4] [ref=e286]
+          - paragraph [ref=e287]: Closed-door, private co-creation alignment to prevent corporate posturing and foster high-performance trust.
+        - generic [ref=e288]:
+          - generic [ref=e289]: Chatham House Rules
+          - heading "Active Open Discourse" [level=4] [ref=e290]
+          - paragraph [ref=e291]: Identity and affiliation of speakers are protected. Thoughts and ideas flow with absolute confidentiality.
+    - generic [ref=e292]:
+      - generic [ref=e293]: "Backdrop: Orbital Horizon"
+      - generic [ref=e294]: Stage 6 of 7
+  - generic [ref=e295]:
+    - img "Deep starry Milky Way panorama background" [ref=e296]
+    - generic [ref=e298]:
+      - generic [ref=e299]: The Overview Summit
+      - generic [ref=e300]: Consortium MoU & CTA
+    - generic [ref=e301]:
+      - generic [ref=e302]:
+        - text: The Constellation Compact 2026
+        - generic [ref=e303]: 🇲🇾
+      - generic [ref=e304]:
+        - generic [ref=e305]:
+          - generic [ref=e306]:
+            - heading "Member MoU" [level=2] [ref=e307]
+            - generic [ref=e308]:
+              - paragraph [ref=e309]:
+                - strong [ref=e310]: "1. Radical Integrity:"
+                - text: Operating with deep-level transparency, doing what is best for the ecosystem even when unobserved.
+              - paragraph [ref=e311]:
+                - strong [ref=e312]: "2. No One Left Behind:"
+                - text: Integrating grassroots youth and underrepresented communities into high-level space software pipelines.
+              - paragraph [ref=e313]:
+                - strong [ref=e314]: "3. Stealth & Humility:"
+                - text: Valuing concrete, silent technical execution and long-term project performance over noise.
+          - generic [ref=e315]: Signed July 25th, 2026
+        - generic [ref=e316]:
+          - link "See Beyond QR Code fallback" [ref=e317] [cursor=pointer]:
+            - /url: https://luma.com/event/manage/evt-VJMPGd7ynRAUw3V/overview
+            - img "See Beyond QR Code fallback"
+          - heading "Scan to RSVP" [level=4] [ref=e320]
+        - generic [ref=e321]:
+          - generic [ref=e322]:
+            - heading "Sponsor, Collaborate and Sign Up!" [level=4] [ref=e323]
+            - link [ref=e324] [cursor=pointer]:
+              - /url: https://luma.com/event/manage/evt-VJMPGd7ynRAUw3V/overview
+            - paragraph [ref=e326]: https://luma.com/event/manage/evt-VJMPGd7ynRAUw3V/overview
+            - paragraph [ref=e327]: Step forward to pioneer and collaborate on this boundaryless space-for-earth mission.
+            - button " Validate Luma Link" [ref=e328] [cursor=pointer]:
+              - generic [ref=e329]: 
+              - text: Validate Luma Link
+          - link "Aidiel@astroterran.com" [ref=e331] [cursor=pointer]:
+            - /url: mailto:Aidiel@astroterran.com
+      - generic [ref=e333]:
+        - generic [ref=e334]:
+          - generic [ref=e335]:
+            - generic [ref=e336]: Validation Flow
+            - heading "Luma link verified" [level=4] [ref=e337]
+          - generic [ref=e338]: PASS
+        - generic [ref=e339]:
+          - generic [ref=e340]:
+            - generic [ref=e341]: ✓
+            - generic [ref=e342]: Deck has a Luma URL
+          - generic [ref=e343]:
+            - generic [ref=e344]: ✓
+            - generic [ref=e345]: Luma URL shape is valid
+          - generic [ref=e346]:
+            - generic [ref=e347]: ✓
+            - generic [ref=e348]: References include the same URL
+          - generic [ref=e349]:
+            - generic [ref=e350]: ✓
+            - generic [ref=e351]: QR links target the same URL
+        - generic [ref=e352]:
+          - generic [ref=e353]: URL https://luma.com/event/manage/evt-VJMPGd7ynRAUw3V/overview
+          - generic [ref=e354]: Refs 6
+        - paragraph [ref=e355]: This is a manage/overview link, so the flow can validate structure and consistency, but not fetch private dashboard content.
+      - paragraph [ref=e357]: "\"Through shared integrity and unified purpose, we build classical bridges to safeguard our common home.\""
+      - generic [ref=e358]:
+        - generic [ref=e359]:
+          - heading "Sources" [level=3] [ref=e360]
+          - generic [ref=e361]: Backlinked references
+        - generic [ref=e362]:
+          - link "Luma Event Overview" [ref=e363] [cursor=pointer]:
+            - /url: https://luma.com/event/manage/evt-VJMPGd7ynRAUw3V/overview
+          - link "Send Frank To Space" [ref=e364] [cursor=pointer]:
+            - /url: https://www.sendfranktospace.com
+          - 'link "NASA: The Overview Effect" [ref=e365] [cursor=pointer]':
+            - /url: https://www.nasa.gov/podcasts/houston-we-have-a-podcast/the-overview-effect/
+          - link "UM Physics Radio Cosmology Lab" [ref=e366] [cursor=pointer]:
+            - /url: https://physics.um.edu.my/radio-cosmology-research-laboratory
+          - link "Malaysia National Space Policy 2030" [ref=e367] [cursor=pointer]:
+            - /url: https://cms.spacesecurityportal.org/uploads/MLY_National_Space_Policy2030_English_501fa55c3e.pdf
+          - link "NASA Artemis Accords" [ref=e368] [cursor=pointer]:
+            - /url: https://www.nasa.gov/artemis-accords/
+    - generic [ref=e369]:
+      - generic [ref=e370]: "Backdrop: Deep Space"
+      - generic [ref=e371]: AUTO QA PASS • STAGE 4
+      - generic [ref=e372]: Stage 7 of 7
+  - text:  

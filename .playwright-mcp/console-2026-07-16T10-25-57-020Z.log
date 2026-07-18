@@ -1,0 +1,11 @@
+[     243ms] [WARNING] cdn.tailwindcss.com should not be used in production. To use Tailwind CSS in production, install it as a PostCSS plugin or use the Tailwind CLI: https://tailwindcss.com/docs/installation @ https://cdn.tailwindcss.com/:63
+[    2405ms] [INFO] [Deck QA] {ok: false, slideCount: 7, activeSlideId: slide-7, currentSlide: 7, normalizedUrl: https://luma.com/event/manage/evt-VJMPGd7ynRAUw3V/overview} @ http://127.0.0.1:4174/brand-system.js:672
+[    2410ms] [WARNING] Deck QA issues detected [Luma link consistency checks did not pass.] @ http://127.0.0.1:4174/index.html?slide=7:986
+[    2411ms] [INFO] [Deck QA] {ok: false, slideCount: 7, activeSlideId: slide-7, currentSlide: 7, normalizedUrl: https://luma.com/event/manage/evt-VJMPGd7ynRAUw3V/overview} @ http://127.0.0.1:4174/brand-system.js:672
+[    2411ms] [WARNING] Deck QA issues detected [Luma link consistency checks did not pass.] @ http://127.0.0.1:4174/index.html?slide=7:986
+[    3413ms] [ERROR] Failed to load resource: the server responded with a status of 404 (File not found) @ http://127.0.0.1:4174/favicon.ico:0
+[  739246ms] [INFO] [Deck QA] {ok: true, slideCount: 7, activeSlideId: slide-6, currentSlide: 6, normalizedUrl: https://luma.com/event/manage/evt-VJMPGd7ynRAUw3V/overview} @ http://127.0.0.1:4174/brand-system.js:672
+[  739446ms] [INFO] [Deck QA] {ok: true, slideCount: 7, activeSlideId: slide-5, currentSlide: 5, normalizedUrl: https://luma.com/event/manage/evt-VJMPGd7ynRAUw3V/overview} @ http://127.0.0.1:4174/brand-system.js:672
+[  739643ms] [INFO] [Deck QA] {ok: true, slideCount: 7, activeSlideId: slide-4, currentSlide: 4, normalizedUrl: https://luma.com/event/manage/evt-VJMPGd7ynRAUw3V/overview} @ http://127.0.0.1:4174/brand-system.js:672
+[  739882ms] [INFO] [Deck QA] {ok: true, slideCount: 7, activeSlideId: slide-3, currentSlide: 3, normalizedUrl: https://luma.com/event/manage/evt-VJMPGd7ynRAUw3V/overview} @ http://127.0.0.1:4174/brand-system.js:672
+[  740620ms] [INFO] [Deck QA] {ok: true, slideCount: 7, activeSlideId: slide-2, currentSlide: 2, normalizedUrl: https://luma.com/event/manage/evt-VJMPGd7ynRAUw3V/overview} @ http://127.0.0.1:4174/brand-system.js:672

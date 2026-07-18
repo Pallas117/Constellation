@@ -1,0 +1,33 @@
+[    2041ms] [WARNING] cdn.tailwindcss.com should not be used in production. To use Tailwind CSS in production, install it as a PostCSS plugin or use the Tailwind CLI: https://tailwindcss.com/docs/installation @ https://cdn.tailwindcss.com/:63
+[   11939ms] [INFO] [Deck QA] {ok: true, slideCount: 7, activeSlideId: slide-1, currentSlide: 1, normalizedUrl: https://luma.com/event/manage/evt-VJMPGd7ynRAUw3V/overview} @ http://127.0.0.1:4174/brand-system.js:677
+[   11945ms] [INFO] [Deck QA] {ok: true, slideCount: 7, activeSlideId: slide-1, currentSlide: 1, normalizedUrl: https://luma.com/event/manage/evt-VJMPGd7ynRAUw3V/overview} @ http://127.0.0.1:4174/brand-system.js:677
+[   12404ms] [ERROR] Failed to load resource: the server responded with a status of 404 (File not found) @ http://127.0.0.1:4174/favicon.ico:0
+[  133342ms] [ERROR] Failed to load resource: net::ERR_CONTENT_LENGTH_MISMATCH @ http://127.0.0.1:4174/earthrise_2160p30.mp4:0
+[  133737ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://127.0.0.1:4174/earthrise_2160p30.mp4:0
+[  134090ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://127.0.0.1:4174/earthrise_2160p30.mp4:0
+[  134499ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://127.0.0.1:4174/earthrise_2160p30.mp4:0
+[  134963ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://127.0.0.1:4174/earthrise_2160p30.mp4:0
+[  135465ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://127.0.0.1:4174/earthrise_2160p30.mp4:0
+[  136019ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://127.0.0.1:4174/earthrise_2160p30.mp4:0
+[  136624ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://127.0.0.1:4174/earthrise_2160p30.mp4:0
+[  137276ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://127.0.0.1:4174/earthrise_2160p30.mp4:0
+[  137980ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://127.0.0.1:4174/earthrise_2160p30.mp4:0
+[  138736ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://127.0.0.1:4174/earthrise_2160p30.mp4:0
+[  139540ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://127.0.0.1:4174/earthrise_2160p30.mp4:0
+[  140394ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://127.0.0.1:4174/earthrise_2160p30.mp4:0
+[  141297ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://127.0.0.1:4174/earthrise_2160p30.mp4:0
+[  142253ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://127.0.0.1:4174/earthrise_2160p30.mp4:0
+[  143257ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://127.0.0.1:4174/earthrise_2160p30.mp4:0
+[  144625ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://127.0.0.1:4174/earthrise_2160p30.mp4:0
+[  145730ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://127.0.0.1:4174/earthrise_2160p30.mp4:0
+[  146885ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://127.0.0.1:4174/earthrise_2160p30.mp4:0
+[  148088ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://127.0.0.1:4174/earthrise_2160p30.mp4:0
+[  149340ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://127.0.0.1:4174/earthrise_2160p30.mp4:0
+[  150642ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://127.0.0.1:4174/earthrise_2160p30.mp4:0
+[  151994ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://127.0.0.1:4174/earthrise_2160p30.mp4:0
+[  153396ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://127.0.0.1:4174/earthrise_2160p30.mp4:0
+[  154848ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://127.0.0.1:4174/earthrise_2160p30.mp4:0
+[  156351ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://127.0.0.1:4174/earthrise_2160p30.mp4:0
+[  164619ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://127.0.0.1:4174/earthrise_2160p30.mp4:0
+[  649361ms] [INFO] [Deck QA] {ok: true, slideCount: 7, activeSlideId: slide-2, currentSlide: 2, normalizedUrl: https://luma.com/event/manage/evt-VJMPGd7ynRAUw3V/overview} @ http://127.0.0.1:4174/brand-system.js:677
+[  651647ms] [INFO] [Deck QA] {ok: true, slideCount: 7, activeSlideId: slide-4, currentSlide: 4, normalizedUrl: https://luma.com/event/manage/evt-VJMPGd7ynRAUw3V/overview} @ http://127.0.0.1:4174/brand-system.js:677
