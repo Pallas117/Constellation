@@ -68,6 +68,8 @@ func Plan(c Class, s Snapshot, remembered string) []Action {
 	return a
 }
 
+const settleDelay = 10 * time.Second
+
 // Effects are the side effects the loop may cause; tests replace them.
 type Effects interface {
 	Notify(title, msg string)
@@ -107,6 +109,13 @@ func (l Loop) Tick(ctx context.Context) State {
 	st := l.Store.Load()
 	snap := l.Prober.Probe(ctx)
 	class, reason := Classify(snap)
+	// A network switch leaves a few seconds with no route or DNS. Confirm a
+	// new failure once before alerting, so every switch isn't an incident.
+	if class.Blocking() && class != st.Class {
+		l.Fx.Sleep(settleDelay)
+		snap = l.Prober.Probe(ctx)
+		class, reason = Classify(snap)
+	}
 	now := l.Fx.Now()
 	fp := Fingerprint(snap.GatewayMAC, snap.PublicIP)
 	if fp != "" {

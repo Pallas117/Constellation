@@ -229,7 +229,7 @@ func TestLoopCaptiveAutoOpensVerifiesAndRemembers(t *testing.T) {
 	portal.GatewayMAC, portal.PublicIP = "aa:bb:cc:dd:ee:ff", "203.0.113.9"
 	ok := fixture(t, "my_sim_ok.json")
 	ok.GatewayMAC, ok.PublicIP = portal.GatewayMAC, portal.PublicIP
-	l, fx := newLoop(t, portal, ok)
+	l, fx := newLoop(t, portal, portal, ok) // probe, settle re-probe, verify
 
 	st := l.Tick(context.Background())
 	if len(fx.opened) != 1 || fx.opened[0] != "http://captive.apple.com" {
@@ -291,7 +291,7 @@ func TestLoopBackoffAndCircuitBreaker(t *testing.T) {
 func TestLoopUserFixCreditedOnRecovery(t *testing.T) {
 	stale := fixture(t, "econnrefused_stale_daemon.json")
 	ok := fixture(t, "my_sim_ok.json")
-	l, fx := newLoop(t, stale, ok)
+	l, fx := newLoop(t, stale, stale, ok)
 	l.Tick(context.Background())
 	fx.now = fx.now.Add(5 * time.Minute)
 	st := l.Tick(context.Background())
@@ -309,5 +309,26 @@ func TestStatusLine(t *testing.T) {
 	st = State{Class: OK, Loc: "MY", CheckedAt: now.Add(-time.Hour), Tailscale: Tailscale{Running: true, ExitNode: "exit-sg-1"}}
 	if got := statusLine(st, now); got != "● OK MY ts:exit-sg-1 (stale 1h0m0s)" {
 		t.Errorf("%q", got)
+	}
+}
+
+func TestNetworkSwitchBlipIsNotAnIncident(t *testing.T) {
+	// Leaving Pitaya for the hotspot: the first probe lands mid-switch.
+	l, fx := newLoop(t, fixture(t, "offline.json"), fixture(t, "my_sim_ok.json"))
+	st := l.Tick(context.Background())
+	if st.Class != OK || len(fx.notes) != 0 || len(l.Store.Incidents()) != 0 {
+		t.Fatalf("blip became an incident: class=%s notes=%v incidents=%v", st.Class, fx.notes, l.Store.Incidents())
+	}
+}
+
+func TestHotspotOnWrongSIMAlertsOnce(t *testing.T) {
+	// Phone's data line flipped to the HK eSIM: persists past the settle check.
+	ok, hk := fixture(t, "my_sim_ok.json"), fixture(t, "hk_esim_403.json")
+	l, fx := newLoop(t, ok, hk, hk)
+	l.Tick(context.Background())
+	fx.now = fx.now.Add(5 * time.Minute)
+	st := l.Tick(context.Background())
+	if st.Class != Region || len(fx.notes) != 1 || fx.notes[0] != "Argo: REGION" {
+		t.Fatalf("class=%s notes=%v", st.Class, fx.notes)
 	}
 }
