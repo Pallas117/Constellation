@@ -341,11 +341,19 @@ func run(ctx context.Context, name string, args ...string) string {
 	return string(out)
 }
 
+// tailscaleCLI finds the CLI even under launchd's minimal PATH. The app's
+// binary acts as the CLI only when invoked as lowercase "tailscale"; as
+// "Tailscale" it tries to launch the GUI and fails outside a login shell.
 func tailscaleCLI() string {
 	if p, err := exec.LookPath("tailscale"); err == nil {
 		return p
 	}
-	return "/Applications/Tailscale.app/Contents/MacOS/Tailscale"
+	for _, p := range []string{"/usr/local/bin/tailscale", "/opt/homebrew/bin/tailscale"} {
+		if _, err := os.Stat(p); err == nil {
+			return p
+		}
+	}
+	return "/Applications/Tailscale.app/Contents/MacOS/tailscale"
 }
 
 func home() string {
