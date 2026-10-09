@@ -5,10 +5,12 @@
   <key>Label</key><string>uk.lightbound.argo</string>
   <key>ProgramArguments</key>
   <array><string>{{ARGO}}</string><string>tick</string></array>
-  <!-- Runs on every network change, every 5 minutes, and at login. -->
+  <!-- Runs on every network change, at login, and every minute; `argo tick` skips
+       the full (data-using) check unless on the iPhone hotspot, something is
+       broken, the gateway changed, or the last check is ~5 minutes old. -->
   <key>WatchPaths</key>
   <array><string>/Library/Preferences/SystemConfiguration</string></array>
-  <key>StartInterval</key><integer>300</integer>
+  <key>StartInterval</key><integer>60</integer>
   <key>RunAtLoad</key><true/>
   <!-- Network changes fire bursts of events; settle before re-running. -->
   <key>ThrottleInterval</key><integer>20</integer>

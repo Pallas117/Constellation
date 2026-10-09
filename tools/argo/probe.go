@@ -29,7 +29,6 @@ type Prober interface {
 
 const (
 	apiURL     = "https://api.anthropic.com/v1/messages" // GET → 405 when reachable
-	webURL     = "https://claude.ai/"
 	traceURL   = "https://www.cloudflare.com/cdn-cgi/trace"
 	captiveURL = "http://captive.apple.com/hotspot-detect.html"
 )
@@ -75,7 +74,6 @@ func (p SystemProber) Probe(ctx context.Context) Snapshot {
 	}
 	s.Captive = probeCaptive(ctx)
 	s.API = httpProbe(ctx, apiURL)
-	s.Web = httpProbe(ctx, webURL)
 	if r, body := httpGet(ctx, traceURL); r.OK {
 		s.PublicIP, s.Loc = parseTrace(body)
 	}

@@ -332,3 +332,26 @@ func TestHotspotOnWrongSIMAlertsOnce(t *testing.T) {
 		t.Fatalf("class=%s notes=%v", st.Class, fx.notes)
 	}
 }
+
+func TestSkipTickOnlyWhenNothingCanHaveChanged(t *testing.T) {
+	now := time.Now()
+	home := State{Class: OK, CheckedAt: now.Add(-time.Minute), Gateway: "192.168.1.254", GatewayMAC: "24:2f:d0:c5:e6:9e"}
+	if !skipTick(home, "192.168.1.254", "24:2f:d0:c5:e6:9e", now) {
+		t.Error("same home network, checked 1 min ago: should skip")
+	}
+	cases := map[string]struct {
+		st      State
+		gw, mac string
+	}{
+		"first run":           {State{}, "192.168.1.254", "x"},
+		"iPhone hotspot":      {State{Class: OK, CheckedAt: now, Gateway: "172.20.10.1"}, "172.20.10.1", ""},
+		"something is broken": {State{Class: Region, CheckedAt: now, Gateway: "192.168.1.254", GatewayMAC: "24:2f:d0:c5:e6:9e"}, "192.168.1.254", "24:2f:d0:c5:e6:9e"},
+		"gateway changed":     {home, "10.0.0.1", "aa:bb:cc:dd:ee:ff"},
+		"5 minutes old":       {State{Class: OK, CheckedAt: now.Add(-5 * time.Minute), Gateway: "192.168.1.254", GatewayMAC: "24:2f:d0:c5:e6:9e"}, "192.168.1.254", "24:2f:d0:c5:e6:9e"},
+	}
+	for name, c := range cases {
+		if skipTick(c.st, c.gw, c.mac, now) {
+			t.Errorf("%s: must run a full check", name)
+		}
+	}
+}

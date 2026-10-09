@@ -86,6 +86,9 @@ func main() {
 		if store.Disabled() {
 			return
 		}
+		if gw, mac := localGateway(ctx); skipTick(store.Load(), gw, mac, time.Now()) {
+			return
+		}
 		err = withLock(store, func() { flush(); loop.Tick(ctx) })
 	case "preflight":
 		os.Exit(preflight())
@@ -120,6 +123,33 @@ func main() {
 		fmt.Fprintln(os.Stderr, "argo:", Mask(err.Error()))
 		os.Exit(1)
 	}
+}
+
+// The LaunchAgent fires every minute. A full probe uses network data, so it
+// only runs when it can matter: on the iPhone hotspot (the phone can switch
+// SIM/data line without the Mac noticing), while something is broken, after
+// the gateway changes, or when the last check is ~5 minutes old.
+const fullCheckEvery = 290 * time.Second
+
+func isIPhoneHotspot(gw string) bool { return gw == "172.20.10.1" } // Personal Hotspot always uses 172.20.10.0/28
+
+func skipTick(st State, gw, mac string, now time.Time) bool {
+	switch {
+	case st.CheckedAt.IsZero(), st.Class.Blocking(), isIPhoneHotspot(gw):
+		return false
+	case gw != st.Gateway || mac != st.GatewayMAC:
+		return false
+	}
+	return now.Sub(st.CheckedAt) < fullCheckEvery
+}
+
+// localGateway is the cheap, local-only part of a probe (no network traffic).
+func localGateway(ctx context.Context) (string, string) {
+	gw, ok := parseDefaultRoute(run(ctx, "route", "-n", "get", "default"))
+	if !ok {
+		return "", ""
+	}
+	return gw, parseARP(run(ctx, "arp", "-n", gw))
 }
 
 func withLock(s Store, f func()) error {

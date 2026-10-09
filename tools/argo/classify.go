@@ -76,7 +76,7 @@ type Snapshot struct {
 	Loc        string      `json:"loc,omitempty"`
 	DNS        Result      `json:"dns"`
 	API        Result      `json:"api"` // api.anthropic.com, direct (no proxy)
-	Web        Result      `json:"web"` // claude.ai; informational, Cloudflare 403s curl-like clients
+	Web        Result      `json:"web"` // legacy fixtures only; claude.ai 403s non-browsers so it is not probed
 	Captive    Result      `json:"captive"`
 	WPAD       bool        `json:"wpad"`
 	PAC        bool        `json:"pac"`

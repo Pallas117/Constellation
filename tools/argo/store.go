@@ -40,6 +40,8 @@ type State struct {
 	BreakerUntil time.Time      `json:"breaker_until,omitempty"`
 	Networks     map[string]Net `json:"networks,omitempty"` // fingerprint → what worked there
 	Tailscale    Tailscale      `json:"tailscale"`
+	Gateway      string         `json:"gateway,omitempty"`
+	GatewayMAC   string         `json:"gateway_mac,omitempty"`
 }
 
 // Net remembers which fix resolved each class on one network.

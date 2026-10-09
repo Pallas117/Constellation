@@ -128,6 +128,7 @@ func (l Loop) Tick(ctx context.Context) State {
 	}
 	prev := st.Class
 	st.Fingerprint, st.Loc, st.CheckedAt, st.Tailscale = fp, snap.Loc, now, snap.Tailscale
+	st.Gateway, st.GatewayMAC = snap.Gateway, snap.GatewayMAC
 	l.say("%s  %s", class, reason)
 
 	if !class.Blocking() {
