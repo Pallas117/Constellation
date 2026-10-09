@@ -112,3 +112,13 @@ test("devices enrolled by another process (npm run mesh:enroll) are picked up an
   server.record(server.byToken(enrolled.token)!, parseReport(okReport)!);
   assert.deepEqual(new MeshStore(file).list().map((d) => d.name), ["existing", "judith"]);
 });
+
+test("onboarding tells the page whether to fetch team status, so viewers never hit a 403", async () => {
+  await withApp(async (base) => {
+    const viewer = await (await fetch(`${base}/onboarding`, { headers: { "x-test-role": "viewer" } })).json();
+    const operator = await (await fetch(`${base}/onboarding`, { headers: { "x-test-role": "operator" } })).json();
+    assert.equal(viewer.canSeeTeam, false);
+    assert.equal(operator.canSeeTeam, true);
+    assert.ok(viewer.steps.length > 0);
+  });
+});

@@ -1,6 +1,6 @@
 import express from "express";
 import path from "node:path";
-import { requireRole, type AuthenticatedRequest } from "../auth.js";
+import { requireRole, roleSatisfies, type AuthenticatedRequest } from "../auth.js";
 import { MeshStore, parseReport } from "./store.js";
 
 const ALLOWED_EXIT_COUNTRIES = new Set(["MY", "SG"]);
@@ -65,8 +65,11 @@ export function createMeshRouters(store = new MeshStore(path.resolve(process.env
 
   /** Mounted after session auth. Team network state is operator-only. */
   const ui = express.Router();
-  ui.get("/onboarding", (_req, res) => {
-    res.json({ ok: true, steps: onboardingSteps() });
+  // canSeeTeam lets the page skip /devices for viewers: a 403 there counts as an
+  // auth failure in CyberTiger, and polling it would auto-block the viewer's IP.
+  ui.get("/onboarding", (req: AuthenticatedRequest, res) => {
+    const canSeeTeam = req.auth ? roleSatisfies(req.auth.role, "operator") : false;
+    res.json({ ok: true, steps: onboardingSteps(), canSeeTeam });
   });
   ui.get("/devices", requireRole("operator"), (_req, res) => {
     res.json({ ok: true, devices: store.list() });

@@ -11,6 +11,8 @@ export default function Login() {
   const navigate = useNavigate();
   const location = useLocation();
 
+  // Deep links return to where they were going; otherwise land by role below.
+  const hasFrom = Boolean(location.state?.from?.pathname);
   const fromPath = location.state?.from?.pathname || "/operator";
   const fromSearch = location.state?.from?.search || location.search || "";
   const from = `${fromPath}${fromSearch}`;
@@ -30,7 +32,11 @@ export default function Login() {
       console.warn("Device registration failed", deviceError);
     }
 
-    navigate(from, { replace: true });
+    // Operators run the console; team members start on Mesh & Network to get
+    // their laptop onto the tailnet with Argo.
+    const role = (data?.user as { role?: string } | undefined)?.role;
+    const landing = hasFrom || role === "operator" || role === "admin" ? from : "/mesh";
+    navigate(landing, { replace: true });
   };
 
   return (

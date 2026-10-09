@@ -44,21 +44,22 @@ async function api(path: string, init: RequestInit = {}) {
 export function useMesh() {
   const [steps, setSteps] = useState<OnboardingStep[]>([]);
   const [devices, setDevices] = useState<MeshDevice[] | null>(null);
-  const [canSeeTeam, setCanSeeTeam] = useState(true);
+  const [canSeeTeam, setCanSeeTeam] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     try {
       const onboarding = await api("/onboarding");
-      if (onboarding.ok) setSteps((await onboarding.json()).steps);
+      if (!onboarding.ok) throw new Error(`Mesh HTTP ${onboarding.status}`);
+      const info = await onboarding.json();
+      setSteps(info.steps);
+      setCanSeeTeam(info.canSeeTeam === true);
+      setError(null);
+      // Viewers never call /devices: its 403s would count as auth failures.
+      if (info.canSeeTeam !== true) return;
       const res = await api("/devices");
-      if (res.status === 403) {
-        setCanSeeTeam(false);
-        return;
-      }
       if (!res.ok) throw new Error(`Mesh HTTP ${res.status}`);
       setDevices((await res.json()).devices);
-      setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Mesh request failed");
     }
