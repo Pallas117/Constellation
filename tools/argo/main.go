@@ -51,7 +51,13 @@ func main() {
 		cmd = os.Args[1]
 	}
 	cfg, store := loadConfig(), DefaultStore()
-	loop := Loop{Prober: SystemProber{ExitNodes: cfg.ExitNodes}, Store: store, Fx: realEffects{}}
+	slack := loadSlack(cfg.Device)
+	loop := Loop{Prober: SystemProber{ExitNodes: cfg.ExitNodes}, Store: store, Fx: realEffects{slack: slack}}
+	flush := func() {
+		if slack != nil {
+			slack.Flush() // deliver alerts queued while offline
+		}
+	}
 	if cfg.GaussURL != "" {
 		loop.Pushers = append(loop.Pushers, func(st State) { pushToGauss(cfg, st) })
 	}
@@ -66,12 +72,12 @@ func main() {
 		err = doctor(ctx, loop.Prober)
 	case "fix":
 		loop.Out = func(s string) { fmt.Println(s) }
-		err = withLock(store, func() { loop.Tick(ctx) })
+		err = withLock(store, func() { flush(); loop.Tick(ctx) })
 	case "tick": // LaunchAgent entry point
 		if store.Disabled() {
 			return
 		}
-		err = withLock(store, func() { loop.Tick(ctx) })
+		err = withLock(store, func() { flush(); loop.Tick(ctx) })
 	case "preflight":
 		os.Exit(preflight())
 	case "run":
@@ -87,6 +93,8 @@ func main() {
 			err = nil
 		}
 		fmt.Println("argo active.")
+	case "slack":
+		err = slackSetup(os.Args[2:], cfg.Device)
 	case "enroll":
 		err = enroll(os.Args[2:])
 	case "install":
@@ -96,7 +104,7 @@ func main() {
 	case "version":
 		fmt.Println("argo", version)
 	default:
-		fmt.Fprintln(os.Stderr, "usage: argo [status|doctor|fix|report|on|off|preflight|run -- cmd|enroll URL DEVICE|install|uninstall|version]")
+		fmt.Fprintln(os.Stderr, "usage: argo [status|doctor|fix|report|on|off|preflight|run -- cmd|slack [test|off]|enroll URL DEVICE|install|uninstall|version]")
 		os.Exit(2)
 	}
 	if err != nil {

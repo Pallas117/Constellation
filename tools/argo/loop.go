@@ -78,13 +78,16 @@ type Effects interface {
 	Now() time.Time
 }
 
-type realEffects struct{}
+type realEffects struct{ slack *Slack }
 
-func (realEffects) Notify(title, msg string) {
+func (f realEffects) Notify(title, msg string) {
 	// Message is passed as an argv item, never interpolated into AppleScript.
 	_ = exec.Command("osascript",
 		"-e", "on run argv", "-e", "display notification (item 2 of argv) with title (item 1 of argv)", "-e", "end run",
 		title, msg).Run()
+	if f.slack != nil {
+		f.slack.Send(title, msg, time.Now())
+	}
 }
 func (realEffects) Open(u string) error   { return exec.Command("open", u).Run() }
 func (realEffects) Sleep(d time.Duration) { time.Sleep(d) }
