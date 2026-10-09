@@ -88,7 +88,9 @@ const allowedOrigins = (process.env.ALLOWED_ORIGINS ?? "http://localhost:8080,ht
   .filter(Boolean);
 const allowedOriginSet = new Set(allowedOrigins);
 
-function isAllowedOrigin(origin: string | null | undefined): boolean {
+const LOOPBACK_HOSTNAMES = new Set(["localhost", "127.0.0.1", "[::1]"]);
+
+export function isAllowedOrigin(origin: string | null | undefined): boolean {
   if (!origin) {
     return true; // Allow requests without Origin header
   }
@@ -97,8 +99,12 @@ function isAllowedOrigin(origin: string | null | undefined): boolean {
     return true;
   }
   // In development, be more permissive
-  if (process.env.NODE_ENV !== "production" && origin?.includes("localhost") || origin?.includes("127.0.0.1")) {
-    return true;
+  if (process.env.NODE_ENV !== "production") {
+    try {
+      return LOOPBACK_HOSTNAMES.has(new URL(origin).hostname);
+    } catch {
+      return false;
+    }
   }
   return false;
 }
@@ -219,6 +225,16 @@ app.use("/api", (req: express.Request, res: express.Response, next: express.Next
 
   next();
 });
+// Argo agents report with a device token, so this sits before session auth.
+const mesh = createMeshRouters();
+app.use("/api/mesh", mesh.agent);
+
+app.use("/api", withAsyncMiddleware(authenticateRequest));
+
+// Mesh & Network page: onboarding for everyone signed in, team status for operators.
+app.use("/api/mesh", mesh.ui);
+
+// RAG endpoints: status for any signed-in user, index/query for operators.
 app.get("/api/rag/status", (_req, res) => {
   res.json({
     ok: true,
@@ -226,7 +242,7 @@ app.get("/api/rag/status", (_req, res) => {
   });
 });
 
-app.post("/api/rag/index", (req, res) => {
+app.post("/api/rag/index", requireRole("operator"), (req, res) => {
   const { dir } = req.body as { dir?: string };
   console.log(`[backend] Indexing directory: ${dir || "default"}`);
   // Mock indexing process
@@ -235,7 +251,7 @@ app.post("/api/rag/index", (req, res) => {
   }, 1000);
 });
 
-app.post("/api/rag/query", async (req: express.Request, res: express.Response) => {
+app.post("/api/rag/query", requireRole("operator"), async (req: express.Request, res: express.Response) => {
   try {
     const { query } = req.body as { query: string };
     if (!query) {
@@ -243,7 +259,7 @@ app.post("/api/rag/query", async (req: express.Request, res: express.Response) =
       return;
     }
 
-    console.log(`[backend] Processing agentic RAG query: "${query}"`);
+    console.log(`[backend] Processing agentic RAG query (${query.length} chars)`);
     const result = await reasoningEngine.generateVerifiedTacticalResponse(query);
 
     res.json({
@@ -259,15 +275,6 @@ app.post("/api/rag/query", async (req: express.Request, res: express.Response) =
     });
   }
 });
-
-// Argo agents report with a device token, so this sits before session auth.
-const mesh = createMeshRouters();
-app.use("/api/mesh", mesh.agent);
-
-app.use("/api", withAsyncMiddleware(authenticateRequest));
-
-// Mesh & Network page: onboarding for everyone signed in, team status for operators.
-app.use("/api/mesh", mesh.ui);
 
 // Device lifecycle endpoints (requires operator session)
 app.use("/api/device", deviceRegistryRouter);

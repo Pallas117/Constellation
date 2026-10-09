@@ -15,7 +15,7 @@ export class NotebookLMClient {
   }
 
   async queryNotebook(query: string): Promise<NotebookLMQueryResponse> {
-    console.log(`[NotebookLM] Backend query for notebook ${this.notebookId}: "${query}"`);
+    console.log(`[NotebookLM] Backend query for notebook ${this.notebookId} (${query.length} chars)`);
     
     if (query.toLowerCase().includes("van allen")) {
       return {
