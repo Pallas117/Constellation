@@ -31,3 +31,6 @@ bun.lockb
 *.njsproj
 *.sln
 *.sw?
+
+# Argo device registry (hashed tokens + last reports)
+data/mesh/
