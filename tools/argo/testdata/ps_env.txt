@@ -1,0 +1,6 @@
+ 7036 /Users/josh/.local/bin/claude --permission-mode auto TMPDIR=/var/folders/x/T/ __CFBundleIdentifier=com.apple.Terminal NODE_OPTIONS=--dns-result-order=ipv4first HTTP_PROXY=http://127.0.0.1:4000 HTTPS_PROXY=http://127.0.0.1:4000 ALL_PROXY=socks5://127.0.0.1:4000 CLAUDE_CODE_ENTRYPOINT=cli
+27950 /Users/josh/.local/bin/claude daemon run --json-path /Users/josh/.claude/daemon.json HTTPS_PROXY=http://127.0.0.1:4000
+31142 /Users/josh/.local/bin/claude agents TMPDIR=/var/folders/x/T/ __CFBundleIdentifier=com.apple.Terminal
+ 8167 claude bg-pty-host --bg-pty-host /tmp/cc-daemon-501/x.sock HTTPS_PROXY=http://127.0.0.1:4000
+  512 /usr/bin/vim notes.txt HTTPS_PROXY=http://127.0.0.1:4000
+  640 /Users/josh/.local/bin/claude agents HTTPS_PROXY=http://corp-proxy.example:8080

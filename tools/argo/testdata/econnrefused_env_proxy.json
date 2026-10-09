@@ -1,0 +1,4 @@
+{"_source":"recorded 2026-10-08: old .zshrc alias forced HTTPS_PROXY=127.0.0.1:4000 with nothing listening",
+ "online":true,"gateway":"192.168.1.254","loc":"MY","dns":{"ok":true},"captive":{"ok":true,"status":200},
+ "api":{"ok":true,"status":405},
+ "proxies":[{"source":"env:HTTPS_PROXY","url":"http://127.0.0.1:4000","alive":false}],"tailscale":{"running":true}}

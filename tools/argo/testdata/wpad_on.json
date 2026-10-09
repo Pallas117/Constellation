@@ -1,0 +1,2 @@
+{"online":true,"gateway":"192.168.1.254","loc":"MY","dns":{"ok":true},"captive":{"ok":true,"status":200},
+ "api":{"ok":true,"status":405},"wpad":true,"tailscale":{"running":true}}

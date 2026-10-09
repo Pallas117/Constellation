@@ -1,0 +1,4 @@
+{"_source":"recorded 2026-10-09 on the Malaysian SIM after the daemon restart",
+ "online":true,"gateway":"192.168.1.254","gateway_mac":"24:2f:d0:c5:e6:9e","public_ip":"2001:d08:f5:363:c1bb:6c13:cf7b:3173","loc":"MY",
+ "dns":{"ok":true},"captive":{"ok":true,"status":200},"api":{"ok":true,"status":405},"web":{"ok":true,"status":403},
+ "tailscale":{"running":true}}

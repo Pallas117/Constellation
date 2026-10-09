@@ -1,0 +1,2 @@
+{"online":true,"gateway":"10.0.0.1","dns":{"ok":true},"captive":{"status":302,"err":"portal"},
+ "api":{"err":"tls_untrusted","detail":"x509: certificate signed by unknown authority"},"tailscale":{}}
