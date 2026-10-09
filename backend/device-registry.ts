@@ -28,7 +28,7 @@ function requireOwnedDevice(req: AuthenticatedRequest, res: express.Response): b
     res.status(401).json({ ok: false, error: "Authentication required" });
     return false;
   }
-  const device = getDevice(req.params.id);
+  const device = getDevice(String(req.params.id));
   if (!device || (device.userId !== userId && !isAdmin(req))) {
     res.status(404).json({ ok: false, error: "Device not found" });
     return false;
