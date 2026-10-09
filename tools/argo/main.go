@@ -33,6 +33,15 @@ type Config struct {
 	GaussURL  string            `json:"gauss_url,omitempty"`  // must be a tailnet address
 	Device    string            `json:"device,omitempty"`     // display name in Gauss
 	ExitNodes map[string]string `json:"exit_nodes,omitempty"` // tailscale hostname → country (MY/SG only)
+	PhoneTo   string            `json:"phone_to,omitempty"`   // your own iMessage handle for phone alerts
+}
+
+func saveConfig(c Config) error {
+	if err := os.MkdirAll(configDir(), 0o700); err != nil {
+		return err
+	}
+	b, _ := json.MarshalIndent(c, "", "  ")
+	return os.WriteFile(filepath.Join(configDir(), "config.json"), b, 0o600)
 }
 
 func configDir() string { return filepath.Join(home(), ".config/argo") }
@@ -51,11 +60,11 @@ func main() {
 		cmd = os.Args[1]
 	}
 	cfg, store := loadConfig(), DefaultStore()
-	slack := loadSlack(cfg.Device)
-	loop := Loop{Prober: SystemProber{ExitNodes: cfg.ExitNodes}, Store: store, Fx: realEffects{slack: slack}}
+	phone := newPhone(cfg.PhoneTo, cfg.Device)
+	loop := Loop{Prober: SystemProber{ExitNodes: cfg.ExitNodes}, Store: store, Fx: realEffects{phone: phone}}
 	flush := func() {
-		if slack != nil {
-			slack.Flush() // deliver alerts queued while offline
+		if phone != nil {
+			phone.Flush() // deliver alerts queued while offline
 		}
 	}
 	if cfg.GaussURL != "" {
@@ -93,8 +102,8 @@ func main() {
 			err = nil
 		}
 		fmt.Println("argo active.")
-	case "slack":
-		err = slackSetup(os.Args[2:], cfg.Device)
+	case "phone":
+		err = phoneSetup(os.Args[2:], cfg)
 	case "enroll":
 		err = enroll(os.Args[2:])
 	case "install":
@@ -104,7 +113,7 @@ func main() {
 	case "version":
 		fmt.Println("argo", version)
 	default:
-		fmt.Fprintln(os.Stderr, "usage: argo [status|doctor|fix|report|on|off|preflight|run -- cmd|slack [test|off]|enroll URL DEVICE|install|uninstall|version]")
+		fmt.Fprintln(os.Stderr, "usage: argo [status|doctor|fix|report|on|off|preflight|run -- cmd|phone <handle>|test|off|enroll URL DEVICE|install|uninstall|version]")
 		os.Exit(2)
 	}
 	if err != nil {
@@ -315,9 +324,8 @@ func enroll(args []string) error {
 	}
 	cfg := loadConfig()
 	cfg.GaussURL, cfg.Device = args[0], args[1]
-	b, _ := json.MarshalIndent(cfg, "", "  ")
 	fmt.Println("enrolled; status will be reported to", args[0])
-	return os.WriteFile(filepath.Join(configDir(), "config.json"), b, 0o600)
+	return saveConfig(cfg)
 }
 
 // ---- install / uninstall ----

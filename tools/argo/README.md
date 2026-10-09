@@ -20,11 +20,11 @@ Optional extras:
 - **Report to Gauss.** An admin creates a token on `/mesh`. Then run
   `argo enroll http://<gauss-tailnet-host>:3001 <device-name>` and paste the token when asked.
   Argo refuses any URL that isn't a tailnet address (`100.64.0.0/10`, `fd7a:115c:a1e0::/48` or `*.ts.net`).
-- **Slack alerts (reach your phone).** Create a Slack incoming webhook for a private channel or your own DM,
-  then run `argo slack` and paste the URL when asked (it's stored `0600` and never typed on the command line).
-  Check it with `argo slack test`; turn it off with `argo slack off`. Only `https://hooks.slack.com/services/…`
-  is accepted, and messages carry just the masked title and reason. Alerts raised while offline are queued
-  (up to 20) and sent on the next tick that has internet.
+- **Alerts on your iPhone.** Run `argo phone +60XXXXXXXXX` (or your Apple ID email), then `argo phone test`.
+  Argo sends an iMessage from this Mac's Messages app to your own handle, so no app or token is needed.
+  macOS asks once to let Argo control Messages. Messages carry only the masked title and reason. Alerts
+  raised while offline are queued (up to 20) and sent on the next tick with internet. `argo phone off`
+  turns them off.
 - **Claude Code status line.** In `~/.claude/settings.json`:
   `"statusLine": {"type": "command", "command": "argo status"}`.
   It reads the cached state only, so it never probes the network and is instant.
@@ -53,7 +53,7 @@ Then remove the `statusLine` and `claude()` lines above if you added them, and r
 | `argo doctor` | Full probe snapshot (secrets masked), the class, and what to do. Changes nothing. |
 | `argo fix` | Runs the loop once in the foreground |
 | `argo report` | Incident counts by class, fix success rate, last 10 events |
-| `argo slack [test\|off]` | Set up, test or turn off Slack alerts |
+| `argo phone <handle>\|test\|off` | Set up, test or turn off iMessage alerts to your iPhone |
 | `argo off` / `argo on` | Pauses or resumes the LaunchAgent ticks |
 | `argo preflight` | Fast local check for dead proxies and stuck Claude daemons (exit 1 if found) |
 | `argo run -- cmd` | Runs `cmd` with dead proxy variables removed |
