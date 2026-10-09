@@ -183,7 +183,7 @@ func TestFingerprintHashesAndGroupsByPrefix(t *testing.T) {
 }
 
 func TestTailnetOnly(t *testing.T) {
-	for _, ok := range []string{"http://100.73.232.74:3001", "https://judith.tail1234.ts.net"} {
+	for _, ok := range []string{"http://100.73.232.74:3001", "https://judith.tail1234.ts.net", "http://127.0.0.1:3001", "http://localhost:3001"} {
 		if _, err := tailnetOnly(ok); err != nil {
 			t.Errorf("%s rejected: %v", ok, err)
 		}

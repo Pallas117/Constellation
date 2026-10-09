@@ -17,7 +17,12 @@ launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/uk.lightbound.argo.plist
 
 Optional extras:
 
-- **Report to Gauss.** An admin creates a token on `/mesh`. Then run
+- **Report to Gauss automatically (one command).** With the Gauss backend running from this repo, run
+  `tools/argo/connect-gauss.sh [device-name] [gauss-url]` (defaults: this Mac's name, `http://127.0.0.1:3001`).
+  It enrolls the device via `npm run mesh:enroll`, pipes the one-time token straight into `argo enroll`
+  (never shown or stored in history), runs a check, and confirms Gauss received it. After that, every Argo check
+  updates the Mesh page. Gauss on this Mac (loopback) or on the tailnet is accepted; nothing else is.
+- **Report to a remote Gauss.** An admin creates a token on `/mesh`. Then run
   `argo enroll http://<gauss-tailnet-host>:3001 <device-name>` and paste the token when asked.
   Argo refuses any URL that isn't a tailnet address (`100.64.0.0/10`, `fd7a:115c:a1e0::/48` or `*.ts.net`).
 - **Alerts on your iPhone.** Run `argo phone +60XXXXXXXXX` (or your Apple ID email), then `argo phone test`.
@@ -52,7 +57,7 @@ Then remove the `statusLine` and `claude()` lines above if you added them, and r
 | `argo status` | One line, e.g. `● OK MY ts:on` or `▲ REGION HK ts:on` |
 | `argo doctor` | Full probe snapshot (secrets masked), the class, and what to do. Changes nothing. |
 | `argo fix` | Runs the loop once in the foreground |
-| `argo report` | Incident counts by class, fix success rate, last 10 events |
+| `argo report` | Incident counts by class, how many needed a fix and were fixed, how many resolved on their own, last 10 events |
 | `argo phone <handle>\|test\|off` | Set up, test or turn off iMessage alerts to your iPhone |
 | `argo off` / `argo on` | Pauses or resumes the LaunchAgent ticks |
 | `argo preflight` | Fast local check for dead proxies and stuck Claude daemons (exit 1 if found) |

@@ -251,7 +251,7 @@ func isProxyVar(k string) bool {
 }
 
 func report(in []Incident) {
-	opens, resolved := map[Class]int{}, 0
+	opens, fixed, selfResolved := map[Class]int{}, 0, 0
 	var classes []string
 	for _, i := range in {
 		switch i.Event {
@@ -261,8 +261,11 @@ func report(in []Incident) {
 			}
 			opens[i.Class]++
 		case "resolved":
-			if i.Fix != "" {
-				resolved++
+			// "wait" means it came back on its own (e.g. network returned): not a fix.
+			if i.Fix == "" || i.Fix == "wait" {
+				selfResolved++
+			} else {
+				fixed++
 			}
 		}
 	}
@@ -277,7 +280,10 @@ func report(in []Incident) {
 		fmt.Println("  (none)")
 		return
 	}
-	fmt.Printf("Fix success rate: %d/%d (%.0f%%)\n", resolved, total, 100*float64(resolved)/float64(total))
+	if needed := total - selfResolved; needed > 0 {
+		fmt.Printf("Fixed: %d/%d incidents that needed a fix (%.0f%%)\n", fixed, needed, 100*float64(fixed)/float64(needed))
+	}
+	fmt.Printf("Resolved on their own (e.g. network came back): %d\n", selfResolved)
 	fmt.Println("Last 10 events:")
 	for _, i := range in[max(0, len(in)-10):] {
 		fmt.Printf("  %s  %-9s %-13s %s%s\n", i.Time.Local().Format("01-02 15:04"), i.Event, i.Class, i.Fix, i.Detail)
@@ -286,25 +292,29 @@ func report(in []Incident) {
 
 // ---- Gauss reporting ----
 
-// tailnetOnly refuses to send status anywhere but a Tailscale address, so a
-// mistyped or hostile URL cannot exfiltrate device state.
+// tailnetOnly refuses to send status anywhere but this Mac (a local Gauss)
+// or a Tailscale address, so a mistyped or hostile URL cannot exfiltrate
+// device state.
 func tailnetOnly(raw string) (*url.URL, error) {
 	u, err := url.Parse(raw)
 	if err != nil {
 		return nil, err
 	}
 	h := u.Hostname()
-	if strings.HasSuffix(h, ".ts.net") {
+	if strings.HasSuffix(h, ".ts.net") || h == "localhost" {
 		return u, nil
 	}
 	if ip := net.ParseIP(h); ip != nil {
+		if ip.IsLoopback() {
+			return u, nil
+		}
 		_, cgnat, _ := net.ParseCIDR("100.64.0.0/10")
 		_, ula, _ := net.ParseCIDR("fd7a:115c:a1e0::/48")
 		if cgnat.Contains(ip) || ula.Contains(ip) {
 			return u, nil
 		}
 	}
-	return nil, fmt.Errorf("gauss_url %q is not a tailnet address (100.64.0.0/10 or *.ts.net)", h)
+	return nil, fmt.Errorf("gauss_url %q is not this Mac or a tailnet address (100.64.0.0/10 or *.ts.net)", h)
 }
 
 // pushToGauss sends a minimal record: no public IP, no MAC, no SSID, no env.

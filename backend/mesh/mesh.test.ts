@@ -96,3 +96,19 @@ test("only MY/SG exit nodes are ever offered", () => {
   const exitStep = onboardingSteps([]).find((s) => s.id === "exit-node")!;
   assert.equal(exitStep.pending, true);
 });
+
+test("devices enrolled by another process (npm run mesh:enroll) are picked up and not overwritten", async () => {
+  const fs = await import("node:fs");
+  const os = await import("node:os");
+  const path = await import("node:path");
+  const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "mesh-")), "devices.json");
+  const server = new MeshStore(file);
+  server.enroll("existing", "u");
+  await new Promise((r) => setTimeout(r, 20)); // distinct mtime
+  const cli = new MeshStore(file);
+  const enrolled = cli.enroll("judith", "local-cli");
+  assert.ok("token" in enrolled);
+  assert.equal(server.byToken(enrolled.token)?.name, "judith");
+  server.record(server.byToken(enrolled.token)!, parseReport(okReport)!);
+  assert.deepEqual(new MeshStore(file).list().map((d) => d.name), ["existing", "judith"]);
+});

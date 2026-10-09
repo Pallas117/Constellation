@@ -71,16 +71,30 @@ export function parseReport(body: unknown, now = new Date()): MeshReport | null 
 /** Device tokens are stored only as SHA-256 hashes; the plain token is shown once at enrollment. */
 export class MeshStore {
   private devices = new Map<string, MeshDevice>();
+  private loadedMtimeMs = -1;
 
   constructor(private readonly file: string | null) {
-    if (file && fs.existsSync(file)) {
-      for (const d of JSON.parse(fs.readFileSync(file, "utf8")) as MeshDevice[]) {
-        this.devices.set(d.name, d);
-      }
+    this.reloadIfChanged();
+  }
+
+  /**
+   * `npm run mesh:enroll` writes the same file from another process while the
+   * server runs; reload it when it changed so new devices work immediately and
+   * the server's next write doesn't drop them.
+   */
+  private reloadIfChanged(): void {
+    if (!this.file || !fs.existsSync(this.file)) return;
+    const mtime = fs.statSync(this.file).mtimeMs;
+    if (mtime === this.loadedMtimeMs) return;
+    this.devices.clear();
+    for (const d of JSON.parse(fs.readFileSync(this.file, "utf8")) as MeshDevice[]) {
+      this.devices.set(d.name, d);
     }
+    this.loadedMtimeMs = mtime;
   }
 
   enroll(name: string, owner: string): { device: MeshDevice; token: string } | { error: string } {
+    this.reloadIfChanged();
     if (!NAME_RE.test(name)) return { error: "Device name must be lowercase letters, digits and dashes" };
     if (this.devices.has(name)) return { error: "Device already enrolled; revoke it first" };
     const token = `argo_${randomBytes(32).toString("base64url")}`;
@@ -91,12 +105,14 @@ export class MeshStore {
   }
 
   revoke(name: string): boolean {
+    this.reloadIfChanged();
     const removed = this.devices.delete(name);
     if (removed) this.persist();
     return removed;
   }
 
   byToken(token: string): MeshDevice | undefined {
+    this.reloadIfChanged();
     const h = hashToken(token);
     for (const d of this.devices.values()) {
       if (d.tokenHash === h) return d;
@@ -110,6 +126,7 @@ export class MeshStore {
   }
 
   list(): Array<Omit<MeshDevice, "tokenHash">> {
+    this.reloadIfChanged();
     return [...this.devices.values()]
       .map(({ tokenHash: _hidden, ...rest }) => rest)
       .sort((a, b) => a.name.localeCompare(b.name));
@@ -121,5 +138,6 @@ export class MeshStore {
     const tmp = `${this.file}.tmp`;
     fs.writeFileSync(tmp, JSON.stringify([...this.devices.values()], null, 2), { mode: 0o600 });
     fs.renameSync(tmp, this.file);
+    this.loadedMtimeMs = fs.statSync(this.file).mtimeMs;
   }
 }
