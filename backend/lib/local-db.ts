@@ -5,7 +5,9 @@ import { fileURLToPath } from "node:url";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const DATA_DIR = path.resolve(__dirname, "../../data/bedrock");
+const DATA_DIR = process.env.GAUSS_BEDROCK_DIR
+  ? path.resolve(process.env.GAUSS_BEDROCK_DIR)
+  : path.resolve(__dirname, "../../data/bedrock");
 const TELEMETRY_FILE = path.join(DATA_DIR, "telemetry.jsonl");
 
 export class BedrockDB {

@@ -32,6 +32,8 @@ class LinkGuardian {
   private start() {
     this.check();
     this.checkInterval = setInterval(() => this.check(), 30000); // Check every 30s
+    // Don't keep the process alive just for link checks (lets importers like tests exit).
+    this.checkInterval.unref();
   }
 
   private async check() {
