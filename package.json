@@ -29,6 +29,7 @@
     "check:security-compliance": "node --env-file-if-exists=.env --import tsx backend/scripts/security-compliance-check.ts",
     "audit:adherence": "node --env-file-if-exists=.env --import tsx backend/scripts/full-adherence-audit.ts",
     "setup:rbac": "node --env-file-if-exists=.env --import tsx backend/scripts/rbac-bootstrap.ts",
+    "auth:migrate": "node --env-file-if-exists=.env --import tsx backend/scripts/auth-migrate.ts",
     "auth:set-role": "node --env-file-if-exists=.env --import tsx backend/scripts/set-role.ts",
     "test:rbac": "node --env-file-if-exists=.env --import tsx backend/scripts/rbac-smoke.ts",
     "test:backend:harness": "node --import tsx --test backend/server.harness.test.ts",
