@@ -34,17 +34,6 @@ function authRequired(): boolean {
   return value !== "false";
 }
 
-function parseAuthorization(value: string | undefined): string | null {
-  if (!value) {
-    return null;
-  }
-  const trimmed = value.trim();
-  if (!trimmed.toLowerCase().startsWith("bearer ")) {
-    return null;
-  }
-  return trimmed.slice(7).trim() || null;
-}
-
 function normalizeRole(value: unknown): AuthRole | null {
   if (typeof value !== "string") {
     return null;
@@ -103,13 +92,12 @@ function forbidden(res: Response, message: string): void {
   res.status(403).json({ error: message });
 }
 
-export function getTokenFromRequest(req: Request): string | null {
-  const authHeader = parseAuthorization(req.header("authorization") ?? undefined);
-  if (authHeader) {
-    return authHeader;
-  }
-  const queryToken = typeof req.query.token === "string" ? req.query.token.trim() : "";
-  return queryToken || null;
+/**
+ * Role comes from the better-auth user record (`role` column, set only by
+ * `npm run auth:set-role`). Anything missing or unknown is a viewer.
+ */
+export function roleFromUser(user: { role?: unknown } | null | undefined): AuthRole {
+  return normalizeRole(user?.role) ?? "viewer";
 }
 
 export async function authenticateRequest(
@@ -139,8 +127,8 @@ export async function authenticateRequest(
       req.auth = {
         userId: sessionResponse.user.id,
         email: sessionResponse.user.email ?? null,
-        role: "admin", // Skunkworks operators get full visualization clearance
-        rawRoles: ["admin"],
+        role: roleFromUser(sessionResponse.user),
+        rawRoles: [roleFromUser(sessionResponse.user)],
         token: sessionResponse.session.token ?? "better-auth-session"
       };
       next();
@@ -179,24 +167,6 @@ export async function authenticateSocket(req: IncomingMessage): Promise<AuthCont
     };
   }
 
-  let token: string | null = null;
-  const url = req.url ? new URL(req.url, "http://localhost") : null;
-  if (url) {
-    const qToken = url.searchParams.get("token");
-    if (qToken && qToken.trim()) {
-      token = qToken.trim();
-    }
-  }
-
-  if (!token) {
-    const authHeader = parseAuthorization(
-      typeof req.headers.authorization === "string" ? req.headers.authorization : undefined,
-    );
-    if (authHeader) {
-      token = authHeader;
-    }
-  }
-
   const headers = new Headers();
   for (const [key, value] of Object.entries(req.headers)) {
     if (typeof value === "string") headers.set(key, value);
@@ -209,8 +179,8 @@ export async function authenticateSocket(req: IncomingMessage): Promise<AuthCont
       return {
         userId: sessionResponse.user.id,
         email: sessionResponse.user.email ?? null,
-        role: "admin",
-        rawRoles: ["admin"],
+        role: roleFromUser(sessionResponse.user),
+        rawRoles: [roleFromUser(sessionResponse.user)],
         token: sessionResponse.session.token ?? "better-auth-session",
       };
     }

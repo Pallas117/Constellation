@@ -13,5 +13,12 @@ export const auth = betterAuth({
     database: sqlite,
     emailAndPassword: {  
         enabled: true
-    }
+    },
+    user: {
+        additionalFields: {
+            // input: false stops users choosing their own role at sign-up.
+            // Change it with `npm run auth:set-role -- <email> <role>`.
+            role: { type: "string", required: false, defaultValue: "viewer", input: false },
+        },
+    },
 });
