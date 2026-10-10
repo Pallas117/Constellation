@@ -22,9 +22,25 @@ defence-grade onboard AI. The repo currently contains:
 | Mesh / devices | Mesh router and store; device registry and auth; Go `argo` agent | `backend/mesh/*`, `backend/services/device-*.ts`, `tools/argo/` |
 | Frontend | React 18 + Vite 7 + three.js 0.169 | `frontend/` |
 
-Nothing in the repo uses CCSDS framing or packet formats, XTCE, or SDLS today
-(grep for `ccsds` and `xtce` found nothing). Every external interface is HTTPS/JSON
-or protobuf.
+Nothing in **this** repo (Constellation) uses CCSDS framing or packet formats,
+XTCE, or SDLS today (grep for `ccsds` and `xtce` found nothing). Every external
+interface here is HTTPS/JSON or protobuf.
+
+CCSDS/cFS work already exists in the sibling `Pallas117/gauss-aurora` repo and is
+tracked in Linear project **Orbital Interoperability (CCSDS + ONNX)**:
+
+| Linear | State (2026-10-10) | What exists |
+|---|---|---|
+| GAU-22 SPACE-001 | Done | CCSDS telemetry framing with executable decoder coverage |
+| GAU-13 | Backlog | `services/cfs-gauss-mhd` host SIL passes; cFS adapter, target build and HIL pending (`docs/architecture/CFS_YAMCS_ECC_INTEGRATION.md`) |
+| GAU-14 | Backlog | Yamcs CCSDS/XTCE replay adapter and mission conformance fixture |
+| GAU-17 / GAU-20 | In Progress | Seven-zone CCSDS/cFS qualification contract and offline replay fixtures |
+| GAU-32 SPACE-SEC-001 | In Review | SDLS, credentials and key management tracked |
+| GAU-74 / GAU-75 | Backlog (M3 gate) | Flight-candidate gate and target-board benchmark of `cfs-gauss-mhd` |
+
+This ADR's recommendation matches that plan (ground-first, flight work gated at
+Product Narrative milestone M3). Steps 1–4 below should **reuse** the
+gauss-aurora decoder and Yamcs fixtures rather than re-implement them here.
 
 The question is whether Gauss should move to NASA cFS, F Prime, or another
 "space-native" stack. If not, what should it adopt instead?
@@ -195,12 +211,12 @@ Gauss needs to be able to:
 
 | # | Step | Effort | Notes |
 |---|---|---|---|
-| 1 | Add `backend/ccsds/` with a Space Packet encoder/decoder (primary header, APID, sequence count, CRC-16 option) and golden-vector tests against `spacepackets` (Python) output | **S** | No new runtime deps required. Write it in TS with `Buffer`, or use a vetted library. |
+| 1 | Add `backend/ccsds/` with a Space Packet encoder/decoder (primary header, APID, sequence count, CRC-16 option) and golden-vector tests against `spacepackets` (Python) output | **S** | Port or share the GAU-22 decoder from gauss-aurora first; only write new TS if it can't be shared. |
 | 2 | Write an XTCE 1.3 generator from `telemetry_descriptor.json`, and add a CI-local test that validates against the OMG XSD | **S-M** | Output: `shared/xtce/gauss.xml`. |
 | 3 | Add an export endpoint or stream: Gauss alerts as Space Packets over TLS (TCP or WebSocket), plus a Yamcs/OpenC3 smoke test in docker-compose | **M** | Proves interoperability with a real MCS. |
 | 4 | Ingest spacecraft HK as Space Packets using a mission-supplied XTCE, with a mapping into the internal proto | **M** | Required before "AI on spacecraft health". |
 | 5 | Refactor `mhd_core.cpp` behind a C ABI (`gauss_mhd.h`) used by both N-API and native tests, and remove `std::cout` and dynamic alloc from the hot path | **S-M** | Pays off for both ground and flight. |
-| 6 | Stand up **NOS3** (or cFS Basecamp to start) locally in Docker, and build a skeleton `GAUSS_INFER` cFS app: SB subscribe, table-loaded thresholds, HK and alert packets | **M** | Use Linux `pc-linux` PSP first. |
+| 6 | Stand up **NOS3** (or cFS Basecamp to start) locally in Docker, and wrap the existing `cfs-gauss-mhd` SIL (GAU-13) as a cFS app: SB subscribe, table-loaded thresholds, HK and alert packets | **M** | Use Linux `pc-linux` PSP first. |
 | 7 | Choose an inference runtime for C (TFLite Micro or ONNX RT C API), quantise the model, and benchmark on target-class hardware (e.g. LEON/ARM in QEMU) | **M-L** | Determinism and memory bounds are the key results. |
 | 8 | Add CFDP model upload (cFS CF) and a table validation callback that checks hash, shape and version | **M** | |
 | 9 | Integrate SDLS-EP via CryptoLib on the NOS3 link, with key management design and a threat model | **L** | Needs a crypto and export review first (section 6). |
