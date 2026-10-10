@@ -1,5 +1,5 @@
 import { fetchEsaReadout, getEsaStatus, type ESAReadout } from "../adapters/esa-hapi.js";
-import { fetchJaxaReadout, getJaxaStatus, type JAXAReadout } from "../adapters/jaxa-erg.js";
+import { getJaxaStatus, probeJaxaCatalog } from "../adapters/jaxa-erg.js";
 import { fetchMmsCdawebSamples, getMmsCdawebStatus } from "../adapters/mms-cdaweb.js";
 import { fetchMmsBurstWindows, getMmsLaspStatus } from "../adapters/mms-lasp.js";
 import { fetchNoaaReadout, getNoaaStatus, type NOAAReadout } from "../adapters/noaa-swpc.js";
@@ -36,8 +36,24 @@ const TICK_MS = 5000;
 const NOAA_MS = 60000;
 const ESA_MS = 10000;
 const JAXA_MS = 60000;
-const MMS_MS = 5000;
+const MMS_MS = 10 * 60 * 1000; // archival L2 product; polling faster gains nothing
 const LASP_MS = 60000;
+
+// Freshness is judged by the age of the measurement itself, not by whether a fetch ran
+// this tick. Beyond NOAA_MAX_AGE_MS a readout is discarded rather than carried forward.
+export const NOAA_FRESH_MS = 10 * 60 * 1000;
+export const NOAA_MAX_AGE_MS = 15 * 60 * 1000; // GAU-15: carried values expire at 15 min
+
+/** 0 live, 1 buffered (measured but ageing), 3 stale (no measurement within the cap). */
+export function freshnessTier(dataTimestamp: string | null, nowMs: number): ResilienceTier {
+  if (!dataTimestamp) return 3;
+  const t = Date.parse(dataTimestamp);
+  if (!Number.isFinite(t)) return 3;
+  const age = nowMs - t;
+  if (age <= NOAA_FRESH_MS) return 0;
+  if (age <= NOAA_MAX_AGE_MS) return 1;
+  return 3;
+}
 
 export class IngestionWorker {
   private timer: NodeJS.Timeout | null = null;
@@ -49,7 +65,6 @@ export class IngestionWorker {
 
   private noaa: NOAAReadout | null = null;
   private esa: ESAReadout | null = null;
-  private jaxa: JAXAReadout | null = null;
   private latestCanonical: CanonicalSpaceWeatherPoint | null = null;
   private latestMms: MMSReconVectorPoint | null = null;
   private latestForecast: AnomalyForecastResponse | null = null;
@@ -119,18 +134,19 @@ export class IngestionWorker {
   }
 
   private blendInputs(timestamp: string): MhdInput {
-    const density = this.noaa?.density ?? this.esa?.densityHint ?? this.latestCanonical?.solarWind.density ?? 5;
+    const density = this.noaa?.density ?? this.latestCanonical?.solarWind.density ?? 5;
 
     let velocity = this.noaa?.velocityGse ?? this.latestCanonical?.velocity ?? { x: -400, y: 0, z: 0, magnitude: 400 };
     if ("magnitude" in velocity) {
       velocity = { x: velocity.x, y: velocity.y, z: velocity.z };
     }
 
+    // IMF comes from the L1 monitor only. Swarm (ESA) measures the geomagnetic main field
+    // in LEO in a local NEC frame, which is not comparable to the solar-wind field.
     const noaaB = this.noaa?.magneticFieldGse;
-    const esaB = this.esa?.magneticFieldGse;
-    const bx = noaaB && esaB ? 0.7 * noaaB.x + 0.3 * esaB.x : noaaB?.x ?? esaB?.x ?? 0;
-    const by = noaaB && esaB ? 0.7 * noaaB.y + 0.3 * esaB.y : noaaB?.y ?? esaB?.y ?? 0;
-    const bz = noaaB && esaB ? 0.7 * noaaB.z + 0.3 * esaB.z : noaaB?.z ?? esaB?.z ?? 0;
+    const bx = noaaB?.x ?? 0;
+    const by = noaaB?.y ?? 0;
+    const bz = noaaB?.z ?? 0;
 
     return {
       timestamp,
@@ -139,7 +155,7 @@ export class IngestionWorker {
       velocityGse: velocity,
       magneticFieldGse: { x: bx, y: by, z: bz },
       kp: this.noaa?.kp ?? this.latestCanonical?.indices.kp ?? 2,
-      dst: this.noaa?.dst ?? this.latestCanonical?.indices.dst,
+      // dst is left to the nowcast's model estimate; no source here measures it.
     };
   }
 
@@ -186,9 +202,7 @@ export class IngestionWorker {
     const nowIso = new Date().toISOString();
     const officialOnly = String(process.env.OFFICIAL_SOURCES_ONLY ?? "false").toLowerCase() === "true";
 
-    // Redundancy 2: Adapter Circuit-Breaker & Synthetic Fallback
     const link = linkGuardian.getStatus();
-    let apiSuccess = false;
 
     // AIRGAP MODE: Skip all external API fetches
     if (link.mode !== "AIRGAP") {
@@ -198,7 +212,6 @@ export class IngestionWorker {
           const result = await fetchNoaaReadout();
           if (result) {
             this.noaa = result;
-            apiSuccess = true;
           }
         }
 
@@ -208,13 +221,11 @@ export class IngestionWorker {
             const result = await fetchEsaReadout();
             if (result) {
               this.esa = result;
-              apiSuccess = true;
             }
           }
 
           if (this.shouldFetch("jaxa", JAXA_MS)) {
-            const result = await fetchJaxaReadout();
-            if (result) this.jaxa = result;
+            await probeJaxaCatalog();
           }
         } else {
           // Official-only mode: skip ESA/JAXA to prioritize NOAA/MMS/GOES-like sources
@@ -247,37 +258,29 @@ export class IngestionWorker {
       }
     }
 
-    let mhdInput = this.blendInputs(nowIso);
-    let tier: ResilienceTier = 0;
-
-    // LEVEL 2 REDUNDANCY: Synthetic High-Entropy Jitter for "Stale" data
-    // If we haven't had a successful API hit recently, we inject organic variation
-    if (!apiSuccess && this.latestCanonical) {
-      const jitter = (amp: number) => (Math.random() - 0.5) * amp;
-      mhdInput.density *= (1 + jitter(0.05));
-      mhdInput.velocityGse.x += jitter(10);
-      mhdInput.magneticFieldGse.z += jitter(0.5);
-      mhdInput.source = "synthetic-nowcast";
-      tier = 2; // Synthetic
-    } else if (!apiSuccess) {
-      tier = 3; // Emergency/No data
-    } else if (this.noaa === null || this.esa === null) {
-      tier = 1; // Buffered/Partial
+    // Never invent variation: tiers describe the age of the real measurement.
+    const tier = freshnessTier(this.noaa?.timestamp ?? null, Date.parse(nowIso));
+    if (tier === 3) {
+      // Past the cap the readout is unknown, not "last known"; inputs fall back to the
+      // previous canonical state and the point is flagged stale.
+      this.noaa = null;
     }
+    const mhdInput = this.blendInputs(nowIso);
 
     const { point, state } = computeCanonicalPoint(
       mhdInput,
       this.previousState,
       this.couplingWindow,
       this.previousDst,
+      this.latestCanonical?.timestamp ?? null,
     );
 
     if (tier > 0) {
-      point.quality.stale = (tier === 3);
-      point.quality.interpolated = true;
+      // Carried forward from an older measurement (tier 1) or from no measurement (tier 3).
+      point.quality.stale = tier === 3;
+      point.quality.extrapolated = true;
       point.quality.lowConfidence = true;
       point.quality.tier = tier;
-      if (tier === 2) point.source = "synthetic-nowcast";
     }
 
     this.previousState = state;

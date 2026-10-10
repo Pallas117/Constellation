@@ -80,7 +80,7 @@ export const HUD = ({ data }: HUDProps) => {
         />
         <DataRow
           label="PROTON_FLUX"
-          value={data.protonFlux}
+          value={data.protonFlux ?? 'N/A'}
           unit="PFU"
         />
       </div>
