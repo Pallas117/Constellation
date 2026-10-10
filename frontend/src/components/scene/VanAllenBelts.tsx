@@ -134,10 +134,10 @@ export const VanAllenBelts = ({ visible, intensity, compression = 1, highFidelit
         varying float vRadialDist;
         
         void main() {
-          // NASA SVS color gradient: green → yellow → red
-          vec3 lowColor = vec3(0.0, 1.0, 0.53);    // #00FF88 bright green
-          vec3 midColor = vec3(1.0, 0.93, 0.0);    // #FFEE00 yellow
-          vec3 highColor = vec3(1.0, 0.27, 0.0);   // #FF4400 orange-red
+          // Brand: inner-belt protons are amber, heating to Sun under high flux
+          vec3 lowColor = vec3(0.45, 0.30, 0.10);   // dim amber
+          vec3 midColor = vec3(0.906, 0.694, 0.290); // #E7B14A amber
+          vec3 highColor = vec3(0.761, 0.333, 0.165); // #C2552A sun
           
           // Color based on intensity
           vec3 color = mix(
@@ -164,7 +164,7 @@ export const VanAllenBelts = ({ visible, intensity, compression = 1, highFidelit
           
           float alpha = equatorBand * radialBand * flow * pulse * (0.5 + uIntensity * 0.5);
           
-          gl_FragColor = vec4(color * (0.8 + equatorBand * 0.4), alpha * 0.7);
+          gl_FragColor = vec4(color * (0.8 + equatorBand * 0.4), alpha * 0.45);
         }
       `,
       transparent: true,
@@ -201,10 +201,10 @@ export const VanAllenBelts = ({ visible, intensity, compression = 1, highFidelit
         varying float vRadialDist;
         
         void main() {
-          // Outer belt: more blue-shifted colors for electron population
-          vec3 lowColor = vec3(0.0, 0.8, 0.9);     // Cyan
-          vec3 midColor = vec3(0.2, 1.0, 0.6);     // Bright green
-          vec3 highColor = vec3(1.0, 0.8, 0.0);    // Golden yellow
+          // Brand: outer-belt electrons are signal lime, whitening under high flux
+          vec3 lowColor = vec3(0.35, 0.45, 0.0);    // dim lime
+          vec3 midColor = vec3(0.8, 1.0, 0.0);      // #CCFF00 signal lime
+          vec3 highColor = vec3(0.92, 1.0, 0.45);    // hot lime, stays on-signal
           
           vec3 color = mix(
             lowColor,
@@ -229,7 +229,7 @@ export const VanAllenBelts = ({ visible, intensity, compression = 1, highFidelit
           
           float alpha = equatorBand * radialBand * flow * pulse * (0.4 + uIntensity * 0.6);
           
-          gl_FragColor = vec4(color * (0.7 + equatorBand * 0.5), alpha * 0.6);
+          gl_FragColor = vec4(color * (0.7 + equatorBand * 0.5), alpha * 0.35);
         }
       `,
       transparent: true,

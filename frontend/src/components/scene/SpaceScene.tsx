@@ -7,13 +7,15 @@
 
 'use client'; // Mark as client component (for Next.js compatibility, if migrated)
 
-import { Suspense, useRef, useEffect } from 'react';
-import { Canvas, useFrame, useThree } from '@react-three/fiber';
+import { Suspense, useRef, useEffect, useMemo } from 'react';
+import { Canvas, useThree } from '@react-three/fiber';
 import { OrbitControls, Stars, PerspectiveCamera } from '@react-three/drei';
 import * as THREE from 'three';
 import { Earth } from './Earth';
 import { VanAllenBelts } from './VanAllenBelts';
 import { Magnetosphere } from './Magnetosphere';
+import { dipoleTiltRad, type SolarWindDrivers } from '@/lib/physics/geomagnetic';
+import { useNow } from '@/hooks/useNow';
 import { OrbitRings } from './OrbitRings';
 import { RadiationDataOverlay } from './RadiationDataOverlay';
 import { RadiationDataOverlayLOD } from './RadiationDataOverlayLOD';
@@ -60,7 +62,26 @@ interface SpaceSceneProps {
   encodingMode?: 'color' | 'size' | 'both';
   /** MMS tetrahedron-derived reconnection vectors */
   mmsVectors?: MMSReconVectorPoint[];
+  /** Live solar wind drivers for the field-line model (Bz/By nT, Pdyn nPa, Kp) */
+  solarWindDrivers?: Partial<SolarWindDrivers>;
+  /** Camera preset; change `viewRequest` to re-apply the same preset. */
+  view?: SceneView;
+  viewRequest?: number;
 }
+
+export type SceneView = 'overview' | 'dayside' | 'meridian' | 'tail' | 'polar';
+
+type Vec = [number, number, number];
+/** Camera position and orbit target per preset (scene units = Earth radii, Sun at +x). */
+export const SCENE_VIEWS: Record<SceneView, { position: Vec; target: Vec; label: string }> = {
+  overview: { position: [6, 5, 18], target: [0, 0, 0], label: 'Overview' },
+  dayside: { position: [26, 4, 6], target: [3, 0, 0], label: 'From the Sun' },
+  meridian: { position: [-4, 2, 44], target: [-6, 0, 0], label: 'Noon–midnight' },
+  tail: { position: [-34, 9, 16], target: [-12, 0, 0], label: 'Magnetotail' },
+  polar: { position: [-1.5, 24, 3], target: [0, 0, 0], label: 'North pole' },
+};
+
+const DEFAULT_CAMERA: Vec = SCENE_VIEWS.overview.position;
 
 const SceneContent = ({
   layers,
@@ -77,17 +98,29 @@ const SceneContent = ({
   encodingMode = 'color',
   mmsVectors,
   highFidelity,
+  solarWindDrivers,
+  view = 'overview',
+  viewRequest = 0,
 }: Omit<SpaceSceneProps, 'canvasRef'>) => {
   const groupRef = useRef<THREE.Group>(null);
+  // GSM frame: the dipole tilts toward/away from the Sun with season and UT.
+  const epochMs = useNow(5 * 60_000);
+  const dipoleTilt = useMemo(() => dipoleTiltRad(epochMs), [epochMs]);
   const controlsRef = useRef<any>(null);
   const { camera } = useThree();
 
-  useFrame((state) => {
-    // Subtle scene rotation for dynamic feel
-    if (groupRef.current) {
-      groupRef.current.rotation.y = Math.sin(state.clock.elapsedTime * 0.1) * 0.1;
+  // Apply camera presets on request.
+  useEffect(() => {
+    const preset = SCENE_VIEWS[view] ?? SCENE_VIEWS.overview;
+    camera.position.set(...preset.position);
+    camera.lookAt(...preset.target);
+    if (controlsRef.current) {
+      controlsRef.current.target.set(...preset.target);
+      controlsRef.current.update();
     }
-  });
+  }, [camera, view, viewRequest]);
+
+  // No decorative scene sway: the Sun stays fixed on +x so geometry reads as data.
 
   // Keyboard navigation for globe control
   useEffect(() => {
@@ -162,10 +195,12 @@ const SceneContent = ({
           event.preventDefault();
           // Reset view
           if (camera instanceof THREE.PerspectiveCamera) {
-            camera.position.set(0, 3, 12);
+            camera.position.set(...DEFAULT_CAMERA);
             camera.lookAt(0, 0, 0);
             camera.updateProjectionMatrix();
           }
+          controlsRef.current.target.set(0, 0, 0);
+          controlsRef.current.update();
           if (groupRef.current) {
             groupRef.current.rotation.set(0, 0, 0);
           }
@@ -179,12 +214,12 @@ const SceneContent = ({
 
   return (
     <>
-      <PerspectiveCamera makeDefault position={[0, 3, 12]} fov={45} />
+      <PerspectiveCamera makeDefault position={DEFAULT_CAMERA} fov={45} />
       <OrbitControls
         ref={controlsRef}
         enablePan={false}
         minDistance={5}
-        maxDistance={30}
+        maxDistance={70}
         enableDamping
         dampingFactor={0.05}
         rotateSpeed={0.5}
@@ -218,17 +253,24 @@ const SceneContent = ({
       <group ref={groupRef}>
         <Earth visible={layers.earth} />
         
-        <VanAllenBelts 
-          visible={layers.belts} 
-          intensity={0.5 + beltIntensity * 0.5}
-          compression={magnetopauseCompression}
-          highFidelity={Boolean(highFidelity)}
-        />
-        
+        {/* Belts are symmetric about the dipole axis: tilt them with it. */}
+        <group rotation={[0, 0, -dipoleTilt]}>
+          <VanAllenBelts
+            visible={layers.belts}
+            intensity={0.5 + beltIntensity * 0.5}
+            compression={magnetopauseCompression}
+            highFidelity={Boolean(highFidelity)}
+          />
+        </group>
+
         <Magnetosphere
           visible={layers.magnetosphere || layers.fieldLines}
+          showSurfaces={layers.magnetosphere}
+          showFieldLines={layers.fieldLines}
           compression={magnetopauseCompression}
           reconnectionStrength={reconnectionStrength}
+          drivers={solarWindDrivers}
+          epochMs={epochMs}
         />
 
         <MHDWaves visible={layers.mhdWaves !== false} />
