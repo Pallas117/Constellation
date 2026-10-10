@@ -77,10 +77,33 @@ function propagationDelaySeconds(speedKmS: number): number {
   return (L1_DISTANCE_KM / clamped);
 }
 
-function estimateDst(kp: number, bzNt: number, epsilon: number): number {
-  // Burton-like proxy for nowcast feed; deterministic and bounded.
-  const driving = -0.3 * Math.min(0, bzNt) - 0.04 * kp - 1.2e-7 * epsilon;
-  return clamp(-20 + driving * 100, -400, 80);
+const DST_REINIT_GAP_HOURS = 3;
+
+/**
+ * Dst model estimate from O'Brien & McPherron (2000): the pressure-corrected ring
+ * current Dst-star relaxes toward Q * tau, d(Dst-star)/dt = Q - Dst-star / tau, integrated exactly over
+ * the step. Without a recent previous value it starts at equilibrium, which errs toward
+ * reporting a storm rather than missing one. This is a model output, not a measurement.
+ */
+export function estimateDst(
+  speedKmS: number,
+  bzGsmNt: number,
+  pdynNpa: number,
+  previousDst: number | null,
+  dtHours: number | null,
+): number {
+  const vbs = Math.max(0, speedKmS) * Math.max(0, -bzGsmNt) * 1e-3; // mV/m
+  const q = vbs > 0.49 ? -4.4 * (vbs - 0.49) : 0; // nT/h
+  const tau = 2.4 * Math.exp(9.74 / (4.69 + vbs)); // h
+  const pressureTerm = 7.26 * Math.sqrt(Math.max(0, pdynNpa)) - 11;
+  const equilibrium = q * tau;
+
+  let dstStar = equilibrium;
+  if (previousDst != null && dtHours != null && dtHours >= 0 && dtHours <= DST_REINIT_GAP_HOURS) {
+    const prevStar = previousDst - pressureTerm;
+    dstStar = equilibrium + (prevStar - equilibrium) * Math.exp(-dtHours / tau);
+  }
+  return clamp(dstStar + pressureTerm, -1500, 100);
 }
 
 function inducedElectricFieldMvM(velocityKmS: Vector3, magneticNt: Vector3): Vector3 {
@@ -146,15 +169,9 @@ function conservativeUpdate(prev: MhdState | null, input: MhdInput): MhdState {
     alpha * gsmMagnetic.z + (1 - alpha) * prev.magneticField.z,
   );
 
-  // Divergence projection in a lumped-cell approximation.
-  const divBApprox = (magneticField.x + magneticField.y + magneticField.z) / 3;
-  const projectedB = vec(
-    magneticField.x - divBApprox,
-    magneticField.y - divBApprox,
-    magneticField.z - divBApprox,
-  );
-
-  return { rho, velocity, magneticField: projectedB };
+  // No "divergence projection": divergence is undefined for a single point vector, and
+  // subtracting the component mean shifted Bz by up to several nT (flipping its sign).
+  return { rho, velocity, magneticField };
 }
 
 function uncertainty(value: number, rel: number, floor = 0): UncertaintyEnvelope {
@@ -182,6 +199,7 @@ export function computeCanonicalPoint(
   previousState: MhdState | null,
   couplingWindow: number[],
   previousDst: number | null,
+  previousTimestamp: string | null = null,
 ): { point: CanonicalSpaceWeatherPoint; state: MhdState } {
   const state = conservativeUpdate(previousState, input);
   const speed = magnitude(state.velocity);
@@ -192,8 +210,10 @@ export function computeCanonicalPoint(
   const newell = newellCoupling(speed, bt, state.magneticField.y, state.magneticField.z);
   const epsilon = akasofuEpsilon(speed, bt, state.magneticField.y, state.magneticField.z);
   const kp = clamp(input.kp ?? 2, 0, 9);
-  const dst = input.dst ?? estimateDst(kp, state.magneticField.z, epsilon);
-  const dstSlope = previousDst == null ? 0 : (dst - previousDst) * 12;
+  const dtMs = previousTimestamp ? Date.parse(input.timestamp) - Date.parse(previousTimestamp) : Number.NaN;
+  const dtHours = Number.isFinite(dtMs) ? dtMs / 3_600_000 : null;
+  const dst = input.dst ?? estimateDst(speed, state.magneticField.z, pdyn, previousDst, dtHours);
+  const dstSlope = previousDst == null || !dtHours || dtHours <= 0 ? 0 : (dst - previousDst) / dtHours;
 
   const sorted = [...couplingWindow].sort((a, b) => a - b);
   const p75 = sorted.length > 0 ? sorted[Math.floor(0.75 * (sorted.length - 1))] : newell;

@@ -7,6 +7,9 @@ import {
   transformApiResponse,
   validateSpaceWeatherResponse,
   applyDecay,
+  canonicalToInterpolated,
+  unavailableData,
+  DATA_EXPIRY_MS,
 } from '@/lib/dataProcessing';
 import { useConnectivity } from './useConnectivity';
 
@@ -16,27 +19,10 @@ import { useConnectivity } from './useConnectivity';
 
 const UPDATE_INTERVAL = 60000; // 1 minute
 const INTERPOLATION_DURATION = 10000; // 10 seconds for smooth transitions
-const FALLBACK_TO_MOCK_AFTER = 3; // Consecutive failures before mock mode
+const MARK_UNAVAILABLE_AFTER = 3; // Consecutive failures before showing "no data"
 
-// ============================================================================
-// MOCK DATA GENERATOR (fallback)
-// ============================================================================
-
-const generateMockData = (): InterpolatedData => ({
-  solarWind: {
-    speed: 380 + Math.random() * 100 + Math.sin(Date.now() / 30000) * 30,
-    density: 4 + Math.random() * 4 + Math.sin(Date.now() / 25000) * 1.5,
-    pressure: 2 + Math.random() * 2,
-  },
-  imfBz: -3 + Math.random() * 10 + Math.sin(Date.now() / 20000) * 2,
-  kpIndex: Math.min(9, Math.max(0, Math.round(2.5 + Math.random() * 3 + Math.sin(Date.now() / 60000) * 1.5))),
-  protonFlux: 0.8 + Math.random() * 3 + Math.sin(Date.now() / 40000) * 0.5,
-  electronFlux: 1500 + Math.random() * 3000 + Math.sin(Date.now() / 35000) * 400,
-  timestamp: new Date(),
-  isStale: false,
-  source: 'mock',
-  tier: 0,
-});
+// No simulated fallback: without a live feed the UI shows "unavailable" (see
+// unavailableData), never generated values presented as measurements.
 
 // ============================================================================
 // CUSTOM HOOK
@@ -52,15 +38,15 @@ export interface UseSpaceWeatherReturn {
 }
 
 export const useSpaceWeather = (): UseSpaceWeatherReturn => {
-  const [data, setData] = useState<InterpolatedData>(generateMockData());
+  const [data, setData] = useState<InterpolatedData>(unavailableData());
   const [visualParams, setVisualParams] = useState<VisualizationParams>(() => 
-    calculateVisualizationParams(generateMockData())
+    calculateVisualizationParams(unavailableData())
   );
   const [lastUpdate, setLastUpdate] = useState<Date | null>(null);
   const [error, setError] = useState<string | null>(null);
   
   const interpolatorRef = useRef<EMAInterpolator>(
-    new EMAInterpolator(generateMockData(), INTERPOLATION_DURATION)
+    new EMAInterpolator(unavailableData(), INTERPOLATION_DURATION)
   );
   const animationRef = useRef<number>();
   const failureCountRef = useRef(0);
@@ -83,13 +69,15 @@ export const useSpaceWeather = (): UseSpaceWeatherReturn => {
 
       const responseData = await response.json();
 
-      const validated = validateSpaceWeatherResponse(responseData);
-      
-      if (!validated) {
+      // The backend serves CanonicalSpaceWeatherPoint; the legacy edge-function shape is
+      // still accepted.
+      const legacy = validateSpaceWeatherResponse(responseData);
+      const transformed = canonicalToInterpolated(responseData) ?? (legacy ? transformApiResponse(legacy) : null);
+
+      if (!transformed) {
         throw new Error('Invalid response format');
       }
 
-      const transformed = transformApiResponse(validated);
       interpolatorRef.current.setTarget(transformed);
       
       failureCountRef.current = 0;
@@ -98,8 +86,8 @@ export const useSpaceWeather = (): UseSpaceWeatherReturn => {
       setError(null);
       
       console.log('[SpaceWeather] Data updated:', {
-        source: validated.flags.source,
-        stale: validated.flags.stale,
+        source: transformed.source,
+        stale: transformed.isStale,
         solarWind: transformed.solarWind.speed.toFixed(0) + ' km/s',
         bz: transformed.imfBz.toFixed(1) + ' nT',
         kp: transformed.kpIndex,
@@ -110,10 +98,10 @@ export const useSpaceWeather = (): UseSpaceWeatherReturn => {
       const errorMsg = err instanceof Error ? err.message : 'Unknown error';
       console.error('[SpaceWeather] Fetch error:', errorMsg);
       
-      if (failureCountRef.current >= FALLBACK_TO_MOCK_AFTER) {
-        console.log('[SpaceWeather] Switching to mock data mode');
-        interpolatorRef.current.setTarget(generateMockData());
-        setError('Using simulated data (API unavailable)');
+      if (failureCountRef.current >= MARK_UNAVAILABLE_AFTER) {
+        console.log('[SpaceWeather] Live data unavailable');
+        interpolatorRef.current.setTarget(unavailableData());
+        setError('Live data unavailable');
       } else {
         setError(`Fetch failed: ${errorMsg}`);
       }
@@ -173,11 +161,15 @@ export const useSpaceWeather = (): UseSpaceWeatherReturn => {
   // RETURN
   // ============================================================================
 
+  // Expiry is judged by the measurement's own timestamp, so a value that stops updating
+  // goes stale even if no fetch has failed yet.
+  const effective = applyDecay(data, Date.now() - data.timestamp.getTime());
+
   return {
-    data,
+    data: effective,
     visualParams,
-    isStale: data.tier === 3 || (data.isStale && data.tier === 3),
-    source: data.source,
+    isStale: effective.isStale || effective.tier === 3,
+    source: effective.source,
     lastUpdate,
     error,
   };
