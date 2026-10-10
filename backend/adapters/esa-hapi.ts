@@ -2,6 +2,8 @@ import { vec } from "../physics/coordinates.js";
 import type { DataSource, SourceStatus } from "../types.js";
 
 const SOURCE: DataSource = "esa-hapi";
+const HAPI_BASE = "https://vires.services/hapi";
+const DATASET = "SW_FAST_MAGA_LR_1B";
 
 export interface ESAReadout {
   timestamp: string;
@@ -31,11 +33,12 @@ async function fetchHapiDataset(
   start: string,
   stop: string,
 ): Promise<unknown> {
-  const url = new URL("https://vires.services/hapi/data");
-  url.searchParams.set("id", dataset);
+  const url = new URL(`${HAPI_BASE}/data`);
+  url.searchParams.set("dataset", dataset);
   url.searchParams.set("parameters", parameters);
-  url.searchParams.set("time.min", start);
-  url.searchParams.set("time.max", stop);
+  url.searchParams.set("start", start);
+  url.searchParams.set("stop", stop);
+  url.searchParams.set("format", "json");
 
   const response = await fetch(url, {
     signal: AbortSignal.timeout(8000),
@@ -46,7 +49,28 @@ async function fetchHapiDataset(
   if (!response.ok) {
     throw new Error(`ESA HAPI returned HTTP ${response.status}`);
   }
-  return response.json();
+  return parseHapiJson(await response.text());
+}
+
+/** VirES emits bare NaN for missing samples, which is not valid JSON; read those as null. */
+export function parseHapiJson(text: string): unknown {
+  return JSON.parse(text.replace(/\bNaN\b/g, "null"));
+}
+
+/** Last time covered by the dataset; requests beyond it fail with HAPI 1405. */
+async function fetchStopDate(dataset: string): Promise<Date> {
+  const url = new URL(`${HAPI_BASE}/info`);
+  url.searchParams.set("dataset", dataset);
+  const response = await fetch(url, { signal: AbortSignal.timeout(8000), headers: { Accept: "application/json" } });
+  if (!response.ok) {
+    throw new Error(`ESA HAPI info returned HTTP ${response.status}`);
+  }
+  const info = parseHapiJson(await response.text()) as { stopDate?: unknown };
+  const stop = typeof info.stopDate === "string" ? new Date(info.stopDate) : null;
+  if (!stop || Number.isNaN(stop.getTime())) {
+    throw new Error("ESA HAPI info has no stopDate");
+  }
+  return stop;
 }
 
 /**
@@ -72,25 +96,24 @@ export function parseNecRow(row: unknown): { timestamp: string; n: number; e: nu
 
 export async function fetchEsaReadout(): Promise<ESAReadout | null> {
   try {
-    const now = new Date();
-    const start = new Date(now.getTime() - 15 * 60 * 1000);
-
-    // Prefer stable near-real-time Swarm magnetic field series.
-    const data = (await fetchHapiDataset(
-      "SW_OPER_MAGA_LR_1B",
-      "B_NEC",
-      toIso(start),
-      toIso(now),
-    )) as { data?: unknown[] };
+    // FAST is Swarm's lowest-latency L1b product (hours behind, vs days for OPER). Query
+    // the last 15 minutes the dataset actually covers.
+    const stopDate = await fetchStopDate(DATASET);
+    const stop = new Date(Math.min(Date.now(), stopDate.getTime()));
+    const start = new Date(stop.getTime() - 15 * 60 * 1000);
+    const data = (await fetchHapiDataset(DATASET, "B_NEC", toIso(start), toIso(stop))) as { data?: unknown[] };
 
     if (!Array.isArray(data.data) || data.data.length === 0) {
       throw new Error("ESA HAPI returned no rows");
     }
 
-    const row = data.data[data.data.length - 1];
-    const parsed = parseNecRow(row);
+    // Trailing samples are often NaN-filled; use the latest complete one.
+    let parsed: ReturnType<typeof parseNecRow> = null;
+    for (let i = data.data.length - 1; i >= 0 && !parsed; i -= 1) {
+      parsed = parseNecRow(data.data[i]);
+    }
     if (!parsed) {
-      throw new Error("ESA row format invalid");
+      throw new Error("ESA HAPI returned no complete B_NEC sample");
     }
     const { timestamp, n, e, c } = parsed;
 
@@ -99,7 +122,7 @@ export async function fetchEsaReadout(): Promise<ESAReadout | null> {
       lastSeen: timestamp,
       latencySeconds: Math.max(0, (Date.now() - Date.parse(timestamp)) / 1000),
       healthy: true,
-      message: "ESA HAPI OK",
+      message: `ESA HAPI OK (Swarm A FAST, ${((Date.now() - Date.parse(timestamp)) / 3600000).toFixed(1)} h behind)`,
     };
 
     return {

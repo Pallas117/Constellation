@@ -55,33 +55,54 @@ test("dipole tilt follows season and UT (Hapgood 1992)", () => {
   assert.ok(juneMorning > 10 && juneMorning < 18, `June 05UT tilt ${juneMorning}`);
 });
 
-test("NOAA: velocity comes from bulk speed, not the temperature column; mag is rotated from GSM (GAU-48, GAU-51, GAU-56)", async () => {
-  const ts = "2026-10-10 12:00:00.000";
-  const readout = await withFetch((url) => {
-    if (url.includes("plasma-1-day")) {
-      return { status: 200, body: [["time_tag", "density", "speed", "temperature"], [ts, "4.2", "512.3", "123456"]] };
-    }
-    if (url.includes("mag-1-day")) {
+// Shapes follow the live SWPC RTSW feeds (newest first, one record per L1 spacecraft).
+function rtswRoute(opts: { activeWind?: boolean } = {}): Route {
+  const activeWind = opts.activeWind ?? true;
+  return (url) => {
+    if (url.includes("rtsw_wind_1m")) {
       return {
         status: 200,
-        body: [["time_tag", "bx_gsm", "by_gsm", "bz_gsm", "lon_gsm", "lat_gsm", "bt"], [ts, "1.0", "-2.0", "-6.0", "0", "0", "6.4"]],
+        body: [
+          { time_tag: "2026-10-10T04:44:03", active: false, source: "IMAP", proton_speed: 999, proton_density: 99, proton_temperature: 74855, proton_vx_gse: null, proton_vy_gse: null, proton_vz_gse: null },
+          { time_tag: "2026-10-10T04:43:00", active: activeWind, source: "SOLAR1", proton_speed: 413.4, proton_density: 7.84, proton_temperature: 123456, proton_vx_gse: -413.4, proton_vy_gse: 18, proton_vz_gse: -15.2 },
+          { time_tag: "2026-10-10T04:42:00", active: true, source: "SOLAR1", proton_speed: null, proton_density: null },
+        ],
       };
     }
-    if (url.includes("planetary-k-index")) return { status: 200, body: [["time_tag", "Kp"], [ts, "4.33"]] };
+    if (url.includes("rtsw_mag_1m")) {
+      return {
+        status: 200,
+        body: [
+          { time_tag: "2026-10-10T04:45:01", active: false, source: "IMAP", bx_gse: 50, by_gse: 50, bz_gse: 50 },
+          { time_tag: "2026-10-10T04:44:00", active: true, source: "SOLAR1", bx_gse: -6.7, by_gse: -3.01, bz_gse: -3.91, bx_gsm: -6.7, by_gsm: -1, bz_gsm: -5 },
+        ],
+      };
+    }
+    if (url.includes("planetary-k-index")) {
+      return { status: 200, body: [{ time_tag: "2026-10-09T21:00:00", Kp: 3 }, { time_tag: "2026-10-10T00:00:00", Kp: 2.33 }] };
+    }
     if (url.includes("ovation")) return { status: 200, body: {} };
     return undefined;
-  }, fetchNoaaReadout);
+  };
+}
 
+test("NOAA: RTSW active spacecraft, native GSE, UTC time, no temperature-as-velocity (GAU-48, GAU-51, GAU-56)", async () => {
+  const readout = await withFetch(rtswRoute(), fetchNoaaReadout);
   assert.ok(readout);
-  assert.deepEqual(
-    { x: readout.velocityGse.x, y: readout.velocityGse.y, z: readout.velocityGse.z },
-    { x: -512.3, y: 0, z: 0 },
-  );
-  assert.equal(readout.timestamp, "2026-10-10T12:00:00.000Z", "SWPC time_tag is UTC");
-  const expected = gsmToGse(vec(1, -2, -6), readout.timestamp);
-  close(readout.magneticFieldGse.z, expected.z);
-  close(readout.magneticFieldGse.x, 1); // X is common to GSM and GSE
+  assert.equal(readout.spacecraft, "SOLAR1", "inactive IMAP record is not used");
+  assert.deepEqual({ ...readout.velocityGse }, { x: -413.4, y: 18, z: -15.2 });
+  assert.deepEqual({ ...readout.magneticFieldGse }, { x: -6.7, y: -3.01, z: -3.91 }, "GSE components, not GSM");
+  assert.equal(readout.density, 7.84);
+  assert.equal(readout.kp, 2.33, "object-form Kp rows are read");
+  assert.equal(readout.timestamp, "2026-10-10T04:43:00.000Z", "older of wind/mag, read as UTC");
   assert.equal("dst" in readout, false, "Dst must not be synthesised from Kp");
+});
+
+test("NOAA: without an active wind record the newest complete one is used", async () => {
+  const readout = await withFetch(rtswRoute({ activeWind: false }), fetchNoaaReadout);
+  assert.ok(readout);
+  assert.equal(readout.spacecraft, "IMAP");
+  assert.deepEqual({ ...readout.velocityGse }, { x: -999, y: 0, z: 0 }, "bulk speed along -X when no GSE vector");
 });
 
 test("ESA: parses nested and flat HAPI B_NEC rows and rejects malformed ones (GAU-50)", () => {
@@ -98,17 +119,28 @@ test("ESA: parses nested and flat HAPI B_NEC rows and rejects malformed ones (GA
   assert.equal(parseNecRow([123, [1, 2, 3]]), null);
 });
 
-test("ESA: a real nested HAPI response yields an NEC readout, not GSE (GAU-50, GAU-51)", async () => {
-  const readout = await withFetch(
-    (url) =>
-      url.includes("vires.services")
-        ? { status: 200, body: { data: [["2026-10-10T12:00:00Z", [21000, -1500, 42000]]] } }
-        : undefined,
-    fetchEsaReadout,
-  );
+test("ESA: queries within dataset coverage, survives bare NaN, takes last complete row (GAU-50, GAU-51)", async () => {
+  let dataUrl = "";
+  const readout = await withFetch((url) => {
+    if (url.includes("vires.services/hapi/info")) {
+      return { status: 200, body: '{"HAPI": "3.0", "stopDate": "2026-10-09T21:41:19Z", "x": NaN}' };
+    }
+    if (url.includes("vires.services/hapi/data")) {
+      dataUrl = url;
+      return {
+        status: 200,
+        body: '{"data":[["2026-10-09T21:33:18.000Z", [18085.1, 2155.0, 37300.4]], ["2026-10-09T21:33:19.000Z", [18085.1283, 2154.9995, 37300.3859]], ["2026-10-09T21:41:18.000Z", [NaN, NaN, NaN]]]}',
+      };
+    }
+    return undefined;
+  }, fetchEsaReadout);
   assert.ok(readout);
-  assert.equal(readout.magneticFieldNec.z, 42000);
+  assert.equal(readout.timestamp, "2026-10-09T21:33:19.000Z");
+  assert.equal(readout.magneticFieldNec.z, 37300.3859);
   assert.equal("magneticFieldGse" in readout, false);
+  const q = new URL(dataUrl).searchParams;
+  assert.equal(q.get("dataset"), "SW_FAST_MAGA_LR_1B");
+  assert.equal(q.get("stop"), "2026-10-09T21:41:19Z", "never asks beyond stopDate (HAPI 1405)");
 });
 
 test("ingest: Swarm main-field values never leak into the IMF blend", () => {
@@ -132,32 +164,49 @@ test("ingest: Swarm main-field values never leak into the IMF blend", () => {
   assert.equal(input.dst, undefined);
 });
 
-function mmsRoute(failing: Set<string>, empty = false): Route {
+// Shapes follow the live CDAWeb HAPI: FGM survey @0 (B, 4 components incl. |B|) and
+// MEC ephemeris at 30 s cadence.
+function mmsRoute(opts: { failing?: Set<string>; empty?: boolean; fill?: boolean } = {}): Route {
   return (url) => {
     if (!url.includes("cdaweb.gsfc.nasa.gov")) return undefined;
-    const id = new URL(url).searchParams.get("id") ?? "";
+    const u = new URL(url);
+    const id = u.searchParams.get("id") ?? "";
     const sc = id.slice(0, 4).toLowerCase();
-    if (failing.has(sc)) return { status: 503, body: "unavailable" };
-    if (empty) return { status: 200, body: { data: [] } };
-    const value = id.includes("FGM") ? [5, -3, 10] : [60000, 10000, 5000];
-    return { status: 200, body: { data: [["2026-10-10T12:00:00Z", value]] } };
+    if (u.pathname.endsWith("/info")) return { status: 200, body: { stopDate: "2026-08-16T23:59:59Z" } };
+    if (opts.failing?.has(sc)) return { status: 503, body: "unavailable" };
+    if (opts.empty) return { status: 200, body: { data: [] } };
+    if (id.includes("FGM")) {
+      const b = opts.fill ? [-1e31, -1e31, -1e31, -1e31] : [5, -3, 10, 12];
+      return { status: 200, body: { data: [["2026-08-16T23:59:58.959Z", b]] } };
+    }
+    return {
+      status: 200,
+      body: { data: [["2026-08-16T23:59:30.000Z", [-47300, 10300, -43900]], ["2026-08-17T00:00:00.000Z", [-47400, 10280, -43920]]] },
+    };
   };
 }
 
 test("MMS: one spacecraft HTTP error keeps the other three (GAU-53)", async () => {
-  const samples = await withFetch(mmsRoute(new Set(["mms2"])), fetchMmsCdawebSamples);
+  const samples = await withFetch(mmsRoute({ failing: new Set(["mms2"]) }), fetchMmsCdawebSamples);
   assert.deepEqual(
     samples.map((s) => s.id),
     ["mms1", "mms3", "mms4"],
   );
   const status = getMmsCdawebStatus();
   assert.equal(status.healthy, true);
-  assert.match(status.message ?? "", /3\/4.*1 failed/);
+  assert.match(status.message ?? "", /3\/4.*archival.*1 failed/);
+});
+
+test("MMS: native GSM B, MEC position interpolated to the B sample time", async () => {
+  const [s] = await withFetch(mmsRoute(), fetchMmsCdawebSamples);
+  assert.deepEqual({ ...s.magneticFieldNt }, { x: 5, y: -3, z: 10 }, "|B| component is dropped");
+  const f = 28.959 / 30;
+  close(s.positionGsmRe.x * 6371.2, -47300 + (-100) * f, 1e-6);
 });
 
 test("MMS: zero samples does not advance lastSeen to now (GAU-54)", async () => {
   const before = getMmsCdawebStatus().lastSeen;
-  const samples = await withFetch(mmsRoute(new Set(), true), fetchMmsCdawebSamples);
+  const samples = await withFetch(mmsRoute({ empty: true }), fetchMmsCdawebSamples);
   assert.equal(samples.length, 0);
   const status = getMmsCdawebStatus();
   assert.equal(status.lastSeen, before);
@@ -165,13 +214,7 @@ test("MMS: zero samples does not advance lastSeen to now (GAU-54)", async () => 
 });
 
 test("MMS: fill-valued components are rejected rather than zeroed", async () => {
-  const samples = await withFetch(
-    (url) =>
-      url.includes("cdaweb.gsfc.nasa.gov")
-        ? { status: 200, body: { data: [["2026-10-10T12:00:00Z", [-1e31, -1e31, -1e31]]] } }
-        : undefined,
-    fetchMmsCdawebSamples,
-  );
+  const samples = await withFetch(mmsRoute({ fill: true }), fetchMmsCdawebSamples);
   assert.equal(samples.length, 0);
 });
 
@@ -240,4 +283,18 @@ test("ingest tick: no jitter between fetches, and an over-age readout is dropped
     assert.equal(c.quality.stale, true);
     assert.equal(worker.noaa, null);
   });
+});
+
+test("latest feed: points older than 15 min are served flagged stale (GAU-15)", async () => {
+  const { withFreshness, LATEST_MAX_AGE_MS } = await import("../lib/freshness.js");
+  const now = Date.parse("2026-10-10T12:00:00Z");
+  const point = {
+    timestamp: new Date(now - 60_000).toISOString(),
+    quality: { outlier: false, stale: false, interpolated: false, extrapolated: false, lowConfidence: false, tier: 0 },
+  } as unknown as Parameters<typeof withFreshness>[0];
+  assert.equal(withFreshness(point, now), point);
+  const old = withFreshness({ ...point, timestamp: new Date(now - LATEST_MAX_AGE_MS - 1).toISOString() }, now);
+  assert.equal(old.quality.stale, true);
+  assert.equal(old.quality.tier, 3);
+  assert.equal(point.quality.stale, false, "input not mutated");
 });
