@@ -15,7 +15,8 @@
 # learning job (03:00, or on next wake) rebuilds the nowcast dataset from the
 # data collected so far and records a new model version; an awake guard keeps
 # the Mac awake with the lid closed, except on battery at or below
-# GAUSS_AWAKE_MIN_BATTERY% (default 20), where it lets the Mac sleep again.
+# GAUSS_AWAKE_MIN_BATTERY% (default 10, the mesh's critical-battery level), where it
+# lets the Mac sleep again.
 # The site is built for GAUSS_PUBLIC_URL (default: this Mac's tailnet name over
 # HTTP, encrypted by Tailscale; never exposed to the internet).
 # Logs: ~/Library/Logs/gauss/. User scope only; the one sudo step is `awake setup`,
@@ -30,7 +31,9 @@ LABELS=(uk.lightbound.gauss-backend uk.lightbound.gauss-frontend uk.lightbound.g
 SERVICES=(uk.lightbound.gauss-backend uk.lightbound.gauss-frontend)
 SUDOERS=/etc/sudoers.d/gauss-awake
 AWAKE_OFF="$HOME/Library/Application Support/Gauss/awake-off"
-AWAKE_MIN_BATTERY="${GAUSS_AWAKE_MIN_BATTERY:-20}"
+# Same floor the mesh uses for its own devices: below 10% a device is flagged
+# (backend/services/device-registry.ts) and swapped out (device-swap-manager.ts).
+AWAKE_MIN_BATTERY="${GAUSS_AWAKE_MIN_BATTERY:-10}"
 
 tailnet_url() {
   local name
