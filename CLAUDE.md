@@ -10,6 +10,7 @@
 - Roles (each includes the ones below): user = live visualisation; staff = + Mesh onboarding of own devices; operator = + operator console and team status; admin = + manage roles and any device. New accounts are `user`.
 - Public API routes are an explicit allowlist (`PUBLIC_READ_PATHS` in backend/server.ts). Never let the UI poll a route the role can't use: CyberTiger counts 401/403s and auto-blocks the IP.
 - `tools/argo/` is a standalone Go module (`go test ./...`); see its README.
+- Always-on local services: `scripts/ops/gauss-services.sh install|status|restart|uninstall` runs the backend (:3001) and built frontend (:8080) as LaunchAgents from a dedicated checkout (`Gauss Aurora.worktrees/live`), logs in `~/Library/Logs/gauss/`. To deploy new code there: check out the commit in that worktree, `npm ci`, then `install` again.
 
 ## Working rules
 - Branch from `main`; for Linear issues use the issue's branch name (e.g. `jzwnathan/gau-6-…`) so the PR links to it.
