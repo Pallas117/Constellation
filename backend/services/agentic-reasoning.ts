@@ -1,5 +1,5 @@
-import { NotebookLMClient, type NotebookLMQueryResponse } from './notebooklm-client.js';
-import { GraphDBClient, type GraphTrace } from './graphdb-client.js';
+import { NotebookLMClient } from './notebooklm-client.js';
+import { GraphDBClient } from './graphdb-client.js';
 import { linkGuardian } from '../lib/connectivity.js';
 
 export interface ReasoningResult {
@@ -9,6 +9,7 @@ export interface ReasoningResult {
 }
 
 export class AgenticReasoningEngine {
+  // Retrieval clients for the grounded implementation; unused until it exists (GAU-96).
   private notebookApi: NotebookLMClient;
   private graphDb: GraphDBClient;
 
@@ -20,55 +21,27 @@ export class AgenticReasoningEngine {
   async generateVerifiedTacticalResponse(query: string): Promise<ReasoningResult> {
     console.log(`[ReasoningEngine] FLARE / CoVe Loop starting for: "${query}"`);
 
-    // 1. STEP-BACK PROMPTING
-    const stepBackQuery = `What are the fundamental physics rules for: ${query}?`;
-    
-    // 2. RETRIEVAL & LINK STATE
-    const link = linkGuardian.getStatus();
-    let isOffline = link.mode === "AIRGAP";
-    
-    // FLARE Initial Draft
-    let draftAnswer = "Initiating multi-hop causal traceback. ";
-    const traces: string[] = [];
-
-    try {
-      if (!isOffline) {
-        // FLARE Hook: Mid-generation query pulling from multiple data planes
-        const [fundamentals, state] = await Promise.all([
-          this.notebookApi.queryNotebook(stepBackQuery),
-          this.graphDb.traceAnomalyPath(query.toLowerCase().includes("debris") ? "debris_conjunction" : "solar_system_state")
-        ]);
-        
-        draftAnswer += `Anomaly mapped via knowledge graph spanning [${state?.path.join(" -> ") || 'Sun -> Earth'}]. `;
-        traces.push(`GraphDB_${state?.path.join('_') || 'Solar_System_State'}`);
-        
-        // CoVe (Chain-of-Verification) Loop
-        // Secondary model scores the semantic claims against NotebookLM ground truth
-        const verifiedFacts = "Historical ML distributions correlate current metrics with severe orbital drag escalation.";
-        draftAnswer += `${verifiedFacts} [Trace: NotebookLM_${fundamentals?.answer.substring(0,10) || 'Physics'}_Vol1]. `;
-        traces.push(`NotebookLM_${fundamentals?.answer.substring(0,10) || 'Physics'}_Vol1`);
-        
-        if (state && state.confidence > 0.8) {
-           draftAnswer += `\n\n[VERIFICATION PASS] Graph propagation confirms >80% risk of impact on terminal node ${state.path[state.path.length - 1]}. [Trace: GraphDB_Path_Validation] `;
-           traces.push(`GraphDB_Path_Validation`);
-        }
-      }
-    } catch (err) {
-      console.warn("[ReasoningEngine] Cloud retrieval failed. Activating DeepLens Offline Fallback.");
-      isOffline = true;
+    // No grounded retrieval exists yet: NotebookLMClient is a stub that returns canned
+    // text, and GraphDBClient.traceAnomalyPath yields raw nodes/edges with no path or
+    // confidence. Until both are real, the only honest answer is an explicit unknown,
+    // whatever the link state. Never assemble a "verified" assessment from canned text
+    // or invent a confidence (GAU-96).
+    if (linkGuardian.getStatus().mode === "AIRGAP") {
+      return this.seekDeepLensTruth(query);
     }
+    return this.notGrounded();
+  }
 
-    if (isOffline) {
-        // DeepLens Offline Keyword Routing
-        return this.seekDeepLensTruth(query);
-    }
-
-    const finalAnswer = draftAnswer + `\n\nRecommendation: Maintain high-frequency telemetry and prepare safe-mode protocols.`;
-
+  /**
+   * Online, but there is nothing real to ground an answer in yet, so the answer is an
+   * explicit unknown rather than an assessment.
+   */
+  private notGrounded(): ReasoningResult {
     return {
-      answer: finalAnswer,
-      traces,
-      confidence: 0.96
+      answer:
+        "[NOT GROUNDED] Unable to assess: grounded retrieval (knowledge graph and document store) is not connected yet, so no answer can be grounded. Status is unknown, not nominal. Consult live telemetry directly.",
+      traces: [],
+      confidence: 0,
     };
   }
 
