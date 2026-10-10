@@ -33,7 +33,7 @@ const App = () => (
                 <Route 
                   path="/operator" 
                   element={
-                    <ProtectedRoute>
+                    <ProtectedRoute minRole="operator">
                       <OperatorDashboard />
                     </ProtectedRoute>
                   } 
@@ -43,7 +43,7 @@ const App = () => (
                 <Route 
                   path="/protection" 
                   element={
-                    <ProtectedRoute>
+                    <ProtectedRoute minRole="operator">
                       <ProtectionDashboard />
                     </ProtectedRoute>
                   } 
@@ -51,7 +51,7 @@ const App = () => (
                 <Route
                   path="/mesh"
                   element={
-                    <ProtectedRoute>
+                    <ProtectedRoute minRole="staff">
                       <MeshDashboard />
                     </ProtectedRoute>
                   }

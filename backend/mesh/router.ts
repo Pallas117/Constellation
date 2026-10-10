@@ -75,7 +75,14 @@ export function createMeshRouters(store = new MeshStore(path.resolve(process.env
   const isOperator = (req: AuthenticatedRequest) => (req.auth ? roleSatisfies(req.auth.role, "operator") : false);
 
   ui.get("/onboarding", requireRole("staff"), (req: AuthenticatedRequest, res) => {
-    res.json({ ok: true, steps: onboardingSteps(), canEnroll: true, canSeeTeam: isOperator(req) });
+    res.json({
+      ok: true,
+      steps: onboardingSteps(),
+      me: req.auth!.userId,
+      canEnroll: true,
+      canSeeTeam: isOperator(req),
+      canRevokeAny: isAdmin(req),
+    });
   });
   ui.get("/devices", requireRole("staff"), (req: AuthenticatedRequest, res) => {
     const devices = store.list();

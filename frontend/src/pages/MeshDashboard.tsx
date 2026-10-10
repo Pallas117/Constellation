@@ -37,7 +37,7 @@ function ago(iso?: string) {
 }
 
 const MeshDashboard = () => {
-  const { steps, devices, canSeeTeam, error, enroll, revoke } = useMesh();
+  const { steps, devices, me, canEnroll, canSeeTeam, canRevokeAny, error, enroll, revoke } = useMesh();
   const [name, setName] = useState("");
   const [issued, setIssued] = useState<{ name: string; token: string } | null>(null);
   const [enrollError, setEnrollError] = useState<string | null>(null);
@@ -66,7 +66,7 @@ const MeshDashboard = () => {
             </p>
           </div>
           <Button asChild variant="outline">
-            <Link to="/operator">Back to operator console</Link>
+            {canSeeTeam ? <Link to="/operator">Back to operator console</Link> : <Link to="/">Live visualisation</Link>}
           </Button>
         </div>
       </section>
@@ -74,15 +74,17 @@ const MeshDashboard = () => {
       <section className="grid gap-6 px-4 pb-10 sm:px-8 xl:grid-cols-[1.4fr_1fr]">
         <Card className="min-w-0">
           <CardHeader>
-            <CardTitle>Devices</CardTitle>
+            <CardTitle>{canSeeTeam ? "Team devices" : "Your devices"}</CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
-            {!canSeeTeam && <p className="text-sm text-muted-foreground">Team status is visible to operators and admins.</p>}
-            {error && <p className="text-sm text-destructive">{error}</p>}
-            {canSeeTeam && devices && devices.length === 0 && (
-              <p className="text-sm text-muted-foreground">No devices enrolled yet. An admin can add one below.</p>
+            {canEnroll && !canSeeTeam && (
+              <p className="text-sm text-muted-foreground">You see the devices you enrolled. Operators see the whole team.</p>
             )}
-            {canSeeTeam && devices && devices.length > 0 && (
+            {error && <p className="text-sm text-destructive">{error}</p>}
+            {canEnroll && devices && devices.length === 0 && (
+              <p className="text-sm text-muted-foreground">No devices yet. Enroll this laptop below.</p>
+            )}
+            {canEnroll && devices && devices.length > 0 && (
               <div className="overflow-x-auto">
                 <table className="w-full text-sm">
                   <thead className="text-left text-xs uppercase tracking-wider text-muted-foreground">
@@ -112,9 +114,11 @@ const MeshDashboard = () => {
                           <td className="py-3 pr-4">{d.last ? (d.last.tailscale ? d.last.exitNode || "on" : "off") : "—"}</td>
                           <td className="py-3 pr-4 text-muted-foreground">{ago(d.last?.receivedAt)}</td>
                           <td className="py-3 text-right">
-                            <Button size="sm" variant="ghost" onClick={() => void revoke(d.name)}>
-                              Revoke
-                            </Button>
+                            {(canRevokeAny || d.owner === me) && (
+                              <Button size="sm" variant="ghost" onClick={() => void revoke(d.name)}>
+                                Revoke
+                              </Button>
+                            )}
                           </td>
                         </tr>
                       );
@@ -124,9 +128,9 @@ const MeshDashboard = () => {
               </div>
             )}
 
-            {canSeeTeam && (
+            {canEnroll && (
               <div className="space-y-2 border-t border-border/60 pt-4">
-                <p className="text-sm font-medium">Enroll a device (admin)</p>
+                <p className="text-sm font-medium">Enroll a device</p>
                 <div className="flex flex-col gap-2 sm:flex-row">
                   <Input placeholder="device name, e.g. judith" value={name} onChange={(e) => setName(e.target.value)} />
                   <Button onClick={() => void onEnroll()} disabled={!name.trim()}>

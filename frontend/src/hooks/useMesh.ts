@@ -22,6 +22,7 @@ export interface MeshReport {
 export interface MeshDevice {
   name: string;
   enrolledAt: string;
+  owner?: string;
   last?: MeshReport;
 }
 
@@ -44,7 +45,10 @@ async function api(path: string, init: RequestInit = {}) {
 export function useMesh() {
   const [steps, setSteps] = useState<OnboardingStep[]>([]);
   const [devices, setDevices] = useState<MeshDevice[] | null>(null);
+  const [canEnroll, setCanEnroll] = useState(false);
   const [canSeeTeam, setCanSeeTeam] = useState(false);
+  const [canRevokeAny, setCanRevokeAny] = useState(false);
+  const [me, setMe] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
@@ -53,10 +57,14 @@ export function useMesh() {
       if (!onboarding.ok) throw new Error(`Mesh HTTP ${onboarding.status}`);
       const info = await onboarding.json();
       setSteps(info.steps);
+      setCanEnroll(info.canEnroll === true);
       setCanSeeTeam(info.canSeeTeam === true);
+      setCanRevokeAny(info.canRevokeAny === true);
+      setMe(typeof info.me === "string" ? info.me : null);
       setError(null);
-      // Viewers never call /devices: its 403s would count as auth failures.
-      if (info.canSeeTeam !== true) return;
+      // Only call /devices when allowed: 403s count as auth failures in CyberTiger.
+      // Staff get their own devices back; operators get the whole team.
+      if (info.canEnroll !== true) return;
       const res = await api("/devices");
       if (!res.ok) throw new Error(`Mesh HTTP ${res.status}`);
       setDevices((await res.json()).devices);
@@ -91,5 +99,5 @@ export function useMesh() {
     [refresh],
   );
 
-  return { steps, devices, canSeeTeam, error, enroll, revoke };
+  return { steps, devices, me, canEnroll, canSeeTeam, canRevokeAny, error, enroll, revoke };
 }
