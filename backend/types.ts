@@ -128,6 +128,7 @@ export interface CanonicalSpaceWeatherPoint {
 
 export interface MMSTetrahedronQuality {
   valid: boolean;
+  /** Tetrahedron volume, km^3. */
   volume: number;
   conditionNumber: number;
   divCurlRatio: number;
@@ -142,6 +143,7 @@ export interface MMSReconVectorPoint {
     y: number;
     z: number;
   };
+  /** Curlometer current density, nA/m^2. */
   currentDensity: {
     x: number;
     y: number;

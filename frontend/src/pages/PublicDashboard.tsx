@@ -105,7 +105,7 @@ export default function PublicDashboard() {
             </div>
             <div className="flex items-baseline gap-2">
               <span className="text-4xl font-bold tracking-tighter">
-                {Math.round(data.solarWind.speed)}
+                {data.source === 'unavailable' ? '—' : Math.round(data.solarWind.speed)}
               </span>
               <span className="text-white/40 font-medium">km/s</span>
             </div>
@@ -130,7 +130,7 @@ export default function PublicDashboard() {
             </div>
             <div className="flex items-baseline gap-2">
               <span className="text-4xl font-bold tracking-tighter">
-                {data.kpIndex.toFixed(1)}
+                {data.source === 'unavailable' ? '—' : data.kpIndex.toFixed(1)}
               </span>
               <span className="text-white/40 font-medium">/ 9.0</span>
             </div>
@@ -158,12 +158,16 @@ export default function PublicDashboard() {
             </div>
             <div className="flex items-baseline gap-2">
               <span className="text-4xl font-bold tracking-tighter">
-                {data.imfBz > 0 ? '+' : ''}{data.imfBz.toFixed(1)}
+                {data.source === 'unavailable' ? '—' : `${data.imfBz > 0 ? '+' : ''}${data.imfBz.toFixed(1)}`}
               </span>
               <span className="text-white/40 font-medium">nT</span>
             </div>
             <p className="mt-4 text-xs text-white/50 leading-relaxed">
-              {data.imfBz < -5 
+              {data.source === 'unavailable'
+                ? "Live solar wind data is currently unavailable."
+                : data.isStale
+                ? "Last measurement is more than 15 minutes old."
+                : data.imfBz < -5 
                 ? "Southward IMF is enabling magnetic reconnection and potential storm activity." 
                 : "IMF is stable. Magnetosphere is currently shielded form major solar wind coupling."}
             </p>
@@ -183,8 +187,10 @@ export default function PublicDashboard() {
           </div>
           <div className="flex items-center gap-3 pointer-events-auto hover:text-white transition-colors cursor-pointer">
              <div className="flex items-center gap-2 bg-white/5 border border-white/10 backdrop-blur-md px-3 py-1.5 rounded-full">
-               <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
-               <span className="text-xs font-medium text-white/80 tracking-widest">LIVE</span>
+               <span className={`w-2 h-2 rounded-full ${data.isStale ? 'bg-amber-500' : 'bg-emerald-500 animate-pulse'}`}></span>
+               <span className="text-xs font-medium text-white/80 tracking-widest">
+                 {data.source === 'unavailable' ? 'NO DATA' : data.isStale ? 'STALE' : 'LIVE'}
+               </span>
              </div>
           </div>
         </motion.div>
