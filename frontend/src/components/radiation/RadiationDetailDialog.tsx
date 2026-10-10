@@ -29,6 +29,7 @@ import {
   getDoseRateFromMeasurement,
   getMagneticFieldFromMeasurement,
   formatSourceName,
+  type DoseRate,
 } from '@/lib/utils/radiation-calculations';
 import type { RadiationMeasurement, RadiationDataPoint, RadiationTimeSeries } from '@/lib/types/radiation';
 import { createTimeSeries } from '@/lib/utils/radiation';
@@ -186,10 +187,13 @@ export function RadiationDetailDialog({
     return flux.toExponential(2);
   };
 
-  const formatDoseRate = (dose: number) => {
-    if (dose < 0.001) return `${(dose * 1000).toFixed(3)} µSv/h`;
-    if (dose < 1) return `${(dose * 1000).toFixed(2)} µSv/h`;
-    return `${dose.toFixed(3)} mSv/h`;
+  // Gy(Si)/h: absorbed dose in silicon, not a tissue dose equivalent (Sv)
+  const formatDoseRate = (dose: DoseRate | null) => {
+    if (!dose) return 'N/A';
+    const grayPerHour = dose.grayPerSecond * 3600;
+    if (grayPerHour === 0) return '0';
+    if (grayPerHour < 1e-3 || grayPerHour >= 1e3) return grayPerHour.toExponential(2);
+    return grayPerHour.toPrecision(3);
   };
 
   const formatBField = (b: number) => {
@@ -250,9 +254,9 @@ export function RadiationDetailDialog({
                   <TableCell>particles/(cm²·s·sr·MeV)</TableCell>
                 </TableRow>
                 <TableRow>
-                  <TableCell className="font-medium">Dose Rate</TableCell>
+                  <TableCell className="font-medium">Absorbed Dose Rate (Si)</TableCell>
                   <TableCell className="font-mono">{formatDoseRate(detailData.doseRate)}</TableCell>
-                  <TableCell>mSv/h</TableCell>
+                  <TableCell>Gy(Si)/h</TableCell>
                 </TableRow>
                 <TableRow>
                   <TableCell className="font-medium">L-shell</TableCell>
@@ -302,6 +306,11 @@ export function RadiationDetailDialog({
                 )}
               </TableBody>
             </Table>
+            <p className="mt-2 text-xs text-muted-foreground">
+              Absorbed dose rate in a thin, unshielded Si layer: Φ = 4π·j·ΔE (isotropic flux) and
+              NIST PSTAR/ESTAR electronic stopping power. Not a tissue dose. N/A where no Si
+              stopping-power table applies (alpha, heavy ions) or the energy bin is outside it.
+            </p>
           </div>
 
           {/* Chart with Suspense */}

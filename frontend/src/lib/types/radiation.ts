@@ -12,6 +12,11 @@ export type OrbitType = 'LEO' | 'MEO' | 'GEO';
  */
 export type ParticleType = 'proton' | 'electron' | 'alpha' | 'heavy_ion';
 
+/**
+ * Radiation alert level (thresholds and sources in getAlertLevel, lib/utils/radiation.ts)
+ */
+export type AlertLevel = 'low' | 'moderate' | 'high' | 'severe';
+
 export type RadiationZone =
   | 'inner-belt-low'
   | 'inner-belt-high'
@@ -170,7 +175,8 @@ export interface RealTimeRadiationSnapshot {
     maxFlux: number;
     minFlux: number;
     activeOrbits: OrbitType[];
-    alertLevel: 'low' | 'moderate' | 'high' | 'severe';
+    /** Null when no measurement covers a channel with a cited threshold */
+    alertLevel: AlertLevel | null;
   };
 }
 
