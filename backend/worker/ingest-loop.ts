@@ -36,7 +36,7 @@ const TICK_MS = 5000;
 const NOAA_MS = 60000;
 const ESA_MS = 10000;
 const JAXA_MS = 60000;
-const MMS_MS = 5000;
+const MMS_MS = 10 * 60 * 1000; // archival L2 product; polling faster gains nothing
 const LASP_MS = 60000;
 
 // Freshness is judged by the age of the measurement itself, not by whether a fetch ran
@@ -272,6 +272,7 @@ export class IngestionWorker {
       this.previousState,
       this.couplingWindow,
       this.previousDst,
+      this.latestCanonical?.timestamp ?? null,
     );
 
     if (tier > 0) {
