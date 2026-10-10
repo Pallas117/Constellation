@@ -3,6 +3,8 @@ import { useSpaceWeather } from '@/hooks/useSpaceWeather';
 import { GaussGlobe } from '@/components/GaussGlobe';
 import { Shield, Activity, Globe, Zap, ArrowRight, Lock } from 'lucide-react';
 import { Link } from 'react-router-dom';
+import { PilotPanels } from '@/components/PilotPanels';
+import { useSession } from '@/lib/auth-client';
 import { motion } from 'framer-motion';
 
 const containerVariants = {
@@ -25,6 +27,8 @@ const itemVariants = {
 export default function PublicDashboard() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const { data, visualParams } = useSpaceWeather();
+  const { data: session } = useSession();
+  const signedIn = Boolean(session?.user?.id);
 
   const isE2E =
     typeof window !== 'undefined' &&
@@ -51,7 +55,7 @@ export default function PublicDashboard() {
       </div>
 
       {/* Premium Glassmorphic Overlay */}
-      <div className="absolute inset-0 z-10 pointer-events-none flex flex-col justify-between p-8 md:p-12">
+      <div className="absolute inset-0 z-10 pointer-events-none flex flex-col justify-between gap-6 overflow-y-auto p-8 md:p-12 [&>*]:shrink-0">
         
         {/* Header Section */}
         <motion.header 
@@ -83,6 +87,14 @@ export default function PublicDashboard() {
               <Globe className="w-4 h-4" />
               Member Hub
             </Link>
+            {signedIn && (
+              <Link
+                to="/account/api"
+                className="flex items-center gap-2 px-5 py-2.5 rounded-full border border-white/20 bg-white/5 text-sm font-medium text-white/90 hover:bg-white/10 transition-all"
+              >
+                API keys
+              </Link>
+            )}
           </div>
         </motion.header>
 
@@ -174,6 +186,9 @@ export default function PublicDashboard() {
           </motion.div>
 
         </motion.div>
+
+        {/* Paid offers under the open visualisation */}
+        <PilotPanels />
 
         {/* Footer */}
         <motion.div 

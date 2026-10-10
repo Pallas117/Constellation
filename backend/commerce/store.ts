@@ -23,6 +23,18 @@ export interface ApiKeyInfo {
   revokedAt: string | null;
 }
 
+export type PilotInterest = "data-api" | "connectivity" | "both";
+
+export interface PilotRequest {
+  id: string;
+  name: string;
+  email: string;
+  company: string;
+  interest: PilotInterest;
+  useCase: string;
+  createdAt: string;
+}
+
 export interface UsageRow {
   day: string;
   keyId: string;
@@ -58,6 +70,9 @@ export class CommerceStore {
         id TEXT PRIMARY KEY, org_id TEXT NOT NULL REFERENCES orgs(id), name TEXT NOT NULL,
         prefix TEXT NOT NULL, key_hash TEXT NOT NULL UNIQUE, created_by TEXT NOT NULL,
         created_at TEXT NOT NULL, last_used_at TEXT, revoked_at TEXT);
+      CREATE TABLE IF NOT EXISTS pilot_requests (
+        id TEXT PRIMARY KEY, name TEXT NOT NULL, email TEXT NOT NULL, company TEXT NOT NULL,
+        interest TEXT NOT NULL, use_case TEXT NOT NULL, ip_hash TEXT NOT NULL, created_at TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS usage (
         day TEXT NOT NULL, key_id TEXT NOT NULL REFERENCES api_keys(id), endpoint TEXT NOT NULL,
         count INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (day, key_id, endpoint));
@@ -161,6 +176,33 @@ export class CommerceStore {
       | undefined;
     const org = row ? this.getOrg(row.org_id) : undefined;
     return row && org ? { keyId: row.id, org } : undefined;
+  }
+
+  // ---- pilot requests (leads from the public landing page) ----
+
+  /** The requester's IP is kept only as a hash, for abuse checks. */
+  addPilotRequest(input: Omit<PilotRequest, "id" | "createdAt">, ip: string): PilotRequest {
+    const request = { ...input, id: randomUUID(), createdAt: nowIso() };
+    this.db
+      .prepare("INSERT INTO pilot_requests (id, name, email, company, interest, use_case, ip_hash, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
+      .run(request.id, request.name, request.email, request.company, request.interest, request.useCase, hash(ip), request.createdAt);
+    return request;
+  }
+
+  listPilotRequests(): PilotRequest[] {
+    return (
+      this.db.prepare("SELECT id, name, email, company, interest, use_case, created_at FROM pilot_requests ORDER BY created_at DESC").all() as Array<
+        Record<string, string>
+      >
+    ).map((r) => ({
+      id: r.id,
+      name: r.name,
+      email: r.email,
+      company: r.company,
+      interest: r.interest as PilotInterest,
+      useCase: r.use_case,
+      createdAt: r.created_at,
+    }));
   }
 
   // ---- usage metering ----

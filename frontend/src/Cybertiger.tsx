@@ -14,6 +14,7 @@ import { ProtectedRoute } from "./components/ProtectedRoute";
 import NotFound from "./pages/NotFound";
 import HeliophysicsDashboard from "./pages/HeliophysicsDashboard";
 import MeshDashboard from "./pages/MeshDashboard";
+import ApiKeys from "./pages/ApiKeys";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 
 const queryClient = new QueryClient();
@@ -60,6 +61,14 @@ const App = () => (
                   element={
                     <ProtectedRoute minRole="staff">
                       <MeshDashboard />
+                    </ProtectedRoute>
+                  }
+                />
+                <Route
+                  path="/account/api"
+                  element={
+                    <ProtectedRoute minRole="user">
+                      <ApiKeys />
                     </ProtectedRoute>
                   }
                 />

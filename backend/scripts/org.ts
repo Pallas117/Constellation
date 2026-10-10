@@ -7,6 +7,7 @@
 //   npm run org -- add-member <org-id> <email>      (they must have signed in once)
 //   npm run org -- remove-member <org-id> <email>
 //   npm run org -- usage <org-id> [YYYY-MM]          (for invoicing / pilot evidence)
+//   npm run org -- leads                             ("Request a pilot" submissions)
 import Database from "better-sqlite3";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -74,6 +75,15 @@ switch (cmd) {
     for (const [endpoint, n] of [...byEndpoint].sort((a, b) => b[1] - a[1])) console.log(`  ${String(n).padStart(8)}  ${endpoint}`);
     break;
   }
+  case "leads": {
+    const leads = store.listPilotRequests();
+    if (leads.length === 0) console.log("No pilot requests yet.");
+    for (const l of leads) {
+      console.log(`${l.createdAt.slice(0, 16).replace("T", " ")}  ${l.interest.padEnd(12)}  ${l.company} — ${l.name} <${l.email}>`);
+      if (l.useCase) console.log(`    ${l.useCase.replace(/\s+/g, " ").slice(0, 300)}`);
+    }
+    break;
+  }
   default:
-    fail("Usage: npm run org -- <list|create|plan|add-member|remove-member|usage> …");
+    fail("Usage: npm run org -- <list|create|plan|add-member|remove-member|usage|leads> …");
 }

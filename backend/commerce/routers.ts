@@ -1,7 +1,7 @@
 import express from "express";
 import { roleSatisfies, type AuthenticatedRequest } from "../auth.js";
 import { PLANS, type Plan, type PlanLimits } from "./plans.js";
-import type { CommerceStore, Org } from "./store.js";
+import type { CommerceStore, Org, PilotInterest } from "./store.js";
 
 /** Where the refined data comes from; injected so tests don't need the ingest pipeline. */
 export interface DataProvider {
@@ -102,6 +102,50 @@ export function createDataApiRouter(
   });
 
   return router;
+}
+
+const EMAIL_RE = /^[^\s@]{1,64}@[^\s@]{1,190}\.[^\s@]{2,}$/;
+const INTERESTS = new Set(["data-api", "connectivity", "both"]);
+
+/**
+ * Public "Request a pilot" endpoint behind the landing page's pilot panels.
+ * Abuse limits: 3 requests per IP per hour, a hidden honeypot field, length
+ * caps. Leads are stored for admins (`npm run org -- leads`); nothing is sent
+ * anywhere automatically.
+ */
+export function createPilotRequestHandler(store: CommerceStore, now: () => number = Date.now) {
+  const recent = new Map<string, number[]>();
+  return (req: express.Request, res: express.Response) => {
+    const ip = req.ip ?? "unknown";
+    const hourAgo = now() - 60 * 60 * 1000;
+    const times = (recent.get(ip) ?? []).filter((t) => t > hourAgo);
+    if (times.length >= 3) {
+      res.status(429).json({ error: "Too many requests. Please try again later." });
+      return;
+    }
+    const b = (req.body ?? {}) as Record<string, unknown>;
+    const text = (v: unknown, max: number) => (typeof v === "string" ? v.trim().slice(0, max) : "");
+    // Bots fill every field; people never see this one. Pretend success.
+    if (text(b.website, 200)) {
+      res.status(201).json({ ok: true });
+      return;
+    }
+    const lead = {
+      name: text(b.name, 120),
+      email: text(b.email, 254).toLowerCase(),
+      company: text(b.company, 160),
+      interest: (INTERESTS.has(String(b.interest)) ? b.interest : "both") as PilotInterest,
+      useCase: text(b.useCase, 2000),
+    };
+    if (!lead.name || !lead.company || !EMAIL_RE.test(lead.email)) {
+      res.status(400).json({ error: "Name, a valid work email and company are required." });
+      return;
+    }
+    times.push(now());
+    recent.set(ip, times);
+    store.addPilotRequest(lead, ip);
+    res.status(201).json({ ok: true });
+  };
 }
 
 /**

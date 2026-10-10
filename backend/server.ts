@@ -45,7 +45,7 @@ import deviceRegistryRouter from "./device-registry.js";
 import { createMeshRouters } from "./mesh/router.js";
 import { enforceApiPolicy, isPublic } from "./rbac.js";
 import { CommerceStore } from "./commerce/store.js";
-import { createDataApiRouter, createOrgRouter } from "./commerce/routers.js";
+import { createDataApiRouter, createOrgRouter, createPilotRequestHandler } from "./commerce/routers.js";
 
 const app = express();
 const cyberTiger = new CyberTigerDaemon();
@@ -271,6 +271,9 @@ app.use("/api", enforceApiPolicy);
 
 // Organisation self-service: keys and usage for members (policy: backend/rbac.ts).
 app.use("/api/orgs", createOrgRouter(commerce));
+
+// Public "Request a pilot" form on the landing page.
+app.post("/api/pilot-requests", createPilotRequestHandler(commerce));
 
 // Mesh & Network page: onboarding for everyone signed in, team status for operators.
 app.use("/api/mesh", mesh.ui);
