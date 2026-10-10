@@ -142,6 +142,8 @@ router.post("/:id/quality", (req: AuthenticatedRequest, res) => {
 });
 
 router.post("/:id/proof", (req: AuthenticatedRequest, res) => {
+  // Otherwise anyone could send bad proofs to mark another user's device untrusted.
+  if (!requireOwnedDevice(req, res)) return;
   const { sig, timestamp, nonce } = req.body ?? {};
   if (!sig || !timestamp) {
     res.status(400).json({ ok: false, error: "Missing proof fields" });
@@ -166,6 +168,7 @@ router.post("/:id/proof", (req: AuthenticatedRequest, res) => {
 });
 
 router.get("/:id", (req: AuthenticatedRequest, res) => {
+  if (!requireOwnedDevice(req, res)) return;
   const device = getDevice(req.params.id);
   if (!device) {
     res.status(404).json({ ok: false, error: "Device not found" });

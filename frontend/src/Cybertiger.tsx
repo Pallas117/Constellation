@@ -39,7 +39,14 @@ const App = () => (
                   } 
                 />
                 <Route path="/member" element={<MemberHub />} />
-                <Route path="/heliophysics" element={<HeliophysicsDashboard />} />
+                <Route
+                  path="/heliophysics"
+                  element={
+                    <ProtectedRoute minRole="user">
+                      <HeliophysicsDashboard />
+                    </ProtectedRoute>
+                  }
+                />
                 <Route 
                   path="/protection" 
                   element={
