@@ -208,7 +208,7 @@ const HeliophysicsDashboard = () => {
               Earth's magnetic shield, driven by the live solar wind.
             </h1>
             <p className="mt-1 max-w-[62ch] text-sm text-muted-foreground">
-              Field lines are traced from L1 solar wind measurements. Public view, no login needed.
+              Field lines are traced from L1 solar wind measurements. Use “Simulate G4 storm” to see a severe event.
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
