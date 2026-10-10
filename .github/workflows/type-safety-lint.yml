@@ -38,7 +38,7 @@ jobs:
         id: typescript
         run: |
           echo "🔍 Running TypeScript compiler..."
-          npx tsc --noEmit 2>&1 | tee tsc-output.txt
+          npm run quality:types 2>&1 | tee tsc-output.txt
           exit_code=${PIPESTATUS[0]}
           echo "exit_code=$exit_code" >> $GITHUB_OUTPUT
           exit $exit_code

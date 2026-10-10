@@ -99,13 +99,6 @@ export function getDoseRateFromMeasurement(measurement: RadiationMeasurement | R
 export function getMagneticFieldFromMeasurement(
   measurement: RadiationMeasurement | RadiationDataPoint
 ): number {
-  if ('altitude' in measurement) {
-    return estimateMagneticField(
-      measurement.L_shell,
-      measurement.altitude,
-      'latitude' in measurement ? measurement.latitude : undefined
-    );
-  }
   return estimateMagneticField(measurement.L_shell, measurement.altitude, measurement.latitude);
 }
 

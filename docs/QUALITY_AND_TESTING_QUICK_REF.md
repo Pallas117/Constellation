@@ -26,7 +26,7 @@ git push origin v1.0.0   # Triggers release workflow
 ### Quality Checks
 | Command | Does |
 |---------|------|
-| `npm run quality:types` | TypeScript strict mode |
+| `npm run quality:types` | TypeScript type check (frontend app + Vite config) |
 | `npm run quality:lint` | ESLint checking |
 | `npm run quality:full` | Both together |
 
@@ -96,7 +96,7 @@ GitHub automatically comments with:
 
 ### Type errors fail PR
 ```bash
-npx tsc --noEmit --strict
+npm run quality:types
 # Fix errors shown, then re-push
 ```
 
