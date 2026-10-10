@@ -1,60 +1,28 @@
-import { useEffect, useState } from "react";
 import type { AuroraMapResponse } from "@/lib/types/space-weather";
-import { getAuthHeaders } from "@/lib/api/auth";
+import { useFeedSession, usePolledFeed, type FeedStatus } from "@/hooks/usePolledFeed";
 
 const POLL_INTERVAL_MS = 5000;
-
-function getBaseUrl(): string {
-  return import.meta.env.VITE_HELIO_PROXY_URL ?? "http://127.0.0.1:3001";
-}
+const ENDPOINT = "/api/feed/aurora/map?projection=gsm";
 
 export interface AuroraMapState {
   map: AuroraMapResponse | null;
   loading: boolean;
   error: string | null;
+  status: FeedStatus;
 }
 
+const parse = (json: unknown) => json as AuroraMapResponse;
+
 export function useAuroraMap(): AuroraMapState {
-  const [map, setMap] = useState<AuroraMapResponse | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    let mounted = true;
-
-    const fetchMap = async () => {
-      try {
-        const response = await fetch(`${getBaseUrl()}/api/feed/aurora/map?projection=gsm`, {
-          headers: await getAuthHeaders(),
-        });
-        if (!response.ok) {
-          throw new Error(`Aurora map HTTP ${response.status}`);
-        }
-        const json = (await response.json()) as AuroraMapResponse;
-        if (!mounted) {
-          return;
-        }
-        setMap(json);
-        setError(null);
-      } catch (err) {
-        if (!mounted) {
-          return;
-        }
-        setError(err instanceof Error ? err.message : "Failed to fetch aurora map");
-      } finally {
-        if (mounted) {
-          setLoading(false);
-        }
-      }
-    };
-
-    fetchMap();
-    const timer = setInterval(fetchMap, POLL_INTERVAL_MS);
-    return () => {
-      mounted = false;
-      clearInterval(timer);
-    };
-  }, []);
-
-  return { map, loading, error };
+  // `user`-role route: never request it signed out (CyberTiger counts 401s).
+  const session = useFeedSession();
+  const feed = usePolledFeed({
+    path: session.resolved && session.signedIn ? ENDPOINT : null,
+    intervalMs: POLL_INTERVAL_MS,
+    parse,
+    disabledStatus: session.resolved ? "sign-in-required" : "waiting",
+    signInMessage: "Sign in to see the aurora map.",
+    restartKey: session.userKey,
+  });
+  return { map: feed.data, loading: feed.loading, error: feed.error, status: feed.status };
 }
