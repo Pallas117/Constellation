@@ -37,8 +37,9 @@ export interface InterpolatedData {
   };
   imfBz: number;
   kpIndex: number;
-  protonFlux: number;
-  electronFlux: number;
+  /** null = not measured by any connected source; never substitute a value. */
+  protonFlux: number | null;
+  electronFlux: number | null;
   timestamp: Date;
   isStale: boolean;
   source: string;
@@ -84,8 +85,8 @@ export class EMAInterpolator {
       },
       imfBz: lerp(this.current.imfBz, this.target.imfBz, t),
       kpIndex: Math.round(lerp(this.current.kpIndex, this.target.kpIndex, t)),
-      protonFlux: lerp(this.current.protonFlux, this.target.protonFlux, t),
-      electronFlux: lerp(this.current.electronFlux, this.target.electronFlux, t),
+      protonFlux: lerpNullable(this.current.protonFlux, this.target.protonFlux, t),
+      electronFlux: lerpNullable(this.current.electronFlux, this.target.electronFlux, t),
       timestamp: this.target.timestamp,
       isStale: this.target.isStale,
       source: this.target.source,
@@ -99,45 +100,46 @@ export class EMAInterpolator {
 }
 
 // ============================================================================
-// DECAY FUNCTION (for stale data)
+// FRESHNESS (for stale data)
 // ============================================================================
 
-const BASELINE = {
-  solarWind: { speed: 400, density: 5, pressure: 2 },
-  imfBz: 0,
-  kpIndex: 3,
-  protonFlux: 1,
-  electronFlux: 2000,
-};
+/** Carried values expire after 15 minutes (GAU-15). */
+export const DATA_EXPIRY_MS = 15 * 60 * 1000;
 
-const DECAY_HALF_LIFE = 5 * 60 * 1000; // 5 minutes
-
+/**
+ * Marks data stale once it is older than DATA_EXPIRY_MS. Values are left as last
+ * measured; they are never drifted toward an invented baseline.
+ */
 export function applyDecay(
   data: InterpolatedData,
   timeSinceUpdate: number
 ): InterpolatedData {
-  if (timeSinceUpdate < DECAY_HALF_LIFE / 2) {
-    return data; // No decay needed yet
+  if (timeSinceUpdate <= DATA_EXPIRY_MS) {
+    return data;
   }
+  return { ...data, isStale: true, tier: 3 };
+}
 
-  const decayFactor = Math.exp(-timeSinceUpdate / DECAY_HALF_LIFE * Math.LN2);
-
+/**
+ * Shown when no live data has been received. The numbers only keep the 3D scene in a
+ * quiet, neutral geometry; `source: 'unavailable'` tells the UI not to display them.
+ */
+export function unavailableData(): InterpolatedData {
   return {
-    ...data,
-    solarWind: {
-      speed: decayToward(data.solarWind.speed, BASELINE.solarWind.speed, decayFactor),
-      density: decayToward(data.solarWind.density, BASELINE.solarWind.density, decayFactor),
-      pressure: decayToward(data.solarWind.pressure, BASELINE.solarWind.pressure, decayFactor),
-    },
-    imfBz: decayToward(data.imfBz, BASELINE.imfBz, decayFactor),
-    kpIndex: Math.round(decayToward(data.kpIndex, BASELINE.kpIndex, decayFactor)),
-    protonFlux: decayToward(data.protonFlux, BASELINE.protonFlux, decayFactor),
-    electronFlux: decayToward(data.electronFlux, BASELINE.electronFlux, decayFactor),
+    solarWind: { speed: 400, density: 5, pressure: 2 },
+    imfBz: 0,
+    kpIndex: 0,
+    protonFlux: null,
+    electronFlux: null,
+    timestamp: new Date(),
+    isStale: true,
+    source: 'unavailable',
+    tier: 3,
   };
 }
 
-function decayToward(value: number, baseline: number, factor: number): number {
-  return baseline + (value - baseline) * factor;
+export function isUnavailable(data: InterpolatedData): boolean {
+  return data.source === 'unavailable';
 }
 
 // ============================================================================
@@ -160,8 +162,9 @@ export function calculateVisualizationParams(data: InterpolatedData): Visualizat
 
   // Belt intensity based on particle flux
   // Normalized log scale for better visual response
-  const protonNorm = Math.min(1, Math.log10(data.protonFlux + 1) / 3);
-  const electronNorm = Math.min(1, Math.log10(data.electronFlux + 1) / 6);
+  // Unmeasured flux contributes nothing rather than an assumed level.
+  const protonNorm = data.protonFlux == null ? 0 : Math.min(1, Math.log10(data.protonFlux + 1) / 3);
+  const electronNorm = data.electronFlux == null ? 0 : Math.min(1, Math.log10(data.electronFlux + 1) / 6);
   const beltIntensity = Math.min(1, (protonNorm + electronNorm) / 2 + 0.2);
 
   // Reconnection strength based on southward Bz
@@ -189,6 +192,11 @@ export function calculateVisualizationParams(data: InterpolatedData): Visualizat
 
 export function lerp(a: number, b: number, t: number): number {
   return a + (b - a) * t;
+}
+
+function lerpNullable(a: number | null, b: number | null, t: number): number | null {
+  if (a == null || b == null) return b;
+  return lerp(a, b, t);
 }
 
 export function clamp(value: number, min: number, max: number): number {
@@ -245,4 +253,47 @@ export function validateSpaceWeatherResponse(data: unknown): SpaceWeatherRespons
   }
 
   return data as SpaceWeatherResponse;
+}
+
+// ============================================================================
+// CANONICAL BACKEND POINT (/api/feed/space-weather/latest)
+// ============================================================================
+
+const isFiniteNumber = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
+
+/**
+ * Maps the backend's CanonicalSpaceWeatherPoint. It carries no particle flux, so those
+ * stay null instead of being filled in.
+ */
+export function canonicalToInterpolated(data: unknown): InterpolatedData | null {
+  if (!data || typeof data !== 'object') return null;
+  const d = data as Record<string, any>;
+  const ts = typeof d.timestamp === 'string' ? new Date(d.timestamp) : null;
+  if (!ts || Number.isNaN(ts.getTime())) return null;
+  const sw = d.solarWind;
+  const b = d.magneticField;
+  const idx = d.indices;
+  const q = d.quality;
+  if (
+    !sw || !b || !idx || !q ||
+    !isFiniteNumber(sw.speed) ||
+    !isFiniteNumber(sw.density) ||
+    !isFiniteNumber(sw.dynamicPressure) ||
+    !isFiniteNumber(b.z) ||
+    !isFiniteNumber(idx.kp)
+  ) {
+    return null;
+  }
+  const tier = isFiniteNumber(q.tier) ? q.tier : 3;
+  return {
+    solarWind: { speed: sw.speed, density: sw.density, pressure: sw.dynamicPressure },
+    imfBz: b.z,
+    kpIndex: idx.kp,
+    protonFlux: null,
+    electronFlux: null,
+    timestamp: ts,
+    isStale: q.stale === true || tier === 3,
+    source: typeof d.source === 'string' ? d.source : 'unknown',
+    tier,
+  };
 }
