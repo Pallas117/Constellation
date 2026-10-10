@@ -26,6 +26,7 @@ import type {
   IngestionTickResult,
   NowcastInferenceRequest,
 } from "./types.js";
+import { withFreshness } from "./lib/freshness.js";
 import { IngestionWorker } from "./worker/ingest-loop.js";
 import { NotebookLMClient } from "./services/notebooklm-client.js";
 import { GraphDBClient } from "./services/graphdb-client.js";
@@ -312,7 +313,7 @@ app.get("/api/feed/space-weather/latest", async (req: AuthenticatedRequest, res)
     res.status(404).json({ error: "No feed data yet" });
     return;
   }
-  res.json(point);
+  res.json(withFreshness(point));
 });
 
 app.get("/api/feed/space-objects", (_req, res) => {
@@ -349,7 +350,7 @@ app.get("/api/feed/space-weather/latest/proto", async (req: AuthenticatedRequest
     return;
   }
   try {
-    const buffer = await encodeCanonicalPoint(point);
+    const buffer = await encodeCanonicalPoint(withFreshness(point));
     res.setHeader("Content-Type", "application/x-protobuf");
     res.send(Buffer.from(buffer));
   } catch (err) {
