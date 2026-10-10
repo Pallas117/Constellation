@@ -17,8 +17,11 @@
 # the Mac awake with the lid closed, except on battery at or below
 # GAUSS_AWAKE_MIN_BATTERY% (default 10, the mesh's critical-battery level), where it
 # lets the Mac sleep again.
-# The site is built for GAUSS_PUBLIC_URL (default: this Mac's tailnet name over
-# HTTP, encrypted by Tailscale; never exposed to the internet).
+# The site is shared at GAUSS_PUBLIC_URL (default: this Mac's tailnet name over
+# HTTP, encrypted by Tailscale; never exposed to the internet). It is built with a
+# same-origin API (/api, /ws), so the one build works at http://127.0.0.1:8080 on
+# this Mac and at the tailnet name: vite preview and tailscale serve both forward
+# /api and /ws to the backend.
 # Logs: ~/Library/Logs/gauss/. User scope only; the one sudo step is `awake setup`,
 # which allows exactly `pmset -a disablesleep 0|1` and `pmset sleepnow` without a password.
 set -euo pipefail
@@ -152,6 +155,15 @@ check() { # pre-demo checklist
   item $ok "network: $argo"
   [ "$(code http://127.0.0.1:3001/health)" = 200 ] && ok=ok || ok=no; item $ok "backend up (:3001)"
   [ "$(code http://127.0.0.1:8080/)" = 200 ] && ok=ok || ok=no; item $ok "website up (:8080)"
+  # The path a browser on this Mac takes: page origin -> preview proxy -> backend.
+  [ "$(code http://127.0.0.1:8080/api/system/connectivity)" = 200 ] && ok=ok || ok=no
+  item $ok "website reaches the API through its own origin (:8080/api)"
+  # A build that hardcodes another API origin breaks on this Mac (no tailnet loopback).
+  if grep -rqs "ts\.net" "$(launchctl print "$UID_DOMAIN/uk.lightbound.gauss-frontend" 2>/dev/null | awk -F'= ' '/working directory =/{print $2; exit}')/frontend/dist/assets" 2>/dev/null; then
+    item no "frontend build is same-origin (it hardcodes an API host: reinstall)"
+  else
+    item ok "frontend build is same-origin"
+  fi
   if [ "$PUBLIC_URL" != "http://127.0.0.1:8080" ]; then
     # This Mac can't open its own tailnet share (macOS Tailscale doesn't loop it
     # back), so verify the parts it can: sharing configured, and the website and
@@ -209,8 +221,8 @@ case "${1:-}" in
     dir="$(cd "${2:?usage: $0 install <checkout-dir>}" && pwd)"
     [ -f "$dir/backend/server.ts" ] || { echo "$dir is not a Gauss checkout" >&2; exit 1; }
     mkdir -p "$LOGS" "$dir/data/mesh" "$dir/data/commerce"
-    echo "Building the frontend in $dir for $PUBLIC_URL ..."
-    (cd "$dir" && VITE_HELIO_PROXY_URL="$PUBLIC_URL" "$NODE" node_modules/vite/bin/vite.js build --config frontend/vite.config.ts >/dev/null)
+    echo "Building the frontend in $dir (same-origin API) ..."
+    (cd "$dir" && VITE_HELIO_PROXY_URL=same-origin "$NODE" node_modules/vite/bin/vite.js build --config frontend/vite.config.ts >/dev/null)
     plist uk.lightbound.gauss-backend "$dir" "$LOGS/backend.log" keepalive \
       "$NODE" --env-file-if-exists=.env --import tsx backend/server.ts >"$AGENTS/uk.lightbound.gauss-backend.plist"
     plist uk.lightbound.gauss-learning "$dir" "$LOGS/learning.log" nightly \

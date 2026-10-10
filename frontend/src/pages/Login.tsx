@@ -4,6 +4,7 @@ import { landingFor, roleOf } from "@/lib/roles";
 import { registerDeviceWithLogin } from "@/lib/device-auth";
 import { Link, useNavigate, useLocation } from "react-router-dom";
 import { Shield, Fingerprint } from "lucide-react";
+import { apiBase } from "@/lib/api/base-url";
 
 export default function Login() {
   const [email, setEmail] = useState("");
@@ -48,7 +49,7 @@ export default function Login() {
   }, [session?.user, hasFrom, from, navigate]);
 
   useEffect(() => {
-    const base = import.meta.env.VITE_HELIO_PROXY_URL ?? "http://127.0.0.1:3001";
+    const base = apiBase();
     fetch(`${base}/api/sso-options`)
       .then((res) => (res.ok ? res.json() : null))
       .then((options) => options && setSso(options))

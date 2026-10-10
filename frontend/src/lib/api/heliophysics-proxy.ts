@@ -5,8 +5,9 @@ import type {
   SourceStatus,
 } from "@/lib/types/space-weather";
 import { getAuthHeaders } from "@/lib/api/auth";
+import { apiBase } from "./base-url";
 
-const BASE_URL = import.meta.env.VITE_HELIO_PROXY_URL ?? "http://127.0.0.1:3001";
+const BASE_URL = apiBase();
 
 export async function fetchSpaceWeather5s(
   lookback = "PT24H",
