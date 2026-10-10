@@ -1,4 +1,4 @@
-import { useMemo, useRef } from 'react';
+import { createContext, useContext, useMemo, useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
 import { Line } from '@react-three/drei';
 import * as THREE from 'three';
@@ -12,6 +12,14 @@ import {
   type MagnetosphereState,
   type SolarWindDrivers,
 } from '@/lib/physics/geomagnetic';
+import { usePrefersReducedMotion } from '@/hooks/usePrefersReducedMotion';
+
+/** 1 = normal animation, 0 = frozen (prefers-reduced-motion). */
+const MotionScale = createContext(1);
+const useAnimTime = () => {
+  const scale = useContext(MotionScale);
+  return (elapsed: number) => elapsed * scale;
+};
 
 interface MagnetosphereProps {
   visible: boolean;
@@ -28,11 +36,12 @@ interface MagnetosphereProps {
 
 const TAIL_LENGTH = 40;
 
-// Palette: closed flux cold (ice → cobalt), open flux hot (amber → magenta).
-const CLOSED_NEAR = new THREE.Color('#8ff0ff');
-const CLOSED_FAR = new THREE.Color('#2a6cff');
-const OPEN_NEAR = new THREE.Color('#ffd27a');
-const OPEN_FAR = new THREE.Color('#ff3d8b');
+// Lightbound brand palette: closed flux warm white → Earth blue, open flux
+// amber → Sun. Signal lime is reserved for the outer belt / aurora.
+const CLOSED_NEAR = new THREE.Color('#F3F0E8');
+const CLOSED_FAR = new THREE.Color('#2378C4');
+const OPEN_NEAR = new THREE.Color('#E7B14A');
+const OPEN_FAR = new THREE.Color('#C2552A');
 
 const LOG_B_MIN = Math.log10(5);
 const LOG_B_MAX = Math.log10(60000);
@@ -102,6 +111,7 @@ const FieldLines = ({ lines }: { lines: FieldLine[] }) => {
 /** Plasma tracers flowing along the traced field lines at constant arc speed. */
 const FieldLineTracers = ({ lines, count = 520 }: { lines: FieldLine[]; count?: number }) => {
   const pointsRef = useRef<THREE.Points>(null);
+  const animTime = useAnimTime();
 
   const data = useMemo(() => {
     const paths = lines.map((l) => {
@@ -141,7 +151,7 @@ const FieldLineTracers = ({ lines, count = 520 }: { lines: FieldLine[]; count?: 
     const pts = pointsRef.current;
     if (!pts || data.paths.length === 0) return;
     const pos = pts.geometry.attributes.position.array as Float32Array;
-    const time = state.clock.elapsedTime;
+    const time = animTime(state.clock.elapsedTime);
     for (let i = 0; i < count; i++) {
       const path = data.paths[data.lineIdx[i]];
       if (!path || path.length === 0) continue;
@@ -288,13 +298,15 @@ const BOWSHOCK_FRAG = /* glsl */ `
   void main() {
     float ripple = 0.5 + 0.5 * sin(vPos.x * 2.2 - uTime * 3.0 + sin(vUv.x * 25.0));
     float fade = 1.0 - smoothstep(-2.0, -14.0, vPos.x);
-    vec3 col = mix(vec3(1.0, 0.78, 0.45), vec3(1.0, 0.45, 0.25), clamp(uPressure / 15.0, 0.0, 1.0));
+    // Warm white at nominal pressure, heating to Sun (#C2552A) under compression.
+    vec3 col = mix(vec3(0.953, 0.941, 0.910), vec3(0.761, 0.333, 0.165), clamp(uPressure / 15.0, 0.0, 1.0));
     float a = vFresnel * (0.12 + 0.12 * ripple) * fade;
     gl_FragColor = vec4(col, a);
   }
 `;
 
 const Magnetopause = ({ state, reconnection }: { state: MagnetosphereState; reconnection: number }) => {
+  const animTime = useAnimTime();
   const geometry = useMemo(
     () => revolutionGeometry((th) => shueRadius(th, state.r0, state.alpha), TAIL_LENGTH),
     [state.r0, state.alpha],
@@ -307,8 +319,8 @@ const Magnetopause = ({ state, reconnection }: { state: MagnetosphereState; reco
           uReconnection: { value: 0 },
           uR0: { value: 10 },
           uTail: { value: TAIL_LENGTH },
-          uColor: { value: new THREE.Color('#2fd8ff') },
-          uHot: { value: new THREE.Color('#ff5fd2') },
+          uColor: { value: new THREE.Color('#2378C4') },
+          uHot: { value: new THREE.Color('#C2552A') },
         },
         vertexShader: BOUNDARY_VERT,
         fragmentShader: MAGNETOPAUSE_FRAG,
@@ -320,7 +332,7 @@ const Magnetopause = ({ state, reconnection }: { state: MagnetosphereState; reco
     [],
   );
   useFrame(({ clock }) => {
-    material.uniforms.uTime.value = clock.elapsedTime;
+    material.uniforms.uTime.value = animTime(clock.elapsedTime);
     material.uniforms.uReconnection.value = reconnection;
     material.uniforms.uR0.value = state.r0;
   });
@@ -328,6 +340,7 @@ const Magnetopause = ({ state, reconnection }: { state: MagnetosphereState; reco
 };
 
 const BowShock = ({ state, pdyn }: { state: MagnetosphereState; pdyn: number }) => {
+  const animTime = useAnimTime();
   const geometry = useMemo(() => {
     const ecc = 0.81;
     const semiLatus = state.bowShock * (1 + ecc);
@@ -347,7 +360,7 @@ const BowShock = ({ state, pdyn }: { state: MagnetosphereState; pdyn: number }) 
     [],
   );
   useFrame(({ clock }) => {
-    material.uniforms.uTime.value = clock.elapsedTime;
+    material.uniforms.uTime.value = animTime(clock.elapsedTime);
     material.uniforms.uPressure.value = pdyn;
   });
   return <mesh geometry={geometry} material={material} />;
@@ -371,13 +384,14 @@ const CURRENT_SHEET_FRAG = /* glsl */ `
     float d = vPos.x - uXLine;
     float burst = 0.5 + 0.5 * sin(abs(d) * 1.1 - uTime * (2.0 + 3.0 * uReconnection));
     float xglow = exp(-d * d / 6.0) * uReconnection;
-    vec3 col = mix(vec3(1.0, 0.55, 0.15), vec3(1.0, 0.85, 0.6), xglow);
+    vec3 col = mix(vec3(0.906, 0.694, 0.290), vec3(0.953, 0.941, 0.910), xglow); // amber → warm white
     float a = across * along * (0.10 + 0.22 * burst * (0.3 + uReconnection)) + across * xglow * 0.5;
     gl_FragColor = vec4(col, a);
   }
 `;
 
 const CurrentSheet = ({ tilt, reconnection, width }: { tilt: number; reconnection: number; width: number }) => {
+  const animTime = useAnimTime();
   const geometry = useMemo(() => {
     const g = new THREE.PlaneGeometry(TAIL_LENGTH - 6, width, 48, 8);
     g.translate(-(TAIL_LENGTH + 6) / 2, 0, 0);
@@ -405,7 +419,7 @@ const CurrentSheet = ({ tilt, reconnection, width }: { tilt: number; reconnectio
     [],
   );
   useFrame(({ clock }) => {
-    material.uniforms.uTime.value = clock.elapsedTime;
+    material.uniforms.uTime.value = animTime(clock.elapsedTime);
     material.uniforms.uReconnection.value = reconnection;
     // Near-Earth X-line moves earthward under strong driving.
     material.uniforms.uXLine.value = -26 + 8 * reconnection;
@@ -415,6 +429,7 @@ const CurrentSheet = ({ tilt, reconnection, width }: { tilt: number; reconnectio
 };
 
 const SolarWind = ({ standoff, pdyn }: { standoff: number; pdyn: number }) => {
+  const animTime = useAnimTime();
   const ref = useRef<THREE.Points>(null);
   const count = 420;
   const data = useMemo(() => {
@@ -430,7 +445,7 @@ const SolarWind = ({ standoff, pdyn }: { standoff: number; pdyn: number }) => {
       lanes[i * 2 + 1] = rr * Math.sin(a);
       phase[i] = Math.random();
       sizes[i] = 0.035 + Math.random() * 0.04;
-      colors.set([1.0, 0.86, 0.55], i * 3);
+      colors.set([0.953, 0.88, 0.70], i * 3);
     }
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
@@ -442,7 +457,7 @@ const SolarWind = ({ standoff, pdyn }: { standoff: number; pdyn: number }) => {
   useFrame(({ clock }) => {
     if (!ref.current) return;
     const pos = ref.current.geometry.attributes.position.array as Float32Array;
-    const t = clock.elapsedTime;
+    const t = animTime(clock.elapsedTime);
     const speed = 6 + Math.sqrt(Math.max(pdyn, 0.1)) * 2; // Re/s, display speed
     const x0 = 34;
     const span = x0 + TAIL_LENGTH;
@@ -492,8 +507,8 @@ const AURORA_FRAG = /* glsl */ `
     // vUv.y: 0 at equatorward edge, 1 at poleward edge.
     float band = smoothstep(0.0, 0.25, vUv.y) * (1.0 - smoothstep(0.55, 1.0, vUv.y));
     float curtain = 0.6 + 0.4 * sin(vUv.x * 160.0 + uTime * 1.3) * sin(vUv.x * 47.0 - uTime * 0.7);
-    vec3 green = vec3(0.35, 1.0, 0.55);
-    vec3 red = vec3(1.0, 0.25, 0.4);
+    vec3 green = vec3(0.8, 1.0, 0.0);        // signal lime (557.7 nm green line)
+    vec3 red = vec3(0.761, 0.333, 0.165);    // Sun (630 nm red line, storm-time)
     vec3 col = mix(green, red, smoothstep(0.55, 1.0, vUv.y) * clamp(uKp / 6.0, 0.0, 1.0));
     float a = band * curtain * (0.35 + 0.65 * vNight) * (0.35 + uKp / 9.0);
     gl_FragColor = vec4(col, a);
@@ -501,6 +516,7 @@ const AURORA_FRAG = /* glsl */ `
 `;
 
 const AuroralOvals = ({ state, kp }: { state: MagnetosphereState; kp: number }) => {
+  const animTime = useAnimTime();
   const geometry = useMemo(() => {
     const steps = 128;
     const rows = 6;
@@ -562,7 +578,7 @@ const AuroralOvals = ({ state, kp }: { state: MagnetosphereState; kp: number }) 
     [],
   );
   useFrame(({ clock }) => {
-    material.uniforms.uTime.value = clock.elapsedTime;
+    material.uniforms.uTime.value = animTime(clock.elapsedTime);
     material.uniforms.uKp.value = kp;
   });
   return <mesh geometry={geometry} material={material} />;
@@ -593,6 +609,7 @@ export const Magnetosphere = ({
   // Fall back to a fixed epoch per mount so the memo stays stable without a clock.
   const mountEpoch = useMemo(() => Date.now(), []);
   const state = useMagnetosphereState(resolved, epochMs ?? mountEpoch);
+  const reducedMotion = usePrefersReducedMotion();
   const reconnection = THREE.MathUtils.clamp(-resolved.bz / 15, 0, 1);
 
   if (!visible) return null;
@@ -600,6 +617,7 @@ export const Magnetosphere = ({
   const tailRadius = shueRadius(Math.PI * 0.75, state.r0, state.alpha) * Math.sin(Math.PI * 0.75);
 
   return (
+    <MotionScale.Provider value={reducedMotion ? 0 : 1}>
     <group>
       {showSurfaces && (
         <>
@@ -617,5 +635,6 @@ export const Magnetosphere = ({
       )}
       <AuroralOvals state={state} kp={resolved.kp} />
     </group>
+    </MotionScale.Provider>
   );
 };
