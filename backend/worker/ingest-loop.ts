@@ -42,7 +42,7 @@ const LASP_MS = 60000;
 // Freshness is judged by the age of the measurement itself, not by whether a fetch ran
 // this tick. Beyond NOAA_MAX_AGE_MS a readout is discarded rather than carried forward.
 export const NOAA_FRESH_MS = 10 * 60 * 1000;
-export const NOAA_MAX_AGE_MS = 60 * 60 * 1000;
+export const NOAA_MAX_AGE_MS = 15 * 60 * 1000; // GAU-15: carried values expire at 15 min
 
 /** 0 live, 1 buffered (measured but ageing), 3 stale (no measurement within the cap). */
 export function freshnessTier(dataTimestamp: string | null, nowMs: number): ResilienceTier {
