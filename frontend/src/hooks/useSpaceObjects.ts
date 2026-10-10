@@ -15,6 +15,11 @@ const calculateUndetectedCandidates = (
   data: InterpolatedData,
   catalog: SpaceObjectCatalogEntry[]
 ): SpaceObjectDetectionAlert | null => {
+  // Only raise candidates from live, measured inputs. Unmeasured flux or stale data
+  // must never produce a detection alert.
+  if (data.isStale || data.tier !== 0 || data.source === 'unavailable' || data.electronFlux == null) {
+    return null;
+  }
   const stormFactor = Math.max(0, data.kpIndex - 4);
   const fluxFactor = Math.max(0, (data.electronFlux - 2200) / 2200);
   const candidateCount = Math.min(3, Math.round(stormFactor + fluxFactor));

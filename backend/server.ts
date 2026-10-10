@@ -7,7 +7,6 @@ import {
   authenticateOptional,
   authenticateRequest,
   authenticateSocket,
-  requireRole,
   roleSatisfies,
   type AuthContext,
   type AuthRole,
@@ -28,6 +27,7 @@ import type {
   IngestionTickResult,
   NowcastInferenceRequest,
 } from "./types.js";
+import { withFreshness } from "./lib/freshness.js";
 import { IngestionWorker } from "./worker/ingest-loop.js";
 import { NotebookLMClient } from "./services/notebooklm-client.js";
 import { GraphDBClient } from "./services/graphdb-client.js";
@@ -42,6 +42,7 @@ import { toNodeHandler } from "better-auth/node";
 import { SelfHealerAgent } from "./cybertiger/self-healer.js";
 import deviceRegistryRouter from "./device-registry.js";
 import { createMeshRouters } from "./mesh/router.js";
+import { enforceApiPolicy, isPublic } from "./rbac.js";
 
 const app = express();
 const cyberTiger = new CyberTigerDaemon();
@@ -90,7 +91,9 @@ const allowedOrigins = (process.env.ALLOWED_ORIGINS ?? "http://localhost:8080,ht
   .filter(Boolean);
 const allowedOriginSet = new Set(allowedOrigins);
 
-function isAllowedOrigin(origin: string | null | undefined): boolean {
+const LOOPBACK_HOSTNAMES = new Set(["localhost", "127.0.0.1", "[::1]"]);
+
+export function isAllowedOrigin(origin: string | null | undefined): boolean {
   if (!origin) {
     return true; // Allow requests without Origin header
   }
@@ -99,8 +102,12 @@ function isAllowedOrigin(origin: string | null | undefined): boolean {
     return true;
   }
   // In development, be more permissive
-  if (process.env.NODE_ENV !== "production" && origin?.includes("localhost") || origin?.includes("127.0.0.1")) {
-    return true;
+  if (process.env.NODE_ENV !== "production") {
+    try {
+      return LOOPBACK_HOSTNAMES.has(new URL(origin).hostname);
+    } catch {
+      return false;
+    }
   }
   return false;
 }
@@ -221,6 +228,29 @@ app.use("/api", (req: express.Request, res: express.Response, next: express.Next
 
   next();
 });
+// Tells the login page which sign-in methods to offer (public, no secrets).
+app.get("/api/sso-options", (_req, res) => {
+  res.json({ google: ssoGoogleEnabled, domain: ssoGoogleEnabled ? ssoAllowedDomain : null });
+});
+
+// Argo agents report with a device token, so this sits before session auth.
+const mesh = createMeshRouters();
+app.use("/api/mesh", mesh.agent);
+
+// Who may call what lives in one table (backend/rbac.ts). Public routes (the
+// open landing visualisation) attach a session if present; all others need one.
+app.use(
+  "/api",
+  withAsyncMiddleware((req, res, next) =>
+    isPublic(req.method, req.path) ? authenticateOptional(req, res, next) : authenticateRequest(req, res, next),
+  ),
+);
+app.use("/api", enforceApiPolicy);
+
+// Mesh & Network page: onboarding for everyone signed in, team status for operators.
+app.use("/api/mesh", mesh.ui);
+
+// RAG endpoints: status for any signed-in user, index/query for operators.
 app.get("/api/rag/status", (_req, res) => {
   res.json({
     ok: true,
@@ -245,7 +275,7 @@ app.post("/api/rag/query", async (req: express.Request, res: express.Response) =
       return;
     }
 
-    console.log(`[backend] Processing agentic RAG query: "${query}"`);
+    console.log(`[backend] Processing agentic RAG query (${query.length} chars)`);
     const result = await reasoningEngine.generateVerifiedTacticalResponse(query);
 
     res.json({
@@ -261,29 +291,6 @@ app.post("/api/rag/query", async (req: express.Request, res: express.Response) =
     });
   }
 });
-
-// Tells the login page which sign-in methods to offer (public, no secrets).
-app.get("/api/sso-options", (_req, res) => {
-  res.json({ google: ssoGoogleEnabled, domain: ssoGoogleEnabled ? ssoAllowedDomain : null });
-});
-
-// Argo agents report with a device token, so this sits before session auth.
-const mesh = createMeshRouters();
-app.use("/api/mesh", mesh.agent);
-
-// The landing page's live visualisation is public; everything else needs a session.
-const PUBLIC_READ_PATHS = new Set(["/feed/space-weather/latest", "/system/connectivity"]);
-app.use(
-  "/api",
-  withAsyncMiddleware((req, res, next) =>
-    req.method === "GET" && PUBLIC_READ_PATHS.has(req.path)
-      ? authenticateOptional(req, res, next)
-      : authenticateRequest(req, res, next),
-  ),
-);
-
-// Mesh & Network page: onboarding for everyone signed in, team status for operators.
-app.use("/api/mesh", mesh.ui);
 
 // Device lifecycle endpoints (requires operator session)
 app.use("/api/device", deviceRegistryRouter);
@@ -328,7 +335,7 @@ app.get("/api/feed/space-weather/latest", async (req: AuthenticatedRequest, res)
     res.status(404).json({ error: "No feed data yet" });
     return;
   }
-  res.json(point);
+  res.json(withFreshness(point));
 });
 
 app.get("/api/feed/space-objects", (_req, res) => {
@@ -365,7 +372,7 @@ app.get("/api/feed/space-weather/latest/proto", async (req: AuthenticatedRequest
     return;
   }
   try {
-    const buffer = await encodeCanonicalPoint(point);
+    const buffer = await encodeCanonicalPoint(withFreshness(point));
     res.setHeader("Content-Type", "application/x-protobuf");
     res.send(Buffer.from(buffer));
   } catch (err) {
@@ -444,7 +451,7 @@ app.get("/api/feed/sources/status", (req: AuthenticatedRequest, res) => {
   });
 });
 
-app.get("/api/security/cybertiger/status", requireRole("operator"), (_req: AuthenticatedRequest, res) => {
+app.get("/api/security/cybertiger/status", (_req: AuthenticatedRequest, res) => {
   res.json({
     timestamp: new Date().toISOString(),
     status: cyberTiger.getStatus(),
@@ -455,7 +462,7 @@ app.get("/api/system/connectivity", (req: AuthenticatedRequest, res) => {
   res.json(linkGuardian.getStatus());
 });
 
-app.get("/api/security/cybertiger/events", requireRole("admin"), (req: AuthenticatedRequest, res) => {
+app.get("/api/security/cybertiger/events", (req: AuthenticatedRequest, res) => {
   const limit = Math.max(1, Math.min(Number(req.query.limit ?? 200), 2000));
   res.json({
     timestamp: new Date().toISOString(),
@@ -464,7 +471,7 @@ app.get("/api/security/cybertiger/events", requireRole("admin"), (req: Authentic
   });
 });
 
-app.post("/api/security/cybertiger/block", requireRole("admin"), (req: AuthenticatedRequest, res) => {
+app.post("/api/security/cybertiger/block", (req: AuthenticatedRequest, res) => {
   const input = req.body as { ip?: string; reason?: string; seconds?: number };
   const ip = (input.ip ?? "").trim();
   if (!ip) {
@@ -485,7 +492,7 @@ app.post("/api/security/cybertiger/block", requireRole("admin"), (req: Authentic
   res.json({ ok: true, ip, reason, seconds: Number.isFinite(seconds) && seconds > 0 ? seconds : null });
 });
 
-app.post("/api/security/cybertiger/unblock", requireRole("admin"), (req: AuthenticatedRequest, res) => {
+app.post("/api/security/cybertiger/unblock", (req: AuthenticatedRequest, res) => {
   const input = req.body as { ip?: string };
   const ip = (input.ip ?? "").trim();
   if (!ip) {
@@ -499,7 +506,7 @@ app.post("/api/security/cybertiger/unblock", requireRole("admin"), (req: Authent
   res.json({ ok: removed, ip });
 });
 
-app.post("/api/ai/nowcast/infer", requireRole("operator"), async (req: AuthenticatedRequest, res) => {
+app.post("/api/ai/nowcast/infer", async (req: AuthenticatedRequest, res) => {
   try {
     const body = req.body as Partial<NowcastInferenceRequest>;
     const sequence = Array.isArray(body.sequence) ? body.sequence : [];
@@ -529,7 +536,7 @@ app.post("/api/ai/nowcast/infer", requireRole("operator"), async (req: Authentic
   }
 });
 
-app.post("/api/ai/nowcast/train", requireRole("admin"), async (_req, res) => {
+app.post("/api/ai/nowcast/train", async (_req, res) => {
   try {
     const result = await triggerTraining();
     if (!result.started) {

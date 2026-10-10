@@ -11,6 +11,9 @@ import {
 } from "./coordinates.js";
 
 const MU0 = 4e-7 * Math.PI;
+const RE_KM = 6371.2;
+/** Minimum tetrahedron regularity (volume / volume of a regular tetrahedron of the same mean edge). */
+const MIN_REGULARITY = 0.05;
 
 export interface MMSSpacecraftSample {
   id: "mms1" | "mms2" | "mms3" | "mms4";
@@ -83,7 +86,10 @@ function determinant(m: Matrix3): number {
 
 function inverse(m: Matrix3): Matrix3 | null {
   const det = determinant(m);
-  if (Math.abs(det) < 1e-10) {
+  // Relative test: an absolute threshold depends on the length unit and rejects every
+  // real MMS configuration (separations of ~10-100 km).
+  const norm = frobeniusNorm(m);
+  if (!Number.isFinite(det) || norm === 0 || Math.abs(det) < 1e-12 * norm * norm * norm) {
     return null;
   }
   const invDet = 1 / det;
@@ -163,15 +169,17 @@ function computeGradient(samples: MMSSpacecraftSample[]): {
   volume: number;
   conditionNumber: number;
 } {
-  const positions = samples.map((s) => s.positionGsmRe);
+  // Work in km so the gradient is nT/km; positions arrive in Earth radii.
+  const positions = samples.map((s) => scale(s.positionGsmRe, RE_KM));
   const fields = samples.map((s) => s.magneticFieldNt);
-  const rc = barycenter(positions);
+  const rcKm = barycenter(positions);
+  const rc = scale(rcKm, 1 / RE_KM);
   const bc = barycenter(fields);
 
   let rMatrix = zeroMatrix();
   let rbMatrix = zeroMatrix();
   for (let i = 0; i < samples.length; i += 1) {
-    const dr = sub(positions[i], rc);
+    const dr = sub(positions[i], rcKm);
     const db = sub(fields[i], bc);
     rMatrix = matrixAdd(rMatrix, matrixFromOuter(dr, dr));
     rbMatrix = matrixAdd(rbMatrix, matrixFromOuter(dr, db));
@@ -191,6 +199,24 @@ function computeGradient(samples: MMSSpacecraftSample[]): {
     volume,
     conditionNumber: cond,
   };
+}
+
+function meanEdge(points: Vector3[]): number {
+  let sum = 0;
+  let n = 0;
+  for (let i = 0; i < points.length; i += 1) {
+    for (let j = i + 1; j < points.length; j += 1) {
+      sum += magnitude(sub(points[i], points[j]));
+      n += 1;
+    }
+  }
+  return n > 0 ? sum / n : 0;
+}
+
+/** Scale-free shape quality in [0, 1]: 1 for a regular tetrahedron, 0 when degenerate. */
+function regularity(points: Vector3[], volume: number): number {
+  const a = meanEdge(points);
+  return a > 0 ? volume / (a ** 3 / (6 * Math.SQRT2)) : 0;
 }
 
 function toQuality(
@@ -264,18 +290,21 @@ export function computeMMSReconnectionVector(
     };
   }
 
+  // gradient.aij = dB_j/dx_i (from sum dr_i * dB_j), so curl_x = dBz/dy - dBy/dz = a23 - a32.
   const curl = vec(
-    result.gradient.a32 - result.gradient.a23,
-    result.gradient.a13 - result.gradient.a31,
-    result.gradient.a21 - result.gradient.a12,
+    result.gradient.a23 - result.gradient.a32,
+    result.gradient.a31 - result.gradient.a13,
+    result.gradient.a12 - result.gradient.a21,
   );
-  const current = scale(curl, (1e-9 / MU0));
+  // curl is nT/km = 1e-12 T/m; J = curl / mu0 in A/m^2, reported in nA/m^2.
+  const current = scale(curl, (1e-12 / MU0) * 1e9);
   const divB = trace(result.gradient);
   const curlMag = magnitude(curl);
   const divCurlRatio = curlMag > 0 ? Math.abs(divB) / curlMag : 1;
   const lmn = estimateLmn(result.barycenterB, result.gradient);
 
-  const valid = result.volume > 1e-6 && result.conditionNumber < 2e3;
+  const shape = regularity(ordered.map((s) => scale(s.positionGsmRe, RE_KM)), result.volume);
+  const valid = shape >= MIN_REGULARITY && result.conditionNumber < 2e3;
   return {
     timestamp: nearestTimestamp(ordered),
     barycenterGsmRe: result.barycenterPosition,

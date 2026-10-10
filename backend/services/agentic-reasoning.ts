@@ -18,7 +18,7 @@ export class AgenticReasoningEngine {
   }
 
   async generateVerifiedTacticalResponse(query: string): Promise<ReasoningResult> {
-    console.log(`[ReasoningEngine] FLARE / CoVe Loop starting for: "${query}"`);
+    console.log(`[ReasoningEngine] FLARE / CoVe Loop starting (${query.length} chars)`);
 
     // 1. STEP-BACK PROMPTING
     const stepBackQuery = `What are the fundamental physics rules for: ${query}?`;
@@ -72,19 +72,17 @@ export class AgenticReasoningEngine {
     };
   }
 
-  private seekDeepLensTruth(query: string): ReasoningResult {
-      const q = query.toLowerCase();
-      if (q.includes("radiation") || q.includes("van allen")) {
-          return {
-              answer: "[DEEPLENS OFFLINE] High-energy proton flux detected in inner radiation belt. SEU risk: CRITICAL. Local diagnostics suggest possible bit-flip vulnerability in EMFISIS-class instruments.",
-              traces: ["Local: Physics_Manual_v2 (Radiation)", "Local: Asset_Spec_Sheet (EMFISIS)"],
-              confidence: 0.85
-          };
-      }
-      return {
-          answer: "[DEEPLENS OFFLINE] Mission status nominal. Solar wind coupling within expected deviances. Recommendation: Continue standard monitoring.",
-          traces: ["Local: Operations_Protocol_v1"],
-          confidence: 0.70
-      };
+  /**
+   * Offline: no retrieval or telemetry is available, so the only honest answer is an
+   * explicit unknown. Canned assessments ("CRITICAL" or "nominal") with invented
+   * confidence and citations must never stand in for analysis.
+   */
+  private seekDeepLensTruth(_query: string): ReasoningResult {
+    return {
+      answer:
+        "[DEEPLENS OFFLINE] Unable to assess: knowledge retrieval is unreachable, so no answer can be grounded. Status is unknown, not nominal. Retry when the link is restored or consult live telemetry directly.",
+      traces: [],
+      confidence: 0,
+    };
   }
 }
