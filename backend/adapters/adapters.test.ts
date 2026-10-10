@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { dipoleTiltRad, gseToGsm, gsmToGse, vec } from "../physics/coordinates.js";
-import { IngestionWorker } from "../worker/ingest-loop.js";
+import { freshnessTier, IngestionWorker, NOAA_FRESH_MS, NOAA_MAX_AGE_MS } from "../worker/ingest-loop.js";
 import { fetchEsaReadout, parseNecRow } from "./esa-hapi.js";
 import { getJaxaStatus, probeJaxaCatalog } from "./jaxa-erg.js";
 import { fetchMmsCdawebSamples, getMmsCdawebStatus } from "./mms-cdaweb.js";
-import { fetchNoaaReadout } from "./noaa-swpc.js";
+import { fetchNoaaReadout, swpcTimeToIso } from "./noaa-swpc.js";
 
 type Route = (url: string) => { status: number; body: unknown } | undefined;
 
@@ -77,7 +77,8 @@ test("NOAA: velocity comes from bulk speed, not the temperature column; mag is r
     { x: readout.velocityGse.x, y: readout.velocityGse.y, z: readout.velocityGse.z },
     { x: -512.3, y: 0, z: 0 },
   );
-  const expected = gsmToGse(vec(1, -2, -6), ts);
+  assert.equal(readout.timestamp, "2026-10-10T12:00:00.000Z", "SWPC time_tag is UTC");
+  const expected = gsmToGse(vec(1, -2, -6), readout.timestamp);
   close(readout.magneticFieldGse.z, expected.z);
   close(readout.magneticFieldGse.x, 1); // X is common to GSM and GSE
   assert.equal("dst" in readout, false, "Dst must not be synthesised from Kp");
@@ -184,4 +185,59 @@ test("JAXA: catalog reachability is not reported as a healthy data feed (GAU-55)
   assert.equal(status.healthy, false);
   assert.equal(status.lastSeen, null);
   assert.match(status.message ?? "", /probe only/);
+});
+
+test("NOAA: zone-less SWPC time_tags are read as UTC, invalid ones rejected", () => {
+  assert.equal(swpcTimeToIso("2026-10-10 12:00:00.000"), "2026-10-10T12:00:00.000Z");
+  assert.equal(swpcTimeToIso("2026-10-10T12:00:00Z"), "2026-10-10T12:00:00.000Z");
+  assert.equal(swpcTimeToIso(""), null);
+  assert.equal(swpcTimeToIso("garbage"), null);
+  assert.equal(swpcTimeToIso(null), null);
+});
+
+test("freshness tier follows measurement age, not fetch cadence (GAU-44)", () => {
+  const now = Date.parse("2026-10-10T12:00:00Z");
+  const at = (ageMs: number) => new Date(now - ageMs).toISOString();
+  assert.equal(freshnessTier(at(30_000), now), 0);
+  assert.equal(freshnessTier(at(NOAA_FRESH_MS), now), 0);
+  assert.equal(freshnessTier(at(NOAA_FRESH_MS + 1), now), 1);
+  assert.equal(freshnessTier(at(NOAA_MAX_AGE_MS), now), 1);
+  assert.equal(freshnessTier(at(NOAA_MAX_AGE_MS + 1), now), 3);
+  assert.equal(freshnessTier(null, now), 3);
+  assert.equal(freshnessTier("not a time", now), 3);
+});
+
+test("ingest tick: no jitter between fetches, and an over-age readout is dropped (GAU-44)", async () => {
+  const worker = new IngestionWorker() as unknown as {
+    noaa: { timestamp: string } | null;
+    lastFetch: Map<string, number>;
+    tick: () => Promise<{ canonicalPoint: { source: string; solarWind: { speed: number }; quality: { tier: number; stale: boolean } } }>;
+  };
+  const fresh = {
+    timestamp: new Date(Date.now() - 60_000).toISOString(),
+    density: 6,
+    velocityGse: vec(-450, 0, 0),
+    magneticFieldGse: vec(1, 2, -5),
+    kp: 3,
+    ovation: null,
+  };
+  // Pretend every source was just fetched so the tick makes no network calls.
+  const now = Date.now();
+  for (const key of ["noaa", "esa", "jaxa", "mms", "lasp", "ml-forecast"]) worker.lastFetch.set(key, now);
+
+  await withFetch(() => undefined, async () => {
+    worker.noaa = fresh;
+    const a = (await worker.tick()).canonicalPoint;
+    const b = (await worker.tick()).canonicalPoint;
+    assert.equal(a.quality.tier, 0);
+    assert.equal(b.quality.tier, 0);
+    assert.notEqual(a.source, "synthetic-nowcast");
+    assert.equal(b.solarWind.speed, a.solarWind.speed, "no random variation between ticks");
+
+    worker.noaa = { ...fresh, timestamp: new Date(Date.now() - NOAA_MAX_AGE_MS - 60_000).toISOString() };
+    const c = (await worker.tick()).canonicalPoint;
+    assert.equal(c.quality.tier, 3);
+    assert.equal(c.quality.stale, true);
+    assert.equal(worker.noaa, null);
+  });
 });

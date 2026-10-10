@@ -33,6 +33,17 @@ async function fetchJson(url: string): Promise<unknown> {
   return response.json();
 }
 
+/** SWPC time_tags are UTC but carry no zone ("2026-10-10 12:00:00.000"); make that explicit. */
+export function swpcTimeToIso(value: unknown): string | null {
+  if (typeof value !== "string" || value.trim() === "") return null;
+  let text = value.trim();
+  if (/^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}(:\d{2}(\.\d+)?)?$/.test(text)) {
+    text = `${text.replace(" ", "T")}Z`;
+  }
+  const ms = Date.parse(text);
+  return Number.isFinite(ms) ? new Date(ms).toISOString() : null;
+}
+
 function latestRow(arrayData: unknown): unknown[] | null {
   if (!Array.isArray(arrayData) || arrayData.length < 2) {
     return null;
@@ -62,7 +73,10 @@ export async function fetchNoaaReadout(): Promise<NOAAReadout | null> {
       throw new Error("Missing NOAA rows");
     }
 
-    const timestamp = String(p[0] || m[0] || new Date().toISOString());
+    const timestamp = swpcTimeToIso(p[0]);
+    if (!timestamp) {
+      throw new Error("NOAA plasma row has no valid time_tag");
+    }
     const density = parseNumber(p[1], 5);
     // plasma-1-day columns: time_tag, density, speed, temperature. SWPC publishes bulk
     // speed only, so the flow is taken as anti-sunward along X (shared by GSE and GSM).
@@ -71,7 +85,7 @@ export async function fetchNoaaReadout(): Promise<NOAAReadout | null> {
     // mag-1-day columns: time_tag, bx_gsm, by_gsm, bz_gsm, ... — rotate GSM into the
     // GSE frame the nowcast expects.
     const bGsm = vec(parseNumber(m[1], 0), parseNumber(m[2], 0), parseNumber(m[3], 0));
-    const bGse = gsmToGse(bGsm, String(m[0] || timestamp));
+    const bGse = gsmToGse(bGsm, swpcTimeToIso(m[0]) ?? timestamp);
     const kp = Math.min(9, Math.max(0, parseNumber(k[1], 2)));
 
     latestStatus = {
