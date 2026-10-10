@@ -33,6 +33,7 @@
     "auth:migrate": "node --env-file-if-exists=.env --import tsx backend/scripts/auth-migrate.ts",
     "auth:set-role": "node --env-file-if-exists=.env --import tsx backend/scripts/set-role.ts",
     "mesh:enroll": "node --import tsx backend/scripts/mesh-enroll.ts",
+    "test:physics": "node --import tsx --test \"frontend/src/lib/physics/**/*.test.ts\"",
     "test:rbac": "node --env-file-if-exists=.env --import tsx backend/scripts/rbac-smoke.ts",
     "test:backend:harness": "node --import tsx --test backend/server.harness.test.ts",
     "test:ui": "playwright test",
