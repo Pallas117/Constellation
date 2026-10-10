@@ -16,9 +16,9 @@ export function useOperatorNotifications() {
     const bz = point.magneticField?.z ?? 0;
     const speed = point.solarWind.speed ?? 0;
 
-    let title = "";
-    let description = "";
-    let variant: "default" | "success" | "destructive" = "default";
+    let title: string;
+    let description: string;
+    let variant: "default" | "success" | "destructive";
 
     if (kp >= 6 || bz <= -8 || speed >= 700) {
       title = "Critical Space Weather Alert";

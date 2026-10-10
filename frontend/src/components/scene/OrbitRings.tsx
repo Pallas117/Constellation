@@ -101,8 +101,6 @@ export const OrbitRings = ({ visible, orbitFilter }: OrbitRingsProps) => {
     }
   });
 
-  if (!visible) return null;
-
   // Create Line objects
   const leoLine = useMemo(() => {
     if (!orbitFilter.includes('LEO')) return null;
@@ -118,6 +116,8 @@ export const OrbitRings = ({ visible, orbitFilter }: OrbitRingsProps) => {
     if (!orbitFilter.includes('GEO')) return null;
     return new THREE.Line(geoGeometry, geoMaterial);
   }, [geoGeometry, geoMaterial, orbitFilter]);
+
+  if (!visible) return null;
 
   return (
     <group>
