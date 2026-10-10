@@ -6,7 +6,6 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Badge } from '@/components/ui/badge';
 import { formatDistanceToNow } from 'date-fns';
 import type { RealTimeRadiationSnapshot } from '@/lib/types/radiation';
-import { getAlertLevel } from '@/lib/utils/radiation';
 
 interface RadiationStatisticsProps {
   statistics: {
@@ -45,9 +44,9 @@ export function RadiationStatistics({
     return `${hours}h`;
   };
 
-  const alertLevel = realTimeSnapshot
-    ? realTimeSnapshot.summary.alertLevel
-    : getAlertLevel(statistics.averageFlux, 'electron');
+  // Derived from >=10 MeV proton (NOAA S-scale) and >2 MeV electron (SWPC
+  // 1000 pfu) channels; null when the recent data covers neither.
+  const alertLevel = realTimeSnapshot?.summary.alertLevel ?? null;
 
   // WCAG 2.1 AA compliant alert colors
   const alertColors = {
@@ -132,7 +131,21 @@ export function RadiationStatistics({
             <div>
               <div className="flex items-center justify-between mb-2">
                 <p className="text-sm font-medium">Alert Level</p>
-                <Badge className={alertColors[alertLevel]}>{alertLevel.toUpperCase()}</Badge>
+                {alertLevel ? (
+                  <Badge
+                    className={alertColors[alertLevel]}
+                    title="Lower bound from ≥10 MeV proton (NOAA S-scale) and >2 MeV electron (SWPC 1000 pfu) channels"
+                  >
+                    {alertLevel.toUpperCase()}
+                  </Badge>
+                ) : (
+                  <Badge
+                    variant="outline"
+                    title="No ≥10 MeV proton or >2 MeV electron channel in recent data"
+                  >
+                    N/A
+                  </Badge>
+                )}
               </div>
             </div>
 
