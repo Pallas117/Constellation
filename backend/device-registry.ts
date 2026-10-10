@@ -1,5 +1,5 @@
 import express from "express";
-import type { AuthenticatedRequest } from "./auth.js";
+import { roleSatisfies, type AuthenticatedRequest } from "./auth.js";
 import {
   getDevice,
   listDevices,
@@ -14,8 +14,36 @@ import { createSwapPlan, rebalanceDeviceNetwork } from "./services/device-swap-m
 
 const router = express.Router();
 
-router.get("/", (_req, res) => {
-  res.json({ ok: true, devices: listDevices() });
+function isAdmin(req: AuthenticatedRequest): boolean {
+  return req.auth ? roleSatisfies(req.auth.role, "admin") : false;
+}
+
+/**
+ * Only the device's owner (or an admin) may touch it. Responds 404 rather than
+ * 403 for other users' devices so device ids can't be probed.
+ */
+function requireOwnedDevice(req: AuthenticatedRequest, res: express.Response): boolean {
+  const userId = req.auth?.userId;
+  if (!userId) {
+    res.status(401).json({ ok: false, error: "Authentication required" });
+    return false;
+  }
+  const device = getDevice(String(req.params.id));
+  if (!device || (device.userId !== userId && !isAdmin(req))) {
+    res.status(404).json({ ok: false, error: "Device not found" });
+    return false;
+  }
+  return true;
+}
+
+router.get("/", (req: AuthenticatedRequest, res) => {
+  const userId = req.auth?.userId;
+  if (!userId) {
+    res.status(401).json({ ok: false, error: "Authentication required" });
+    return;
+  }
+  const devices = listDevices();
+  res.json({ ok: true, devices: isAdmin(req) ? devices : devices.filter((device) => device.userId === userId) });
 });
 
 router.post("/register", (req: AuthenticatedRequest, res) => {
@@ -36,6 +64,7 @@ router.post("/register", (req: AuthenticatedRequest, res) => {
 });
 
 router.post("/:id/heartbeat", (req: AuthenticatedRequest, res) => {
+  if (!requireOwnedDevice(req, res)) return;
   const device = heartbeatDevice(req.params.id);
   if (!device) {
     res.status(404).json({ ok: false, error: "Device not found" });
@@ -45,6 +74,7 @@ router.post("/:id/heartbeat", (req: AuthenticatedRequest, res) => {
 });
 
 router.post("/:id/status", (req: AuthenticatedRequest, res) => {
+  if (!requireOwnedDevice(req, res)) return;
   const { status, fingerprintHash, fingerprintSignals } = req.body ?? {};
   const device = updateDeviceStatus(req.params.id, { status, fingerprintHash, fingerprintSignals });
   if (!device) {
@@ -55,6 +85,7 @@ router.post("/:id/status", (req: AuthenticatedRequest, res) => {
 });
 
 router.post("/:id/telemetry", (req: AuthenticatedRequest, res) => {
+  if (!requireOwnedDevice(req, res)) return;
   const { temperatureC, batteryPercent, powerWatts, computeLoadPercent, networkLatencyMs, signalStrength } = req.body ?? {};
   if (
     typeof temperatureC !== "number" ||
