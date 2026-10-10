@@ -198,7 +198,7 @@ export default function PublicDashboard() {
           className="flex justify-between items-end"
         >
           <div className="text-white/40 text-xs tracking-widest uppercase font-mono">
-            Powered by DeepMind & Next-Gen Space AI
+            Live data: NOAA Space Weather Prediction Center
           </div>
           <div className="flex items-center gap-3 pointer-events-auto hover:text-white transition-colors cursor-pointer">
              <div className="flex items-center gap-2 bg-white/5 border border-white/10 backdrop-blur-md px-3 py-1.5 rounded-full">
