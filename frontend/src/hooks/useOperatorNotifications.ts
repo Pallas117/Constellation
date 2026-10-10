@@ -44,9 +44,10 @@ export function useOperatorNotifications() {
     }
 
     lastNotificationRef.current = fingerprint;
-    toast(title, {
+    // sonner has no `variant` option; severity is chosen by the toast function.
+    const notify = variant === "destructive" ? toast.error : variant === "success" ? toast.success : toast;
+    notify(title, {
       description,
-      variant,
       duration: 12000,
       action: {
         label: "View status",

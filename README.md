@@ -155,7 +155,7 @@ npm run test:rbac                        # RBAC smoke tests
 Gauss Aurora includes comprehensive quality gates and automated testing:
 
 **Five Core Automations**:
-1. **Type Safety & Linting Gate** — TypeScript strict mode + ESLint
+1. **Type Safety & Linting Gate** — TypeScript type check + ESLint
 2. **Test Coverage Enforcement** — Unit tests + E2E tests (Playwright)
 3. **Build & Release Pipeline** — Auto-versioning + changelog generation
 4. **Database Migration Safety** — SQL validation + downtime detection
@@ -172,7 +172,7 @@ npm run perf:check       # Bundle size analysis
 
 **Common Commands**:
 ```sh
-npm run quality:types                    # TypeScript strict mode
+npm run quality:types                    # TypeScript type check (frontend app + Vite config)
 npm run quality:lint                     # ESLint checking
 npm run test:all                         # All tests
 npm run perf:check                       # Bundle size analysis
