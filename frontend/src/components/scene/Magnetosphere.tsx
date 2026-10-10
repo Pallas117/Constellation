@@ -1,726 +1,621 @@
-import { useRef, useMemo } from 'react';
+import { useMemo, useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
+import { Line } from '@react-three/drei';
 import * as THREE from 'three';
+import {
+  computeMagnetosphere,
+  driversFromVisualParams,
+  gsmToScene,
+  magneticFootpoint,
+  shueRadius,
+  type FieldLine,
+  type MagnetosphereState,
+  type SolarWindDrivers,
+} from '@/lib/physics/geomagnetic';
 
 interface MagnetosphereProps {
   visible: boolean;
+  /** Legacy normalised drivers (0.6-1 compression, 0-1 reconnection). */
   compression: number;
   reconnectionStrength: number;
+  /** Live solar wind drivers; override the values derived from the legacy params. */
+  drivers?: Partial<SolarWindDrivers>;
+  /** Epoch for the dipole tilt; defaults to now. */
+  epochMs?: number;
+  showSurfaces?: boolean;
+  showFieldLines?: boolean;
 }
 
-/**
- * Generate dipole field line points following r = L * cos²(λ)
- */
-function generateDipoleFieldLine(
-  L: number,
-  phi: number,
-  steps: number,
-  isOpen: boolean,
-  tailLength: number
-): THREE.Vector3[] {
-  const points: THREE.Vector3[] = [];
-  
-  const latRange = isOpen ? 75 : 85; // degrees
-  
-  for (let i = 0; i <= steps; i++) {
-    const t = i / steps;
-    const lambda = (t - 0.5) * 2 * latRange * (Math.PI / 180);
-    const cosLambda = Math.cos(lambda);
-    const cos2Lambda = cosLambda * cosLambda;
-    
-    let r = L * cos2Lambda;
-    
-    // For open field lines, stretch toward tail on nightside
-    if (isOpen && Math.abs(lambda) > 60 * Math.PI / 180) {
-      const stretch = (Math.abs(lambda) - 60 * Math.PI / 180) / (15 * Math.PI / 180);
-      r += stretch * tailLength * Math.sign(Math.cos(phi) < 0 ? -1 : 0);
-    }
-    
-    const x = r * cosLambda * Math.cos(phi);
-    const y = r * Math.sin(lambda);
-    const z = r * cosLambda * Math.sin(phi);
-    
-    points.push(new THREE.Vector3(x, y, z));
-  }
-  
-  return points;
+const TAIL_LENGTH = 40;
+
+// Palette: closed flux cold (ice → cobalt), open flux hot (amber → magenta).
+const CLOSED_NEAR = new THREE.Color('#8ff0ff');
+const CLOSED_FAR = new THREE.Color('#2a6cff');
+const OPEN_NEAR = new THREE.Color('#ffd27a');
+const OPEN_FAR = new THREE.Color('#ff3d8b');
+
+const LOG_B_MIN = Math.log10(5);
+const LOG_B_MAX = Math.log10(60000);
+
+const quantise = (v: number, step: number) => Math.round(v / step) * step;
+
+/** Recompute the traced model only when drivers change meaningfully. */
+function useMagnetosphereState(drivers: SolarWindDrivers, epochMs: number): MagnetosphereState {
+  const bz = quantise(drivers.bz, 0.5);
+  const by = quantise(drivers.by, 0.5);
+  const pdyn = quantise(drivers.pdyn, 0.25);
+  const kp = quantise(drivers.kp, 1 / 3);
+  const epoch = quantise(epochMs, 10 * 60_000);
+  return useMemo(
+    () => computeMagnetosphere({ bz, by, pdyn, kp }, epoch, { tailLength: TAIL_LENGTH }),
+    [bz, by, pdyn, kp, epoch],
+  );
 }
 
-/**
- * Create magnetotail geometry - elongated parabolic cavity
- */
-function createMagnetotailGeometry(
-  length: number,
-  startRadius: number,
-  segments: number,
-  rings: number
-): THREE.BufferGeometry {
-  const geometry = new THREE.BufferGeometry();
-  const vertices: number[] = [];
-  const indices: number[] = [];
+/* ------------------------------------------------------------------------- */
+/* Field lines                                                               */
+/* ------------------------------------------------------------------------- */
 
-  for (let i = 0; i <= rings; i++) {
-    const t = i / rings;
-    // Parabolic flaring: radius increases slowly then more at the end
-    const x = -startRadius - t * length;
-    const flareFactor = 1 + t * 0.3 + t * t * 0.5;
-    const radius = startRadius * flareFactor;
-    
-    for (let j = 0; j <= segments; j++) {
-      const theta = (j / segments) * Math.PI * 2;
-      const y = radius * Math.sin(theta);
-      const z = radius * Math.cos(theta);
-      
-      vertices.push(x, y, z);
-      
-      if (i < rings && j < segments) {
-        const current = i * (segments + 1) + j;
-        const next = current + segments + 1;
-        indices.push(current, next, current + 1);
-        indices.push(current + 1, next, next + 1);
+const FieldLines = ({ lines }: { lines: FieldLine[] }) => {
+  const { points, colors } = useMemo(() => {
+    const points: [number, number, number][] = [];
+    const colors: [number, number, number][] = [];
+    const c = new THREE.Color();
+    for (const line of lines) {
+      const open = line.topology === 'open';
+      const near = open ? OPEN_NEAR : CLOSED_NEAR;
+      const far = open ? OPEN_FAR : CLOSED_FAR;
+      const vertexColor = (i: number): [number, number, number] => {
+        const t = THREE.MathUtils.clamp((Math.log10(line.strength[i]) - LOG_B_MIN) / (LOG_B_MAX - LOG_B_MIN), 0, 1);
+        c.copy(far).lerp(near, Math.pow(t, 1.6));
+        // Lines converge at the poles; dim them near the surface so the
+        // additive blend doesn't saturate the inner magnetosphere.
+        const [px, py, pz] = line.points[i];
+        const r = Math.hypot(px, py, pz);
+        const k = (0.3 + 0.5 * t) * (0.15 + 0.85 * THREE.MathUtils.smoothstep(r, 1.0, 2.4));
+        return [c.r * k, c.g * k, c.b * k];
+      };
+      for (let i = 0; i < line.points.length - 1; i++) {
+        points.push(gsmToScene(line.points[i]), gsmToScene(line.points[i + 1]));
+        colors.push(vertexColor(i), vertexColor(i + 1));
       }
     }
-  }
+    return { points, colors };
+  }, [lines]);
 
-  geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
-  geometry.setIndex(indices);
-  geometry.computeVertexNormals();
+  if (points.length === 0) return null;
+  return (
+    <Line
+      points={points}
+      vertexColors={colors}
+      segments
+      lineWidth={1.1}
+      transparent
+      opacity={0.6}
+      depthWrite={false}
+      blending={THREE.AdditiveBlending}
+      toneMapped={false}
+    />
+  );
+};
 
-  return geometry;
-}
+/** Plasma tracers flowing along the traced field lines at constant arc speed. */
+const FieldLineTracers = ({ lines, count = 520 }: { lines: FieldLine[]; count?: number }) => {
+  const pointsRef = useRef<THREE.Points>(null);
 
-/**
- * Plasma particles flowing along field lines - optimized
- */
-const FieldLineParticles = ({ fieldLines }: { fieldLines: { points: THREE.Vector3[]; isOpen: boolean }[] }) => {
-  const particlesRef = useRef<THREE.Points>(null);
-  const particleCount = 150; // Reduced from 400
-  const frameSkip = useRef(0);
-  
-  const { geometry, offsets, lineIndices } = useMemo(() => {
-    const positions = new Float32Array(particleCount * 3);
-    const offsets = new Float32Array(particleCount);
-    const lineIndices = new Float32Array(particleCount);
-    const sizes = new Float32Array(particleCount);
-    const colors = new Float32Array(particleCount * 3);
-    
-    for (let i = 0; i < particleCount; i++) {
-      const lineIdx = Math.floor(Math.random() * fieldLines.length);
-      const line = fieldLines[lineIdx];
-      const t = Math.random();
-      const pointIdx = Math.floor(t * (line.points.length - 1));
-      const point = line.points[pointIdx];
-      
-      positions[i * 3] = point.x;
-      positions[i * 3 + 1] = point.y;
-      positions[i * 3 + 2] = point.z;
-      
-      offsets[i] = Math.random();
-      lineIndices[i] = lineIdx;
-      sizes[i] = 0.06 + Math.random() * 0.1;
-      
-      // Color based on line type
-      if (line.isOpen) {
-        colors[i * 3] = 1.0;
-        colors[i * 3 + 1] = 0.5;
-        colors[i * 3 + 2] = 0.2;
-      } else {
-        colors[i * 3] = 0.2;
-        colors[i * 3 + 1] = 0.7;
-        colors[i * 3 + 2] = 1.0;
+  const data = useMemo(() => {
+    const paths = lines.map((l) => {
+      const pts = l.points.map(gsmToScene);
+      const cum = [0];
+      for (let i = 1; i < pts.length; i++) {
+        const [a, b] = [pts[i - 1], pts[i]];
+        cum.push(cum[i - 1] + Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2]));
       }
+      return { pts, cum, length: cum[cum.length - 1], open: l.topology === 'open' };
+    });
+    const total = paths.reduce((s, p) => s + p.length, 0) || 1;
+    const lineIdx = new Uint16Array(count);
+    const phase = new Float32Array(count);
+    const positions = new Float32Array(count * 3);
+    const colors = new Float32Array(count * 3);
+    const sizes = new Float32Array(count);
+    for (let i = 0; i < count; i++) {
+      // Sample lines in proportion to length so density is even in space.
+      let r = Math.random() * total;
+      let k = 0;
+      while (k < paths.length - 1 && r > paths[k].length) r -= paths[k++].length;
+      lineIdx[i] = k;
+      phase[i] = Math.random();
+      const col = paths[k]?.open ? OPEN_NEAR : CLOSED_NEAR;
+      colors.set([col.r, col.g, col.b], i * 3);
+      sizes[i] = 0.05 + Math.random() * 0.07;
     }
-    
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-    geometry.setAttribute('aOffset', new THREE.BufferAttribute(offsets, 1));
-    geometry.setAttribute('aLineIndex', new THREE.BufferAttribute(lineIndices, 1));
-    geometry.setAttribute('size', new THREE.BufferAttribute(sizes, 1));
     geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
-    
-    return { geometry, offsets, lineIndices };
-  }, [fieldLines]);
-  
+    geometry.setAttribute('size', new THREE.BufferAttribute(sizes, 1));
+    return { paths, lineIdx, phase, geometry };
+  }, [lines, count]);
+
   useFrame((state) => {
-    if (!particlesRef.current) return;
-    
-    // Skip every other frame for performance
-    frameSkip.current++;
-    if (frameSkip.current % 2 !== 0) return;
-    
-    const positions = particlesRef.current.geometry.attributes.position.array as Float32Array;
+    const pts = pointsRef.current;
+    if (!pts || data.paths.length === 0) return;
+    const pos = pts.geometry.attributes.position.array as Float32Array;
     const time = state.clock.elapsedTime;
-    
-    for (let i = 0; i < particleCount; i++) {
-      const lineIdx = Math.floor(lineIndices[i]);
-      const line = fieldLines[lineIdx];
-      if (!line) continue;
-      
-      const speed = line.isOpen ? 0.4 : 0.25;
-      let t = (offsets[i] + time * speed) % 1;
-      
-      const pointIdx = Math.floor(t * (line.points.length - 1));
-      const nextIdx = Math.min(pointIdx + 1, line.points.length - 1);
-      const frac = t * (line.points.length - 1) - pointIdx;
-      
-      const p1 = line.points[pointIdx];
-      const p2 = line.points[nextIdx];
-      
-      positions[i * 3] = p1.x + (p2.x - p1.x) * frac;
-      positions[i * 3 + 1] = p1.y + (p2.y - p1.y) * frac;
-      positions[i * 3 + 2] = p1.z + (p2.z - p1.z) * frac;
+    for (let i = 0; i < count; i++) {
+      const path = data.paths[data.lineIdx[i]];
+      if (!path || path.length === 0) continue;
+      const speed = path.open ? 2.2 : 1.2; // Re per second
+      const s = ((data.phase[i] * path.length + time * speed) % path.length + path.length) % path.length;
+      // Binary search the segment.
+      let lo = 0;
+      let hi = path.cum.length - 1;
+      while (hi - lo > 1) {
+        const mid = (lo + hi) >> 1;
+        if (path.cum[mid] < s) lo = mid;
+        else hi = mid;
+      }
+      const seg = path.cum[hi] - path.cum[lo] || 1;
+      const f = (s - path.cum[lo]) / seg;
+      const a = path.pts[lo];
+      const b = path.pts[hi];
+      pos[i * 3] = a[0] + (b[0] - a[0]) * f;
+      pos[i * 3 + 1] = a[1] + (b[1] - a[1]) * f;
+      pos[i * 3 + 2] = a[2] + (b[2] - a[2]) * f;
     }
-    
-    particlesRef.current.geometry.attributes.position.needsUpdate = true;
+    pts.geometry.attributes.position.needsUpdate = true;
   });
-  
+
   return (
-    <points ref={particlesRef} geometry={geometry}>
+    <points ref={pointsRef} geometry={data.geometry} frustumCulled={false}>
       <shaderMaterial
-        uniforms={{
+        vertexShader={GLOW_POINT_VERT}
+        fragmentShader={GLOW_POINT_FRAG}
+        transparent
+        depthWrite={false}
+        blending={THREE.AdditiveBlending}
+      />
+    </points>
+  );
+};
+
+const GLOW_POINT_VERT = /* glsl */ `
+  attribute float size;
+  attribute vec3 color;
+  varying vec3 vColor;
+  void main() {
+    vColor = color;
+    vec4 mv = modelViewMatrix * vec4(position, 1.0);
+    gl_PointSize = size * (260.0 / -mv.z);
+    gl_Position = projectionMatrix * mv;
+  }
+`;
+
+const GLOW_POINT_FRAG = /* glsl */ `
+  varying vec3 vColor;
+  void main() {
+    float d = length(gl_PointCoord - 0.5);
+    if (d > 0.5) discard;
+    float core = exp(-d * d * 40.0);
+    float halo = exp(-d * d * 10.0) * 0.45;
+    gl_FragColor = vec4(vColor * (core + halo), core + halo);
+  }
+`;
+
+/* ------------------------------------------------------------------------- */
+/* Boundaries                                                                */
+/* ------------------------------------------------------------------------- */
+
+/** Surface of revolution about the Sun–Earth line from r(θ), cut at x = -tail. */
+function revolutionGeometry(radius: (theta: number) => number, tail: number, thetaSteps = 72, phiSteps = 64) {
+  // Find the θ at which the surface reaches x = -tail.
+  let thetaMax = Math.PI / 2;
+  for (let th = Math.PI / 2; th < Math.PI * 0.98; th += 0.005) {
+    thetaMax = th;
+    if (radius(th) * Math.cos(th) <= -tail) break;
+  }
+  const vertices: number[] = [];
+  const uvs: number[] = [];
+  const indices: number[] = [];
+  for (let i = 0; i <= thetaSteps; i++) {
+    const th = (i / thetaSteps) * thetaMax;
+    const r = radius(th);
+    for (let j = 0; j <= phiSteps; j++) {
+      const ph = (j / phiSteps) * Math.PI * 2;
+      vertices.push(r * Math.cos(th), r * Math.sin(th) * Math.sin(ph), r * Math.sin(th) * Math.cos(ph));
+      uvs.push(j / phiSteps, i / thetaSteps);
+      if (i < thetaSteps && j < phiSteps) {
+        const a = i * (phiSteps + 1) + j;
+        const b = a + phiSteps + 1;
+        indices.push(a, b, a + 1, a + 1, b, b + 1);
+      }
+    }
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
+  g.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+  g.setIndex(indices);
+  g.computeVertexNormals();
+  return g;
+}
+
+const BOUNDARY_VERT = /* glsl */ `
+  varying vec3 vPos;
+  varying vec2 vUv;
+  varying float vFresnel;
+  void main() {
+    vPos = position;
+    vUv = uv;
+    vec3 n = normalize(normalMatrix * normal);
+    vec4 mv = modelViewMatrix * vec4(position, 1.0);
+    vFresnel = pow(1.0 - abs(dot(normalize(-mv.xyz), n)), 2.2);
+    gl_Position = projectionMatrix * mv;
+  }
+`;
+
+const MAGNETOPAUSE_FRAG = /* glsl */ `
+  uniform float uTime;
+  uniform float uReconnection;
+  uniform float uR0;
+  uniform float uTail;
+  uniform vec3 uColor;
+  uniform vec3 uHot;
+  varying vec3 vPos;
+  varying vec2 vUv;
+  varying float vFresnel;
+  void main() {
+    // Plasma flows anti-sunward along the boundary.
+    float flow = 0.5 + 0.5 * sin(vPos.x * 0.9 + uTime * 1.6 + sin(vUv.x * 37.7) * 0.6);
+    // Fine meridian/latitude lattice for depth cues.
+    float lat = smoothstep(0.96, 1.0, abs(sin(vUv.y * 3.14159 * 18.0)));
+    float lon = smoothstep(0.985, 1.0, abs(sin(vUv.x * 3.14159 * 12.0)));
+    float lattice = max(lat, lon) * 0.35;
+    // Dayside reconnection hot spot around the subsolar point.
+    float sub = exp(-pow(length(vPos - vec3(uR0, 0.0, 0.0)) / (0.45 * uR0), 2.0));
+    float tailFade = 1.0 - smoothstep(uTail * 0.45, uTail, -vPos.x);
+    vec3 col = mix(uColor, uHot, clamp(sub * uReconnection * 1.4, 0.0, 1.0));
+    float a = (vFresnel * (0.32 + 0.18 * flow) + lattice * vFresnel + sub * uReconnection * 0.35) * tailFade;
+    gl_FragColor = vec4(col, clamp(a, 0.0, 0.7));
+  }
+`;
+
+const BOWSHOCK_FRAG = /* glsl */ `
+  uniform float uTime;
+  uniform float uPressure;
+  varying vec3 vPos;
+  varying vec2 vUv;
+  varying float vFresnel;
+  void main() {
+    float ripple = 0.5 + 0.5 * sin(vPos.x * 2.2 - uTime * 3.0 + sin(vUv.x * 25.0));
+    float fade = 1.0 - smoothstep(-2.0, -14.0, vPos.x);
+    vec3 col = mix(vec3(1.0, 0.78, 0.45), vec3(1.0, 0.45, 0.25), clamp(uPressure / 15.0, 0.0, 1.0));
+    float a = vFresnel * (0.12 + 0.12 * ripple) * fade;
+    gl_FragColor = vec4(col, a);
+  }
+`;
+
+const Magnetopause = ({ state, reconnection }: { state: MagnetosphereState; reconnection: number }) => {
+  const geometry = useMemo(
+    () => revolutionGeometry((th) => shueRadius(th, state.r0, state.alpha), TAIL_LENGTH),
+    [state.r0, state.alpha],
+  );
+  const material = useMemo(
+    () =>
+      new THREE.ShaderMaterial({
+        uniforms: {
           uTime: { value: 0 },
-        }}
-        vertexShader={`
-          attribute float size;
-          attribute vec3 color;
-          varying vec3 vColor;
-          
-          void main() {
-            vColor = color;
-            vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
-            gl_PointSize = size * (200.0 / -mvPosition.z);
-            gl_Position = projectionMatrix * mvPosition;
-          }
-        `}
-        fragmentShader={`
-          varying vec3 vColor;
-          
-          void main() {
-            float dist = length(gl_PointCoord - vec2(0.5));
-            if (dist > 0.5) discard;
-            
-            float alpha = 1.0 - smoothstep(0.2, 0.5, dist);
-            gl_FragColor = vec4(vColor, alpha * 0.8);
-          }
-        `}
-        transparent
-        blending={THREE.AdditiveBlending}
-        depthWrite={false}
-      />
-    </points>
+          uReconnection: { value: 0 },
+          uR0: { value: 10 },
+          uTail: { value: TAIL_LENGTH },
+          uColor: { value: new THREE.Color('#2fd8ff') },
+          uHot: { value: new THREE.Color('#ff5fd2') },
+        },
+        vertexShader: BOUNDARY_VERT,
+        fragmentShader: MAGNETOPAUSE_FRAG,
+        transparent: true,
+        side: THREE.DoubleSide,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+      }),
+    [],
   );
-};
-
-/**
- * Particles flowing through magnetotail current sheet - optimized
- */
-const CurrentSheetParticles = () => {
-  const particlesRef = useRef<THREE.Points>(null);
-  const particleCount = 100; // Reduced from 300
-  const frameSkip = useRef(0);
-  
-  const { geometry, offsets, yOffsets } = useMemo(() => {
-    const positions = new Float32Array(particleCount * 3);
-    const offsets = new Float32Array(particleCount);
-    const yOffsets = new Float32Array(particleCount);
-    const sizes = new Float32Array(particleCount);
-    
-    for (let i = 0; i < particleCount; i++) {
-      const t = Math.random();
-      const x = -4 - t * 35;
-      const y = (Math.random() - 0.5) * 1.5;
-      const z = (Math.random() - 0.5) * 6;
-      
-      positions[i * 3] = x;
-      positions[i * 3 + 1] = y;
-      positions[i * 3 + 2] = z;
-      
-      offsets[i] = Math.random();
-      yOffsets[i] = y;
-      sizes[i] = 0.1 + Math.random() * 0.12;
-    }
-    
-    const geometry = new THREE.BufferGeometry();
-    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-    geometry.setAttribute('size', new THREE.BufferAttribute(sizes, 1));
-    
-    return { geometry, offsets, yOffsets };
-  }, []);
-  
-  useFrame((state) => {
-    if (!particlesRef.current) return;
-    
-    // Skip frames for performance
-    frameSkip.current++;
-    if (frameSkip.current % 2 !== 0) return;
-    
-    const positions = particlesRef.current.geometry.attributes.position.array as Float32Array;
-    const time = state.clock.elapsedTime;
-    
-    for (let i = 0; i < particleCount; i++) {
-      let t = (offsets[i] + time * 0.15) % 1;
-      const x = -4 - t * 35;
-      const waver = Math.sin(time * 2 + offsets[i] * 10) * 0.2;
-      
-      positions[i * 3] = x;
-      positions[i * 3 + 1] = yOffsets[i] + waver;
-    }
-    
-    particlesRef.current.geometry.attributes.position.needsUpdate = true;
+  useFrame(({ clock }) => {
+    material.uniforms.uTime.value = clock.elapsedTime;
+    material.uniforms.uReconnection.value = reconnection;
+    material.uniforms.uR0.value = state.r0;
   });
-  
-  return (
-    <points ref={particlesRef} geometry={geometry}>
-      <shaderMaterial
-        vertexShader={`
-          attribute float size;
-          varying float vIntensity;
-          
-          void main() {
-            vIntensity = 1.0 - smoothstep(-4.0, -39.0, position.x);
-            vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
-            gl_PointSize = size * (200.0 / -mvPosition.z) * vIntensity;
-            gl_Position = projectionMatrix * mvPosition;
-          }
-        `}
-        fragmentShader={`
-          varying float vIntensity;
-          
-          void main() {
-            float dist = length(gl_PointCoord - vec2(0.5));
-            if (dist > 0.5) discard;
-            
-            float alpha = (1.0 - smoothstep(0.1, 0.5, dist)) * vIntensity;
-            vec3 color = vec3(1.0, 0.6, 0.2);
-            gl_FragColor = vec4(color, alpha * 0.7);
-          }
-        `}
-        transparent
-        blending={THREE.AdditiveBlending}
-        depthWrite={false}
-      />
-    </points>
-  );
+  return <mesh geometry={geometry} material={material} />;
 };
 
-/**
- * Solar wind particles hitting magnetopause - optimized
- */
-const SolarWindParticles = ({ compression }: { compression: number }) => {
-  const particlesRef = useRef<THREE.Points>(null);
-  const particleCount = 80; // Reduced from 200
-  const frameSkip = useRef(0);
-  
-  const { geometry, offsets, angles } = useMemo(() => {
-    const positions = new Float32Array(particleCount * 3);
-    const offsets = new Float32Array(particleCount);
-    const angles = new Float32Array(particleCount * 2);
-    const sizes = new Float32Array(particleCount);
-    
-    for (let i = 0; i < particleCount; i++) {
-      const theta = (Math.random() - 0.5) * Math.PI * 0.8;
-      const phi = (Math.random() - 0.5) * Math.PI * 0.8;
-      
-      positions[i * 3] = 20;
-      positions[i * 3 + 1] = 0;
-      positions[i * 3 + 2] = 0;
-      
-      offsets[i] = Math.random();
-      angles[i * 2] = theta;
-      angles[i * 2 + 1] = phi;
-      sizes[i] = 0.08 + Math.random() * 0.08;
+const BowShock = ({ state, pdyn }: { state: MagnetosphereState; pdyn: number }) => {
+  const geometry = useMemo(() => {
+    const ecc = 0.81;
+    const semiLatus = state.bowShock * (1 + ecc);
+    return revolutionGeometry((th) => semiLatus / (1 + ecc * Math.cos(th)), 16, 48, 56);
+  }, [state.bowShock]);
+  const material = useMemo(
+    () =>
+      new THREE.ShaderMaterial({
+        uniforms: { uTime: { value: 0 }, uPressure: { value: 2 } },
+        vertexShader: BOUNDARY_VERT,
+        fragmentShader: BOWSHOCK_FRAG,
+        transparent: true,
+        side: THREE.DoubleSide,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+      }),
+    [],
+  );
+  useFrame(({ clock }) => {
+    material.uniforms.uTime.value = clock.elapsedTime;
+    material.uniforms.uPressure.value = pdyn;
+  });
+  return <mesh geometry={geometry} material={material} />;
+};
+
+/* ------------------------------------------------------------------------- */
+/* Tail current sheet, X-lines, solar wind                                   */
+/* ------------------------------------------------------------------------- */
+
+const CURRENT_SHEET_FRAG = /* glsl */ `
+  uniform float uTime;
+  uniform float uReconnection;
+  uniform float uXLine;
+  varying vec2 vUv;
+  varying vec3 vPos;
+  void main() {
+    float across = 1.0 - abs(vUv.y - 0.5) * 2.0;
+    across = pow(max(across, 0.0), 2.5);
+    float along = smoothstep(-8.0, -14.0, vPos.x) * (1.0 - smoothstep(-28.0, -40.0, vPos.x));
+    // Bursty bulk flows radiate both ways from the near-Earth X-line.
+    float d = vPos.x - uXLine;
+    float burst = 0.5 + 0.5 * sin(abs(d) * 1.1 - uTime * (2.0 + 3.0 * uReconnection));
+    float xglow = exp(-d * d / 6.0) * uReconnection;
+    vec3 col = mix(vec3(1.0, 0.55, 0.15), vec3(1.0, 0.85, 0.6), xglow);
+    float a = across * along * (0.10 + 0.22 * burst * (0.3 + uReconnection)) + across * xglow * 0.5;
+    gl_FragColor = vec4(col, a);
+  }
+`;
+
+const CurrentSheet = ({ tilt, reconnection, width }: { tilt: number; reconnection: number; width: number }) => {
+  const geometry = useMemo(() => {
+    const g = new THREE.PlaneGeometry(TAIL_LENGTH - 6, width, 48, 8);
+    g.translate(-(TAIL_LENGTH + 6) / 2, 0, 0);
+    return g;
+  }, [width]);
+  const material = useMemo(
+    () =>
+      new THREE.ShaderMaterial({
+        uniforms: { uTime: { value: 0 }, uReconnection: { value: 0 }, uXLine: { value: -24 } },
+        vertexShader: /* glsl */ `
+          varying vec2 vUv;
+          varying vec3 vPos;
+          void main() {
+            vUv = uv;
+            vPos = position;
+            gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+          }
+        `,
+        fragmentShader: CURRENT_SHEET_FRAG,
+        transparent: true,
+        side: THREE.DoubleSide,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+      }),
+    [],
+  );
+  useFrame(({ clock }) => {
+    material.uniforms.uTime.value = clock.elapsedTime;
+    material.uniforms.uReconnection.value = reconnection;
+    // Near-Earth X-line moves earthward under strong driving.
+    material.uniforms.uXLine.value = -26 + 8 * reconnection;
+  });
+  // Plane lies in scene XZ (GSM XY); hinge it to the tilted neutral sheet.
+  return <mesh geometry={geometry} material={material} rotation={[-Math.PI / 2, 0, 0]} position={[0, 10 * Math.tan(tilt), 0]} />;
+};
+
+const SolarWind = ({ standoff, pdyn }: { standoff: number; pdyn: number }) => {
+  const ref = useRef<THREE.Points>(null);
+  const count = 420;
+  const data = useMemo(() => {
+    const positions = new Float32Array(count * 3);
+    const lanes = new Float32Array(count * 2);
+    const phase = new Float32Array(count);
+    const sizes = new Float32Array(count);
+    const colors = new Float32Array(count * 3);
+    for (let i = 0; i < count; i++) {
+      const rr = Math.sqrt(Math.random()) * 22;
+      const a = Math.random() * Math.PI * 2;
+      lanes[i * 2] = rr * Math.cos(a);
+      lanes[i * 2 + 1] = rr * Math.sin(a);
+      phase[i] = Math.random();
+      sizes[i] = 0.035 + Math.random() * 0.04;
+      colors.set([1.0, 0.86, 0.55], i * 3);
     }
-    
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
     geometry.setAttribute('size', new THREE.BufferAttribute(sizes, 1));
-    
-    return { geometry, offsets, angles };
+    return { geometry, lanes, phase };
   }, []);
-  
-  useFrame((state) => {
-    if (!particlesRef.current) return;
-    
-    // Skip frames for performance
-    frameSkip.current++;
-    if (frameSkip.current % 2 !== 0) return;
-    
-    const positions = particlesRef.current.geometry.attributes.position.array as Float32Array;
-    const time = state.clock.elapsedTime;
-    const r0 = 10 * compression;
-    
-    for (let i = 0; i < particleCount; i++) {
-      const speed = 0.3;
-      let t = (offsets[i] + time * speed) % 1;
-      
-      const startX = 25;
-      const endX = r0 + 1;
-      
-      const theta = angles[i * 2];
-      const phi = angles[i * 2 + 1];
-      
-      if (t < 0.7) {
-        const x = startX - t * (startX - endX) / 0.7;
-        const spread = t * 0.5;
-        const y = Math.sin(theta) * spread * 3;
-        const z = Math.sin(phi) * spread * 3;
-        
-        positions[i * 3] = x;
-        positions[i * 3 + 1] = y;
-        positions[i * 3 + 2] = z;
-      } else {
-        const deflectT = (t - 0.7) / 0.3;
-        const deflectAngle = deflectT * Math.PI * 0.5;
-        
-        const r = r0 + 1 + deflectT * 2;
-        const x = r * Math.cos(deflectAngle + theta * 0.3);
-        const y = Math.sin(theta) * (1 + deflectT * 4);
-        const z = Math.sin(phi) * (1 + deflectT * 4);
-        
-        positions[i * 3] = x;
-        positions[i * 3 + 1] = y;
-        positions[i * 3 + 2] = z;
+
+  useFrame(({ clock }) => {
+    if (!ref.current) return;
+    const pos = ref.current.geometry.attributes.position.array as Float32Array;
+    const t = clock.elapsedTime;
+    const speed = 6 + Math.sqrt(Math.max(pdyn, 0.1)) * 2; // Re/s, display speed
+    const x0 = 34;
+    const span = x0 + TAIL_LENGTH;
+    for (let i = 0; i < count; i++) {
+      const x = x0 - ((data.phase[i] * span + t * speed) % span);
+      let y = data.lanes[i * 2];
+      let z = data.lanes[i * 2 + 1];
+      // Deflect around the obstacle: push radially outward from the axis
+      // to stay outside a paraboloid just beyond the bow shock.
+      const rho = Math.hypot(y, z) || 1e-3;
+      const minRho = x < standoff ? Math.sqrt(Math.max(0, 2 * standoff * 1.1 * (standoff - x))) : 0;
+      if (rho < minRho) {
+        const s = minRho / rho;
+        y *= s;
+        z *= s;
       }
+      pos[i * 3] = x;
+      pos[i * 3 + 1] = z;
+      pos[i * 3 + 2] = -y;
     }
-    
-    particlesRef.current.geometry.attributes.position.needsUpdate = true;
+    ref.current.geometry.attributes.position.needsUpdate = true;
   });
-  
+
   return (
-    <points ref={particlesRef} geometry={geometry}>
+    <points ref={ref} geometry={data.geometry} frustumCulled={false}>
       <shaderMaterial
-        vertexShader={`
-          attribute float size;
-          
-          void main() {
-            vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
-            gl_PointSize = size * (200.0 / -mvPosition.z);
-            gl_Position = projectionMatrix * mvPosition;
-          }
-        `}
-        fragmentShader={`
-          void main() {
-            float dist = length(gl_PointCoord - vec2(0.5));
-            if (dist > 0.5) discard;
-            
-            float alpha = 1.0 - smoothstep(0.1, 0.5, dist);
-            vec3 color = vec3(1.0, 0.9, 0.4);
-            gl_FragColor = vec4(color, alpha * 0.6);
-          }
-        `}
+        vertexShader={GLOW_POINT_VERT}
+        fragmentShader={GLOW_POINT_FRAG}
         transparent
-        blending={THREE.AdditiveBlending}
         depthWrite={false}
+        blending={THREE.AdditiveBlending}
       />
     </points>
   );
 };
 
-export const Magnetosphere = ({ visible, compression, reconnectionStrength }: MagnetosphereProps) => {
-  const magnetopauseRef = useRef<THREE.Mesh>(null);
-  const fieldLinesRef = useRef<THREE.Group>(null);
+/* ------------------------------------------------------------------------- */
+/* Auroral ovals                                                             */
+/* ------------------------------------------------------------------------- */
 
-  // Create magnetopause geometry - reduced segments (32x16 instead of 64x32)
-  const magnetopauseGeometry = useMemo(() => {
-    const geometry = new THREE.BufferGeometry();
-    const segments = 32;
-    const rings = 16;
+const AURORA_FRAG = /* glsl */ `
+  uniform float uTime;
+  uniform float uKp;
+  varying vec2 vUv;
+  varying float vNight;
+  void main() {
+    // vUv.y: 0 at equatorward edge, 1 at poleward edge.
+    float band = smoothstep(0.0, 0.25, vUv.y) * (1.0 - smoothstep(0.55, 1.0, vUv.y));
+    float curtain = 0.6 + 0.4 * sin(vUv.x * 160.0 + uTime * 1.3) * sin(vUv.x * 47.0 - uTime * 0.7);
+    vec3 green = vec3(0.35, 1.0, 0.55);
+    vec3 red = vec3(1.0, 0.25, 0.4);
+    vec3 col = mix(green, red, smoothstep(0.55, 1.0, vUv.y) * clamp(uKp / 6.0, 0.0, 1.0));
+    float a = band * curtain * (0.35 + 0.65 * vNight) * (0.35 + uKp / 9.0);
+    gl_FragColor = vec4(col, a);
+  }
+`;
+
+const AuroralOvals = ({ state, kp }: { state: MagnetosphereState; kp: number }) => {
+  const geometry = useMemo(() => {
+    const steps = 128;
+    const rows = 6;
     const vertices: number[] = [];
+    const uvs: number[] = [];
+    const night: number[] = [];
     const indices: number[] = [];
-
-    const r0 = 10 * compression;
-    const alpha = 0.5;
-
-    for (let i = 0; i <= rings; i++) {
-      const theta = (i / rings) * Math.PI - Math.PI / 2;
-      
-      for (let j = 0; j <= segments; j++) {
-        const phi = (j / segments) * Math.PI * 2;
-        
-        const cosTheta = Math.cos(theta);
-        const r = theta > 0 
-          ? r0 * Math.pow(2 / (1 + cosTheta), alpha)
-          : r0 * Math.pow(2 / (1 + cosTheta), alpha) * (1 + theta * 0.3);
-
-        const x = r * Math.cos(theta) * Math.cos(phi);
-        const y = r * Math.sin(theta);
-        const z = r * Math.cos(theta) * Math.sin(phi);
-
-        vertices.push(x, y, z);
-
-        if (i < rings && j < segments) {
-          const current = i * (segments + 1) + j;
-          const next = current + segments + 1;
-
-          indices.push(current, next, current + 1);
-          indices.push(current + 1, next, next + 1);
+    let base = 0;
+    for (const hemi of [1, -1]) {
+      for (let i = 0; i <= rows; i++) {
+        const v = i / rows;
+        for (let j = 0; j <= steps; j++) {
+          const mlt = (j / steps) * Math.PI * 2;
+          // Oval is displaced toward midnight: higher latitude at noon.
+          const eq = state.oval.equatorward + 3 * Math.cos(mlt);
+          const pol = state.oval.poleward + 4 * Math.cos(mlt);
+          const lat = eq + (pol - eq) * v;
+          const p = gsmToScene(magneticFootpoint(state.tilt, hemi * lat, mlt, 1.03));
+          vertices.push(...p);
+          uvs.push(j / steps, v);
+          night.push(0.5 - 0.5 * Math.cos(mlt));
+          if (i < rows && j < steps) {
+            const a = base + i * (steps + 1) + j;
+            const b = a + steps + 1;
+            indices.push(a, b, a + 1, a + 1, b, b + 1);
+          }
         }
       }
+      base += (rows + 1) * (steps + 1);
     }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
+    g.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+    g.setAttribute('aNight', new THREE.Float32BufferAttribute(night, 1));
+    g.setIndex(indices);
+    return g;
+  }, [state.tilt, state.oval.equatorward, state.oval.poleward]);
 
-    geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
-    geometry.setIndex(indices);
-    geometry.computeVertexNormals();
-
-    return geometry;
-  }, [compression]);
-
-  const magnetopauseMaterial = useMemo(() => {
-    return new THREE.ShaderMaterial({
-      uniforms: {
-        time: { value: 0 },
-        compression: { value: compression },
-        reconnection: { value: reconnectionStrength },
-        baseColor: { value: new THREE.Color('#00d4ff') },
-        glowColor: { value: new THREE.Color('#00ffff') },
-      },
-      vertexShader: `
-        varying vec3 vNormal;
-        varying vec3 vPosition;
-        varying float vFresnel;
-        
-        void main() {
-          vNormal = normalize(normalMatrix * normal);
-          vPosition = position;
-          
-          vec3 viewDir = normalize(cameraPosition - (modelMatrix * vec4(position, 1.0)).xyz);
-          vFresnel = pow(1.0 - abs(dot(viewDir, vNormal)), 2.0);
-          
-          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-        }
-      `,
-      fragmentShader: `
-        uniform float time;
-        uniform float compression;
-        uniform float reconnection;
-        uniform vec3 baseColor;
-        uniform vec3 glowColor;
-        
-        varying vec3 vNormal;
-        varying vec3 vPosition;
-        varying float vFresnel;
-        
-        void main() {
-          float flow = sin(vPosition.x * 0.5 - time * 0.5) * 0.5 + 0.5;
-          float pulse = sin(time * 2.0 + vPosition.y * 0.3) * 0.3 + 0.7;
-          
-          vec3 color = mix(baseColor, glowColor, vFresnel * 0.5 + flow * 0.2);
-          color += glowColor * reconnection * 0.5;
-          
-          float alpha = vFresnel * 0.4 * pulse;
-          alpha = clamp(alpha, 0.05, 0.5);
-          
-          gl_FragColor = vec4(color, alpha);
-        }
-      `,
-      transparent: true,
-      side: THREE.DoubleSide,
-      blending: THREE.AdditiveBlending,
-      depthWrite: false,
-    });
-  }, [compression, reconnectionStrength]);
-
-  // Magnetotail geometry - reduced segments (16x12 instead of 32x24)
-  const magnetotailGeometry = useMemo(() => {
-    return createMagnetotailGeometry(35, 4, 16, 12);
-  }, []);
-
-  const magnetotailMaterial = useMemo(() => {
-    return new THREE.ShaderMaterial({
-      uniforms: {
-        uTime: { value: 0 },
-      },
-      vertexShader: `
-        varying vec3 vPosition;
-        varying float vDistance;
-        
-        void main() {
-          vPosition = position;
-          vDistance = -position.x; // Distance along tail
-          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-        }
-      `,
-      fragmentShader: `
-        uniform float uTime;
-        varying vec3 vPosition;
-        varying float vDistance;
-        
-        void main() {
-          // Fade out toward tail end
-          float distanceFade = 1.0 - smoothstep(5.0, 35.0, vDistance);
-          
-          // Animated plasma flow toward tail
-          float flow = sin(vDistance * 0.3 + uTime * 1.5) * 0.3 + 0.7;
-          
-          // Color gradient: cyan near Earth, darker blue toward tail
-          vec3 nearColor = vec3(0.0, 0.8, 1.0);
-          vec3 farColor = vec3(0.0, 0.2, 0.5);
-          vec3 color = mix(nearColor, farColor, smoothstep(0.0, 30.0, vDistance));
-          
-          float alpha = distanceFade * flow * 0.15;
-          
-          gl_FragColor = vec4(color, alpha);
-        }
-      `,
-      transparent: true,
-      side: THREE.DoubleSide,
-      blending: THREE.AdditiveBlending,
-      depthWrite: false,
-    });
-  }, []);
-
-  // Current sheet - reduced segments (16x4 instead of 32x8)
-  const currentSheetGeometry = useMemo(() => {
-    const geometry = new THREE.PlaneGeometry(35, 8, 16, 4);
-    const positions = geometry.attributes.position.array as Float32Array;
-    for (let i = 0; i < positions.length; i += 3) {
-      positions[i] = positions[i] - 21.5;
-    }
-    geometry.attributes.position.needsUpdate = true;
-    return geometry;
-  }, []);
-
-  const currentSheetMaterial = useMemo(() => {
-    return new THREE.ShaderMaterial({
-      uniforms: {
-        uTime: { value: 0 },
-      },
-      vertexShader: `
-        varying vec2 vUv;
-        varying vec3 vPosition;
-        
-        void main() {
-          vUv = uv;
-          vPosition = position;
-          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-        }
-      `,
-      fragmentShader: `
-        uniform float uTime;
-        varying vec2 vUv;
-        varying vec3 vPosition;
-        
-        void main() {
-          // Fade from center outward (Y direction)
-          float centerFade = 1.0 - abs(vUv.y - 0.5) * 2.0;
-          centerFade = pow(centerFade, 3.0);
-          
-          // Distance fade along tail
-          float distanceFade = 1.0 - smoothstep(-10.0, -39.0, vPosition.x);
-          
-          // Animated reconnection pulses
-          float pulse = sin(-vPosition.x * 0.2 + uTime * 2.0) * 0.5 + 0.5;
-          
-          // Hot orange-yellow color for current sheet
-          vec3 color = vec3(1.0, 0.6, 0.1);
-          
-          float alpha = centerFade * distanceFade * (0.2 + pulse * 0.3);
-          
-          gl_FragColor = vec4(color, alpha);
-        }
-      `,
-      transparent: true,
-      side: THREE.DoubleSide,
-      blending: THREE.AdditiveBlending,
-      depthWrite: false,
-    });
-  }, []);
-
-  // Dipole field lines - reduced count (8 closed, 4 open instead of 12+8)
-  const fieldLines = useMemo(() => {
-    const lines: { points: THREE.Vector3[]; isOpen: boolean }[] = [];
-    
-    // Closed field lines on dayside (8 lines instead of 12)
-    for (let i = 0; i < 8; i++) {
-      const phi = (i / 8) * Math.PI * 2;
-      const L = 2.5 + Math.random() * 1.5;
-      const points = generateDipoleFieldLine(L, phi, 24, false, 0);
-      lines.push({ points, isOpen: false });
-    }
-    
-    // Open field lines connecting to tail (4 lines instead of 8)
-    for (let i = 0; i < 4; i++) {
-      const phi = Math.PI + (i / 4 - 0.5) * Math.PI * 0.6;
-      const L = 4 + Math.random() * 2;
-      const points = generateDipoleFieldLine(L, phi, 24, true, 15);
-      lines.push({ points, isOpen: true });
-    }
-
-    return lines;
-  }, []);
-
-  useFrame((state) => {
-    if (magnetopauseMaterial) {
-      magnetopauseMaterial.uniforms.time.value = state.clock.elapsedTime;
-      magnetopauseMaterial.uniforms.compression.value = compression;
-      magnetopauseMaterial.uniforms.reconnection.value = reconnectionStrength;
-    }
-    if (magnetotailMaterial) {
-      magnetotailMaterial.uniforms.uTime.value = state.clock.elapsedTime;
-    }
-    if (currentSheetMaterial) {
-      currentSheetMaterial.uniforms.uTime.value = state.clock.elapsedTime;
-    }
-    if (fieldLinesRef.current) {
-      fieldLinesRef.current.rotation.y += 0.0005;
-    }
+  const material = useMemo(
+    () =>
+      new THREE.ShaderMaterial({
+        uniforms: { uTime: { value: 0 }, uKp: { value: 2 } },
+        vertexShader: /* glsl */ `
+          attribute float aNight;
+          varying vec2 vUv;
+          varying float vNight;
+          void main() {
+            vUv = uv;
+            vNight = aNight;
+            gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+          }
+        `,
+        fragmentShader: AURORA_FRAG,
+        transparent: true,
+        side: THREE.DoubleSide,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+      }),
+    [],
+  );
+  useFrame(({ clock }) => {
+    material.uniforms.uTime.value = clock.elapsedTime;
+    material.uniforms.uKp.value = kp;
   });
+  return <mesh geometry={geometry} material={material} />;
+};
+
+/* ------------------------------------------------------------------------- */
+
+export const Magnetosphere = ({
+  visible,
+  compression,
+  reconnectionStrength,
+  drivers,
+  epochMs,
+  showSurfaces = true,
+  showFieldLines = true,
+}: MagnetosphereProps) => {
+  const resolved = useMemo<SolarWindDrivers>(() => {
+    const legacy = driversFromVisualParams(compression, reconnectionStrength);
+    const pick = (v: number | undefined, fallback: number) => (typeof v === 'number' && Number.isFinite(v) ? v : fallback);
+    return {
+      bz: pick(drivers?.bz, legacy.bz),
+      by: pick(drivers?.by, legacy.by),
+      pdyn: pick(drivers?.pdyn, legacy.pdyn),
+      kp: pick(drivers?.kp, legacy.kp),
+    };
+  }, [compression, reconnectionStrength, drivers?.bz, drivers?.by, drivers?.pdyn, drivers?.kp]);
+
+  // Fall back to a fixed epoch per mount so the memo stays stable without a clock.
+  const mountEpoch = useMemo(() => Date.now(), []);
+  const state = useMagnetosphereState(resolved, epochMs ?? mountEpoch);
+  const reconnection = THREE.MathUtils.clamp(-resolved.bz / 15, 0, 1);
 
   if (!visible) return null;
 
+  const tailRadius = shueRadius(Math.PI * 0.75, state.r0, state.alpha) * Math.sin(Math.PI * 0.75);
+
   return (
     <group>
-      {/* Magnetopause surface */}
-      <mesh
-        ref={magnetopauseRef}
-        geometry={magnetopauseGeometry}
-        material={magnetopauseMaterial}
-        rotation={[0, Math.PI / 2, 0]}
-      />
-
-      {/* Magnetotail - elongated parabolic cavity */}
-      <mesh
-        geometry={magnetotailGeometry}
-        material={magnetotailMaterial}
-      />
-
-      {/* Current sheet in magnetotail */}
-      <mesh
-        geometry={currentSheetGeometry}
-        material={currentSheetMaterial}
-        rotation={[Math.PI / 2, 0, 0]}
-      />
-
-      {/* Plasma particles along field lines */}
-      <FieldLineParticles fieldLines={fieldLines} />
-      
-      {/* Particles flowing through current sheet */}
-      <CurrentSheetParticles />
-      
-      {/* Solar wind particles hitting magnetopause */}
-      <SolarWindParticles compression={compression} />
-
-      {/* Dipole field lines */}
-      <group ref={fieldLinesRef}>
-        {fieldLines.map((line, index) => (
-          <line key={index}>
-            <bufferGeometry>
-              <bufferAttribute
-                attach="attributes-position"
-                count={line.points.length}
-                array={new Float32Array(line.points.flatMap(p => [p.x, p.y, p.z]))}
-                itemSize={3}
-              />
-            </bufferGeometry>
-            <lineBasicMaterial
-              color={line.isOpen ? "#ff6644" : "#00aaff"}
-              transparent
-              opacity={line.isOpen ? 0.4 : 0.3}
-              linewidth={1}
-            />
-          </line>
-        ))}
-      </group>
+      {showSurfaces && (
+        <>
+          <BowShock state={state} pdyn={resolved.pdyn} />
+          <Magnetopause state={state} reconnection={reconnection} />
+          <CurrentSheet tilt={state.tilt} reconnection={reconnection} width={tailRadius * 1.3} />
+          <SolarWind standoff={state.bowShock} pdyn={resolved.pdyn} />
+        </>
+      )}
+      {showFieldLines && (
+        <>
+          <FieldLines lines={state.lines} />
+          <FieldLineTracers lines={state.lines} />
+        </>
+      )}
+      <AuroralOvals state={state} kp={resolved.kp} />
     </group>
   );
 };

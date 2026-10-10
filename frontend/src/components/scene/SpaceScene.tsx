@@ -7,13 +7,15 @@
 
 'use client'; // Mark as client component (for Next.js compatibility, if migrated)
 
-import { Suspense, useRef, useEffect } from 'react';
+import { Suspense, useRef, useEffect, useMemo } from 'react';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { OrbitControls, Stars, PerspectiveCamera } from '@react-three/drei';
 import * as THREE from 'three';
 import { Earth } from './Earth';
 import { VanAllenBelts } from './VanAllenBelts';
 import { Magnetosphere } from './Magnetosphere';
+import { dipoleTiltRad, type SolarWindDrivers } from '@/lib/physics/geomagnetic';
+import { useNow } from '@/hooks/useNow';
 import { OrbitRings } from './OrbitRings';
 import { RadiationDataOverlay } from './RadiationDataOverlay';
 import { RadiationDataOverlayLOD } from './RadiationDataOverlayLOD';
@@ -60,7 +62,11 @@ interface SpaceSceneProps {
   encodingMode?: 'color' | 'size' | 'both';
   /** MMS tetrahedron-derived reconnection vectors */
   mmsVectors?: MMSReconVectorPoint[];
+  /** Live solar wind drivers for the field-line model (Bz/By nT, Pdyn nPa, Kp) */
+  solarWindDrivers?: Partial<SolarWindDrivers>;
 }
+
+const DEFAULT_CAMERA: [number, number, number] = [6, 5, 18];
 
 const SceneContent = ({
   layers,
@@ -77,8 +83,12 @@ const SceneContent = ({
   encodingMode = 'color',
   mmsVectors,
   highFidelity,
+  solarWindDrivers,
 }: Omit<SpaceSceneProps, 'canvasRef'>) => {
   const groupRef = useRef<THREE.Group>(null);
+  // GSM frame: the dipole tilts toward/away from the Sun with season and UT.
+  const epochMs = useNow(5 * 60_000);
+  const dipoleTilt = useMemo(() => dipoleTiltRad(epochMs), [epochMs]);
   const controlsRef = useRef<any>(null);
   const { camera } = useThree();
 
@@ -162,7 +172,7 @@ const SceneContent = ({
           event.preventDefault();
           // Reset view
           if (camera instanceof THREE.PerspectiveCamera) {
-            camera.position.set(0, 3, 12);
+            camera.position.set(...DEFAULT_CAMERA);
             camera.lookAt(0, 0, 0);
             camera.updateProjectionMatrix();
           }
@@ -179,12 +189,12 @@ const SceneContent = ({
 
   return (
     <>
-      <PerspectiveCamera makeDefault position={[0, 3, 12]} fov={45} />
+      <PerspectiveCamera makeDefault position={DEFAULT_CAMERA} fov={45} />
       <OrbitControls
         ref={controlsRef}
         enablePan={false}
         minDistance={5}
-        maxDistance={30}
+        maxDistance={70}
         enableDamping
         dampingFactor={0.05}
         rotateSpeed={0.5}
@@ -218,17 +228,24 @@ const SceneContent = ({
       <group ref={groupRef}>
         <Earth visible={layers.earth} />
         
-        <VanAllenBelts 
-          visible={layers.belts} 
-          intensity={0.5 + beltIntensity * 0.5}
-          compression={magnetopauseCompression}
-          highFidelity={Boolean(highFidelity)}
-        />
-        
+        {/* Belts are symmetric about the dipole axis: tilt them with it. */}
+        <group rotation={[0, 0, -dipoleTilt]}>
+          <VanAllenBelts
+            visible={layers.belts}
+            intensity={0.5 + beltIntensity * 0.5}
+            compression={magnetopauseCompression}
+            highFidelity={Boolean(highFidelity)}
+          />
+        </group>
+
         <Magnetosphere
           visible={layers.magnetosphere || layers.fieldLines}
+          showSurfaces={layers.magnetosphere}
+          showFieldLines={layers.fieldLines}
           compression={magnetopauseCompression}
           reconnectionStrength={reconnectionStrength}
+          drivers={solarWindDrivers}
+          epochMs={epochMs}
         />
 
         <MHDWaves visible={layers.mhdWaves !== false} />

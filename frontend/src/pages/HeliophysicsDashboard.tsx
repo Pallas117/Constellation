@@ -9,6 +9,17 @@ import { useMMSReconnection } from "@/hooks/useMMSReconnection";
 import { useSolarWind5s } from "@/hooks/useSolarWind5s";
 import type { LayerVisibility } from "@/components/types";
 import mockSolarStormData from "@/data/mock_solar_storm.json";
+import {
+  auroralOvalBounds,
+  bowShockStandoff,
+  dipoleTiltRad,
+  shueMagnetopause,
+  type SolarWindDrivers,
+} from "@/lib/physics/geomagnetic";
+import { useNow } from "@/hooks/useNow";
+
+/** Simulated G4: strong southward IMF behind a CME shock. */
+const G4_DRIVERS: SolarWindDrivers = { bz: -20, by: 6, pdyn: 15, kp: 8 };
 
 function formatDelay(seconds: number | undefined): string {
   if (!seconds || seconds <= 0) return "n/a";
@@ -52,6 +63,29 @@ const HeliophysicsDashboard = () => {
     return { magnetopauseCompression, beltIntensity, reconnectionStrength };
   }, [latest, useMockData]);
 
+  const drivers = useMemo<SolarWindDrivers>(() => {
+    if (useMockData) return G4_DRIVERS;
+    return {
+      bz: latest?.magneticField.z ?? 0,
+      by: latest?.magneticField.y ?? 0,
+      pdyn: latest?.solarWind.dynamicPressure ?? 2,
+      kp: latest?.indices.kp ?? 2,
+    };
+  }, [latest, useMockData]);
+
+  const now = useNow(60_000);
+  const fieldModel = useMemo(() => {
+    const { r0 } = shueMagnetopause(drivers.bz, drivers.pdyn);
+    return {
+      r0,
+      bowShock: bowShockStandoff(r0),
+      tiltDeg: (dipoleTiltRad(now) * 180) / Math.PI,
+      oval: auroralOvalBounds(drivers.kp),
+      // Shue (1998) was fitted for -18 < Bz < 15 nT and 0.5 < Pdyn < 8.5 nPa.
+      extrapolated: drivers.bz < -18 || drivers.bz > 15 || drivers.pdyn < 0.5 || drivers.pdyn > 8.5,
+    };
+  }, [drivers, now]);
+
   const onToggle = (layer: keyof LayerVisibility) => {
     setLayers((prev) => ({
       ...prev,
@@ -77,13 +111,14 @@ const HeliophysicsDashboard = () => {
       </button>
 
       <section className="grid gap-4 p-4 pt-14 lg:grid-cols-[1fr_320px]">
-        <div className="relative h-[420px] overflow-hidden rounded-lg border bg-card">
+        <div className="relative h-[460px] overflow-hidden rounded-lg border bg-black lg:h-[620px]">
           <SpaceScene
             layers={layers}
             magnetopauseCompression={visual.magnetopauseCompression}
             beltIntensity={visual.beltIntensity}
             reconnectionStrength={visual.reconnectionStrength}
             mmsVectors={mms.vectors}
+            solarWindDrivers={drivers}
             canvasRef={canvasRef}
             data={useMockData ? mockSolarStormData as any : undefined}
             orbitFilter={['LEO', 'MEO', 'GEO']}
@@ -92,6 +127,38 @@ const HeliophysicsDashboard = () => {
 
         <div className="space-y-4">
           <LayerToggles layers={layers} onToggle={onToggle} />
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-base">Field Model</CardTitle>
+            </CardHeader>
+            <CardContent className="text-sm">
+              <dl className="grid grid-cols-[1fr_auto] gap-x-4 gap-y-1 tabular-nums">
+                <dt className="text-muted-foreground">Magnetopause standoff</dt>
+                <dd className="font-semibold">
+                  {fieldModel.r0.toFixed(1)} R<sub>E</sub>
+                  {fieldModel.extrapolated && (
+                    <span className="ml-1 text-xs text-[hsl(var(--amber))]" title="Drivers outside the Shue (1998) fit range">
+                      extrap.
+                    </span>
+                  )}
+                </dd>
+                <dt className="text-muted-foreground">Bow shock nose</dt>
+                <dd className="font-semibold">{fieldModel.bowShock.toFixed(1)} R<sub>E</sub></dd>
+                <dt className="text-muted-foreground">Dipole tilt</dt>
+                <dd className="font-semibold">{fieldModel.tiltDeg >= 0 ? "+" : ""}{fieldModel.tiltDeg.toFixed(1)}°</dd>
+                <dt className="text-muted-foreground">Aurora equatorward edge</dt>
+                <dd className="font-semibold">{fieldModel.oval.equatorward.toFixed(0)}° MLAT</dd>
+                <dt className="text-muted-foreground">GEO exposed to sheath</dt>
+                <dd className={fieldModel.r0 < 6.6 ? "font-semibold text-destructive" : "font-semibold"}>
+                  {fieldModel.r0 < 6.6 ? "Yes" : "No"}
+                </dd>
+              </dl>
+              <p className="mt-3 text-xs text-muted-foreground">
+                Shue (1998) magnetopause; field lines traced through a tilted IGRF dipole, IMF and tail sheet.
+                Cyan lines are closed, amber lines are open to the solar wind.
+              </p>
+            </CardContent>
+          </Card>
           <Card>
             <CardHeader className="pb-2">
               <CardTitle className="text-base">Operational Summary</CardTitle>
