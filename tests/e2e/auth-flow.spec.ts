@@ -37,7 +37,7 @@ test.describe('Authentication Flow & Route Splitting', () => {
   });
 
   test('Redirects unauthenticated users from /operator to /login', async ({ page }) => {
-    let authenticated = false;
+    const authenticated = false;
 
     await mockUiApis(page, { auth: false });
 

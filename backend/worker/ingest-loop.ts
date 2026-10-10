@@ -12,7 +12,6 @@ import {
 import {
   computeMMSReconnectionVector,
   withinSkewWindow,
-  type MMSSpacecraftSample,
 } from "../physics/reconnection.js";
 import {
   pushCanonical,
@@ -238,9 +237,8 @@ export class IngestionWorker {
     }
 
     let mmsVector: MMSReconVectorPoint | null = null;
-    let mmsSamples: MMSSpacecraftSample[] = [];
     if (link.mode !== "AIRGAP" && this.shouldFetch("mms", MMS_MS)) {
-      mmsSamples = await fetchMmsCdawebSamples();
+      const mmsSamples = await fetchMmsCdawebSamples();
       if (mmsSamples.length >= 4 && withinSkewWindow(mmsSamples, 1.5)) {
         mmsVector = computeMMSReconnectionVector(mmsSamples);
       }

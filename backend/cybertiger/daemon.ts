@@ -439,7 +439,7 @@ export class CyberTigerDaemon {
     req: Request,
   ): { name: string; severity: CyberTigerSeverity } | null {
     const rawCandidate = `${req.method} ${req.originalUrl ?? req.url}`.toLowerCase();
-    let decodedCandidate = rawCandidate;
+    let decodedCandidate: string;
     try {
       decodedCandidate = decodeURIComponent(rawCandidate);
     } catch {
