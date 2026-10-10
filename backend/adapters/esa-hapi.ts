@@ -5,8 +5,12 @@ const SOURCE: DataSource = "esa-hapi";
 
 export interface ESAReadout {
   timestamp: string;
-  magneticFieldGse: { x: number; y: number; z: number };
-  densityHint: number;
+  /**
+   * Swarm in-situ geomagnetic field at LEO, in the local North-East-Centre frame (nT).
+   * This is the main field (~10^4 nT), not the interplanetary field, so it must never be
+   * blended into the solar-wind IMF.
+   */
+  magneticFieldNec: { x: number; y: number; z: number };
 }
 
 let latestStatus: SourceStatus = {
@@ -45,6 +49,27 @@ async function fetchHapiDataset(
   return response.json();
 }
 
+/**
+ * HAPI JSON nests vector parameters, so `parameters=B_NEC` yields `[time, [n, e, c]]`.
+ * A flattened `[time, n, e, c]` row is accepted too. Anything else, or any non-finite
+ * component, is rejected rather than defaulted to zero.
+ */
+export function parseNecRow(row: unknown): { timestamp: string; n: number; e: number; c: number } | null {
+  if (!Array.isArray(row) || typeof row[0] !== "string") return null;
+  let components: unknown[];
+  if (row.length === 2 && Array.isArray(row[1])) {
+    components = row[1];
+  } else if (row.length === 4) {
+    components = row.slice(1);
+  } else {
+    return null;
+  }
+  if (components.length !== 3) return null;
+  const [n, e, c] = components.map((v) => (v === null || v === "" ? Number.NaN : Number(v)));
+  if (![n, e, c].every(Number.isFinite) || !Number.isFinite(Date.parse(row[0]))) return null;
+  return { timestamp: row[0], n, e, c };
+}
+
 export async function fetchEsaReadout(): Promise<ESAReadout | null> {
   try {
     const now = new Date();
@@ -63,14 +88,11 @@ export async function fetchEsaReadout(): Promise<ESAReadout | null> {
     }
 
     const row = data.data[data.data.length - 1];
-    if (!Array.isArray(row) || row.length < 4) {
+    const parsed = parseNecRow(row);
+    if (!parsed) {
       throw new Error("ESA row format invalid");
     }
-
-    const timestamp = String(row[0]);
-    const bx = Number((row[1] as number[] | undefined)?.[0] ?? 0);
-    const by = Number((row[1] as number[] | undefined)?.[1] ?? 0);
-    const bz = Number((row[1] as number[] | undefined)?.[2] ?? 0);
+    const { timestamp, n, e, c } = parsed;
 
     latestStatus = {
       source: SOURCE,
@@ -82,8 +104,7 @@ export async function fetchEsaReadout(): Promise<ESAReadout | null> {
 
     return {
       timestamp,
-      magneticFieldGse: vec(bx, by, bz),
-      densityHint: 4,
+      magneticFieldNec: vec(n, e, c),
     };
   } catch (error) {
     latestStatus = {

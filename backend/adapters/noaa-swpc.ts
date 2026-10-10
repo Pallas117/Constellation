@@ -1,4 +1,4 @@
-import { vec } from "../physics/coordinates.js";
+import { gsmToGse, vec } from "../physics/coordinates.js";
 import type { DataSource, SourceStatus } from "../types.js";
 
 const SOURCE: DataSource = "noaa-swpc";
@@ -9,7 +9,6 @@ export interface NOAAReadout {
   velocityGse: { x: number; y: number; z: number };
   magneticFieldGse: { x: number; y: number; z: number };
   kp: number;
-  dst: number;
   ovation: unknown | null;
 }
 
@@ -65,14 +64,14 @@ export async function fetchNoaaReadout(): Promise<NOAAReadout | null> {
 
     const timestamp = String(p[0] || m[0] || new Date().toISOString());
     const density = parseNumber(p[1], 5);
+    // plasma-1-day columns: time_tag, density, speed, temperature. SWPC publishes bulk
+    // speed only, so the flow is taken as anti-sunward along X (shared by GSE and GSM).
     const speed = parseNumber(p[2], 400);
-    const vx = parseNumber(p[3], -speed);
-    const vy = parseNumber(p[4], 0);
-    const vz = parseNumber(p[5], 0);
 
-    const bx = parseNumber(m[1], 0);
-    const by = parseNumber(m[2], 0);
-    const bz = parseNumber(m[3], 0);
+    // mag-1-day columns: time_tag, bx_gsm, by_gsm, bz_gsm, ... — rotate GSM into the
+    // GSE frame the nowcast expects.
+    const bGsm = vec(parseNumber(m[1], 0), parseNumber(m[2], 0), parseNumber(m[3], 0));
+    const bGse = gsmToGse(bGsm, String(m[0] || timestamp));
     const kp = Math.min(9, Math.max(0, parseNumber(k[1], 2)));
 
     latestStatus = {
@@ -86,10 +85,11 @@ export async function fetchNoaaReadout(): Promise<NOAAReadout | null> {
     return {
       timestamp,
       density,
-      velocityGse: vec(vx, vy, vz),
-      magneticFieldGse: vec(bx, by, bz),
+      velocityGse: vec(-speed, 0, 0),
+      magneticFieldGse: bGse,
       kp,
-      dst: -10 - kp * 6,
+      // No measured Dst here: SWPC does not publish it in these products, so the nowcast
+      // derives its own model estimate rather than receiving a Kp-synthesised value.
       ovation,
     };
   } catch (error) {

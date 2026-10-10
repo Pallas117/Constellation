@@ -1,5 +1,5 @@
 import { fetchEsaReadout, getEsaStatus, type ESAReadout } from "../adapters/esa-hapi.js";
-import { fetchJaxaReadout, getJaxaStatus, type JAXAReadout } from "../adapters/jaxa-erg.js";
+import { getJaxaStatus, probeJaxaCatalog } from "../adapters/jaxa-erg.js";
 import { fetchMmsCdawebSamples, getMmsCdawebStatus } from "../adapters/mms-cdaweb.js";
 import { fetchMmsBurstWindows, getMmsLaspStatus } from "../adapters/mms-lasp.js";
 import { fetchNoaaReadout, getNoaaStatus, type NOAAReadout } from "../adapters/noaa-swpc.js";
@@ -49,7 +49,6 @@ export class IngestionWorker {
 
   private noaa: NOAAReadout | null = null;
   private esa: ESAReadout | null = null;
-  private jaxa: JAXAReadout | null = null;
   private latestCanonical: CanonicalSpaceWeatherPoint | null = null;
   private latestMms: MMSReconVectorPoint | null = null;
   private latestForecast: AnomalyForecastResponse | null = null;
@@ -119,18 +118,19 @@ export class IngestionWorker {
   }
 
   private blendInputs(timestamp: string): MhdInput {
-    const density = this.noaa?.density ?? this.esa?.densityHint ?? this.latestCanonical?.solarWind.density ?? 5;
+    const density = this.noaa?.density ?? this.latestCanonical?.solarWind.density ?? 5;
 
     let velocity = this.noaa?.velocityGse ?? this.latestCanonical?.velocity ?? { x: -400, y: 0, z: 0, magnitude: 400 };
     if ("magnitude" in velocity) {
       velocity = { x: velocity.x, y: velocity.y, z: velocity.z };
     }
 
+    // IMF comes from the L1 monitor only. Swarm (ESA) measures the geomagnetic main field
+    // in LEO in a local NEC frame, which is not comparable to the solar-wind field.
     const noaaB = this.noaa?.magneticFieldGse;
-    const esaB = this.esa?.magneticFieldGse;
-    const bx = noaaB && esaB ? 0.7 * noaaB.x + 0.3 * esaB.x : noaaB?.x ?? esaB?.x ?? 0;
-    const by = noaaB && esaB ? 0.7 * noaaB.y + 0.3 * esaB.y : noaaB?.y ?? esaB?.y ?? 0;
-    const bz = noaaB && esaB ? 0.7 * noaaB.z + 0.3 * esaB.z : noaaB?.z ?? esaB?.z ?? 0;
+    const bx = noaaB?.x ?? 0;
+    const by = noaaB?.y ?? 0;
+    const bz = noaaB?.z ?? 0;
 
     return {
       timestamp,
@@ -139,7 +139,7 @@ export class IngestionWorker {
       velocityGse: velocity,
       magneticFieldGse: { x: bx, y: by, z: bz },
       kp: this.noaa?.kp ?? this.latestCanonical?.indices.kp ?? 2,
-      dst: this.noaa?.dst ?? this.latestCanonical?.indices.dst,
+      // dst is left to the nowcast's model estimate; no source here measures it.
     };
   }
 
@@ -213,8 +213,7 @@ export class IngestionWorker {
           }
 
           if (this.shouldFetch("jaxa", JAXA_MS)) {
-            const result = await fetchJaxaReadout();
-            if (result) this.jaxa = result;
+            await probeJaxaCatalog();
           }
         } else {
           // Official-only mode: skip ESA/JAXA to prioritize NOAA/MMS/GOES-like sources
@@ -261,7 +260,7 @@ export class IngestionWorker {
       tier = 2; // Synthetic
     } else if (!apiSuccess) {
       tier = 3; // Emergency/No data
-    } else if (this.noaa === null || this.esa === null) {
+    } else if (this.noaa === null) {
       tier = 1; // Buffered/Partial
     }
 

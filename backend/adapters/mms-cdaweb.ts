@@ -33,6 +33,17 @@ async function fetchHapi(id: string, parameters: string, start: string, stop: st
   return response.json();
 }
 
+// CDF/HAPI fill values are large negative sentinels (e.g. -1e31).
+const FILL_THRESHOLD = 1e30;
+
+function finiteTriple(value: unknown): [number, number, number] | null {
+  if (!Array.isArray(value) || value.length < 3) return null;
+  const out = value.slice(0, 3).map((v) => (v === null || v === "" ? Number.NaN : Number(v)));
+  return out.every((v) => Number.isFinite(v) && Math.abs(v) < FILL_THRESHOLD)
+    ? (out as [number, number, number])
+    : null;
+}
+
 async function fetchSpacecraft(id: "mms1" | "mms2" | "mms3" | "mms4"): Promise<MMSSpacecraftSample | null> {
   const now = new Date();
   const start = new Date(now.getTime() - 10 * 60 * 1000);
@@ -53,19 +64,23 @@ async function fetchSpacecraft(id: "mms1" | "mms2" | "mms3" | "mms4"): Promise<M
     return null;
   }
 
-  const timestamp = String(fgmRow[0] ?? mecRow[0] ?? new Date().toISOString());
-  const bGseRaw = Array.isArray(fgmRow[1]) ? fgmRow[1] : [0, 0, 0];
-  const rGseKmRaw = Array.isArray(mecRow[1]) ? mecRow[1] : [0, 0, 0];
+  const timestamp = typeof fgmRow[0] === "string" ? fgmRow[0] : null;
+  const bGseRaw = finiteTriple(fgmRow[1]);
+  const rGseKmRaw = finiteTriple(mecRow[1]);
+  if (!timestamp || !Number.isFinite(Date.parse(timestamp)) || !bGseRaw || !rGseKmRaw) {
+    // Missing or fill-valued components are not data; never substitute zeros.
+    return null;
+  }
 
-  const bGse = vec(Number(bGseRaw[0] ?? 0), Number(bGseRaw[1] ?? 0), Number(bGseRaw[2] ?? 0));
+  const bGse = vec(bGseRaw[0], bGseRaw[1], bGseRaw[2]);
   const bGsm = gseToGsm(bGse, timestamp);
 
   // Convert position km -> Re before storing for tetrahedron geometry.
   const re = 6371;
   const rGseRe = vec(
-    Number(rGseKmRaw[0] ?? 0) / re,
-    Number(rGseKmRaw[1] ?? 0) / re,
-    Number(rGseKmRaw[2] ?? 0) / re,
+    rGseKmRaw[0] / re,
+    rGseKmRaw[1] / re,
+    rGseKmRaw[2] / re,
   );
   const rGsmRe = gseToGsm(rGseRe, timestamp);
 
@@ -79,21 +94,34 @@ async function fetchSpacecraft(id: "mms1" | "mms2" | "mms3" | "mms4"): Promise<M
 
 export async function fetchMmsCdawebSamples(): Promise<MMSSpacecraftSample[]> {
   try {
-    const results = await Promise.all([
-      fetchSpacecraft("mms1"),
-      fetchSpacecraft("mms2"),
-      fetchSpacecraft("mms3"),
-      fetchSpacecraft("mms4"),
-    ]);
+    // One spacecraft failing must not discard the other three.
+    const results = await Promise.allSettled(
+      (["mms1", "mms2", "mms3", "mms4"] as const).map((id) => fetchSpacecraft(id)),
+    );
 
-    const samples = results.filter((sample): sample is MMSSpacecraftSample => Boolean(sample));
-    const ts = samples.length > 0 ? samples[0].timestamp : new Date().toISOString();
+    const samples: MMSSpacecraftSample[] = [];
+    const failures: string[] = [];
+    for (const result of results) {
+      if (result.status === "fulfilled") {
+        if (result.value) samples.push(result.value);
+      } else {
+        failures.push(result.reason instanceof Error ? result.reason.message : String(result.reason));
+      }
+    }
+
+    // lastSeen only advances when data actually arrived; it is the newest sample time.
+    const newest = samples.reduce<string | null>(
+      (latest, sample) => (latest === null || Date.parse(sample.timestamp) > Date.parse(latest) ? sample.timestamp : latest),
+      null,
+    );
+    const lastSeen = newest ?? latestStatus.lastSeen;
+    const failureNote = failures.length > 0 ? `; ${failures.length} failed: ${failures[0]}` : "";
     latestStatus = {
       source: SOURCE,
-      lastSeen: ts,
-      latencySeconds: Math.max(0, (Date.now() - Date.parse(ts)) / 1000),
+      lastSeen,
+      latencySeconds: lastSeen ? Math.max(0, (Date.now() - Date.parse(lastSeen)) / 1000) : null,
       healthy: samples.length >= 3,
-      message: `Fetched ${samples.length}/4 MMS spacecraft`,
+      message: `Fetched ${samples.length}/4 MMS spacecraft${failureNote}`,
     };
 
     return samples;
