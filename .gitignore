@@ -34,3 +34,6 @@ bun.lockb
 
 # Argo device registry (hashed tokens + last reports)
 data/mesh/
+
+# Organisations, API keys (hashed) and usage metering
+data/commerce/

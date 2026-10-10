@@ -1,4 +1,5 @@
 import http from "node:http";
+import path from "node:path";
 import { pathToFileURL } from "node:url";
 import cors from "cors";
 import express from "express";
@@ -43,6 +44,8 @@ import { SelfHealerAgent } from "./cybertiger/self-healer.js";
 import deviceRegistryRouter from "./device-registry.js";
 import { createMeshRouters } from "./mesh/router.js";
 import { enforceApiPolicy, isPublic } from "./rbac.js";
+import { CommerceStore } from "./commerce/store.js";
+import { createDataApiRouter, createOrgRouter } from "./commerce/routers.js";
 
 const app = express();
 const cyberTiger = new CyberTigerDaemon();
@@ -237,6 +240,25 @@ app.get("/api/sso-options", (_req, res) => {
 const mesh = createMeshRouters();
 app.use("/api/mesh", mesh.agent);
 
+// Paid data API: organisation API keys, plans, quotas and metering. Keys, not
+// sessions, so this also sits before session auth (backend/commerce/).
+const commerce = new CommerceStore(path.resolve(process.env.COMMERCE_DB_PATH ?? "data/commerce/commerce.db"));
+app.use(
+  "/api/v1",
+  createDataApiRouter(commerce, {
+    latest: async () => {
+      const fromDb = await fetchCanonicalFromDb(5 * 60 * 1000, 1);
+      const point = fromDb && fromDb.length > 0 ? fromDb[fromDb.length - 1] : getLatestCanonical();
+      return point ? withFreshness(point) : null;
+    },
+    history: async (lookbackMs, limit) => {
+      const fromDb = await fetchCanonicalFromDb(lookbackMs, limit);
+      return fromDb ? { source: "database", points: fromDb } : { source: "memory", points: filterByLookback(getCanonicalFeed(), lookbackMs, limit) };
+    },
+    sources: () => getSourceStatus(),
+  }),
+);
+
 // Who may call what lives in one table (backend/rbac.ts). Public routes (the
 // open landing visualisation) attach a session if present; all others need one.
 app.use(
@@ -246,6 +268,9 @@ app.use(
   ),
 );
 app.use("/api", enforceApiPolicy);
+
+// Organisation self-service: keys and usage for members (policy: backend/rbac.ts).
+app.use("/api/orgs", createOrgRouter(commerce));
 
 // Mesh & Network page: onboarding for everyone signed in, team status for operators.
 app.use("/api/mesh", mesh.ui);

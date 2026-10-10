@@ -11,8 +11,9 @@ import { roleSatisfies, type AuthenticatedRequest, type AuthRole } from "./auth.
  * (backend/rbac.test.ts fails if a route is added without a policy).
  * Routers may add finer checks on top, e.g. device ownership.
  * Not listed because they never reach this middleware: /api/auth/* (better-auth),
- * /api/sso-options (public, registered first) and POST /api/mesh/report
- * (Argo device token, registered before session auth).
+ * /api/sso-options (public, registered first), POST /api/mesh/report
+ * (Argo device token) and /api/v1/* (organisation API keys; plan, quota and
+ * metering in backend/commerce/), all registered before session auth.
  */
 export type Access = "public" | AuthRole;
 
@@ -46,6 +47,12 @@ export const API_POLICY: ReadonlyArray<{ method: string; path: string; access: A
   { method: "GET", path: "/mesh/devices", access: "staff" },
   { method: "POST", path: "/mesh/devices", access: "staff" },
   { method: "DELETE", path: "/mesh/devices/:name", access: "staff" },
+
+  // Organisation self-service; the router checks membership (operators may read usage)
+  { method: "GET", path: "/orgs/mine", access: "user" },
+  { method: "POST", path: "/orgs/:orgId/keys", access: "user" },
+  { method: "DELETE", path: "/orgs/:orgId/keys/:keyId", access: "user" },
+  { method: "GET", path: "/orgs/:orgId/usage", access: "user" },
 
   // Operators: console tools
   { method: "GET", path: "/rag/status", access: "operator" },
