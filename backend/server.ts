@@ -72,6 +72,7 @@ type CyberTigerRequest = AuthenticatedRequest & {
   security?: {
     requestId: string;
     ip: string;
+    local?: boolean;
     startedAtMs: number;
     path: string;
     method: string;
@@ -198,6 +199,7 @@ app.use("/api", (req: express.Request, res: express.Response, next: express.Next
   tracked.security = {
     requestId: decision.requestId,
     ip: decision.ip,
+    local: decision.local,
     startedAtMs: start,
     path: req.originalUrl ?? req.url,
     method: req.method,
@@ -212,6 +214,7 @@ app.use("/api", (req: express.Request, res: express.Response, next: express.Next
     cyberTiger.recordResponse({
       requestId: detail.requestId,
       ip: detail.ip,
+      local: detail.local,
       method: detail.method,
       path: detail.path,
       status: res.statusCode,

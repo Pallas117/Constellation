@@ -70,7 +70,7 @@ $schedule
 EOF
 }
 
-code() { curl -s -o /dev/null -m 5 -w '%{http_code}' "$1" 2>/dev/null || echo down; }
+code() { local c; c=$(curl -s -o /dev/null -m 5 -w '%{http_code}' "$1" 2>/dev/null); [ "$c" = 000 ] || [ -z "$c" ] && echo down || echo "$c"; }
 
 health() {
   printf 'backend  /health  -> %s\n' "$(code http://127.0.0.1:3001/health)"
@@ -134,6 +134,8 @@ case "${1:-}" in
     for l in "${LABELS[@]}"; do
       plutil -lint -s "$AGENTS/$l.plist"
       launchctl bootout "$UID_DOMAIN/$l" 2>/dev/null || true
+      # bootout returns before the job is gone; bootstrapping too early fails with error 5.
+      for _ in $(seq 1 20); do launchctl print "$UID_DOMAIN/$l" >/dev/null 2>&1 || break; sleep 0.5; done
       launchctl bootstrap "$UID_DOMAIN" "$AGENTS/$l.plist"
     done
     sleep 8
