@@ -1,14 +1,14 @@
-// Usage: npm run auth:set-role -- <email> <viewer|operator|admin>
+// Usage: npm run auth:set-role -- <email> <user|staff|operator|admin>
 // Roles live only in the local better-auth DB; users cannot set their own.
 import Database from "better-sqlite3";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-const ROLES = new Set(["viewer", "operator", "admin"]);
+const ROLES = new Set(["user", "staff", "operator", "admin"]);
 const [email, role] = process.argv.slice(2);
 
 if (!email || !role || !ROLES.has(role)) {
-  console.error("Usage: npm run auth:set-role -- <email> <viewer|operator|admin>");
+  console.error("Usage: npm run auth:set-role -- <email> <user|staff|operator|admin>");
   process.exit(2);
 }
 

@@ -4,11 +4,13 @@ import cors from "cors";
 import express from "express";
 import { WebSocket, WebSocketServer } from "ws";
 import {
+  authenticateOptional,
   authenticateRequest,
   authenticateSocket,
   requireRole,
   roleSatisfies,
   type AuthContext,
+  type AuthRole,
   type AuthenticatedRequest,
 } from "./auth.js";
 import { CyberTigerDaemon } from "./cybertiger/daemon.js";
@@ -35,7 +37,7 @@ import { encodeCanonicalPoint } from "./lib/proto.js";
 import { linkGuardian } from "./lib/connectivity.js";
 import { bedrock } from "./lib/local-db.js";
 import { SPACE_OBJECT_CATALOG } from "./lib/space-object-catalog.js";
-import { auth } from "./better-auth.js";
+import { auth, ssoAllowedDomain, ssoGoogleEnabled } from "./better-auth.js";
 import { toNodeHandler } from "better-auth/node";
 import { SelfHealerAgent } from "./cybertiger/self-healer.js";
 import deviceRegistryRouter from "./device-registry.js";
@@ -260,11 +262,25 @@ app.post("/api/rag/query", async (req: express.Request, res: express.Response) =
   }
 });
 
+// Tells the login page which sign-in methods to offer (public, no secrets).
+app.get("/api/sso-options", (_req, res) => {
+  res.json({ google: ssoGoogleEnabled, domain: ssoGoogleEnabled ? ssoAllowedDomain : null });
+});
+
 // Argo agents report with a device token, so this sits before session auth.
 const mesh = createMeshRouters();
 app.use("/api/mesh", mesh.agent);
 
-app.use("/api", withAsyncMiddleware(authenticateRequest));
+// The landing page's live visualisation is public; everything else needs a session.
+const PUBLIC_READ_PATHS = new Set(["/feed/space-weather/latest", "/system/connectivity"]);
+app.use(
+  "/api",
+  withAsyncMiddleware((req, res, next) =>
+    req.method === "GET" && PUBLIC_READ_PATHS.has(req.path)
+      ? authenticateOptional(req, res, next)
+      : authenticateRequest(req, res, next),
+  ),
+);
 
 // Mesh & Network page: onboarding for everyone signed in, team status for operators.
 app.use("/api/mesh", mesh.ui);
@@ -555,7 +571,7 @@ function broadcast(wss: WebSocketServer, topic: string, payload: unknown): void 
 
 async function guardSocketConnection(
   socket: AuthedSocket,
-  requiredRole: "viewer" | "operator" | "admin",
+  requiredRole: AuthRole,
   req: http.IncomingMessage,
 ): Promise<boolean> {
   const requestOrigin = typeof req.headers.origin === "string" ? req.headers.origin : null;
@@ -583,7 +599,7 @@ async function guardSocketConnection(
 }
 
 wsSpaceWeather.on("connection", async (socket: AuthedSocket, req) => {
-  const allowed = await guardSocketConnection(socket, "viewer", req);
+  const allowed = await guardSocketConnection(socket, "user", req);
   if (!allowed) return;
 
   socket.send(
@@ -592,7 +608,7 @@ wsSpaceWeather.on("connection", async (socket: AuthedSocket, req) => {
       payload: {
         stream: "space-weather",
         message: "Connected",
-        role: socket.auth?.role ?? "viewer",
+        role: socket.auth?.role ?? "user",
         timestamp: new Date().toISOString(),
       },
     }),
@@ -600,7 +616,7 @@ wsSpaceWeather.on("connection", async (socket: AuthedSocket, req) => {
 });
 
 wsMmsRecon.on("connection", async (socket: AuthedSocket, req) => {
-  const allowed = await guardSocketConnection(socket, "viewer", req);
+  const allowed = await guardSocketConnection(socket, "user", req);
   if (!allowed) return;
 
   socket.send(
@@ -609,7 +625,7 @@ wsMmsRecon.on("connection", async (socket: AuthedSocket, req) => {
       payload: {
         stream: "mms-reconnection",
         message: "Connected",
-        role: socket.auth?.role ?? "viewer",
+        role: socket.auth?.role ?? "user",
         timestamp: new Date().toISOString(),
       },
     }),

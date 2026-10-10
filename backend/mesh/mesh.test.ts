@@ -15,7 +15,8 @@ async function withApp(fn: (base: string, store: MeshStore) => Promise<void>) {
   // Stand-in for authenticateRequest: role comes from a test header.
   app.use("/api", (req: AuthenticatedRequest, _res, next) => {
     const role = req.header("x-test-role") as AuthRole | undefined;
-    if (role) req.auth = { userId: `u-${role}`, email: null, role, rawRoles: [role], token: "t" };
+    const userId = req.header("x-test-user") ?? `u-${role}`;
+    if (role) req.auth = { userId, email: null, role, rawRoles: [role], token: "t" };
     next();
   });
   app.use("/api/mesh", mesh.ui);
@@ -37,7 +38,7 @@ const okReport = { class: "REGION", reason: "api.anthropic.com returned 403 (exi
 
 test("team device status is operator-only and never exposes token hashes", async () => {
   await withApp(async (base) => {
-    assert.equal((await fetch(`${base}/devices`, { headers: { "x-test-role": "viewer" } })).status, 403);
+    assert.equal((await fetch(`${base}/devices`, { headers: { "x-test-role": "user" } })).status, 403);
     await fetch(`${base}/devices`, json({ name: "judith" }, { "x-test-role": "admin" }));
     const res = await fetch(`${base}/devices`, { headers: { "x-test-role": "operator" } });
     assert.equal(res.status, 200);
@@ -47,10 +48,29 @@ test("team device status is operator-only and never exposes token hashes", async
   });
 });
 
-test("only admins can enroll devices", async () => {
+test("staff and above enroll devices; plain users cannot", async () => {
   await withApp(async (base) => {
-    assert.equal((await fetch(`${base}/devices`, json({ name: "x" }, { "x-test-role": "operator" }))).status, 403);
+    assert.equal((await fetch(`${base}/devices`, json({ name: "x" }, { "x-test-role": "user" }))).status, 403);
+    assert.equal((await fetch(`${base}/devices`, json({ name: "staff-mac" }, { "x-test-role": "staff" }))).status, 201);
     assert.equal((await fetch(`${base}/devices`, json({ name: "../etc" }, { "x-test-role": "admin" }))).status, 400);
+  });
+});
+
+test("staff see and revoke only their own devices; operators see all; admins revoke any", async () => {
+  await withApp(async (base) => {
+    const as = (user: string, role: string) => ({ "x-test-role": role, "x-test-user": user });
+    await fetch(`${base}/devices`, json({ name: "alice-mac" }, as("alice", "staff")));
+    await fetch(`${base}/devices`, json({ name: "bob-mac" }, as("bob", "staff")));
+
+    const alice = await (await fetch(`${base}/devices`, { headers: as("alice", "staff") })).json();
+    assert.deepEqual(alice.devices.map((d: { name: string }) => d.name), ["alice-mac"]);
+    const ops = await (await fetch(`${base}/devices`, { headers: as("olga", "operator") })).json();
+    assert.equal(ops.devices.length, 2);
+
+    assert.equal((await fetch(`${base}/devices/bob-mac`, { method: "DELETE", headers: as("alice", "staff") })).status, 404);
+    assert.equal((await fetch(`${base}/devices/alice-mac`, { method: "DELETE", headers: as("alice", "staff") })).status, 204);
+    assert.equal((await fetch(`${base}/devices/bob-mac`, { method: "DELETE", headers: as("olga", "operator") })).status, 404);
+    assert.equal((await fetch(`${base}/devices/bob-mac`, { method: "DELETE", headers: as("root", "admin") })).status, 204);
   });
 });
 
@@ -113,12 +133,14 @@ test("devices enrolled by another process (npm run mesh:enroll) are picked up an
   assert.deepEqual(new MeshStore(file).list().map((d) => d.name), ["existing", "judith"]);
 });
 
-test("onboarding tells the page whether to fetch team status, so viewers never hit a 403", async () => {
+test("onboarding is for staff and above, and tells the page whether team status is visible", async () => {
   await withApp(async (base) => {
-    const viewer = await (await fetch(`${base}/onboarding`, { headers: { "x-test-role": "viewer" } })).json();
+    assert.equal((await fetch(`${base}/onboarding`, { headers: { "x-test-role": "user" } })).status, 403);
+    const staff = await (await fetch(`${base}/onboarding`, { headers: { "x-test-role": "staff" } })).json();
     const operator = await (await fetch(`${base}/onboarding`, { headers: { "x-test-role": "operator" } })).json();
-    assert.equal(viewer.canSeeTeam, false);
+    assert.equal(staff.canEnroll, true);
+    assert.equal(staff.canSeeTeam, false);
     assert.equal(operator.canSeeTeam, true);
-    assert.ok(viewer.steps.length > 0);
+    assert.ok(staff.steps.length > 0);
   });
 });
