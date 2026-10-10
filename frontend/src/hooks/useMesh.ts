@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useState } from "react";
 import { getAuthHeaders } from "@/lib/api/auth";
+import { apiBase } from "@/lib/api/base-url";
 
 const POLL_INTERVAL_MS = 30_000;
 
 function getBaseUrl(): string {
-  return import.meta.env.VITE_HELIO_PROXY_URL ?? "http://127.0.0.1:3001";
+  return apiBase();
 }
 
 export interface MeshReport {

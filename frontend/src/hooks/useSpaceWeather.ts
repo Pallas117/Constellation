@@ -12,6 +12,7 @@ import {
   DATA_EXPIRY_MS,
 } from '@/lib/dataProcessing';
 import { useConnectivity } from './useConnectivity';
+import { apiBase } from "@/lib/api/base-url";
 
 // ============================================================================
 // CONFIGURATION
@@ -60,7 +61,7 @@ export const useSpaceWeather = (): UseSpaceWeatherReturn => {
     try {
       console.log('[SpaceWeather] Fetching data from edge function...');
       
-      const proxyUrl = import.meta.env.VITE_HELIO_PROXY_URL || 'http://127.0.0.1:3001';
+      const proxyUrl = apiBase();
       const response = await fetch(`${proxyUrl}/api/feed/space-weather/latest`);
       
       if (!response.ok) {

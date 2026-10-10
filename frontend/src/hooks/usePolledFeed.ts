@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import { classifyResponse, startPolling, type PollOutcome } from "@/lib/api/feed-poller";
 import { useSession } from "@/lib/auth-client";
+import { apiBase } from "@/lib/api/base-url";
 
 export function getBackendBaseUrl(): string {
-  return import.meta.env.VITE_HELIO_PROXY_URL ?? "http://127.0.0.1:3001";
+  return apiBase();
 }
 
 export type FeedStatus =

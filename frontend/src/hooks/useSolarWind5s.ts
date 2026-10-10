@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { CanonicalSpaceWeatherPoint } from "@/lib/types/space-weather";
 import { getAccessToken } from "@/lib/api/auth";
-import { getBackendBaseUrl, useFeedSession, usePolledFeed, type FeedStatus } from "@/hooks/usePolledFeed";
+import { useFeedSession, usePolledFeed, type FeedStatus } from "@/hooks/usePolledFeed";
+import { wsOrigin } from "@/lib/api/base-url";
 
 // Signed in: the 24 h, 5 s feed (`user` role). Signed out: only the public
 // latest point, about once a minute (NOAA updates each minute). The auth-only
@@ -10,8 +11,6 @@ const FEED_ENDPOINT = "/api/feed/space-weather/5s?lookback=PT24H&limit=17280";
 const PUBLIC_LATEST_ENDPOINT = "/api/feed/space-weather/latest";
 const POLL_INTERVAL_MS = 5000;
 const PUBLIC_POLL_INTERVAL_MS = 60_000;
-
-const getBaseUrl = getBackendBaseUrl;
 
 export interface SolarWind5sState {
   points: CanonicalSpaceWeatherPoint[];
@@ -60,7 +59,7 @@ export function useSolarWind5s(): SolarWind5sState {
     let cancelled = false;
 
     const connect = async () => {
-      const base = getBaseUrl().replace(/^http/i, "ws");
+      const base = wsOrigin();
       const token = await getAccessToken();
       if (!token || cancelled) {
         setSource("polling");
