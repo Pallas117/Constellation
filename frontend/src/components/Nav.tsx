@@ -22,7 +22,7 @@ export interface NavProps {
     data: InterpolatedData;
     layers: LayerVisibility;
     onToggle: (layer: keyof LayerVisibility) => void;
-    canvasRef: RefObject<HTMLCanvasElement | null>;
+    canvasRef: RefObject<HTMLCanvasElement>;
     spaceObjectSummary?: string;
     /** Slot for extra controls rendered after LayerToggles (e.g. encoding panel) */
     children?: ReactNode;
