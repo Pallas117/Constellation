@@ -122,7 +122,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Build Provenance
-        uses: slsa-framework/slsa-github-generator@v1.9.0
+        uses: slsa-framework/slsa-github-generator@v2.1.0
         with:
           base64-subjects: ${{ needs.sign-release.outputs.build-outputs-sha256 }}
           upload-assets: true
