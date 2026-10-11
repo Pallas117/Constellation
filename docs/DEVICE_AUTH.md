@@ -13,7 +13,9 @@ This document describes the repository-native device registration and proofing f
 
 - `POST /api/device/:id/proof`
   - Authenticated route.
-  - Request body: `{ sig, timestamp, nonce? }`
+  - Request body: `{ sig, timestamp, nonce? }`. `timestamp` is Unix epoch milliseconds as a decimal
+    string (e.g. `"1791705662572"`); `sig` is the hex HMAC-SHA256 of `` `${timestamp}:${nonce}` ``
+    under the device secret. Other timestamp formats, including ISO 8601, are rejected.
   - Verifies HMAC proof against a derived device secret: `200` marks the device `trusted`,
     `401` marks it `untrusted` (including malformed signatures), and `503` means proofs are
     disabled because `DEVICE_AUTH_SECRET` is not configured (status unchanged).
@@ -52,6 +54,9 @@ This document describes the repository-native device registration and proofing f
 
 ## Notes
 
-- Device proof verification uses `timestamp` and optional `nonce` to prevent replay attacks.
-- Proofs must be submitted within `DEVICE_PROOF_TTL_MS` milliseconds (default 60 seconds).
+- A proof is valid only while its `timestamp` is within `DEVICE_PROOF_TTL_MS` milliseconds of the
+  server clock, either way (default 60 seconds). A missing, non-numeric or non-positive value uses
+  the default; it never turns the check off.
+- Nonces are signed but not tracked, so a captured proof can be replayed until it expires. The TTL
+  bounds that window; it does not prevent replay within it.
 - Device records are stored in the backend in-memory registry and appended to `bedrock` telemetry for persistence.
