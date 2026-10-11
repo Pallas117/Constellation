@@ -11,7 +11,14 @@ function getWebHeaders(req: Request): Headers {
   return headers;
 }
 
-export type AuthRole = "viewer" | "operator" | "admin";
+/**
+ * Each role includes everything below it:
+ * - user: the live visualisation and their own account (default for sign-ups)
+ * - staff: plus Mesh onboarding — enroll their own devices onto the mesh
+ * - operator: plus the operator console, team network status, protection research
+ * - admin: plus managing roles and any device
+ */
+export type AuthRole = "user" | "staff" | "operator" | "admin";
 
 export interface AuthContext {
   userId: string;
@@ -24,9 +31,10 @@ export interface AuthContext {
 export type AuthenticatedRequest = Request & { auth?: AuthContext };
 
 const ROLE_RANK: Record<AuthRole, number> = {
-  viewer: 1,
-  operator: 2,
-  admin: 3,
+  user: 1,
+  staff: 2,
+  operator: 3,
+  admin: 4,
 };
 
 function authRequired(): boolean {
@@ -39,7 +47,10 @@ function normalizeRole(value: unknown): AuthRole | null {
     return null;
   }
   const normalized = value.toLowerCase();
-  if (normalized === "viewer" || normalized === "operator" || normalized === "admin") {
+  if (normalized === "viewer") {
+    return "user"; // legacy name from before staff/user existed
+  }
+  if (normalized === "user" || normalized === "staff" || normalized === "operator" || normalized === "admin") {
     return normalized;
   }
   return null;
@@ -66,14 +77,14 @@ function extractRoles(user: {
   if (userRole) roles.add(userRole);
 
   if (roles.size === 0) {
-    roles.add("viewer");
+    roles.add("user");
   }
 
   return Array.from(roles);
 }
 
 function highestRole(rawRoles: string[]): AuthRole {
-  let current: AuthRole = "viewer";
+  let current: AuthRole = "user";
   for (const role of rawRoles) {
     const mapped = normalizeRole(role);
     if (!mapped) continue;
@@ -94,10 +105,40 @@ function forbidden(res: Response, message: string): void {
 
 /**
  * Role comes from the better-auth user record (`role` column, set only by
- * `npm run auth:set-role`). Anything missing or unknown is a viewer.
+ * `npm run auth:set-role`). Anything missing or unknown is a user.
  */
 export function roleFromUser(user: { role?: unknown } | null | undefined): AuthRole {
-  return normalizeRole(user?.role) ?? "viewer";
+  return normalizeRole(user?.role) ?? "user";
+}
+
+/** Resolves the caller's identity from the better-auth session, or null. */
+async function sessionContext(req: AuthenticatedRequest): Promise<AuthContext | null> {
+  if (!authRequired()) {
+    return {
+      userId: "development",
+      email: null,
+      role: "admin",
+      rawRoles: ["admin"],
+      token: "dev-bypass",
+    };
+  }
+  try {
+    const sessionResponse = await auth.api.getSession({
+      headers: getWebHeaders(req)
+    });
+    if (sessionResponse && sessionResponse.session && sessionResponse.user) {
+      return {
+        userId: sessionResponse.user.id,
+        email: sessionResponse.user.email ?? null,
+        role: roleFromUser(sessionResponse.user),
+        rawRoles: [roleFromUser(sessionResponse.user)],
+        token: sessionResponse.session.token ?? "better-auth-session"
+      };
+    }
+  } catch (err) {
+    // Ignore internal auth errors; no legacy fallback is configured.
+  }
+  return null;
 }
 
 export async function authenticateRequest(
@@ -105,40 +146,27 @@ export async function authenticateRequest(
   res: Response,
   next: NextFunction,
 ): Promise<void> {
-  if (!authRequired()) {
-    req.auth = {
-      userId: "development",
-      email: null,
-      role: "admin",
-      rawRoles: ["admin"],
-      token: "dev-bypass",
-    };
-    next();
+  const context = await sessionContext(req);
+  if (!context) {
+    unauthorized(res, "Missing active better-auth session");
     return;
   }
+  req.auth = context;
+  next();
+}
 
-  // 1. Try better-auth session first
-  try {
-    const sessionResponse = await auth.api.getSession({
-      headers: getWebHeaders(req)
-    });
-    
-    if (sessionResponse && sessionResponse.session && sessionResponse.user) {
-      req.auth = {
-        userId: sessionResponse.user.id,
-        email: sessionResponse.user.email ?? null,
-        role: roleFromUser(sessionResponse.user),
-        rawRoles: [roleFromUser(sessionResponse.user)],
-        token: sessionResponse.session.token ?? "better-auth-session"
-      };
-      next();
-      return;
-    }
-  } catch (err) {
-    // Ignore internal auth errors; no legacy fallback is configured.
-  }
-
-  unauthorized(res, "Missing active better-auth session");
+/**
+ * For public, read-only endpoints (the landing visualisation): attaches the
+ * session if there is one, but never rejects. Anonymous visitors must not get
+ * 401s there — CyberTiger counts each as an auth failure and blocks the IP.
+ */
+export async function authenticateOptional(
+  req: AuthenticatedRequest,
+  _res: Response,
+  next: NextFunction,
+): Promise<void> {
+  req.auth = (await sessionContext(req)) ?? undefined;
+  next();
 }
 
 export function requireRole(minRole: AuthRole) {
