@@ -42,7 +42,7 @@ test("team device status is operator-only and never exposes token hashes", async
     await fetch(`${base}/devices`, json({ name: "judith" }, { "x-test-role": "admin" }));
     const res = await fetch(`${base}/devices`, { headers: { "x-test-role": "operator" } });
     assert.equal(res.status, 200);
-    const body = await res.json();
+    const body = (await res.json()) as { devices: { name: string }[] };
     assert.equal(body.devices[0].name, "judith");
     assert.equal(JSON.stringify(body).includes("tokenHash"), false);
   });
@@ -76,7 +76,7 @@ test("staff see and revoke only their own devices; operators see all; admins rev
 
 test("agents report with their device token; bad tokens, bad payloads and floods are refused", async () => {
   await withApp(async (base, store) => {
-    const enrolled = await (await fetch(`${base}/devices`, json({ name: "judith" }, { "x-test-role": "admin" }))).json();
+    const enrolled = (await (await fetch(`${base}/devices`, json({ name: "judith" }, { "x-test-role": "admin" }))).json()) as { token: string };
     assert.match(enrolled.token, /^argo_/);
     const auth = { authorization: `Bearer ${enrolled.token}` };
 
@@ -94,7 +94,7 @@ test("agents report with their device token; bad tokens, bad payloads and floods
 
 test("revoked devices can no longer report", async () => {
   await withApp(async (base) => {
-    const { token } = await (await fetch(`${base}/devices`, json({ name: "old-laptop" }, { "x-test-role": "admin" }))).json();
+    const { token } = (await (await fetch(`${base}/devices`, json({ name: "old-laptop" }, { "x-test-role": "admin" }))).json()) as { token: string };
     assert.equal((await fetch(`${base}/devices/old-laptop`, { method: "DELETE", headers: { "x-test-role": "admin" } })).status, 204);
     assert.equal((await fetch(`${base}/report`, json(okReport, { authorization: `Bearer ${token}` }))).status, 401);
   });
@@ -133,11 +133,13 @@ test("devices enrolled by another process (npm run mesh:enroll) are picked up an
   assert.deepEqual(new MeshStore(file).list().map((d) => d.name), ["existing", "judith"]);
 });
 
+type Onboarding = { canEnroll: boolean; canSeeTeam: boolean; steps: unknown[] };
+
 test("onboarding is for staff and above, and tells the page whether team status is visible", async () => {
   await withApp(async (base) => {
     assert.equal((await fetch(`${base}/onboarding`, { headers: { "x-test-role": "user" } })).status, 403);
-    const staff = await (await fetch(`${base}/onboarding`, { headers: { "x-test-role": "staff" } })).json();
-    const operator = await (await fetch(`${base}/onboarding`, { headers: { "x-test-role": "operator" } })).json();
+    const staff = (await (await fetch(`${base}/onboarding`, { headers: { "x-test-role": "staff" } })).json()) as Onboarding;
+    const operator = (await (await fetch(`${base}/onboarding`, { headers: { "x-test-role": "operator" } })).json()) as Onboarding;
     assert.equal(staff.canEnroll, true);
     assert.equal(staff.canSeeTeam, false);
     assert.equal(operator.canSeeTeam, true);
