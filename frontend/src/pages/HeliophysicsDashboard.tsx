@@ -317,15 +317,17 @@ const HeliophysicsDashboard = () => {
               <Readout label="Dipole tilt" value={signed(tiltDeg)} unit="°" hint="Angle of the magnetic axis toward the Sun; from the UTC clock" />
               <Readout
                 label="Field lines open to the solar wind"
-                value={fieldModel ? `${Math.round(fieldModel.openFraction * 100)}` : "—"}
+                value={fieldModel?.openFraction != null ? `${Math.round(fieldModel.openFraction * 100)}` : "—"}
                 unit="%"
                 hint="Share of traced field lines connected to the IMF: grows as southward Bz opens the magnetosphere"
               />
             </dl>
             {fieldModel && (
               <p className="mt-3 font-mono text-[11px] uppercase tracking-[0.12em] text-muted-foreground">
-                {fieldModel.smoothed ? "5-min mean drivers" : "Simulated drivers"} · traced{" "}
-                {new Date(fieldModel.tracedAt).toISOString().slice(11, 16)} UTC
+                {fieldModel.smoothed ? "5-min mean drivers" : "Simulated drivers"} ·{" "}
+                {fieldModel.tracedAt != null
+                  ? `traced ${new Date(fieldModel.tracedAt).toISOString().slice(11, 16)} UTC`
+                  : "tracing field lines…"}
               </p>
             )}
             <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
