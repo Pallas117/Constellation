@@ -62,9 +62,9 @@ test("staff see and revoke only their own devices; operators see all; admins rev
     await fetch(`${base}/devices`, json({ name: "alice-mac" }, as("alice", "staff")));
     await fetch(`${base}/devices`, json({ name: "bob-mac" }, as("bob", "staff")));
 
-    const alice = await (await fetch(`${base}/devices`, { headers: as("alice", "staff") })).json();
+    const alice = (await (await fetch(`${base}/devices`, { headers: as("alice", "staff") })).json()) as { devices: { name: string }[] };
     assert.deepEqual(alice.devices.map((d: { name: string }) => d.name), ["alice-mac"]);
-    const ops = await (await fetch(`${base}/devices`, { headers: as("olga", "operator") })).json();
+    const ops = (await (await fetch(`${base}/devices`, { headers: as("olga", "operator") })).json()) as { devices: { name: string }[] };
     assert.equal(ops.devices.length, 2);
 
     assert.equal((await fetch(`${base}/devices/bob-mac`, { method: "DELETE", headers: as("alice", "staff") })).status, 404);
