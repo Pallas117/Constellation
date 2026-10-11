@@ -18,7 +18,7 @@ export class AgenticReasoningEngine {
   }
 
   async generateVerifiedTacticalResponse(query: string): Promise<ReasoningResult> {
-    console.log(`[ReasoningEngine] FLARE / CoVe Loop starting for: "${query}"`);
+    console.log(`[ReasoningEngine] FLARE / CoVe Loop starting (${query.length} chars)`);
 
     // 1. STEP-BACK PROMPTING
     const stepBackQuery = `What are the fundamental physics rules for: ${query}?`;
