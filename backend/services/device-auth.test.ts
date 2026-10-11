@@ -2,7 +2,14 @@ import assert from "node:assert/strict";
 import crypto from "node:crypto";
 import test from "node:test";
 import type { DeviceRecord } from "../types.js";
-import { computeProof, deriveDeviceSecret, deviceAuthSecret, deviceProofsEnabled, verifyProof } from "./device-auth.js";
+import {
+  computeProof,
+  deriveDeviceSecret,
+  deviceAuthSecret,
+  deviceProofsEnabled,
+  MAX_LIVE_PROOFS_PER_DEVICE,
+  verifyProof,
+} from "./device-auth.js";
 
 const device = { id: "dev-1", userId: "u1", fingerprintHash: "fp-1" } as DeviceRecord;
 const strongKey = crypto.randomBytes(32).toString("hex");
@@ -85,8 +92,9 @@ test("with a configured key, genuine proofs verify and everything else is reject
 test("timestamps: only computeProof's epoch-ms format, within the TTL; a bad TTL setting can't disable the check (GAU-98)", () => {
   withKey(strongKey, () => {
     const secret = deriveDeviceSecret(device.userId, device.id, device.fingerprintHash);
+    // A fresh nonce each time: proofs are single-use (GAU-99), and these share timestamps.
     const verifiesAt = (timestamp: string) => {
-      const p = computeProof(secret, "n1", timestamp);
+      const p = computeProof(secret, crypto.randomUUID(), timestamp);
       return verifyProof(device, p.sig, p.timestamp, p.nonce);
     };
 
@@ -116,5 +124,47 @@ test("timestamps: only computeProof's epoch-ms format, within the TTL; a bad TTL
     }
     withEnv("DEVICE_PROOF_TTL_MS", "1000", () => assert.equal(verifiesAt(String(now - 5_000)), false));
     withEnv("DEVICE_PROOF_TTL_MS", "600000", () => assert.equal(verifiesAt(String(now - 5 * 60_000)), true));
+  });
+});
+
+test("each proof is accepted once, uppercase copies included; a new nonce makes a new proof (GAU-99)", () => {
+  withKey(strongKey, () => {
+    const d = { ...device, id: "dev-replay" } as DeviceRecord;
+    const secret = deriveDeviceSecret(d.userId, d.id, d.fingerprintHash);
+    const p = computeProof(secret, "n1");
+    assert.equal(verifyProof(d, p.sig, p.timestamp, p.nonce), true);
+    assert.equal(verifyProof(d, p.sig, p.timestamp, p.nonce), false, "replayed");
+    assert.equal(verifyProof(d, p.sig.toUpperCase(), p.timestamp, p.nonce), false, "uppercase copy of the same signature");
+
+    const sameMs = computeProof(secret, "n2", p.timestamp);
+    assert.equal(verifyProof(d, sameMs.sig, sameMs.timestamp, sameMs.nonce), true, "same millisecond, new nonce");
+
+    // Only genuine proofs are remembered: a cap's worth of forgeries uses none of the device's cap.
+    const next = computeProof(secret, "n3");
+    for (let i = 0; i < MAX_LIVE_PROOFS_PER_DEVICE; i++) {
+      assert.equal(verifyProof(d, crypto.randomBytes(32).toString("hex"), next.timestamp, next.nonce), false);
+    }
+    assert.equal(verifyProof(d, next.sig, next.timestamp, next.nonce), true);
+  });
+});
+
+test("remembered proofs expire with the TTL, and a device's live-proof cap releases as they do (GAU-99)", (t) => {
+  t.mock.timers.enable({ apis: ["Date"], now: 1_800_000_000_000 });
+  withKey(strongKey, () => {
+    const d = { ...device, id: "dev-cap" } as DeviceRecord;
+    const other = { ...device, id: "dev-other" } as DeviceRecord;
+    const fresh = (dev: DeviceRecord) => {
+      const p = computeProof(deriveDeviceSecret(dev.userId, dev.id, dev.fingerprintHash), crypto.randomUUID());
+      return { p, ok: verifyProof(dev, p.sig, p.timestamp, p.nonce) };
+    };
+
+    const first = fresh(d).p;
+    for (let i = 1; i < MAX_LIVE_PROOFS_PER_DEVICE; i++) assert.equal(fresh(d).ok, true);
+    assert.equal(fresh(d).ok, false, "over the live-proof cap: refused");
+    assert.equal(fresh(other).ok, true, "other devices are unaffected");
+
+    t.mock.timers.tick(60_001); // past the default TTL
+    assert.equal(verifyProof(d, first.sig, first.timestamp, first.nonce), false, "an expired proof stays rejected");
+    assert.equal(fresh(d).ok, true, "the cap releases once remembered proofs expire");
   });
 });

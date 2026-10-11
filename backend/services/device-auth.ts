@@ -47,6 +47,31 @@ function proofTtlMs(): number {
   return Number.isFinite(ttl) && ttl > 0 ? ttl : DEFAULT_PROOF_TTL_MS;
 }
 
+/** Unexpired proofs one device can have accepted at once; beyond this its proofs are refused. */
+export const MAX_LIVE_PROOFS_PER_DEVICE = 100;
+// Accepted proofs per device id: lowercased signature -> last moment it could pass the age check.
+const acceptedProofs = new Map<string, Map<string, number>>();
+
+/**
+ * Accept each proof once (GAU-99). False if the device already used this signature, or already
+ * has MAX_LIVE_PROOFS_PER_DEVICE unexpired proofs: holding one device's secret then can't grow
+ * memory without bound, and only that device is refused. Hex decoding ignores case, so an
+ * uppercase copy is the same proof; signatures are lowercased before they are remembered.
+ */
+function acceptOnce(deviceId: string, sig: string, expiresAt: number): boolean {
+  const now = Date.now();
+  for (const [id, seen] of acceptedProofs) {
+    for (const [s, exp] of seen) if (exp < now) seen.delete(s);
+    if (seen.size === 0) acceptedProofs.delete(id);
+  }
+  const seen = acceptedProofs.get(deviceId) ?? new Map<string, number>();
+  const key = sig.toLowerCase();
+  if (seen.has(key) || seen.size >= MAX_LIVE_PROOFS_PER_DEVICE) return false;
+  seen.set(key, expiresAt);
+  acceptedProofs.set(deviceId, seen);
+  return true;
+}
+
 /** Signs `${timestamp}:${nonce}`. The timestamp is Unix epoch milliseconds as a decimal string. */
 export function computeProof(deviceSecret: string, nonce = "", timestamp = Date.now().toString()) {
   const payload = `${timestamp}:${nonce}`;
@@ -63,10 +88,13 @@ export function verifyProof(device: DeviceRecord, sig: string, timestamp: string
   }
   // Only the format computeProof signs: epoch milliseconds as a decimal string. Date.parse
   // returned NaN for that and accepted loose formats ("1" is 2001) instead (GAU-98).
-  if (!/^\d{1,16}$/.test(timestamp) || Math.abs(Date.now() - Number(timestamp)) > proofTtlMs()) {
+  const ttl = proofTtlMs();
+  if (!/^\d{1,16}$/.test(timestamp) || Math.abs(Date.now() - Number(timestamp)) > ttl) {
     return false;
   }
   const secret = deriveDeviceSecret(device.userId, device.id, device.fingerprintHash);
   const expected = crypto.createHmac("sha256", secret).update(`${timestamp}:${nonce}`).digest();
-  return crypto.timingSafeEqual(expected, Buffer.from(sig, "hex"));
+  if (!crypto.timingSafeEqual(expected, Buffer.from(sig, "hex"))) return false;
+  // Only genuine proofs are remembered, until they would fail the age check anyway.
+  return acceptOnce(device.id, sig, Number(timestamp) + ttl);
 }
