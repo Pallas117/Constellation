@@ -8,18 +8,14 @@ const EPOCH_BUCKET_MS = 10 * 60_000; // dipole tilt changes < 2.5° in 10 min
 const RESAMPLE_MS = 30_000; // the averaging window slides even when values don't change
 
 export interface TracedMagnetosphere {
-  /** Field model being shown (its lines fade in). */
+  /** Field model being shown; a new one crossfades in (see FieldLinePool). */
   current: TracedModel;
-  /** Field model being replaced (its lines fade out); null once the fade finishes. */
-  previous: TracedModel | null;
-  /** Increments on every new trace; use as a React key. */
+  /** Increments on every new trace. */
   version: number;
   /** Drivers the current model used (averaged when smoothing is on). */
   drivers: SolarWindDrivers;
   /** When the current field lines were traced; null before the first trace. */
   tracedAt: number | null;
-  /** Call when the previous field model has faded out. */
-  dropPrevious: () => void;
 }
 
 interface Options {
@@ -56,21 +52,13 @@ export function useTracedMagnetosphere(drivers: SolarWindDrivers, epochMs: numbe
   // from the worker a moment later and fade in. Nothing blocks the first paint.
   const [model, setModel] = useState(() => ({
     current: { ...fieldScalars(drivers, bucket(epochMs)), openFraction: null, render: null } as TracedModel,
-    previous: null as TracedModel | null,
     version: 0,
     drivers,
     tracedAt: null as number | null,
   }));
 
   const accept = useCallback((next: TracedModel, used: SolarWindDrivers) => {
-    setModel((m) => ({
-      current: next,
-      // Only keep a previous model if it has lines to fade out.
-      previous: m.current.render ? m.current : null,
-      version: m.version + 1,
-      drivers: used,
-      tracedAt: Date.now(),
-    }));
+    setModel((m) => ({ current: next, version: m.version + 1, drivers: used, tracedAt: Date.now() }));
   }, []);
 
   const dispatch = useCallback(
@@ -153,7 +141,5 @@ export function useTracedMagnetosphere(drivers: SolarWindDrivers, epochMs: numbe
     return () => window.clearInterval(id);
   }, [smooth, evaluate]);
 
-  const dropPrevious = useCallback(() => setModel((m) => (m.previous ? { ...m, previous: null } : m)), []);
-
-  return { ...model, dropPrevious };
+  return model;
 }
