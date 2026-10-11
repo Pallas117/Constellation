@@ -13,7 +13,7 @@ import { OrbitControls, Stars, PerspectiveCamera } from '@react-three/drei';
 import * as THREE from 'three';
 import { Earth } from './Earth';
 import { VanAllenBelts } from './VanAllenBelts';
-import { Magnetosphere } from './Magnetosphere';
+import { Magnetosphere, type MagnetosphereModelInfo } from './Magnetosphere';
 import { dipoleTiltRad, type SolarWindDrivers } from '@/lib/physics/geomagnetic';
 import { useNow } from '@/hooks/useNow';
 import { OrbitRings } from './OrbitRings';
@@ -64,6 +64,10 @@ interface SpaceSceneProps {
   mmsVectors?: MMSReconVectorPoint[];
   /** Live solar wind drivers for the field-line model (Bz/By nT, Pdyn nPa, Kp) */
   solarWindDrivers?: Partial<SolarWindDrivers>;
+  /** Average live drivers over 5 min before tracing field lines (default true). */
+  smoothDrivers?: boolean;
+  /** Called with the field model each time the scene retraces. */
+  onModelUpdate?: (info: MagnetosphereModelInfo) => void;
   /** Camera preset; change `viewRequest` to re-apply the same preset. */
   view?: SceneView;
   viewRequest?: number;
@@ -99,6 +103,8 @@ const SceneContent = ({
   mmsVectors,
   highFidelity,
   solarWindDrivers,
+  smoothDrivers = true,
+  onModelUpdate,
   view = 'overview',
   viewRequest = 0,
 }: Omit<SpaceSceneProps, 'canvasRef'>) => {
@@ -270,6 +276,8 @@ const SceneContent = ({
           compression={magnetopauseCompression}
           reconnectionStrength={reconnectionStrength}
           drivers={solarWindDrivers}
+          smoothing={smoothDrivers}
+          onModelUpdate={onModelUpdate}
           epochMs={epochMs}
         />
 

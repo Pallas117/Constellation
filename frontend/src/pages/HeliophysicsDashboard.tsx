@@ -2,6 +2,7 @@ import { useMemo, useRef, useState, type ReactNode } from "react";
 import { Zap, RotateCcw } from "lucide-react";
 import { LayerToggles } from "@/components/ui/LayerToggles";
 import { SpaceScene, SCENE_VIEWS, type SceneView } from "@/components/scene/SpaceScene";
+import type { MagnetosphereModelInfo } from "@/components/scene/Magnetosphere";
 import { AuroraCastMap } from "@/components/heliophysics/AuroraCastMap";
 import { SolarWindSpeedChart } from "@/components/heliophysics/SolarWindSpeedChart";
 import { useAuroraMap } from "@/hooks/useAuroraMap";
@@ -9,13 +10,7 @@ import { useMMSReconnection } from "@/hooks/useMMSReconnection";
 import { useSolarWind5s } from "@/hooks/useSolarWind5s";
 import type { LayerVisibility } from "@/components/types";
 import mockSolarStormData from "@/data/mock_solar_storm.json";
-import {
-  auroralOvalBounds,
-  bowShockStandoff,
-  dipoleTiltRad,
-  shueMagnetopause,
-  type SolarWindDrivers,
-} from "@/lib/physics/geomagnetic";
+import { dipoleTiltRad, type SolarWindDrivers } from "@/lib/physics/geomagnetic";
 import { useNow } from "@/hooks/useNow";
 
 /** Simulated G4: strong southward IMF behind a CME shock (Pdyn = 1.67e-6·n·v² ≈ 15 nPa). */
@@ -125,6 +120,7 @@ const HeliophysicsDashboard = () => {
     mmsReconnection: true,
   });
   const [view, setView] = useState<SceneView>("overview");
+  const [modelInfo, setModelInfo] = useState<MagnetosphereModelInfo | null>(null);
   const [viewRequest, setViewRequest] = useState(0);
 
   const solarWind = useSolarWind5s();
@@ -170,17 +166,22 @@ const HeliophysicsDashboard = () => {
     };
   }, [drivers]);
 
+  // The panel describes exactly what the scene drew: the traced model, built
+  // from 5-min mean drivers for live data. Fail closed without a reading.
   const fieldModel = useMemo(() => {
-    if (!drivers) return null;
-    const { r0 } = shueMagnetopause(drivers.bz, drivers.pdyn);
+    if (!drivers || !modelInfo) return null;
+    const used = modelInfo.drivers;
     return {
-      r0,
-      bowShock: bowShockStandoff(r0),
-      oval: auroralOvalBounds(drivers.kp),
+      r0: modelInfo.r0,
+      bowShock: modelInfo.bowShock,
+      oval: modelInfo.oval,
+      openFraction: modelInfo.openFraction,
+      tracedAt: modelInfo.tracedAt,
+      smoothed: modelInfo.smoothed,
       // Shue (1998) was fitted for -18 < Bz < 15 nT and 0.5 < Pdyn < 8.5 nPa.
-      extrapolated: drivers.bz < -18 || drivers.bz > 15 || drivers.pdyn < 0.5 || drivers.pdyn > 8.5,
+      extrapolated: used.bz < -18 || used.bz > 15 || used.pdyn < 0.5 || used.pdyn > 8.5,
     };
-  }, [drivers]);
+  }, [drivers, modelInfo]);
   const tiltDeg = useMemo(() => (dipoleTiltRad(now) * 180) / Math.PI, [now]);
   const geoExposed = fieldModel ? fieldModel.r0 < GEO_RE : null;
 
@@ -242,6 +243,8 @@ const HeliophysicsDashboard = () => {
             reconnectionStrength={visual.reconnectionStrength}
             mmsVectors={mms.vectors}
             solarWindDrivers={drivers}
+            smoothDrivers={!simulateStorm}
+            onModelUpdate={setModelInfo}
             view={view}
             viewRequest={viewRequest}
             canvasRef={canvasRef}
@@ -312,10 +315,23 @@ const HeliophysicsDashboard = () => {
               <Readout label="Bow shock nose" value={fmt(fieldModel?.bowShock)} unit={<>R<sub>E</sub></>} />
               <Readout label="Aurora equatorward edge" value={fmt(fieldModel?.oval.equatorward, 0)} unit="° MLAT" />
               <Readout label="Dipole tilt" value={signed(tiltDeg)} unit="°" hint="Angle of the magnetic axis toward the Sun; from the UTC clock" />
+              <Readout
+                label="Field lines open to the solar wind"
+                value={fieldModel ? `${Math.round(fieldModel.openFraction * 100)}` : "—"}
+                unit="%"
+                hint="Share of traced field lines connected to the IMF: grows as southward Bz opens the magnetosphere"
+              />
             </dl>
-            <p className="mt-3 text-xs leading-relaxed text-muted-foreground">
+            {fieldModel && (
+              <p className="mt-3 font-mono text-[11px] uppercase tracking-[0.12em] text-muted-foreground">
+                {fieldModel.smoothed ? "5-min mean drivers" : "Simulated drivers"} · traced{" "}
+                {new Date(fieldModel.tracedAt).toISOString().slice(11, 16)} UTC
+              </p>
+            )}
+            <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
               Shue (1998) magnetopause. Field lines traced through a tilted IGRF dipole, the IMF and a tail current sheet:
-              a qualitative topology model, not a forecast.
+              a qualitative topology model, not a forecast. Geometry uses the 5-minute mean of the drivers, as the model was
+              fitted, and retraces only on meaningful changes.
             </p>
           </Panel>
 
