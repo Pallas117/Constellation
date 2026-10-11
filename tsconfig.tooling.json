@@ -1,0 +1,22 @@
+{
+  // Type-check only: the Playwright config and e2e tests (transpiled by Playwright) and
+  // scripts/*.ts (run with tsx). Both resolve extensionless relative imports, hence Bundler.
+  // DOM is for page.evaluate() callbacks, which run in the browser.
+  "compilerOptions": {
+    "target": "ES2023",
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "types": ["node"],
+    "noEmit": true,
+    "allowImportingTsExtensions": true,
+    "isolatedModules": true,
+    "esModuleInterop": true,
+    "resolveJsonModule": true,
+    "skipLibCheck": true,
+
+    "strict": true,
+    "noFallthroughCasesInSwitch": true
+  },
+  "include": ["playwright.config.ts", "tests/**/*.ts", "scripts/**/*.ts"]
+}
