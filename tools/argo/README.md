@@ -30,6 +30,10 @@ Optional extras:
   macOS asks once to let Argo control Messages. Messages carry only the masked title and reason. Alerts
   raised while offline are queued (up to 20) and sent on the next tick with internet. `argo phone off`
   turns them off.
+- **Alerts from other tools.** `argo notify [-key K -every 30m] TITLE MESSAGE` sends through the same
+  channel, mask and offline queue, at most once per interval per key. The gauss-awake battery guard
+  uses it (battery low, at the sleep floor, charger can't keep up, no cutoff configured), as do
+  mesh-heal and Claude Code `Notification` hooks.
 - **Claude Code status line.** In `~/.claude/settings.json`:
   `"statusLine": {"type": "command", "command": "argo status"}`.
   It reads the cached state only, so it never probes the network and is instant.
@@ -59,6 +63,7 @@ Then remove the `statusLine` and `claude()` lines above if you added them, and r
 | `argo fix` | Runs the loop once in the foreground |
 | `argo report` | Incident counts by class, how many needed a fix and were fixed, how many resolved on their own, last 10 events |
 | `argo phone <handle>\|test\|off` | Set up, test or turn off iMessage alerts to your iPhone |
+| `argo notify [-key K -every D] TITLE MSG` | Send an alert to your iPhone (masked, queued offline, rate-limited per key) |
 | `argo off` / `argo on` | Pauses or resumes the LaunchAgent ticks |
 | `argo preflight` | Fast local check for dead proxies and stuck Claude daemons (exit 1 if found) |
 | `argo run -- cmd` | Runs `cmd` with dead proxy variables removed |

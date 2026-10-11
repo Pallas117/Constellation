@@ -121,6 +121,8 @@ func main() {
 			err = nil
 		}
 		fmt.Println("argo active.")
+	case "notify": // for mesh-heal, the awake guard and Claude Code hooks
+		err = notifyCmd(os.Args[2:], phone, store, time.Now())
 	case "phone":
 		err = phoneSetup(os.Args[2:], cfg)
 	case "enroll":
@@ -132,7 +134,7 @@ func main() {
 	case "version":
 		fmt.Println("argo", version)
 	default:
-		fmt.Fprintln(os.Stderr, "usage: argo [status|doctor|fix|report|on|off|preflight|run -- cmd|phone <handle>|test|off|summary [--send]|enroll URL DEVICE|install|uninstall|version]")
+		fmt.Fprintln(os.Stderr, "usage: argo [status|doctor|fix|report|on|off|preflight|run -- cmd|phone <handle>|test|off|notify TITLE MSG|summary [--send]|enroll URL DEVICE|install|uninstall|version]")
 		os.Exit(2)
 	}
 	if err != nil {
