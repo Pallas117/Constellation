@@ -181,7 +181,7 @@ export default function PublicDashboard() {
                 ? "Last measurement is more than 15 minutes old."
                 : data.imfBz < -5 
                 ? "Southward IMF is enabling magnetic reconnection and potential storm activity." 
-                : "IMF is stable. Magnetosphere is currently shielded form major solar wind coupling."}
+                : "IMF is stable. Magnetosphere is currently shielded from major solar wind coupling."}
             </p>
           </motion.div>
 

@@ -1,6 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import {
-  EMAInterpolator,
   InterpolatedData,
   VisualizationParams,
   calculateVisualizationParams,
@@ -19,11 +18,14 @@ import { apiBase } from "@/lib/api/base-url";
 // ============================================================================
 
 const UPDATE_INTERVAL = 60000; // 1 minute
-const INTERPOLATION_DURATION = 10000; // 10 seconds for smooth transitions
 const MARK_UNAVAILABLE_AFTER = 3; // Consecutive failures before showing "no data"
+const STALENESS_RECHECK_MS = 30000; // re-render so a value that stops updating turns stale
 
 // No simulated fallback: without a live feed the UI shows "unavailable" (see
 // unavailableData), never generated values presented as measurements.
+// No tweening either: readings are shown exactly as measured the moment they
+// arrive. (Easing them in over 10 s displayed values that were never measured
+// under a LIVE badge.)
 
 // ============================================================================
 // CUSTOM HOOK
@@ -46,12 +48,13 @@ export const useSpaceWeather = (): UseSpaceWeatherReturn => {
   const [lastUpdate, setLastUpdate] = useState<Date | null>(null);
   const [error, setError] = useState<string | null>(null);
   
-  const interpolatorRef = useRef<EMAInterpolator>(
-    new EMAInterpolator(unavailableData(), INTERPOLATION_DURATION)
-  );
-  const animationRef = useRef<number>();
+  const [, setTick] = useState(0);
   const failureCountRef = useRef(0);
-  const lastFetchTimeRef = useRef<number>(0);
+
+  const show = useCallback((next: InterpolatedData) => {
+    setData(next);
+    setVisualParams(calculateVisualizationParams(next));
+  }, []);
 
   // ============================================================================
   // DATA FETCHING
@@ -79,10 +82,9 @@ export const useSpaceWeather = (): UseSpaceWeatherReturn => {
         throw new Error('Invalid response format');
       }
 
-      interpolatorRef.current.setTarget(transformed);
-      
+      show(transformed);
+
       failureCountRef.current = 0;
-      lastFetchTimeRef.current = Date.now();
       setLastUpdate(new Date());
       setError(null);
       
@@ -101,41 +103,21 @@ export const useSpaceWeather = (): UseSpaceWeatherReturn => {
       
       if (failureCountRef.current >= MARK_UNAVAILABLE_AFTER) {
         console.log('[SpaceWeather] Live data unavailable');
-        interpolatorRef.current.setTarget(unavailableData());
+        show(unavailableData());
         setError('Live data unavailable');
       } else {
         setError(`Fetch failed: ${errorMsg}`);
       }
     }
-  }, []);
+  }, [show]);
 
   // ============================================================================
-  // ANIMATION LOOP
+  // STALENESS RECHECK
   // ============================================================================
 
   useEffect(() => {
-    const animate = () => {
-      let interpolated = interpolatorRef.current.getInterpolated();
-      
-      // Apply decay if data is stale
-      if (interpolated.isStale && lastFetchTimeRef.current > 0) {
-        const timeSinceUpdate = Date.now() - lastFetchTimeRef.current;
-        interpolated = applyDecay(interpolated, timeSinceUpdate);
-      }
-      
-      setData(interpolated);
-      setVisualParams(calculateVisualizationParams(interpolated));
-      
-      animationRef.current = requestAnimationFrame(animate);
-    };
-
-    animate();
-    
-    return () => {
-      if (animationRef.current) {
-        cancelAnimationFrame(animationRef.current);
-      }
-    };
+    const id = setInterval(() => setTick((n) => n + 1), STALENESS_RECHECK_MS);
+    return () => clearInterval(id);
   }, []);
 
   // ============================================================================
