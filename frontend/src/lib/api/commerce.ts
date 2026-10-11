@@ -1,7 +1,8 @@
+import { apiBase } from "./base-url";
 // Client for organisation self-service (/api/orgs) and the public pilot form.
 // Session cookies are attached by lib/api/backend-credentials.
 
-export const BACKEND_URL = import.meta.env.VITE_HELIO_PROXY_URL ?? "http://127.0.0.1:3001";
+export const BACKEND_URL = apiBase();
 
 export type Plan = "free" | "pilot" | "enterprise";
 
