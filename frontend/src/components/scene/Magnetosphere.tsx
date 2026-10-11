@@ -124,8 +124,19 @@ function writeLineSlot(slot: LineSegments2, data: FieldRenderData) {
 const FieldLinePool = ({ data }: { data: FieldRenderData | null }) => {
   const tau = useTau(FADE_TAU);
   const size = useThree((st) => st.size);
+  const gl = useThree((st) => st.gl);
+  const camera = useThree((st) => st.camera);
+  const scene = useThree((st) => st.scene);
   const slots = useMemo(() => [makeLineSlot(), makeLineSlot()], []);
   const active = useRef(-1);
+
+  // Compile the fat-line shader while the worker traces the first field, so
+  // the first frame that shows lines doesn't stall on shader compilation
+  // (~190 ms measured in Chrome). Non-blocking where the driver supports
+  // KHR_parallel_shader_compile; both slots share the compiled program.
+  useEffect(() => {
+    gl.compileAsync(slots[0], camera, scene).catch(() => undefined);
+  }, [gl, camera, scene, slots]);
 
   useEffect(
     () => () => {
