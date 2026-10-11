@@ -41,6 +41,11 @@ tailnet_url() {
   [ -n "$name" ] && echo "http://$name" || echo "http://127.0.0.1:8080"
 }
 PUBLIC_URL="${GAUSS_PUBLIC_URL:-$(tailnet_url)}"
+# Where sign-in providers send the browser back to (<AUTH_URL>/api/auth/callback/...).
+# Must be reachable from the browser doing the sign-in: http://localhost:8080 for
+# demos on this Mac (this Mac can't open its own tailnet name, and Google only
+# allows http:// for localhost). Defaults to the tailnet URL.
+AUTH_URL="${GAUSS_AUTH_URL:-$PUBLIC_URL}"
 
 xml() { sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g' <<<"$1"; }
 
@@ -68,10 +73,10 @@ $args  </array>
   <dict>
     <key>PATH</key><string>$(xml "$(dirname "$NODE")"):/usr/bin:/bin:/usr/sbin:/sbin</string>
     <key>GAUSS_PUBLIC_URL</key><string>$(xml "$PUBLIC_URL")</string>
-    <key>BETTER_AUTH_URL</key><string>$(xml "$PUBLIC_URL")</string>
+    <key>BETTER_AUTH_URL</key><string>$(xml "$AUTH_URL")</string>
     <key>MESH_STORE_PATH</key><string>$(xml "$dir/data/mesh/devices.json")</string>
     <key>COMMERCE_DB_PATH</key><string>$(xml "$dir/data/commerce/commerce.db")</string>
-    <key>ALLOWED_ORIGINS</key><string>$(xml "$PUBLIC_URL,http://127.0.0.1:8080,http://localhost:8080")</string>
+    <key>ALLOWED_ORIGINS</key><string>$(xml "$PUBLIC_URL,$AUTH_URL,http://127.0.0.1:8080,http://localhost:8080")</string>
   </dict>
 $schedule
   <key>ThrottleInterval</key><integer>10</integer>

@@ -31,5 +31,6 @@ test("sso-options is public and reports Google SSO off without credentials", asy
   assert.equal(res.status, 200);
   const body = await res.json();
   assert.equal(body.google, Boolean(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET));
+  assert.equal(body.github, Boolean(process.env.GITHUB_CLIENT_ID && process.env.GITHUB_CLIENT_SECRET));
   assert.equal(JSON.stringify(body).includes("secret"), false);
 });

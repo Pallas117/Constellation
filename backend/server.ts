@@ -38,7 +38,7 @@ import { encodeCanonicalPoint } from "./lib/proto.js";
 import { linkGuardian } from "./lib/connectivity.js";
 import { bedrock } from "./lib/local-db.js";
 import { SPACE_OBJECT_CATALOG } from "./lib/space-object-catalog.js";
-import { auth, ssoAllowedDomain, ssoGoogleEnabled } from "./better-auth.js";
+import { auth, ssoAllowedDomain, ssoGithubEnabled, ssoGoogleEnabled } from "./better-auth.js";
 import { toNodeHandler } from "better-auth/node";
 import { SelfHealerAgent } from "./cybertiger/self-healer.js";
 import deviceRegistryRouter from "./device-registry.js";
@@ -236,7 +236,8 @@ app.use("/api", (req: express.Request, res: express.Response, next: express.Next
 });
 // Tells the login page which sign-in methods to offer (public, no secrets).
 app.get("/api/sso-options", (_req, res) => {
-  res.json({ google: ssoGoogleEnabled, domain: ssoGoogleEnabled ? ssoAllowedDomain : null });
+  const any = ssoGoogleEnabled || ssoGithubEnabled;
+  res.json({ google: ssoGoogleEnabled, github: ssoGithubEnabled, domain: any ? ssoAllowedDomain : null });
 });
 
 // Argo agents report with a device token, so this sits before session auth.

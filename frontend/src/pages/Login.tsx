@@ -3,14 +3,19 @@ import { signIn, useSession } from "@/lib/auth-client";
 import { landingFor, roleOf } from "@/lib/roles";
 import { registerDeviceWithLogin } from "@/lib/device-auth";
 import { Link, useNavigate, useLocation } from "react-router-dom";
-import { LogIn } from "lucide-react";
+import { Github, LogIn } from "lucide-react";
 import { apiBase } from "@/lib/api/base-url";
 
 export default function Login() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
-  const [sso, setSso] = useState<{ google: boolean; domain: string | null }>({ google: false, domain: null });
+  const [sso, setSso] = useState<{ google: boolean; github: boolean; domain: string | null }>({
+    google: false,
+    github: false,
+    domain: null,
+  });
+  const anySso = sso.google || sso.github;
   const navigate = useNavigate();
   const location = useLocation();
   const { data: session } = useSession();
@@ -52,17 +57,17 @@ export default function Login() {
     const base = apiBase();
     fetch(`${base}/api/sso-options`)
       .then((res) => (res.ok ? res.json() : null))
-      .then((options) => options && setSso(options))
+      .then((options) => options && setSso({ google: Boolean(options.google), github: Boolean(options.github), domain: options.domain ?? null }))
       .catch(() => undefined);
     if (new URLSearchParams(location.search).has("error")) {
       setError("Single sign-on failed. Use your Lightbound Google Workspace account.");
     }
   }, [location.search]);
 
-  const handleGoogle = async () => {
+  const handleSso = async (provider: "google" | "github") => {
     setError("");
     const back = `${window.location.origin}/login`;
-    await signIn.social({ provider: "google", callbackURL: back, errorCallbackURL: back });
+    await signIn.social({ provider, callbackURL: back, errorCallbackURL: back });
   };
 
   return (
@@ -81,16 +86,32 @@ export default function Login() {
           </p>
         )}
 
-        {sso.google && (
+        {anySso && (
           <>
-            <button
-              type="button"
-              onClick={() => void handleGoogle()}
-              className="mt-6 flex w-full items-center justify-center gap-2 rounded-md border border-charcoal bg-panel px-3 py-2.5 text-sm font-medium text-foreground transition-colors hover:bg-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            >
-              Continue with Google Workspace
-            </button>
-            <p className="mt-2 text-center text-xs text-muted-foreground">@{sso.domain} accounts</p>
+            <div className="mt-6 space-y-2">
+              {sso.google && (
+                <button
+                  type="button"
+                  onClick={() => void handleSso("google")}
+                  className="flex w-full items-center justify-center gap-2 rounded-md border border-charcoal bg-panel px-3 py-2.5 text-sm font-medium text-foreground transition-colors hover:bg-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                >
+                  Continue with Google Workspace
+                </button>
+              )}
+              {sso.github && (
+                <button
+                  type="button"
+                  onClick={() => void handleSso("github")}
+                  className="flex w-full items-center justify-center gap-2 rounded-md border border-charcoal bg-panel px-3 py-2.5 text-sm font-medium text-foreground transition-colors hover:bg-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                >
+                  <Github className="h-4 w-4" aria-hidden="true" />
+                  Continue with GitHub
+                </button>
+              )}
+            </div>
+            <p className="mt-2 text-center text-xs text-muted-foreground">
+              New accounts: verified @{sso.domain} email
+            </p>
             <div className="my-5 flex items-center gap-3 font-mono text-[11px] uppercase tracking-[0.12em] text-muted-foreground">
               <span className="h-px flex-1 bg-charcoal" />
               or email
@@ -99,7 +120,7 @@ export default function Login() {
           </>
         )}
 
-        <form onSubmit={handleLogin} className={`space-y-4 ${sso.google ? "" : "mt-6"}`}>
+        <form onSubmit={handleLogin} className={`space-y-4 ${anySso ? "" : "mt-6"}`}>
           <div>
             <label htmlFor="login-email" className="mb-1.5 block text-sm font-medium">
               Email
