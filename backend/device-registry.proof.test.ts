@@ -44,7 +44,7 @@ async function statusOf(id: string): Promise<DeviceRecord["status"]> {
 }
 
 function proofFor(deviceSecret: string) {
-  return computeProof(deviceSecret, "n1", new Date().toISOString());
+  return computeProof(deviceSecret, "n1");
 }
 
 async function withKey(value: string | undefined, fn: () => Promise<void>) {
@@ -78,11 +78,11 @@ test("with DEVICE_AUTH_SECRET set, a genuine proof marks the device trusted and 
   await withKey(crypto.randomBytes(32).toString("hex"), async () => {
     const device = await register("fp-configured");
 
-    const bad = await fetch(`${base}/${device.id}/proof`, json({ sig: crypto.randomBytes(32).toString("hex"), timestamp: new Date().toISOString() }));
+    const bad = await fetch(`${base}/${device.id}/proof`, json({ sig: crypto.randomBytes(32).toString("hex"), timestamp: Date.now().toString() }));
     assert.equal(bad.status, 401);
     assert.equal(await statusOf(device.id), "untrusted");
 
-    const malformed = await fetch(`${base}/${device.id}/proof`, json({ sig: "not-hex", timestamp: new Date().toISOString() }));
+    const malformed = await fetch(`${base}/${device.id}/proof`, json({ sig: "not-hex", timestamp: Date.now().toString() }));
     assert.equal(malformed.status, 401, "a malformed signature is rejected, not a 500");
 
     const genuine = proofFor(deriveDeviceSecret(device.userId, device.id, device.fingerprintHash));
