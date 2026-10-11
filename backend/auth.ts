@@ -21,7 +21,7 @@ export interface AuthContext {
   token: string;
 }
 
-export type AuthenticatedRequest = Request & { auth?: AuthContext };
+export type AuthenticatedRequest = Request<Record<string, string>> & { auth?: AuthContext };
 
 const ROLE_RANK: Record<AuthRole, number> = {
   viewer: 1,

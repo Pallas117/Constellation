@@ -14,7 +14,7 @@ test("backend harness starts and responds to /health", async (t) => {
 
   const response = await fetch(`${backendUrl}/health`);
   assert.strictEqual(response.status, 200);
-  const body = await response.json();
+  const body = (await response.json()) as { ok: boolean; timestamp: string };
   assert.strictEqual(body.ok, true);
   assert.ok(typeof body.timestamp === "string");
 
