@@ -1,5 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
+import { deviceAuthSecret } from "../services/device-auth.js";
 
 type ControlStatus = "pass" | "warn" | "fail";
 
@@ -101,6 +102,17 @@ function runChecks(): ControlCheck[] {
     details: hasSpaceGuidanceDoc
       ? "Compliance baseline document present."
       : "Compliance baseline document missing.",
+  });
+
+  const deviceKeyConfigured = deviceAuthSecret() !== null;
+  checks.push({
+    id: "NIST-IA-3",
+    framework: "NIST SP 800-53 Rev.5",
+    title: "Device identification and authentication key",
+    status: deviceKeyConfigured ? "pass" : "warn",
+    details: deviceKeyConfigured
+      ? "DEVICE_AUTH_SECRET is set (32+ characters, not a value that has been public)."
+      : "DEVICE_AUTH_SECRET is unset, too short or a public value; device proofs are disabled (fail closed).",
   });
 
   return checks;
