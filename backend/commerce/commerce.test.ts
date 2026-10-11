@@ -66,7 +66,7 @@ test("data API: key required, plan enforced, refined data returned with meta", a
 
     const res = await fetch(`${base}/v1/data/space-weather/latest`, { headers: bearer(pilot) });
     assert.equal(res.status, 200);
-    const body = await res.json();
+    const body = (await res.json()) as { data: { kp: number }; meta: { org: string; plan: string } };
     assert.equal(body.data.kp, 3);
     assert.deepEqual([body.meta.org, body.meta.plan], ["xOrbita", "pilot"]);
     assert.equal(res.headers.get("x-quota-limit"), "5");
@@ -88,7 +88,7 @@ test("data API: per-key minute limit, per-org daily quota, history capped by pla
     assert.equal((await get(k2)).status, 429, "quota of 5/day is shared by the organisation's keys");
 
     clock.t += 24 * 60 * 60 * 1000; // next UTC day
-    const hist = await (await get(k2, "/v1/data/space-weather/history?lookback=P1D")).json();
+    const hist = (await (await get(k2, "/v1/data/space-weather/history?lookback=P1D")).json()) as { meta: { lookbackMs: number } };
     assert.equal(hist.meta.lookbackMs, 60 * 60 * 1000, "P1D capped to the plan's 1h");
   });
 });
@@ -116,12 +116,12 @@ test("org self-service: members create and revoke keys; outsiders get 404; opera
     store.addMember(freeOrg.id, "alice");
     const as = (user: string, role: AuthRole = "user") => ({ "x-test-user": user, "x-test-role": role, "content-type": "application/json" });
 
-    const mine = await (await fetch(`${base}/orgs/mine`, { headers: as("alice") })).json();
+    const mine = (await (await fetch(`${base}/orgs/mine`, { headers: as("alice") })).json()) as { orgs: { name: string }[] };
     assert.deepEqual(mine.orgs.map((o: { name: string }) => o.name).sort(), ["Free Co", "xOrbita"]);
 
     const created = await fetch(`${base}/orgs/${org.id}/keys`, { method: "POST", headers: as("alice"), body: JSON.stringify({ name: "ci" }) });
     assert.equal(created.status, 201);
-    const { key, info } = await created.json();
+    const { key, info } = (await created.json()) as { key: string; info: { id: string } };
     assert.ok(store.resolveKey(key));
 
     assert.equal((await fetch(`${base}/orgs/${org.id}/keys`, { method: "POST", headers: as("mallory"), body: "{}" })).status, 404);
