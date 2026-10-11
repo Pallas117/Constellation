@@ -40,6 +40,11 @@ AWAKE_WARN_BATTERY="${GAUSS_AWAKE_WARN_BATTERY:-20}" # phone warning before the 
 ARGO="${ARGO:-$HOME/.local/bin/argo}"
 MEM_MIN_FREE="${GAUSS_MEM_MIN_FREE:-15}" # phone alert at or below this system-wide free %
 SWAP_MAX="${GAUSS_SWAP_MAX:-90}"         # ... or at or above this swap use %
+DISK_MIN_GB="${GAUSS_DISK_MIN_GB:-8}"   # ... or below this many GB free on the boot volume
+WATCH_DIR="$HOME/Library/Application Support/Gauss"
+GUARD_HEARTBEAT="$WATCH_DIR/guard.heartbeat" # Argo restarts the guard if this goes stale
+WATCH_KICKS="$WATCH_DIR/watch-kicks"         # "<label> <epoch>" per watchdog restart
+WATCH_MAX_KICKS=3
 
 tailnet_url() {
   local name
@@ -138,6 +143,14 @@ memory_stats() { # prints "<free%> <swap used%>"
   swap=$(sysctl -n vm.swapusage 2>/dev/null | awk '{t=$3; u=$6; gsub(/M/,"",t); gsub(/M/,"",u); print (t>0 ? int(u*100/t) : 0)}' || true)
   echo "${free:-100} ${swap:-0}"
 }
+# Disk: swap files live on the boot volume, so a near-full disk turns memory
+# pressure into killed apps and failed builds (seen: 5 GB free with 5 GB swap).
+disk_free_gb() { df -g / 2>/dev/null | awk 'NR==2{print $4+0}'; }
+disk_alerts() { # disk_alerts <free GB>
+  [ "${1:-999}" -lt "$DISK_MIN_GB" ] && phone -key disk-low -every 6h "Gauss: disk ${1} GB free" \
+    "Swap and builds need room; below ${DISK_MIN_GB} GB macOS may kill apps. Clear caches or old builds."
+  return 0
+}
 top_memory() { ps -Acmo rss=,comm= 2>/dev/null | awk 'NR==1{printf "%s %.1f GB", $2, $1/1048576}'; }
 
 memory_alerts() { # memory_alerts <free%> <swap used%>
@@ -152,12 +165,62 @@ memory_alerts() { # memory_alerts <free%> <swap used%>
   fi
 }
 
+# Redundancy: this guard and Argo watch each other. The guard touches a
+# heartbeat Argo checks (tools/argo/watch.go); the guard restarts Argo and
+# mesh-heal when theirs go stale, and the services after two failed health
+# checks in a row. At most WATCH_MAX_KICKS restarts per job per hour, then
+# it only alerts: something that dies on start needs a human.
+mtime_age_min() { local m; m=$(stat -f %m "$1" 2>/dev/null) || { echo 99999; return; }; echo $(( ($(date +%s) - m) / 60 )); }
+loaded() { launchctl print "$UID_DOMAIN/$1" >/dev/null 2>&1; }
+
+kick() { # kick <label> <reason>: rate-limited launchctl kickstart, logged and alerted
+  local label=$1 reason=$2 now; now=$(date +%s)
+  local recent; recent=$({ awk -v l="$label" -v n="$now" '$1==l && n-$2<3600' "$WATCH_KICKS" 2>/dev/null || true; } | wc -l | tr -d ' ')
+  if [ "$recent" -ge "$WATCH_MAX_KICKS" ]; then
+    phone -key "watch-$label" -every 1h "Gauss: $label keeps failing" "$reason after $recent restarts this hour. Check its log."
+    return 0
+  fi
+  echo "$label $now" >>"$WATCH_KICKS"
+  awk -v n="$now" 'n-$2<86400' "$WATCH_KICKS" >"$WATCH_KICKS.tmp" 2>/dev/null && mv "$WATCH_KICKS.tmp" "$WATCH_KICKS"
+  if launchctl kickstart -k "$UID_DOMAIN/$label" >/dev/null 2>&1; then
+    echo "$(date '+%F %T') watchdog restarted $label: $reason"
+  else
+    phone -key "watch-$label" -every 1h "Gauss: can't restart $label" "$reason; launchctl kickstart failed."
+  fi
+}
+
+watch_peers() {
+  mkdir -p "$(dirname "$GUARD_HEARTBEAT")"; touch "$GUARD_HEARTBEAT"
+  local age
+  # Argo only rewrites state.json on a full probe (~5 min), so allow 15.
+  if loaded uk.lightbound.argo && [ ! -e "$HOME/.local/state/argo/disabled" ]; then
+    age=$(mtime_age_min "$HOME/.local/state/argo/state.json")
+    [ "$age" -gt 15 ] && kick uk.lightbound.argo "no Argo check for ${age} min"
+  fi
+  if loaded uk.lightbound.mesh-heal; then
+    age=$(mtime_age_min "$HOME/.local/share/mesh-heal/state")
+    [ "$age" -gt 10 ] && kick uk.lightbound.mesh-heal "no mesh-heal check for ${age} min"
+  fi
+  local svc url strikes
+  for svc in backend:http://127.0.0.1:3001/health frontend:http://127.0.0.1:8080/; do
+    url=${svc#*:}; svc=uk.lightbound.gauss-${svc%%:*}
+    loaded "$svc" || continue
+    strikes="$WATCH_DIR/$svc.strikes"
+    if [ "$(code "$url")" = 200 ]; then rm -f "$strikes"; continue; fi
+    echo x >>"$strikes"
+    [ "$(wc -l <"$strikes" | tr -d ' ')" -ge 2 ] && { rm -f "$strikes"; kick "$svc" "health check failed twice"; }
+  done
+  return 0
+}
+
 awake_guard() { # run every minute by the awake agent
+  watch_peers
   local batt pct
   batt=$(pmset -g batt); pct=$(grep -Eo '[0-9]+%' <<<"$batt" | head -1 | tr -d % || true)
   battery_alerts "$batt" "$pct"
   local free swap; read -r free swap < <(memory_stats)
   memory_alerts "$free" "$swap"
+  disk_alerts "$(disk_free_gb)"
   [ -f "$SUDOERS" ] || return 0 # not set up; status and check say so
   if [ -f "$AWAKE_OFF" ]; then
     awake_set 0 "turned off"
@@ -228,6 +291,9 @@ resilience() { # can background work survive the lid closed, the battery, memory
   read -r free swap < <(memory_stats)
   [ "$free" -gt "$MEM_MIN_FREE" ] && [ "$swap" -lt "$SWAP_MAX" ] && ok=ok || ok=no
   item $ok "memory ${free}% free, swap ${swap}% used$([ $ok = no ] && echo "; biggest: $(top_memory)")"
+  local disk; disk=$(disk_free_gb)
+  [ "${disk:-0}" -ge "$DISK_MIN_GB" ] && ok=ok || ok=no
+  item $ok "disk ${disk:-?} GB free$([ $ok = no ] && echo " (need ${DISK_MIN_GB}+ for swap and builds)")"
   network_item
   local heal="$HOME/.local/share/mesh-heal/state"
   [ -n "$(find "$heal" -mmin -5 2>/dev/null)" ] && ok=ok || ok=no

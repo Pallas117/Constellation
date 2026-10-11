@@ -43,19 +43,31 @@ func newPhone(to, device string) *Phone {
 	return &Phone{To: to, Queue: filepath.Join(DefaultStore().Dir, "phone-queue.jsonl"), Device: device, send: iMessage}
 }
 
-// iMessage passes the handle and text as argv items; they are never
+// iMessage sends over iMessage, then falls back to SMS (the iPhone's Text
+// Message Forwarding) for a phone-number handle, so one broken service
+// doesn't silence alerts. Handle and text are argv items, never
 // interpolated into the script.
 func iMessage(to, text string) error {
+	err := messagesSend("iMessage", to, text)
+	if err != nil && strings.HasPrefix(to, "+") {
+		if smsErr := messagesSend("SMS", to, text); smsErr == nil {
+			return nil
+		}
+	}
+	return err
+}
+
+func messagesSend(service, to, text string) error {
 	out, err := exec.Command("osascript",
 		"-e", "on run argv",
 		"-e", `tell application "Messages"`,
-		"-e", "set svc to 1st account whose service type = iMessage",
+		"-e", "set svc to 1st account whose service type = "+service, // constant, not user input
 		"-e", "send (item 2 of argv) to participant (item 1 of argv) of svc",
 		"-e", "end tell",
 		"-e", "end run",
 		to, text).CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("Messages: %s", strings.TrimSpace(string(out)))
+		return fmt.Errorf("Messages (%s): %s", service, strings.TrimSpace(string(out)))
 	}
 	return nil
 }

@@ -34,6 +34,14 @@ type Config struct {
 	Device    string            `json:"device,omitempty"`     // display name in Gauss
 	ExitNodes map[string]string `json:"exit_nodes,omitempty"` // tailscale hostname → country (MY/SG only)
 	PhoneTo   string            `json:"phone_to,omitempty"`   // your own iMessage handle for phone alerts
+	Watch     []Peer            `json:"watch,omitempty"`      // LaunchAgents Argo keeps alive; default: awake guard + mesh-heal
+}
+
+func (c Config) peers() []Peer {
+	if c.Watch == nil {
+		return defaultPeers()
+	}
+	return c.Watch
 }
 
 func saveConfig(c Config) error {
@@ -86,6 +94,8 @@ func main() {
 		if store.Disabled() {
 			return
 		}
+		// Every minute, even when the network probe is skipped: cheap (file stats).
+		_ = withLock(store, func() { watchPeers(cfg.peers(), store, realWatchFx(phone, store), time.Now()) })
 		if gw, mac := localGateway(ctx); skipTick(store.Load(), gw, mac, time.Now()) {
 			return
 		}
@@ -121,6 +131,13 @@ func main() {
 			err = nil
 		}
 		fmt.Println("argo active.")
+	case "watch": // run the peer watchdog once and say what it did
+		err = withLock(store, func() {
+			for _, l := range watchPeers(cfg.peers(), store, realWatchFx(phone, store), time.Now()) {
+				fmt.Println(l)
+			}
+			fmt.Println("watch: done")
+		})
 	case "notify": // for mesh-heal, the awake guard and Claude Code hooks
 		err = notifyCmd(os.Args[2:], phone, store, time.Now())
 	case "phone":
@@ -134,7 +151,7 @@ func main() {
 	case "version":
 		fmt.Println("argo", version)
 	default:
-		fmt.Fprintln(os.Stderr, "usage: argo [status|doctor|fix|report|on|off|preflight|run -- cmd|phone <handle>|test|off|notify TITLE MSG|summary [--send]|enroll URL DEVICE|install|uninstall|version]")
+		fmt.Fprintln(os.Stderr, "usage: argo [status|doctor|fix|report|on|off|preflight|run -- cmd|phone <handle>|test|off|notify TITLE MSG|watch|summary [--send]|enroll URL DEVICE|install|uninstall|version]")
 		os.Exit(2)
 	}
 	if err != nil {

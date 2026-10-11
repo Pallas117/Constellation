@@ -15,7 +15,12 @@ stub memory_pressure 'echo "System-wide memory free percentage: ${FREE:-50}%"'
 stub sysctl 'echo "total = 6144.00M  used = ${SWAPUSED:-1000}.00M  free = 0.00M  (encrypted)"'
 stub ps 'echo "2097152 node"'
 stub ioreg 'echo "\"AppleClamshellState\" = No"'
-stub launchctl 'exit 1'
+stub launchctl 'case "$1" in
+  print) for l in $LOADED; do [ "$2" = "gui/$(id -u)/$l" ] && exit 0; done; exit 1 ;;
+  kickstart) echo "${3##*/}" >>"$KICKS"; exit 0 ;;
+esac; exit 1'
+stub df 'printf "Filesystem 1G-blocks Used Available\n/dev/disk3s1s1 228 13 %s\n" "${DISKGB:-50}"'
+stub curl 'printf "%s" "${HEALTH:-200}"' # code() reads only the HTTP status
 stub sudo 'exit 1'
 stub argo 'case "$1" in
   notify) [ $# -gt 1 ] || { [ -n "${OLD_ARGO:-}" ] && echo "usage: argo [status|doctor]" >&2 || echo "usage: argo notify [-key K -every 30m] TITLE MESSAGE" >&2; exit 1; }
@@ -24,8 +29,9 @@ stub argo 'case "$1" in
 esac'
 
 run() { # run <args...>: gauss-services.sh with the stubs; alerts land in $LOG
-  : >"$T/log"
-  env -i PATH="$T/bin:/usr/bin:/bin" HOME="$T/home" ARGO="$T/bin/argo" LOG="$T/log" GAUSS_PUBLIC_URL=http://127.0.0.1:8080 \
+  : >"$T/log"; : >"$T/kicks"
+  env -i PATH="$T/bin:/usr/bin:/bin" HOME="$T/home" ARGO="$T/bin/argo" LOG="$T/log" KICKS="$T/kicks" GAUSS_PUBLIC_URL=http://127.0.0.1:8080 \
+    LOADED="${LOADED:-}" HEALTH="${HEALTH:-200}" DISKGB="${DISKGB:-50}" \
     SRC="${SRC:-AC Power}" BATT="${BATT:-80%; charging; present: true}" SD="${SD:-0}" \
     FREE="${FREE:-50}" SWAPUSED="${SWAPUSED:-1000}" OLD_ARGO="${OLD_ARGO:-}" bash "$SCRIPT" "$@"
 }
@@ -55,12 +61,57 @@ SWAPUSED=5800 run awake guard
 FREE=40 SWAPUSED=3000 run awake guard
 [ -z "$(alerts)" ]; expect "healthy memory: no alerts" $?
 
+# Disk (seen on the dev Mac: 5 GB free with 5 GB of swap)
+DISKGB=5 run awake guard
+[ "$(alerts)" = "disk-low" ]; expect "5 GB free disk: alert" $?
+DISKGB=20 run awake guard
+[ -z "$(alerts)" ]; expect "20 GB free disk: no alert" $?
+
+# Replay: a real overnight drain from the dev Mac's pmset log (57% down to 2%,
+# lid closed, on battery). Alert keys per reading; argo rate-limits repeats.
+seq=""
+for pct in 57 48 30 21 20 15 11 10 6 2; do
+  SRC="Battery Power" BATT="${pct}%; discharging; present: true" run awake guard
+  seq+="$pct:$(alerts) "
+done
+[ "$seq" = "57: 48: 30: 21: 20:battery-low 15:battery-low 11:battery-low 10:battery-critical 6:battery-critical 2:battery-critical " ]
+expect "replayed 57→2% drain: warn from 20%, critical from 10%" $?
+
+# Watchdog: the guard keeps Argo, mesh-heal and the services alive, and leaves a heartbeat for Argo
+kicked() { tr '\n' ' ' <"$T/kicks" | sed 's/ $//'; }
+WD="$T/home/Library/Application Support/Gauss"
+mkdir -p "$T/home/.local/state/argo"
+touch "$T/home/.local/state/argo/state.json" "$T/home/.local/share/mesh-heal/state"
+LOADED="uk.lightbound.argo uk.lightbound.mesh-heal" run awake guard
+[ -z "$(kicked)" ] && [ -n "$(find "$WD/guard.heartbeat" -mmin -1)" ]; expect "fresh peers: no restarts, guard heartbeat written" $?
+touch -t 202601010000 "$T/home/.local/state/argo/state.json" "$T/home/.local/share/mesh-heal/state"
+LOADED="uk.lightbound.argo uk.lightbound.mesh-heal" run awake guard
+[ "$(kicked)" = "uk.lightbound.argo uk.lightbound.mesh-heal" ]; expect "stale Argo and mesh-heal: both restarted" $?
+touch "$T/home/.local/state/argo/disabled"
+LOADED="uk.lightbound.argo" run awake guard
+[ -z "$(kicked)" ]; expect "argo off: not restarted" $?
+rm -f "$T/home/.local/state/argo/disabled"
+run awake guard
+[ -z "$(kicked)" ]; expect "jobs not installed: nothing restarted" $?
+for _ in 1 2; do LOADED="uk.lightbound.mesh-heal" run awake guard; done # 2 more kicks: 3 this hour
+LOADED="uk.lightbound.mesh-heal" run awake guard
+[ -z "$(kicked)" ] && grep -q "mesh-heal keeps failing" "$T/log"; expect "4th restart in an hour: alert instead of kicking" $?
+rm -f "$WD/watch-kicks"; touch "$T/home/.local/share/mesh-heal/state" "$T/home/.local/state/argo/state.json"
+HEALTH=000 LOADED="uk.lightbound.gauss-backend" run awake guard
+[ -z "$(kicked)" ]; expect "backend down once: wait for a second failure" $?
+HEALTH=000 LOADED="uk.lightbound.gauss-backend" run awake guard
+[ "$(kicked)" = "uk.lightbound.gauss-backend" ]; expect "backend down twice: restarted" $?
+HEALTH=000 LOADED="uk.lightbound.gauss-backend" run awake guard
+HEALTH=200 LOADED="uk.lightbound.gauss-backend" run awake guard
+HEALTH=000 LOADED="uk.lightbound.gauss-backend" run awake guard
+[ -z "$(kicked)" ]; expect "a recovery resets the strike count" $?
+
 # resilience checklist
 echo '{"phone_to":"+60123456789"}' >"$T/home/.config/argo/config.json"
 echo '{"hooks":{"Notification":[{"hooks":[{"type":"command","command":"~/.local/bin/claude-phone-hook"}]}]}}' >"$T/home/.claude/settings.json"
 touch "$T/home/.local/share/mesh-heal/state"
 out=$(run resilience | plain)
-for want in "✓ battery 80% on AC" "✓ memory 50% free, swap 16% used" "✓ network: ● OK MY" "✓ tailnet self-heal" \
+for want in "✓ battery 80% on AC" "✓ memory 50% free, swap 16% used" "✓ disk 50 GB free" "✓ network: ● OK MY" "✓ tailnet self-heal" \
   "✓ phone alerts: iMessage via argo notify" "✓ Claude Code prompts forwarded"; do
   [[ "$out" == *"$want"* ]]; expect "resilience shows '$want'" $?
 done
