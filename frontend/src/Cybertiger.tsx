@@ -13,6 +13,7 @@ import ProtectionDashboard from "./pages/ProtectionDashboard";
 import { ProtectedRoute } from "./components/ProtectedRoute";
 import NotFound from "./pages/NotFound";
 import HeliophysicsDashboard from "./pages/HeliophysicsDashboard";
+import MeshDashboard from "./pages/MeshDashboard";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 
 const queryClient = new QueryClient();
@@ -46,6 +47,14 @@ const App = () => (
                       <ProtectionDashboard />
                     </ProtectedRoute>
                   } 
+                />
+                <Route
+                  path="/mesh"
+                  element={
+                    <ProtectedRoute>
+                      <MeshDashboard />
+                    </ProtectedRoute>
+                  }
                 />
                 {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
                 <Route path="*" element={<NotFound />} />

@@ -40,6 +40,7 @@ import { auth } from "./better-auth.js";
 import { toNodeHandler } from "better-auth/node";
 import { SelfHealerAgent } from "./cybertiger/self-healer.js";
 import deviceRegistryRouter from "./device-registry.js";
+import { createMeshRouters } from "./mesh/router.js";
 
 const app = express();
 const cyberTiger = new CyberTigerDaemon();
@@ -260,7 +261,14 @@ app.post("/api/rag/query", async (req: express.Request, res: express.Response) =
   }
 });
 
+// Argo agents report with a device token, so this sits before session auth.
+const mesh = createMeshRouters();
+app.use("/api/mesh", mesh.agent);
+
 app.use("/api", withAsyncMiddleware(authenticateRequest));
+
+// Mesh & Network page: onboarding for everyone signed in, team status for operators.
+app.use("/api/mesh", mesh.ui);
 
 // Device lifecycle endpoints (requires operator session)
 app.use("/api/device", deviceRegistryRouter);

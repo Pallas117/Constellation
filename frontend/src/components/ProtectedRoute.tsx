@@ -5,8 +5,9 @@ export const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
   const { data: session, isPending } = useSession();
   const location = useLocation();
 
-  const authSession =
-    session?.session ?? session?.data?.session ?? session;
+  // better-auth's useSession data is { session, user }: the user sits beside
+  // the session, not inside it, so checking session.session.user always failed.
+  const user = session?.user;
 
   if (isPending) {
     return (
@@ -16,7 +17,7 @@ export const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
     );
   }
 
-  if (!authSession || !authSession.user?.id) {
+  if (!user?.id) {
     return <Navigate to="/login" state={{ from: location }} replace />;
   }
 

@@ -80,7 +80,7 @@ export function useSolarWind5s(): SolarWind5sState {
         setSource("polling");
         return;
       }
-      const wsUrl = `${base}/ws/feed/space-weather?token=${encodeURIComponent(token)}`;
+      const wsUrl = `${base}/ws/feed/space-weather`; // session cookie authenticates; never put tokens in URLs
       ws = new WebSocket(wsUrl);
       wsRef.current = ws;
 

@@ -1,0 +1,2 @@
+{"online":true,"gateway":"10.0.0.1","dns":{"err":"dns","detail":"lookup api.anthropic.com: no such host"},
+ "captive":{"ok":true,"status":200},"api":{"err":"dns"},"tailscale":{}}

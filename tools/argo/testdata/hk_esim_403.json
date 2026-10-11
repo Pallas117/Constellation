@@ -1,0 +1,4 @@
+{"_source":"recorded 2026-10-08 on the HK eSIM hotspot (Hutchison AS10118)",
+ "online":true,"gateway":"172.20.10.1","public_ip":"180.188.170.58","loc":"HK",
+ "dns":{"ok":true},"captive":{"ok":true,"status":200},
+ "api":{"ok":true,"status":403},"web":{"ok":true,"status":403},"tailscale":{"running":true}}

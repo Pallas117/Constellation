@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "deny": [
+      "Read(./node_modules/**)",
+      "Read(./build/**)",
+      "Read(./dist/**)",
+      "Read(./test-results/**)",
+      "Read(./data/bedrock/**)",
+      "Read(./data/mesh/**)",
+      "Read(./package-lock.json)",
+      "Read(./.auth.db)",
+      "Read(./.env)",
+      "Read(./.env.*)"
+    ]
+  }
+}
