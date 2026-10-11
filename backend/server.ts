@@ -432,6 +432,11 @@ app.get("/api/system/connectivity", (req: AuthenticatedRequest, res) => {
   res.json(linkGuardian.getStatus());
 });
 
+// Per-stage ingest latency and the age of the data being served (fresh / degraded / stale / stalled).
+app.get("/api/system/pipeline", (_req: AuthenticatedRequest, res) => {
+  res.json(worker.getPipelineLatency());
+});
+
 app.get("/api/security/cybertiger/events", requireRole("admin"), (req: AuthenticatedRequest, res) => {
   const limit = Math.max(1, Math.min(Number(req.query.limit ?? 200), 2000));
   res.json({
