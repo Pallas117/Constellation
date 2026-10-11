@@ -9,6 +9,9 @@ whose date isn't published yet ("tbc") get a Monday nudge to find it.
   funding_reminders.py remind              # daily (LaunchAgent); --dry-run prints instead
   funding_reminders.py plan [--days 45]    # upcoming milestones and deadlines
   funding_reminders.py ics [--out FILE]    # calendar with alarms: a second alert path
+  funding_reminders.py outbox --days 90    # every future reminder as JSON lines (to pre-schedule in Slack)
+
+"email_to" beside "calls" in the file adds a daily digest email through Mail.app.
   funding_reminders.py install             # write the 09:00 LaunchAgent; prints how to load it
 
 The file holds call names, dates and owners only: no drafts, numbers or notes.
@@ -38,6 +41,12 @@ def load(path):
                 raise ValueError(f"{c['id']}: deadline needs a UTC offset, e.g. 2026-10-30T13:00:00+01:00")
             c["_deadline"] = d
     return calls
+
+
+def load_meta(path):
+    """Top-level settings beside "calls", e.g. {"email_to": "you@example.com"}."""
+    with open(path) as f:
+        return {k: v for k, v in json.load(f).items() if k != "calls"}
 
 
 def milestones(call):
@@ -96,6 +105,29 @@ def notify(key, title, msg):
     # Rate-limited per key in argo, so a second run the same day sends nothing new.
     subprocess.run([ARGO, "notify", "-key", key[:64].lower(), "-every", "20h", title, msg], check=False,
                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=120)
+
+
+def email(to, items):
+    """One digest email through the Mac's Mail.app (no tokens). Address, subject and body
+    are argv items, never interpolated into the script. Returns True if Mail accepted it."""
+    subject = f"Funding reminders: {len(items)} today"
+    body = "\n\n".join(f"{t}\n{m}" for _, t, m in items) + "\n\n(Sent by scripts/ops/funding_reminders.py)"
+    r = subprocess.run(["osascript", "-e", "on run argv", "-e", 'tell application "Mail"',
+                        "-e", "set m to make new outgoing message with properties {subject:(item 2 of argv), content:(item 3 of argv), visible:false}",
+                        "-e", "tell m to make new to recipient at end of to recipients with properties {address:(item 1 of argv)}",
+                        "-e", "send m", "-e", "end tell", "-e", "end run", to, subject, body],
+                       capture_output=True, text=True, timeout=120)
+    return r.returncode == 0
+
+
+def outbox(calls, start, days):
+    """Every reminder from `start` for `days` days: [(date, key, title, message)], for
+    scheduling the same messages in another channel ahead of time (e.g. Slack)."""
+    out = []
+    for i in range(days):
+        d = start + dt.timedelta(days=i)
+        out += [(d, k, t, m) for k, t, m in reminders(calls, d)]
+    return out
 
 
 def plan(calls, today, days):
@@ -157,7 +189,7 @@ PLIST = """<?xml version="1.0" encoding="UTF-8"?>
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("cmd", choices=["remind", "plan", "ics", "install"])
+    ap.add_argument("cmd", choices=["remind", "plan", "ics", "outbox", "install"])
     ap.add_argument("--file", default=os.environ.get("GAUSS_FUNDING_DEADLINES", str(DEFAULT_FILE)))
     ap.add_argument("--days", type=int, default=45)
     ap.add_argument("--out", default=str(DEFAULT_FILE.with_name("gauss-funding.ics")))
@@ -174,8 +206,15 @@ def main(argv=None):
         return 0
     calls = load(a.file)
     if a.cmd == "remind":
-        for key, title, msg in reminders(calls, today):
+        items = reminders(calls, today)
+        for key, title, msg in items:
             print(f"{title}: {msg}") if a.dry_run else notify(key, title, msg)
+        to = load_meta(a.file).get("email_to")
+        if items and to and not a.dry_run and not email(to, items):
+            print("email via Mail.app failed: open Mail once and allow automation", file=sys.stderr)
+    elif a.cmd == "outbox":
+        for d, key, title, msg in outbox(calls, today, a.days):
+            print(json.dumps({"date": d.isoformat(), "key": key, "title": title, "message": msg}))
     elif a.cmd == "plan":
         for d, name, label, owner in plan(calls, today, a.days):
             print(f"{d.strftime('%a %d %b') if d else 'TBC       '}  {label:<16} {name}" + (f"  [{owner}]" if owner else ""))

@@ -79,6 +79,24 @@ class Reminders(unittest.TestCase):
             os.unlink(f.name)
 
 
+class Outbox(unittest.TestCase):
+    def test_outbox_equals_each_days_reminders(self):
+        calls, start = load(), dt.date(2026, 10, 11)
+        box = fr.outbox(calls, start, 30)
+        expect = [k for i in range(30) for k, t, m in fr.reminders(calls, start + dt.timedelta(days=i))]
+        self.assertEqual([k for d, k, t, m in box], expect)
+        self.assertTrue(all(start <= d < start + dt.timedelta(days=30) for d, k, t, m in box))
+        self.assertIn(dt.date(2026, 10, 30), [d for d, k, t, m in box if "GAU-102" in k])  # deadline day
+
+    def test_meta_is_read_beside_calls(self):
+        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
+            json.dump({"email_to": "me@example.com", **CALLS}, f)
+        try:
+            self.assertEqual(fr.load_meta(f.name), {"email_to": "me@example.com"})
+        finally:
+            os.unlink(f.name)
+
+
 class PlanAndCalendar(unittest.TestCase):
     def test_plan_is_dated_then_tbc(self):
         rows = fr.plan(load(), dt.date(2026, 10, 19), 12)
