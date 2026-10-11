@@ -4,7 +4,7 @@ import test from "node:test";
 import express from "express";
 import type { AuthenticatedRequest, AuthRole } from "../auth.js";
 import { PLANS, type Plan, type PlanLimits } from "./plans.js";
-import { createDataApiRouter, createOrgRouter, type DataProvider } from "./routers.js";
+import { createDataApiRouter, createOrgRouter, createPilotRequestHandler, type DataProvider } from "./routers.js";
 import { CommerceStore } from "./store.js";
 
 const data: DataProvider = {
@@ -133,4 +133,36 @@ test("org self-service: members create and revoke keys; outsiders get 404; opera
     assert.equal((await fetch(`${base}/orgs/${org.id}/keys/${info.id}`, { method: "DELETE", headers: as("alice") })).status, 204);
     assert.equal(store.resolveKey(key), undefined);
   });
+});
+
+test("pilot requests: valid leads stored, bad input rejected, honeypot dropped, 3 per IP per hour", async () => {
+  const store = new CommerceStore(":memory:");
+  let t = Date.parse("2026-10-10T08:00:00Z");
+  const app = express();
+  app.use(express.json());
+  app.post("/api/pilot-requests", createPilotRequestHandler(store, () => t));
+  const server = app.listen(0);
+  const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}/api/pilot-requests`;
+  const post = (body: object) => fetch(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+  const lead = { name: "Ada", email: "Ada@xOrbita.space", company: "xOrbita", interest: "data-api", useCase: "Replay our LEO logs" };
+  try {
+    assert.equal((await post({ ...lead, email: "not-an-email" })).status, 400);
+    assert.equal((await post({ ...lead, website: "http://spam" })).status, 201, "honeypot looks like success");
+    assert.equal(store.listPilotRequests().length, 0, "honeypot submissions are not stored");
+
+    assert.equal((await post(lead)).status, 201);
+    const [saved] = store.listPilotRequests();
+    assert.equal(saved.email, "ada@xorbita.space");
+    assert.equal(saved.interest, "data-api");
+    assert.equal(JSON.stringify(saved).includes("127.0.0.1"), false, "IP is stored only as a hash");
+
+    assert.equal((await post({ ...lead, interest: "free-money" })).status, 201);
+    assert.equal(store.listPilotRequests()[0].interest, "both", "unknown interest normalised");
+    assert.equal((await post(lead)).status, 201);
+    assert.equal((await post(lead)).status, 429, "4th request from one IP within an hour");
+    t += 61 * 60 * 1000;
+    assert.equal((await post(lead)).status, 201);
+  } finally {
+    server.close();
+  }
 });

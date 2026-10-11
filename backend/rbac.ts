@@ -21,6 +21,7 @@ export const API_POLICY: ReadonlyArray<{ method: string; path: string; access: A
   // Open landing visualisation
   { method: "GET", path: "/feed/space-weather/latest", access: "public" },
   { method: "GET", path: "/system/connectivity", access: "public" },
+  { method: "POST", path: "/pilot-requests", access: "public" }, // landing "Request a pilot" form
 
   // Free account (user): richer feeds behind sign-in
   { method: "GET", path: "/feed/space-weather/5s", access: "user" },

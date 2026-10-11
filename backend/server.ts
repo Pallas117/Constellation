@@ -45,7 +45,7 @@ import deviceRegistryRouter from "./device-registry.js";
 import { createMeshRouters } from "./mesh/router.js";
 import { enforceApiPolicy, isPublic } from "./rbac.js";
 import { CommerceStore } from "./commerce/store.js";
-import { createDataApiRouter, createOrgRouter } from "./commerce/routers.js";
+import { createDataApiRouter, createOrgRouter, createPilotRequestHandler } from "./commerce/routers.js";
 
 const app = express();
 const cyberTiger = new CyberTigerDaemon();
@@ -72,6 +72,7 @@ type CyberTigerRequest = AuthenticatedRequest & {
   security?: {
     requestId: string;
     ip: string;
+    local?: boolean;
     startedAtMs: number;
     path: string;
     method: string;
@@ -198,6 +199,7 @@ app.use("/api", (req: express.Request, res: express.Response, next: express.Next
   tracked.security = {
     requestId: decision.requestId,
     ip: decision.ip,
+    local: decision.local,
     startedAtMs: start,
     path: req.originalUrl ?? req.url,
     method: req.method,
@@ -212,6 +214,7 @@ app.use("/api", (req: express.Request, res: express.Response, next: express.Next
     cyberTiger.recordResponse({
       requestId: detail.requestId,
       ip: detail.ip,
+      local: detail.local,
       method: detail.method,
       path: detail.path,
       status: res.statusCode,
@@ -271,6 +274,9 @@ app.use("/api", enforceApiPolicy);
 
 // Organisation self-service: keys and usage for members (policy: backend/rbac.ts).
 app.use("/api/orgs", createOrgRouter(commerce));
+
+// Public "Request a pilot" form on the landing page.
+app.post("/api/pilot-requests", createPilotRequestHandler(commerce));
 
 // Mesh & Network page: onboarding for everyone signed in, team status for operators.
 app.use("/api/mesh", mesh.ui);
