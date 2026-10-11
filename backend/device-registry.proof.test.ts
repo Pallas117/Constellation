@@ -89,5 +89,10 @@ test("with DEVICE_AUTH_SECRET set, a genuine proof marks the device trusted and 
     const ok = await fetch(`${base}/${device.id}/proof`, json(genuine));
     assert.equal(ok.status, 200);
     assert.equal(await statusOf(device.id), "trusted");
+
+    // The same proof again is a replay: rejected like any failed proof (GAU-99).
+    const replay = await fetch(`${base}/${device.id}/proof`, json(genuine));
+    assert.equal(replay.status, 401);
+    assert.equal(await statusOf(device.id), "untrusted");
   });
 });
