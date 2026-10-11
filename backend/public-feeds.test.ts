@@ -29,7 +29,7 @@ test("sso-options is public and reports Google SSO off without credentials", asy
   const base = `http://${host}:${(server.address() as AddressInfo).port}`;
   const res = await fetch(`${base}/api/sso-options`);
   assert.equal(res.status, 200);
-  const body = await res.json();
+  const body = (await res.json()) as { google: boolean };
   assert.equal(body.google, Boolean(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET));
   assert.equal(JSON.stringify(body).includes("secret"), false);
 });
