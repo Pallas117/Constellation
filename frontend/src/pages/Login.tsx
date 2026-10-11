@@ -3,6 +3,7 @@ import { signIn } from "@/lib/auth-client";
 import { registerDeviceWithLogin } from "@/lib/device-auth";
 import { useNavigate, useLocation } from "react-router-dom";
 import { Shield, Fingerprint } from "lucide-react";
+import { safeRedirectPath } from "@/lib/safe-redirect";
 
 export default function Login() {
   const [email, setEmail] = useState("");
@@ -13,7 +14,7 @@ export default function Login() {
 
   const fromPath = location.state?.from?.pathname || "/operator";
   const fromSearch = location.state?.from?.search || location.search || "";
-  const from = `${fromPath}${fromSearch}`;
+  const from = safeRedirectPath(`${fromPath}${fromSearch}`, "/operator");
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
