@@ -63,11 +63,17 @@ func iMessage(to, text string) error {
 // Send delivers any queued alerts first, then this one; failures are queued.
 func (p *Phone) Send(title, msg string, at time.Time) {
 	text := fmt.Sprintf("%s on %s (%s)\n%s", Mask(title), p.Device, at.Local().Format("15:04"), Mask(msg))
+	if unlock, err := p.queueLock(); err == nil {
+		defer unlock()
+	} // still best-effort deliver if the lock is stuck
 	p.deliver(append(p.readQueue(), text))
 }
 
 // Flush retries queued alerts; called every tick so offline alerts arrive once back online.
 func (p *Phone) Flush() {
+	if unlock, err := p.queueLock(); err == nil {
+		defer unlock()
+	}
 	if q := p.readQueue(); len(q) > 0 {
 		p.deliver(q)
 	}

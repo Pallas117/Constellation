@@ -16,7 +16,8 @@
 # data collected so far and records a new model version; an awake guard keeps
 # the Mac awake with the lid closed, except on battery at or below
 # GAUSS_AWAKE_MIN_BATTERY% (default 10, the mesh's critical-battery level), where it
-# lets the Mac sleep again.
+# lets the Mac sleep again. It texts the phone (via `argo notify`) at
+# GAUSS_AWAKE_WARN_BATTERY% (default 20), at the floor, and when the charger can't keep up.
 # The site is built for GAUSS_PUBLIC_URL (default: this Mac's tailnet name over
 # HTTP, encrypted by Tailscale; never exposed to the internet).
 # Logs: ~/Library/Logs/gauss/. User scope only; the one sudo step is `awake setup`,
@@ -34,6 +35,8 @@ AWAKE_OFF="$HOME/Library/Application Support/Gauss/awake-off"
 # Same floor the mesh uses for its own devices: below 10% a device is flagged
 # (backend/services/device-registry.ts) and swapped out (device-swap-manager.ts).
 AWAKE_MIN_BATTERY="${GAUSS_AWAKE_MIN_BATTERY:-10}"
+AWAKE_WARN_BATTERY="${GAUSS_AWAKE_WARN_BATTERY:-20}" # phone warning before the floor
+ARGO="${ARGO:-$HOME/.local/bin/argo}"
 
 tailnet_url() {
   local name
@@ -98,10 +101,36 @@ awake_set() { # awake_set 0|1 <reason>
   echo "$(date '+%F %T') lid-closed awake $([ "$1" = 1 ] && echo on || echo off): $2"
 }
 
+# Phone alerts go through Argo's iMessage channel (masked, queued while
+# offline, rate-limited per key); silently skipped if Argo isn't installed.
+phone() { [ -x "$ARGO" ] && "$ARGO" notify "$@" >/dev/null 2>&1 || true; }
+
+battery_alerts() { # battery_alerts <pmset batt output> <pct>
+  local batt=$1 pct=$2
+  [ -n "$pct" ] || return 0
+  if [ "$(sleep_disabled)" = 1 ] && [ ! -f "$SUDOERS" ]; then
+    phone -key awake-unguarded -every 6h "Gauss: no battery cutoff" \
+      "Sleep is disabled but the awake guard isn't set up, so nothing stops the battery running flat (${pct}%). Run: gauss-services.sh awake setup"
+  fi
+  if [[ "$batt" == *"'AC Power'"* ]]; then
+    if [ "$pct" -le "$AWAKE_WARN_BATTERY" ] && [[ "$batt" == *"discharging"* || "$batt" == *"not charging"* ]]; then
+      phone -key charger-weak -every 1h "Gauss: charger can't keep up" \
+        "Battery ${pct}% and not gaining on AC. Use a 30W+ USB-C charger or ease the load."
+    fi
+  elif [ "$pct" -le "$AWAKE_MIN_BATTERY" ]; then
+    phone -key battery-critical -every 30m "Gauss: battery ${pct}%" \
+      "At the ${AWAKE_MIN_BATTERY}% floor: letting the Mac sleep. Plug in to keep background work running."
+  elif [ "$pct" -le "$AWAKE_WARN_BATTERY" ]; then
+    phone -key battery-low -every 30m "Gauss: battery ${pct}%" \
+      "On battery. The Mac sleeps at ${AWAKE_MIN_BATTERY}% and background work pauses; plug in soon."
+  fi
+}
+
 awake_guard() { # run every minute by the awake agent
-  [ -f "$SUDOERS" ] || return 0 # not set up; status and check say so
   local batt pct
   batt=$(pmset -g batt); pct=$(grep -Eo '[0-9]+%' <<<"$batt" | head -1 | tr -d % || true)
+  battery_alerts "$batt" "$pct"
+  [ -f "$SUDOERS" ] || return 0 # not set up; status and check say so
   if [ -f "$AWAKE_OFF" ]; then
     awake_set 0 "turned off"
   elif [[ "$batt" == *"'AC Power'"* ]] || [ -z "$pct" ]; then
