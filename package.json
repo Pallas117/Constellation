@@ -36,6 +36,7 @@
     "org": "node --env-file-if-exists=.env --import tsx backend/scripts/org.ts",
     "test:rbac": "node --env-file-if-exists=.env --import tsx backend/scripts/rbac-smoke.ts",
     "test:backend:harness": "node --import tsx --test backend/server.harness.test.ts",
+    "test:ops": "bash scripts/ops/gauss-services.test.sh && cd tools/argo && go test ./...",
     "test:ui": "playwright test",
     "test:ui:mobile": "playwright test tests/e2e/ui-mobile-layout.spec.ts",
     "test:ui:headed": "playwright test --headed",
