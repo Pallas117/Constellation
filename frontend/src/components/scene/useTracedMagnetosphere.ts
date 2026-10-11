@@ -1,21 +1,23 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { computeMagnetosphere, type MagnetosphereState, type SolarWindDrivers } from '@/lib/physics/geomagnetic';
+import { computeMagnetosphere, type SolarWindDrivers } from '@/lib/physics/geomagnetic';
 import { DriverAverager, shouldRetrace } from '@/lib/physics/driver-smoothing';
+import { fieldScalars, tracedModel, type TracedModel } from '@/lib/physics/field-render';
 import type { TraceRequest, TraceResponse } from '@/lib/physics/magnetosphere.worker';
 
 const EPOCH_BUCKET_MS = 10 * 60_000; // dipole tilt changes < 2.5° in 10 min
 const RESAMPLE_MS = 30_000; // the averaging window slides even when values don't change
 
 export interface TracedMagnetosphere {
-  /** Field model being shown (fades in). */
-  current: MagnetosphereState;
-  /** Field model being replaced (fades out); null once the fade finishes. */
-  previous: MagnetosphereState | null;
+  /** Field model being shown (its lines fade in). */
+  current: TracedModel;
+  /** Field model being replaced (its lines fade out); null once the fade finishes. */
+  previous: TracedModel | null;
   /** Increments on every new trace; use as a React key. */
   version: number;
-  /** Drivers the current trace used (averaged when smoothing is on). */
+  /** Drivers the current model used (averaged when smoothing is on). */
   drivers: SolarWindDrivers;
-  tracedAt: number;
+  /** When the current field lines were traced; null before the first trace. */
+  tracedAt: number | null;
   /** Call when the previous field model has faded out. */
   dropPrevious: () => void;
 }
@@ -39,7 +41,8 @@ function createWorker(): Worker | null {
 
 /**
  * Stable, off-main-thread field-line tracing for live data:
- * drivers -> 5-min running mean -> hysteresis -> Web Worker trace -> crossfade.
+ * drivers -> 5-min running mean -> hysteresis -> Web Worker trace
+ * (transferred typed arrays) -> crossfade.
  */
 export function useTracedMagnetosphere(drivers: SolarWindDrivers, epochMs: number, { smooth, tailLength }: Options): TracedMagnetosphere {
   const averager = useRef(new DriverAverager());
@@ -49,21 +52,25 @@ export function useTracedMagnetosphere(drivers: SolarWindDrivers, epochMs: numbe
   const queued = useRef<{ drivers: SolarWindDrivers; epoch: number } | null>(null);
   const traced = useRef<{ drivers: SolarWindDrivers; epoch: number } | null>(null);
 
-  // First frame: trace synchronously so the scene never starts empty.
-  const [model, setModel] = useState(() => {
-    const epoch = bucket(epochMs);
-    traced.current = { drivers, epoch };
-    return {
-      current: computeMagnetosphere(drivers, epoch, { tailLength }),
-      previous: null as MagnetosphereState | null,
-      version: 0,
-      drivers,
-      tracedAt: Date.now(),
-    };
-  });
+  // First frame: boundaries from cheap closed-form scalars; field lines arrive
+  // from the worker a moment later and fade in. Nothing blocks the first paint.
+  const [model, setModel] = useState(() => ({
+    current: { ...fieldScalars(drivers, bucket(epochMs)), openFraction: null, render: null } as TracedModel,
+    previous: null as TracedModel | null,
+    version: 0,
+    drivers,
+    tracedAt: null as number | null,
+  }));
 
-  const accept = useCallback((state: MagnetosphereState, used: SolarWindDrivers) => {
-    setModel((m) => ({ current: state, previous: m.current, version: m.version + 1, drivers: used, tracedAt: Date.now() }));
+  const accept = useCallback((next: TracedModel, used: SolarWindDrivers) => {
+    setModel((m) => ({
+      current: next,
+      // Only keep a previous model if it has lines to fade out.
+      previous: m.current.render ? m.current : null,
+      version: m.version + 1,
+      drivers: used,
+      tracedAt: Date.now(),
+    }));
   }, []);
 
   const dispatch = useCallback(
@@ -72,7 +79,7 @@ export function useTracedMagnetosphere(drivers: SolarWindDrivers, epochMs: numbe
       const worker = workerRef.current;
       if (!worker) {
         // No worker (old browser / tests): trace after this render instead of during it.
-        setTimeout(() => accept(computeMagnetosphere(target, epoch, { tailLength }), target), 0);
+        setTimeout(() => accept(tracedModel(computeMagnetosphere(target, epoch, { tailLength })), target), 0);
         return;
       }
       if (inFlight.current) {
@@ -87,7 +94,7 @@ export function useTracedMagnetosphere(drivers: SolarWindDrivers, epochMs: numbe
     [accept, tailLength],
   );
 
-  // Worker lifecycle.
+  // Worker lifecycle (declared before the effects that dispatch, so it exists first).
   useEffect(() => {
     const worker = createWorker();
     workerRef.current = worker;
@@ -96,7 +103,7 @@ export function useTracedMagnetosphere(drivers: SolarWindDrivers, epochMs: numbe
       const flight = inFlight.current;
       if (!flight || e.data.id !== flight.id) return;
       inFlight.current = null;
-      accept(e.data.state, flight.drivers);
+      accept(e.data.model, flight.drivers);
       const next = queued.current;
       queued.current = null;
       if (next) dispatch(next.drivers, next.epoch);
@@ -105,7 +112,9 @@ export function useTracedMagnetosphere(drivers: SolarWindDrivers, epochMs: numbe
       // Fall back to main-thread tracing rather than freezing the scene.
       worker.terminate();
       workerRef.current = null;
+      const pending = inFlight.current;
       inFlight.current = null;
+      if (pending && traced.current) dispatch(traced.current.drivers, traced.current.epoch);
     };
     return () => {
       worker.terminate();
@@ -114,7 +123,7 @@ export function useTracedMagnetosphere(drivers: SolarWindDrivers, epochMs: numbe
     };
   }, [accept, dispatch]);
 
-  // Feed the averager and retrace on meaningful change.
+  // Retrace when the (averaged) drivers move meaningfully, or the tilt bucket changes.
   const evaluate = useCallback(
     (now: number) => {
       const target = smooth ? averager.current.mean(now) : drivers;

@@ -1,6 +1,8 @@
-// Traces the magnetosphere off the main thread (20-90 ms per trace), so a
-// retrace never drops a rendering frame. Used by useTracedMagnetosphere.
-import { computeMagnetosphere, type MagnetosphereState, type SolarWindDrivers } from './geomagnetic';
+// Traces the magnetosphere off the main thread (20-180 ms per trace) and packs
+// render-ready typed arrays that are transferred zero-copy, so a retrace never
+// drops a rendering frame. Used by useTracedMagnetosphere.
+import { computeMagnetosphere, type SolarWindDrivers } from './geomagnetic';
+import { tracedModel, transferables, type TracedModel } from './field-render';
 
 export interface TraceRequest {
   id: number;
@@ -11,15 +13,16 @@ export interface TraceRequest {
 
 export interface TraceResponse {
   id: number;
-  state: MagnetosphereState;
+  model: TracedModel;
 }
 
 const ctx = self as unknown as {
   onmessage: ((e: MessageEvent<TraceRequest>) => void) | null;
-  postMessage: (message: TraceResponse) => void;
+  postMessage: (message: TraceResponse, transfer: ArrayBuffer[]) => void;
 };
 
 ctx.onmessage = (e) => {
   const { id, drivers, epochMs, tailLength } = e.data;
-  ctx.postMessage({ id, state: computeMagnetosphere(drivers, epochMs, { tailLength }) });
+  const model = tracedModel(computeMagnetosphere(drivers, epochMs, { tailLength }));
+  ctx.postMessage({ id, model }, model.render ? transferables(model.render) : []);
 };

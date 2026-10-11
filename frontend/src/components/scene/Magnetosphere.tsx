@@ -1,16 +1,17 @@
 import { createContext, memo, useContext, useEffect, useLayoutEffect, useMemo, useRef } from 'react';
-import { useFrame } from '@react-three/fiber';
-import { Line } from '@react-three/drei';
+import { useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
+import { LineSegments2 } from 'three/examples/jsm/lines/LineSegments2.js';
+import { LineSegmentsGeometry } from 'three/examples/jsm/lines/LineSegmentsGeometry.js';
+import { LineMaterial } from 'three/examples/jsm/lines/LineMaterial.js';
 import {
   driversFromVisualParams,
   gsmToScene,
   magneticFootpoint,
   shueRadius,
-  type FieldLine,
-  type MagnetosphereState,
   type SolarWindDrivers,
 } from '@/lib/physics/geomagnetic';
+import { CLOSED_NEAR, OPEN_NEAR, type FieldRenderData, type TracedModel } from '@/lib/physics/field-render';
 import { damp } from '@/lib/physics/driver-smoothing';
 import { usePrefersReducedMotion } from '@/hooks/usePrefersReducedMotion';
 import { useTracedMagnetosphere } from './useTracedMagnetosphere';
@@ -27,6 +28,7 @@ const useTau = (tau: number) => (useContext(MotionScale) === 0 ? 0 : tau);
 const MORPH_TAU = 0.9; // boundaries settle in ~2-3 s
 const FADE_TAU = 0.35; // field-line crossfade completes in ~1.2 s
 const LINE_OPACITY = 0.6;
+const LINE_WIDTH_PX = 1.1;
 
 /** Deterministic per-index random in [0, 1): particles keep their identity across retraces. */
 function seeded(i: number, salt = 0): number {
@@ -40,12 +42,14 @@ export interface MagnetosphereModelInfo {
   /** Drivers the shown geometry was traced from (5-min mean for live data). */
   drivers: SolarWindDrivers;
   smoothed: boolean;
-  tracedAt: number;
+  /** Null until the first field-line trace arrives. */
+  tracedAt: number | null;
   r0: number;
   bowShock: number;
   tilt: number;
   oval: { equatorward: number; poleward: number };
-  openFraction: number;
+  /** Null until the first field-line trace arrives. */
+  openFraction: number | null;
 }
 
 interface MagnetosphereProps {
@@ -67,163 +71,145 @@ interface MagnetosphereProps {
 
 const TAIL_LENGTH = 40;
 
-// Lightbound brand palette: closed flux warm white → Earth blue, open flux
-// amber → Sun. Signal lime is reserved for the outer belt / aurora.
-const CLOSED_NEAR = new THREE.Color('#F3F0E8');
-const CLOSED_FAR = new THREE.Color('#2378C4');
-const OPEN_NEAR = new THREE.Color('#E7B14A');
-const OPEN_FAR = new THREE.Color('#C2552A');
-
-const LOG_B_MIN = Math.log10(5);
-const LOG_B_MAX = Math.log10(60000);
-
 /* ------------------------------------------------------------------------- */
 /* Field lines                                                               */
 /* ------------------------------------------------------------------------- */
 
+/**
+ * All traced field lines as one fat-line draw call, built straight from the
+ * worker's transferred buffers (no per-vertex JS objects on the main thread).
+ */
 const FieldLines = memo(function FieldLines({
-  lines,
+  data,
   visible,
   onFaded,
 }: {
-  lines: FieldLine[];
+  data: FieldRenderData;
   /** Fade toward full (true) or zero (false) opacity. */
   visible: boolean;
   onFaded?: () => void;
 }) {
-  const lineRef = useRef<{ material: THREE.Material & { opacity: number } } | null>(null);
   const tau = useTau(FADE_TAU);
+  const size = useThree((st) => st.size);
   const done = useRef(false);
-  const { points, colors } = useMemo(() => {
-    const points: [number, number, number][] = [];
-    const colors: [number, number, number][] = [];
-    const c = new THREE.Color();
-    for (const line of lines) {
-      const open = line.topology === 'open';
-      const near = open ? OPEN_NEAR : CLOSED_NEAR;
-      const far = open ? OPEN_FAR : CLOSED_FAR;
-      const vertexColor = (i: number): [number, number, number] => {
-        const t = THREE.MathUtils.clamp((Math.log10(line.strength[i]) - LOG_B_MIN) / (LOG_B_MAX - LOG_B_MIN), 0, 1);
-        c.copy(far).lerp(near, Math.pow(t, 1.6));
-        // Lines converge at the poles; dim them near the surface so the
-        // additive blend doesn't saturate the inner magnetosphere.
-        const [px, py, pz] = line.points[i];
-        const r = Math.hypot(px, py, pz);
-        const k = (0.3 + 0.5 * t) * (0.15 + 0.85 * THREE.MathUtils.smoothstep(r, 1.0, 2.4));
-        return [c.r * k, c.g * k, c.b * k];
-      };
-      for (let i = 0; i < line.points.length - 1; i++) {
-        points.push(gsmToScene(line.points[i]), gsmToScene(line.points[i + 1]));
-        colors.push(vertexColor(i), vertexColor(i + 1));
-      }
-    }
-    return { points, colors };
-  }, [lines]);
 
-  // Start invisible; useFrame fades in (or out) without re-rendering React.
+  const object = useMemo(() => {
+    const geometry = new LineSegmentsGeometry();
+    geometry.setPositions(data.segments);
+    geometry.setColors(data.colors);
+    const material = new LineMaterial({
+      vertexColors: true,
+      linewidth: LINE_WIDTH_PX,
+      worldUnits: false,
+      transparent: true,
+      opacity: 0, // fades in
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    });
+    material.toneMapped = false;
+    const lines = new LineSegments2(geometry, material);
+    lines.frustumCulled = false;
+    return lines;
+  }, [data]);
+
+  // GPU buffers are ours to free (drei used to do this for us).
+  useEffect(
+    () => () => {
+      object.geometry.dispose();
+      object.material.dispose();
+    },
+    [object],
+  );
+
   useLayoutEffect(() => {
-    if (lineRef.current) lineRef.current.material.opacity = 0;
-  }, []);
+    object.material.resolution.set(size.width, size.height);
+  }, [object, size.width, size.height]);
 
   useFrame((_, dt) => {
-    const mat = lineRef.current?.material;
-    if (!mat) return;
-    const target = visible ? LINE_OPACITY : 0;
-    mat.opacity = damp(mat.opacity, target, dt, tau);
+    const mat = object.material;
+    mat.opacity = damp(mat.opacity, visible ? LINE_OPACITY : 0, dt, tau);
     if (!visible && mat.opacity < 0.01 && !done.current) {
       done.current = true;
       onFaded?.();
     }
   });
 
-  if (points.length === 0) return null;
-  return (
-    <Line
-      ref={lineRef as never}
-      points={points}
-      vertexColors={colors}
-      segments
-      lineWidth={1.1}
-      transparent
-      depthWrite={false}
-      blending={THREE.AdditiveBlending}
-      toneMapped={false}
-    />
-  );
+  return <primitive object={object} />;
 });
 
 /** Plasma tracers flowing along the traced field lines at constant arc speed. */
-const FieldLineTracers = memo(function FieldLineTracers({ lines, count = 520 }: { lines: FieldLine[]; count?: number }) {
+const FieldLineTracers = memo(function FieldLineTracers({ data, count = 520 }: { data: FieldRenderData; count?: number }) {
   const pointsRef = useRef<THREE.Points>(null);
   const animTime = useAnimTime();
 
-  const data = useMemo(() => {
-    const paths = lines.map((l) => {
-      const pts = l.points.map(gsmToScene);
-      const cum = [0];
-      for (let i = 1; i < pts.length; i++) {
-        const [a, b] = [pts[i - 1], pts[i]];
-        cum.push(cum[i - 1] + Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2]));
-      }
-      return { pts, cum, length: cum[cum.length - 1], open: l.topology === 'open' };
-    });
-    const total = paths.reduce((s, p) => s + p.length, 0) || 1;
+  const geometry = useMemo(() => {
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(count * 3), 3));
+    g.setAttribute('color', new THREE.BufferAttribute(new Float32Array(count * 3), 3));
+    const sizes = new Float32Array(count);
+    for (let i = 0; i < count; i++) sizes[i] = 0.05 + seeded(i, 3) * 0.07;
+    g.setAttribute('size', new THREE.BufferAttribute(sizes, 1));
+    return g;
+  }, [count]);
+  useEffect(() => () => geometry.dispose(), [geometry]);
+
+  // Assign particles to lines in proportion to length so density is even in
+  // space. Draws are seeded per particle, so after a retrace each particle
+  // lands on the corresponding stretch of the new field instead of jumping.
+  const assign = useMemo(() => {
+    const lines = data.pathOpen.length;
+    const length = new Float32Array(lines);
+    let total = 0;
+    for (let l = 0; l < lines; l++) {
+      length[l] = data.pathCum[data.pathStart[l + 1] - 1] || 0;
+      total += length[l];
+    }
     const lineIdx = new Uint16Array(count);
     const phase = new Float32Array(count);
-    const positions = new Float32Array(count * 3);
-    const colors = new Float32Array(count * 3);
-    const sizes = new Float32Array(count);
+    const colors = geometry.attributes.color.array as Float32Array;
     for (let i = 0; i < count; i++) {
-      // Sample lines in proportion to length so density is even in space. The
-      // draws are seeded per particle, so after a retrace each particle lands
-      // on the corresponding stretch of the new field instead of jumping.
-      let r = seeded(i, 1) * total;
+      let r = seeded(i, 1) * (total || 1);
       let k = 0;
-      while (k < paths.length - 1 && r > paths[k].length) r -= paths[k++].length;
+      while (k < lines - 1 && r > length[k]) r -= length[k++];
       lineIdx[i] = k;
       phase[i] = seeded(i, 2);
-      const col = paths[k]?.open ? OPEN_NEAR : CLOSED_NEAR;
-      colors.set([col.r, col.g, col.b], i * 3);
-      sizes[i] = 0.05 + seeded(i, 3) * 0.07;
+      colors.set(data.pathOpen[k] ? OPEN_NEAR : CLOSED_NEAR, i * 3);
     }
-    const geometry = new THREE.BufferGeometry();
-    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-    geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
-    geometry.setAttribute('size', new THREE.BufferAttribute(sizes, 1));
-    return { paths, lineIdx, phase, geometry };
-  }, [lines, count]);
+    geometry.attributes.color.needsUpdate = true;
+    return { lineIdx, phase, length };
+  }, [data, count, geometry]);
 
   useFrame((state) => {
     const pts = pointsRef.current;
-    if (!pts || data.paths.length === 0) return;
-    const pos = pts.geometry.attributes.position.array as Float32Array;
+    if (!pts || assign.length.length === 0) return;
+    const pos = geometry.attributes.position.array as Float32Array;
     const time = animTime(state.clock.elapsedTime);
+    const { pathPoints, pathCum, pathStart, pathOpen } = data;
     for (let i = 0; i < count; i++) {
-      const path = data.paths[data.lineIdx[i]];
-      if (!path || path.length === 0) continue;
-      const speed = path.open ? 2.2 : 1.2; // Re per second
-      const s = ((data.phase[i] * path.length + time * speed) % path.length + path.length) % path.length;
-      // Binary search the segment.
-      let lo = 0;
-      let hi = path.cum.length - 1;
+      const l = assign.lineIdx[i];
+      const len = assign.length[l];
+      if (!(len > 0)) continue;
+      const speed = pathOpen[l] ? 2.2 : 1.2; // Re per second
+      const s = ((assign.phase[i] * len + time * speed) % len + len) % len;
+      // Binary search the segment within this line.
+      let lo = pathStart[l];
+      let hi = pathStart[l + 1] - 1;
       while (hi - lo > 1) {
         const mid = (lo + hi) >> 1;
-        if (path.cum[mid] < s) lo = mid;
+        if (pathCum[mid] < s) lo = mid;
         else hi = mid;
       }
-      const seg = path.cum[hi] - path.cum[lo] || 1;
-      const f = (s - path.cum[lo]) / seg;
-      const a = path.pts[lo];
-      const b = path.pts[hi];
-      pos[i * 3] = a[0] + (b[0] - a[0]) * f;
-      pos[i * 3 + 1] = a[1] + (b[1] - a[1]) * f;
-      pos[i * 3 + 2] = a[2] + (b[2] - a[2]) * f;
+      const seg = pathCum[hi] - pathCum[lo] || 1;
+      const f = (s - pathCum[lo]) / seg;
+      pos[i * 3] = pathPoints[lo * 3] + (pathPoints[hi * 3] - pathPoints[lo * 3]) * f;
+      pos[i * 3 + 1] = pathPoints[lo * 3 + 1] + (pathPoints[hi * 3 + 1] - pathPoints[lo * 3 + 1]) * f;
+      pos[i * 3 + 2] = pathPoints[lo * 3 + 2] + (pathPoints[hi * 3 + 2] - pathPoints[lo * 3 + 2]) * f;
     }
-    pts.geometry.attributes.position.needsUpdate = true;
+    geometry.attributes.position.needsUpdate = true;
   });
 
   return (
-    <points ref={pointsRef} geometry={data.geometry} frustumCulled={false}>
+    <points ref={pointsRef} geometry={geometry} frustumCulled={false}>
       <shaderMaterial
         vertexShader={GLOW_POINT_VERT}
         fragmentShader={GLOW_POINT_FRAG}
@@ -653,7 +639,7 @@ function fillOvals(g: THREE.BufferGeometry, tilt: number, equatorward: number, p
   g.computeBoundingSphere();
 }
 
-const AuroralOvals = ({ tilt, oval, kp }: { tilt: number; oval: MagnetosphereState['oval']; kp: number }) => {
+const AuroralOvals = ({ tilt, oval, kp }: { tilt: number; oval: TracedModel['oval']; kp: number }) => {
   const animTime = useAnimTime();
   const tau = useTau(MORPH_TAU);
   const shape = useRef({ tilt, eq: oval.equatorward, pol: oval.poleward });
@@ -787,11 +773,15 @@ export const Magnetosphere = ({
         )}
         {showFieldLines && (
           <>
-            {model.previous && (
-              <FieldLines key={`lines-${model.version - 1}`} lines={model.previous.lines} visible={false} onFaded={model.dropPrevious} />
+            {model.previous?.render && (
+              <FieldLines key={`lines-${model.version - 1}`} data={model.previous.render} visible={false} onFaded={model.dropPrevious} />
             )}
-            <FieldLines key={`lines-${model.version}`} lines={state.lines} visible />
-            <FieldLineTracers lines={state.lines} />
+            {state.render && (
+              <>
+                <FieldLines key={`lines-${model.version}`} data={state.render} visible />
+                <FieldLineTracers data={state.render} />
+              </>
+            )}
           </>
         )}
         <AuroralOvals tilt={state.tilt} oval={state.oval} kp={model.drivers.kp} />
