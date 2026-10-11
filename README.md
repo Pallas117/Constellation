@@ -172,7 +172,7 @@ npm run perf:check       # Bundle size analysis
 
 **Common Commands**:
 ```sh
-npm run quality:types                    # TypeScript type check (frontend app + Vite config)
+npm run quality:types                    # TypeScript type check (frontend app, Vite config, backend)
 npm run quality:lint                     # ESLint checking
 npm run test:all                         # All tests
 npm run perf:check                       # Bundle size analysis

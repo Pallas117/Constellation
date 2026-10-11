@@ -28,6 +28,7 @@ function canonicalPoint(i: number): CanonicalSpaceWeatherPoint {
       interpolated: false,
       extrapolated: false,
       lowConfidence: false,
+      tier: 0,
     },
     uncertainty: {
       speed: { lower: 360, upper: 440, sigma: 20 },

@@ -44,7 +44,7 @@
     "security:secrets": "bash scripts/check-secrets-local.sh",
     "security:setup-hooks": "bash scripts/setup-pre-commit.sh",
     "security:full": "npm run security:audit && npm run security:secrets && npm run check:security-compliance",
-    "quality:types": "tsc --noEmit -p frontend/tsconfig.app.json && tsc --noEmit -p frontend/tsconfig.node.json",
+    "quality:types": "tsc --noEmit -p frontend/tsconfig.app.json && tsc --noEmit -p frontend/tsconfig.node.json && tsc --noEmit -p backend/tsconfig.json",
     "quality:lint": "eslint . --format compact",
     "quality:full": "npm run quality:types && npm run quality:lint",
     "test:all": "npm test && npm run test:ui",

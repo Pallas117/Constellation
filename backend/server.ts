@@ -620,7 +620,7 @@ const worker = new IngestionWorker((result: IngestionTickResult) => {
 
 selfHealer.register({
   onRequestTraining: async () => {
-    return triggerTraining();
+    await triggerTraining();
   },
   onResetIngestion: () => {
     worker.stop();

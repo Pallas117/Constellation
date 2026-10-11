@@ -1,5 +1,5 @@
 import crypto from "node:crypto";
-import type { DeviceRecord } from "./device-registry.js";
+import type { DeviceRecord } from "../types.js";
 
 const SECRET = process.env.DEVICE_AUTH_SECRET || "dev_device_secret_fallback";
 const PROOF_TTL_MS = Number(process.env.DEVICE_PROOF_TTL_MS ?? 60_000);
