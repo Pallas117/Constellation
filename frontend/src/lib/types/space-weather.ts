@@ -55,6 +55,11 @@ export interface CanonicalSpaceWeatherPoint {
     stormTier: "quiet" | "watch" | "warning" | "severe";
     reason: string;
   };
+  /** Measured GOES particle flux; null per channel when missing or older than 30 min. */
+  particles?: {
+    protons: ParticleReading | null;
+    electrons: ParticleReading | null;
+  };
   quality: QualityFlags;
   uncertainty: {
     speed: UncertaintyEnvelope;
@@ -150,4 +155,12 @@ export interface PipelineLatencySnapshot {
   freshMs: number;
   maxAgeMs: number;
   stages: PipelineStageLatency[];
+}
+
+export interface ParticleReading {
+  /** Integral flux, particles cm^-2 s^-1 sr^-1 (pfu for protons). */
+  value: number;
+  energy: string;
+  satellite: string | null;
+  timestamp: string;
 }

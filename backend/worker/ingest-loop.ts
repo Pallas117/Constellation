@@ -1,4 +1,5 @@
 import { fetchEsaReadout, getEsaStatus, type ESAReadout } from "../adapters/esa-hapi.js";
+import { freshReading, fetchGoesParticles, getGoesStatus, type GoesParticleReadout } from "../adapters/goes-particles.js";
 import { getJaxaStatus, probeJaxaCatalog } from "../adapters/jaxa-erg.js";
 import { fetchMmsCdawebSamples, getMmsCdawebStatus } from "../adapters/mms-cdaweb.js";
 import { fetchMmsBurstWindows, getMmsLaspStatus } from "../adapters/mms-lasp.js";
@@ -40,6 +41,7 @@ const ESA_MS = 10000;
 const JAXA_MS = 60000;
 const MMS_MS = 10 * 60 * 1000; // archival L2 product; polling faster gains nothing
 const LASP_MS = 60000;
+const GOES_MS = 60000; // GOES publishes every 5 min; a 60 s poll keeps worst-case lag under 6 min
 
 // Freshness is judged by the age of the measurement itself, not by whether a fetch ran
 // this tick. Beyond NOAA_MAX_AGE_MS a readout is discarded rather than carried forward.
@@ -67,6 +69,7 @@ export class IngestionWorker {
 
   private noaa: NOAAReadout | null = null;
   private esa: ESAReadout | null = null;
+  private goes: GoesParticleReadout | null = null;
   private latestCanonical: CanonicalSpaceWeatherPoint | null = null;
   private latestMms: MMSReconVectorPoint | null = null;
   private latestForecast: AnomalyForecastResponse | null = null;
@@ -197,11 +200,12 @@ export class IngestionWorker {
       console.log('[IngestionWorker] OFFICIAL_SOURCES_ONLY=true — preferring official data adapters (NOAA/MMS)');
     }
     if (officialOnly) {
-      return [getNoaaStatus(), getMmsCdawebStatus(), getMmsLaspStatus()];
+      return [getNoaaStatus(), getGoesStatus(), getMmsCdawebStatus(), getMmsLaspStatus()];
     }
 
     return [
       getNoaaStatus(),
+      getGoesStatus(),
       getEsaStatus(),
       getJaxaStatus(),
       getMmsCdawebStatus(),
@@ -257,6 +261,13 @@ export class IngestionWorker {
         fetches.push(
           this.timedFetch("noaa", fetchNoaaReadout).then((result) => {
             if (result) this.noaa = result;
+          }),
+        );
+      }
+      if (this.shouldFetch("goes", GOES_MS)) {
+        fetches.push(
+          this.timedFetch("goes", () => fetchGoesParticles()).then((result) => {
+            if (result) this.goes = result;
           }),
         );
       }
@@ -330,6 +341,13 @@ export class IngestionWorker {
       point.quality.lowConfidence = true;
       point.quality.tier = tier;
     }
+
+    // Measured particle flux rides along unchanged; anything older than 30 min is unknown (null).
+    const nowMs = Date.parse(nowIso);
+    point.particles = {
+      protons: freshReading(this.goes?.protons ?? null, nowMs),
+      electrons: freshReading(this.goes?.electrons ?? null, nowMs),
+    };
 
     this.previousState = state;
     this.previousDst = point.indices.dst;

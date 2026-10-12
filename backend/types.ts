@@ -4,6 +4,7 @@ export type DataSource =
   | "jaxa-erg"
   | "mms-cdaweb"
   | "mms-lasp"
+  | "goes-swpc"
   | "model-nowcast"
   | "synthetic-nowcast";
 
@@ -119,6 +120,11 @@ export interface CanonicalSpaceWeatherPoint {
     reason: string;
   };
   quality: QualityFlags;
+  /** Measured GOES particle flux; null per channel when missing or older than 30 min. */
+  particles?: {
+    protons: ParticleReading | null;
+    electrons: ParticleReading | null;
+  };
   uncertainty: {
     speed: UncertaintyEnvelope;
     density: UncertaintyEnvelope;
@@ -174,6 +180,16 @@ export interface SphericalHarmonicCoefficients {
   lMax: number;
   coefficients: Array<{ l: number; m: number; re: number; im: number }>;
   powerSpectrum: Array<{ l: number; cL: number }>;
+}
+
+export interface ParticleReading {
+  /** Integral flux, particles cm^-2 s^-1 sr^-1 (pfu for protons). */
+  value: number;
+  /** Energy channel, e.g. ">=10 MeV". */
+  energy: string;
+  satellite: string | null;
+  /** Measurement time (UTC). */
+  timestamp: string;
 }
 
 export interface SourceStatus {
