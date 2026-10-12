@@ -105,6 +105,10 @@ export interface CanonicalSpaceWeatherPoint {
   indices: {
     kp: number;
     dst: number;
+    /** "measured", or the model that derived dst (no source here measures Dst). GAU-63/GAU-84. */
+    dstMethod: string;
+    /** Canonical fields dst was derived from; empty when measured. */
+    dstDerivedFrom: string[];
   };
   coupling: {
     newell: number;
