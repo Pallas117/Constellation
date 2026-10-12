@@ -26,7 +26,22 @@ async function withFetch<T>(route: Route, fn: () => Promise<T>): Promise<T> {
 
 const tag = (ms: number) => new Date(ms).toISOString().slice(0, 19);
 
-test("NOAA: 1-minute estimated Kp is preferred over the 3-hourly product", async () => {
+test("Kp now: the higher of this interval's running estimate and the last completed interval", async () => {
+  const { currentKp } = await import("../adapters/noaa-swpc.js");
+  const now = Date.parse("2026-10-12T09:40:00Z");
+  const est = (value: number) => ({ value, observedAt: "2026-10-12T09:39:00.000Z", kind: "estimated-1m" as const });
+  const done = (value: number, start = "2026-10-12T06:00:00.000Z") => ({ value, observedAt: start, kind: "planetary-3h" as const });
+  // Seen live: the running estimate restarts near 0 after a 3.33 interval.
+  assert.equal(currentKp(est(0.33), done(3.33), now)?.value, 3.33);
+  // A rise shows before the interval completes.
+  assert.equal(currentKp(est(5.67), done(3.33), now)?.kind, "estimated-1m");
+  // A completed value from over 6 h ago no longer applies; either alone is used.
+  assert.equal(currentKp(est(0.33), done(6, "2026-10-12T00:00:00.000Z"), now)?.value, 0.33);
+  assert.equal(currentKp(null, done(3.33), now)?.value, 3.33);
+  assert.equal(currentKp(est(1), null, now)?.value, 1);
+});
+
+test("NOAA: Kp reading combines the 1-minute running estimate with the 3-hourly product", async () => {
   const t = Date.parse("2026-10-12T06:20:00Z");
   const readout = await withFetch((url) => {
     if (url.includes("rtsw_wind_1m")) return [{ time_tag: tag(t), source: "SOLAR1", active: true, proton_speed: 480, proton_density: 3, proton_vx_gse: -480, proton_vy_gse: 0, proton_vz_gse: 0 }];
@@ -37,8 +52,8 @@ test("NOAA: 1-minute estimated Kp is preferred over the 3-hourly product", async
     return undefined;
   }, fetchNoaaReadout);
   assert.ok(readout);
-  assert.equal(readout.kp, 2.0);
-  assert.deepEqual(readout.kpReading, { value: 2.0, observedAt: "2026-10-12T06:19:00.000Z", kind: "estimated-1m" });
+  assert.equal(readout.kp, 2.33, "03-06 UT completed at 2.33; the 06-09 running estimate is still 2.0");
+  assert.deepEqual(readout.kpReading, { value: 2.33, observedAt: "2026-10-12T03:00:00.000Z", kind: "planetary-3h" });
   assert.deepEqual({ ...readout.magneticFieldGsm! }, { x: 1, y: 1.5, z: -3.2 }, "published GSM kept");
   assert.equal(readout.series?.length, 1);
 });

@@ -124,9 +124,9 @@ const HeliophysicsDashboard = () => {
     : null;
   const kpNote =
     live.kp?.kind === "estimated-1m"
-      ? "NOAA's estimated planetary Kp, updated each minute."
+      ? "NOAA's running estimate for the current 3-hour interval, updated each minute."
       : live.kp?.kind === "planetary-3h"
-        ? "3-hourly planetary Kp: can lag by up to 3 h."
+        ? "The last completed 3-hour interval: this interval's running estimate is lower so far."
         : "";
   const geoLine =
     geoExposed === null

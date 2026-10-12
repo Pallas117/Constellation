@@ -8,7 +8,7 @@ const SOURCE: DataSource = "noaa-swpc";
 // /products/solar-wind/{plasma,mag}-1-day.json products have been retired (HTTP 404).
 const RTSW_WIND_URL = "https://services.swpc.noaa.gov/json/rtsw/rtsw_wind_1m.json";
 const RTSW_MAG_URL = "https://services.swpc.noaa.gov/json/rtsw/rtsw_mag_1m.json";
-// Estimated planetary Kp, updated each minute; the 3-hourly product lags by up to 3 h.
+// Running estimate of planetary Kp for the current 3-hour interval, updated each minute.
 const KP_1M_URL = "https://services.swpc.noaa.gov/json/planetary_k_index_1m.json";
 const KP_URL = "https://services.swpc.noaa.gov/products/noaa-planetary-k-index.json";
 const OVATION_URL = "https://services.swpc.noaa.gov/json/ovation_aurora_latest.json";
@@ -90,7 +90,7 @@ export function latestKp(data: unknown): KpReading | null {
   return null;
 }
 
-/** Newest 1-minute estimated planetary Kp. */
+/** Newest running estimate of Kp for the current 3-hour interval. */
 export function latestKp1m(data: unknown): KpReading | null {
   if (!Array.isArray(data)) return null;
   let best: { kp: number; time: string } | null = null;
@@ -105,6 +105,24 @@ export function latestKp1m(data: unknown): KpReading | null {
   return best ? { value: Math.min(9, Math.max(0, best.kp)), observedAt: best.time, kind: "estimated-1m" } : null;
 }
 
+/** A completed 3-hour Kp older than this (interval start) no longer describes now. */
+const KP_3H_MAX_AGE_MS = 6 * 3_600_000;
+
+/**
+ * Kp for now: the higher of the running estimate for the current 3-hour interval and
+ * the last completed interval. The running estimate covers only the minutes so far, so
+ * it restarts near 0 each interval (0.33 at 09:39 UT on 2026-10-12, after a 06-09 UT
+ * interval of 3.33): alone it under-reads for much of every interval. The completed value
+ * alone lags a rise by up to 3 h. Taking the higher never under-reports activity.
+ */
+export function currentKp(estimate: KpReading | null, completed: KpReading | null, nowMs: number): KpReading | null {
+  const start = completed?.observedAt ? Date.parse(completed.observedAt) : NaN;
+  const recent = completed && Number.isFinite(start) && nowMs - start <= KP_3H_MAX_AGE_MS ? completed : null;
+  if (!estimate) return recent ?? completed;
+  if (!recent) return estimate;
+  return estimate.value > recent.value ? estimate : recent;
+}
+
 export async function fetchNoaaReadout(): Promise<NOAAReadout | null> {
   try {
     const [windData, magData, kp1mData, kpData, ovation] = await Promise.all([
@@ -117,7 +135,7 @@ export async function fetchNoaaReadout(): Promise<NOAAReadout | null> {
 
     const all = buildL1Series(windData, magData);
     const latest = all.at(-1);
-    const kp = latestKp1m(kp1mData) ?? latestKp(kpData);
+    const kp = currentKp(latestKp1m(kp1mData), latestKp(kpData), all.at(-1)?.t ?? Date.now());
     if (!latest) throw new Error("NOAA RTSW: no complete, plausible wind+mag record");
     if (!kp) throw new Error("NOAA Kp: no valid value");
 
