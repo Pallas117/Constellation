@@ -191,17 +191,21 @@ export interface NowcastInferenceRequest {
 
 export interface NowcastInferenceResponse {
   modelVersion: string;
+  /** "model": trained weights. "heuristic": a fixed formula with no learned parameters. */
+  method: "model" | "heuristic";
   generatedAt: string;
   horizonMinutes: number;
   predictions: Array<{
     timestamp: string;
     geomagneticPerturbation: number;
     auroraIntensity: number;
-    confidence: number;
+    /** null when the method has no calibrated confidence. */
+    confidence: number | null;
   }>;
 }
 
-export interface AnomalyForecastResponse {
+export interface AnomalyForecastAvailable {
+  available: true;
   modelVersion: string;
   generatedAt: string;
   horizonHours: number;
@@ -210,6 +214,17 @@ export interface AnomalyForecastResponse {
   warningMessage: string;
   confidenceInterval: [number, number];
 }
+
+/** No trained model is deployed or it could not answer: say so instead of inventing a number. */
+export interface AnomalyForecastUnavailable {
+  available: false;
+  modelVersion: null;
+  generatedAt: string;
+  horizonHours: number;
+  reason: string;
+}
+
+export type AnomalyForecastResponse = AnomalyForecastAvailable | AnomalyForecastUnavailable;
 
 export interface IngestionTickResult {
   canonicalPoint: CanonicalSpaceWeatherPoint | null;
