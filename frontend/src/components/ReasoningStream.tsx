@@ -1,84 +1,53 @@
 /**
- * ReasoningStream — LLM / RAG inference panel + 72-hour ML forecast widget.
- *
- * Self-contained; wraps GaussRagPanel with bottom-centre positioning and
- * the LSTM anomaly-probability banner. GPU-isolated via will-change.
+ * ReasoningStream — knowledge-base assistant plus the 72-hour ML forecast,
+ * centred under the scene in the operator console.
  */
 
 import { GaussRagPanel } from './GaussRagPanel';
 import { useAnomalyForecast } from '@/hooks/useAnomalyForecast';
-import { AlertTriangle, Activity, ShieldCheck } from 'lucide-react';
-
-const containerStyle: React.CSSProperties = {
-  willChange: 'transform',
-  transform: 'translate3d(-50%, 0, 0)',
-  contain: 'layout style',
-};
+import { StatusBadge, type BadgeTone } from '@/components/brand/StatusBadge';
 
 function ForecastBanner() {
   const { forecast, loading } = useAnomalyForecast();
 
   if (loading || !forecast) {
+    // 250 ms rule: show that the model is working rather than an empty slot.
     return (
-      <div className="flex items-center gap-2 px-3 py-1.5 bg-black/50 border border-primary/10 text-[8px] font-mono text-primary/30 uppercase tracking-widest">
-        <Activity size={8} className="animate-pulse" />
-        LSTM_FORECAST: COMPUTING...
+      <div className="hud-panel flex items-center gap-2 px-3 py-2 font-mono text-xs text-muted-foreground">
+        <span aria-hidden="true" className="h-1.5 w-1.5 animate-pulse rounded-full bg-muted-foreground" />
+        72 h forecast: computing…
       </div>
     );
   }
 
-  const pct = (forecast.anomalyProbability * 100).toFixed(1);
-  const kpMax = forecast.predictedKpMax.toFixed(1);
-  const isHighRisk = forecast.predictedKpMax >= 5;
-  const isSevere = forecast.predictedKpMax >= 7;
-
-  const colour = isSevere
-    ? 'border-red-500/60 text-red-400'
-    : isHighRisk
-    ? 'border-yellow-500/50 text-yellow-400'
-    : 'border-primary/20 text-primary/60';
-
-  const Icon = isSevere ? AlertTriangle : isHighRisk ? AlertTriangle : ShieldCheck;
+  const kpMax = forecast.predictedKpMax;
+  const tone: BadgeTone = kpMax >= 7 ? 'risk' : kpMax >= 5 ? 'caution' : 'neutral';
+  const word = kpMax >= 7 ? 'Severe' : kpMax >= 5 ? 'Storm likely' : 'Quiet';
 
   return (
-    <div
-      className={`flex items-start gap-2 px-3 py-2 bg-black/60 border backdrop-blur-sm ${colour}`}
-      title={forecast.warningMessage}
-    >
-      <Icon size={10} className="mt-0.5 shrink-0" />
-      <div className="space-y-0.5 text-left">
-        <p className="text-[9px] font-bold uppercase tracking-wider">
-          72H_LSTM_FORECAST &nbsp;|&nbsp; P(anomaly) = {pct}% &nbsp;|&nbsp; Kp_max ≈ {kpMax}
+    <div className="hud-panel px-3 py-2" title={forecast.warningMessage}>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="font-mono text-xs tabular-nums text-foreground">
+          72 h forecast · P(anomaly) {(forecast.anomalyProbability * 100).toFixed(1)}% · Kp max ≈ {kpMax.toFixed(1)}
         </p>
-        <p className="text-[8px] opacity-70 font-mono truncate max-w-[440px]">
-          {forecast.warningMessage}
-        </p>
-        <p className="text-[7px] opacity-40 font-mono">
-          CI: [{(forecast.confidenceInterval[0] * 100).toFixed(0)}%,
-          {(forecast.confidenceInterval[1] * 100).toFixed(0)}%]
-          &nbsp; MDL: {forecast.modelVersion}
-        </p>
+        <StatusBadge tone={tone}>{word}</StatusBadge>
       </div>
+      <p className="mt-1 truncate text-xs text-muted-foreground">{forecast.warningMessage}</p>
+      <p className="mt-0.5 font-mono text-[11px] text-muted-foreground">
+        CI {(forecast.confidenceInterval[0] * 100).toFixed(0)}–{(forecast.confidenceInterval[1] * 100).toFixed(0)}% · model{' '}
+        {forecast.modelVersion}
+      </p>
     </div>
   );
 }
 
 export function ReasoningStream() {
   return (
-    <div
-      className="absolute bottom-6 left-1/2 flex flex-col items-center gap-1.5 pointer-events-none"
-      style={containerStyle}
-    >
-      <div className="pointer-events-auto">
-        <GaussRagPanel />
-      </div>
-
-      <div className="pointer-events-auto w-full">
-        <ForecastBanner />
-      </div>
-
-      <p className="text-[8px] text-primary/30 font-bold uppercase tracking-[0.4em]">
-        FEED_SRC: NOAA_SWPC // NASA_DSCOVR // LSTM_72H
+    <div className="flex w-full max-w-xl flex-col gap-2">
+      <GaussRagPanel />
+      <ForecastBanner />
+      <p className="text-center font-mono text-[11px] text-muted-foreground">
+        Sources: NOAA SWPC · NASA DSCOVR · 72 h LSTM forecast
       </p>
     </div>
   );

@@ -61,14 +61,22 @@ const MOCK_AUTH_SESSION = {
     updatedAt: new Date().toISOString(),
     name: "Operator Gauss",
     image: null,
+    // /operator needs minRole "operator"; without a role the guard sends us to "/".
+    role: "operator",
   },
 };
 
 export async function mockUiApis(page: Page, options?: { auth?: boolean }): Promise<void> {
-  const corsHeaders = {
-    "access-control-allow-origin": "*",
-    "access-control-allow-methods": "GET,POST,OPTIONS",
-    "access-control-allow-headers": "*",
+  // The auth client sends credentials, and browsers reject credentialed
+  // responses that use "*". Echo the caller's origin instead.
+  const corsHeadersFor = (route: Parameters<Parameters<Page["route"]>[1]>[0]) => {
+    const origin = route.request().headers()["origin"];
+    return {
+      "access-control-allow-origin": origin ?? "*",
+      ...(origin ? { "access-control-allow-credentials": "true", vary: "Origin" } : {}),
+      "access-control-allow-methods": "GET,POST,OPTIONS",
+      "access-control-allow-headers": "content-type, authorization",
+    };
   };
 
   const fulfillCorsJson = async (
@@ -79,7 +87,7 @@ export async function mockUiApis(page: Page, options?: { auth?: boolean }): Prom
     if (route.request().method() === "OPTIONS") {
       await route.fulfill({
         status: 204,
-        headers: corsHeaders,
+        headers: corsHeadersFor(route),
       });
       return;
     }
@@ -87,7 +95,7 @@ export async function mockUiApis(page: Page, options?: { auth?: boolean }): Prom
     await route.fulfill({
       status,
       contentType: "application/json",
-      headers: corsHeaders,
+      headers: corsHeadersFor(route),
       body: JSON.stringify(body),
     });
   };

@@ -1,21 +1,25 @@
 /**
- * Root Tailwind config to ensure PostCSS/Tailwind finds `content` and theme
- * when running Vite from workspace root (Playwright dev server). This mirrors
- * `frontend/tailwind.config.ts` but is plain JS so PostCSS can load it reliably.
+ * The one Tailwind config. frontend/postcss.config.js loads this file by path,
+ * so `npm run build` from the repo root and `npm run build` inside frontend/
+ * produce the same CSS. Content globs resolve relative to this file.
+ *
+ * Tokens follow the Lightbound Brand Room (9 Oct 2026); the Figma library
+ * "Lightbound Brand System — Gauss Aurora UI" mirrors them as variables.
  */
 module.exports = {
   darkMode: ['class'],
-  content: [
-    './frontend/index.html',
-    './frontend/src/**/*.{ts,tsx,js,jsx,html}',
-    './frontend/components/**/*.{ts,tsx,js,jsx}',
-    './frontend/pages/**/*.{ts,tsx,js,jsx}',
-    './frontend/app/**/*.{ts,tsx,js,jsx}',
-    './frontend/**/*.{html,js,ts,jsx,tsx}'
-  ],
+  content: {
+    relative: true,
+    files: ['./frontend/index.html', './frontend/src/**/*.{ts,tsx}'],
+  },
   theme: {
+    container: {
+      center: true,
+      padding: '1rem',
+      screens: { '2xl': '1400px' },
+    },
     extend: {
-      // Lightbound Brand Room: IBM Plex Sans for headlines/body, JetBrains Mono for labels and telemetry.
+      // IBM Plex Sans for sentences, JetBrains Mono for labels and telemetry.
       fontFamily: {
         sans: ['"IBM Plex Sans"', 'ui-sans-serif', 'system-ui', 'sans-serif'],
         mono: ['"JetBrains Mono"', 'ui-monospace', 'SFMono-Regular', 'Menlo', 'monospace'],
@@ -26,6 +30,7 @@ module.exports = {
         sm: 'calc(var(--radius) - 4px)',
       },
       colors: {
+        // Status by meaning: signal = nominal/live, caution = amber, sun = risk.
         signal: 'hsl(var(--signal))',
         caution: 'hsl(var(--amber))',
         sun: 'hsl(var(--sun))',
@@ -65,16 +70,27 @@ module.exports = {
           DEFAULT: 'hsl(var(--card))',
           foreground: 'hsl(var(--card-foreground))',
         },
-        space: {
-          deep: 'hsl(var(--space-deep))',
-          nebula: 'hsl(var(--space-nebula))',
+      },
+      keyframes: {
+        'accordion-down': {
+          from: { height: '0' },
+          to: { height: 'var(--radix-accordion-content-height)' },
         },
-        belt: {
-          inner: 'hsl(var(--belt-inner))',
-          outer: 'hsl(var(--belt-outer))',
+        'accordion-up': {
+          from: { height: 'var(--radix-accordion-content-height)' },
+          to: { height: '0' },
         },
-      }
-    }
+        'fade-in-up': {
+          from: { opacity: '0', transform: 'translateY(4px)' },
+          to: { opacity: '1', transform: 'translateY(0)' },
+        },
+      },
+      animation: {
+        'accordion-down': 'accordion-down 0.2s ease-out',
+        'accordion-up': 'accordion-up 0.2s ease-out',
+        'fade-in-up': 'fade-in-up 0.2s ease-out both',
+      },
+    },
   },
-  plugins: [require('tailwindcss-animate')]
+  plugins: [require('tailwindcss-animate')],
 };

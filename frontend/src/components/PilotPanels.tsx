@@ -1,5 +1,6 @@
 import { Database, ShieldCheck } from "lucide-react";
 import { PilotRequestDialog } from "@/components/PilotRequestDialog";
+import { Button } from "@/components/ui/button";
 import type { PilotInterest } from "@/lib/api/commerce";
 
 const OFFERS: Array<{ interest: PilotInterest; icon: typeof Database; title: string; body: string; points: string[] }> = [
@@ -19,33 +20,34 @@ const OFFERS: Array<{ interest: PilotInterest; icon: typeof Database; title: str
   },
 ];
 
-/** "Available on pilot" offers under the open visualisation. */
+/** "Available on pilot" offers beside the open visualisation. */
 export function PilotPanels() {
   return (
-    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 w-full max-w-5xl mx-auto pointer-events-auto">
+    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-1">
       {OFFERS.map(({ interest, icon: Icon, title, body, points }) => (
-        <div key={interest} className="bg-white/5 border border-white/10 rounded-2xl p-5 backdrop-blur-xl flex flex-col gap-3">
+        <section key={interest} className="hud-panel flex flex-col gap-2 p-4">
           <div className="flex items-center justify-between gap-3">
-            <div className="flex items-center gap-2 text-sm font-medium tracking-wide uppercase text-white/80">
-              <Icon className="w-4 h-4 text-sky-300" />
+            <h2 className="flex items-center gap-2 text-base font-semibold">
+              <Icon className="h-4 w-4 text-muted-foreground" aria-hidden="true" />
               {title}
-            </div>
-            <span className="rounded-full border border-white/20 px-2.5 py-0.5 text-[10px] uppercase tracking-widest text-white/60">
-              Available on pilot
-            </span>
+            </h2>
+            <span className="font-mono text-[11px] uppercase tracking-[0.08em] text-muted-foreground">On pilot</span>
           </div>
-          <p className="text-sm text-white/60 leading-relaxed">{body}</p>
-          <ul className="text-xs text-white/50 space-y-1">
+          <p className="text-sm leading-relaxed text-muted-foreground">{body}</p>
+          <ul className="space-y-1 text-sm text-foreground/85">
             {points.map((p) => (
-              <li key={p}>· {p}</li>
+              <li key={p} className="flex gap-2">
+                <span aria-hidden="true" className="text-muted-foreground">·</span>
+                {p}
+              </li>
             ))}
           </ul>
           <PilotRequestDialog interest={interest}>
-            <button className="self-start mt-1 rounded-full bg-white/10 hover:bg-white/20 border border-white/20 px-4 py-2 text-sm font-medium transition-colors">
+            <Button variant="outline" size="sm" className="mt-1 self-start">
               Request a pilot
-            </button>
+            </Button>
           </PilotRequestDialog>
-        </div>
+        </section>
       ))}
     </div>
   );

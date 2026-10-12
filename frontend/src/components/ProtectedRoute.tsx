@@ -12,8 +12,9 @@ export const ProtectedRoute = ({ children, minRole = "user" }: { children: React
 
   if (isPending) {
     return (
-      <div className="h-screen w-screen bg-black flex items-center justify-center phosphor-text font-mono text-sm tracking-widest uppercase">
-        Establishing secure uplink...
+      <div role="status" className="flex h-dvh w-screen items-center justify-center gap-2 bg-background font-mono text-sm text-muted-foreground">
+        <span aria-hidden="true" className="h-1.5 w-1.5 animate-pulse rounded-full bg-signal" />
+        Checking your session…
       </div>
     );
   }

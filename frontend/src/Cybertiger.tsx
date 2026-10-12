@@ -2,7 +2,6 @@ import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { ThemeProvider } from "@/components/ui/ThemeProvider";
-import { GaussThemeProvider } from "@/components/ThemeContext";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 import PublicDashboard from "./pages/PublicDashboard";
@@ -21,8 +20,7 @@ const queryClient = new QueryClient();
 
 const App = () => (
   <ErrorBoundary>
-    <ThemeProvider defaultTheme="dark" storageKey="gauss-aurora-theme">
-      <GaussThemeProvider>
+    <ThemeProvider>
         <QueryClientProvider client={queryClient}>
           <TooltipProvider>
             <Toaster />
@@ -78,7 +76,6 @@ const App = () => (
             </BrowserRouter>
           </TooltipProvider>
         </QueryClientProvider>
-      </GaussThemeProvider>
     </ThemeProvider>
   </ErrorBoundary>
 );
