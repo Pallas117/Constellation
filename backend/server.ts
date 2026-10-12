@@ -12,7 +12,7 @@ import {
   type AuthenticatedRequest,
 } from "./auth.js";
 import { CyberTigerDaemon } from "./cybertiger/daemon.js";
-import { inferNowcast, inferAnomalyForecast, triggerTraining } from "./ml-client/client.js";
+import { inferNowcast, triggerTraining } from "./ml-client/client.js";
 import {
   getAuroraMap,
   getCanonicalFeed,
@@ -319,12 +319,20 @@ app.get("/api/feed/space-objects", (_req, res) => {
 
 // 72-hour anomaly forecast: a trained model's output, or an explicit "unavailable"
 app.get("/api/forecast/anomaly", async (_req, res) => {
-  try {
-    const forecast = await inferAnomalyForecast([]);
+  // Serve the ingest loop's forecast (computed from its last 6 h of measured points every 5 min)
+  // instead of calling the model with no data on every request. GAU-115.
+  const forecast = worker.getLatestForecast();
+  if (forecast) {
     res.json(forecast);
-  } catch (err) {
-    res.status(500).json({ error: "Forecast generation failed" });
+    return;
   }
+  res.json({
+    available: false,
+    modelVersion: null,
+    generatedAt: new Date().toISOString(),
+    horizonHours: 3,
+    reason: "No forecast computed yet; the ingest loop runs one every 5 min.",
+  });
 });
 
 app.get("/api/feed/space-weather/latest/proto", async (req: AuthenticatedRequest, res) => {
@@ -626,7 +634,9 @@ const worker = new IngestionWorker((result: IngestionTickResult) => {
 
 selfHealer.register({
   onRequestTraining: async () => {
-    return triggerTraining();
+    // The self-healer only needs to know training was requested; log the outcome instead.
+    const result = await triggerTraining();
+    if (!result.started) console.warn(`[SelfHealer] ${result.message}`);
   },
   onResetIngestion: () => {
     worker.stop();

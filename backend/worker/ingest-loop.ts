@@ -16,6 +16,7 @@ import {
   type MMSSpacecraftSample,
 } from "../physics/reconnection.js";
 import {
+  getCanonicalFeed,
   pushCanonical,
   pushMms,
   setAuroraMap,
@@ -57,6 +58,31 @@ export function freshnessTier(dataTimestamp: string | null, nowMs: number): Resi
   if (age <= NOAA_FRESH_MS) return 0;
   if (age <= NOAA_MAX_AGE_MS) return 1;
   return 3;
+}
+
+/** History the Kp forecaster needs (ml/kp_model.py WINDOW_HOURS), sent at one point per minute. */
+export const FORECAST_WINDOW_MS = 6 * 60 * 60 * 1000;
+
+/**
+ * The last FORECAST_WINDOW_MS of measured (non-stale) canonical points, thinned to the first point
+ * of each minute so a 5 s feed becomes about 360 points. GAU-115.
+ */
+export function forecastWindow(
+  feed: CanonicalSpaceWeatherPoint[],
+  nowMs: number,
+): CanonicalSpaceWeatherPoint[] {
+  const out: CanonicalSpaceWeatherPoint[] = [];
+  let lastMinute = -Infinity;
+  for (const point of feed) {
+    if (point.quality?.stale) continue;
+    const t = Date.parse(point.timestamp);
+    if (!Number.isFinite(t) || nowMs - t > FORECAST_WINDOW_MS || t > nowMs) continue;
+    const minute = Math.floor(t / 60_000);
+    if (minute === lastMinute) continue;
+    lastMinute = minute;
+    out.push(point);
+  }
+  return out;
 }
 
 export class IngestionWorker {
@@ -131,6 +157,11 @@ export class IngestionWorker {
 
   getLatestCanonical(): CanonicalSpaceWeatherPoint | null {
     return this.latestCanonical;
+  }
+
+  /** The forecast computed by the loop (every 5 min), or null before the first one. */
+  getLatestForecast(): AnomalyForecastResponse | null {
+    return this.latestForecast;
   }
 
   getLatestMms(): MMSReconVectorPoint | null {
@@ -307,7 +338,7 @@ export class IngestionWorker {
       try {
         this.latestForecast = await this.timing.time(
           "ml-forecast",
-          () => inferAnomalyForecast(this.couplingWindow),
+          () => inferAnomalyForecast(forecastWindow(getCanonicalFeed(), Date.parse(nowIso))),
           STAGE_BUDGET_MS["ml-forecast"],
         );
       } catch (err) {

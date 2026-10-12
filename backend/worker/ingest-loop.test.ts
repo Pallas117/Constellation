@@ -143,4 +143,31 @@ test("tick attaches only current GOES particle readings to the canonical point (
   worker.goes = { protons: fresh, electrons: old };
   const { canonicalPoint } = await worker.tick();
   assert.deepEqual(canonicalPoint.particles, { protons: fresh, electrons: null });
+
+test("forecast window: last 6 h of measured points, one per minute (GAU-115)", async () => {
+  const { forecastWindow, FORECAST_WINDOW_MS } = await import("./ingest-loop.js");
+  const now = Date.parse("2026-10-12T12:00:00Z");
+  const point = (msAgo: number, stale = false) =>
+    ({ timestamp: new Date(now - msAgo).toISOString(), quality: { stale } }) as unknown as Parameters<typeof forecastWindow>[0][number];
+  const feed = [
+    point(FORECAST_WINDOW_MS + 60_000), // older than the window
+    ...Array.from({ length: 6 * 60 * 12 }, (_, i) => point(FORECAST_WINDOW_MS - 1 - i * 5_000)), // 6 h at 5 s
+    point(30_000, true), // stale: not a measurement
+    point(-60_000), // future: clock skew
+  ];
+  const window = forecastWindow(feed, now);
+  assert.ok(window.length >= 359 && window.length <= 361, `~360 one-per-minute points, got ${window.length}`);
+  assert.ok(window.every((p) => !p.quality.stale));
+  const times = window.map((p) => Date.parse(p.timestamp));
+  assert.ok(Math.min(...times) >= now - FORECAST_WINDOW_MS && Math.max(...times) <= now);
+  const minutes = new Set(times.map((t) => Math.floor(t / 60_000)));
+  assert.equal(minutes.size, window.length, "one point per minute");
+});
+
+test("the worker exposes its last forecast for the API to serve (GAU-115)", () => {
+  const worker = new IngestionWorker() as unknown as { latestForecast: unknown; getLatestForecast: () => unknown };
+  assert.equal(worker.getLatestForecast(), null);
+  const f = { available: false, reason: "x" };
+  worker.latestForecast = f;
+  assert.equal(worker.getLatestForecast(), f);
 });
