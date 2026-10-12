@@ -130,3 +130,17 @@ test("interval never stacks a tick on one still running", async () => {
     globalThis.setInterval = realSetInterval;
   }
 });
+
+test("tick attaches only current GOES particle readings to the canonical point (GAU-112)", async () => {
+  const worker = new IngestionWorker() as unknown as TimedWorker & {
+    goes: unknown;
+    tick: () => Promise<{ canonicalPoint: { particles?: { protons: unknown; electrons: unknown } } }>;
+  };
+  const now = Date.now();
+  for (const key of ["noaa", "esa", "jaxa", "mms", "lasp", "goes", "ml-forecast"]) worker.lastFetch.set(key, now);
+  const fresh = { value: 0.25, energy: ">=10 MeV", satellite: "GOES-18", timestamp: new Date(now - 5 * 60_000).toISOString() };
+  const old = { value: 150, energy: ">=2 MeV", satellite: "GOES-19", timestamp: new Date(now - 45 * 60_000).toISOString() };
+  worker.goes = { protons: fresh, electrons: old };
+  const { canonicalPoint } = await worker.tick();
+  assert.deepEqual(canonicalPoint.particles, { protons: fresh, electrons: null });
+});

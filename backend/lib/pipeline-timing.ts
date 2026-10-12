@@ -5,6 +5,7 @@ import type { PipelineLatencySnapshot, PipelineStageLatency } from "../types.js"
 export const STAGE_BUDGET_MS: Record<string, number> = {
   noaa: 8_000,
   esa: 8_000,
+  goes: 8_000,
   jaxa: 8_000,
   mms: 9_000,
   lasp: 9_000,
