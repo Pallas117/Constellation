@@ -90,7 +90,7 @@ test("tick reports per-stage latency, and sources are fetched in parallel", asyn
   const worker = new IngestionWorker() as unknown as TimedWorker;
   const now = Date.now();
   // Only NOAA and ESA are due this tick; every request takes ~300ms and fails.
-  for (const key of ["jaxa", "mms", "lasp", "ml-forecast"]) worker.lastFetch.set(key, now);
+  for (const key of ["jaxa", "mms", "lasp", "kyoto-dst", "ml-forecast"]) worker.lastFetch.set(key, now);
 
   const result = await withSlowFetch(300, () => worker.tick());
   const stages = new Map(result.pipeline?.stages.map((s) => [s.stage, s]));
@@ -137,10 +137,27 @@ test("tick attaches only current GOES particle readings to the canonical point (
     tick: () => Promise<{ canonicalPoint: { particles?: { protons: unknown; electrons: unknown } } }>;
   };
   const now = Date.now();
-  for (const key of ["noaa", "esa", "jaxa", "mms", "lasp", "goes", "ml-forecast"]) worker.lastFetch.set(key, now);
+  for (const key of ["noaa", "esa", "jaxa", "mms", "lasp", "goes", "kyoto-dst", "ml-forecast"]) worker.lastFetch.set(key, now);
   const fresh = { value: 0.25, energy: ">=10 MeV", satellite: "GOES-18", timestamp: new Date(now - 5 * 60_000).toISOString() };
   const old = { value: 150, energy: ">=2 MeV", satellite: "GOES-19", timestamp: new Date(now - 45 * 60_000).toISOString() };
   worker.goes = { protons: fresh, electrons: old };
   const { canonicalPoint } = await worker.tick();
   assert.deepEqual(canonicalPoint.particles, { protons: fresh, electrons: null });
+});
+
+test("tick uses measured Kyoto Dst while fresh, and the model once it is stale (GAU-116)", async () => {
+  const worker = new IngestionWorker() as unknown as TimedWorker & {
+    kyotoDst: unknown;
+    tick: () => Promise<{ canonicalPoint: { indices: { dst: number; dstMethod?: string } } }>;
+  };
+  const now = Date.now();
+  for (const key of ["noaa", "esa", "jaxa", "mms", "lasp", "goes", "kyoto-dst", "ml-forecast"]) worker.lastFetch.set(key, now);
+  worker.kyotoDst = { dst: -123, timestamp: new Date(now - 30 * 60_000).toISOString() };
+  const measured = (await worker.tick()).canonicalPoint.indices;
+  assert.equal(measured.dst, -123);
+  if ("dstMethod" in measured) assert.equal(measured.dstMethod, "measured"); // once #50 is merged
+
+  worker.kyotoDst = { dst: -123, timestamp: new Date(now - 3 * 3_600_000).toISOString() };
+  const modelled = (await worker.tick()).canonicalPoint.indices;
+  assert.notEqual(modelled.dst, -123, "a 3 h old reading is not used as current");
 });

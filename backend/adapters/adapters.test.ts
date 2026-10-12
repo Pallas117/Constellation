@@ -266,7 +266,7 @@ test("ingest tick: no jitter between fetches, and an over-age readout is dropped
   };
   // Pretend every source was just fetched so the tick makes no network calls.
   const now = Date.now();
-  for (const key of ["noaa", "esa", "jaxa", "mms", "lasp", "ml-forecast"]) worker.lastFetch.set(key, now);
+  for (const key of ["noaa", "esa", "jaxa", "mms", "lasp", "kyoto-dst", "ml-forecast"]) worker.lastFetch.set(key, now);
 
   await withFetch(() => undefined, async () => {
     worker.noaa = fresh;

@@ -5,6 +5,7 @@ export type DataSource =
   | "mms-cdaweb"
   | "mms-lasp"
   | "goes-swpc"
+  | "kyoto-dst"
   | "model-nowcast"
   | "synthetic-nowcast";
 
