@@ -123,3 +123,33 @@ export interface SourceStatus {
   healthy: boolean;
   message?: string;
 }
+
+export interface PipelineStageLatency {
+  stage: string;
+  lastMs: number;
+  p50Ms: number;
+  p95Ms: number;
+  maxMs: number;
+  budgetMs: number | null;
+  overBudget: boolean;
+  samples: number;
+  errors: number;
+  timeouts: number;
+  lastAt: string;
+}
+
+/** Mirrors backend PipelineLatencySnapshot (GET /api/system/pipeline). */
+export interface PipelineLatencySnapshot {
+  generatedAt: string;
+  status: "fresh" | "degraded" | "stale" | "stalled";
+  tickIntervalMs: number;
+  ticks: number;
+  skippedTicks: number;
+  lastTickAt: string | null;
+  lastTickAgeMs: number | null;
+  dataTimestamp: string | null;
+  dataAgeMs: number | null;
+  freshMs: number;
+  maxAgeMs: number;
+  stages: PipelineStageLatency[];
+}

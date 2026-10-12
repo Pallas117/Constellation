@@ -230,6 +230,38 @@ export interface AnomalyForecastUnavailable {
 
 export type AnomalyForecastResponse = AnomalyForecastAvailable | AnomalyForecastUnavailable;
 
+export interface PipelineStageLatency {
+  stage: string;
+  lastMs: number;
+  p50Ms: number;
+  p95Ms: number;
+  maxMs: number;
+  budgetMs: number | null;
+  overBudget: boolean;
+  samples: number;
+  errors: number;
+  timeouts: number;
+  lastAt: string;
+}
+
+export interface PipelineLatencySnapshot {
+  generatedAt: string;
+  /** fresh: live data, all stages in budget; degraded: ageing data or a stage over budget;
+   *  stale: no measurement within maxAgeMs; stalled: the ingest loop itself stopped ticking. */
+  status: "fresh" | "degraded" | "stale" | "stalled";
+  tickIntervalMs: number;
+  ticks: number;
+  skippedTicks: number;
+  lastTickAt: string | null;
+  lastTickAgeMs: number | null;
+  /** Timestamp and age of the newest real measurement feeding the nowcast. */
+  dataTimestamp: string | null;
+  dataAgeMs: number | null;
+  freshMs: number;
+  maxAgeMs: number;
+  stages: PipelineStageLatency[];
+}
+
 export interface IngestionTickResult {
   canonicalPoint: CanonicalSpaceWeatherPoint | null;
   mmsVector: MMSReconVectorPoint | null;
@@ -241,5 +273,6 @@ export interface IngestionTickResult {
     harmonics: SphericalHarmonicCoefficients;
   } | null;
   anomalyForecast?: AnomalyForecastResponse | null;
+  pipeline?: PipelineLatencySnapshot;
 }
 

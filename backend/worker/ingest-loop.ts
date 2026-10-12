@@ -21,6 +21,7 @@ import {
   setSourceStatus,
 } from "../state.js";
 import { linkGuardian } from "../lib/connectivity.js";
+import { PipelineTimer, STAGE_BUDGET_MS } from "../lib/pipeline-timing.js";
 import { bedrock } from "../lib/local-db.js";
 import { inferAnomalyForecast } from "../ml-client/client.js";
 import type {
@@ -30,9 +31,10 @@ import type {
   SourceStatus,
   ResilienceTier,
   AnomalyForecastResponse,
+  PipelineLatencySnapshot,
 } from "../types.js";
 
-const TICK_MS = 5000;
+export const TICK_MS = 5000;
 const NOAA_MS = 60000;
 const ESA_MS = 10000;
 const JAXA_MS = 60000;
@@ -68,6 +70,10 @@ export class IngestionWorker {
   private latestCanonical: CanonicalSpaceWeatherPoint | null = null;
   private latestMms: MMSReconVectorPoint | null = null;
   private latestForecast: AnomalyForecastResponse | null = null;
+  /** Timestamp of the newest NOAA measurement seen, kept after expiry so its age stays visible. */
+  private lastMeasurementAt: string | null = null;
+  private ticking = false;
+  readonly timing = new PipelineTimer();
 
   constructor(private onTick?: (result: IngestionTickResult) => void) {}
 
@@ -101,6 +107,11 @@ export class IngestionWorker {
     this.running = true;
     void this.tickWithRetry();
     this.timer = setInterval(() => {
+      // Never stack ticks: an overlapping tick would publish out of order and hide a slow stage.
+      if (this.ticking) {
+        this.timing.tickSkipped();
+        return;
+      }
       this.tick().catch((error) => {
         console.error("[IngestionWorker] Tick failed", error);
       });
@@ -121,6 +132,20 @@ export class IngestionWorker {
 
   getLatestMms(): MMSReconVectorPoint | null {
     return this.latestMms;
+  }
+
+  getPipelineLatency(): PipelineLatencySnapshot {
+    return this.timing.snapshot(TICK_MS, this.lastMeasurementAt, NOAA_FRESH_MS, NOAA_MAX_AGE_MS);
+  }
+
+  /** Fetch one source within its latency budget; a failure or timeout keeps the previous value. */
+  private async timedFetch<T>(stage: string, fn: () => Promise<T>): Promise<T | null> {
+    try {
+      return await this.timing.time(stage, fn, STAGE_BUDGET_MS[stage]);
+    } catch (error) {
+      console.warn(`[IngestionWorker] ${stage} fetch failed; keeping previous value.`, error);
+      return null;
+    }
   }
 
   private shouldFetch(key: string, cadenceMs: number): boolean {
@@ -199,60 +224,81 @@ export class IngestionWorker {
   }
 
   async tick(): Promise<IngestionTickResult> {
+    this.ticking = true;
+    this.timing.tickStarted();
+    try {
+      const result = await this.runTick();
+      this.timing.tickFinished();
+      result.pipeline = this.getPipelineLatency();
+      if (this.onTick) {
+        this.onTick(result);
+      }
+      return result;
+    } finally {
+      this.ticking = false;
+    }
+  }
+
+  private async runTick(): Promise<IngestionTickResult> {
     const nowIso = new Date().toISOString();
     const officialOnly = String(process.env.OFFICIAL_SOURCES_ONLY ?? "false").toLowerCase() === "true";
 
     const link = linkGuardian.getStatus();
 
-    // AIRGAP MODE: Skip all external API fetches
+    let mmsVector: MMSReconVectorPoint | null = null;
+
+    // AIRGAP MODE: Skip all external API fetches.
+    // Sources are fetched in parallel, each within its own budget, so the slowest source
+    // bounds the tick instead of the sum of all of them.
     if (link.mode !== "AIRGAP") {
-      try {
-        // Always attempt NOAA as a primary official source
-        if (this.shouldFetch("noaa", NOAA_MS)) {
-          const result = await fetchNoaaReadout();
-          if (result) {
-            this.noaa = result;
-          }
-        }
-
-        // If not restricted to official-only, also fetch ESA/JAXA auxiliary sources
-        if (!officialOnly) {
-          if (this.shouldFetch("esa", ESA_MS)) {
-            const result = await fetchEsaReadout();
-            if (result) {
-              this.esa = result;
-            }
-          }
-
-          if (this.shouldFetch("jaxa", JAXA_MS)) {
-            await probeJaxaCatalog();
-          }
-        } else {
-          // Official-only mode: skip ESA/JAXA to prioritize NOAA/MMS/GOES-like sources
-        }
-      } catch (err) {
-        console.warn("[IngestionWorker] Primary API fetch failed, engaging redundancy layers.", err);
+      const fetches: Promise<unknown>[] = [];
+      // Always attempt NOAA as a primary official source
+      if (this.shouldFetch("noaa", NOAA_MS)) {
+        fetches.push(
+          this.timedFetch("noaa", fetchNoaaReadout).then((result) => {
+            if (result) this.noaa = result;
+          }),
+        );
       }
+      // If not restricted to official-only, also fetch ESA/JAXA auxiliary sources
+      if (!officialOnly) {
+        if (this.shouldFetch("esa", ESA_MS)) {
+          fetches.push(
+            this.timedFetch("esa", fetchEsaReadout).then((result) => {
+              if (result) this.esa = result;
+            }),
+          );
+        }
+        if (this.shouldFetch("jaxa", JAXA_MS)) {
+          fetches.push(this.timedFetch("jaxa", probeJaxaCatalog));
+        }
+      }
+      if (this.shouldFetch("mms", MMS_MS)) {
+        fetches.push(
+          this.timedFetch("mms", fetchMmsCdawebSamples).then((samples) => {
+            const mmsSamples: MMSSpacecraftSample[] = samples ?? [];
+            if (mmsSamples.length >= 4 && withinSkewWindow(mmsSamples, 1.5)) {
+              mmsVector = computeMMSReconnectionVector(mmsSamples);
+            }
+          }),
+        );
+      }
+      if (this.shouldFetch("lasp", LASP_MS)) {
+        fetches.push(this.timedFetch("lasp", fetchMmsBurstWindows));
+      }
+      await Promise.all(fetches);
     } else {
       console.log("[IngestionWorker] AIRGAP mode active. Bypassing external API fetches.");
     }
-
-    let mmsVector: MMSReconVectorPoint | null = null;
-    let mmsSamples: MMSSpacecraftSample[] = [];
-    if (link.mode !== "AIRGAP" && this.shouldFetch("mms", MMS_MS)) {
-      mmsSamples = await fetchMmsCdawebSamples();
-      if (mmsSamples.length >= 4 && withinSkewWindow(mmsSamples, 1.5)) {
-        mmsVector = computeMMSReconnectionVector(mmsSamples);
-      }
-    }
-
-    if (link.mode !== "AIRGAP" && this.shouldFetch("lasp", LASP_MS)) {
-      await fetchMmsBurstWindows();
-    }
+    if (this.noaa?.timestamp) this.lastMeasurementAt = this.noaa.timestamp;
 
     if (this.shouldFetch("ml-forecast", 300000)) {
       try {
-        this.latestForecast = await inferAnomalyForecast(this.couplingWindow);
+        this.latestForecast = await this.timing.time(
+          "ml-forecast",
+          () => inferAnomalyForecast(this.couplingWindow),
+          STAGE_BUDGET_MS["ml-forecast"],
+        );
       } catch (err) {
         console.warn("[IngestionWorker] ML Forecast failed, retaining previous predictions.");
       }
@@ -267,12 +313,14 @@ export class IngestionWorker {
     }
     const mhdInput = this.blendInputs(nowIso);
 
-    const { point, state } = computeCanonicalPoint(
-      mhdInput,
-      this.previousState,
-      this.couplingWindow,
-      this.previousDst,
-      this.latestCanonical?.timestamp ?? null,
+    const { point, state } = await this.timing.time("nowcast", () =>
+      computeCanonicalPoint(
+        mhdInput,
+        this.previousState,
+        this.couplingWindow,
+        this.previousDst,
+        this.latestCanonical?.timestamp ?? null,
+      ),
     );
 
     if (tier > 0) {
@@ -288,7 +336,7 @@ export class IngestionWorker {
     this.couplingWindow.push(point.coupling.newell);
     this.trimCouplingWindow();
 
-    const { grid, harmonics } = buildAuroraGrid(point, 64);
+    const { grid, harmonics } = await this.timing.time("aurora-grid", () => buildAuroraGrid(point, 64));
     const auroraMap = {
       timestamp: point.timestamp,
       nside: 64,
@@ -311,10 +359,12 @@ export class IngestionWorker {
     
     try {
       // Local Buffer is always the priority (Air-Gap ready)
-      await bedrock.appendTelemetry({ type: "canonical", data: point, timestamp: point.timestamp });
-      if (mmsVector) {
-        await bedrock.appendTelemetry({ type: "mms", data: mmsVector, timestamp: mmsVector.timestamp });
-      }
+      await this.timing.time("persist", async () => {
+        await bedrock.appendTelemetry({ type: "canonical", data: point, timestamp: point.timestamp });
+        if (mmsVector) {
+          await bedrock.appendTelemetry({ type: "mms", data: mmsVector, timestamp: mmsVector.timestamp });
+        }
+      });
 
       // Cloud Sync only if link is CLOUD or SAT
       if (link.mode !== "AIRGAP") {
@@ -331,10 +381,6 @@ export class IngestionWorker {
       auroraMap,
       anomalyForecast: this.latestForecast,
     };
-
-    if (this.onTick) {
-      this.onTick(result);
-    }
 
     return result;
   }

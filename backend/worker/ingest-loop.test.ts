@@ -63,3 +63,70 @@ test("caps coupling window length to prevent unbounded memory growth", () => {
   assert.equal(worker.couplingWindow[0], 70);
   assert.equal(worker.couplingWindow[179], 249);
 });
+
+type TimedWorker = {
+  lastFetch: Map<string, number>;
+  ticking: boolean;
+  tick: () => Promise<{ pipeline?: { status: string; stages: Array<{ stage: string; lastMs: number; errors: number }> } }>;
+  getPipelineLatency: () => { ticks: number; skippedTicks: number };
+  start: () => void;
+  stop: () => void;
+};
+
+async function withSlowFetch<T>(delayMs: number, fn: () => Promise<T>): Promise<T> {
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = (async () => {
+    await new Promise((resolve) => setTimeout(resolve, delayMs));
+    return new Response("unavailable", { status: 503 });
+  }) as typeof fetch;
+  try {
+    return await fn();
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+}
+
+test("tick reports per-stage latency, and sources are fetched in parallel", async () => {
+  const worker = new IngestionWorker() as unknown as TimedWorker;
+  const now = Date.now();
+  // Only NOAA and ESA are due this tick; every request takes ~300ms and fails.
+  for (const key of ["jaxa", "mms", "lasp", "ml-forecast"]) worker.lastFetch.set(key, now);
+
+  const result = await withSlowFetch(300, () => worker.tick());
+  const stages = new Map(result.pipeline?.stages.map((s) => [s.stage, s]));
+  for (const stage of ["noaa", "esa", "nowcast", "aurora-grid", "persist", "tick"]) {
+    assert.ok(stages.has(stage), `missing ${stage} timing`);
+  }
+  const noaa = stages.get("noaa")!.lastMs;
+  const esa = stages.get("esa")!.lastMs;
+  assert.ok(noaa >= 250 && esa >= 250, `slow fetches were timed (noaa ${noaa}ms, esa ${esa}ms)`);
+  // The fetch phase is what remains of the tick after the sequential compute stages.
+  const compute = ["nowcast", "aurora-grid", "persist"].reduce((sum, s) => sum + stages.get(s)!.lastMs, 0);
+  const fetchPhase = stages.get("tick")!.lastMs - compute;
+  assert.ok(
+    fetchPhase < noaa + esa,
+    `fetch phase ${fetchPhase}ms should be bounded by the slowest source, not the sum (${noaa + esa}ms)`,
+  );
+  assert.notEqual(result.pipeline?.status, "fresh", "failed sources cannot yield fresh data");
+});
+
+test("interval never stacks a tick on one still running", async () => {
+  const worker = new IngestionWorker() as unknown as TimedWorker;
+  const realSetInterval = globalThis.setInterval;
+  let intervalFn: (() => void) | null = null;
+  globalThis.setInterval = ((fn: () => void) => {
+    intervalFn = fn;
+    return realSetInterval(() => undefined, 1_000_000);
+  }) as typeof setInterval;
+  worker.tick = async () => ({}); // the first (retrying) tick
+  try {
+    worker.start();
+    worker.ticking = true; // pretend a slow tick is in flight
+    intervalFn!();
+    intervalFn!();
+    assert.equal(worker.getPipelineLatency().skippedTicks, 2);
+  } finally {
+    worker.stop();
+    globalThis.setInterval = realSetInterval;
+  }
+});
