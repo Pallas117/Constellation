@@ -1,6 +1,15 @@
 import React, { useEffect, useState } from 'react';
 import { Shield, Cpu, Activity, Zap, Server, Database, Wifi } from 'lucide-react';
 import { useConnectivity } from '@/hooks/useConnectivity';
+import { usePipelineLatency } from '@/hooks/usePipelineLatency';
+import type { PipelineTone } from '@/lib/pipelineLatency';
+
+const TONE_CLASS: Record<PipelineTone, string> = {
+  nominal: 'text-primary',
+  warn: 'text-amber-500',
+  critical: 'text-red-500',
+  unknown: 'text-muted-foreground',
+};
 
 interface DataFlowHUDProps {
   tier?: number;
@@ -16,6 +25,7 @@ const StatusNode = ({ label, value, active = true }: { label: string; value: str
 export const DataFlowHUD: React.FC<DataFlowHUDProps> = ({ tier = 0 }) => {
   const [timestamp, setTimestamp] = useState(new Date());
   const { mode, latencyMs } = useConnectivity();
+  const pipeline = usePipelineLatency();
 
   useEffect(() => {
     const interval = setInterval(() => setTimestamp(new Date()), 1000);
@@ -55,6 +65,9 @@ export const DataFlowHUD: React.FC<DataFlowHUDProps> = ({ tier = 0 }) => {
           <StatusNode label="Link_Topology" value={mode} active={mode !== 'AIRGAP'} />
           <StatusNode label="Link_Latency" value={latencyMs >= 0 ? `${latencyMs}ms` : '---'} active={mode === 'CLOUD'} />
           <StatusNode label="Persistent_Log" value="BEDROCK_ACTIVE" />
+          <StatusNode label="Data_Age" value={pipeline.dataAge} active={pipeline.tone === 'nominal'} />
+          <StatusNode label="Ingest_Tick" value={pipeline.tick} active={pipeline.tone !== 'unknown'} />
+          <StatusNode label="Slowest_Stage" value={pipeline.slowest} active={pipeline.tone !== 'unknown'} />
         </div>
 
         {/* Flow Indicators */}
@@ -75,8 +88,8 @@ export const DataFlowHUD: React.FC<DataFlowHUDProps> = ({ tier = 0 }) => {
             </div>
           </div>
           <div className="text-right">
-            <div className="text-[7px] text-primary/40 uppercase">Flux_Throughput</div>
-            <div className="text-[10px] font-bold phosphor-text">2.4 MB/S</div>
+            <div className="text-[7px] text-primary/40 uppercase">Pipeline</div>
+            <div className={`text-[10px] font-bold ${TONE_CLASS[pipeline.tone]}`}>{pipeline.label}</div>
           </div>
         </div>
 

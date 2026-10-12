@@ -1,16 +1,27 @@
 import { useState, useEffect } from 'react';
+import { getAuthHeaders } from '@/lib/api/auth';
 
 const PROXY_URL = import.meta.env.VITE_HELIO_PROXY_URL || 'http://127.0.0.1:3001';
 
-export interface AnomalyForecast {
-  modelVersion: string;
-  generatedAt: string;
-  horizonHours: number;
-  anomalyProbability: number;
-  predictedKpMax: number;
-  warningMessage: string;
-  confidenceInterval: [number, number];
-}
+/** Mirrors backend AnomalyForecastResponse: a model forecast, or an explicit "unavailable". */
+export type AnomalyForecast =
+  | {
+      available: true;
+      modelVersion: string;
+      generatedAt: string;
+      horizonHours: number;
+      anomalyProbability: number;
+      predictedKpMax: number;
+      warningMessage: string;
+      confidenceInterval: [number, number];
+    }
+  | {
+      available: false;
+      modelVersion: null;
+      generatedAt: string;
+      horizonHours: number;
+      reason: string;
+    };
 
 export function useAnomalyForecast(pollIntervalMs = 300_000) {
   const [forecast, setForecast] = useState<AnomalyForecast | null>(null);
@@ -19,7 +30,8 @@ export function useAnomalyForecast(pollIntervalMs = 300_000) {
 
   async function fetch_() {
     try {
-      const res = await fetch(`${PROXY_URL}/api/forecast/anomaly`);
+      // /api requires a session; without it this always read 401 (GAU-115).
+      const res = await fetch(`${PROXY_URL}/api/forecast/anomaly`, { headers: await getAuthHeaders() });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       setForecast(await res.json() as AnomalyForecast);
       setError(null);

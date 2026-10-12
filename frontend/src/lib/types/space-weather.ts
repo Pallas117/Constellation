@@ -4,6 +4,8 @@ export interface QualityFlags {
   interpolated: boolean;
   extrapolated: boolean;
   lowConfidence: boolean;
+  /** Backend resilience tier: 0 live, 1 buffered, 2 synthetic, 3 stale/unknown. */
+  tier?: 0 | 1 | 2 | 3;
 }
 
 export interface UncertaintyEnvelope {
@@ -54,6 +56,11 @@ export interface CanonicalSpaceWeatherPoint {
   alerts: {
     stormTier: "quiet" | "watch" | "warning" | "severe";
     reason: string;
+  };
+  /** Measured GOES particle flux; null per channel when missing or older than 30 min. */
+  particles?: {
+    protons: ParticleReading | null;
+    electrons: ParticleReading | null;
   };
   quality: QualityFlags;
   uncertainty: {
@@ -120,4 +127,42 @@ export interface SourceStatus {
   latencySeconds: number | null;
   healthy: boolean;
   message?: string;
+}
+
+export interface PipelineStageLatency {
+  stage: string;
+  lastMs: number;
+  p50Ms: number;
+  p95Ms: number;
+  maxMs: number;
+  budgetMs: number | null;
+  overBudget: boolean;
+  samples: number;
+  errors: number;
+  timeouts: number;
+  lastAt: string;
+}
+
+/** Mirrors backend PipelineLatencySnapshot (GET /api/system/pipeline). */
+export interface PipelineLatencySnapshot {
+  generatedAt: string;
+  status: "fresh" | "degraded" | "stale" | "stalled";
+  tickIntervalMs: number;
+  ticks: number;
+  skippedTicks: number;
+  lastTickAt: string | null;
+  lastTickAgeMs: number | null;
+  dataTimestamp: string | null;
+  dataAgeMs: number | null;
+  freshMs: number;
+  maxAgeMs: number;
+  stages: PipelineStageLatency[];
+}
+
+export interface ParticleReading {
+  /** Integral flux, particles cm^-2 s^-1 sr^-1 (pfu for protons). */
+  value: number;
+  energy: string;
+  satellite: string | null;
+  timestamp: string;
 }
