@@ -63,3 +63,129 @@ test("caps coupling window length to prevent unbounded memory growth", () => {
   assert.equal(worker.couplingWindow[0], 70);
   assert.equal(worker.couplingWindow[179], 249);
 });
+
+type TimedWorker = {
+  lastFetch: Map<string, number>;
+  ticking: boolean;
+  tick: () => Promise<{ pipeline?: { status: string; stages: Array<{ stage: string; lastMs: number; errors: number }> } }>;
+  getPipelineLatency: () => { ticks: number; skippedTicks: number };
+  start: () => void;
+  stop: () => void;
+};
+
+async function withSlowFetch<T>(delayMs: number, fn: () => Promise<T>): Promise<T> {
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = (async () => {
+    await new Promise((resolve) => setTimeout(resolve, delayMs));
+    return new Response("unavailable", { status: 503 });
+  }) as typeof fetch;
+  try {
+    return await fn();
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+}
+
+test("tick reports per-stage latency, and sources are fetched in parallel", async () => {
+  const worker = new IngestionWorker() as unknown as TimedWorker;
+  const now = Date.now();
+  // Only NOAA and ESA are due this tick; every request takes ~300ms and fails.
+  for (const key of ["jaxa", "mms", "lasp", "kyoto-dst", "ml-forecast"]) worker.lastFetch.set(key, now);
+
+  const result = await withSlowFetch(300, () => worker.tick());
+  const stages = new Map(result.pipeline?.stages.map((s) => [s.stage, s]));
+  for (const stage of ["noaa", "esa", "nowcast", "aurora-grid", "persist", "tick"]) {
+    assert.ok(stages.has(stage), `missing ${stage} timing`);
+  }
+  const noaa = stages.get("noaa")!.lastMs;
+  const esa = stages.get("esa")!.lastMs;
+  assert.ok(noaa >= 250 && esa >= 250, `slow fetches were timed (noaa ${noaa}ms, esa ${esa}ms)`);
+  // The fetch phase is what remains of the tick after the sequential compute stages.
+  const compute = ["nowcast", "aurora-grid", "persist"].reduce((sum, s) => sum + stages.get(s)!.lastMs, 0);
+  const fetchPhase = stages.get("tick")!.lastMs - compute;
+  assert.ok(
+    fetchPhase < noaa + esa,
+    `fetch phase ${fetchPhase}ms should be bounded by the slowest source, not the sum (${noaa + esa}ms)`,
+  );
+  assert.notEqual(result.pipeline?.status, "fresh", "failed sources cannot yield fresh data");
+});
+
+test("interval never stacks a tick on one still running", async () => {
+  const worker = new IngestionWorker() as unknown as TimedWorker;
+  const realSetInterval = globalThis.setInterval;
+  let intervalFn: (() => void) | null = null;
+  globalThis.setInterval = ((fn: () => void) => {
+    intervalFn = fn;
+    return realSetInterval(() => undefined, 1_000_000);
+  }) as typeof setInterval;
+  worker.tick = async () => ({}); // the first (retrying) tick
+  try {
+    worker.start();
+    worker.ticking = true; // pretend a slow tick is in flight
+    intervalFn!();
+    intervalFn!();
+    assert.equal(worker.getPipelineLatency().skippedTicks, 2);
+  } finally {
+    worker.stop();
+    globalThis.setInterval = realSetInterval;
+  }
+});
+
+test("tick attaches only current GOES particle readings to the canonical point (GAU-112)", async () => {
+  const worker = new IngestionWorker() as unknown as TimedWorker & {
+    goes: unknown;
+    tick: () => Promise<{ canonicalPoint: { particles?: { protons: unknown; electrons: unknown } } }>;
+  };
+  const now = Date.now();
+  for (const key of ["noaa", "esa", "jaxa", "mms", "lasp", "goes", "kyoto-dst", "ml-forecast"]) worker.lastFetch.set(key, now);
+  const fresh = { value: 0.25, energy: ">=10 MeV", satellite: "GOES-18", timestamp: new Date(now - 5 * 60_000).toISOString() };
+  const old = { value: 150, energy: ">=2 MeV", satellite: "GOES-19", timestamp: new Date(now - 45 * 60_000).toISOString() };
+  worker.goes = { protons: fresh, electrons: old };
+  const { canonicalPoint } = await worker.tick();
+  assert.deepEqual(canonicalPoint.particles, { protons: fresh, electrons: null });
+});
+
+test("forecast window: last 6 h of measured points, one per minute (GAU-115)", async () => {
+  const { forecastWindow, FORECAST_WINDOW_MS } = await import("./ingest-loop.js");
+  const now = Date.parse("2026-10-12T12:00:00Z");
+  const point = (msAgo: number, stale = false) =>
+    ({ timestamp: new Date(now - msAgo).toISOString(), quality: { stale } }) as unknown as Parameters<typeof forecastWindow>[0][number];
+  const feed = [
+    point(FORECAST_WINDOW_MS + 60_000), // older than the window
+    ...Array.from({ length: 6 * 60 * 12 }, (_, i) => point(FORECAST_WINDOW_MS - 1 - i * 5_000)), // 6 h at 5 s
+    point(30_000, true), // stale: not a measurement
+    point(-60_000), // future: clock skew
+  ];
+  const window = forecastWindow(feed, now);
+  assert.ok(window.length >= 359 && window.length <= 361, `~360 one-per-minute points, got ${window.length}`);
+  assert.ok(window.every((p) => !p.quality.stale));
+  const times = window.map((p) => Date.parse(p.timestamp));
+  assert.ok(Math.min(...times) >= now - FORECAST_WINDOW_MS && Math.max(...times) <= now);
+  const minutes = new Set(times.map((t) => Math.floor(t / 60_000)));
+  assert.equal(minutes.size, window.length, "one point per minute");
+});
+
+test("the worker exposes its last forecast for the API to serve (GAU-115)", () => {
+  const worker = new IngestionWorker() as unknown as { latestForecast: unknown; getLatestForecast: () => unknown };
+  assert.equal(worker.getLatestForecast(), null);
+  const f = { available: false, reason: "x" };
+  worker.latestForecast = f;
+  assert.equal(worker.getLatestForecast(), f);
+});
+
+test("tick uses measured Kyoto Dst while fresh, and the model once it is stale (GAU-116)", async () => {
+  const worker = new IngestionWorker() as unknown as TimedWorker & {
+    kyotoDst: unknown;
+    tick: () => Promise<{ canonicalPoint: { indices: { dst: number; dstMethod?: string } } }>;
+  };
+  const now = Date.now();
+  for (const key of ["noaa", "esa", "jaxa", "mms", "lasp", "goes", "kyoto-dst", "ml-forecast"]) worker.lastFetch.set(key, now);
+  worker.kyotoDst = { dst: -123, timestamp: new Date(now - 30 * 60_000).toISOString() };
+  const measured = (await worker.tick()).canonicalPoint.indices;
+  assert.equal(measured.dst, -123);
+  if ("dstMethod" in measured) assert.equal(measured.dstMethod, "measured"); // once #50 is merged
+
+  worker.kyotoDst = { dst: -123, timestamp: new Date(now - 3 * 3_600_000).toISOString() };
+  const modelled = (await worker.tick()).canonicalPoint.indices;
+  assert.notEqual(modelled.dst, -123, "a 3 h old reading is not used as current");
+});
