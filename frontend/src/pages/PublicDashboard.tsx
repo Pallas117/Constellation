@@ -10,7 +10,7 @@ import { GEO_RE, SceneHoverTip } from '@/components/hud/SceneHoverTip';
 import { useSolarWind5s } from '@/hooks/useSolarWind5s';
 import { useNow } from '@/hooks/useNow';
 import { useSession } from '@/lib/auth-client';
-import { beltVisuals, liveDrivers } from '@/lib/physics/live-drivers';
+import { beltVisuals, liveDrivers, standoffIfReference } from '@/lib/physics/live-drivers';
 
 const LAYERS = {
   earth: true,
@@ -44,6 +44,12 @@ export default function PublicDashboard() {
   const visualParams = useMemo(() => beltVisuals(drivers), [drivers]);
   const r0 = drivers && modelInfo ? modelInfo.r0 : null;
   const geoExposed = r0 === null ? null : r0 < GEO_RE;
+  // Same honesty as /heliophysics: a disputed density gives a range, and Shue (1998)
+  // was only fitted for 0.5-8.5 nPa and -18 < Bz < 15 nT.
+  const alt = r0 !== null && live.densityCheck ? standoffIfReference(r0, live.densityCheck) : null;
+  const r0Range = alt !== null && r0 !== null ? [Math.min(alt, r0), Math.max(alt, r0)] : null;
+  const used = modelInfo?.drivers;
+  const extrapolated = Boolean(used && (used.bz < -18 || used.bz > 15 || used.pdyn < 0.5 || used.pdyn > 8.5));
 
   const isE2E = typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('e2e');
 
@@ -116,13 +122,17 @@ export default function PublicDashboard() {
               label="Magnetopause"
               value={fmt(r0)}
               unit="RE"
-              tone={geoExposed ? 'risk' : r0 === null ? 'caution' : 'signal'}
+              tone={geoExposed ? 'risk' : r0 === null || r0Range || extrapolated ? 'caution' : 'signal'}
               detail={
                 r0 === null
                   ? 'How far sunward Earth’s field holds off the solar wind. No live reading: the scene shows reference geometry.'
                   : `How far sunward Earth’s field holds off the solar wind. ${
                       geoExposed ? 'Inside' : 'Outside'
-                    } geostationary orbit (${GEO_RE} RE): GEO satellites are ${geoExposed ? 'exposed' : 'shielded'}.`
+                    } geostationary orbit (${GEO_RE} RE): GEO satellites are ${geoExposed ? 'exposed' : 'shielded'}.${
+                      r0Range
+                        ? ` The L1 spacecraft disagree on density, so it is ${fmt(r0Range[0])}–${fmt(r0Range[1])} RE depending on which is right.`
+                        : ''
+                    }${extrapolated ? ' The solar wind is outside the range the model was fitted for.' : ''}`
               }
             />
             <HudStat
