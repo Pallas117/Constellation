@@ -27,13 +27,24 @@ const L0_METERS = 7 * RE_METERS;
 const L1_DISTANCE_KM = 1_500_000;
 
 export interface MhdInput {
+  /** When the point is issued (the ingest tick). */
   timestamp: string;
+  /** When the L1 values were measured; frames are rotated at this time. */
+  observedAt?: string;
   source: CanonicalSpaceWeatherPoint["source"];
   density: number;
   velocityGse: Vector3;
   magneticFieldGse: Vector3;
+  /** Published GSM components, used as-is when present. */
+  velocityGsm?: Vector3 | null;
+  magneticFieldGsm?: Vector3 | null;
   kp?: number;
   dst?: number;
+  /**
+   * The solar wind reaching Earth now (L1 values one travel time ago). Dst responds
+   * to this, not to what is at L1 now; without it the L1 values are used.
+   */
+  atEarth?: { speed: number; bzGsm: number; pdyn: number } | null;
 }
 
 export interface MhdState {
@@ -72,9 +83,9 @@ function akasofuEpsilon(speedKmS: number, btNt: number, byNt: number, bzNt: numb
   return (speedMs * btTesla * btTesla * sinTerm * L0_METERS * L0_METERS) / MU0;
 }
 
-function propagationDelaySeconds(speedKmS: number): number {
-  const clamped = clamp(speedKmS, 250, 2000);
-  return (L1_DISTANCE_KM / clamped);
+/** Ballistic L1 -> Earth travel time from the sunward flow component. */
+function propagationDelaySeconds(vxKmS: number): number {
+  return L1_DISTANCE_KM / clamp(Math.abs(vxKmS), 250, 2000);
 }
 
 const DST_REINIT_GAP_HOURS = 3;
@@ -144,34 +155,18 @@ function stormTier(
   return { stormTier: "quiet", reason: "Nominal IMF orientation" };
 }
 
-function conservativeUpdate(prev: MhdState | null, input: MhdInput): MhdState {
-  const gsmVelocity = gseToGsm(input.velocityGse, input.timestamp);
-  const gsmMagnetic = gseToGsm(input.magneticFieldGse, input.timestamp);
-  if (!prev) {
-    return {
-      rho: Math.max(0.01, input.density),
-      velocity: gsmVelocity,
-      magneticField: gsmMagnetic,
-    };
-  }
-
-  // Lightweight conservative advection with divergence damping.
-  const alpha = 0.35;
-  const rho = clamp(alpha * input.density + (1 - alpha) * prev.rho, 0.01, 1000);
-  const velocity = vec(
-    alpha * gsmVelocity.x + (1 - alpha) * prev.velocity.x,
-    alpha * gsmVelocity.y + (1 - alpha) * prev.velocity.y,
-    alpha * gsmVelocity.z + (1 - alpha) * prev.velocity.z,
-  );
-  const magneticField = vec(
-    alpha * gsmMagnetic.x + (1 - alpha) * prev.magneticField.x,
-    alpha * gsmMagnetic.y + (1 - alpha) * prev.magneticField.y,
-    alpha * gsmMagnetic.z + (1 - alpha) * prev.magneticField.z,
-  );
-
-  // No "divergence projection": divergence is undefined for a single point vector, and
-  // subtracting the component mean shifted Bz by up to several nT (flipping its sign).
-  return { rho, velocity, magneticField };
+/**
+ * The measured L1 state in GSM. No blending with the previous tick: the old 35%-per-tick
+ * blend reported values between two measurements that were never measured, and lagged
+ * a Bz turning by about a minute. Averaging for the models happens over explicit windows.
+ */
+function measuredState(input: MhdInput): MhdState {
+  const at = input.observedAt ?? input.timestamp;
+  return {
+    rho: Math.max(0.01, input.density),
+    velocity: input.velocityGsm ?? gseToGsm(input.velocityGse, at),
+    magneticField: input.magneticFieldGsm ?? gseToGsm(input.magneticFieldGse, at),
+  };
 }
 
 function uncertainty(value: number, rel: number, floor = 0): UncertaintyEnvelope {
@@ -196,12 +191,11 @@ function quality(flags: Partial<QualityFlags> = {}): QualityFlags {
 
 export function computeCanonicalPoint(
   input: MhdInput,
-  previousState: MhdState | null,
   couplingWindow: number[],
   previousDst: number | null,
   previousTimestamp: string | null = null,
 ): { point: CanonicalSpaceWeatherPoint; state: MhdState } {
-  const state = conservativeUpdate(previousState, input);
+  const state = measuredState(input);
   const speed = magnitude(state.velocity);
   const bt = magnitude(state.magneticField);
   const pdyn = dynamicPressureNpa(state.rho, speed);
@@ -212,18 +206,21 @@ export function computeCanonicalPoint(
   const kp = clamp(input.kp ?? 2, 0, 9);
   const dtMs = previousTimestamp ? Date.parse(input.timestamp) - Date.parse(previousTimestamp) : Number.NaN;
   const dtHours = Number.isFinite(dtMs) ? dtMs / 3_600_000 : null;
-  const dst = input.dst ?? estimateDst(speed, state.magneticField.z, pdyn, previousDst, dtHours);
+  const earth = input.atEarth ?? { speed, bzGsm: state.magneticField.z, pdyn };
+  const dst = input.dst ?? estimateDst(earth.speed, earth.bzGsm, earth.pdyn, previousDst, dtHours);
   const dstSlope = previousDst == null || !dtHours || dtHours <= 0 ? 0 : (dst - previousDst) / dtHours;
 
   const sorted = [...couplingWindow].sort((a, b) => a - b);
   const p75 = sorted.length > 0 ? sorted[Math.floor(0.75 * (sorted.length - 1))] : newell;
   const alert = stormTier(state.magneticField.z, kp, newell, p75, dstSlope);
 
-  const delaySec = propagationDelaySeconds(speed);
-  const eta = new Date(Date.parse(input.timestamp) + delaySec * 1000).toISOString();
+  // Arrival is counted from when the solar wind was measured, not from when we issued the point.
+  const delaySec = propagationDelaySeconds(state.velocity.x || speed);
+  const eta = new Date(Date.parse(input.observedAt ?? input.timestamp) + delaySec * 1000).toISOString();
 
   const point: CanonicalSpaceWeatherPoint = {
     timestamp: input.timestamp,
+    observedAt: input.observedAt ?? null,
     source: input.source,
     rho: state.rho,
     velocity: {

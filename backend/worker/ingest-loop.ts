@@ -3,12 +3,10 @@ import { getJaxaStatus, probeJaxaCatalog } from "../adapters/jaxa-erg.js";
 import { fetchMmsCdawebSamples, getMmsCdawebStatus } from "../adapters/mms-cdaweb.js";
 import { fetchMmsBurstWindows, getMmsLaspStatus } from "../adapters/mms-lasp.js";
 import { fetchNoaaReadout, getNoaaStatus, type NOAAReadout } from "../adapters/noaa-swpc.js";
+import { arrivingNow, type L1Sample } from "../adapters/rtsw-series.js";
+import { gseToGsm } from "../physics/coordinates.js";
 import { buildAuroraGrid } from "../physics/healpix.js";
-import {
-  computeCanonicalPoint,
-  type MhdInput,
-  type MhdState,
-} from "../physics/mhd-nowcast.js";
+import { computeCanonicalPoint, type MhdInput } from "../physics/mhd-nowcast.js";
 import {
   computeMMSReconnectionVector,
   withinSkewWindow,
@@ -58,12 +56,16 @@ export function freshnessTier(dataTimestamp: string | null, nowMs: number): Resi
 export class IngestionWorker {
   private timer: NodeJS.Timeout | null = null;
   private running = false;
-  private previousState: MhdState | null = null;
   private previousDst: number | null = null;
   private couplingWindow: number[] = [];
   private lastFetch = new Map<string, number>();
 
   private noaa: NOAAReadout | null = null;
+  /**
+   * L1 history, kept when the latest readout expires: solar wind already measured
+   * keeps arriving at Earth for one travel time (~45 min) after an L1 outage.
+   */
+  private l1Series: L1Sample[] = [];
   private esa: ESAReadout | null = null;
   private latestCanonical: CanonicalSpaceWeatherPoint | null = null;
   private latestMms: MMSReconVectorPoint | null = null;
@@ -134,28 +136,39 @@ export class IngestionWorker {
   }
 
   private blendInputs(timestamp: string): MhdInput {
-    const density = this.noaa?.density ?? this.latestCanonical?.solarWind.density ?? 5;
-
-    let velocity = this.noaa?.velocityGse ?? this.latestCanonical?.velocity ?? { x: -400, y: 0, z: 0, magnitude: 400 };
-    if ("magnitude" in velocity) {
-      velocity = { x: velocity.x, y: velocity.y, z: velocity.z };
-    }
-
     // IMF comes from the L1 monitor only. Swarm (ESA) measures the geomagnetic main field
     // in LEO in a local NEC frame, which is not comparable to the solar-wind field.
-    const noaaB = this.noaa?.magneticFieldGse;
-    const bx = noaaB?.x ?? 0;
-    const by = noaaB?.y ?? 0;
-    const bz = noaaB?.z ?? 0;
-
+    const noaa = this.noaa;
+    if (noaa) {
+      return {
+        timestamp,
+        observedAt: noaa.timestamp,
+        source: "fusion",
+        density: noaa.density,
+        velocityGse: noaa.velocityGse,
+        magneticFieldGse: noaa.magneticFieldGse,
+        velocityGsm: noaa.velocityGsm ?? null,
+        magneticFieldGsm: noaa.magneticFieldGsm ?? null,
+        kp: noaa.kp,
+        // dst is left to the nowcast's model estimate; no source here measures it.
+      };
+    }
+    // No current readout: carry the last point's measured values (already GSM), flagged by
+    // the caller, rather than inventing a zero field. With no point at all, the values are
+    // placeholders on a point flagged stale.
+    const prev = this.latestCanonical;
+    const v = prev ? { x: prev.velocity.x, y: prev.velocity.y, z: prev.velocity.z } : { x: -400, y: 0, z: 0 };
+    const b = prev ? { x: prev.magneticField.x, y: prev.magneticField.y, z: prev.magneticField.z } : { x: 0, y: 0, z: 0 };
     return {
       timestamp,
+      observedAt: prev?.observedAt ?? undefined,
       source: "fusion",
-      density,
-      velocityGse: velocity,
-      magneticFieldGse: { x: bx, y: by, z: bz },
-      kp: this.noaa?.kp ?? this.latestCanonical?.indices.kp ?? 2,
-      // dst is left to the nowcast's model estimate; no source here measures it.
+      density: prev?.solarWind.density ?? 5,
+      velocityGse: v,
+      magneticFieldGse: b,
+      velocityGsm: v,
+      magneticFieldGsm: b,
+      kp: prev?.indices.kp ?? 2,
     };
   }
 
@@ -212,6 +225,7 @@ export class IngestionWorker {
           const result = await fetchNoaaReadout();
           if (result) {
             this.noaa = result;
+            if (result.series?.length) this.l1Series = result.series;
           }
         }
 
@@ -266,14 +280,32 @@ export class IngestionWorker {
       this.noaa = null;
     }
     const mhdInput = this.blendInputs(nowIso);
+    // The solar wind reaching Earth now, from the L1 history one travel time back.
+    const arriving = arrivingNow(this.l1Series, Date.parse(nowIso), gseToGsm);
+    mhdInput.atEarth = arriving ? { speed: arriving.speed, bzGsm: arriving.bz, pdyn: arriving.dynamicPressure } : null;
 
-    const { point, state } = computeCanonicalPoint(
+    const { point } = computeCanonicalPoint(
       mhdInput,
-      this.previousState,
       this.couplingWindow,
       this.previousDst,
       this.latestCanonical?.timestamp ?? null,
     );
+    point.spacecraft = this.noaa?.spacecraft ?? this.latestCanonical?.spacecraft;
+    point.arriving = arriving;
+    if (this.noaa?.kpReading) {
+      point.indices.kpKind = this.noaa.kpReading.kind;
+      point.indices.kpObservedAt = this.noaa.kpReading.observedAt;
+    }
+
+    const densityCheck = this.noaa?.densityCheck ?? null;
+    point.densityCheck = densityCheck;
+    if (densityCheck) {
+      // Two L1 spacecraft disagree: the true density is somewhere between them.
+      const lower = Math.min(densityCheck.density, densityCheck.referenceDensity, point.solarWind.density);
+      const upper = Math.max(densityCheck.density, densityCheck.referenceDensity, point.solarWind.density);
+      point.uncertainty.density = { lower, upper, sigma: (upper - lower) / 2 };
+      point.quality.lowConfidence = true;
+    }
 
     if (tier > 0) {
       // Carried forward from an older measurement (tier 1) or from no measurement (tier 3).
@@ -283,7 +315,6 @@ export class IngestionWorker {
       point.quality.tier = tier;
     }
 
-    this.previousState = state;
     this.previousDst = point.indices.dst;
     this.couplingWindow.push(point.coupling.newell);
     this.trimCouplingWindow();
