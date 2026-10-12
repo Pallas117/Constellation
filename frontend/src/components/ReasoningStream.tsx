@@ -22,7 +22,7 @@ function ForecastBanner() {
     return (
       <div className="flex items-center gap-2 px-3 py-1.5 bg-black/50 border border-primary/10 text-[8px] font-mono text-primary/30 uppercase tracking-widest">
         <Activity size={8} className="animate-pulse" />
-        72H_FORECAST: AWAITING_NODE
+        FORECAST: AWAITING_NODE
       </div>
     );
   }
@@ -36,15 +36,17 @@ function ForecastBanner() {
         title={reason}
       >
         <Activity size={8} />
-        72H_FORECAST: UNAVAILABLE &nbsp;|&nbsp; {reason}
+        FORECAST: UNAVAILABLE &nbsp;|&nbsp; {reason}
       </div>
     );
   }
 
   const pct = (forecast.anomalyProbability * 100).toFixed(1);
   const kpMax = forecast.predictedKpMax.toFixed(1);
-  const isHighRisk = forecast.predictedKpMax >= 5;
-  const isSevere = forecast.predictedKpMax >= 7;
+  // Severity follows the storm probability: it has held-out skill, while the Kp estimate trails
+  // persistence during storms (see the model's gate warnings).
+  const isHighRisk = forecast.anomalyProbability >= 0.2;
+  const isSevere = forecast.anomalyProbability >= 0.5;
 
   const colour = isSevere
     ? 'border-red-500/60 text-red-400'
@@ -62,13 +64,13 @@ function ForecastBanner() {
       <Icon size={10} className="mt-0.5 shrink-0" />
       <div className="space-y-0.5 text-left">
         <p className="text-[9px] font-bold uppercase tracking-wider">
-          72H_FORECAST &nbsp;|&nbsp; P(anomaly) = {pct}% &nbsp;|&nbsp; Kp_max ≈ {kpMax}
+          {forecast.horizonHours}H_FORECAST &nbsp;|&nbsp; P(G1+) = {pct}% &nbsp;|&nbsp; Kp ≈ {kpMax}
         </p>
         <p className="text-[8px] opacity-70 font-mono truncate max-w-[440px]">
           {forecast.warningMessage}
         </p>
         <p className="text-[7px] opacity-40 font-mono">
-          CI: [{(forecast.confidenceInterval[0] * 100).toFixed(0)}%,
+          ENSEMBLE: [{(forecast.confidenceInterval[0] * 100).toFixed(0)}%,
           {(forecast.confidenceInterval[1] * 100).toFixed(0)}%]
           &nbsp; MDL: {forecast.modelVersion}
         </p>

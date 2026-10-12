@@ -36,7 +36,7 @@ async function withFetch<T>(impl: typeof fetch, fn: () => Promise<T>): Promise<T
 const json = (status: number, body: unknown) =>
   (async () => new Response(JSON.stringify(body), { status })) as unknown as typeof fetch;
 
-test("no anomaly model: forecast is an explicit unavailable, never a number (GAU-111)", async () => {
+test("no inference server: forecast is an explicit unavailable, never a number (GAU-111)", async () => {
   await withEnv(undefined, async () => {
     for (let i = 0; i < 20; i += 1) {
       const f = await inferAnomalyForecast([]);
@@ -83,6 +83,7 @@ test("a valid model forecast passes through as available", async () => {
     const f = await withFetch(
       json(200, {
         modelVersion: "anomaly-gbm-v1",
+        horizonHours: 3,
         anomalyProbability: 0.2,
         predictedKpMax: 4.5,
         warningMessage: "ok",
@@ -91,13 +92,21 @@ test("a valid model forecast passes through as available", async () => {
       () => inferAnomalyForecast([]),
     );
     assert.equal(f.available, true);
-    if (f.available) assert.equal(f.anomalyProbability, 0.2);
+    if (f.available) {
+      assert.equal(f.anomalyProbability, 0.2);
+      assert.equal(f.horizonHours, 3, "the model's own horizon, never relabelled as 72 h");
+    }
+    const noHorizon = await withFetch(
+      json(200, { modelVersion: "x", anomalyProbability: 0.2, predictedKpMax: 4, confidenceInterval: [0.1, 0.3] }),
+      () => inferAnomalyForecast([]),
+    );
+    assert.equal(noHorizon.available, false);
   });
 });
 
 const hasPython = spawnSync("python3", ["--version"]).status === 0;
 
-test("the real inference server answers honestly end to end", { skip: !hasPython && "python3 not found" }, async (t) => {
+test("the real inference server serves the promoted Kp model, honestly (GAU-113)", { skip: !hasPython && "python3 not found" }, async (t) => {
   const server = spawn("python3", ["-I", "ml/infer/infer_server.py"], {
     env: { ...process.env, INFER_HOST: "127.0.0.1", INFER_PORT: "0" },
     stdio: ["ignore", "pipe", "inherit"],
@@ -114,12 +123,45 @@ test("the real inference server answers honestly end to end", { skip: !hasPython
     });
   });
 
+  // Six hours of 1-minute points ending now, with the given drivers.
+  const history = (drivers: { bz: number; by: number; speed: number; density: number; pressure: number; kp: number }, stale = false) =>
+    Array.from({ length: 6 * 60 }, (_, i) => ({
+      timestamp: new Date(Date.now() - (6 * 60 - 1 - i) * 60_000).toISOString(),
+      solarWind: { speed: drivers.speed, density: drivers.density, dynamicPressure: drivers.pressure },
+      magneticField: { x: 0, y: drivers.by, z: drivers.bz },
+      indices: { kp: drivers.kp },
+      quality: { stale },
+    }));
+
   await withEnv(`http://127.0.0.1:${port}`, async () => {
-    const forecast = await inferAnomalyForecast([]);
-    assert.equal(forecast.available, false, "no trained anomaly model exists yet");
+    const empty = await inferAnomalyForecast([]);
+    assert.equal(empty.available, false);
+    if (!empty.available) assert.match(empty.reason, /Needs 6 h/);
+
+    const quiet = await inferAnomalyForecast(history({ bz: 3, by: 1, speed: 340, density: 4, pressure: 1, kp: 1 }));
+    const storm = await inferAnomalyForecast(history({ bz: -20, by: 5, speed: 750, density: 20, pressure: 15, kp: 6 }));
+    assert.equal(quiet.available, true, "a promoted model with 6 h of history answers");
+    assert.equal(storm.available, true);
+    if (quiet.available && storm.available) {
+      assert.match(quiet.modelVersion, /^kp3h-mlp-v1-/);
+      assert.equal(quiet.horizonHours, 3);
+      assert.ok(quiet.anomalyProbability < 0.1, `quiet wind: P=${quiet.anomalyProbability}`);
+      assert.ok(storm.anomalyProbability > 0.5, `strong southward driving: P=${storm.anomalyProbability}`);
+      assert.ok(storm.predictedKpMax > quiet.predictedKpMax);
+      assert.ok(storm.confidenceInterval[0] <= storm.anomalyProbability && storm.anomalyProbability <= storm.confidenceInterval[1]);
+    }
+
+    const stale = await inferAnomalyForecast(history({ bz: -20, by: 5, speed: 750, density: 20, pressure: 15, kp: 6 }, true));
+    assert.equal(stale.available, false, "stale points are not measurements");
+
     const nowcast = await inferNowcast({ horizonMinutes: 30, sequence: [point] });
     assert.equal(nowcast.method, "heuristic");
     assert.equal(nowcast.modelVersion, "heuristic-nowcast-v0");
     assert.ok(nowcast.predictions.every((p) => p.confidence === null));
   });
+});
+
+test("Kp model unit tests (python)", { skip: !hasPython && "python3 not found" }, () => {
+  const result = spawnSync("python3", ["-I", "ml/tests/test_kp_model.py"], { encoding: "utf8" });
+  assert.equal(result.status, 0, result.stderr);
 });
