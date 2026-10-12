@@ -1,6 +1,7 @@
 import { fetchEsaReadout, getEsaStatus, type ESAReadout } from "../adapters/esa-hapi.js";
 import { freshReading, fetchGoesParticles, getGoesStatus, type GoesParticleReadout } from "../adapters/goes-particles.js";
 import { getJaxaStatus, probeJaxaCatalog } from "../adapters/jaxa-erg.js";
+import { fetchKyotoDst, freshDst, getKyotoDstStatus, type DstReading } from "../adapters/kyoto-dst.js";
 import { fetchMmsCdawebSamples, getMmsCdawebStatus } from "../adapters/mms-cdaweb.js";
 import { fetchMmsBurstWindows, getMmsLaspStatus } from "../adapters/mms-lasp.js";
 import { fetchNoaaReadout, getNoaaStatus, type NOAAReadout } from "../adapters/noaa-swpc.js";
@@ -43,6 +44,7 @@ const JAXA_MS = 60000;
 const MMS_MS = 10 * 60 * 1000; // archival L2 product; polling faster gains nothing
 const LASP_MS = 60000;
 const GOES_MS = 60000; // GOES publishes every 5 min; a 60 s poll keeps worst-case lag under 6 min
+const KYOTO_DST_MS = 10 * 60 * 1000; // hourly product
 
 // Freshness is judged by the age of the measurement itself, not by whether a fetch ran
 // this tick. Beyond NOAA_MAX_AGE_MS a readout is discarded rather than carried forward.
@@ -96,6 +98,7 @@ export class IngestionWorker {
   private noaa: NOAAReadout | null = null;
   private esa: ESAReadout | null = null;
   private goes: GoesParticleReadout | null = null;
+  private kyotoDst: DstReading | null = null;
   private latestCanonical: CanonicalSpaceWeatherPoint | null = null;
   private latestMms: MMSReconVectorPoint | null = null;
   private latestForecast: AnomalyForecastResponse | null = null;
@@ -214,7 +217,9 @@ export class IngestionWorker {
       velocityGse: velocity,
       magneticFieldGse: { x: bx, y: by, z: bz },
       kp: this.noaa?.kp ?? this.latestCanonical?.indices.kp ?? 2,
-      // dst is left to the nowcast's model estimate; no source here measures it.
+      // Measured Kyoto Dst while it is under 2 h old; otherwise the nowcast's labelled model
+      // estimate (O'Brien & McPherron) takes over. GAU-116.
+      dst: freshDst(this.kyotoDst, Date.parse(timestamp)),
     };
   }
 
@@ -231,12 +236,13 @@ export class IngestionWorker {
       console.log('[IngestionWorker] OFFICIAL_SOURCES_ONLY=true — preferring official data adapters (NOAA/MMS)');
     }
     if (officialOnly) {
-      return [getNoaaStatus(), getGoesStatus(), getMmsCdawebStatus(), getMmsLaspStatus()];
+      return [getNoaaStatus(), getGoesStatus(), getKyotoDstStatus(), getMmsCdawebStatus(), getMmsLaspStatus()];
     }
 
     return [
       getNoaaStatus(),
       getGoesStatus(),
+      getKyotoDstStatus(),
       getEsaStatus(),
       getJaxaStatus(),
       getMmsCdawebStatus(),
@@ -292,6 +298,13 @@ export class IngestionWorker {
         fetches.push(
           this.timedFetch("noaa", fetchNoaaReadout).then((result) => {
             if (result) this.noaa = result;
+          }),
+        );
+      }
+      if (this.shouldFetch("kyoto-dst", KYOTO_DST_MS)) {
+        fetches.push(
+          this.timedFetch("kyoto-dst", () => fetchKyotoDst()).then((result) => {
+            if (result) this.kyotoDst = result;
           }),
         );
       }
