@@ -217,7 +217,8 @@ export function transformApiResponse(response: SpaceWeatherResponse): Interpolat
     timestamp: new Date(response.timestamp),
     isStale: response.flags.stale,
     source: response.flags.source,
-    tier: response.flags.tier ?? 0,
+    // A response that does not state its tier is not known to be live (GAU-114).
+    tier: response.flags.tier ?? 3,
   };
 }
 

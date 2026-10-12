@@ -4,6 +4,8 @@ export interface QualityFlags {
   interpolated: boolean;
   extrapolated: boolean;
   lowConfidence: boolean;
+  /** Backend resilience tier: 0 live, 1 buffered, 2 synthetic, 3 stale/unknown. */
+  tier?: 0 | 1 | 2 | 3;
 }
 
 export interface UncertaintyEnvelope {
