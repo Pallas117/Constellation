@@ -132,11 +132,16 @@ export async function inferAnomalyForecast(
   ) {
     return unavailable("Inference server returned a malformed forecast.");
   }
+  // The model states its own horizon (e.g. 3 h from L1 solar wind); never relabel it.
+  const horizon = body.horizonHours;
+  if (typeof horizon !== "number" || !Number.isFinite(horizon) || horizon <= 0 || horizon > ANOMALY_HORIZON_HOURS) {
+    return unavailable("Inference server returned a forecast without a valid horizon.");
+  }
   return {
     available: true,
     modelVersion: body.modelVersion,
     generatedAt: typeof body.generatedAt === "string" ? body.generatedAt : new Date().toISOString(),
-    horizonHours: ANOMALY_HORIZON_HOURS,
+    horizonHours: horizon,
     anomalyProbability: body.anomalyProbability,
     predictedKpMax: kp,
     warningMessage: typeof body.warningMessage === "string" ? body.warningMessage : "",
@@ -146,7 +151,7 @@ export async function inferAnomalyForecast(
 
 export async function triggerTraining(): Promise<{ started: boolean; pid?: number; message: string }> {
   return new Promise((resolve) => {
-    const script = process.env.TRAINING_SCRIPT_PATH ?? "ml/train/train_unet.py";
+    const script = process.env.TRAINING_SCRIPT_PATH ?? "ml/train/train_kp.py";
     const child = spawn("python3", [script], {
       stdio: "ignore",
       detached: true,
