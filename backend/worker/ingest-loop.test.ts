@@ -143,6 +143,7 @@ test("tick attaches only current GOES particle readings to the canonical point (
   worker.goes = { protons: fresh, electrons: old };
   const { canonicalPoint } = await worker.tick();
   assert.deepEqual(canonicalPoint.particles, { protons: fresh, electrons: null });
+});
 
 test("forecast window: last 6 h of measured points, one per minute (GAU-115)", async () => {
   const { forecastWindow, FORECAST_WINDOW_MS } = await import("./ingest-loop.js");
