@@ -20,6 +20,7 @@ import {
   getLatestMms,
   getMmsFeed,
   getSourceStatus,
+  seedCanonical,
 } from "./state.js";
 import type {
   CanonicalSpaceWeatherPoint,
@@ -640,6 +641,16 @@ export async function startBackend(options?: { host?: string; port?: number }): 
     const address = server.address();
     const actualPort = typeof address === "object" && address?.port ? address.port : port;
     return { app, server, host, port: actualPort };
+  }
+
+  // Reload the last 24 h from bedrock so the feed history and the 6 h forecast window survive a
+  // restart instead of starting empty. GAU-117.
+  try {
+    const since = Date.now() - 24 * 60 * 60 * 1000;
+    const seeded = seedCanonical(await bedrock.getCanonicalSince(since, 20_000));
+    if (seeded > 0) console.log(`[backend] reloaded ${seeded} canonical points from bedrock`);
+  } catch (error) {
+    console.warn("[backend] bedrock reload failed; starting with an empty buffer", error);
   }
 
   return new Promise((resolve, reject) => {
