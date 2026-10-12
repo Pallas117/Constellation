@@ -12,6 +12,8 @@
 
 import { type RefObject } from 'react';
 import { SpaceScene } from './scene/SpaceScene';
+import type { MagnetosphereModelInfo } from './scene/Magnetosphere';
+import type { SolarWindDrivers } from '@/lib/physics/geomagnetic';
 import type { LayerVisibility, EncodingMode } from './types';
 import type { VisualizationParams } from '@/hooks/useSpaceWeather';
 import type { SpaceObjectCatalogEntry, SpaceObjectDetectionAlert } from '@/lib/types/space-object';
@@ -22,13 +24,17 @@ import type { SpaceObjectCatalogEntry, SpaceObjectDetectionAlert } from '@/lib/t
 
 export interface GaussGlobeProps {
     layers: LayerVisibility;
-    visualParams: VisualizationParams;
+    visualParams: Pick<VisualizationParams, 'magnetopauseCompression' | 'beltIntensity' | 'reconnectionStrength'>;
     encodingMode: EncodingMode;
     canvasRef: RefObject<HTMLCanvasElement | null>;
     spaceObjects?: SpaceObjectCatalogEntry[];
     spaceObjectAlert?: SpaceObjectDetectionAlert | null;
     isE2E?: boolean;
     highFidelityBelts?: boolean;
+    /** Live drivers for the traced field lines; reference geometry without them. */
+    solarWindDrivers?: SolarWindDrivers;
+    onModelUpdate?: (info: MagnetosphereModelInfo) => void;
+    hoverable?: boolean;
 }
 
 export function GaussGlobe({
@@ -40,6 +46,9 @@ export function GaussGlobe({
     spaceObjectAlert,
     isE2E = false,
     highFidelityBelts = false,
+    solarWindDrivers,
+    onModelUpdate,
+    hoverable = false,
 }: GaussGlobeProps) {
     const { magnetopauseCompression, beltIntensity, reconnectionStrength } =
         visualParams;
@@ -67,6 +76,9 @@ export function GaussGlobe({
             spaceObjects={spaceObjects}
             spaceObjectAlert={spaceObjectAlert}
             highFidelity={highFidelityBelts}
+            solarWindDrivers={solarWindDrivers}
+            onModelUpdate={onModelUpdate}
+            hoverable={hoverable}
         />
     );
 }

@@ -14,6 +14,7 @@ import * as THREE from 'three';
 import { Earth } from './Earth';
 import { VanAllenBelts } from './VanAllenBelts';
 import { Magnetosphere, type MagnetosphereModelInfo } from './Magnetosphere';
+import { hoverHandlers } from './scene-hover';
 import { dipoleTiltRad, type SolarWindDrivers } from '@/lib/physics/geomagnetic';
 import { useNow } from '@/hooks/useNow';
 import { OrbitRings } from './OrbitRings';
@@ -71,6 +72,8 @@ interface SpaceSceneProps {
   /** Camera preset; change `viewRequest` to re-apply the same preset. */
   view?: SceneView;
   viewRequest?: number;
+  /** Report Earth and the boundaries under the pointer (see scene-hover.ts). */
+  hoverable?: boolean;
 }
 
 export type SceneView = 'overview' | 'dayside' | 'meridian' | 'tail' | 'polar';
@@ -105,6 +108,7 @@ const SceneContent = ({
   solarWindDrivers,
   smoothDrivers = true,
   onModelUpdate,
+  hoverable = false,
   view = 'overview',
   viewRequest = 0,
 }: Omit<SpaceSceneProps, 'canvasRef'>) => {
@@ -257,7 +261,9 @@ const SceneContent = ({
 
       {/* Main scene group */}
       <group ref={groupRef}>
-        <Earth visible={layers.earth} />
+        <group {...(hoverable ? { userData: { hoverTarget: 'earth' }, ...hoverHandlers } : {})}>
+          <Earth visible={layers.earth} />
+        </group>
         
         {/* Belts are symmetric about the dipole axis: tilt them with it. */}
         <group rotation={[0, 0, -dipoleTilt]}>
@@ -279,6 +285,7 @@ const SceneContent = ({
           smoothing={smoothDrivers}
           onModelUpdate={onModelUpdate}
           epochMs={epochMs}
+          hoverable={hoverable}
         />
 
         <MHDWaves visible={layers.mhdWaves !== false} />
@@ -333,7 +340,7 @@ export const SpaceScene = (props: SpaceSceneProps) => {
       role="application"
       aria-label="3D space weather visualization. Use arrow keys to rotate, plus/minus to zoom, and R to reset view."
       tabIndex={0}
-      className="w-full h-full focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2"
+      className="w-full h-full focus:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-signal/40"
     >
       <Canvas
         ref={props.canvasRef}

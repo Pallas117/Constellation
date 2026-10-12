@@ -1,108 +1,49 @@
-import { useMemo, useRef, useState, type ReactNode } from "react";
-import { Zap, RotateCcw } from "lucide-react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { Link } from "react-router-dom";
+import { ChevronDown, Info, Layers, PanelRight, RotateCcw, Video, Zap } from "lucide-react";
 import { LayerToggles } from "@/components/ui/LayerToggles";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { SpaceScene, SCENE_VIEWS, type SceneView } from "@/components/scene/SpaceScene";
 import type { MagnetosphereModelInfo } from "@/components/scene/Magnetosphere";
+import { FeedStatus, HudButton, HudCluster, HudStat, SceneKey, fmt, signed, type Tone } from "@/components/hud/Hud";
+import { GEO_RE, SceneHoverTip } from "@/components/hud/SceneHoverTip";
 import { AuroraCastMap } from "@/components/heliophysics/AuroraCastMap";
 import { SolarWindSpeedChart } from "@/components/heliophysics/SolarWindSpeedChart";
 import { useAuroraMap } from "@/hooks/useAuroraMap";
 import { useMMSReconnection } from "@/hooks/useMMSReconnection";
 import { useSolarWind5s } from "@/hooks/useSolarWind5s";
 import type { LayerVisibility } from "@/components/types";
+import type { RadiationDataPoint } from "@/lib/types/radiation";
 import mockSolarStormData from "@/data/mock_solar_storm.json";
-import { dipoleTiltRad, type SolarWindDrivers } from "@/lib/physics/geomagnetic";
+import { beltVisuals, liveDrivers } from "@/lib/physics/live-drivers";
 import { useNow } from "@/hooks/useNow";
 
-/** Simulated G4: strong southward IMF behind a CME shock (Pdyn = 1.67e-6·n·v² ≈ 15 nPa). */
-const G4_DRIVERS: SolarWindDrivers = { bz: -20, by: 6, pdyn: 15, kp: 8 };
-const G4_PLASMA = { speed: 670, density: 20 };
+const VIEW_KEYS = Object.keys(SCENE_VIEWS) as SceneView[];
+const STORM_RADIATION = mockSolarStormData as unknown as RadiationDataPoint[];
 
-/** Geostationary orbit radius, Re. */
-const GEO_RE = 6.6;
-const STALE_AFTER_MIN = 15;
-
-type FeedMode = "live" | "stale" | "none" | "simulated";
-
-const fmt = (v: number | null | undefined, digits = 1) =>
-  typeof v === "number" && Number.isFinite(v) ? v.toFixed(digits) : "—";
-const signed = (v: number | null | undefined, digits = 1) =>
-  typeof v === "number" && Number.isFinite(v) ? `${v > 0 ? "+" : ""}${v.toFixed(digits)}` : "—";
+const bzTone = (bz: number | undefined): Tone =>
+  bz === undefined ? "default" : bz <= -10 ? "risk" : bz < 0 ? "caution" : "default";
+const pdynTone = (p: number | undefined): Tone =>
+  p === undefined ? "default" : p >= 8 ? "risk" : p >= 4 ? "caution" : "default";
+const kpTone = (kp: number | undefined): Tone =>
+  kp === undefined ? "default" : kp >= 7 ? "risk" : kp >= 5 ? "caution" : "default";
 
 /* ------------------------------------------------------------------------- */
+/* Details drawer: the full readouts and method, for touch and deep reading  */
 
-const FEED_STYLES: Record<FeedMode, { label: string; className: string; dot: string }> = {
-  live: { label: "Live L1 drivers", className: "border-charcoal text-foreground", dot: "bg-signal" },
-  stale: { label: "Stale drivers", className: "border-caution/60 text-caution", dot: "bg-caution" },
-  none: { label: "No live data · reference geometry", className: "border-caution/60 text-caution", dot: "bg-caution" },
-  simulated: { label: "Simulated G4 storm", className: "border-sun/70 text-sun", dot: "bg-sun" },
-};
-
-function FeedStatus({ mode, ageMin, className = "" }: { mode: FeedMode; ageMin: number | null; className?: string }) {
-  const style = FEED_STYLES[mode];
-  const age = ageMin === null ? "" : ` · ${ageMin < 1 ? "<1" : Math.round(ageMin)} min old`;
-  return (
-    <div
-      role="status"
-      aria-live="polite"
-      className={`inline-flex items-center gap-2 rounded-full border bg-black/70 px-3 py-1 font-mono text-[11px] font-bold uppercase tracking-[0.12em] backdrop-blur ${style.className} ${className}`}
-    >
-      <span aria-hidden="true" className={`h-1.5 w-1.5 rounded-full ${style.dot}`} />
-      {style.label}
-      {age}
-    </div>
-  );
-}
-
-function Panel({ label, title, children, aside }: { label: string; title: string; children: ReactNode; aside?: ReactNode }) {
-  const id = `panel-${label}`;
-  return (
-    <section className="hud-panel p-4" aria-labelledby={id}>
-      <div className="mb-3 flex items-start justify-between gap-3">
-        <div>
-          <p className="brand-label">{label}</p>
-          <h2 id={id} className="mt-1 text-base font-semibold leading-snug">
-            {title}
-          </h2>
-        </div>
-        {aside}
-      </div>
-      {children}
-    </section>
-  );
-}
-
-function Readout({ label, value, unit, tone = "default", hint }: { label: string; value: string; unit?: ReactNode; tone?: "default" | "caution" | "risk"; hint?: string }) {
+function Readout({ label, value, unit, tone = "default", hint }: { label: string; value: string; unit?: ReactNode; tone?: Tone; hint?: string }) {
   const toneClass = tone === "risk" ? "text-sun" : tone === "caution" ? "text-caution" : "text-foreground";
   return (
-    <div className="flex items-baseline justify-between gap-3 border-b border-charcoal py-1.5 last:border-b-0" title={hint}>
-      <dt className="text-sm text-muted-foreground">{label}</dt>
-      <dd className={`font-mono text-sm tabular-nums ${toneClass}`}>
+    <div className="flex items-baseline justify-between gap-3 border-b border-charcoal py-1.5 last:border-b-0">
+      <dt className="text-sm text-muted-foreground">
+        {label}
+        {hint && <span className="block text-xs text-muted-foreground/70">{hint}</span>}
+      </dt>
+      <dd className={`shrink-0 font-mono text-sm tabular-nums ${toneClass}`}>
         {value}
         {unit && value !== "—" && <span className="ml-1 text-xs text-muted-foreground">{unit}</span>}
       </dd>
-    </div>
-  );
-}
-
-function Legend() {
-  const items: { label: string; swatch: string }[] = [
-    { label: "Closed field line", swatch: "bg-gradient-to-r from-foreground to-earth" },
-    { label: "Open to solar wind", swatch: "bg-gradient-to-r from-caution to-sun" },
-    { label: "Magnetopause", swatch: "bg-earth" },
-    { label: "Inner belt · protons", swatch: "bg-caution" },
-    { label: "Outer belt · electrons, aurora", swatch: "bg-signal" },
-  ];
-  return (
-    <div className="pointer-events-none absolute bottom-3 right-3 z-10 hidden rounded-md border border-charcoal bg-black/75 p-3 backdrop-blur sm:block">
-      <p className="brand-label mb-2 text-[10px]">Key</p>
-      <ul className="space-y-1.5">
-        {items.map((i) => (
-          <li key={i.label} className="flex items-center gap-2 text-xs text-foreground/90">
-            <span aria-hidden="true" className={`h-1 w-5 rounded-full ${i.swatch}`} />
-            {i.label}
-          </li>
-        ))}
-      </ul>
     </div>
   );
 }
@@ -120,70 +61,50 @@ const HeliophysicsDashboard = () => {
     mmsReconnection: true,
   });
   const [view, setView] = useState<SceneView>("overview");
-  const [modelInfo, setModelInfo] = useState<MagnetosphereModelInfo | null>(null);
   const [viewRequest, setViewRequest] = useState(0);
+  const [modelInfo, setModelInfo] = useState<MagnetosphereModelInfo | null>(null);
+  const [simulateStorm, setSimulateStorm] = useState(false);
 
   const solarWind = useSolarWind5s();
   const mms = useMMSReconnection();
   const aurora = useAuroraMap();
-
-  const [simulateStorm, setSimulateStorm] = useState(false);
   const latest = solarWind.latest;
   const now = useNow(60_000);
 
   // Fail closed: without a fresh reading the scene shows reference geometry and
   // the readouts show "—", never nominal numbers presented as live.
-  const feed = useMemo((): { mode: FeedMode; ageMin: number | null } => {
-    if (simulateStorm) return { mode: "simulated", ageMin: null };
-    if (!latest) return { mode: "none", ageMin: null };
-    const ageMin = Math.max(0, (now - Date.parse(latest.timestamp)) / 60_000);
-    const stale = latest.quality.stale || !Number.isFinite(ageMin) || ageMin > STALE_AFTER_MIN;
-    return { mode: stale ? "stale" : "live", ageMin: Number.isFinite(ageMin) ? ageMin : null };
-  }, [latest, simulateStorm, now]);
+  const live = useMemo(() => liveDrivers(latest, now, simulateStorm), [latest, now, simulateStorm]);
+  const { drivers, plasma } = live;
+  const visual = useMemo(() => beltVisuals(drivers), [drivers]);
 
-  const drivers = useMemo<SolarWindDrivers | undefined>(() => {
-    if (simulateStorm) return G4_DRIVERS;
-    if (!latest) return undefined;
-    return {
-      bz: latest.magneticField.z,
-      by: latest.magneticField.y,
-      pdyn: latest.solarWind.dynamicPressure,
-      kp: latest.indices.kp,
-    };
-  }, [latest, simulateStorm]);
-
-  const plasma = simulateStorm ? G4_PLASMA : latest ? { speed: latest.solarWind.speed, density: latest.solarWind.density } : null;
-
-  // Legacy normalised params still drive the belts; reference values when no data.
-  const visual = useMemo(() => {
-    const pressure = drivers?.pdyn ?? 2;
-    const bz = drivers?.bz ?? 0;
-    const kp = drivers?.kp ?? 2;
-    return {
-      magnetopauseCompression: Math.max(0.6, 1 - Math.min(1, pressure / 10) * 0.4),
-      beltIntensity: Math.min(1, kp / 9 + 0.2),
-      reconnectionStrength: Math.max(0, Math.min(1, -bz / 15)),
-    };
-  }, [drivers]);
-
-  // The panel describes exactly what the scene drew: the traced model, built
-  // from 5-min mean drivers for live data. Fail closed without a reading.
+  // The HUD describes exactly what the scene drew: the traced model, built
+  // from 5-min mean drivers for live data.
   const fieldModel = useMemo(() => {
     if (!drivers || !modelInfo) return null;
     const used = modelInfo.drivers;
     return {
-      r0: modelInfo.r0,
-      bowShock: modelInfo.bowShock,
-      oval: modelInfo.oval,
-      openFraction: modelInfo.openFraction,
-      tracedAt: modelInfo.tracedAt,
-      smoothed: modelInfo.smoothed,
+      ...modelInfo,
       // Shue (1998) was fitted for -18 < Bz < 15 nT and 0.5 < Pdyn < 8.5 nPa.
       extrapolated: used.bz < -18 || used.bz > 15 || used.pdyn < 0.5 || used.pdyn > 8.5,
     };
   }, [drivers, modelInfo]);
-  const tiltDeg = useMemo(() => (dipoleTiltRad(now) * 180) / Math.PI, [now]);
   const geoExposed = fieldModel ? fieldModel.r0 < GEO_RE : null;
+  const tiltDeg = modelInfo ? (modelInfo.tilt * 180) / Math.PI : null;
+  const openPct = fieldModel?.openFraction != null ? `${Math.round(fieldModel.openFraction * 100)}` : "—";
+  const l1DelayMin =
+    !simulateStorm && latest?.propagation.l1DelaySeconds ? fmt(latest.propagation.l1DelaySeconds / 60, 0) : "—";
+  const stormTier = !simulateStorm ? latest?.alerts.stormTier : undefined;
+  const tracedLine = fieldModel
+    ? `${fieldModel.smoothed ? "5-min mean" : "Simulated"} · ${
+        fieldModel.tracedAt != null ? `traced ${new Date(fieldModel.tracedAt).toISOString().slice(11, 16)} UTC` : "tracing…"
+      }`
+    : null;
+  const geoLine =
+    geoExposed === null
+      ? "GEO exposure unknown"
+      : geoExposed
+        ? "Inside GEO · satellites exposed"
+        : "Outside GEO · satellites shielded";
 
   const onToggle = (layer: keyof LayerVisibility) => setLayers((prev) => ({ ...prev, [layer]: !prev[layer] }));
 
@@ -199,181 +120,293 @@ const HeliophysicsDashboard = () => {
     setViewRequest((n) => n + 1);
   };
 
+  // 1-5 pick a camera view, like a HUD's preset keys.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      const t = e.target as HTMLElement | null;
+      if (t?.closest("input, textarea, select, [contenteditable='true'], [role='dialog'][data-state='open']")) return;
+      const v = VIEW_KEYS[Number(e.key) - 1];
+      if (!v) return;
+      setView(v);
+      setViewRequest((n) => n + 1);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
   return (
-    <main className="min-h-screen w-full bg-background text-foreground">
-      <header className="border-b border-charcoal">
-        <div className="mx-auto flex max-w-[1600px] flex-wrap items-end justify-between gap-4 px-4 py-5 md:px-6">
-          <div className="min-w-0">
-            <p className="brand-label">04_HELIOPHYSICS · GAUSS AURORA</p>
-            <h1 className="mt-2 text-balance text-2xl font-semibold leading-tight md:text-3xl">
-              Earth's magnetic shield, driven by the live solar wind.
+    <main className="w-full bg-background text-foreground">
+      <section aria-label="3D magnetosphere" className="relative h-[100dvh] min-h-[540px] w-full overflow-hidden bg-black">
+        <SpaceScene
+          layers={layers}
+          magnetopauseCompression={visual.magnetopauseCompression}
+          beltIntensity={visual.beltIntensity}
+          reconnectionStrength={visual.reconnectionStrength}
+          mmsVectors={mms.vectors}
+          solarWindDrivers={drivers}
+          smoothDrivers={!simulateStorm}
+          onModelUpdate={setModelInfo}
+          view={view}
+          viewRequest={viewRequest}
+          canvasRef={canvasRef}
+          data={simulateStorm ? STORM_RADIATION : undefined}
+          orbitFilter={["LEO", "MEO", "GEO"]}
+          hoverable
+        />
+        {/* Edge vignette so HUD text reads without boxing in the field lines */}
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_center,transparent_55%,hsl(var(--background)/0.8)_100%)]"
+        />
+        <SceneHoverTip model={modelInfo} live={Boolean(drivers)} />
+
+        {/* Top edge: identity and feed left, controls right */}
+        <header className="pointer-events-none absolute inset-x-0 top-0 z-10 flex items-start justify-between gap-3 p-3 md:p-4">
+          <div className="flex min-w-0 flex-col items-start gap-1.5">
+            <Link to="/" className="brand-label pointer-events-auto text-[10px]">
+              Gauss Aurora<span className="hidden sm:inline"> · Heliophysics</span>
+            </Link>
+            <h1 className="text-sm font-semibold leading-tight text-foreground/90 md:text-base">
+              Earth's magnetic shield, live
             </h1>
-            <p className="mt-1 max-w-[62ch] text-sm text-muted-foreground">
-              Field lines are traced from L1 solar wind measurements. Use “Simulate G4 storm” to see a severe event.
-            </p>
+            <FeedStatus mode={live.mode} ageMin={live.ageMin} />
           </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <FeedStatus mode={feed.mode} ageMin={feed.ageMin} />
-            <button
-              type="button"
-              onClick={toggleStorm}
+
+          <nav aria-label="Scene controls" className="pointer-events-auto flex shrink-0 items-center gap-1.5">
+            <Popover>
+              <PopoverTrigger asChild>
+                <HudButton label={`Camera view: ${SCENE_VIEWS[view].label}`} hint="Camera view · keys 1–5">
+                  <Video size={14} aria-hidden="true" />
+                  <span className="hidden sm:inline">{SCENE_VIEWS[view].label}</span>
+                </HudButton>
+              </PopoverTrigger>
+              <PopoverContent align="end" className="w-52 border-charcoal bg-panel/95 p-1 backdrop-blur-md">
+                <ul aria-label="Camera view">
+                  {VIEW_KEYS.map((v, i) => (
+                    <li key={v}>
+                      <button
+                        type="button"
+                        aria-pressed={view === v}
+                        onClick={() => chooseView(v)}
+                        className={`flex w-full items-center justify-between rounded px-2 py-1.5 text-left text-sm transition-colors hover:bg-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
+                          view === v ? "text-foreground" : "text-muted-foreground"
+                        }`}
+                      >
+                        {SCENE_VIEWS[v].label}
+                        <kbd className="font-mono text-[10px] text-muted-foreground">{i + 1}</kbd>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </PopoverContent>
+            </Popover>
+
+            <Popover>
+              <PopoverTrigger asChild>
+                <HudButton label="Layers">
+                  <Layers size={14} aria-hidden="true" />
+                </HudButton>
+              </PopoverTrigger>
+              <PopoverContent align="end" className="w-80 border-0 bg-transparent p-0 shadow-none">
+                <LayerToggles layers={layers} onToggle={onToggle} label="Layers" />
+              </PopoverContent>
+            </Popover>
+
+            <Popover>
+              <PopoverTrigger asChild>
+                <HudButton label="Colour key and controls">
+                  <Info size={14} aria-hidden="true" />
+                </HudButton>
+              </PopoverTrigger>
+              <PopoverContent align="end" className="w-64 border-charcoal bg-panel/95 p-3 backdrop-blur-md">
+                <p className="brand-label mb-2 text-[10px]">Key</p>
+                <SceneKey />
+                <p className="mt-3 border-t border-charcoal pt-2 text-xs leading-relaxed text-muted-foreground">
+                  Drag to orbit, scroll to zoom, 1–5 for views, R to reset. Point at Earth or a boundary for its live
+                  value. The Sun is to the right.
+                </p>
+              </PopoverContent>
+            </Popover>
+
+            <HudButton
+              label={simulateStorm ? "Back to live" : "Simulate G4 storm"}
+              hint={simulateStorm ? "Return to the live L1 drivers" : "Show a severe (G4) storm: Bz −20 nT, 15 nPa, Kp 8"}
               aria-pressed={simulateStorm}
-              className={`inline-flex items-center gap-2 rounded-md border px-3 py-2 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
-                simulateStorm
-                  ? "border-sun bg-sun/15 text-sun hover:bg-sun/25"
-                  : "border-charcoal bg-panel text-foreground hover:bg-secondary"
-              }`}
+              active={simulateStorm}
+              tone="sun"
+              onClick={toggleStorm}
             >
               {simulateStorm ? <RotateCcw size={14} aria-hidden="true" /> : <Zap size={14} aria-hidden="true" />}
-              {simulateStorm ? "Back to live" : "Simulate G4 storm"}
-            </button>
-          </div>
-        </div>
-      </header>
+              <span className="hidden sm:inline">{simulateStorm ? "Back to live" : "Simulate G4"}</span>
+            </HudButton>
 
-      <div className="mx-auto grid max-w-[1600px] gap-4 p-4 md:p-6 lg:grid-cols-[minmax(0,1fr)_340px]">
-        <section
-          aria-label="3D magnetosphere"
-          className="relative h-[min(72vh,700px)] min-h-[380px] overflow-hidden rounded-lg border border-charcoal bg-black"
-        >
-          <SpaceScene
-            layers={layers}
-            magnetopauseCompression={visual.magnetopauseCompression}
-            beltIntensity={visual.beltIntensity}
-            reconnectionStrength={visual.reconnectionStrength}
-            mmsVectors={mms.vectors}
-            solarWindDrivers={drivers}
-            smoothDrivers={!simulateStorm}
-            onModelUpdate={setModelInfo}
-            view={view}
-            viewRequest={viewRequest}
-            canvasRef={canvasRef}
-            data={simulateStorm ? (mockSolarStormData as any) : undefined}
-            orbitFilter={["LEO", "MEO", "GEO"]}
-          />
+            <Sheet>
+              <SheetTrigger asChild>
+                <HudButton label="Details">
+                  <PanelRight size={14} aria-hidden="true" />
+                </HudButton>
+              </SheetTrigger>
+              <SheetContent side="right" className="w-full overflow-y-auto border-charcoal bg-panel sm:max-w-sm">
+                <SheetHeader className="text-left">
+                  <p className="brand-label">Field model</p>
+                  <SheetTitle>How far out the shield stands</SheetTitle>
+                  <SheetDescription>{geoLine}.</SheetDescription>
+                </SheetHeader>
+                <dl className="mt-4">
+                  <Readout label="Magnetopause standoff" value={fmt(fieldModel?.r0)} unit="RE" tone={geoExposed ? "risk" : "default"} />
+                  <Readout label="Bow shock nose" value={fmt(fieldModel?.bowShock)} unit="RE" />
+                  <Readout label="Aurora equatorward edge" value={fmt(fieldModel?.oval.equatorward, 0)} unit="° MLAT" />
+                  <Readout label="Dipole tilt" value={signed(tiltDeg)} unit="°" hint="Toward the Sun, from the UTC clock" />
+                  <Readout label="Field lines open to the solar wind" value={openPct} unit="%" />
+                </dl>
+                {tracedLine && (
+                  <p className="mt-2 font-mono text-[10px] uppercase tracking-[0.12em] text-muted-foreground">
+                    {tracedLine}
+                    {fieldModel?.extrapolated && <span className="ml-2 text-caution">· extrapolated</span>}
+                  </p>
+                )}
 
-          <div className="absolute inset-x-3 top-3 z-10 flex items-start justify-between gap-3">
-            <div
-              role="toolbar"
-              aria-label="Camera view"
-              className="flex max-w-full gap-1 overflow-x-auto rounded-md border border-charcoal bg-black/75 p-1 backdrop-blur"
-            >
-              {(Object.keys(SCENE_VIEWS) as SceneView[]).map((v) => (
-                <button
-                  key={v}
-                  type="button"
-                  aria-pressed={view === v}
-                  onClick={() => chooseView(v)}
-                  className={`whitespace-nowrap rounded px-2.5 py-1 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
-                    view === v ? "bg-secondary text-foreground" : "text-muted-foreground hover:text-foreground"
-                  }`}
-                >
-                  {SCENE_VIEWS[v].label}
-                </button>
-              ))}
-            </div>
-            <p className="hidden rounded-md bg-black/60 px-2 py-1 font-mono text-[10px] uppercase tracking-[0.12em] text-muted-foreground xl:block">
-              Drag to orbit · scroll to zoom · R resets · Sun is to the right
-            </p>
-          </div>
+                <p className="brand-label mt-6">Solar wind at L1{stormTier ? ` · ${stormTier}` : ""}</p>
+                <dl className="mt-2">
+                  <Readout label="IMF Bz" value={signed(drivers?.bz)} unit="nT" tone={bzTone(drivers?.bz)} />
+                  <Readout label="IMF By" value={signed(drivers?.by)} unit="nT" />
+                  <Readout label="Dynamic pressure" value={fmt(drivers?.pdyn)} unit="nPa" tone={pdynTone(drivers?.pdyn)} />
+                  <Readout label="Speed" value={fmt(plasma?.speed, 0)} unit="km/s" />
+                  <Readout label="Density" value={fmt(plasma?.density)} unit={<>cm<sup>−3</sup></>} />
+                  <Readout label="Kp" value={fmt(drivers?.kp)} tone={kpTone(drivers?.kp)} />
+                  <Readout label="L1 → Earth delay" value={l1DelayMin} unit="min" />
+                  <Readout
+                    label="MMS reconnection confidence"
+                    value={mms.latest?.quality.confidence != null ? String(mms.latest.quality.confidence) : "—"}
+                  />
+                </dl>
 
-          <FeedStatus mode={feed.mode} ageMin={feed.ageMin} className="pointer-events-none absolute bottom-3 left-3 z-10" />
-          <Legend />
-        </section>
+                <p className="mt-6 text-xs leading-relaxed text-muted-foreground">
+                  Shue (1998) magnetopause and Farris–Russell bow shock. Field lines are traced through a tilted IGRF
+                  dipole, the IMF and a tail current sheet: a qualitative topology model, not a forecast. Geometry uses
+                  the 5-minute mean of the drivers, as the model was fitted, and retraces only on meaningful changes.
+                </p>
+              </SheetContent>
+            </Sheet>
+          </nav>
+        </header>
 
-        <aside className="space-y-4">
-          <Panel
-            label="01_FIELD_MODEL"
-            title="How far out the shield stands"
-            aside={
-              fieldModel?.extrapolated ? (
-                <span
-                  className="rounded-full border border-caution/60 px-2 py-0.5 font-mono text-[10px] uppercase tracking-[0.12em] text-caution"
-                  title="Drivers are outside the range the Shue (1998) model was fitted for"
-                >
-                  Extrapolated
-                </span>
-              ) : undefined
-            }
-          >
-            <div className="mb-3 flex items-baseline gap-2">
-              <span className={`font-mono text-4xl font-bold tabular-nums ${geoExposed ? "text-sun" : "text-signal"}`}>
-                {fmt(fieldModel?.r0)}
-              </span>
-              <span className="text-sm text-muted-foreground">
-                R<sub>E</sub> magnetopause standoff
-              </span>
-            </div>
-            <p className={`mb-3 text-sm ${geoExposed ? "text-sun" : geoExposed === null ? "text-caution" : "text-muted-foreground"}`}>
-              {geoExposed === null
-                ? "No live reading: GEO exposure unknown."
-                : geoExposed
-                  ? `Inside GEO (${GEO_RE} RE): geostationary satellites are in the solar wind.`
-                  : `Outside GEO (${GEO_RE} RE): geostationary satellites are shielded.`}
-            </p>
-            <dl>
-              <Readout label="Bow shock nose" value={fmt(fieldModel?.bowShock)} unit={<>R<sub>E</sub></>} />
-              <Readout label="Aurora equatorward edge" value={fmt(fieldModel?.oval.equatorward, 0)} unit="° MLAT" />
-              <Readout label="Dipole tilt" value={signed(tiltDeg)} unit="°" hint="Angle of the magnetic axis toward the Sun; from the UTC clock" />
-              <Readout
-                label="Field lines open to the solar wind"
-                value={fieldModel?.openFraction != null ? `${Math.round(fieldModel.openFraction * 100)}` : "—"}
+        {/* Bottom edge: the shield itself left, what is driving it right; stacked on phones */}
+        <div className="pointer-events-none absolute inset-x-0 bottom-0 z-10 flex flex-col items-start gap-2 p-3 sm:flex-row sm:items-end sm:justify-between md:p-4">
+          <HudCluster label="Field model" className="max-w-full p-1.5">
+            <dl className="flex items-end gap-0.5">
+              <HudStat
+                size="lg"
+                label="Magnetopause"
+                value={fmt(fieldModel?.r0)}
+                unit="RE"
+                tone={geoExposed ? "risk" : fieldModel ? "signal" : "caution"}
+                detail={
+                  <>
+                    How far sunward Earth's field holds off the solar wind (Shue 1998).{" "}
+                    {geoExposed === null
+                      ? "No live reading, so GEO exposure is unknown."
+                      : `${geoLine}: GEO is at ${GEO_RE} RE.`}
+                    {fieldModel?.extrapolated && " Drivers are outside the range the model was fitted for."}
+                  </>
+                }
+              />
+              <HudStat
+                className="hidden sm:block"
+                label="Bow shock"
+                value={fmt(fieldModel?.bowShock)}
+                unit="RE"
+                detail="Where the supersonic solar wind slows, upstream of the magnetopause (Farris–Russell)."
+              />
+              <HudStat
+                className="hidden sm:block"
+                label="Open lines"
+                value={openPct}
                 unit="%"
-                hint="Share of traced field lines connected to the IMF: grows as southward Bz opens the magnetosphere"
+                detail="Share of traced field lines connected to the solar wind. Grows as southward Bz opens the magnetosphere."
+              />
+              <HudStat
+                className="hidden sm:block"
+                label="Aurora edge"
+                value={fmt(fieldModel?.oval.equatorward, 0)}
+                unit="° MLAT"
+                detail="Equatorward edge of the auroral oval, from Kp."
+              />
+              <HudStat
+                className="hidden sm:block"
+                label="Tilt"
+                value={signed(tiltDeg)}
+                unit="°"
+                detail="Angle of the magnetic axis toward the Sun, from the UTC clock."
               />
             </dl>
-            {fieldModel && (
-              <p className="mt-3 font-mono text-[11px] uppercase tracking-[0.12em] text-muted-foreground">
-                {fieldModel.smoothed ? "5-min mean drivers" : "Simulated drivers"} ·{" "}
-                {fieldModel.tracedAt != null
-                  ? `traced ${new Date(fieldModel.tracedAt).toISOString().slice(11, 16)} UTC`
-                  : "tracing field lines…"}
-              </p>
-            )}
-            <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
-              Shue (1998) magnetopause. Field lines traced through a tilted IGRF dipole, the IMF and a tail current sheet:
-              a qualitative topology model, not a forecast. Geometry uses the 5-minute mean of the drivers, as the model was
-              fitted, and retraces only on meaningful changes.
+            <p className="px-2 pb-0.5 pt-1 font-mono text-[9px] uppercase tracking-[0.14em] text-muted-foreground">
+              <span className={geoExposed ? "text-sun" : geoExposed === null ? "text-caution" : undefined}>{geoLine}</span>
+              {tracedLine && <span className="hidden md:inline"> · {tracedLine}</span>}
+              {fieldModel?.extrapolated && <span className="text-caution"> · extrapolated</span>}
             </p>
-          </Panel>
+          </HudCluster>
 
-          <Panel label="02_DRIVERS" title="Solar wind at L1" aside={latest?.alerts.stormTier && !simulateStorm ? (
-            <span className="rounded-full border border-charcoal px-2 py-0.5 font-mono text-[10px] uppercase tracking-[0.12em] text-muted-foreground">
-              {latest.alerts.stormTier}
-            </span>
-          ) : undefined}>
-            <dl>
-              <Readout
-                label="IMF Bz"
+          <HudCluster label="Solar wind at L1" className="p-1.5">
+            <p className="px-2 pb-1 font-mono text-[9px] font-bold uppercase tracking-[0.14em] text-muted-foreground">
+              Solar wind · L1{stormTier ? ` · ${stormTier}` : ""}
+            </p>
+            <dl className="grid grid-cols-3 gap-0.5">
+              <HudStat
+                label="Bz"
                 value={signed(drivers?.bz)}
                 unit="nT"
-                tone={drivers && drivers.bz <= -10 ? "risk" : drivers && drivers.bz < 0 ? "caution" : "default"}
-                hint="Southward (negative) Bz opens the dayside magnetopause to reconnection"
+                tone={bzTone(drivers?.bz)}
+                detail="North–south IMF. Southward (negative) Bz reconnects with Earth's field and opens the dayside."
               />
-              <Readout label="IMF By" value={signed(drivers?.by)} unit="nT" />
-              <Readout
-                label="Dynamic pressure"
+              <HudStat
+                label="Pressure"
                 value={fmt(drivers?.pdyn)}
                 unit="nPa"
-                tone={drivers && drivers.pdyn >= 8 ? "risk" : drivers && drivers.pdyn >= 4 ? "caution" : "default"}
+                tone={pdynTone(drivers?.pdyn)}
+                detail="Solar wind dynamic pressure. Higher pressure compresses the magnetopause."
               />
-              <Readout label="Speed" value={fmt(plasma?.speed, 0)} unit="km/s" />
-              <Readout label="Density" value={fmt(plasma?.density)} unit={<>cm<sup>−3</sup></>} />
-              <Readout label="Kp" value={fmt(drivers?.kp)} tone={drivers && drivers.kp >= 7 ? "risk" : drivers && drivers.kp >= 5 ? "caution" : "default"} />
-              <Readout
-                label="L1 → Earth delay"
-                value={!simulateStorm && latest?.propagation.l1DelaySeconds ? fmt(latest.propagation.l1DelaySeconds / 60, 0) : "—"}
-                unit="min"
+              <HudStat
+                label="Kp"
+                value={fmt(drivers?.kp)}
+                tone={kpTone(drivers?.kp)}
+                detail="Planetary geomagnetic activity, 0–9. 5 and above is a storm (G1+)."
               />
-              <Readout label="MMS reconnection confidence" value={mms.latest?.quality.confidence != null ? String(mms.latest.quality.confidence) : "—"} />
+              <HudStat
+                className="hidden sm:block"
+                label="By"
+                value={signed(drivers?.by)}
+                unit="nT"
+                detail="Dawn–dusk IMF. Twists the open field lines and shifts the cusps."
+              />
+              <HudStat
+                className="hidden sm:block"
+                label="Speed"
+                value={fmt(plasma?.speed, 0)}
+                unit="km/s"
+                detail={`Bulk solar wind speed. L1 to Earth takes about ${l1DelayMin === "—" ? "an hour" : `${l1DelayMin} min`} at this speed.`}
+              />
+              <HudStat
+                className="hidden sm:block"
+                label="Density"
+                value={fmt(plasma?.density)}
+                unit={<>cm<sup>−3</sup></>}
+                detail="Proton density. With speed, sets the dynamic pressure."
+              />
             </dl>
-          </Panel>
+          </HudCluster>
+        </div>
 
-          <LayerToggles layers={layers} onToggle={onToggle} label="03_LAYERS" />
-        </aside>
-      </div>
+        <a
+          href="#history"
+          className="pointer-events-auto absolute bottom-4 left-1/2 z-10 hidden -translate-x-1/2 items-center gap-1 rounded-full px-3 py-1 font-mono text-[9px] uppercase tracking-[0.14em] text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring lg:inline-flex"
+        >
+          24 h history <ChevronDown size={12} aria-hidden="true" />
+        </a>
+      </section>
 
-      <div className="mx-auto grid max-w-[1600px] gap-4 px-4 pb-8 md:px-6 lg:grid-cols-2">
+      <section id="history" aria-label="History" className="mx-auto grid max-w-[1600px] gap-4 p-4 md:p-6 lg:grid-cols-2">
         <SolarWindSpeedChart
           points={solarWind.points}
           loading={solarWind.loading}
@@ -381,7 +414,7 @@ const HeliophysicsDashboard = () => {
           source={solarWind.source}
         />
         <AuroraCastMap map={aurora.map} loading={aurora.loading} error={aurora.error} />
-      </div>
+      </section>
     </main>
   );
 };

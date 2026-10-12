@@ -1,215 +1,162 @@
-import { useState, useRef } from 'react';
-import { useSpaceWeather } from '@/hooks/useSpaceWeather';
-import { GaussGlobe } from '@/components/GaussGlobe';
-import { Shield, Activity, Globe, Zap, ArrowRight, Lock } from 'lucide-react';
+import { useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { PilotPanels } from '@/components/PilotPanels';
-import { useSession } from '@/lib/auth-client';
+import { Globe, KeyRound, Lock, Orbit } from 'lucide-react';
 import { motion } from 'framer-motion';
+import { GaussGlobe } from '@/components/GaussGlobe';
+import { PilotPanels } from '@/components/PilotPanels';
+import type { MagnetosphereModelInfo } from '@/components/scene/Magnetosphere';
+import { FeedStatus, HudCluster, HudStat, fmt, signed } from '@/components/hud/Hud';
+import { GEO_RE, SceneHoverTip } from '@/components/hud/SceneHoverTip';
+import { useSolarWind5s } from '@/hooks/useSolarWind5s';
+import { useNow } from '@/hooks/useNow';
+import { useSession } from '@/lib/auth-client';
+import { beltVisuals, liveDrivers } from '@/lib/physics/live-drivers';
 
-const containerVariants = {
-  hidden: { opacity: 0 },
-  visible: {
-    opacity: 1,
-    transition: { staggerChildren: 0.15, delayChildren: 0.4 }
-  }
+const LAYERS = {
+  earth: true,
+  belts: true,
+  magnetosphere: true,
+  fieldLines: true,
+  mhdWaves: false,
+  mmsReconnection: false,
 };
 
-const itemVariants = {
-  hidden: { opacity: 0, y: 30 },
-  visible: { 
-    opacity: 1, 
-    y: 0, 
-    transition: { type: 'spring', stiffness: 60, damping: 15 } 
-  }
-};
+const NAV_LINK =
+  'inline-flex h-8 items-center gap-1.5 rounded-md border border-charcoal/70 bg-black/55 px-2.5 text-xs font-medium text-foreground/90 backdrop-blur-md transition-colors hover:bg-white/10 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring';
+
+const fadeIn = (delay: number) => ({
+  initial: { opacity: 0 },
+  animate: { opacity: 1 },
+  transition: { duration: 0.8, delay, ease: 'easeOut' as const },
+});
 
 export default function PublicDashboard() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const { data, visualParams } = useSpaceWeather();
   const { data: session } = useSession();
   const signedIn = Boolean(session?.user?.id);
+  const [modelInfo, setModelInfo] = useState<MagnetosphereModelInfo | null>(null);
 
-  const isE2E =
-    typeof window !== 'undefined' &&
-    new URLSearchParams(window.location.search).has('e2e');
+  // The public latest L1 point, once a minute, drives the traced field lines.
+  const solarWind = useSolarWind5s({ history: false });
+  const now = useNow(60_000);
+  const live = useMemo(() => liveDrivers(solarWind.latest, now), [solarWind.latest, now]);
+  const { drivers, plasma } = live;
+  const visualParams = useMemo(() => beltVisuals(drivers), [drivers]);
+  const r0 = drivers && modelInfo ? modelInfo.r0 : null;
+  const geoExposed = r0 === null ? null : r0 < GEO_RE;
+
+  const isE2E = typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('e2e');
 
   return (
-    <div className="relative w-screen h-screen overflow-hidden bg-black font-sans text-white">
-      {/* 3D Scene Background */}
+    <div className="relative h-[100dvh] w-full overflow-hidden bg-black font-sans text-foreground">
       <div className="absolute inset-0 z-0">
         <GaussGlobe
-          layers={{
-            earth: true,
-            belts: true,
-            magnetosphere: true,
-            fieldLines: true,
-            mhdWaves: false,
-            mmsReconnection: false,
-          }}
+          layers={LAYERS}
           visualParams={visualParams}
           encodingMode="color"
           canvasRef={canvasRef}
           isE2E={isE2E}
+          solarWindDrivers={drivers}
+          onModelUpdate={setModelInfo}
+          hoverable
         />
       </div>
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute inset-0 z-[1] bg-[radial-gradient(ellipse_at_center,transparent_55%,hsl(var(--background)/0.8)_100%)]"
+      />
+      <SceneHoverTip model={modelInfo} live={Boolean(drivers)} />
 
-      {/* Premium Glassmorphic Overlay */}
-      <div className="absolute inset-0 z-10 pointer-events-none flex flex-col justify-between gap-6 overflow-y-auto p-8 md:p-12 [&>*]:shrink-0">
-        
-        {/* Header Section */}
-        <motion.header 
-          initial={{ opacity: 0, y: -20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.8, ease: "easeOut" }}
-          className="flex justify-between items-start"
-        >
-          <div className="pointer-events-auto">
-            <h1 className="text-4xl md:text-5xl font-bold tracking-tight bg-gradient-to-br from-white via-white to-white/40 bg-clip-text text-transparent drop-shadow-lg">
-              Gauss Aurora
-            </h1>
-            <p className="text-white/60 mt-2 text-sm md:text-base font-light tracking-wide max-w-md">
-              Real-time monitoring of Earth's magnetosphere. Protecting critical orbital and terrestrial infrastructure from space weather anomalies.
-            </p>
-          </div>
-          <div className="flex flex-wrap items-center gap-3 pointer-events-auto">
-            <Link 
-              to="/operator" 
-              className="flex items-center gap-2 px-5 py-2.5 rounded-full bg-white/10 hover:bg-white/20 border border-white/20 backdrop-blur-md transition-all text-sm font-medium"
-            >
-              <Lock className="w-4 h-4" />
-              Operator Portal
+      {/* Top edge: identity left, navigation right */}
+      <motion.header
+        {...fadeIn(0)}
+        className="pointer-events-none absolute inset-x-0 top-0 z-10 flex items-start justify-between gap-3 p-3 md:p-5"
+      >
+        <div className="flex min-w-0 flex-col items-start gap-1.5">
+          <h1 className="text-xl font-semibold tracking-tight md:text-2xl">Gauss Aurora</h1>
+          <p className="max-w-[34ch] text-xs leading-relaxed text-muted-foreground md:text-sm">
+            Earth's magnetic shield, traced live from the solar wind.
+          </p>
+          <FeedStatus mode={live.mode} ageMin={live.ageMin} />
+        </div>
+        <nav aria-label="Main" className="pointer-events-auto flex flex-wrap items-center justify-end gap-1.5">
+          {signedIn && (
+            <Link to="/heliophysics" className={NAV_LINK}>
+              <Orbit className="h-3.5 w-3.5" aria-hidden="true" />
+              Field model
             </Link>
-            <Link
-              to="/member"
-              className="flex items-center gap-2 px-5 py-2.5 rounded-full border border-white/20 bg-white/5 text-sm font-medium text-white/90 hover:bg-white/10 transition-all"
-            >
-              <Globe className="w-4 h-4" />
-              Member Hub
+          )}
+          <Link to="/operator" className={NAV_LINK}>
+            <Lock className="h-3.5 w-3.5" aria-hidden="true" />
+            Operator Portal
+          </Link>
+          <Link to="/member" className={NAV_LINK}>
+            <Globe className="h-3.5 w-3.5" aria-hidden="true" />
+            Member Hub
+          </Link>
+          {signedIn && (
+            <Link to="/account/api" className={NAV_LINK}>
+              <KeyRound className="h-3.5 w-3.5" aria-hidden="true" />
+              API keys
             </Link>
-            {signedIn && (
-              <Link
-                to="/account/api"
-                className="flex items-center gap-2 px-5 py-2.5 rounded-full border border-white/20 bg-white/5 text-sm font-medium text-white/90 hover:bg-white/10 transition-all"
-              >
-                API keys
-              </Link>
-            )}
-          </div>
-        </motion.header>
+          )}
+        </nav>
+      </motion.header>
 
-        {/* Real-time Telemetry Widgets */}
-        <motion.div 
-          variants={containerVariants}
-          initial="hidden"
-          animate="visible"
-          className="grid grid-cols-1 md:grid-cols-3 gap-6 w-full max-w-5xl mx-auto pointer-events-auto"
-        >
-          
-          {/* Solar Wind Widget */}
-          <motion.div variants={itemVariants} className="bg-white/5 border border-white/10 rounded-2xl p-6 backdrop-blur-xl shadow-2xl relative overflow-hidden group hover:bg-white/10 transition-colors">
-            <div className="absolute top-0 right-0 p-4 opacity-20 group-hover:opacity-40 transition-opacity">
-              <Zap className="w-12 h-12" />
-            </div>
-            <div className="flex items-center gap-2 text-white/60 mb-4 text-sm font-medium tracking-wide uppercase">
-              <Activity className="w-4 h-4 text-emerald-400" />
-              Solar Wind Velocity
-            </div>
-            <div className="flex items-baseline gap-2">
-              <span className="text-4xl font-bold tracking-tighter">
-                {data.source === 'unavailable' ? '—' : Math.round(data.solarWind.speed)}
-              </span>
-              <span className="text-white/40 font-medium">km/s</span>
-            </div>
-            <div className="mt-4 h-1 w-full bg-white/10 rounded-full overflow-hidden">
-              <motion.div 
-                initial={{ width: 0 }}
-                animate={{ width: `${Math.min(100, Math.max(0, (data.solarWind.speed - 300) / 5))}%` }}
-                transition={{ duration: 1.5, ease: "easeOut", delay: 1 }}
-                className="h-full bg-gradient-to-r from-emerald-400 to-cyan-400" 
-              />
-            </div>
-          </motion.div>
+      {/* Bottom edge: live readouts left, pilot offers right */}
+      <motion.div
+        {...fadeIn(0.4)}
+        className="pointer-events-none absolute inset-x-0 bottom-0 z-10 flex flex-col items-start gap-2 p-3 md:flex-row md:items-end md:justify-between md:p-5"
+      >
+        <HudCluster label="Live readouts" className="p-1.5">
+          <dl className="flex flex-wrap items-end gap-0.5">
+            <HudStat
+              size="lg"
+              label="Magnetopause"
+              value={fmt(r0)}
+              unit="RE"
+              tone={geoExposed ? 'risk' : r0 === null ? 'caution' : 'signal'}
+              detail={
+                r0 === null
+                  ? 'How far sunward Earth’s field holds off the solar wind. No live reading: the scene shows reference geometry.'
+                  : `How far sunward Earth’s field holds off the solar wind. ${
+                      geoExposed ? 'Inside' : 'Outside'
+                    } geostationary orbit (${GEO_RE} RE): GEO satellites are ${geoExposed ? 'exposed' : 'shielded'}.`
+              }
+            />
+            <HudStat
+              label="Solar wind"
+              value={fmt(plasma?.speed, 0)}
+              unit="km/s"
+              detail="Bulk speed measured at L1, about an hour upstream of Earth."
+            />
+            <HudStat
+              label="IMF Bz"
+              value={signed(drivers?.bz)}
+              unit="nT"
+              tone={drivers ? (drivers.bz <= -10 ? 'risk' : drivers.bz < 0 ? 'caution' : 'default') : 'default'}
+              detail={
+                !drivers
+                  ? 'Live solar wind data is unavailable.'
+                  : drivers.bz < -5
+                    ? 'Southward IMF is reconnecting with Earth’s field: storm conditions are possible.'
+                    : 'Northward or weak IMF: the magnetosphere is mostly closed to the solar wind.'
+              }
+            />
+            <HudStat
+              label="Kp"
+              value={fmt(drivers?.kp)}
+              tone={drivers ? (drivers.kp >= 7 ? 'risk' : drivers.kp >= 5 ? 'caution' : 'default') : 'default'}
+              detail="Planetary geomagnetic activity, 0–9. 5 and above is a storm (G1+)."
+            />
+          </dl>
+          <p className="px-2 pb-0.5 pt-1 font-mono text-[9px] uppercase tracking-[0.14em] text-muted-foreground">
+            NOAA SWPC · L1<span className="hidden md:inline"> · point at the scene for detail</span>
+          </p>
+        </HudCluster>
 
-          {/* Planetary K-index Widget */}
-          <motion.div variants={itemVariants} className="bg-white/5 border border-white/10 rounded-2xl p-6 backdrop-blur-xl shadow-2xl relative overflow-hidden group hover:bg-white/10 transition-colors">
-            <div className="absolute top-0 right-0 p-4 opacity-20 group-hover:opacity-40 transition-opacity">
-              <Globe className="w-12 h-12" />
-            </div>
-            <div className="flex items-center gap-2 text-white/60 mb-4 text-sm font-medium tracking-wide uppercase">
-              <Shield className="w-4 h-4 text-violet-400" />
-              Geomagnetic Activity (Kp)
-            </div>
-            <div className="flex items-baseline gap-2">
-              <span className="text-4xl font-bold tracking-tighter">
-                {data.source === 'unavailable' ? '—' : data.kpIndex.toFixed(1)}
-              </span>
-              <span className="text-white/40 font-medium">/ 9.0</span>
-            </div>
-            <div className="mt-4 flex gap-1">
-              {[...Array(9)].map((_, i) => (
-                <motion.div 
-                  key={i} 
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  transition={{ delay: 1 + (i * 0.1) }}
-                  className={`flex-1 h-1 rounded-full transition-colors ${i < Math.round(data.kpIndex) ? (i > 5 ? 'bg-red-500' : 'bg-violet-400') : 'bg-white/10'}`} 
-                />
-              ))}
-            </div>
-          </motion.div>
-
-          {/* Interplanetary Magnetic Field Widget */}
-          <motion.div variants={itemVariants} className="bg-white/5 border border-white/10 rounded-2xl p-6 backdrop-blur-xl shadow-2xl relative overflow-hidden group hover:bg-white/10 transition-colors">
-            <div className="absolute top-0 right-0 p-4 opacity-20 group-hover:opacity-40 transition-opacity">
-              <ArrowRight className="w-12 h-12 rotate-[-45deg]" />
-            </div>
-            <div className="flex items-center gap-2 text-white/60 mb-4 text-sm font-medium tracking-wide uppercase">
-              <Activity className="w-4 h-4 text-amber-400" />
-              IMF Bz
-            </div>
-            <div className="flex items-baseline gap-2">
-              <span className="text-4xl font-bold tracking-tighter">
-                {data.source === 'unavailable' ? '—' : `${data.imfBz > 0 ? '+' : ''}${data.imfBz.toFixed(1)}`}
-              </span>
-              <span className="text-white/40 font-medium">nT</span>
-            </div>
-            <p className="mt-4 text-xs text-white/50 leading-relaxed">
-              {data.source === 'unavailable'
-                ? "Live solar wind data is currently unavailable."
-                : data.isStale
-                ? "Last measurement is more than 15 minutes old."
-                : data.imfBz < -5 
-                ? "Southward IMF is enabling magnetic reconnection and potential storm activity." 
-                : "IMF is stable. Magnetosphere is currently shielded from major solar wind coupling."}
-            </p>
-          </motion.div>
-
-        </motion.div>
-
-        {/* Paid offers under the open visualisation */}
-        <PilotPanels />
-
-        {/* Footer */}
-        <motion.div 
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={{ delay: 1.5, duration: 1 }}
-          className="flex justify-between items-end"
-        >
-          <div className="text-white/40 text-xs tracking-widest uppercase font-mono">
-            Live data: NOAA Space Weather Prediction Center
-          </div>
-          <div className="flex items-center gap-3 pointer-events-auto hover:text-white transition-colors cursor-pointer">
-             <div className="flex items-center gap-2 bg-white/5 border border-white/10 backdrop-blur-md px-3 py-1.5 rounded-full">
-               <span className={`w-2 h-2 rounded-full ${data.isStale ? 'bg-amber-500' : 'bg-emerald-500 animate-pulse'}`}></span>
-               <span className="text-xs font-medium text-white/80 tracking-widest">
-                 {data.source === 'unavailable' ? 'NO DATA' : data.isStale ? 'STALE' : 'LIVE'}
-               </span>
-             </div>
-          </div>
-        </motion.div>
-      </div>
+        <PilotPanels className="max-w-full" />
+      </motion.div>
     </div>
   );
 }

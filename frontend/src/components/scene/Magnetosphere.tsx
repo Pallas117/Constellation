@@ -15,6 +15,7 @@ import { CLOSED_NEAR, OPEN_NEAR, type FieldRenderData, type TracedModel } from '
 import { damp } from '@/lib/physics/driver-smoothing';
 import { usePrefersReducedMotion } from '@/hooks/usePrefersReducedMotion';
 import { useTracedMagnetosphere } from './useTracedMagnetosphere';
+import { hoverHandlers, setSceneHover, type HoverTarget } from './scene-hover';
 
 /** 1 = normal animation, 0 = frozen (prefers-reduced-motion). */
 const MotionScale = createContext(1);
@@ -67,9 +68,15 @@ interface MagnetosphereProps {
   smoothing?: boolean;
   /** Called whenever a new field model is shown. */
   onModelUpdate?: (info: MagnetosphereModelInfo) => void;
+  /** Report the boundary under the pointer (see scene-hover.ts). */
+  hoverable?: boolean;
 }
 
 const TAIL_LENGTH = 40;
+
+/** Props that make a mesh report itself to the HUD hover readout. */
+const hoverProps = (target: HoverTarget, on: boolean) =>
+  on ? { userData: { hoverTarget: target }, ...hoverHandlers } : {};
 
 /* ------------------------------------------------------------------------- */
 /* Field lines                                                               */
@@ -396,7 +403,7 @@ const BOWSHOCK_FRAG = /* glsl */ `
 const MP_THETA = 72;
 const MP_PHI = 64;
 
-const Magnetopause = ({ r0, alpha, reconnection }: { r0: number; alpha: number; reconnection: number }) => {
+const Magnetopause = ({ r0, alpha, reconnection, hover }: { r0: number; alpha: number; reconnection: number; hover: boolean }) => {
   const animTime = useAnimTime();
   const tau = useTau(MORPH_TAU);
   const shape = useRef({ r0, alpha });
@@ -436,7 +443,7 @@ const Magnetopause = ({ r0, alpha, reconnection }: { r0: number; alpha: number; 
     material.uniforms.uReconnection.value = damp(material.uniforms.uReconnection.value, reconnection, dt, tau);
     material.uniforms.uR0.value = cur.r0;
   });
-  return <mesh geometry={geometry} material={material} />;
+  return <mesh geometry={geometry} material={material} {...hoverProps('magnetopause', hover)} />;
 };
 
 const BS_THETA = 48;
@@ -444,7 +451,7 @@ const BS_PHI = 56;
 const BS_ECC = 0.81;
 const bowShockRadius = (standoff: number) => (th: number) => (standoff * (1 + BS_ECC)) / (1 + BS_ECC * Math.cos(th));
 
-const BowShock = ({ standoff, pdyn }: { standoff: number; pdyn: number }) => {
+const BowShock = ({ standoff, pdyn, hover }: { standoff: number; pdyn: number; hover: boolean }) => {
   const animTime = useAnimTime();
   const tau = useTau(MORPH_TAU);
   const shape = useRef(standoff);
@@ -474,7 +481,7 @@ const BowShock = ({ standoff, pdyn }: { standoff: number; pdyn: number }) => {
     material.uniforms.uTime.value = animTime(clock.elapsedTime);
     material.uniforms.uPressure.value = damp(material.uniforms.uPressure.value, pdyn, dt, tau);
   });
-  return <mesh geometry={geometry} material={material} />;
+  return <mesh geometry={geometry} material={material} {...hoverProps('bowShock', hover)} />;
 };
 
 /* ------------------------------------------------------------------------- */
@@ -501,7 +508,7 @@ const CURRENT_SHEET_FRAG = /* glsl */ `
   }
 `;
 
-const CurrentSheet = ({ tilt, reconnection, width }: { tilt: number; reconnection: number; width: number }) => {
+const CurrentSheet = ({ tilt, reconnection, width, hover }: { tilt: number; reconnection: number; width: number; hover: boolean }) => {
   const animTime = useAnimTime();
   const tau = useTau(MORPH_TAU);
   const meshRef = useRef<THREE.Mesh>(null);
@@ -556,6 +563,7 @@ const CurrentSheet = ({ tilt, reconnection, width }: { tilt: number; reconnectio
       rotation={[-Math.PI / 2, 0, 0]}
       position={[0, 10 * Math.tan(shape.current.tilt), 0]}
       scale={[1, shape.current.width, 1]}
+      {...hoverProps('currentSheet', hover)}
     />
   );
 };
@@ -761,6 +769,7 @@ export const Magnetosphere = ({
   showFieldLines = true,
   smoothing = true,
   onModelUpdate,
+  hoverable = false,
 }: MagnetosphereProps) => {
   const resolved = useMemo<SolarWindDrivers>(() => {
     const legacy = driversFromVisualParams(compression, reconnectionStrength);
@@ -796,6 +805,9 @@ export const Magnetosphere = ({
     });
   }, [model.drivers, model.tracedAt, smoothing, state]);
 
+  // A boundary hidden or unmounted under the pointer never fires pointerout.
+  useEffect(() => () => setSceneHover(null), [visible, showSurfaces]);
+
   if (!visible) return null;
 
   const tailRadius = shueRadius(Math.PI * 0.75, state.r0, state.alpha) * Math.sin(Math.PI * 0.75);
@@ -805,9 +817,9 @@ export const Magnetosphere = ({
       <group>
         {showSurfaces && (
           <>
-            <BowShock standoff={state.bowShock} pdyn={model.drivers.pdyn} />
-            <Magnetopause r0={state.r0} alpha={state.alpha} reconnection={reconnection} />
-            <CurrentSheet tilt={state.tilt} reconnection={reconnection} width={tailRadius * 1.3} />
+            <BowShock standoff={state.bowShock} pdyn={model.drivers.pdyn} hover={hoverable} />
+            <Magnetopause r0={state.r0} alpha={state.alpha} reconnection={reconnection} hover={hoverable} />
+            <CurrentSheet tilt={state.tilt} reconnection={reconnection} width={tailRadius * 1.3} hover={hoverable} />
             <SolarWind standoff={state.bowShock} pdyn={model.drivers.pdyn} />
           </>
         )}
