@@ -12,7 +12,12 @@ interface Described {
 }
 
 /** What the HUD says about the object under the pointer, from the model the scene drew. */
-export function describeTarget(target: HoverTarget, model: MagnetosphereModelInfo | null, live: boolean): Described {
+export function describeTarget(
+  target: HoverTarget,
+  model: MagnetosphereModelInfo | null,
+  live: boolean,
+  r0Range: number[] | null = null,
+): Described {
   const reference = live ? null : "Reference geometry · no live reading";
   switch (target) {
     case "earth":
@@ -27,7 +32,9 @@ export function describeTarget(target: HoverTarget, model: MagnetosphereModelInf
         value:
           reference ??
           (model ? `${fmt(model.r0)} RE standoff · ${model.r0 < GEO_RE ? "inside" : "outside"} GEO` : "—"),
-        body: "Where Earth's field holds off the solar wind. Higher pressure and southward Bz push it inward.",
+        body: r0Range
+          ? `Where Earth's field holds off the solar wind. L1 spacecraft disagree on density, so it is ${fmt(r0Range[0])}–${fmt(r0Range[1])} RE depending on which is right.`
+          : "Where Earth's field holds off the solar wind. Higher pressure and southward Bz push it inward.",
       };
     case "bowShock":
       return {
@@ -47,10 +54,18 @@ export function describeTarget(target: HoverTarget, model: MagnetosphereModelInf
 }
 
 /** Cursor-following readout for whatever the pointer is over in the scene. */
-export function SceneHoverTip({ model, live }: { model: MagnetosphereModelInfo | null; live: boolean }) {
+export function SceneHoverTip({
+  model,
+  live,
+  r0Range = null,
+}: {
+  model: MagnetosphereModelInfo | null;
+  live: boolean;
+  r0Range?: number[] | null;
+}) {
   const hover = useSceneHover();
   if (!hover) return null;
-  const d = describeTarget(hover.target, model, live);
+  const d = describeTarget(hover.target, model, live, r0Range);
   // Keep it on screen: flip to the cursor's other side near the right or bottom edge.
   const flipX = hover.x > window.innerWidth - 300;
   const flipY = hover.y > window.innerHeight - 150;

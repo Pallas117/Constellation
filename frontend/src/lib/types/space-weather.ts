@@ -4,6 +4,8 @@ export interface QualityFlags {
   interpolated: boolean;
   extrapolated: boolean;
   lowConfidence: boolean;
+  /** 0 live, 1 measured but ageing (10-15 min), 3 no measurement within 15 min. */
+  tier?: number;
 }
 
 export interface UncertaintyEnvelope {
@@ -12,8 +14,38 @@ export interface UncertaintyEnvelope {
   sigma: number;
 }
 
+/** The solar wind reaching Earth now: L1 values one ballistic travel time ago, 5-min mean, GSM. */
+export interface ArrivingSolarWind {
+  observedAt: string;
+  arrivedAt: string;
+  travelSeconds: number;
+  spacecraft: string;
+  samples: number;
+  bz: number;
+  by: number;
+  density: number;
+  speed: number;
+  dynamicPressure: number;
+}
+
+/** The operational spacecraft's density disagrees with another L1 spacecraft by more than 2x. */
+export interface DensityDisagreement {
+  spacecraft: string;
+  density: number;
+  reference: string;
+  referenceDensity: number;
+  ratio: number;
+  minutes: number;
+}
+
 export interface CanonicalSpaceWeatherPoint {
+  /** When the point was issued (5 s ingest tick). */
   timestamp: string;
+  /** When its L1 values were measured; judge freshness from this. */
+  observedAt?: string | null;
+  spacecraft?: string;
+  arriving?: ArrivingSolarWind | null;
+  densityCheck?: DensityDisagreement | null;
   source: string;
   rho: number;
   velocity: {
@@ -42,6 +74,8 @@ export interface CanonicalSpaceWeatherPoint {
   indices: {
     kp: number;
     dst: number;
+    kpKind?: "estimated-1m" | "planetary-3h";
+    kpObservedAt?: string | null;
   };
   coupling: {
     newell: number;

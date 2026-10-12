@@ -16,7 +16,7 @@ import { useSolarWind5s } from "@/hooks/useSolarWind5s";
 import type { LayerVisibility } from "@/components/types";
 import type { RadiationDataPoint } from "@/lib/types/radiation";
 import mockSolarStormData from "@/data/mock_solar_storm.json";
-import { beltVisuals, liveDrivers } from "@/lib/physics/live-drivers";
+import { beltVisuals, liveDrivers, standoffIfReference } from "@/lib/physics/live-drivers";
 import { useNow } from "@/hooks/useNow";
 
 const VIEW_KEYS = Object.keys(SCENE_VIEWS) as SceneView[];
@@ -28,6 +28,7 @@ const pdynTone = (p: number | undefined): Tone =>
   p === undefined ? "default" : p >= 8 ? "risk" : p >= 4 ? "caution" : "default";
 const kpTone = (kp: number | undefined): Tone =>
   kp === undefined ? "default" : kp >= 7 ? "risk" : kp >= 5 ? "caution" : "default";
+const utc = (t: string | number) => new Date(t).toISOString().slice(11, 16);
 
 /* ------------------------------------------------------------------------- */
 /* Details drawer: the full readouts and method, for touch and deep reading  */
@@ -74,7 +75,10 @@ const HeliophysicsDashboard = () => {
   // Fail closed: without a fresh reading the scene shows reference geometry and
   // the readouts show "—", never nominal numbers presented as live.
   const live = useMemo(() => liveDrivers(latest, now, simulateStorm), [latest, now, simulateStorm]);
-  const { drivers, plasma } = live;
+  const { drivers, plasma, arriving, densityCheck } = live;
+  // The right-hand cluster shows the latest L1 reading: what reaches Earth next.
+  const next = simulateStorm && drivers && plasma ? { ...drivers, ...plasma, observedAt: null, etaEarth: null } : live.l1;
+  const kpValue = drivers?.kp;
   const visual = useMemo(() => beltVisuals(drivers), [drivers]);
 
   // The HUD describes exactly what the scene drew: the traced model, built
@@ -91,14 +95,39 @@ const HeliophysicsDashboard = () => {
   const geoExposed = fieldModel ? fieldModel.r0 < GEO_RE : null;
   const tiltDeg = modelInfo ? (modelInfo.tilt * 180) / Math.PI : null;
   const openPct = fieldModel?.openFraction != null ? `${Math.round(fieldModel.openFraction * 100)}` : "—";
-  const l1DelayMin =
-    !simulateStorm && latest?.propagation.l1DelaySeconds ? fmt(latest.propagation.l1DelaySeconds / 60, 0) : "—";
+  const travelMin = arriving
+    ? fmt(arriving.travelMin, 0)
+    : !simulateStorm && latest?.propagation.l1DelaySeconds
+      ? fmt(latest.propagation.l1DelaySeconds / 60, 0)
+      : "—";
+  const etaUtc = next?.etaEarth ? utc(next.etaEarth) : null;
   const stormTier = !simulateStorm ? latest?.alerts.stormTier : undefined;
-  const tracedLine = fieldModel
-    ? `${fieldModel.smoothed ? "5-min mean" : "Simulated"} · ${
-        fieldModel.tracedAt != null ? `traced ${new Date(fieldModel.tracedAt).toISOString().slice(11, 16)} UTC` : "tracing…"
-      }`
+  const driversLine = simulateStorm
+    ? "Simulated drivers"
+    : arriving
+      ? `At Earth · L1 ${utc(arriving.observedAt)} UTC · 5-min mean`
+      : drivers
+        ? "Latest L1 · 5-min mean · not propagated"
+        : null;
+  const tracedLine =
+    fieldModel && driversLine
+      ? `${driversLine} · ${fieldModel.tracedAt != null ? `traced ${utc(fieldModel.tracedAt)} UTC` : "tracing…"}`
+      : null;
+  // L1 spacecraft disagree on density: show where the magnetopause would be if the other is right.
+  const r0Alt = fieldModel && densityCheck && !simulateStorm ? standoffIfReference(fieldModel.r0, densityCheck) : null;
+  const r0Range = r0Alt != null && fieldModel ? [Math.min(r0Alt, fieldModel.r0), Math.max(r0Alt, fieldModel.r0)] : null;
+  const densityNote = densityCheck
+    ? `${densityCheck.spacecraft} reads ${fmt(densityCheck.density, 2)} cm⁻³ but ${densityCheck.reference} reads ${fmt(
+        densityCheck.referenceDensity,
+        2,
+      )} over the last ${densityCheck.minutes} min.`
     : null;
+  const kpNote =
+    live.kp?.kind === "estimated-1m"
+      ? "NOAA's estimated planetary Kp, updated each minute."
+      : live.kp?.kind === "planetary-3h"
+        ? "3-hourly planetary Kp: can lag by up to 3 h."
+        : "";
   const geoLine =
     geoExposed === null
       ? "GEO exposure unknown"
@@ -145,7 +174,7 @@ const HeliophysicsDashboard = () => {
           reconnectionStrength={visual.reconnectionStrength}
           mmsVectors={mms.vectors}
           solarWindDrivers={drivers}
-          smoothDrivers={!simulateStorm}
+          smoothDrivers={!simulateStorm && !live.propagated}
           onModelUpdate={setModelInfo}
           view={view}
           viewRequest={viewRequest}
@@ -159,7 +188,7 @@ const HeliophysicsDashboard = () => {
           aria-hidden="true"
           className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_center,transparent_55%,hsl(var(--background)/0.8)_100%)]"
         />
-        <SceneHoverTip model={modelInfo} live={Boolean(drivers)} />
+        <SceneHoverTip model={modelInfo} live={Boolean(drivers)} r0Range={r0Range} />
 
         {/* Top edge: identity and feed left, controls right */}
         <header className="pointer-events-none absolute inset-x-0 top-0 z-10 flex items-start justify-between gap-3 p-3 md:p-4">
@@ -255,6 +284,14 @@ const HeliophysicsDashboard = () => {
                 </SheetHeader>
                 <dl className="mt-4">
                   <Readout label="Magnetopause standoff" value={fmt(fieldModel?.r0)} unit="RE" tone={geoExposed ? "risk" : "default"} />
+                  {r0Range && (
+                    <Readout
+                      label="Standoff if the other spacecraft's density is right"
+                      value={`${fmt(r0Range[0])}–${fmt(r0Range[1])}`}
+                      unit="RE"
+                      tone="caution"
+                    />
+                  )}
                   <Readout label="Bow shock nose" value={fmt(fieldModel?.bowShock)} unit="RE" />
                   <Readout label="Aurora equatorward edge" value={fmt(fieldModel?.oval.equatorward, 0)} unit="° MLAT" />
                   <Readout label="Dipole tilt" value={signed(tiltDeg)} unit="°" hint="Toward the Sun, from the UTC clock" />
@@ -267,15 +304,35 @@ const HeliophysicsDashboard = () => {
                   </p>
                 )}
 
-                <p className="brand-label mt-6">Solar wind at L1{stormTier ? ` · ${stormTier}` : ""}</p>
+                <p className="brand-label mt-6">Solar wind reaching Earth now</p>
                 <dl className="mt-2">
-                  <Readout label="IMF Bz" value={signed(drivers?.bz)} unit="nT" tone={bzTone(drivers?.bz)} />
-                  <Readout label="IMF By" value={signed(drivers?.by)} unit="nT" />
-                  <Readout label="Dynamic pressure" value={fmt(drivers?.pdyn)} unit="nPa" tone={pdynTone(drivers?.pdyn)} />
+                  <Readout label="IMF Bz (GSM)" value={signed(drivers?.bz)} unit="nT" tone={bzTone(drivers?.bz)} />
+                  <Readout label="IMF By (GSM)" value={signed(drivers?.by)} unit="nT" />
+                  <Readout label="Dynamic pressure" value={fmt(drivers?.pdyn, 2)} unit="nPa" tone={pdynTone(drivers?.pdyn)} />
                   <Readout label="Speed" value={fmt(plasma?.speed, 0)} unit="km/s" />
-                  <Readout label="Density" value={fmt(plasma?.density)} unit={<>cm<sup>−3</sup></>} />
-                  <Readout label="Kp" value={fmt(drivers?.kp)} tone={kpTone(drivers?.kp)} />
-                  <Readout label="L1 → Earth delay" value={l1DelayMin} unit="min" />
+                  <Readout label="Kp" value={fmt(kpValue)} tone={kpTone(kpValue)} hint={kpNote || undefined} />
+                  <Readout
+                    label="Measured at L1"
+                    value={arriving ? `${utc(arriving.observedAt)} UTC` : "—"}
+                    hint={arriving ? `${arriving.spacecraft}, ${travelMin} min upstream` : "Not yet propagated"}
+                  />
+                </dl>
+
+                <p className="brand-label mt-6">Next from L1{stormTier ? ` · ${stormTier}` : ""}</p>
+                <dl className="mt-2">
+                  <Readout label="IMF Bz (GSM)" value={signed(next?.bz)} unit="nT" tone={bzTone(next?.bz)} />
+                  <Readout label="IMF By (GSM)" value={signed(next?.by)} unit="nT" />
+                  <Readout label="Dynamic pressure" value={fmt(next?.pdyn, 2)} unit="nPa" tone={pdynTone(next?.pdyn)} />
+                  <Readout label="Speed" value={fmt(next?.speed, 0)} unit="km/s" />
+                  <Readout
+                    label="Density"
+                    value={fmt(next?.density, 2)}
+                    unit={<>cm<sup>−3</sup></>}
+                    tone={densityCheck ? "caution" : "default"}
+                    hint={densityNote ?? undefined}
+                  />
+                  <Readout label="Measured" value={next?.observedAt ? `${utc(next.observedAt)} UTC` : "—"} hint={latest?.spacecraft} />
+                  <Readout label="Reaches Earth" value={etaUtc ? `≈ ${etaUtc} UTC` : "—"} hint={`~${travelMin} min at this speed`} />
                   <Readout
                     label="MMS reconnection confidence"
                     value={mms.latest?.quality.confidence != null ? String(mms.latest.quality.confidence) : "—"}
@@ -283,9 +340,11 @@ const HeliophysicsDashboard = () => {
                 </dl>
 
                 <p className="mt-6 text-xs leading-relaxed text-muted-foreground">
-                  Shue (1998) magnetopause and Farris–Russell bow shock. Field lines are traced through a tilted IGRF
-                  dipole, the IMF and a tail current sheet: a qualitative topology model, not a forecast. Geometry uses
-                  the 5-minute mean of the drivers, as the model was fitted, and retraces only on meaningful changes.
+                  NOAA SWPC real-time solar wind, 1-minute data from the operational L1 spacecraft (fill values and
+                  implausible readings rejected; density cross-checked against the other L1 spacecraft). Each minute is
+                  propagated ballistically to Earth (±~3 min), and the model uses the 5-minute mean of what is arriving
+                  now. Shue (1998) magnetopause and Farris–Russell bow shock; field lines traced through a tilted IGRF
+                  dipole, the IMF and a tail current sheet: a qualitative topology model, not a forecast.
                 </p>
               </SheetContent>
             </Sheet>
@@ -294,14 +353,15 @@ const HeliophysicsDashboard = () => {
 
         {/* Bottom edge: the shield itself left, what is driving it right; stacked on phones */}
         <div className="pointer-events-none absolute inset-x-0 bottom-0 z-10 flex flex-col items-start gap-2 p-3 sm:flex-row sm:items-end sm:justify-between md:p-4">
-          <HudCluster label="Field model" className="max-w-full p-1.5">
+          {/* sm:w-min: the panel is as wide as its numbers; the notes wrap under them */}
+          <HudCluster label="Field model" className="max-w-full p-1.5 sm:w-min">
             <dl className="flex items-end gap-0.5">
               <HudStat
                 size="lg"
                 label="Magnetopause"
                 value={fmt(fieldModel?.r0)}
                 unit="RE"
-                tone={geoExposed ? "risk" : fieldModel ? "signal" : "caution"}
+                tone={geoExposed ? "risk" : !fieldModel || fieldModel.extrapolated || r0Range ? "caution" : "signal"}
                 detail={
                   <>
                     How far sunward Earth's field holds off the solar wind (Shue 1998).{" "}
@@ -309,6 +369,7 @@ const HeliophysicsDashboard = () => {
                       ? "No live reading, so GEO exposure is unknown."
                       : `${geoLine}: GEO is at ${GEO_RE} RE.`}
                     {fieldModel?.extrapolated && " Drivers are outside the range the model was fitted for."}
+                    {r0Range && ` ${densityNote} With the other reading it would be ${fmt(r0Alt)} RE.`}
                   </>
                 }
               />
@@ -341,58 +402,72 @@ const HeliophysicsDashboard = () => {
                 detail="Angle of the magnetic axis toward the Sun, from the UTC clock."
               />
             </dl>
-            <p className="px-2 pb-0.5 pt-1 font-mono text-[9px] uppercase tracking-[0.14em] text-muted-foreground">
+            <p className="px-2 pt-1 font-mono text-[9px] uppercase tracking-[0.14em] text-muted-foreground">
               <span className={geoExposed ? "text-sun" : geoExposed === null ? "text-caution" : undefined}>{geoLine}</span>
-              {tracedLine && <span className="hidden md:inline"> · {tracedLine}</span>}
-              {fieldModel?.extrapolated && <span className="text-caution"> · extrapolated</span>}
+              {r0Range && (
+                <span className="text-caution">
+                  {" "}
+                  · {fmt(r0Range[0])}–{fmt(r0Range[1])} RE by density
+                </span>
+              )}
             </p>
+            {tracedLine && (
+              <p className="hidden px-2 pb-0.5 pt-0.5 font-mono text-[9px] uppercase tracking-[0.14em] text-muted-foreground/70 md:block">
+                {tracedLine}
+                {fieldModel?.extrapolated && <span className="text-caution"> · extrapolated</span>}
+              </p>
+            )}
           </HudCluster>
 
-          <HudCluster label="Solar wind at L1" className="p-1.5">
+          <HudCluster label="Next from L1" className="p-1.5">
             <p className="px-2 pb-1 font-mono text-[9px] font-bold uppercase tracking-[0.14em] text-muted-foreground">
-              Solar wind · L1{stormTier ? ` · ${stormTier}` : ""}
+              Next from L1{etaUtc ? ` · at Earth ≈ ${etaUtc} UTC` : ""}
+              {stormTier ? ` · ${stormTier}` : ""}
             </p>
             <dl className="grid grid-cols-3 gap-0.5">
               <HudStat
                 label="Bz"
-                value={signed(drivers?.bz)}
+                value={signed(next?.bz)}
                 unit="nT"
-                tone={bzTone(drivers?.bz)}
-                detail="North–south IMF. Southward (negative) Bz reconnects with Earth's field and opens the dayside."
+                tone={bzTone(next?.bz)}
+                detail={`North–south IMF (GSM) measured at L1. Southward (negative) Bz reconnects with Earth's field and opens the dayside.${
+                  arriving ? ` The scene uses the ${signed(drivers?.bz)} nT now arriving at Earth.` : ""
+                }`}
               />
               <HudStat
                 label="Pressure"
-                value={fmt(drivers?.pdyn)}
+                value={fmt(next?.pdyn, 2)}
                 unit="nPa"
-                tone={pdynTone(drivers?.pdyn)}
-                detail="Solar wind dynamic pressure. Higher pressure compresses the magnetopause."
+                tone={densityCheck ? "caution" : pdynTone(next?.pdyn)}
+                detail={`Solar wind dynamic pressure. Higher pressure compresses the magnetopause.${densityNote ? ` ${densityNote}` : ""}`}
               />
               <HudStat
                 label="Kp"
-                value={fmt(drivers?.kp)}
-                tone={kpTone(drivers?.kp)}
-                detail="Planetary geomagnetic activity, 0–9. 5 and above is a storm (G1+)."
+                value={fmt(kpValue)}
+                tone={kpTone(kpValue)}
+                detail={`Planetary geomagnetic activity, 0–9. 5 and above is a storm (G1+). ${kpNote}`}
               />
               <HudStat
                 className="hidden sm:block"
                 label="By"
-                value={signed(drivers?.by)}
+                value={signed(next?.by)}
                 unit="nT"
-                detail="Dawn–dusk IMF. Twists the open field lines and shifts the cusps."
+                detail="Dawn–dusk IMF (GSM). Twists the open field lines and shifts the cusps."
               />
               <HudStat
                 className="hidden sm:block"
                 label="Speed"
-                value={fmt(plasma?.speed, 0)}
+                value={fmt(next?.speed, 0)}
                 unit="km/s"
-                detail={`Bulk solar wind speed. L1 to Earth takes about ${l1DelayMin === "—" ? "an hour" : `${l1DelayMin} min`} at this speed.`}
+                detail={`Bulk solar wind speed. L1 to Earth takes about ${travelMin === "—" ? "an hour" : `${travelMin} min`} at this speed.`}
               />
               <HudStat
                 className="hidden sm:block"
                 label="Density"
-                value={fmt(plasma?.density)}
+                value={fmt(next?.density, 2)}
                 unit={<>cm<sup>−3</sup></>}
-                detail="Proton density. With speed, sets the dynamic pressure."
+                tone={densityCheck ? "caution" : "default"}
+                detail={densityNote ? `L1 spacecraft disagree: ${densityNote}` : "Proton density. With speed, sets the dynamic pressure."}
               />
             </dl>
           </HudCluster>

@@ -62,7 +62,7 @@ export function HudStat({
         className,
       )}
     >
-      <dt className="font-mono text-[9px] font-bold uppercase leading-none tracking-[0.14em] text-muted-foreground">
+      <dt className="whitespace-nowrap font-mono text-[9px] font-bold uppercase leading-none tracking-[0.14em] text-muted-foreground">
         {label}
       </dt>
       <dd
@@ -143,7 +143,13 @@ const FEED_STYLES: Record<FeedMode, { label: string; className: string; dot: str
     label: "Live",
     className: "text-foreground",
     dot: "bg-signal animate-pulse",
-    hint: "Solar wind measured at L1, about 1.5 million km sunward, roughly an hour before it reaches Earth.",
+    hint: "Solar wind measured at L1, 1.5 million km sunward. The scene shows what is reaching Earth now, measured there about 45 min ago; the age is the newest L1 reading's.",
+  },
+  transit: {
+    label: "L1 delayed · in transit",
+    className: "text-caution",
+    dot: "bg-caution",
+    hint: "The L1 feed is late, but solar wind it already measured is still reaching Earth: the scene stays accurate for up to one travel time (~45 min).",
   },
   stale: {
     label: "Stale",

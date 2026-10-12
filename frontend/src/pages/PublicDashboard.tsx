@@ -40,7 +40,7 @@ export default function PublicDashboard() {
   const solarWind = useSolarWind5s({ history: false });
   const now = useNow(60_000);
   const live = useMemo(() => liveDrivers(solarWind.latest, now), [solarWind.latest, now]);
-  const { drivers, plasma } = live;
+  const { drivers, plasma, arriving } = live;
   const visualParams = useMemo(() => beltVisuals(drivers), [drivers]);
   const r0 = drivers && modelInfo ? modelInfo.r0 : null;
   const geoExposed = r0 === null ? null : r0 < GEO_RE;
@@ -57,6 +57,7 @@ export default function PublicDashboard() {
           canvasRef={canvasRef}
           isE2E={isE2E}
           solarWindDrivers={drivers}
+          smoothDrivers={!live.propagated}
           onModelUpdate={setModelInfo}
           hoverable
         />
@@ -128,7 +129,7 @@ export default function PublicDashboard() {
               label="Solar wind"
               value={fmt(plasma?.speed, 0)}
               unit="km/s"
-              detail="Bulk speed measured at L1, about an hour upstream of Earth."
+              detail="Bulk speed of the solar wind reaching Earth now, measured at L1 about 45 min earlier."
             />
             <HudStat
               label="IMF Bz"
@@ -151,7 +152,10 @@ export default function PublicDashboard() {
             />
           </dl>
           <p className="px-2 pb-0.5 pt-1 font-mono text-[9px] uppercase tracking-[0.14em] text-muted-foreground">
-            NOAA SWPC · L1<span className="hidden md:inline"> · point at the scene for detail</span>
+            {arriving
+              ? `Solar wind reaching Earth · L1 ${new Date(arriving.observedAt).toISOString().slice(11, 16)} UTC`
+              : "NOAA SWPC · L1"}
+            <span className="hidden md:inline"> · point at the scene for detail</span>
           </p>
         </HudCluster>
 

@@ -33,6 +33,8 @@ export interface GaussGlobeProps {
     highFidelityBelts?: boolean;
     /** Live drivers for the traced field lines; reference geometry without them. */
     solarWindDrivers?: SolarWindDrivers;
+    /** Average the drivers over 5 min before tracing; off when they are already means. */
+    smoothDrivers?: boolean;
     onModelUpdate?: (info: MagnetosphereModelInfo) => void;
     hoverable?: boolean;
 }
@@ -47,6 +49,7 @@ export function GaussGlobe({
     isE2E = false,
     highFidelityBelts = false,
     solarWindDrivers,
+    smoothDrivers = true,
     onModelUpdate,
     hoverable = false,
 }: GaussGlobeProps) {
@@ -77,6 +80,7 @@ export function GaussGlobe({
             spaceObjectAlert={spaceObjectAlert}
             highFidelity={highFidelityBelts}
             solarWindDrivers={solarWindDrivers}
+            smoothDrivers={smoothDrivers}
             onModelUpdate={onModelUpdate}
             hoverable={hoverable}
         />
