@@ -7,7 +7,7 @@
 
 'use client'; // Mark as client component (for Next.js compatibility, if migrated)
 
-import { Suspense, useRef, useEffect, useMemo } from 'react';
+import { Suspense, useRef, useEffect, useMemo, useState } from 'react';
 import { Canvas, useThree } from '@react-three/fiber';
 import { OrbitControls, Stars, PerspectiveCamera } from '@react-three/drei';
 import * as THREE from 'three';
@@ -15,6 +15,7 @@ import { Earth } from './Earth';
 import { VanAllenBelts } from './VanAllenBelts';
 import { Magnetosphere, type MagnetosphereModelInfo } from './Magnetosphere';
 import { hoverHandlers } from './scene-hover';
+import { ShaderWarmup } from './ShaderWarmup';
 import { dipoleTiltRad, type SolarWindDrivers } from '@/lib/physics/geomagnetic';
 import { useNow } from '@/hooks/useNow';
 import { OrbitRings } from './OrbitRings';
@@ -334,16 +335,31 @@ const SceneContent = ({
   );
 };
 
+/** Only mention the warm-up if it takes long enough to notice (a first visit). */
+const PREPARING_NOTICE_MS = 400;
+
 export const SpaceScene = (props: SpaceSceneProps) => {
+  // Nothing renders until every shader is compiled: the first draw of an
+  // uncompiled material blocks the main thread (see ShaderWarmup).
+  const [ready, setReady] = useState(false);
+  const [slow, setSlow] = useState(false);
+  useEffect(() => {
+    if (ready) return;
+    const t = window.setTimeout(() => setSlow(true), PREPARING_NOTICE_MS);
+    return () => window.clearTimeout(t);
+  }, [ready]);
+
   return (
     <div
       role="application"
       aria-label="3D space weather visualization. Use arrow keys to rotate, plus/minus to zoom, and R to reset view."
+      aria-busy={!ready}
       tabIndex={0}
-      className="w-full h-full focus:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-signal/40"
+      className="relative w-full h-full focus:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-signal/40"
     >
       <Canvas
         ref={props.canvasRef}
+        frameloop={ready ? 'always' : 'never'}
         gl={{ 
           antialias: true, 
           alpha: true,
@@ -355,8 +371,17 @@ export const SpaceScene = (props: SpaceSceneProps) => {
       >
         <Suspense fallback={null}>
           <SceneContent {...props} />
+          <ShaderWarmup onReady={() => setReady(true)} />
         </Suspense>
       </Canvas>
+      {!ready && slow && (
+        <p
+          role="status"
+          className="pointer-events-none absolute inset-0 flex items-center justify-center font-mono text-[10px] uppercase tracking-[0.14em] text-muted-foreground"
+        >
+          <span className="animate-pulse">Preparing the field model…</span>
+        </p>
+      )}
     </div>
   );
 };

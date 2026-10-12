@@ -104,7 +104,6 @@ const createGlowMaterial = () => {
     },
     vertexShader: `
       attribute float size;
-      attribute vec3 color;
       varying vec3 vColor;
       varying float vSize;
       

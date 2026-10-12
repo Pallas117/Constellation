@@ -1,4 +1,4 @@
-import { useRef, useMemo } from 'react';
+import { useEffect, useRef, useMemo } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 
@@ -105,6 +105,9 @@ export const VanAllenBelts = ({ visible, intensity, compression = 1, highFidelit
     const latSeg = highFidelity ? 64 : 16;
     return createLShellGeometry(3.2, 5.0, 60, lonSeg, latSeg, compression);
   }, [compression, highFidelity]);
+  // Compression follows the live pressure, so geometries are replaced often: free the old ones.
+  useEffect(() => () => innerBeltGeometry.dispose(), [innerBeltGeometry]);
+  useEffect(() => () => outerBeltGeometry.dispose(), [outerBeltGeometry]);
 
   // Inner belt material (proton belt)
   const innerBeltMaterial = useMemo(() => {
@@ -238,6 +241,14 @@ export const VanAllenBelts = ({ visible, intensity, compression = 1, highFidelit
       side: THREE.DoubleSide,
     });
   }, []);
+
+  useEffect(
+    () => () => {
+      innerBeltMaterial.dispose();
+      outerBeltMaterial.dispose();
+    },
+    [innerBeltMaterial, outerBeltMaterial],
+  );
 
   useFrame((state) => {
     const time = state.clock.elapsedTime;

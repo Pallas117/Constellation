@@ -13,6 +13,7 @@ import {
 } from '@/lib/physics/geomagnetic';
 import { CLOSED_NEAR, OPEN_NEAR, type FieldRenderData, type TracedModel } from '@/lib/physics/field-render';
 import { damp } from '@/lib/physics/driver-smoothing';
+import { fillRevolution, revolutionTopology } from '@/lib/physics/revolution';
 import { usePrefersReducedMotion } from '@/hooks/usePrefersReducedMotion';
 import { useTracedMagnetosphere } from './useTracedMagnetosphere';
 import { hoverHandlers, setSceneHover, type HoverTarget } from './scene-hover';
@@ -255,18 +256,22 @@ const FieldLineTracers = memo(function FieldLineTracers({ data, count = 520 }: {
     geometry.attributes.position.needsUpdate = true;
   });
 
-  return (
-    <points ref={pointsRef} geometry={geometry} frustumCulled={false}>
-      <shaderMaterial
-        vertexShader={GLOW_POINT_VERT}
-        fragmentShader={GLOW_POINT_FRAG}
-        transparent
-        depthWrite={false}
-        blending={THREE.AdditiveBlending}
-      />
-    </points>
-  );
+  const material = useMemo(makeTracerMaterial, []);
+  useEffect(() => () => material.dispose(), [material]);
+
+  return <points ref={pointsRef} geometry={geometry} material={material} frustumCulled={false} />;
 });
+
+/** Tracer particle material. Exported so the scene can compile it before the first trace. */
+export function makeTracerMaterial(): THREE.ShaderMaterial {
+  return new THREE.ShaderMaterial({
+    vertexShader: GLOW_POINT_VERT,
+    fragmentShader: GLOW_POINT_FRAG,
+    transparent: true,
+    depthWrite: false,
+    blending: THREE.AdditiveBlending,
+  });
+}
 
 const GLOW_POINT_VERT = /* glsl */ `
   attribute float size;
@@ -294,55 +299,6 @@ const GLOW_POINT_FRAG = /* glsl */ `
 /* ------------------------------------------------------------------------- */
 /* Boundaries                                                                */
 /* ------------------------------------------------------------------------- */
-
-/** Index/uv topology for a surface of revolution; positions are filled separately. */
-function revolutionTopology(thetaSteps: number, phiSteps: number) {
-  const uvs: number[] = [];
-  const indices: number[] = [];
-  for (let i = 0; i <= thetaSteps; i++) {
-    for (let j = 0; j <= phiSteps; j++) {
-      uvs.push(j / phiSteps, i / thetaSteps);
-      if (i < thetaSteps && j < phiSteps) {
-        const a = i * (phiSteps + 1) + j;
-        const b = a + phiSteps + 1;
-        indices.push(a, b, a + 1, a + 1, b, b + 1);
-      }
-    }
-  }
-  const g = new THREE.BufferGeometry();
-  g.setAttribute('position', new THREE.BufferAttribute(new Float32Array((thetaSteps + 1) * (phiSteps + 1) * 3), 3));
-  g.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
-  g.setIndex(indices);
-  return g;
-}
-
-/** Surface of revolution about the Sun–Earth line from r(θ), cut at x = -tail, written in place. */
-function fillRevolution(g: THREE.BufferGeometry, radius: (theta: number) => number, tail: number, thetaSteps: number, phiSteps: number) {
-  // Find the θ at which the surface reaches x = -tail.
-  let thetaMax = Math.PI / 2;
-  for (let th = Math.PI / 2; th < Math.PI * 0.98; th += 0.005) {
-    thetaMax = th;
-    if (radius(th) * Math.cos(th) <= -tail) break;
-  }
-  const attr = g.attributes.position as THREE.BufferAttribute;
-  const pos = attr.array as Float32Array;
-  let o = 0;
-  for (let i = 0; i <= thetaSteps; i++) {
-    const th = (i / thetaSteps) * thetaMax;
-    const r = radius(th);
-    const ct = Math.cos(th);
-    const st = Math.sin(th);
-    for (let j = 0; j <= phiSteps; j++) {
-      const ph = (j / phiSteps) * Math.PI * 2;
-      pos[o++] = r * ct;
-      pos[o++] = r * st * Math.sin(ph);
-      pos[o++] = r * st * Math.cos(ph);
-    }
-  }
-  attr.needsUpdate = true;
-  g.computeVertexNormals();
-  g.computeBoundingSphere();
-}
 
 const BOUNDARY_VERT = /* glsl */ `
   varying vec3 vPos;
