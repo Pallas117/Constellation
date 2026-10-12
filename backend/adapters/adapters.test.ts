@@ -129,7 +129,8 @@ test("ESA: queries within dataset coverage, survives bare NaN, takes last comple
       dataUrl = url;
       return {
         status: 200,
-        body: '{"data":[["2026-10-09T21:33:18.000Z", [18085.1, 2155.0, 37300.4]], ["2026-10-09T21:33:19.000Z", [18085.1283, 2154.9995, 37300.3859]], ["2026-10-09T21:41:18.000Z", [NaN, NaN, NaN]]]}',
+        // Live layout for parameters=Latitude,Longitude,Radius,B_NEC (GAU-85).
+        body: '{"data":[["2026-10-09T21:33:18.000Z", 51.2, -3.1, 6821000.0, [18085.1, 2155.0, 37300.4]], ["2026-10-09T21:33:19.000Z", 51.26, -3.08, 6821001.5, [18085.1283, 2154.9995, 37300.3859]], ["2026-10-09T21:41:18.000Z", 84.1, 85.7, 6781642.4, [NaN, NaN, NaN]]]}',
       };
     }
     return undefined;
@@ -138,7 +139,10 @@ test("ESA: queries within dataset coverage, survives bare NaN, takes last comple
   assert.equal(readout.timestamp, "2026-10-09T21:33:19.000Z");
   assert.equal(readout.magneticFieldNec.z, 37300.3859);
   assert.equal("magneticFieldGse" in readout, false);
+  assert.deepEqual(readout.position, { latitudeDeg: 51.26, longitudeDeg: -3.08, radiusKm: 6821.0015, altitudeKm: 6821.0015 - 6371.2 });
+  assert.ok(readout.fieldMagnitudeNt > 40_000, "LEO |B| is the main field, ~10^4 nT, not the ~5 nT IMF");
   const q = new URL(dataUrl).searchParams;
+  assert.equal(q.get("parameters"), "Latitude,Longitude,Radius,B_NEC");
   assert.equal(q.get("dataset"), "SW_FAST_MAGA_LR_1B");
   assert.equal(q.get("stop"), "2026-10-09T21:41:19Z", "never asks beyond stopDate (HAPI 1405)");
 });
