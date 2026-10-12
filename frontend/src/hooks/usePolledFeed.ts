@@ -32,6 +32,10 @@ export interface PolledFeedOptions<T> {
   signInMessage?: string;
   /** Changing this restarts polling (e.g. the signed-in user id). */
   restartKey?: string;
+  /** Path for each request given the data held so far, e.g. to ask only for newer points. */
+  nextPath?: (path: string, held: T | null) => string;
+  /** Combine held data with a response; returning `held` itself skips the re-render. */
+  reduce?: (held: T | null, next: T) => T;
 }
 
 /** Poll a Gauss backend feed with backoff; see lib/api/feed-poller.ts. */
@@ -43,12 +47,19 @@ export function usePolledFeed<T>({
   disabledStatus = "waiting",
   signInMessage = "Sign in to see this feed.",
   restartKey,
+  nextPath,
+  reduce,
 }: PolledFeedOptions<T>): PolledFeed<T> {
   const [data, setData] = useState<T | null>(null);
   const [status, setStatus] = useState<FeedStatus>("waiting");
   const [error, setError] = useState<string | null>(null);
   const parseRef = useRef(parse);
   parseRef.current = parse;
+  const nextPathRef = useRef(nextPath);
+  nextPathRef.current = nextPath;
+  const reduceRef = useRef(reduce);
+  reduceRef.current = reduce;
+  const heldRef = useRef<T | null>(null);
 
   useEffect(() => {
     if (!path) {
@@ -57,16 +68,22 @@ export function usePolledFeed<T>({
       return;
     }
     let mounted = true;
-    const url = `${getBackendBaseUrl()}${path}`;
+    const base = getBackendBaseUrl();
+    // A new route or user starts from nothing, so an incremental feed backfills again.
+    heldRef.current = null;
 
     const poll = async (signal: AbortSignal): Promise<PollOutcome> => {
+      const url = `${base}${nextPathRef.current?.(path, heldRef.current) ?? path}`;
       // The backend authenticates by the better-auth session cookie only. Don't
       // call getAuthHeaders() here: it costs a /get-session round trip per poll
       // and better-auth sessions carry no bearer token.
       const response = await fetch(url, { signal, credentials: "include" });
       const outcome = classifyResponse(response);
       if (outcome.kind === "ok" && mounted) {
-        setData(parseRef.current(await response.json()));
+        const parsed = parseRef.current(await response.json());
+        const combine = reduceRef.current;
+        heldRef.current = combine ? combine(heldRef.current, parsed) : parsed;
+        setData(heldRef.current);
         setStatus("live");
         setError(null);
       }

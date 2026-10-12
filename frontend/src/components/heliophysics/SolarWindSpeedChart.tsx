@@ -7,8 +7,13 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
+import { memo, useDeferredValue, useMemo } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import type { CanonicalSpaceWeatherPoint } from "@/lib/types/space-weather";
+import { bucketMeans } from "@/lib/api/feed-series";
+
+/** Points drawn for 24 h: recharts re-lays-out every point on each update. */
+const MAX_CHART_POINTS = 720;
 
 interface SolarWindSpeedChartProps {
   points: CanonicalSpaceWeatherPoint[];
@@ -25,26 +30,34 @@ function formatTick(ts: string): string {
     .padStart(2, "0")}`;
 }
 
-export function SolarWindSpeedChart({
+export const SolarWindSpeedChart = memo(function SolarWindSpeedChart({
   points,
   loading,
   error,
   source,
 }: SolarWindSpeedChartProps) {
-  const chartData = points.map((point) => ({
-    timestamp: point.timestamp,
-    speed: Number(point.solarWind.speed.toFixed(2)),
-    density: Number(point.solarWind.density.toFixed(2)),
-    bz: Number(point.magneticField.z.toFixed(2)),
-    stormTier: point.alerts.stormTier,
-  }));
+  // Low priority: a new point never delays a frame of the 3D scene.
+  const deferred = useDeferredValue(points);
+  const { chartData, bucketMin } = useMemo(() => {
+    const { buckets, bucketMs } = bucketMeans(
+      deferred,
+      (p) => ({ speed: p.solarWind.speed, density: p.solarWind.density }),
+      MAX_CHART_POINTS,
+    );
+    return {
+      chartData: buckets.map((b) => ({ timestamp: b.timestamp, ...b.values })),
+      bucketMin: Math.round(bucketMs / 60_000),
+    };
+  }, [deferred]);
 
   return (
     <Card className="h-full">
       <CardHeader className="pb-2">
-        <div className="flex items-center justify-between">
-          <CardTitle className="text-base">Solar Wind Speed (5s feed)</CardTitle>
-          <span className="text-xs text-muted-foreground">Source: {source}</span>
+        <div className="flex items-center justify-between gap-3">
+          <CardTitle className="text-base">Solar wind speed and density</CardTitle>
+          <span className="font-mono text-[10px] uppercase tracking-[0.12em] text-muted-foreground">
+            {bucketMin}-min means · {source}
+          </span>
         </div>
       </CardHeader>
       <CardContent className="space-y-2">
@@ -86,7 +99,7 @@ export function SolarWindSpeedChart({
                 yAxisId="speed"
                 type="monotone"
                 dataKey="speed"
-                stroke="hsl(var(--primary))"
+                stroke="hsl(var(--foreground))"
                 dot={false}
                 strokeWidth={2}
                 isAnimationActive={false}
@@ -95,7 +108,7 @@ export function SolarWindSpeedChart({
                 yAxisId="density"
                 type="monotone"
                 dataKey="density"
-                stroke="hsl(var(--chart-2, 160 70% 45%))"
+                stroke="hsl(var(--earth))"
                 dot={false}
                 strokeWidth={1.8}
                 isAnimationActive={false}
@@ -106,4 +119,4 @@ export function SolarWindSpeedChart({
       </CardContent>
     </Card>
   );
-}
+});

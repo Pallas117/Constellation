@@ -3,11 +3,12 @@ import type { CanonicalSpaceWeatherPoint } from "@/lib/types/space-weather";
 import { getAccessToken } from "@/lib/api/auth";
 import { useFeedSession, usePolledFeed, type FeedStatus } from "@/hooks/usePolledFeed";
 import { wsOrigin } from "@/lib/api/base-url";
+import { lookbackSince, mergeSeries, SERIES_MAX_POINTS } from "@/lib/api/feed-series";
 
 // Signed in: the 24 h, 5 s feed (`user` role). Signed out: only the public
 // latest point, about once a minute (NOAA updates each minute). The auth-only
 // route is never requested without a session, because CyberTiger counts 401s.
-const FEED_ENDPOINT = "/api/feed/space-weather/5s?lookback=PT24H&limit=17280";
+const FEED_ENDPOINT = "/api/feed/space-weather/5s";
 const PUBLIC_LATEST_ENDPOINT = "/api/feed/space-weather/latest";
 const POLL_INTERVAL_MS = 5000;
 const PUBLIC_POLL_INTERVAL_MS = 60_000;
@@ -31,13 +32,25 @@ const parseSeries = (json: unknown): CanonicalSpaceWeatherPoint[] => {
 const parseLatest = (json: unknown): CanonicalSpaceWeatherPoint[] =>
   json && typeof json === "object" && "timestamp" in json ? [json as CanonicalSpaceWeatherPoint] : [];
 
-export function useSolarWind5s(): SolarWind5sState {
+// Backfill 24 h once, then ask only for points newer than the last one held.
+const seriesPath = (path: string, held: CanonicalSpaceWeatherPoint[] | null) =>
+  `${path}?lookback=${lookbackSince(held, Date.now())}&limit=${SERIES_MAX_POINTS}`;
+const latestPath = (path: string) => path;
+
+export interface SolarWind5sOptions {
+  /** false: latest point only, once a minute, even when signed in (the landing). */
+  history?: boolean;
+}
+
+export function useSolarWind5s({ history = true }: SolarWind5sOptions = {}): SolarWind5sState {
   const session = useFeedSession();
-  const full = session.signedIn;
+  const full = history && session.signedIn;
   const feed = usePolledFeed({
     path: session.resolved ? (full ? FEED_ENDPOINT : PUBLIC_LATEST_ENDPOINT) : null,
     intervalMs: full ? POLL_INTERVAL_MS : PUBLIC_POLL_INTERVAL_MS,
     parse: full ? parseSeries : parseLatest,
+    nextPath: full ? seriesPath : latestPath,
+    reduce: mergeSeries,
     restartKey: session.userKey,
   });
 
@@ -82,13 +95,8 @@ export function useSolarWind5s(): SolarWind5sState {
           if (message.topic !== "space-weather" || !message.payload) {
             return;
           }
-          setPoints((prev) => {
-            const next = [...prev, message.payload];
-            const dedup = new Map(next.map((point) => [point.timestamp, point]));
-            return Array.from(dedup.values()).sort(
-              (a, b) => Date.parse(a.timestamp) - Date.parse(b.timestamp),
-            );
-          });
+          const payload = message.payload;
+          setPoints((prev) => mergeSeries(prev, [payload]));
         } catch {
           // Ignore malformed websocket payloads.
         }
