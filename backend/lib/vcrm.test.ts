@@ -55,3 +55,18 @@ test("VCRM: baseline rules enforce id, 'shall', method and evidence (GAU-120)", 
   assert.ok(problems.some((p) => p.includes("needs evidence")));
   assert.deepEqual(validateBaseline(base([{ verifiedBy: ["x"] }])), []);
 });
+
+test("FMEA: mitigated needs passing evidence; gaps are reported; broken evidence fails (GAU-121)", async () => {
+  const { buildFmea, renderFmeaMarkdown } = await import("../../scripts/verify/vcrm.ts");
+  const row = { item: "x", failureMode: "y", effect: "e", detection: "d", mitigation: "m", severity: 5, likelihood: 4, residualLikelihood: 1 };
+  const res = buildFmea([
+    { ...row, id: "FM-01", verifiedBy: ["a passes"] },
+    { ...row, id: "FM-02", verifiedBy: [], gap: "standby host", residualLikelihood: 4 },
+    { ...row, id: "FM-03", verifiedBy: ["renamed"] },
+    { ...row, id: "FM-04", verifiedBy: [] },
+    { ...row, id: "FM-05", verifiedBy: ["a passes"], severity: 7 },
+  ], parseJunit(junit));
+  assert.deepEqual(res.map((r) => r.status), ["mitigated", "gap", "broken", "broken", "broken"]);
+  assert.equal(res[1].residualRisk, 20);
+  assert.match(renderFmeaMarkdown(res), /20 \*\*HIGH\*\*/);
+});

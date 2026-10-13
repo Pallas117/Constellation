@@ -1,6 +1,6 @@
 {
   "$comment": "Constellation requirements baseline (GAU-120). NASA SP-2016-6105 Rev 2 §6.2/§5.3. Methods: T test, A analysis, I inspection, D demonstration. T evidence = exact test names; A/I/D evidence = repo paths. Verified by `npm run verify`.",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "requirements": [
     {
       "id": "REQ-ING-001",
@@ -24,7 +24,9 @@
       "parent": "GAU-44",
       "method": "T",
       "owner": "Josh",
-      "verifiedBy": ["ingest tick: no jitter between fetches, and an over-age readout is dropped (GAU-44)"]
+      "verifiedBy": [
+        "ingest tick: no jitter between fetches, and an over-age readout is dropped (GAU-44)"
+      ]
     },
     {
       "id": "REQ-ING-003",
@@ -232,7 +234,10 @@
       "parent": "GAU-40",
       "method": "I",
       "owner": "Josh",
-      "evidence": ["ml/models/README.md", "ml/models/promoted.json"]
+      "evidence": [
+        "ml/models/README.md",
+        "ml/models/promoted.json"
+      ]
     },
     {
       "id": "REQ-PER-001",
@@ -260,6 +265,19 @@
       "verifiedBy": [
         "caps coupling window length to prevent unbounded memory growth",
         "canonical feed keeps a fixed-size ring buffer"
+      ]
+    },
+    {
+      "id": "REQ-PER-003",
+      "title": "Persistence failures are surfaced",
+      "statement": "A failed telemetry write shall be counted and reported as a persist-stage error, shall not stop the point being served, and shall never crash the process.",
+      "rationale": "Write failures were swallowed and the persist stage read ok (GAU-121, FMEA FM-10).",
+      "parent": "GAU-121",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "FMEA: a failed telemetry write is counted and reported, and the tick still publishes (GAU-121)",
+        "FMEA: best-effort appends never reject (no unhandled rejection); strict appends do; both count (GAU-121)"
       ]
     },
     {
@@ -297,7 +315,9 @@
       "parent": "GAU-46",
       "method": "T",
       "owner": "Josh",
-      "verifiedBy": ["backend harness starts and responds to /health"]
+      "verifiedBy": [
+        "backend harness starts and responds to /health"
+      ]
     },
     {
       "id": "REQ-ARC-001",
@@ -307,7 +327,9 @@
       "parent": "GAU-85",
       "method": "I",
       "owner": "Josh",
-      "evidence": ["docs/adr/swarm-not-an-imf-source.md"]
+      "evidence": [
+        "docs/adr/swarm-not-an-imf-source.md"
+      ]
     }
   ]
 }

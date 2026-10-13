@@ -105,6 +105,7 @@ export class IngestionWorker {
   /** Timestamp of the newest NOAA measurement seen, kept after expiry so its age stays visible. */
   private lastMeasurementAt: string | null = null;
   private ticking = false;
+  private loggedCloudDisabled = false;
   readonly timing = new PipelineTimer();
 
   constructor(private onTick?: (result: IngestionTickResult) => void) {}
@@ -422,18 +423,21 @@ export class IngestionWorker {
     try {
       // Local Buffer is always the priority (Air-Gap ready)
       await this.timing.time("persist", async () => {
-        await bedrock.appendTelemetry({ type: "canonical", data: point, timestamp: point.timestamp });
+        await bedrock.appendTelemetryStrict({ type: "canonical", data: point, timestamp: point.timestamp });
         if (mmsVector) {
-          await bedrock.appendTelemetry({ type: "mms", data: mmsVector, timestamp: mmsVector.timestamp });
+          await bedrock.appendTelemetryStrict({ type: "mms", data: mmsVector, timestamp: mmsVector.timestamp });
         }
       });
 
       // Cloud Sync only if link is CLOUD or SAT
-      if (link.mode !== "AIRGAP") {
+      if (link.mode !== "AIRGAP" && !this.loggedCloudDisabled) {
+        this.loggedCloudDisabled = true; // once, not every 5 s tick
         console.log("[IngestionWorker] Cloud persistence disabled; local bedrock buffering remains active.");
       }
     } catch (error) {
-      console.warn(`[IngestionWorker] Persistence throttled (Link: ${link.mode}). Data safely buffered in Bedrock.`);
+      // The local write itself failed (disk full, permissions): the point is served from memory but
+      // NOT persisted. The persist stage counts the error in /api/system/pipeline. GAU-121.
+      console.error(`[IngestionWorker] Bedrock write failed; point not persisted (${bedrock.failedWrites} failed writes).`, error);
     }
 
     const result: IngestionTickResult = {

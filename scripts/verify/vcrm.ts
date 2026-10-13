@@ -131,3 +131,76 @@ export function renderMarkdown(rows: RowResult[], meta: { version: string; commi
   }
   return lines.join("\n") + "\n";
 }
+
+// ---------------------------------------------------------------------------------------------
+// FMEA (GAU-121, NASA SP-2016-6105 §6.4): rows link failure modes to fault-injection tests.
+
+export interface FmeaRow {
+  id: string;
+  item: string;
+  failureMode: string;
+  effect: string;
+  detection: string;
+  mitigation: string;
+  severity: number;
+  likelihood: number;
+  residualLikelihood: number;
+  verifiedBy: string[];
+  gap?: string;
+}
+
+export interface FmeaResult {
+  id: string;
+  item: string;
+  failureMode: string;
+  risk: number;
+  residualRisk: number;
+  status: "mitigated" | "gap" | "broken";
+  problems: string[];
+  gap?: string;
+}
+
+/** Residual risk at or above this (S x L on the 5x5 matrix) is reported as high. */
+export const HIGH_RESIDUAL_RISK = 12;
+
+export function buildFmea(rows: FmeaRow[], outcomes: Map<string, TestOutcome>): FmeaResult[] {
+  return rows.map((r) => {
+    const problems: string[] = [];
+    for (const name of r.verifiedBy) {
+      const o = outcomes.get(name);
+      if (!o) problems.push(`test not found (renamed or removed?): "${name}"`);
+      else if (o !== "pass") problems.push(`test ${o}: "${name}"`);
+    }
+    for (const [k, v] of [["severity", r.severity], ["likelihood", r.likelihood], ["residualLikelihood", r.residualLikelihood]] as const) {
+      if (!Number.isInteger(v) || v < 1 || v > 5) problems.push(`${k} must be an integer 1-5`);
+    }
+    if (!r.verifiedBy.length && !r.gap) problems.push("no verifying test and no gap recorded");
+    return {
+      id: r.id,
+      item: r.item,
+      failureMode: r.failureMode,
+      risk: r.severity * r.likelihood,
+      residualRisk: r.severity * r.residualLikelihood,
+      status: problems.length ? "broken" : r.gap ? "gap" : "mitigated",
+      problems,
+      gap: r.gap,
+    };
+  });
+}
+
+export function renderFmeaMarkdown(rows: FmeaResult[]): string {
+  const icon = { mitigated: "✅", gap: "⚠️", broken: "❌" } as const;
+  const lines = [
+    "",
+    "## FMEA (ingest pipeline)",
+    "",
+    `${rows.filter((r) => r.status === "mitigated").length}/${rows.length} failure modes mitigated with passing evidence; ` +
+      `${rows.filter((r) => r.status === "gap").length} open gaps; ` +
+      `${rows.filter((r) => r.residualRisk >= HIGH_RESIDUAL_RISK).length} with high residual risk (≥ ${HIGH_RESIDUAL_RISK}).`,
+    "",
+    "| ID | Item: failure mode | Risk → residual | Status | Gap |",
+    "|---|---|---|---|---|",
+    ...rows.map((r) => `| ${r.id} | ${r.item}: ${r.failureMode} | ${r.risk} → ${r.residualRisk}${r.residualRisk >= HIGH_RESIDUAL_RISK ? " **HIGH**" : ""} | ${icon[r.status]} ${r.status} | ${r.gap ?? ""} |`),
+  ];
+  return lines.join("\n") + "\n";
+}

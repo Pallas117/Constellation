@@ -14,7 +14,17 @@
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import { buildMatrix, parseJunit, renderMarkdown, validateBaseline, type Baseline } from "./vcrm.ts";
+import {
+  buildFmea,
+  buildMatrix,
+  HIGH_RESIDUAL_RISK,
+  parseJunit,
+  renderFmeaMarkdown,
+  renderMarkdown,
+  validateBaseline,
+  type Baseline,
+  type FmeaRow,
+} from "./vcrm.ts";
 
 const root = path.resolve(import.meta.dirname, "../..");
 const outDir = path.join(root, "test-results", "verification");
@@ -52,12 +62,27 @@ const commit = spawnSync("git", ["rev-parse", "--short", "HEAD"], { cwd: root, e
 const outcomes = existsSync(junitPath) ? parseJunit(readFileSync(junitPath, "utf8")) : new Map();
 const rows = buildMatrix(baseline, outcomes, (p) => existsSync(path.join(root, p)));
 const meta = { version: baseline.version, commit, generatedAt: new Date().toISOString() };
-writeFileSync(path.join(outDir, "vcrm.json"), JSON.stringify({ ...meta, rows }, null, 2) + "\n");
-writeFileSync(path.join(outDir, "vcrm.md"), renderMarkdown(rows, meta));
+const fmeaPath = path.join(root, "requirements/fmea.json");
+const fmea = existsSync(fmeaPath)
+  ? buildFmea((JSON.parse(readFileSync(fmeaPath, "utf8")) as { rows: FmeaRow[] }).rows, outcomes)
+  : [];
+writeFileSync(path.join(outDir, "vcrm.json"), JSON.stringify({ ...meta, rows, fmea }, null, 2) + "\n");
+writeFileSync(path.join(outDir, "vcrm.md"), renderMarkdown(rows, meta) + (fmea.length ? renderFmeaMarkdown(fmea) : ""));
 const verified = rows.filter((r) => r.status === "verified").length;
 console.log(`\n▶ VCRM: ${verified}/${rows.length} requirements verified (test-results/verification/vcrm.md)`);
 rows.filter((r) => r.problems.length).forEach((r) => r.problems.forEach((p) => console.log(`  ✗ ${r.id}: ${p}`)));
 results.vcrm = verified === rows.length;
+
+if (fmea.length) {
+  const mitigated = fmea.filter((r) => r.status === "mitigated").length;
+  console.log(`\n▶ FMEA: ${mitigated}/${fmea.length} failure modes mitigated with passing evidence`);
+  fmea.filter((r) => r.problems.length).forEach((r) => r.problems.forEach((p) => console.log(`  ✗ ${r.id}: ${p}`)));
+  fmea.filter((r) => r.status === "gap").forEach((r) => console.log(`  ⚠ ${r.id} open gap: ${r.gap}`));
+  fmea.filter((r) => r.residualRisk >= HIGH_RESIDUAL_RISK)
+    .forEach((r) => console.log(`  ⚠ ${r.id} high residual risk ${r.residualRisk}: ${r.item}: ${r.failureMode}`));
+  // Broken evidence fails the gate; open gaps and high residual risk are reported, not blocking.
+  results.fmea = fmea.every((r) => r.status !== "broken");
+}
 
 const failed = Object.entries(results).filter(([, ok]) => !ok).map(([k]) => k);
 console.log(failed.length === 0

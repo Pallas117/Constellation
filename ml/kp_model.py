@@ -74,7 +74,10 @@ class KpForecaster:
       return None
     pointer = json.loads(PROMOTED_POINTER.read_text())
     path = MODELS_DIR / pointer["file"]
-    return KpForecaster.load(path) if path.exists() else None
+    if not path.exists():
+      # A promotion that points at a missing file is a broken deployment, not "no model". GAU-121.
+      raise FileNotFoundError(f"promoted model file missing: {pointer['file']}")
+    return KpForecaster.load(path)
 
   def _member(self, m: Dict[str, np.ndarray], x: np.ndarray):
     h = np.maximum(0.0, x @ m["w1"] + m["b1"])
