@@ -10,7 +10,7 @@
 
 'use client';
 
-import { useRef, useMemo } from 'react';
+import { useEffect, useRef, useMemo } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 
@@ -87,10 +87,10 @@ export const MHDWaves = ({
     return new THREE.ShaderMaterial({
       uniforms: {
         time: { value: 0 },
-        amplitude: { value: amplitude },
+        amplitude: { value: 0 }, // set every frame
         k: { value: K },
         vA: { value: V_A },
-        speed: { value: speed },
+        speed: { value: 1 }, // set every frame
       },
       vertexShader: `
         attribute float phase;
@@ -159,9 +159,9 @@ export const MHDWaves = ({
     return new THREE.ShaderMaterial({
       uniforms: {
         time: { value: 0 },
-        amplitude: { value: amplitude * 0.5 },
+        amplitude: { value: 0 }, // set every frame
         k: { value: K * 0.8 },
-        speed: { value: speed },
+        speed: { value: 1 }, // set every frame
       },
       vertexShader: `
         varying vec3 vNormal;
@@ -202,7 +202,18 @@ export const MHDWaves = ({
     });
   }, [amplitude, speed]);
 
+  useEffect(
+    () => () => {
+      shearGeometry.dispose();
+      fastWaveGeometry.dispose();
+      shearMaterial.dispose();
+      fastWaveMaterial.dispose();
+    },
+    [shearGeometry, fastWaveGeometry, shearMaterial, fastWaveMaterial],
+  );
+
   useFrame((state) => {
+    if (!visible) return;
     const t = state.clock.elapsedTime;
     if (shearMaterial) {
       shearMaterial.uniforms.time.value = t;
@@ -216,30 +227,24 @@ export const MHDWaves = ({
     }
   });
 
-  if (!visible) return null;
-
   const showShear = mode === 'shear' || mode === 'both';
   const showFast = mode === 'fast' || mode === 'both';
 
+  // Mounted even when hidden, so the scene's shader warm-up compiles these too and
+  // switching the layer on draws at once instead of stalling to compile.
   return (
-    <group name="mhd-waves">
-      {showShear && (
-        <group ref={shearLinesRef}>
-          <lineSegments
-            geometry={shearGeometry}
-            material={shearMaterial}
-          />
-        </group>
-      )}
-      {showFast && (
-        <mesh
-          ref={fastWaveRef}
-          geometry={fastWaveGeometry}
-          material={fastWaveMaterial}
-          rotation={[-Math.PI / 2, 0, 0]}
-          position={[0, 0, 0]}
-        />
-      )}
+    <group name="mhd-waves" visible={visible}>
+      <group ref={shearLinesRef} visible={showShear}>
+        <lineSegments geometry={shearGeometry} material={shearMaterial} />
+      </group>
+      <mesh
+        ref={fastWaveRef}
+        visible={showFast}
+        geometry={fastWaveGeometry}
+        material={fastWaveMaterial}
+        rotation={[-Math.PI / 2, 0, 0]}
+        position={[0, 0, 0]}
+      />
     </group>
   );
 };

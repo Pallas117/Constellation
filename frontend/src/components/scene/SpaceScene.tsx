@@ -367,7 +367,8 @@ export const SpaceScene = (props: SpaceSceneProps) => {
           powerPreference: 'high-performance',
         }}
         dpr={[1, 2]}
-        className="w-full h-full"
+        // Transparent until warmed up: ShaderWarmup draws a frame out of sight first.
+        className={`w-full h-full transition-opacity duration-500 motion-reduce:transition-none ${ready ? 'opacity-100' : 'opacity-0'}`}
       >
         <Suspense fallback={null}>
           <SceneContent {...props} />
