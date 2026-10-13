@@ -1,6 +1,6 @@
 {
   "$comment": "Constellation requirements baseline (GAU-120). NASA SP-2016-6105 Rev 2 §6.2/§5.3. Methods: T test, A analysis, I inspection, D demonstration. T evidence = exact test names; A/I/D evidence = repo paths. Verified by `npm run verify`.",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "requirements": [
     {
       "id": "REQ-ING-001",
@@ -346,6 +346,21 @@
         "FMEA FM-09: live forecast skill is scored against observed Kp and compared with persistence (GAU-122)",
         "FMEA FM-14: free disk is read from the data volume and graded (GAU-122)",
         "backend harness starts and responds to /health"
+      ]
+    },
+    {
+      "id": "REQ-OPS-003",
+      "title": "Controlled deployment",
+      "statement": "Only verified release tags on main shall be deployed to the live checkout; every deploy shall be recorded, health-checked, and rolled back automatically when unhealthy.",
+      "rationale": "NASA SE §6.5 configuration management and §5.5 transition (GAU-123).",
+      "parent": "GAU-123",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "deploy: only verified tags on main to a clean checkout (GAU-123)",
+        "deploy: healthy release is activated and recorded; dry run changes nothing (GAU-123)",
+        "deploy: an unhealthy release rolls back automatically (GAU-123)",
+        "rollback: returns to the previous healthy release (GAU-123)"
       ]
     }
   ]

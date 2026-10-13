@@ -50,6 +50,8 @@
     "test:all": "npm test && npm run test:ui",
     "verify": "node --import tsx scripts/verify/verify.ts",
     "tpm": "node --import tsx scripts/ops/tpm-check.ts",
+    "deploy": "node --import tsx scripts/release/deploy.ts",
+    "rollback": "node --import tsx scripts/release/deploy.ts --rollback",
     "perf:check": "npm run build && du -sh frontend/dist",
     "release:prepare": "npm run quality:full && npm run security:full && npm test"
   },

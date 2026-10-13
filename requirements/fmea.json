@@ -1,6 +1,6 @@
 {
   "$comment": "Ingest pipeline FMEA (GAU-121). NASA SP-2016-6105 Rev 2 §6.4. Severity/likelihood 1-5; risk = S x L. residualLikelihood is after the mitigation. verifiedBy = exact test names proving the mitigation; gap = what is still missing. Checked by `npm run verify`.",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "rows": [
     {
       "id": "FM-01",
@@ -266,6 +266,22 @@
       "verifiedBy": [
         "HUD never shows stale or missing data as fresh",
         "measured drivers come only from current, complete measurements (GAU-114)"
+      ]
+    },
+    {
+      "id": "FM-19",
+      "item": "Release process",
+      "failureMode": "Unverified or broken release deployed to the live checkout",
+      "effect": "Live service runs code that fails tests or does not start",
+      "detection": "Tag annotation must carry VERIFY PASSED; post-deploy TPM health check",
+      "mitigation": "Verified-tag-only deploys from origin/main; automatic rollback when unhealthy; manual rollback",
+      "severity": 4,
+      "likelihood": 3,
+      "residualLikelihood": 1,
+      "verifiedBy": [
+        "deploy: only verified tags on main to a clean checkout (GAU-123)",
+        "deploy: an unhealthy release rolls back automatically (GAU-123)",
+        "rollback: returns to the previous healthy release (GAU-123)"
       ]
     }
   ]
