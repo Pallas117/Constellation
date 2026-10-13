@@ -1,54 +1,76 @@
 {
   "$comment": "Ingest pipeline FMEA (GAU-121). NASA SP-2016-6105 Rev 2 §6.4. Severity/likelihood 1-5; risk = S x L. residualLikelihood is after the mitigation. verifiedBy = exact test names proving the mitigation; gap = what is still missing. Checked by `npm run verify`.",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "rows": [
     {
-      "id": "FM-01", "item": "NOAA RTSW feed", "failureMode": "Feed down or HTTP error",
+      "id": "FM-01",
+      "item": "NOAA RTSW feed",
+      "failureMode": "Feed down or HTTP error",
       "effect": "IMF and plasma inputs age; a naive system would keep serving the last value as live",
       "detection": "Measurement-age freshness tier; source status lastSeen from data time",
       "mitigation": "Carry at most 15 min, then flag stale (tier 3); other sources continue in parallel",
-      "severity": 4, "likelihood": 3, "residualLikelihood": 1,
+      "severity": 4,
+      "likelihood": 3,
+      "residualLikelihood": 1,
       "verifiedBy": [
         "ingest tick: no jitter between fetches, and an over-age readout is dropped (GAU-44)",
         "latest feed: points older than 15 min are served flagged stale (GAU-15)"
       ]
     },
     {
-      "id": "FM-02", "item": "Any upstream source", "failureMode": "Hangs or responds slowly",
+      "id": "FM-02",
+      "item": "Any upstream source",
+      "failureMode": "Hangs or responds slowly",
       "effect": "Tick stalls; all data ages behind one slow source",
       "detection": "Per-stage latency and timeout counters (/api/system/pipeline)",
       "mitigation": "Parallel fetch, per-source time budget, previous value kept",
-      "severity": 3, "likelihood": 3, "residualLikelihood": 1,
+      "severity": 3,
+      "likelihood": 3,
+      "residualLikelihood": 1,
       "verifiedBy": [
         "pipeline timer: a stage past its timeout is abandoned and counted",
         "tick reports per-stage latency, and sources are fetched in parallel"
       ]
     },
     {
-      "id": "FM-03", "item": "Ingest loop", "failureMode": "Tick overruns the 5 s interval",
+      "id": "FM-03",
+      "item": "Ingest loop",
+      "failureMode": "Tick overruns the 5 s interval",
       "effect": "Overlapping ticks publish out of order and hide the slow stage",
       "detection": "skippedTicks counter",
       "mitigation": "Skip a tick while one is running",
-      "severity": 3, "likelihood": 2, "residualLikelihood": 1,
-      "verifiedBy": ["interval never stacks a tick on one still running"]
+      "severity": 3,
+      "likelihood": 2,
+      "residualLikelihood": 1,
+      "verifiedBy": [
+        "interval never stacks a tick on one still running"
+      ]
     },
     {
-      "id": "FM-04", "item": "Upstream schema", "failureMode": "Format or field change (e.g. temperature read as velocity)",
+      "id": "FM-04",
+      "item": "Upstream schema",
+      "failureMode": "Format or field change (e.g. temperature read as velocity)",
       "effect": "Wrong physical values presented as measurements",
       "detection": "Row validation per adapter; source unhealthy",
       "mitigation": "Strict parsing; malformed rows rejected, never coerced",
-      "severity": 5, "likelihood": 2, "residualLikelihood": 1,
+      "severity": 5,
+      "likelihood": 2,
+      "residualLikelihood": 1,
       "verifiedBy": [
         "NOAA: RTSW active spacecraft, native GSE, UTC time, no temperature-as-velocity (GAU-48, GAU-51, GAU-56)",
         "ESA: parses nested and flat HAPI B_NEC rows and rejects malformed ones (GAU-50)"
       ]
     },
     {
-      "id": "FM-05", "item": "Upstream values", "failureMode": "Fill, blank or null values",
+      "id": "FM-05",
+      "item": "Upstream values",
+      "failureMode": "Fill, blank or null values",
       "effect": "Coerced to 0 and published as real data",
       "detection": "Range and type checks per value",
       "mitigation": "Treated as missing; row or channel skipped",
-      "severity": 4, "likelihood": 3, "residualLikelihood": 1,
+      "severity": 4,
+      "likelihood": 3,
+      "residualLikelihood": 1,
       "verifiedBy": [
         "MMS: fill-valued components are rejected rather than zeroed",
         "GOES: newest valid sample of the S-scale channel; fill and null flux skipped (GAU-112)",
@@ -56,114 +78,175 @@
       ]
     },
     {
-      "id": "FM-06", "item": "Timestamps", "failureMode": "Zone-less time read in host local time (UTC+8)",
+      "id": "FM-06",
+      "item": "Timestamps",
+      "failureMode": "Zone-less time read in host local time (UTC+8)",
       "effect": "Data shifted by 8 h; freshness wrong",
       "detection": "Unit tests run in Asia/Kuala_Lumpur",
       "mitigation": "Zone-less tags parsed as UTC; invalid rejected",
-      "severity": 4, "likelihood": 2, "residualLikelihood": 1,
+      "severity": 4,
+      "likelihood": 2,
+      "residualLikelihood": 1,
       "verifiedBy": [
         "NOAA: zone-less SWPC time_tags are read as UTC, invalid ones rejected",
         "CSV rows with unparseable times are skipped, and compact times are UTC (GAU-114)"
       ]
     },
     {
-      "id": "FM-07", "item": "Inference server", "failureMode": "Down, timeout, missing route or malformed answer",
+      "id": "FM-07",
+      "item": "Inference server",
+      "failureMode": "Down, timeout, missing route or malformed answer",
       "effect": "A naive client invents a forecast or errors to the UI",
       "detection": "Client validation and timeout",
       "mitigation": "Explicit 'unavailable' with a reason; no number shown",
-      "severity": 4, "likelihood": 3, "residualLikelihood": 1,
+      "severity": 4,
+      "likelihood": 3,
+      "residualLikelihood": 1,
       "verifiedBy": [
         "inference server failures become unavailable with no URL in the reason (GAU-111)",
         "no inference server: forecast is an explicit unavailable, never a number (GAU-111)"
       ]
     },
     {
-      "id": "FM-08", "item": "Promoted model", "failureMode": "Model file missing or corrupt",
+      "id": "FM-08",
+      "item": "Promoted model",
+      "failureMode": "Model file missing or corrupt",
       "effect": "Broken deployment silently reads as 'no model deployed'",
       "detection": "Load error surfaced in the unavailable reason and /health",
       "mitigation": "Promotion gate; load failures reported as such",
-      "severity": 3, "likelihood": 2, "residualLikelihood": 1,
-      "verifiedBy": ["Kp model unit tests (python)"]
+      "severity": 3,
+      "likelihood": 2,
+      "residualLikelihood": 1,
+      "verifiedBy": [
+        "Kp model unit tests (python)"
+      ]
     },
     {
-      "id": "FM-09", "item": "Promoted model", "failureMode": "Skill degrades in operation (drift, regime change)",
+      "id": "FM-09",
+      "item": "Promoted model",
+      "failureMode": "Skill degrades in operation (drift, regime change)",
       "effect": "Forecasts worse than persistence while still served",
-      "detection": "None live: skill is measured only at promotion",
-      "mitigation": "Held-out gate at promotion",
-      "severity": 3, "likelihood": 3, "residualLikelihood": 3,
-      "verifiedBy": [],
-      "gap": "Live skill tracking vs persistence as a technical performance measure (stability plan step 3)"
+      "detection": "Live forecast_skill TPM: each served forecast scored against observed Kp 3 h later, rolling MAE vs persistence",
+      "mitigation": "Held-out gate at promotion; red TPM when live skill falls below persistence",
+      "severity": 3,
+      "likelihood": 3,
+      "residualLikelihood": 2,
+      "verifiedBy": [
+        "FMEA FM-09: live forecast skill is scored against observed Kp and compared with persistence (GAU-122)"
+      ]
     },
     {
-      "id": "FM-10", "item": "Bedrock persistence", "failureMode": "Write fails (disk full, permissions)",
+      "id": "FM-10",
+      "item": "Bedrock persistence",
+      "failureMode": "Write fails (disk full, permissions)",
       "effect": "History silently lost; persist stage reported ok",
       "detection": "failedWrites counter; persist-stage errors in /api/system/pipeline",
       "mitigation": "Point still served from memory; failure surfaced, not swallowed",
-      "severity": 3, "likelihood": 2, "residualLikelihood": 2,
+      "severity": 3,
+      "likelihood": 2,
+      "residualLikelihood": 2,
       "verifiedBy": [
         "FMEA: a failed telemetry write is counted and reported, and the tick still publishes (GAU-121)",
         "FMEA: best-effort appends never reject (no unhandled rejection); strict appends do; both count (GAU-121)"
       ]
     },
     {
-      "id": "FM-11", "item": "Bedrock file", "failureMode": "Corrupt or torn line (crash mid-write)",
+      "id": "FM-11",
+      "item": "Bedrock file",
+      "failureMode": "Corrupt or torn line (crash mid-write)",
       "effect": "Whole fallback read returns nothing",
       "detection": "lastSkippedLines counter",
       "mitigation": "Bad lines skipped, rest served",
-      "severity": 3, "likelihood": 2, "residualLikelihood": 1,
-      "verifiedBy": ["bedrock skips corrupt and torn lines instead of returning nothing (GAU-117)"]
+      "severity": 3,
+      "likelihood": 2,
+      "residualLikelihood": 1,
+      "verifiedBy": [
+        "bedrock skips corrupt and torn lines instead of returning nothing (GAU-117)"
+      ]
     },
     {
-      "id": "FM-12", "item": "Backend process", "failureMode": "Restart (crash, deploy, reboot)",
+      "id": "FM-12",
+      "item": "Backend process",
+      "failureMode": "Restart (crash, deploy, reboot)",
       "effect": "Memory buffer empty: history lost and forecast blind for 6 h",
       "detection": "Startup log: points reloaded",
       "mitigation": "Last 24 h reloaded from bedrock before the worker starts; launchd KeepAlive restarts the process",
-      "severity": 3, "likelihood": 4, "residualLikelihood": 1,
-      "verifiedBy": ["restart reload fills an empty buffer once, in order, and never duplicates (GAU-117)"]
+      "severity": 3,
+      "likelihood": 4,
+      "residualLikelihood": 1,
+      "verifiedBy": [
+        "restart reload fills an empty buffer once, in order, and never duplicates (GAU-117)"
+      ]
     },
     {
-      "id": "FM-13", "item": "Host (Judith laptop)", "failureMode": "Sleeps, loses power or fails",
+      "id": "FM-13",
+      "item": "Host (Judith laptop)",
+      "failureMode": "Sleeps, loses power or fails",
       "effect": "Whole service down: single point of failure",
       "detection": "Pipeline verdict 'stalled' after 3 missed ticks; HUD shows STALLED",
       "mitigation": "Auto-restart on wake; no standby host",
-      "severity": 5, "likelihood": 4, "residualLikelihood": 4,
-      "verifiedBy": ["pipeline timer: status follows data age and loop liveness"],
+      "severity": 5,
+      "likelihood": 4,
+      "residualLikelihood": 4,
+      "verifiedBy": [
+        "pipeline timer: status follows data age and loop liveness"
+      ],
       "gap": "Warm standby host with data replication (stability plan step 5)"
     },
     {
-      "id": "FM-14", "item": "Host disk", "failureMode": "Disk fills (98% full observed 2026-10-11)",
+      "id": "FM-14",
+      "item": "Host disk",
+      "failureMode": "Disk fills (98% full observed 2026-10-11)",
       "effect": "All writes fail; services may crash",
-      "detection": "failedWrites after the fact; no proactive disk-space monitor",
-      "mitigation": "Manual allowlisted cleanup (disk-cleanup)",
-      "severity": 4, "likelihood": 3, "residualLikelihood": 3,
-      "verifiedBy": [],
-      "gap": "Free-space technical performance measure with a threshold alert (stability plan step 3)"
+      "detection": "disk_free TPM (amber < 10 GB, red < 3 GB) in /api/system/tpm, /health and `npm run tpm`",
+      "mitigation": "Threshold alert before writes fail; allowlisted disk-cleanup",
+      "severity": 4,
+      "likelihood": 3,
+      "residualLikelihood": 2,
+      "verifiedBy": [
+        "FMEA FM-14: free disk is read from the data volume and graded (GAU-122)"
+      ],
+      "gap": "`npm run tpm` is not yet scheduled (launchd + phone alert): needs approval for a launchctl change"
     },
     {
-      "id": "FM-15", "item": "Host memory (8 GB)", "failureMode": "Unbounded growth",
+      "id": "FM-15",
+      "item": "Host memory (8 GB)",
+      "failureMode": "Unbounded growth",
       "effect": "OOM, swap storm, crash",
       "detection": "Bounded buffers by construction",
       "mitigation": "Ring buffers and capped windows",
-      "severity": 4, "likelihood": 2, "residualLikelihood": 1,
+      "severity": 4,
+      "likelihood": 2,
+      "residualLikelihood": 1,
       "verifiedBy": [
         "caps coupling window length to prevent unbounded memory growth",
         "canonical feed keeps a fixed-size ring buffer"
       ]
     },
     {
-      "id": "FM-16", "item": "Clocks", "failureMode": "Skew: points stamped in the future",
+      "id": "FM-16",
+      "item": "Clocks",
+      "failureMode": "Skew: points stamped in the future",
       "effect": "Wrong forecast window; data looks fresher than it is",
       "detection": "Window and freshness checks against now",
       "mitigation": "Future points excluded from the forecast window",
-      "severity": 2, "likelihood": 2, "residualLikelihood": 1,
-      "verifiedBy": ["forecast window: last 6 h of measured points, one per minute (GAU-115)"]
+      "severity": 2,
+      "likelihood": 2,
+      "residualLikelihood": 1,
+      "verifiedBy": [
+        "forecast window: last 6 h of measured points, one per minute (GAU-115)"
+      ]
     },
     {
-      "id": "FM-17", "item": "API", "failureMode": "Abuse: floods, malicious payloads, credential stuffing",
+      "id": "FM-17",
+      "item": "API",
+      "failureMode": "Abuse: floods, malicious payloads, credential stuffing",
       "effect": "Service degraded for operators",
       "detection": "CyberTiger signatures, rate counters",
       "mitigation": "Block, rate-limit, auto-block on auth failures",
-      "severity": 4, "likelihood": 3, "residualLikelihood": 2,
+      "severity": 4,
+      "likelihood": 3,
+      "residualLikelihood": 2,
       "verifiedBy": [
         "blocks malicious signature and places IP on blocklist",
         "rate limits after max requests within configured window",
@@ -171,11 +254,15 @@
       ]
     },
     {
-      "id": "FM-18", "item": "Operator UI", "failureMode": "Stale or missing data shown as nominal",
+      "id": "FM-18",
+      "item": "Operator UI",
+      "failureMode": "Stale or missing data shown as nominal",
       "effect": "Operator acts on false 'all clear'",
       "detection": "UI view-model checks freshness and tier",
       "mitigation": "Unknown rendered as unknown/STALE/NO_TELEMETRY",
-      "severity": 5, "likelihood": 3, "residualLikelihood": 1,
+      "severity": 5,
+      "likelihood": 3,
+      "residualLikelihood": 1,
       "verifiedBy": [
         "HUD never shows stale or missing data as fresh",
         "measured drivers come only from current, complete measurements (GAU-114)"

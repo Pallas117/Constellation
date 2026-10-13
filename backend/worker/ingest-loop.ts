@@ -25,6 +25,7 @@ import {
 } from "../state.js";
 import { linkGuardian } from "../lib/connectivity.js";
 import { PipelineTimer, STAGE_BUDGET_MS } from "../lib/pipeline-timing.js";
+import { ForecastSkillTracker } from "../lib/tpm.js";
 import { bedrock } from "../lib/local-db.js";
 import { inferAnomalyForecast } from "../ml-client/client.js";
 import type {
@@ -106,6 +107,8 @@ export class IngestionWorker {
   private lastMeasurementAt: string | null = null;
   private ticking = false;
   private loggedCloudDisabled = false;
+  /** Live skill of served forecasts vs persistence (TPM forecast_skill, FMEA FM-09). GAU-122. */
+  readonly forecastSkill = new ForecastSkillTracker();
   readonly timing = new PipelineTimer();
 
   constructor(private onTick?: (result: IngestionTickResult) => void) {}
@@ -355,6 +358,12 @@ export class IngestionWorker {
           () => inferAnomalyForecast(forecastWindow(getCanonicalFeed(), Date.parse(nowIso))),
           STAGE_BUDGET_MS["ml-forecast"],
         );
+        // Score every served forecast later against observed Kp; persistence = Kp measured now.
+        const f = this.latestForecast;
+        const kpNow = this.noaa?.kp;
+        if (f?.available && typeof kpNow === "number" && freshnessTier(this.noaa?.timestamp ?? null, Date.parse(nowIso)) <= 1) {
+          this.forecastSkill.record(Date.parse(nowIso), f.horizonHours, f.predictedKpMax, kpNow);
+        }
       } catch (err) {
         console.warn("[IngestionWorker] ML Forecast failed, retaining previous predictions.");
       }
@@ -366,6 +375,9 @@ export class IngestionWorker {
       // Past the cap the readout is unknown, not "last known"; inputs fall back to the
       // previous canonical state and the point is flagged stale.
       this.noaa = null;
+    } else if (typeof this.noaa?.kp === "number") {
+      // Resolve due forecasts only against a current measured Kp.
+      this.forecastSkill.resolve(Date.parse(nowIso), this.noaa.kp);
     }
     const mhdInput = this.blendInputs(nowIso);
 

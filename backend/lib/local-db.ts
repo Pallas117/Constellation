@@ -11,6 +11,9 @@ const DATA_DIR = process.env.GAUSS_BEDROCK_DIR
 const TELEMETRY_FILE = path.join(DATA_DIR, "telemetry.jsonl");
 
 export class BedrockDB {
+  /** Directory holding telemetry.jsonl (its volume's free space is a TPM). */
+  readonly dataDir = DATA_DIR;
+
   private initialized = false;
 
   private async ensureDir() {

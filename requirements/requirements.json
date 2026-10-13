@@ -1,6 +1,6 @@
 {
   "$comment": "Constellation requirements baseline (GAU-120). NASA SP-2016-6105 Rev 2 §6.2/§5.3. Methods: T test, A analysis, I inspection, D demonstration. T evidence = exact test names; A/I/D evidence = repo paths. Verified by `npm run verify`.",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "requirements": [
     {
       "id": "REQ-ING-001",
@@ -329,6 +329,23 @@
       "owner": "Josh",
       "evidence": [
         "docs/adr/swarm-not-an-imf-source.md"
+      ]
+    },
+    {
+      "id": "REQ-OPS-002",
+      "title": "Technical performance measures",
+      "statement": "The system shall report its technical performance measures with green/amber/red thresholds and margins, including live forecast skill against persistence and free disk, and shall expose only an overall status publicly.",
+      "rationale": "NASA SE §6.7; closes FMEA FM-09 and FM-14 detection gaps (GAU-122).",
+      "parent": "GAU-122",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "TPM: thresholds and margins for lower-is-better and higher-is-better measures (GAU-122)",
+        "TPM: overall status never lets 'insufficient' hide amber or red (GAU-122)",
+        "TPM: a cold first tick after restart is not a red p95 (GAU-122)",
+        "FMEA FM-09: live forecast skill is scored against observed Kp and compared with persistence (GAU-122)",
+        "FMEA FM-14: free disk is read from the data volume and graded (GAU-122)",
+        "backend harness starts and responds to /health"
       ]
     }
   ]
