@@ -1,12 +1,42 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { CanonicalSpaceWeatherPoint } from "@/lib/types/space-weather";
-import { getAccessToken, getAuthHeaders } from "@/lib/api/auth";
+import { getAuthHeaders } from "@/lib/api/auth";
 
-const FEED_ENDPOINT = "/api/feed/space-weather/5s?lookback=PT24H&limit=17280";
+const MAX_POINTS = 17280; // 24 h at 5 s
+const HISTORY_ENDPOINT = `/api/feed/space-weather/5s?lookback=PT24H&limit=${MAX_POINTS}`;
+// Fallback polling only asks for the recent tail; the 24 h history is loaded once.
+const TAIL_ENDPOINT = "/api/feed/space-weather/5s?lookback=PT1M&limit=12";
 const POLL_INTERVAL_MS = 5000;
+const WS_RETRY_BASE_MS = 1000;
+const WS_RETRY_MAX_MS = 30000;
 
 function getBaseUrl(): string {
   return import.meta.env.VITE_HELIO_PROXY_URL ?? "http://127.0.0.1:3001";
+}
+
+/** Push is the default; set VITE_HELIO_WS_ENABLED=false to poll only. */
+function wsEnabled(): boolean {
+  return String(import.meta.env.VITE_HELIO_WS_ENABLED ?? "true") !== "false";
+}
+
+/** Merge incoming points into the feed by timestamp, keeping order and the 24 h cap. */
+export function mergePoints(
+  prev: CanonicalSpaceWeatherPoint[],
+  incoming: CanonicalSpaceWeatherPoint[],
+): CanonicalSpaceWeatherPoint[] {
+  if (incoming.length === 0) return prev;
+  const last = prev.length > 0 ? Date.parse(prev[prev.length - 1].timestamp) : -Infinity;
+  // Common case: strictly newer points append without re-sorting the whole feed.
+  if (incoming.every((p) => Date.parse(p.timestamp) > last)) {
+    const next = prev.concat(incoming);
+    return next.length > MAX_POINTS ? next.slice(next.length - MAX_POINTS) : next;
+  }
+  const byTime = new Map(prev.map((p) => [p.timestamp, p]));
+  for (const p of incoming) byTime.set(p.timestamp, p);
+  const next = Array.from(byTime.values()).sort(
+    (a, b) => Date.parse(a.timestamp) - Date.parse(b.timestamp),
+  );
+  return next.length > MAX_POINTS ? next.slice(next.length - MAX_POINTS) : next;
 }
 
 export interface SolarWind5sState {
@@ -22,41 +52,43 @@ export function useSolarWind5s(): SolarWind5sState {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [source, setSource] = useState<"polling" | "websocket">("polling");
-  const wsRef = useRef<WebSocket | null>(null);
+  const socketOpen = useRef(false);
 
   useEffect(() => {
     let mounted = true;
+    let historyLoaded = false;
 
-    const fetchFeed = async () => {
+    const fetchFeed = async (endpoint: string) => {
+      const response = await fetch(`${getBaseUrl()}${endpoint}`, {
+        headers: await getAuthHeaders(),
+        credentials: "include",
+      });
+      if (!response.ok) {
+        throw new Error(`Feed HTTP ${response.status}`);
+      }
+      const json = (await response.json()) as { points?: CanonicalSpaceWeatherPoint[] };
+      return Array.isArray(json.points) ? json.points : [];
+    };
+
+    const poll = async () => {
+      // While the socket is delivering, polling would only duplicate it.
+      if (historyLoaded && socketOpen.current) return;
       try {
-        const response = await fetch(`${getBaseUrl()}${FEED_ENDPOINT}`, {
-          headers: await getAuthHeaders(),
-        });
-        if (!response.ok) {
-          throw new Error(`Feed HTTP ${response.status}`);
-        }
-        const json = (await response.json()) as {
-          points?: CanonicalSpaceWeatherPoint[];
-        };
-        if (!mounted) {
-          return;
-        }
-        setPoints(Array.isArray(json.points) ? json.points : []);
+        const incoming = await fetchFeed(historyLoaded ? TAIL_ENDPOINT : HISTORY_ENDPOINT);
+        if (!mounted) return;
+        setPoints((prev) => (historyLoaded ? mergePoints(prev, incoming) : mergePoints([], incoming)));
+        historyLoaded = true;
         setError(null);
       } catch (err) {
-        if (!mounted) {
-          return;
-        }
+        if (!mounted) return;
         setError(err instanceof Error ? err.message : "Failed to fetch feed");
       } finally {
-        if (mounted) {
-          setLoading(false);
-        }
+        if (mounted) setLoading(false);
       }
     };
 
-    fetchFeed();
-    const timer = setInterval(fetchFeed, POLL_INTERVAL_MS);
+    void poll();
+    const timer = setInterval(() => void poll(), POLL_INTERVAL_MS);
 
     return () => {
       mounted = false;
@@ -65,26 +97,31 @@ export function useSolarWind5s(): SolarWind5sState {
   }, []);
 
   useEffect(() => {
-    const wsEnabled = String(import.meta.env.VITE_HELIO_WS_ENABLED ?? "false") === "true";
-    if (!wsEnabled) {
+    if (!wsEnabled()) {
       return;
     }
 
     let ws: WebSocket | null = null;
     let cancelled = false;
+    let retryTimer: ReturnType<typeof setTimeout> | null = null;
+    let attempt = 0;
 
-    const connect = async () => {
+    const scheduleReconnect = () => {
+      if (cancelled) return;
+      const delay = Math.min(WS_RETRY_MAX_MS, WS_RETRY_BASE_MS * 2 ** attempt);
+      attempt += 1;
+      retryTimer = setTimeout(connect, delay);
+    };
+
+    function connect() {
+      if (cancelled) return;
+      // The session cookie authenticates the upgrade; credentials never go in the URL.
       const base = getBaseUrl().replace(/^http/i, "ws");
-      const token = await getAccessToken();
-      if (!token || cancelled) {
-        setSource("polling");
-        return;
-      }
-      const wsUrl = `${base}/ws/feed/space-weather?token=${encodeURIComponent(token)}`;
-      ws = new WebSocket(wsUrl);
-      wsRef.current = ws;
+      ws = new WebSocket(`${base}/ws/feed/space-weather`);
 
       ws.onopen = () => {
+        attempt = 0;
+        socketOpen.current = true;
         setSource("websocket");
       };
 
@@ -97,35 +134,30 @@ export function useSolarWind5s(): SolarWind5sState {
           if (message.topic !== "space-weather" || !message.payload) {
             return;
           }
-          setPoints((prev) => {
-            const next = [...prev, message.payload];
-            const dedup = new Map(next.map((point) => [point.timestamp, point]));
-            return Array.from(dedup.values()).sort(
-              (a, b) => Date.parse(a.timestamp) - Date.parse(b.timestamp),
-            );
-          });
+          const point = message.payload;
+          setPoints((prev) => mergePoints(prev, [point]));
         } catch {
           // Ignore malformed websocket payloads.
         }
       };
 
-      ws.onerror = () => {
-        setSource("polling");
-      };
-
       ws.onclose = () => {
+        socketOpen.current = false;
         setSource("polling");
+        scheduleReconnect();
       };
-    };
+    }
 
     connect();
 
     return () => {
       cancelled = true;
+      if (retryTimer) clearTimeout(retryTimer);
+      socketOpen.current = false;
       if (ws) {
+        ws.onclose = null;
         ws.close();
       }
-      wsRef.current = null;
     };
   }, []);
 

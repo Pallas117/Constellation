@@ -540,18 +540,34 @@ const wsMmsRecon = new WebSocketServer({ server, path: "/ws/feed/mms-reconnectio
 
 type AuthedSocket = WebSocket & { auth?: AuthContext };
 
-let broadcastCount = 0;
+const satRepeatCount = new Map<string, number>();
 
-function broadcast(wss: WebSocketServer, topic: string, payload: unknown): void {
+/**
+ * Push a topic update to authenticated sockets. A new measurement always goes out at once; in SAT
+ * mode an unchanged repeat is sent only every 3rd tick per topic (~15 s) to save bandwidth.
+ */
+function broadcast(
+  wss: WebSocketServer,
+  topic: string,
+  payload: unknown,
+  opts: { newData: boolean; dataTimestamp?: string | null },
+): void {
   const link = linkGuardian.getStatus();
-  broadcastCount++;
 
-  // Satellite (SAT) Mode Throttling: Only broadcast every 3rd tick (~3s frequency) to save bandwidth
-  if (link.mode === "SAT" && broadcastCount % 3 !== 0) {
-    return;
+  if (link.mode === "SAT" && !opts.newData) {
+    const repeats = (satRepeatCount.get(topic) ?? 0) + 1;
+    satRepeatCount.set(topic, repeats);
+    if (repeats % 3 !== 0) {
+      return;
+    }
   }
 
-  const body = JSON.stringify({ topic, payload, timestamp: new Date().toISOString() });
+  const body = JSON.stringify({
+    topic,
+    payload,
+    timestamp: new Date().toISOString(),
+    dataTimestamp: opts.dataTimestamp ?? null,
+  });
   for (const client of wss.clients) {
     const socket = client as AuthedSocket;
     if (socket.readyState === 1 && socket.auth) {
@@ -623,12 +639,21 @@ wsMmsRecon.on("connection", async (socket: AuthedSocket, req) => {
   );
 });
 
+let lastBroadcastMeasurement: string | null = null;
+
 const worker = new IngestionWorker((result: IngestionTickResult) => {
   if (result.canonicalPoint) {
-    broadcast(wsSpaceWeather, "space-weather", result.canonicalPoint);
+    const dataTimestamp = result.pipeline?.dataTimestamp ?? null;
+    const newData = dataTimestamp !== null && dataTimestamp !== lastBroadcastMeasurement;
+    lastBroadcastMeasurement = dataTimestamp;
+    broadcast(wsSpaceWeather, "space-weather", result.canonicalPoint, { newData, dataTimestamp });
   }
   if (result.mmsVector) {
-    broadcast(wsMmsRecon, "mms-reconnection", result.mmsVector);
+    // A vector is only produced from a fresh fetch.
+    broadcast(wsMmsRecon, "mms-reconnection", result.mmsVector, {
+      newData: true,
+      dataTimestamp: result.mmsVector.timestamp,
+    });
   }
 });
 

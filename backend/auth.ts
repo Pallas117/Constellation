@@ -179,24 +179,8 @@ export async function authenticateSocket(req: IncomingMessage): Promise<AuthCont
     };
   }
 
-  let token: string | null = null;
-  const url = req.url ? new URL(req.url, "http://localhost") : null;
-  if (url) {
-    const qToken = url.searchParams.get("token");
-    if (qToken && qToken.trim()) {
-      token = qToken.trim();
-    }
-  }
-
-  if (!token) {
-    const authHeader = parseAuthorization(
-      typeof req.headers.authorization === "string" ? req.headers.authorization : undefined,
-    );
-    if (authHeader) {
-      token = authHeader;
-    }
-  }
-
+  // Sockets authenticate with the session cookie sent on the upgrade request. Tokens are never
+  // read from the URL: query strings end up in proxy and access logs.
   const headers = new Headers();
   for (const [key, value] of Object.entries(req.headers)) {
     if (typeof value === "string") headers.set(key, value);

@@ -38,12 +38,34 @@ const finite = (v: unknown): number | null => {
   return Number.isFinite(n) ? n : null;
 };
 
+// SWPC serves ETag/Last-Modified, so a fast poll costs a 304 until a product changes
+// (the RTSW files are ~4 MB raw). Bodies are kept so a 304 still yields a readout.
+const conditionalCache = new Map<string, { etag: string | null; lastModified: string | null; body: unknown }>();
+
+/** Test hook: forget cached bodies and validators. */
+export function resetNoaaCache(): void {
+  conditionalCache.clear();
+}
+
 async function fetchJson(url: string): Promise<unknown> {
-  const response = await fetch(url, { signal: AbortSignal.timeout(8000) });
+  const cached = conditionalCache.get(url);
+  const headers: Record<string, string> = {};
+  if (cached?.etag) headers["If-None-Match"] = cached.etag;
+  if (cached?.lastModified) headers["If-Modified-Since"] = cached.lastModified;
+  const response = await fetch(url, { headers, signal: AbortSignal.timeout(8000) });
+  if (response.status === 304 && cached) {
+    return cached.body;
+  }
   if (!response.ok) {
     throw new Error(`${url} returned HTTP ${response.status}`);
   }
-  return response.json();
+  const body: unknown = await response.json();
+  const etag = response.headers.get("etag");
+  const lastModified = response.headers.get("last-modified");
+  if (etag || lastModified) {
+    conditionalCache.set(url, { etag, lastModified, body });
+  }
+  return body;
 }
 
 /** SWPC time_tags are UTC but carry no zone ("2026-10-10 12:00:00.000"); make that explicit. */

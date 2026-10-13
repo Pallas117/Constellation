@@ -6,7 +6,7 @@ import { fetchEsaReadout, parseNecRow } from "./esa-hapi.js";
 import { getJaxaStatus, probeJaxaCatalog } from "./jaxa-erg.js";
 import { fetchMmsCdawebSamples, getMmsCdawebStatus } from "./mms-cdaweb.js";
 import { fetchMmsBurstWindows, getMmsLaspStatus } from "./mms-lasp.js";
-import { fetchNoaaReadout, swpcTimeToIso } from "./noaa-swpc.js";
+import { fetchNoaaReadout, resetNoaaCache, swpcTimeToIso } from "./noaa-swpc.js";
 
 type Route = (url: string) => { status: number; body: unknown } | undefined;
 
@@ -104,6 +104,32 @@ test("NOAA: without an active wind record the newest complete one is used", asyn
   assert.ok(readout);
   assert.equal(readout.spacecraft, "IMAP");
   assert.deepEqual({ ...readout.velocityGse }, { x: -999, y: 0, z: 0 }, "bulk speed along -X when no GSE vector");
+});
+
+test("NOAA: a 304 reuses the cached body so fast polling costs no payload", async () => {
+  resetNoaaCache();
+  const route = rtswRoute();
+  const seen: Array<string | null> = [];
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+    const url = String(input instanceof Request ? input.url : input);
+    const ifNoneMatch = new Headers(init?.headers).get("if-none-match");
+    if (url.includes("rtsw_wind_1m")) seen.push(ifNoneMatch);
+    if (ifNoneMatch === `"v1"`) return new Response(null, { status: 304 });
+    const hit = route(url)!;
+    return new Response(JSON.stringify(hit.body), { status: 200, headers: { etag: `"v1"` } });
+  }) as typeof fetch;
+  try {
+    const first = await fetchNoaaReadout();
+    const second = await fetchNoaaReadout();
+    assert.ok(first && second);
+    assert.deepEqual(seen, [null, `"v1"`], "second poll is conditional");
+    assert.equal(second.timestamp, first.timestamp);
+    assert.equal(second.density, first.density);
+  } finally {
+    globalThis.fetch = realFetch;
+    resetNoaaCache();
+  }
 });
 
 test("ESA: parses nested and flat HAPI B_NEC rows and rejects malformed ones (GAU-50)", () => {

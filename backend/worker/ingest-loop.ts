@@ -38,7 +38,9 @@ import type {
 } from "../types.js";
 
 export const TICK_MS = 5000;
-const NOAA_MS = 60000;
+// RTSW is a 1-minute product behind a 60 s CDN cache. Conditional GETs make a 15 s poll cost a
+// 304 between updates, and cut our added lag from up to 60 s to up to 15 s.
+export const NOAA_MS = 15000;
 const ESA_MS = 10000;
 const JAXA_MS = 60000;
 const MMS_MS = 10 * 60 * 1000; // archival L2 product; polling faster gains nothing
