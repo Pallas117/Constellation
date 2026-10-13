@@ -1,10 +1,10 @@
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useDeviceSwapPlan } from "@/hooks/useDeviceSwapPlan";
 import { useSolarWind5s } from "@/hooks/useSolarWind5s";
-import { weatherRisk } from "@/lib/measured";
+import { driverReadings, weatherRisk } from "@/lib/measured";
 
 const ProtectionDashboard = () => {
   const { plan, loading, error, lastUpdated, rebalanceMessage, rebalance } = useDeviceSwapPlan();
@@ -33,8 +33,17 @@ const ProtectionDashboard = () => {
     };
   }, [plan]);
 
-  // Stale or incomplete data is unknown, never "Stable" or a score of 0 (GAU-114 / GAU-81).
-  const risk = useMemo(() => weatherRisk(latest), [latest]);
+  // A stopped feed keeps its last point, so the clock ages it into "stale" between polls.
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const clock = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(clock);
+  }, []);
+
+  // Stale, over-age or incomplete data is unknown, never "Stable", a score of 0 or an old
+  // reading shown as current (GAU-114 / GAU-81).
+  const risk = useMemo(() => weatherRisk(latest, now), [latest, now]);
+  const readings = useMemo(() => driverReadings(latest, now), [latest, now]);
 
   const impactNarrative = useMemo(() => {
     if (!plan || !latest) return "Awaiting device telemetry and space weather data to build correlation signals.";
@@ -97,14 +106,16 @@ const ProtectionDashboard = () => {
             </div>
 
             <div className="grid gap-3 sm:grid-cols-2">
-              <div className="rounded-xl border border-border bg-muted p-4">
-                <p className="text-xs uppercase text-muted-foreground">IMF Bz</p>
-                <p className="mt-2 text-lg font-semibold">{latest?.magneticField?.z?.toFixed(1) ?? "n/a"} nT</p>
-              </div>
-              <div className="rounded-xl border border-border bg-muted p-4">
-                <p className="text-xs uppercase text-muted-foreground">Kp Index</p>
-                <p className="mt-2 text-lg font-semibold">{latest?.indices?.kp ?? "n/a"}</p>
-              </div>
+              {[
+                { title: "IMF Bz", reading: readings.bz },
+                { title: "Kp Index", reading: readings.kp },
+              ].map(({ title, reading }) => (
+                <div key={title} className="rounded-xl border border-border bg-muted p-4">
+                  <p className="text-xs uppercase text-muted-foreground">{title}</p>
+                  <p className={`mt-2 text-lg font-semibold${reading.current ? "" : " text-muted-foreground"}`}>{reading.text}</p>
+                  {reading.note ? <p className="text-xs text-muted-foreground">{reading.note}</p> : null}
+                </div>
+              ))}
             </div>
 
             <p className="text-sm leading-6 text-muted-foreground">{risk.description}</p>
