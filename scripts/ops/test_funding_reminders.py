@@ -10,6 +10,7 @@ CALLS = {"calls": [
      "milestones": {"go/no-go": "2026-10-28"}},
     {"id": "GAU-105", "name": "ESA BIC UK", "status": "tbc", "url": "https://esa-bic.org.uk/apply/"},
     {"id": "P33", "name": "1337 Alpha", "deadline": "2026-11-08T23:59:00+08:00", "status": "verify"},
+    {"id": "EWOR", "name": "Rolling one", "status": "rolling"},
     {"id": "OLD", "name": "Submitted one", "deadline": "2026-10-20T12:00:00+00:00", "status": "submitted"},
 ]}
 
@@ -65,6 +66,12 @@ class Reminders(unittest.TestCase):
         self.assertIn("https://esa-bic.org.uk/apply/", mon[0])
         self.assertFalse([k for k, t, m in fr.reminders(load(), dt.date(2026, 10, 14)) if k.endswith("-tbc")])
 
+    def test_tbc_waits_for_check_from(self):
+        calls = load()
+        calls[2]["check_from"] = "2026-12-01"
+        self.assertFalse([k for k, t, m in fr.reminders(calls, dt.date(2026, 11, 30)) if k.endswith("-tbc")])  # Monday, too early
+        self.assertTrue([k for k, t, m in fr.reminders(calls, dt.date(2026, 12, 7)) if k.endswith("-tbc")])
+
     def test_keys_are_daily_so_argo_sends_once_per_day(self):
         keys = [k for k, t, m in fr.reminders(load(), dt.date(2026, 10, 20))]
         self.assertIn("funding-GAU-102-2026-10-20", keys)
@@ -101,7 +108,10 @@ class PlanAndCalendar(unittest.TestCase):
     def test_plan_is_dated_then_tbc(self):
         rows = fr.plan(load(), dt.date(2026, 10, 19), 12)
         self.assertEqual(rows[0][:3], (dt.date(2026, 10, 20), "ESA Kick-start", "first draft"))
-        self.assertEqual(rows[-1][:3], (None, "ESA BIC UK", "date not published"))
+        self.assertIn((None, "ESA BIC UK", "date not published"), [r[:3] for r in rows])
+        self.assertIn((None, "Rolling one", "rolling, no deadline"), [r[:3] for r in rows])
+        self.assertFalse(any("EWOR" in k for i in range(60)
+                             for k, t, m in fr.reminders(load(), dt.date(2026, 10, 12) + dt.timedelta(days=i))))
         self.assertFalse(any(r[1] == "Submitted one" for r in rows))
 
     def test_ics_has_utc_deadline_alarms_and_milestones(self):

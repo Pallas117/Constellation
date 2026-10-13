@@ -74,7 +74,8 @@ def reminders(calls, today):
         name = c["name"]
         flag = " (unverified: check the call page)" if c["status"] == "verify" else ""
         if c["status"] == "tbc":
-            if today.weekday() == 0:  # Mondays
+            start = dt.date.fromisoformat(c["check_from"]) if c.get("check_from") else today
+            if today.weekday() == 0 and today >= start:  # Mondays, once dates can exist
                 out.append((f"funding-{c['id']}-tbc", f"Funding: {name}",
                             f"Deadline not published yet. Check {c.get('url', 'the call page')} and add it to deadlines.json."))
             continue
@@ -133,8 +134,9 @@ def outbox(calls, start, days):
 def plan(calls, today, days):
     rows = []
     for c in calls:
-        if c["status"] == "tbc":
-            rows.append((None, c["name"], "date not published", c.get("owner", "")))
+        if c["status"] in ("tbc", "rolling"):
+            label = "date not published" if c["status"] == "tbc" else "rolling, no deadline"
+            rows.append((None, c["name"], label, c.get("owner", "")))
         elif c["status"] in ACTIVE:
             for d, label in milestones(c):
                 if today <= d <= today + dt.timedelta(days=days):
