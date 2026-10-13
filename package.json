@@ -49,7 +49,8 @@
     "quality:full": "npm run quality:types && npm run quality:lint",
     "test:all": "npm test && npm run test:ui",
     "perf:check": "npm run build && du -sh frontend/dist",
-    "release:prepare": "npm run quality:full && npm run security:full && npm test"
+    "release:prepare": "npm run quality:full && npm run security:full && npm test",
+    "test:website": "node --test website/site.test.mjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",
