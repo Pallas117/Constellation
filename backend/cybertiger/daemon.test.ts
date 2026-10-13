@@ -83,3 +83,15 @@ test("auth failure threshold auto-blocks IP", () => {
   assert.equal(later.allowed, false);
   assert.equal(later.status, 429);
 });
+
+test("ignores spoofed X-Forwarded-For unless trustProxy is enabled", () => {
+  const daemon = new CyberTigerDaemon({ rateLimitMax: 1000, maxEvents: 1000 });
+  const req = mockRequest({ ip: "10.0.0.30", forwarded: "203.0.113.9" });
+  assert.equal(daemon.extractClientIp(req), "10.0.0.30");
+});
+
+test("uses X-Forwarded-For when behind a trusted proxy", () => {
+  const daemon = new CyberTigerDaemon({ rateLimitMax: 1000, maxEvents: 1000, trustProxy: true });
+  const req = mockRequest({ ip: "10.0.0.30", forwarded: "203.0.113.9, 10.0.0.1" });
+  assert.equal(daemon.extractClientIp(req), "203.0.113.9");
+});

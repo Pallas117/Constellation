@@ -73,6 +73,7 @@ export interface CyberTigerConfig {
   authFailureThreshold: number;
   autoBlockSeconds: number;
   maxEvents: number;
+  trustProxy: boolean;
 }
 
 export interface CyberTigerStatus {
@@ -129,6 +130,8 @@ export function readCyberTigerConfigFromEnv(): CyberTigerConfig {
     authFailureThreshold: asInt(process.env.CYBERTIGER_AUTH_FAILURE_THRESHOLD, 8),
     autoBlockSeconds: asInt(process.env.CYBERTIGER_AUTO_BLOCK_SECONDS, 900),
     maxEvents: asInt(process.env.CYBERTIGER_MAX_EVENTS, 5000),
+    // Only honour X-Forwarded-For behind a trusted reverse proxy; otherwise clients can spoof it.
+    trustProxy: asBool(process.env.CYBERTIGER_TRUST_PROXY, false),
   };
 }
 
@@ -161,15 +164,17 @@ export class CyberTigerDaemon {
   }
 
   extractClientIp(req: Request): string {
-    const forwarded = req.headers["x-forwarded-for"];
-    if (typeof forwarded === "string" && forwarded.trim()) {
-      const first = forwarded.split(",")[0];
-      return normalizeIp(first);
+    if (this.config.trustProxy) {
+      const forwarded = req.headers["x-forwarded-for"];
+      if (typeof forwarded === "string" && forwarded.trim()) {
+        const first = forwarded.split(",")[0];
+        return normalizeIp(first);
+      }
+      if (Array.isArray(forwarded) && forwarded.length > 0) {
+        return normalizeIp(forwarded[0]);
+      }
     }
-    if (Array.isArray(forwarded) && forwarded.length > 0) {
-      return normalizeIp(forwarded[0]);
-    }
-    return normalizeIp(req.ip ?? req.socket.remoteAddress ?? undefined);
+    return normalizeIp(req.socket.remoteAddress ?? req.ip ?? undefined);
   }
 
   inspectRequest(req: Request): CyberTigerInspectDecision {

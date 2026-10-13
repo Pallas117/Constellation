@@ -448,10 +448,11 @@ app.get("/api/system/pipeline", (_req: AuthenticatedRequest, res) => {
 
 app.get("/api/security/cybertiger/events", requireRole("admin"), (req: AuthenticatedRequest, res) => {
   const limit = Math.max(1, Math.min(Number(req.query.limit ?? 200), 2000));
+  const events = cyberTiger.getEvents(limit);
   res.json({
     timestamp: new Date().toISOString(),
-    count: limit,
-    events: cyberTiger.getEvents(limit),
+    count: events.length,
+    events,
   });
 });
 

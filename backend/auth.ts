@@ -30,6 +30,8 @@ const ROLE_RANK: Record<AuthRole, number> = {
 };
 
 function authRequired(): boolean {
+  // The dev bypass grants admin to everyone, so it is never honoured in production.
+  if (process.env.NODE_ENV === "production") return true;
   const value = (process.env.AUTH_REQUIRED ?? "true").toLowerCase();
   return value !== "false";
 }

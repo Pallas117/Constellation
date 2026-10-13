@@ -18,7 +18,7 @@ const RAG_BASE =
   import.meta.env.VITE_GAUSS_RAG_URL || 'http://127.0.0.1:3001';
 
 const DEFAULT_INDEX_DIR =
-  import.meta.env.VITE_GAUSS_RAG_INDEX_DIR || '/Users/josh/Documents/lightbound';
+  import.meta.env.VITE_GAUSS_RAG_INDEX_DIR || '';
 
 const MOCK_AI_TEXT = `[URGENT] SYSTEM ANOMALY DETECTED
 
