@@ -1,7 +1,8 @@
 import { Navigate, useLocation } from "react-router-dom";
 import { useSession } from "@/lib/auth-client";
+import { hasRole, roleOf, type Role } from "@/lib/roles";
 
-export const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
+export const ProtectedRoute = ({ children, minRole = "user" }: { children: React.ReactNode; minRole?: Role }) => {
   const { data: session, isPending } = useSession();
   const location = useLocation();
 
@@ -19,6 +20,12 @@ export const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
 
   if (!user?.id) {
     return <Navigate to="/login" state={{ from: location }} replace />;
+  }
+
+  // Signed in but not allowed here: back to the public visualisation, never a
+  // login loop. The API enforces the same rule; this only avoids dead pages.
+  if (!hasRole(roleOf(user), minRole)) {
+    return <Navigate to="/" replace />;
   }
 
   return <>{children}</>;

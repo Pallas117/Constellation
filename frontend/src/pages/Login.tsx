@@ -1,15 +1,18 @@
-import { useState } from "react";
-import { signIn } from "@/lib/auth-client";
+import { useEffect, useState } from "react";
+import { signIn, useSession } from "@/lib/auth-client";
+import { landingFor, roleOf } from "@/lib/roles";
 import { registerDeviceWithLogin } from "@/lib/device-auth";
-import { useNavigate, useLocation } from "react-router-dom";
+import { Link, useNavigate, useLocation } from "react-router-dom";
 import { Shield, Fingerprint } from "lucide-react";
 
 export default function Login() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
+  const [sso, setSso] = useState<{ google: boolean; domain: string | null }>({ google: false, domain: null });
   const navigate = useNavigate();
   const location = useLocation();
+  const { data: session } = useSession();
 
   // Deep links return to where they were going; otherwise land by role below.
   const hasFrom = Boolean(location.state?.from?.pathname);
@@ -32,11 +35,33 @@ export default function Login() {
       console.warn("Device registration failed", deviceError);
     }
 
-    // Operators run the console; team members start on Mesh & Network to get
-    // their laptop onto the tailnet with Argo.
-    const role = (data?.user as { role?: string } | undefined)?.role;
-    const landing = hasFrom || role === "operator" || role === "admin" ? from : "/mesh";
-    navigate(landing, { replace: true });
+    // Operators run the console, staff start on Mesh & Network to get their
+    // laptop onto the tailnet, users go back to the live visualisation.
+    navigate(hasFrom ? from : landingFor(roleOf(data?.user)), { replace: true });
+  };
+
+  // Returning from Google SSO (or already signed in): route by role.
+  useEffect(() => {
+    if (session?.user?.id) {
+      navigate(hasFrom ? from : landingFor(roleOf(session.user)), { replace: true });
+    }
+  }, [session?.user, hasFrom, from, navigate]);
+
+  useEffect(() => {
+    const base = import.meta.env.VITE_HELIO_PROXY_URL ?? "http://127.0.0.1:3001";
+    fetch(`${base}/api/sso-options`)
+      .then((res) => (res.ok ? res.json() : null))
+      .then((options) => options && setSso(options))
+      .catch(() => undefined);
+    if (new URLSearchParams(location.search).has("error")) {
+      setError("Single sign-on failed. Use your Lightbound Google Workspace account.");
+    }
+  }, [location.search]);
+
+  const handleGoogle = async () => {
+    setError("");
+    const back = `${window.location.origin}/login`;
+    await signIn.social({ provider: "google", callbackURL: back, errorCallbackURL: back });
   };
 
   return (
@@ -46,20 +71,38 @@ export default function Login() {
         <div className="flex flex-col items-center mb-6">
           <Shield className="w-12 h-12 text-primary mb-2 animate-pulse" />
           <h1 className="text-primary text-xl tracking-[0.3em] uppercase phosphor-text text-center">
-            Gauss Operator
+            Gauss
             <br />
             Auth Gateway
           </h1>
           <p className="mt-3 text-[10px] uppercase text-primary/50 tracking-[0.35em] text-center">
-            Operator access only — regular members should use the Member Hub for open contributions and visualization.
+            Team sign-in for staff, operators and admins. The live visualisation is open to everyone.
           </p>
         </div>
         
         {error && <div className="text-amber-500 text-xs mb-4 text-center">{error}</div>}
+
+        {sso.google && (
+          <>
+            <button
+              type="button"
+              onClick={() => void handleGoogle()}
+              className="w-full border border-primary/60 text-primary hover:bg-primary/20 transition-all p-3 text-xs tracking-[0.2em] uppercase flex items-center justify-center gap-2"
+            >
+              Sign in with Google Workspace
+            </button>
+            <p className="mt-2 text-center text-[10px] text-primary/50">@{sso.domain} accounts</p>
+            <div className="my-4 flex items-center gap-3 text-[10px] uppercase tracking-widest text-primary/40">
+              <span className="h-px flex-1 bg-primary/20" />
+              or email
+              <span className="h-px flex-1 bg-primary/20" />
+            </div>
+          </>
+        )}
         
         <form onSubmit={handleLogin} className="space-y-4">
           <div>
-            <label className="text-primary/60 text-[10px] uppercase tracking-wider block mb-1">Operator ID (Email)</label>
+            <label className="text-primary/60 text-[10px] uppercase tracking-wider block mb-1">Email</label>
             <input 
               type="email" 
               value={email}
@@ -69,7 +112,7 @@ export default function Login() {
             />
           </div>
           <div>
-            <label className="text-primary/60 text-[10px] uppercase tracking-wider block mb-1">Passkey</label>
+            <label className="text-primary/60 text-[10px] uppercase tracking-wider block mb-1">Password</label>
             <input 
               type="password" 
               value={password}
@@ -86,6 +129,9 @@ export default function Login() {
             Authenticate
           </button>
         </form>
+        <Link to="/" className="mt-6 block text-center text-[10px] uppercase tracking-widest text-primary/50 hover:text-primary">
+          ← Live visualisation
+        </Link>
       </div>
     </div>
   );
