@@ -61,7 +61,7 @@ export function GaussRagPanel() {
           <button
             key={i}
             onClick={() => setActiveTrace(activeTrace === sourceName ? null : sourceName)}
-            className="inline-flex items-center gap-1 px-1.5 py-0.5 mx-1 rounded bg-blue-500/20 text-blue-400 border border-blue-500/30 hover:bg-blue-500/30 transition-colors text-[9px] uppercase tracking-wider font-bold cursor-pointer align-middle"
+            className="inline-flex items-center gap-1 px-1.5 py-0.5 mx-1 rounded bg-earth/20 text-foreground border border-earth/40 hover:bg-earth/30 transition-colors text-[9px] uppercase tracking-wider font-bold cursor-pointer align-middle"
             title="View Reasoning Trace"
           >
             <Database size={10} />
@@ -181,22 +181,20 @@ export function GaussRagPanel() {
       ? `${status.chunkCount} knowledge chunks`
       : 'No index yet';
   return (
-    <div className="hud-panel p-4 w-[min(94vw,480px)] pointer-events-auto animate-fade-in-up space-y-4 bg-black/60 border-primary/20 backdrop-blur-md">
-      <div className="scanline" />
-      <div className="flex items-center justify-between gap-3 border-b border-primary/20 pb-2">
+    <div className="hud-panel p-4 w-[min(94vw,480px)] pointer-events-auto space-y-4 bg-panel/85 border-border backdrop-blur-md">
+      <div className="flex items-center justify-between gap-3 border-b border-border pb-2">
         <div>
-          <h3 className="text-[10px] font-bold tracking-[0.3em] text-primary uppercase flex items-center gap-2 phosphor-text">
-            LOGIC_ENGINE // Ret_Layer_01
+          <h3 className="brand-label flex items-center gap-2">
+            04_LOGIC_ENGINE
           </h3>
-          <p className="text-[7px] text-primary/40 uppercase tracking-[0.2em] font-bold mt-0.5">
-            LANCEDB_FUSION_V2_ACTIVE
-          </p>
+          {/* The index's real state, from /api/rag/status. */}
+          <p className="stat-label mt-1">{chunkLabel}</p>
         </div>
         <button
           type="button"
           onClick={handleIndex}
           disabled={indexing}
-          className="text-[9px] px-3 py-1 border border-primary/30 hover:bg-primary/20 hover:text-primary transition-colors disabled:opacity-30 uppercase tracking-widest font-bold inline-flex items-center gap-2"
+          className="min-h-8 text-[9px] px-3 py-1 border border-border hover:bg-foreground/10 hover:text-foreground transition-colors disabled:opacity-30 uppercase tracking-widest font-bold inline-flex items-center gap-2"
         >
           <Database size={10} />
           {indexing ? 'INDEXING...' : 'R_INDEX_LGB'}
@@ -208,13 +206,13 @@ export function GaussRagPanel() {
           value={question}
           onChange={(e) => setQuestion(e.target.value)}
           placeholder="[ENTER_QUERY_INPUT...]"
-          className="w-full h-20 text-[10px] bg-black/40 border border-primary/10 px-3 py-2 resize-none focus:outline-none focus:border-primary/40 text-primary font-mono placeholder:text-primary/20"
+          className="w-full h-20 text-[10px] bg-background/60 border border-border px-3 py-2 resize-none focus:outline-none focus:border-foreground/30 text-foreground font-mono placeholder:text-muted-foreground/60"
         />
         <button
           type="button"
           onClick={handleAsk}
           disabled={asking || !question.trim()}
-          className="w-full text-[10px] px-3 py-2 border border-primary/40 bg-primary/5 hover:bg-primary/20 hover:text-primary transition-colors disabled:opacity-30 font-bold uppercase tracking-[0.2em] inline-flex items-center justify-center gap-2"
+          className="w-full text-[10px] px-3 py-2 border border-foreground/30 bg-foreground/5 hover:bg-foreground/10 hover:text-foreground transition-colors disabled:opacity-30 font-bold uppercase tracking-[0.2em] inline-flex items-center justify-center gap-2"
         >
           <Search size={12} />
           {asking ? 'CONSULTING_GAUSS_CO_PROCESSOR...' : 'EXEC_QUERY_RAG'}
@@ -222,53 +220,44 @@ export function GaussRagPanel() {
       </div>
 
       {error && (
-        <p className="text-[9px] text-destructive phosphor-text uppercase">
+        <p className="text-[9px] text-destructive uppercase">
           ERR_STK: {error}
         </p>
       )}
 
       {answer && (
-        <div className="mt-2 space-y-2 relative border-t border-primary/10 pt-3">
-          <div className="flex justify-between items-center text-[8px] font-bold tracking-widest uppercase">
-            <span className="text-primary/40">INV_SHELL_OUTPUT</span>
-            <span className="text-primary animate-pulse">VERIFIED_COVE</span>
-          </div>
-          <div className="p-3 bg-black/40 border border-primary/10 shadow-inner">
-            <p className="text-[10px] text-primary/90 whitespace-pre-wrap text-left leading-relaxed font-mono">
+        <div className="mt-2 space-y-2 relative border-t border-border pt-3">
+          <p className="stat-label">Answer</p>
+          <div className="p-3 bg-background/60 border border-border shadow-inner">
+            <p className="text-[10px] text-foreground whitespace-pre-wrap text-left leading-relaxed font-mono">
               {renderTextWithTraces(answer)}
             </p>
           </div>
           
           {/* Active Expandable Trace Panel */}
           {activeTrace && (
-            <div className="mt-2 p-3 bg-primary/5 border border-primary/30 animate-in fade-in slide-in-from-top-1">
-              <h4 className="text-[9px] uppercase text-primary font-bold mb-1 flex items-center gap-2">
-                <Database size={10} />
-                HEX_TRACE_KGRAPH
+            <div className="mt-2 p-3 bg-foreground/5 border border-border animate-in fade-in slide-in-from-top-1">
+              {/* Only what the answer actually cites: no verification is claimed that didn't run. */}
+              <h4 className="stat-label mb-1 flex items-center gap-2">
+                <Database size={10} aria-hidden="true" />
+                Cited source
               </h4>
-              <p className="text-[8px] text-primary/60 mb-2">
-                SRC: <span className="text-primary font-mono">{activeTrace}</span>
-              </p>
-              <div className="text-[8px] font-mono text-primary/40 bg-black/40 p-2 border-l border-primary/20">
-                <span>&gt; verifying node constraints... ok.</span><br/>
-                <span>&gt; multi-hop citation verified against GraphDB.</span><br/>
-                <span className="text-primary/70">"Observations confirm metric deviations map to historical G4 profiles."</span>
-              </div>
+              <p className="font-mono text-[11px] text-foreground">{activeTrace}</p>
             </div>
           )}
         </div>
       )}
 
       {sources.length > 0 && (
-        <div className="mt-1 pt-2 border-t border-primary/5">
-          <p className="text-[8px] font-bold text-primary/40 uppercase tracking-widest mb-1">
+        <div className="mt-1 pt-2 border-t border-border">
+          <p className="text-[8px] font-bold text-muted-foreground uppercase tracking-widest mb-1">
             SOURCE_ATTRIBUTION
           </p>
           <ul className="space-y-0.5 max-h-16 overflow-y-auto text-left">
             {sources.map((s, i) => (
               <li
                 key={`${s.filePath}-${i}`}
-                className="text-[8px] text-primary/60 truncate font-mono"
+                className="text-[8px] text-muted-foreground truncate font-mono"
               >
                 + {s.filePath}
               </li>

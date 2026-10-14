@@ -21,10 +21,10 @@ export function MeshStatusPill() {
   return (
     <Link
       to="/mesh"
-      className={`rounded-full border px-4 py-2 text-sm font-medium transition ${
+      className={`inline-flex min-h-9 items-center rounded-full border px-4 text-sm backdrop-blur-md transition-colors ${
         attention
-          ? "border-destructive/60 bg-destructive/15 text-destructive hover:bg-destructive/25"
-          : "border-primary/50 bg-primary/10 text-primary hover:bg-primary/20"
+          ? "border-sun/60 bg-sun/15 text-sun hover:bg-sun/25"
+          : "border-border bg-panel/85 text-foreground hover:border-foreground/40"
       }`}
     >
       {label}

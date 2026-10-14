@@ -35,10 +35,10 @@ const DataRow = ({ label, value, unit, status = 'normal' }: { label: string; val
 export const HUD = ({ data }: HUDProps) => {
   const getStatusColor = (tier: number) => {
     switch (tier) {
-      case 0: return 'text-primary';
-      case 1: return 'text-primary/70';
-      case 2: return 'text-cyan-400';
-      case 3: return 'text-amber-500';
+      case 0: return 'text-signal';
+      case 1: return 'text-foreground';
+      case 2: return 'text-caution';
+      case 3: return 'text-caution';
       default: return 'text-muted-foreground';
     }
   };
@@ -47,10 +47,10 @@ export const HUD = ({ data }: HUDProps) => {
   const statusLabel = statusLabels[data.tier] || 'UNKNOWN';
 
   return (
-    <div className="hud-panel min-w-[240px] border-primary/20 bg-black/40">
+    <div className="hud-panel min-w-[240px] bg-panel/85 backdrop-blur-md">
       {/* Table Header */}
       <div className="sql-header p-1 flex justify-between items-center px-2">
-        <span>GAUSS // SENSOR_ARRAY</span>
+        <span>02_SOLAR_WIND</span>
         <span className={getStatusColor(data.tier)}>{statusLabel}</span>
       </div>
 
@@ -86,12 +86,9 @@ export const HUD = ({ data }: HUDProps) => {
       </div>
 
       {/* Table Footer */}
-      <div className="p-1 px-2 border-t border-primary/10 flex justify-between items-center opacity-40 text-[9px]">
-        <span>REF_ID: 0x{data.tier.toString(16).toUpperCase()}</span>
-        <span>{data.timestamp.toISOString().split('T')[1].split('.')[0]} Z</span>
+      <div className="flex justify-end border-t border-border p-1 px-2 font-mono text-[9px] text-muted-foreground">
+        <span>{data.timestamp.toISOString().split('T')[1].split('.')[0]} UTC</span>
       </div>
-      
-      <div className="scanline" />
     </div>
   );
 };

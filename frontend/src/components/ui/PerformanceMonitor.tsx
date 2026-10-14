@@ -63,12 +63,11 @@ export const PerformanceMonitor = ({ visible = true }: PerformanceMonitorProps) 
 
   if (!visible) return null;
 
-  const fpsColor = stats.fps >= 55 ? 'text-green-400' : stats.fps >= 30 ? 'text-yellow-400' : 'text-red-400';
+  const fpsColor = stats.fps >= 55 ? 'text-foreground' : stats.fps >= 30 ? 'text-caution' : 'text-sun';
 
   return (
     <div className="absolute top-6 right-32 pointer-events-auto">
       <div className="hud-panel px-3 py-2 animate-fade-in-up flex items-center gap-4">
-        <div className="scanline" />
         <div className="flex items-center gap-2">
           <span className="text-[10px] text-muted-foreground uppercase font-bold tracking-tighter">FPS</span>
           <span className={`text-sm font-mono font-bold ${fpsColor}`}>{stats.fps}</span>

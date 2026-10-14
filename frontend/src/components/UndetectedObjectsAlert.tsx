@@ -28,18 +28,17 @@ export const UndetectedObjectsAlert: React.FC<UndetectedObjectsAlertProps> = ({
 
   if (!alert) {
     return (
-      <div className="absolute right-6 bottom-6 pointer-events-auto">
-        <div className="hud-panel p-3 min-w-[300px] border-primary/20 bg-black/60">
+      <div className="pointer-events-auto">
+        <div className="hud-panel p-3 min-w-[300px] border-border bg-panel/85">
           <div className="flex items-center gap-2 mb-2">
-            <Radar className="w-4 h-4 text-primary/50" />
-            <h3 className="text-[10px] font-bold tracking-[0.2em] uppercase phosphor-text opacity-50">
+            <Radar className="w-4 h-4 text-muted-foreground" />
+            <h3 className="text-[10px] font-bold tracking-[0.2em] uppercase">
               SSA_NOMINAL
             </h3>
           </div>
-          <div className="text-[9px] text-primary/40">
+          <div className="text-[9px] text-muted-foreground">
             All known orbital assets accounted for. No anomalies detected.
           </div>
-          <div className="scanline opacity-20" />
         </div>
       </div>
     );
@@ -48,13 +47,13 @@ export const UndetectedObjectsAlert: React.FC<UndetectedObjectsAlertProps> = ({
   const getSeverityColor = (severity: string) => {
     switch (severity) {
       case 'critical':
-        return 'text-destructive phosphor-text animate-pulse';
+        return 'text-sun';
       case 'high':
-        return 'text-orange-500 phosphor-text';
+        return 'text-sun';
       case 'moderate':
-        return 'text-yellow-500';
+        return 'text-caution';
       default:
-        return 'text-cyan-400';
+        return 'text-earth';
     }
   };
 
@@ -63,16 +62,16 @@ export const UndetectedObjectsAlert: React.FC<UndetectedObjectsAlertProps> = ({
       case 'critical':
         return 'border-destructive/50 bg-destructive/5';
       case 'high':
-        return 'border-orange-500/50 bg-orange-500/5';
+        return 'border-sun/50 bg-sun/5';
       case 'moderate':
-        return 'border-yellow-500/50 bg-yellow-500/5';
+        return 'border-caution/50 bg-caution/5';
       default:
-        return 'border-cyan-400/50 bg-cyan-400/5';
+        return 'border-earth/50 bg-earth/5';
     }
   };
 
   return (
-    <div className="absolute right-6 bottom-6 pointer-events-auto">
+    <div className="pointer-events-auto">
       <div
         className={`hud-panel p-4 min-w-[320px] border-2 ${getSeverityBorder(
           alert.severity
@@ -96,35 +95,35 @@ export const UndetectedObjectsAlert: React.FC<UndetectedObjectsAlertProps> = ({
               >
                 UNTRACKED OBJECT ALERT
               </h3>
-              <p className="text-[8px] text-primary/40 uppercase tracking-widest">
+              <p className="text-[8px] text-muted-foreground uppercase tracking-widest">
                 {alert.severity.toUpperCase()} PRIORITY
               </p>
             </div>
           </div>
-          <div className="text-[8px] text-primary/40 font-mono">
+          <div className="text-[8px] text-muted-foreground font-mono">
             {new Date(alert.timestamp).toLocaleTimeString()}
           </div>
         </div>
 
         {/* Alert Description */}
-        <div className="mb-4 p-3 bg-black/40 border border-primary/10 rounded">
-          <p className="text-[9px] leading-relaxed text-primary/80">{alert.description}</p>
+        <div className="mb-4 p-3 bg-background/60 border border-border rounded">
+          <p className="text-[9px] leading-relaxed text-foreground">{alert.description}</p>
         </div>
 
         {/* Candidate Count */}
         <div className="mb-4 grid grid-cols-3 gap-2">
-          <div className="p-2 bg-primary/5 border border-primary/20 rounded text-center">
-            <div className="text-[9px] text-primary/60 uppercase tracking-wider">Candidates</div>
+          <div className="p-2 bg-primary/5 border border-border rounded text-center">
+            <div className="text-[9px] text-muted-foreground uppercase tracking-wider">Candidates</div>
             <div className={`text-xl font-bold ${getSeverityColor(alert.severity)}`}>
               {alert.candidateCount}
             </div>
           </div>
-          <div className="p-2 bg-primary/5 border border-primary/20 rounded text-center">
-            <div className="text-[9px] text-primary/60 uppercase tracking-wider">Orbit</div>
+          <div className="p-2 bg-primary/5 border border-border rounded text-center">
+            <div className="text-[9px] text-muted-foreground uppercase tracking-wider">Orbit</div>
             <div className="text-[10px] font-mono text-primary">GEO</div>
           </div>
-          <div className="p-2 bg-primary/5 border border-primary/20 rounded text-center">
-            <div className="text-[9px] text-primary/60 uppercase tracking-wider">Status</div>
+          <div className="p-2 bg-primary/5 border border-border rounded text-center">
+            <div className="text-[9px] text-muted-foreground uppercase tracking-wider">Status</div>
             <div className={`text-[10px] font-bold ${getSeverityColor(alert.severity)}`}>
               ACTIVE
             </div>
@@ -133,7 +132,7 @@ export const UndetectedObjectsAlert: React.FC<UndetectedObjectsAlertProps> = ({
 
         {/* Candidate List */}
         <div className="mb-3">
-          <div className="text-[8px] uppercase tracking-[0.2em] text-primary/60 mb-2 flex items-center gap-1">
+          <div className="text-[8px] uppercase tracking-[0.2em] text-muted-foreground mb-2 flex items-center gap-1">
             <Radio className="w-3 h-3" />
             Detected Candidates
           </div>
@@ -141,13 +140,13 @@ export const UndetectedObjectsAlert: React.FC<UndetectedObjectsAlertProps> = ({
             {alert.candidates.map((candidate, idx) => (
               <div
                 key={`${candidate.id}-${idx}`}
-                className="p-2 bg-black/40 border border-primary/10 rounded text-[8px] font-mono"
+                className="p-2 bg-background/60 border border-border rounded text-[8px] font-mono"
               >
                 <div className="flex justify-between items-start mb-1">
                   <span className="text-primary">{candidate.name}</span>
-                  <span className="text-[7px] text-primary/50">{candidate.id}</span>
+                  <span className="text-[7px] text-muted-foreground">{candidate.id}</span>
                 </div>
-                <div className="flex justify-between text-primary/60 text-[7px]">
+                <div className="flex justify-between text-muted-foreground text-[7px]">
                   <span>{candidate.category}</span>
                   <span>{candidate.altitude.toLocaleString()} km</span>
                 </div>
@@ -158,18 +157,17 @@ export const UndetectedObjectsAlert: React.FC<UndetectedObjectsAlertProps> = ({
 
         {/* Operator Notice */}
         {isOperator && (
-          <div className="p-2 bg-orange-500/10 border border-orange-500/30 rounded text-[8px] text-orange-300 uppercase tracking-wider">
+          <div className="rounded border border-caution/30 bg-caution/10 p-2 text-[10px] uppercase tracking-wider text-caution">
             ⚠ OPERATOR ALERT ENABLED · SECURITY PROTOCOLS ACTIVE · AUDIT TRAIL RECORDING
           </div>
         )}
 
         {/* Trend */}
-        <div className="mt-3 flex items-center gap-2 text-[9px] text-primary/60">
+        <div className="mt-3 flex items-center gap-2 text-[9px] text-muted-foreground">
           <TrendingUp className="w-3 h-3" />
           <span>Detection confidence increasing with radiation flux correlation</span>
         </div>
 
-        <div className="scanline" />
       </div>
     </div>
   );

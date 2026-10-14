@@ -30,14 +30,10 @@ export const ScreenshotButton = ({ canvasRef }: ScreenshotButtonProps) => {
   return (
     <button
       onClick={handleScreenshot}
-      className="hud-panel p-1.5 flex items-center justify-center hover:bg-primary/20 transition-colors border-primary/20 animate-fade-in-up"
-      title="Export Screenshot"
+      className="hud-panel group flex min-h-9 items-center justify-center bg-panel/85 px-3 transition-colors hover:border-foreground/40"
     >
-      <Camera size={14} className="text-primary phosphor-text" />
-      <span className="text-[9px] font-bold uppercase ml-2 tracking-widest text-primary/60 group-hover:text-primary">
-        SEC_CAP
-      </span>
-      <div className="scanline" />
+      <Camera size={14} className="text-muted-foreground group-hover:text-foreground" aria-hidden="true" />
+      <span className="ml-2 text-xs text-muted-foreground group-hover:text-foreground">Screenshot</span>
     </button>
   );
 };

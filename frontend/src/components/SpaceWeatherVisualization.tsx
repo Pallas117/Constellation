@@ -9,6 +9,7 @@ import { useState, useRef, useCallback } from 'react';
 import { useSpaceWeather } from '@/hooks/useSpaceWeather';
 import { useSpaceObjects } from '@/hooks/useSpaceObjects';
 import { GaussGlobe, EncodingPanel } from './GaussGlobe';
+import { Switch } from './ui/switch';
 import { Nav } from './Nav';
 import { ReasoningStream } from './ReasoningStream';
 import { DataFlowHUD } from './DataFlowHUD';
@@ -56,8 +57,9 @@ export const SpaceWeatherVisualization = () => {
         highFidelityBelts={highFidelityBelts}
       />
 
-      {/* UI Overlays */}
-      <div className="absolute inset-0 pointer-events-none">
+      {/* UI overlays: placed around the scene from md up; on a phone, one scrolling
+          column under a strip of the scene, so no panel covers another. */}
+      <div className="pointer-events-none absolute inset-0 flex flex-col gap-3 overflow-y-auto px-3 pb-6 pt-[38vh] md:block md:overflow-visible md:p-0">
         <Nav
           data={data}
           layers={layers}
@@ -73,22 +75,19 @@ export const SpaceWeatherVisualization = () => {
             encodingMode={encodingMode}
             setEncodingMode={setEncodingMode}
           />
-          <div className="absolute right-4 top-4 pointer-events-auto">
-            <label className="flex items-center gap-2 text-sm">
-              <input
-                type="checkbox"
-                checked={highFidelityBelts}
-                onChange={(e) => setHighFidelityBelts(e.target.checked)}
-                className="form-checkbox"
-              />
-              <span>High-fidelity belts</span>
+          <div className="hud-panel flex min-h-10 w-full items-center justify-between gap-3 bg-panel/85 px-3 backdrop-blur-md">
+            <label htmlFor="hifi-belts" className="cursor-pointer text-sm">
+              High-fidelity belts
             </label>
+            <Switch id="hifi-belts" checked={highFidelityBelts} onCheckedChange={setHighFidelityBelts} />
           </div>
         </Nav>
 
         <ReasoningStream />
-        <DataFlowHUD tier={data.tier} />
-        <UndetectedObjectsAlert alert={spaceObjectAlert} />
+        <div className="pointer-events-none flex flex-col gap-2 md:absolute md:bottom-6 md:right-6 md:items-end">
+          <UndetectedObjectsAlert alert={spaceObjectAlert} />
+          <DataFlowHUD tier={data.tier} />
+        </div>
       </div>
     </div>
   );

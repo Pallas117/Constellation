@@ -1,5 +1,5 @@
 /**
- * Nav — Title branding, HUD data overlay, performance monitor, and left-rail controls.
+ * Nav — title, sensor readout and left-rail controls (frame-rate monitor in development only).
  *
  * Owns the UI chrome that surrounds the 3D globe — everything except the
  * scene viewport itself and the bottom RAG panel.
@@ -10,7 +10,6 @@ import { HUD } from './ui/HUD';
 import { LayerToggles } from './ui/LayerToggles';
 import { ScreenshotButton } from './ui/ScreenshotButton';
 import { PerformanceMonitor } from './ui/PerformanceMonitor';
-import { ThemeSwitcher } from './ui/ThemeSwitcher';
 import type { LayerVisibility } from './types';
 import type { InterpolatedData } from '@/hooks/useSpaceWeather';
 
@@ -42,49 +41,29 @@ export function Nav({
 }: NavProps) {
     return (
         <>
-            {/* Top left — Title & System State */}
-            <div className="absolute top-6 left-6 p-3 bg-black/60 border-l border-primary/40 backdrop-blur-sm animate-fade-in-up">
-                <h1 className="text-xl font-bold tracking-tighter text-foreground phosphor-text">
-                    GAUSS // <span className="text-primary opacity-80">AURORA</span>
-                </h1>
-                <div className="mt-1 flex flex-col gap-0.5">
-                    <p className="text-[8px] text-primary/60 uppercase tracking-[0.25em] font-bold">
-                        STATE: NOMINAL_B // SSA_TRACK_ACTIVE
-                    </p>
-                    {spaceObjectSummary ? (
-                      <p className="text-[8px] text-primary/60 uppercase tracking-[0.25em] font-bold">
-                        {spaceObjectSummary}
-                      </p>
-                    ) : null}
-                    <div className="flex items-center gap-1.5 mt-0.5 opacity-30">
-                        <div className="h-[1px] w-12 bg-primary" />
-                        <span className="text-[7px] text-primary uppercase tracking-[0.3em]">SKUNKWORKS_RE_09E0</span>
-                    </div>
-                </div>
+            {/* Top left — title */}
+            <div className="hud-panel pointer-events-auto bg-panel/85 px-4 py-3 backdrop-blur-md md:absolute md:left-6 md:top-6">
+                <h1 className="brand-label">00_OPERATOR · GAUSS AURORA</h1>
+                {spaceObjectSummary ? <p className="stat-label mt-2">{spaceObjectSummary}</p> : null}
             </div>
 
             {/* Top right — Data feed HUD */}
-            <div className="absolute top-6 right-6 pointer-events-auto flex flex-col gap-1 items-end animate-fade-in-up">
+            <div className="pointer-events-auto flex flex-col gap-1 md:absolute md:right-6 md:top-6 md:items-end">
                 <HUD data={data} />
             </div>
 
-            {/* Performance Monitor */}
-            <div className="pointer-events-auto opacity-40 hover:opacity-100 transition-opacity">
-                <PerformanceMonitor visible={true} />
-            </div>
+            {/* Frame-rate readout: a development aid, not part of the console. */}
+            {import.meta.env.DEV && (
+                <div className="pointer-events-auto opacity-40 transition-opacity hover:opacity-100">
+                    <PerformanceMonitor visible={true} />
+                </div>
+            )}
 
             {/* Left rail — Controls and actions */}
-            <div className="absolute left-6 top-1/2 -translate-y-1/2 pointer-events-auto flex flex-col gap-2 items-start">
-                <div className="p-1 bg-black/40 border border-primary/10 hover:border-primary/40 transition-colors">
-                    <ThemeSwitcher />
-                </div>
-                <div className="p-1 bg-black/40 border border-primary/10 hover:border-primary/40 transition-colors">
-                    <LayerToggles layers={layers} onToggle={onToggle} />
-                </div>
+            <div className="pointer-events-auto flex flex-col gap-2 md:absolute md:left-6 md:top-1/2 md:-translate-y-1/2 md:items-start">
+                <LayerToggles layers={layers} onToggle={onToggle} label="01_LAYERS" />
                 {children}
-                <div className="p-1 bg-black/40 border border-primary/10 hover:border-primary/40 transition-colors">
-                    <ScreenshotButton canvasRef={canvasRef} />
-                </div>
+                <ScreenshotButton canvasRef={canvasRef} />
             </div>
         </>
     );

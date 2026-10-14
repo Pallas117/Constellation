@@ -1,26 +1,21 @@
 /**
  * ReasoningStream — LLM / RAG inference panel + 72-hour ML forecast widget.
  *
- * Self-contained; wraps GaussRagPanel with bottom-centre positioning and
- * the LSTM anomaly-probability banner. GPU-isolated via will-change.
+ * Self-contained; wraps GaussRagPanel and
+ * the LSTM anomaly-probability banner. Bottom centre from md up; in the phone column below.
  */
 
 import { GaussRagPanel } from './GaussRagPanel';
 import { useAnomalyForecast } from '@/hooks/useAnomalyForecast';
 import { AlertTriangle, Activity, ShieldCheck } from 'lucide-react';
 
-const containerStyle: React.CSSProperties = {
-  willChange: 'transform',
-  transform: 'translate3d(-50%, 0, 0)',
-  contain: 'layout style',
-};
 
 function ForecastBanner() {
   const { forecast, loading } = useAnomalyForecast();
 
   if (loading || !forecast) {
     return (
-      <div className="flex items-center gap-2 px-3 py-1.5 bg-black/50 border border-primary/10 text-[8px] font-mono text-primary/30 uppercase tracking-widest">
+      <div className="flex items-center gap-2 px-3 py-1.5 bg-black/50 border border-border text-[8px] font-mono text-muted-foreground uppercase tracking-widest">
         <Activity size={8} className="animate-pulse" />
         LSTM_FORECAST: COMPUTING...
       </div>
@@ -33,16 +28,16 @@ function ForecastBanner() {
   const isSevere = forecast.predictedKpMax >= 7;
 
   const colour = isSevere
-    ? 'border-red-500/60 text-red-400'
+    ? 'border-sun/60 text-sun'
     : isHighRisk
-    ? 'border-yellow-500/50 text-yellow-400'
-    : 'border-primary/20 text-primary/60';
+    ? 'border-caution/50 text-caution'
+    : 'border-border text-muted-foreground';
 
   const Icon = isSevere ? AlertTriangle : isHighRisk ? AlertTriangle : ShieldCheck;
 
   return (
     <div
-      className={`flex items-start gap-2 px-3 py-2 bg-black/60 border backdrop-blur-sm ${colour}`}
+      className={`flex items-start gap-2 px-3 py-2 bg-panel/85 border backdrop-blur-sm ${colour}`}
       title={forecast.warningMessage}
     >
       <Icon size={10} className="mt-0.5 shrink-0" />
@@ -66,8 +61,7 @@ function ForecastBanner() {
 export function ReasoningStream() {
   return (
     <div
-      className="absolute bottom-6 left-1/2 flex flex-col items-center gap-1.5 pointer-events-none"
-      style={containerStyle}
+      className="pointer-events-none flex flex-col items-center gap-1.5 [contain:layout_style] md:absolute md:bottom-6 md:left-1/2 md:-translate-x-1/2"
     >
       <div className="pointer-events-auto">
         <GaussRagPanel />
@@ -77,8 +71,8 @@ export function ReasoningStream() {
         <ForecastBanner />
       </div>
 
-      <p className="text-[8px] text-primary/30 font-bold uppercase tracking-[0.4em]">
-        FEED_SRC: NOAA_SWPC // NASA_DSCOVR // LSTM_72H
+      <p className="font-mono text-[9px] uppercase tracking-[0.14em] text-muted-foreground">
+        Sources: NOAA SWPC real-time solar wind (L1) · 72 h LSTM forecast
       </p>
     </div>
   );
