@@ -7,6 +7,7 @@ import type { FC } from 'react';
 import { AlertTriangle, Radar } from 'lucide-react';
 import type { SpaceObjectDetectionAlert } from '@/lib/types/space-object';
 import { StatusBadge, type BadgeTone } from '@/components/brand/StatusBadge';
+import { ssaStatus } from '@/lib/ssaStatus';
 
 interface UndetectedObjectsAlertProps {
   alert: SpaceObjectDetectionAlert | null;
@@ -20,14 +21,18 @@ const SEVERITY_TONE: Record<SpaceObjectDetectionAlert['severity'], BadgeTone> = 
 };
 
 export const UndetectedObjectsAlert: FC<UndetectedObjectsAlertProps> = ({ alert }) => {
+  // No alert is not "nominal": with no detector connected, the SSA state is unknown (GAU-81).
   if (!alert) {
     return (
       <section aria-labelledby="ssa-title" className="hud-panel p-3">
-        <h2 id="ssa-title" className="brand-label mb-1 flex items-center gap-2">
-          <Radar className="h-3.5 w-3.5" aria-hidden="true" />
-          04_ORBITAL_OBJECTS
-        </h2>
-        <p className="text-sm text-muted-foreground">All known orbital assets accounted for. No anomalies detected.</p>
+        <div className="mb-1 flex items-center justify-between gap-3">
+          <h2 id="ssa-title" className="brand-label flex items-center gap-2">
+            <Radar className="h-3.5 w-3.5" aria-hidden="true" />
+            04_ORBITAL_OBJECTS
+          </h2>
+          <StatusBadge tone="neutral">Unknown</StatusBadge>
+        </div>
+        <p className="text-sm text-muted-foreground">{ssaStatus(alert).detail}</p>
       </section>
     );
   }

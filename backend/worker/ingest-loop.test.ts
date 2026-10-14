@@ -189,3 +189,27 @@ test("tick uses measured Kyoto Dst while fresh, and the model once it is stale (
   const modelled = (await worker.tick()).canonicalPoint.indices;
   assert.notEqual(modelled.dst, -123, "a 3 h old reading is not used as current");
 });
+
+test("FMEA: a failed telemetry write is counted and reported, and the tick still publishes (GAU-121)", async () => {
+  const fs = await import("node:fs/promises");
+  const path = await import("node:path");
+  const { bedrock } = await import("../lib/local-db.js");
+  const dir = process.env.GAUSS_BEDROCK_DIR!;
+  const file = path.join(dir, "telemetry.jsonl");
+  await fs.rm(file, { force: true, recursive: true });
+  await fs.mkdir(file); // a directory where the file should be: every append fails with EISDIR
+  const worker = new IngestionWorker() as unknown as TimedWorker & {
+    tick: () => Promise<{ canonicalPoint: unknown; pipeline?: { stages: Array<{ stage: string; errors: number }> } }>;
+  };
+  const now = Date.now();
+  for (const key of ["noaa", "esa", "jaxa", "mms", "lasp", "goes", "kyoto-dst", "ml-forecast"]) worker.lastFetch.set(key, now);
+  const before = bedrock.failedWrites;
+  try {
+    const result = await worker.tick();
+    assert.ok(result.canonicalPoint, "the point is still served from memory");
+    assert.equal(bedrock.failedWrites, before + 1);
+    assert.equal(result.pipeline?.stages.find((s) => s.stage === "persist")?.errors, 1, "persist stage reports the error");
+  } finally {
+    await fs.rm(file, { recursive: true, force: true });
+  }
+});

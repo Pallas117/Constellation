@@ -38,6 +38,7 @@ import { createSwapPlan, rebalanceDeviceNetwork } from "./services/device-swap-m
 import { encodeCanonicalPoint } from "./lib/proto.js";
 import { linkGuardian } from "./lib/connectivity.js";
 import { bedrock } from "./lib/local-db.js";
+import { diskFreeBytes, overall, readTpms } from "./lib/tpm.js";
 import { SPACE_OBJECT_CATALOG } from "./lib/space-object-catalog.js";
 import { auth, ssoAllowedDomain, ssoGithubEnabled, ssoGoogleEnabled } from "./better-auth.js";
 import { toNodeHandler } from "better-auth/node";
@@ -185,10 +186,24 @@ async function fetchMmsFromDb(
   return null;
 }
 
-app.get("/health", (_req, res) => {
+async function currentTpms() {
+  return readTpms({
+    pipeline: worker.getPipelineLatency(),
+    failedWrites: bedrock.failedWrites,
+    diskFreeBytes: await diskFreeBytes(bedrock.dataDir),
+    rssBytes: process.memoryUsage().rss,
+    sources: getSourceStatus(),
+    skill: worker.forecastSkill.skill(),
+  });
+}
+
+app.get("/health", async (_req, res) => {
+  // Public: overall TPM status and the ids of red measures only, no values. GAU-122.
+  const tpms = await currentTpms();
   res.json({
     ok: true,
     timestamp: new Date().toISOString(),
+    tpm: { status: overall(tpms), red: tpms.filter((t) => t.status === "red").map((t) => t.id) },
   });
 });
 
@@ -506,6 +521,12 @@ app.get("/api/system/connectivity", (req: AuthenticatedRequest, res) => {
 // Per-stage ingest latency and the age of the data being served (fresh / degraded / stale / stalled).
 app.get("/api/system/pipeline", (_req: AuthenticatedRequest, res) => {
   res.json(worker.getPipelineLatency());
+});
+
+// Technical performance measures with thresholds and margins (NASA SE §6.7). GAU-122.
+app.get("/api/system/tpm", async (_req: AuthenticatedRequest, res) => {
+  const tpms = await currentTpms();
+  res.json({ generatedAt: new Date().toISOString(), status: overall(tpms), measures: tpms });
 });
 
 app.get("/api/security/cybertiger/events", (req: AuthenticatedRequest, res) => {
