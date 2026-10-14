@@ -26,6 +26,19 @@ const MOCK_SPACE_WEATHER = {
   },
 };
 
+// What GET /api/feed/space-weather/latest really returns: one canonical point.
+const MOCK_CANONICAL_POINT = {
+  timestamp: new Date().toISOString(),
+  observedAt: new Date().toISOString(),
+  source: "fusion",
+  rho: 5.5,
+  velocity: { x: -425, y: 0, z: 0, magnitude: 425 },
+  magneticField: { x: 2.1, y: -3.4, z: -6.2, bt: 7.4 },
+  solarWind: { speed: 425, density: 5.5, dynamicPressure: 2.4 },
+  indices: { kp: 4, dst: -40, kpKind: "estimated-1m" },
+  quality: { outlier: false, stale: false, interpolated: false, extrapolated: false, lowConfidence: false, tier: 0 },
+};
+
 const MOCK_CONNECTIVITY_STATUS = {
   mode: "CLOUD",
   latencyMs: 24,
@@ -101,7 +114,7 @@ export async function mockUiApis(page: Page, options?: { auth?: boolean }): Prom
   };
 
   await page.route("**/api/feed/space-weather/latest", async (route) => {
-    await fulfillCorsJson(route, MOCK_SPACE_WEATHER);
+    await fulfillCorsJson(route, MOCK_CANONICAL_POINT);
   });
 
   await page.route("**/functions/v1/spaceweather**", async (route) => {

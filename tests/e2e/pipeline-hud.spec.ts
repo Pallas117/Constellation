@@ -27,23 +27,27 @@ function snapshot(overrides: Record<string, unknown> = {}) {
 }
 
 async function servePipeline(page: Page, body: unknown, status = 200) {
-  await page.route("**/api/system/pipeline", (route) =>
-    route.fulfill({
-      status,
-      contentType: "application/json",
-      headers: { "Access-Control-Allow-Origin": "*" },
-      body: JSON.stringify(body),
-    }),
-  );
+  await page.route("**/api/system/pipeline", (route) => {
+    // Backend fetches carry credentials (lib/api/backend-credentials.ts), and browsers reject
+    // credentialed responses that use "*". Echo the caller's origin, as mockUiApis does.
+    const origin = route.request().headers()["origin"] ?? "http://127.0.0.1";
+    const headers = {
+      "Access-Control-Allow-Origin": origin,
+      "Access-Control-Allow-Credentials": "true",
+      "Access-Control-Allow-Headers": "content-type, authorization",
+      "Access-Control-Allow-Methods": "GET,OPTIONS",
+      Vary: "Origin",
+    };
+    if (route.request().method() === "OPTIONS") return route.fulfill({ status: 204, headers });
+    return route.fulfill({ status, contentType: "application/json", headers, body: JSON.stringify(body) });
+  });
 }
 
 const hud = (page: Page) => page.getByRole("region", { name: "05_DATA_PATH" });
 
-// ProtectedRoute on main reads `session.session.user.id`, but Better Auth returns
-// `{ session, user }`, so the mocked session in mockUiApis is always bounced to /login (the
-// existing ui-smoke spec fails the same way). Until that is fixed, carry `user` in both places
-// so this spec exercises the HUD; it keeps passing once ProtectedRoute reads `data.user`.
-const USER = { id: "user-op-0001", email: "operator@gauss.space", name: "Operator Gauss", emailVerified: true };
+// Better Auth returns `{ session, user }`; ProtectedRoute reads `data.user` and /operator needs
+// the operator role, otherwise the guard sends the page to "/".
+const USER = { id: "user-op-0001", email: "operator@gauss.space", name: "Operator Gauss", emailVerified: true, role: "operator" };
 const SESSION = {
   session: { id: "sess-op-0001", userId: USER.id, token: "mock", expiresAt: new Date(Date.now() + 3_600_000).toISOString(), user: USER },
   user: USER,

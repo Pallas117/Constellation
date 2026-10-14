@@ -4,6 +4,7 @@ import { getAccessToken } from "@/lib/api/auth";
 import { useFeedSession, usePolledFeed, type FeedStatus } from "@/hooks/usePolledFeed";
 import { wsOrigin } from "@/lib/api/base-url";
 import { lookbackSince, mergeSeries, SERIES_MAX_POINTS } from "@/lib/api/feed-series";
+import { isCanonicalPoint } from "@/lib/dataProcessing";
 
 // Signed in: the 24 h, 5 s feed (`user` role). Signed out: only the public
 // latest point, about once a minute (NOAA updates each minute). The auth-only
@@ -24,13 +25,13 @@ export interface SolarWind5sState {
   status: FeedStatus;
 }
 
+// Malformed points are dropped here rather than crashing the scene and HUD downstream.
 const parseSeries = (json: unknown): CanonicalSpaceWeatherPoint[] => {
-  const points = (json as { points?: CanonicalSpaceWeatherPoint[] } | null)?.points;
-  return Array.isArray(points) ? points : [];
+  const points = (json as { points?: unknown[] } | null)?.points;
+  return Array.isArray(points) ? points.filter(isCanonicalPoint) : [];
 };
 
-const parseLatest = (json: unknown): CanonicalSpaceWeatherPoint[] =>
-  json && typeof json === "object" && "timestamp" in json ? [json as CanonicalSpaceWeatherPoint] : [];
+const parseLatest = (json: unknown): CanonicalSpaceWeatherPoint[] => (isCanonicalPoint(json) ? [json] : []);
 
 // Backfill 24 h once, then ask only for points newer than the last one held.
 const seriesPath = (path: string, held: CanonicalSpaceWeatherPoint[] | null) =>
@@ -90,9 +91,9 @@ export function useSolarWind5s({ history = true }: SolarWind5sOptions = {}): Sol
         try {
           const message = JSON.parse(event.data) as {
             topic?: string;
-            payload?: CanonicalSpaceWeatherPoint;
+            payload?: unknown;
           };
-          if (message.topic !== "space-weather" || !message.payload) {
+          if (message.topic !== "space-weather" || !isCanonicalPoint(message.payload)) {
             return;
           }
           const payload = message.payload;
