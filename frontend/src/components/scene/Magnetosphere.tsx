@@ -75,67 +75,107 @@ const TAIL_LENGTH = 40;
 /* Field lines                                                               */
 /* ------------------------------------------------------------------------- */
 
+/** Segments each pooled line object can hold; the worst case seeds ~34k. */
+const LINE_CAPACITY = 40_000;
+
+/** A fat-line object with pre-allocated GPU buffers, filled in place on each retrace. */
+function makeLineSlot(): LineSegments2 {
+  const geometry = new LineSegmentsGeometry();
+  geometry.setPositions(new Float32Array(LINE_CAPACITY * 6));
+  geometry.setColors(new Float32Array(LINE_CAPACITY * 6));
+  geometry.instanceCount = 0;
+  const material = new LineMaterial({
+    vertexColors: true,
+    linewidth: LINE_WIDTH_PX,
+    worldUnits: false,
+    transparent: true,
+    opacity: 0,
+    depthWrite: false,
+    blending: THREE.AdditiveBlending,
+  });
+  material.toneMapped = false;
+  const lines = new LineSegments2(geometry, material);
+  lines.frustumCulled = false;
+  lines.visible = false;
+  return lines;
+}
+
+/** Copy a trace into a slot's existing buffers; uploads only the used range. */
+function writeLineSlot(slot: LineSegments2, data: FieldRenderData) {
+  const n = Math.min(data.segments.length / 6, LINE_CAPACITY);
+  const write = (name: 'instanceStart' | 'instanceColorStart', src: Float32Array) => {
+    const buffer = (slot.geometry.attributes[name] as THREE.InterleavedBufferAttribute).data;
+    (buffer.array as Float32Array).set(src.subarray(0, n * 6));
+    buffer.clearUpdateRanges();
+    buffer.addUpdateRange(0, n * 6);
+    buffer.needsUpdate = true;
+  };
+  write('instanceStart', data.segments);
+  write('instanceColorStart', data.colors);
+  slot.geometry.instanceCount = n;
+}
+
 /**
- * All traced field lines as one fat-line draw call, built straight from the
- * worker's transferred buffers (no per-vertex JS objects on the main thread).
+ * Field lines with a crossfade between traces, using two fat-line objects
+ * allocated once. Creating a new object per retrace cost a 60-95 ms frame in
+ * Chrome (fresh GPU buffers and material); filling pre-allocated buffers in
+ * place avoids that entirely.
  */
-const FieldLines = memo(function FieldLines({
-  data,
-  visible,
-  onFaded,
-}: {
-  data: FieldRenderData;
-  /** Fade toward full (true) or zero (false) opacity. */
-  visible: boolean;
-  onFaded?: () => void;
-}) {
+const FieldLinePool = ({ data }: { data: FieldRenderData | null }) => {
   const tau = useTau(FADE_TAU);
   const size = useThree((st) => st.size);
-  const done = useRef(false);
+  const gl = useThree((st) => st.gl);
+  const camera = useThree((st) => st.camera);
+  const scene = useThree((st) => st.scene);
+  const slots = useMemo(() => [makeLineSlot(), makeLineSlot()], []);
+  const active = useRef(-1);
 
-  const object = useMemo(() => {
-    const geometry = new LineSegmentsGeometry();
-    geometry.setPositions(data.segments);
-    geometry.setColors(data.colors);
-    const material = new LineMaterial({
-      vertexColors: true,
-      linewidth: LINE_WIDTH_PX,
-      worldUnits: false,
-      transparent: true,
-      opacity: 0, // fades in
-      depthWrite: false,
-      blending: THREE.AdditiveBlending,
-    });
-    material.toneMapped = false;
-    const lines = new LineSegments2(geometry, material);
-    lines.frustumCulled = false;
-    return lines;
-  }, [data]);
+  // Compile the fat-line shader while the worker traces the first field, so
+  // the first frame that shows lines doesn't stall on shader compilation
+  // (~190 ms measured in Chrome). Non-blocking where the driver supports
+  // KHR_parallel_shader_compile; both slots share the compiled program.
+  useEffect(() => {
+    gl.compileAsync(slots[0], camera, scene).catch(() => undefined);
+  }, [gl, camera, scene, slots]);
 
-  // GPU buffers are ours to free (drei used to do this for us).
   useEffect(
     () => () => {
-      object.geometry.dispose();
-      object.material.dispose();
+      for (const slot of slots) {
+        slot.geometry.dispose();
+        slot.material.dispose();
+      }
     },
-    [object],
+    [slots],
   );
 
   useLayoutEffect(() => {
-    object.material.resolution.set(size.width, size.height);
-  }, [object, size.width, size.height]);
+    for (const slot of slots) slot.material.resolution.set(size.width, size.height);
+  }, [slots, size.width, size.height]);
+
+  // A new trace goes into the idle slot and fades in; the other fades out.
+  useEffect(() => {
+    if (!data) return;
+    const next = active.current === 0 ? 1 : 0;
+    writeLineSlot(slots[next], data);
+    slots[next].material.opacity = 0;
+    active.current = next;
+  }, [data, slots]);
 
   useFrame((_, dt) => {
-    const mat = object.material;
-    mat.opacity = damp(mat.opacity, visible ? LINE_OPACITY : 0, dt, tau);
-    if (!visible && mat.opacity < 0.01 && !done.current) {
-      done.current = true;
-      onFaded?.();
-    }
+    slots.forEach((slot, i) => {
+      const mat = slot.material;
+      mat.opacity = damp(mat.opacity, i === active.current ? LINE_OPACITY : 0, dt, tau);
+      slot.visible = mat.opacity > 0.002;
+    });
   });
 
-  return <primitive object={object} />;
-});
+  return (
+    <>
+      <primitive object={slots[0]} />
+      <primitive object={slots[1]} />
+    </>
+  );
+};
 
 /** Plasma tracers flowing along the traced field lines at constant arc speed. */
 const FieldLineTracers = memo(function FieldLineTracers({ data, count = 520 }: { data: FieldRenderData; count?: number }) {
@@ -773,15 +813,8 @@ export const Magnetosphere = ({
         )}
         {showFieldLines && (
           <>
-            {model.previous?.render && (
-              <FieldLines key={`lines-${model.version - 1}`} data={model.previous.render} visible={false} onFaded={model.dropPrevious} />
-            )}
-            {state.render && (
-              <>
-                <FieldLines key={`lines-${model.version}`} data={state.render} visible />
-                <FieldLineTracers data={state.render} />
-              </>
-            )}
+            <FieldLinePool data={state.render} />
+            {state.render && <FieldLineTracers data={state.render} />}
           </>
         )}
         <AuroralOvals tilt={state.tilt} oval={state.oval} kp={model.drivers.kp} />
