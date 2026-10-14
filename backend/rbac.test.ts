@@ -21,6 +21,9 @@ function declaredRoutes(): string[] {
   for (const m of read("mesh/router.ts").matchAll(/ui\.(get|post|put|patch|delete)\("([^"]+)"/g)) {
     out.push(`${m[1].toUpperCase()} /mesh${m[2]}`);
   }
+  for (const m of read("commerce/routers.ts").matchAll(/router\.(get|post|put|patch|delete)\("([^"]+)"/g)) {
+    if (!m[2].startsWith("/data/")) out.push(`${m[1].toUpperCase()} /orgs${m[2]}`); // /data/* is the key-authenticated /api/v1
+  }
   // Handled before the policy middleware by design (see rbac.ts header).
   return out.filter((r) => r !== "GET /sso-options");
 }
