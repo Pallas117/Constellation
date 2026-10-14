@@ -15,56 +15,33 @@ test("smoke: control rail and centered LLM chat interactions", async ({ page }) 
 
   const layerNames = [
     /earth layer/i,
-    /vbelt layer/i,
-    /mopause layer/i,
-    /flines layer/i,
-    /mhdwav layer/i,
-    /recon layer/i,
+    /radiation belts layer/i,
+    /boundaries layer/i,
+    /field lines layer/i,
+    /mhd waves layer/i,
+    /mms reconnection layer/i,
   ];
 
   for (const layerName of layerNames) {
-    const button = page.getByRole("button", { name: layerName });
-    const before = await button.getAttribute("aria-pressed");
-    await button.click();
+    const toggle = page.getByRole("switch", { name: layerName });
+    const before = await toggle.getAttribute("aria-checked");
+    await toggle.click();
     const expectedAfter = before === "true" ? "false" : "true";
-    await expect(button).toHaveAttribute("aria-pressed", expectedAfter);
+    await expect(toggle).toHaveAttribute("aria-checked", expectedAfter);
   }
 
-  const colorEncodingButton = page.getByRole("button", {
-    name: /use color encoding for radiation flux/i,
-  });
-  const sizeEncodingButton = page.getByRole("button", {
-    name: /use particle size encoding for radiation flux/i,
-  });
-  const bothEncodingButton = page.getByRole("button", {
-    name: /use both color and size encoding for radiation flux/i,
-  });
+  const encoding = page.getByRole("radiogroup", { name: /flux encoding/i });
+  for (const name of [/^size$/i, /^both$/i, /^colour$/i]) {
+    const option = encoding.getByRole("radio", { name });
+    await option.click();
+    await expect(option).toHaveAttribute("aria-checked", "true");
+  }
 
-  await sizeEncodingButton.click();
-  await expect(sizeEncodingButton).toHaveAttribute("aria-pressed", "true");
-  await bothEncodingButton.click();
-  await expect(bothEncodingButton).toHaveAttribute("aria-pressed", "true");
-  await colorEncodingButton.click();
-  await expect(colorEncodingButton).toHaveAttribute("aria-pressed", "true");
+  const hifiSwitch = page.getByRole("switch", { name: /high-fidelity belts/i });
+  await hifiSwitch.click();
+  await expect(hifiSwitch).toHaveAttribute("aria-checked", "true");
 
-  const themeTrigger = page.getByRole("button", { name: /current theme:/i });
-  await themeTrigger.click();
-  await page.getByRole("menuitem", { name: /mode_drk/i }).click();
-  await expect
-    .poll(async () =>
-      page.evaluate(() => document.documentElement.classList.contains("dark")),
-    )
-    .toBe(true);
-
-  await themeTrigger.click();
-  await page.getByRole("menuitem", { name: /mode_lit/i }).click();
-  await expect
-    .poll(async () =>
-      page.evaluate(() => document.documentElement.classList.contains("dark")),
-    )
-    .toBe(false);
-
-  const screenshotButton = page.getByRole("button", { name: /sec_cap/i });
+  const screenshotButton = page.getByRole("button", { name: /screenshot/i });
   const downloadPromise = page
     .waitForEvent("download", { timeout: 5_000 })
     .catch(() => null);

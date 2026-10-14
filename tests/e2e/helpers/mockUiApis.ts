@@ -61,36 +61,58 @@ const MOCK_AUTH_SESSION = {
     updatedAt: new Date().toISOString(),
     name: "Operator Gauss",
     image: null,
+    // /operator needs the operator role (frontend/src/lib/roles.ts); without it the route redirects.
+    role: "operator",
   },
 };
 
-export async function mockUiApis(page: Page, options?: { auth?: boolean }): Promise<void> {
-  const corsHeaders = {
-    "access-control-allow-origin": "*",
+// Credentialed requests (the auth client sends cookies) reject a "*" origin:
+// echo the caller's origin and allow credentials, as the real backend does.
+type MockRoute = Parameters<Parameters<Page["route"]>[1]>[0];
+
+const corsHeaders = (route: MockRoute) => {
+  const origin = route.request().headers()["origin"];
+  return {
+    "access-control-allow-origin": origin ?? "*",
+    ...(origin ? { "access-control-allow-credentials": "true", vary: "Origin" } : {}),
     "access-control-allow-methods": "GET,POST,OPTIONS",
-    "access-control-allow-headers": "*",
+    "access-control-allow-headers": "content-type,authorization",
   };
+};
 
-  const fulfillCorsJson = async (
-    route: Parameters<Parameters<Page["route"]>[1]>[0],
-    body: unknown,
-    status = 200,
-  ) => {
-    if (route.request().method() === "OPTIONS") {
-      await route.fulfill({
-        status: 204,
-        headers: corsHeaders,
-      });
-      return;
-    }
-
+/** JSON reply with CORS headers that a credentialed cross-origin fetch accepts. */
+export const fulfillCorsJson = async (
+  route: MockRoute,
+  body: unknown,
+  status = 200,
+) => {
+  if (route.request().method() === "OPTIONS") {
     await route.fulfill({
-      status,
-      contentType: "application/json",
-      headers: corsHeaders,
-      body: JSON.stringify(body),
+      status: 204,
+      headers: corsHeaders(route),
     });
-  };
+    return;
+  }
+
+  await route.fulfill({
+    status,
+    contentType: "application/json",
+    headers: corsHeaders(route),
+    body: JSON.stringify(body),
+  });
+};
+
+export async function mockUiApis(page: Page, options?: { auth?: boolean }): Promise<void> {
+
+  // Hermetic: anything not mocked below gets a 404 here instead of reaching a real
+  // backend (the dev proxy points at :3001, where CyberTiger counts 401/403s per IP).
+  // Registered first, so every specific mock below takes precedence.
+  await page.route(
+    (url) => /^\/(api|ws|functions)\//.test(url.pathname),
+    async (route) => {
+      await fulfillCorsJson(route, { error: "not mocked" }, 404);
+    },
+  );
 
   await page.route("**/api/feed/space-weather/latest", async (route) => {
     await fulfillCorsJson(route, MOCK_SPACE_WEATHER);

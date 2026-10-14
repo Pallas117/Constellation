@@ -16,19 +16,17 @@ test("mobile: layout and controls remain usable at 390x844", async ({ page }) =>
   if (!viewport) throw new Error("Viewport not available");
 
   const appHeading = page.getByRole("heading", { name: /gauss.*aurora/i });
-  const sensorHeading = page.getByText(/gauss \/\/ sensor_array/i);
+  const sensorHeading = page.getByText(/02_solar_wind/i);
   const logicHeading = page.getByRole("heading", { name: /logic[_ ]engine/i });
-  const themeTrigger = page.getByRole("button", { name: /current theme:/i });
-  const earthLayerButton = page.getByRole("button", { name: /earth layer/i });
-  const colorEncodingButton = page.getByRole("button", {
-    name: /use color encoding for radiation flux/i,
-  });
+  const hifiSwitch = page.getByRole("switch", { name: /high-fidelity belts/i });
+  const earthLayerButton = page.getByRole("switch", { name: /earth layer/i });
+  const colorEncodingButton = page.getByRole("radio", { name: /^colour$/i });
   const askButton = page.getByRole("button", { name: /exec_query_rag/i });
 
   await expect(appHeading).toBeVisible();
   await expect(sensorHeading).toBeVisible();
   await expect(logicHeading).toBeVisible();
-  await expect(themeTrigger).toBeVisible();
+  await expect(hifiSwitch).toBeVisible();
   await expect(earthLayerButton).toBeVisible();
   await expect(colorEncodingButton).toBeVisible();
   await expect(askButton).toBeVisible();
@@ -37,12 +35,15 @@ test("mobile: layout and controls remain usable at 390x844", async ({ page }) =>
     appHeading,
     sensorHeading,
     logicHeading,
-    themeTrigger,
+    hifiSwitch,
     earthLayerButton,
     askButton,
   ];
 
+  // On a phone the console is one scrolling column: each control must fit the
+  // width and come fully on screen when scrolled to.
   for (const locator of criticalLocators) {
+    await locator.scrollIntoViewIfNeeded();
     const box = await locator.boundingBox();
     expect(box).not.toBeNull();
     if (!box) continue;
@@ -53,17 +54,12 @@ test("mobile: layout and controls remain usable at 390x844", async ({ page }) =>
   }
 
   await earthLayerButton.click();
-  await expect(earthLayerButton).toHaveAttribute("aria-pressed", "false");
+  await expect(earthLayerButton).toHaveAttribute("aria-checked", "false");
   await earthLayerButton.click();
-  await expect(earthLayerButton).toHaveAttribute("aria-pressed", "true");
+  await expect(earthLayerButton).toHaveAttribute("aria-checked", "true");
 
-  await themeTrigger.click();
-  await page.getByRole("menuitem", { name: /mode_drk/i }).click();
-  await expect
-    .poll(async () =>
-      page.evaluate(() => document.documentElement.classList.contains("dark")),
-    )
-    .toBe(true);
+  await hifiSwitch.click();
+  await expect(hifiSwitch).toHaveAttribute("aria-checked", "true");
 
   await page
     .getByPlaceholder(/\[ENTER_QUERY_INPUT\.\.\.\]/i)
