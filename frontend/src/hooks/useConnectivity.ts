@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { apiBase } from "@/lib/api/base-url";
 
 export type ConnectivityMode = 'CLOUD' | 'SAT' | 'AIRGAP';
 
@@ -17,7 +18,7 @@ export const useConnectivity = () => {
 
   const fetchStatus = async () => {
     try {
-      const proxyUrl = import.meta.env.VITE_HELIO_PROXY_URL || 'http://127.0.0.1:3001';
+      const proxyUrl = apiBase();
       const response = await fetch(`${proxyUrl}/api/system/connectivity`);
       if (response.ok) {
         const data = await response.json();
