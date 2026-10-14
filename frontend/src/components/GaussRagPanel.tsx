@@ -21,7 +21,7 @@ const RAG_BASE =
   import.meta.env.VITE_GAUSS_RAG_URL || apiBase();
 
 const DEFAULT_INDEX_DIR =
-  import.meta.env.VITE_GAUSS_RAG_INDEX_DIR || '/Users/josh/Documents/lightbound';
+  import.meta.env.VITE_GAUSS_RAG_INDEX_DIR || '';
 
 const MOCK_AI_TEXT = `[URGENT] SYSTEM ANOMALY DETECTED
 
