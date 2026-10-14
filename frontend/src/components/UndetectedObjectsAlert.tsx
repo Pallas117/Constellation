@@ -6,6 +6,7 @@
 import React, { useEffect, useState } from 'react';
 import { AlertTriangle, Radar, TrendingUp, Radio } from 'lucide-react';
 import type { SpaceObjectDetectionAlert } from '@/lib/types/space-object';
+import { ssaStatus } from '@/lib/ssaStatus';
 
 interface UndetectedObjectsAlertProps {
   alert: SpaceObjectDetectionAlert | null;
@@ -26,18 +27,19 @@ export const UndetectedObjectsAlert: React.FC<UndetectedObjectsAlertProps> = ({
     return () => clearInterval(interval);
   }, [alert]);
 
+  // No alert is not "nominal": with no detector connected, the SSA state is unknown (GAU-81).
   if (!alert) {
     return (
       <div className="absolute right-6 bottom-6 pointer-events-auto">
-        <div className="hud-panel p-3 min-w-[300px] border-primary/20 bg-black/60">
+        <div className="hud-panel p-3 min-w-[300px] border-border bg-black/60">
           <div className="flex items-center gap-2 mb-2">
-            <Radar className="w-4 h-4 text-primary/50" />
-            <h3 className="text-[10px] font-bold tracking-[0.2em] uppercase phosphor-text opacity-50">
-              SSA_NOMINAL
+            <Radar className="w-4 h-4 text-muted-foreground" />
+            <h3 className="text-[10px] font-bold tracking-[0.2em] uppercase text-muted-foreground">
+              SSA_UNKNOWN
             </h3>
           </div>
-          <div className="text-[9px] text-primary/40">
-            All known orbital assets accounted for. No anomalies detected.
+          <div className="text-[9px] text-muted-foreground">
+            {ssaStatus(alert).detail}
           </div>
           <div className="scanline opacity-20" />
         </div>

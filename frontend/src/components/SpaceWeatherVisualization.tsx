@@ -8,6 +8,7 @@
 import { useState, useRef, useCallback } from 'react';
 import { useSpaceWeather } from '@/hooks/useSpaceWeather';
 import { useSpaceObjects } from '@/hooks/useSpaceObjects';
+import { ssaStatus } from '@/lib/ssaStatus';
 import { GaussGlobe, EncodingPanel } from './GaussGlobe';
 import { Nav } from './Nav';
 import { ReasoningStream } from './ReasoningStream';
@@ -36,6 +37,7 @@ export const SpaceWeatherVisualization = () => {
 
   const { data, visualParams } = useSpaceWeather();
   const { catalog: spaceObjects, alert: spaceObjectAlert } = useSpaceObjects(data);
+  const ssa = ssaStatus(spaceObjectAlert);
 
   const handleToggle = useCallback((layer: keyof LayerVisibility) => {
     setLayers(prev => ({ ...prev, [layer]: !prev[layer] }));
@@ -64,9 +66,9 @@ export const SpaceWeatherVisualization = () => {
           onToggle={handleToggle}
           canvasRef={canvasRef}
           spaceObjectSummary={
-            spaceObjectAlert
-              ? `UNTRACKED OBJECTS DETECTED: ${spaceObjectAlert.candidateCount}`
-              : `KNOWN ORBITAL ASSETS: ${spaceObjects?.length ?? 0}`
+            ssa.state === 'alert'
+              ? ssa.label
+              : `${ssa.label} // KNOWN ORBITAL ASSETS: ${spaceObjects?.length ?? 0}`
           }
         >
           <EncodingPanel
