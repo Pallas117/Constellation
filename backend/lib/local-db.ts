@@ -11,6 +11,9 @@ const DATA_DIR = process.env.GAUSS_BEDROCK_DIR
 const TELEMETRY_FILE = path.join(DATA_DIR, "telemetry.jsonl");
 
 export class BedrockDB {
+  /** Directory holding telemetry.jsonl (its volume's free space is a TPM). */
+  readonly dataDir = DATA_DIR;
+
   private initialized = false;
 
   private async ensureDir() {
@@ -23,13 +26,31 @@ export class BedrockDB {
     }
   }
 
+  /** Appends that failed (disk full, permissions, ...) since start; surfaced, never swallowed. GAU-121. */
+  public failedWrites = 0;
+
+  /** Best-effort append for fire-and-forget callers: never rejects; failures are counted and logged. */
   public async appendTelemetry(data: any) {
+    try {
+      await this.appendTelemetryStrict(data);
+    } catch {
+      // already counted and logged
+    }
+  }
+
+  /**
+   * Append that rejects on failure, for callers that must know (the ingest loop records it as a
+   * persist-stage error instead of reporting the write as ok). GAU-121.
+   */
+  public async appendTelemetryStrict(data: any) {
     await this.ensureDir();
     const line = JSON.stringify(data) + "\n";
     try {
       await fs.appendFile(TELEMETRY_FILE, line, "utf8");
     } catch (err) {
+      this.failedWrites += 1;
       console.error("[Bedrock] Append failed", err);
+      throw err;
     }
   }
 

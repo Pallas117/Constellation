@@ -25,6 +25,7 @@ import {
 } from "../state.js";
 import { linkGuardian } from "../lib/connectivity.js";
 import { PipelineTimer, STAGE_BUDGET_MS } from "../lib/pipeline-timing.js";
+import { ForecastSkillTracker } from "../lib/tpm.js";
 import { bedrock } from "../lib/local-db.js";
 import { inferAnomalyForecast } from "../ml-client/client.js";
 import type {
@@ -105,6 +106,9 @@ export class IngestionWorker {
   /** Timestamp of the newest NOAA measurement seen, kept after expiry so its age stays visible. */
   private lastMeasurementAt: string | null = null;
   private ticking = false;
+  private loggedCloudDisabled = false;
+  /** Live skill of served forecasts vs persistence (TPM forecast_skill, FMEA FM-09). GAU-122. */
+  readonly forecastSkill = new ForecastSkillTracker();
   readonly timing = new PipelineTimer();
 
   constructor(private onTick?: (result: IngestionTickResult) => void) {}
@@ -354,6 +358,12 @@ export class IngestionWorker {
           () => inferAnomalyForecast(forecastWindow(getCanonicalFeed(), Date.parse(nowIso))),
           STAGE_BUDGET_MS["ml-forecast"],
         );
+        // Score every served forecast later against observed Kp; persistence = Kp measured now.
+        const f = this.latestForecast;
+        const kpNow = this.noaa?.kp;
+        if (f?.available && typeof kpNow === "number" && freshnessTier(this.noaa?.timestamp ?? null, Date.parse(nowIso)) <= 1) {
+          this.forecastSkill.record(Date.parse(nowIso), f.horizonHours, f.predictedKpMax, kpNow);
+        }
       } catch (err) {
         console.warn("[IngestionWorker] ML Forecast failed, retaining previous predictions.");
       }
@@ -365,6 +375,9 @@ export class IngestionWorker {
       // Past the cap the readout is unknown, not "last known"; inputs fall back to the
       // previous canonical state and the point is flagged stale.
       this.noaa = null;
+    } else if (typeof this.noaa?.kp === "number") {
+      // Resolve due forecasts only against a current measured Kp.
+      this.forecastSkill.resolve(Date.parse(nowIso), this.noaa.kp);
     }
     const mhdInput = this.blendInputs(nowIso);
 
@@ -422,18 +435,21 @@ export class IngestionWorker {
     try {
       // Local Buffer is always the priority (Air-Gap ready)
       await this.timing.time("persist", async () => {
-        await bedrock.appendTelemetry({ type: "canonical", data: point, timestamp: point.timestamp });
+        await bedrock.appendTelemetryStrict({ type: "canonical", data: point, timestamp: point.timestamp });
         if (mmsVector) {
-          await bedrock.appendTelemetry({ type: "mms", data: mmsVector, timestamp: mmsVector.timestamp });
+          await bedrock.appendTelemetryStrict({ type: "mms", data: mmsVector, timestamp: mmsVector.timestamp });
         }
       });
 
       // Cloud Sync only if link is CLOUD or SAT
-      if (link.mode !== "AIRGAP") {
+      if (link.mode !== "AIRGAP" && !this.loggedCloudDisabled) {
+        this.loggedCloudDisabled = true; // once, not every 5 s tick
         console.log("[IngestionWorker] Cloud persistence disabled; local bedrock buffering remains active.");
       }
     } catch (error) {
-      console.warn(`[IngestionWorker] Persistence throttled (Link: ${link.mode}). Data safely buffered in Bedrock.`);
+      // The local write itself failed (disk full, permissions): the point is served from memory but
+      // NOT persisted. The persist stage counts the error in /api/system/pipeline. GAU-121.
+      console.error(`[IngestionWorker] Bedrock write failed; point not persisted (${bedrock.failedWrites} failed writes).`, error);
     }
 
     const result: IngestionTickResult = {
