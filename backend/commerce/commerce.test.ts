@@ -50,7 +50,8 @@ test("keys are stored only as hashes, resolve to their org, and stop working whe
   assert.match(key, /^gk_[0-9a-f]{8}_/);
   assert.equal(JSON.stringify(store.listKeys(org.id)).includes(key), false);
   assert.equal(store.resolveKey(key)?.org.name, "xOrbita");
-  assert.equal(store.resolveKey(key.slice(0, -1) + "A"), undefined);
+  // The last base64url char of 32 bytes is one of only 16 values ("A" included), so swap in one that differs.
+  assert.equal(store.resolveKey(key.slice(0, -1) + (key.endsWith("A") ? "B" : "A")), undefined);
   assert.equal(store.revokeKey(org.id, info.id), true);
   assert.equal(store.resolveKey(key), undefined);
 });
