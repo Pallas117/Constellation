@@ -18,7 +18,7 @@ function canonicalPoint(i: number): CanonicalSpaceWeatherPoint {
     magneticField: { x: 1, y: -2, z: -3, bt: 3.7416573868 },
     electricField: { x: 0, y: 1, z: 0, ey: 1 },
     solarWind: { speed: 400, density: 5, dynamicPressure: 2 },
-    indices: { kp: 2, dst: -20 },
+    indices: { kp: 2, dst: -20, dstMethod: "measured", dstDerivedFrom: [] },
     coupling: { newell: 1200, epsilon: 1.2e11 },
     propagation: { l1DelaySeconds: 3750, etaEarthArrival: ts },
     alerts: { stormTier: "quiet", reason: "test" },
@@ -28,6 +28,7 @@ function canonicalPoint(i: number): CanonicalSpaceWeatherPoint {
       interpolated: false,
       extrapolated: false,
       lowConfidence: false,
+      tier: 0,
     },
     uncertainty: {
       speed: { lower: 360, upper: 440, sigma: 20 },

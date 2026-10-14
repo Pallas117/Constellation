@@ -31,6 +31,7 @@ export const API_POLICY: ReadonlyArray<{ method: string; path: string; access: A
   { method: "GET", path: "/feed/mms/reconnection/latest", access: "user" },
   { method: "GET", path: "/feed/sources/status", access: "user" },
   { method: "GET", path: "/forecast/anomaly", access: "user" },
+  { method: "GET", path: "/system/pipeline", access: "user" },
 
   // Own devices (login device binding); the router checks ownership
   { method: "GET", path: "/device", access: "user" },

@@ -10,7 +10,7 @@
         "message": "Bootstrap registry entry"
       },
       "dataset": "ml/data/train_dataset.jsonl",
-      "status": "bootstrap"
+      "status": "invalid-no-training-data"
     },
     {
       "version": "unet-baseline-v1",
@@ -22,7 +22,7 @@
         "message": "No data"
       },
       "dataset": "ml/data/train_dataset.jsonl",
-      "status": "ready"
+      "status": "invalid-no-training-data"
     },
     {
       "version": "unet-baseline-v1",
@@ -34,7 +34,58 @@
         "message": "No data"
       },
       "dataset": "ml/data/train_dataset.jsonl",
-      "status": "ready"
+      "status": "invalid-no-training-data"
+    },
+    {
+      "version": "kp3h-mlp-v1-87236383",
+      "file": "kp3h-mlp-v1-87236383.json",
+      "trained_at": "2026-10-12T04:41:14.992406+00:00",
+      "status": "promoted",
+      "gate": {
+        "mae_beats_persistence_by_5pct": true,
+        "brier_skill_vs_climatology_positive": true,
+        "outputs_finite": true,
+        "passed": true,
+        "warnings": [
+          "During storm hours the Kp estimate is worse than persistence (MAE 1.3072 vs 1.1099); use the storm probability, not the Kp value, for storm warnings."
+        ]
+      },
+      "metrics": {
+        "test": {
+          "samples": 25483,
+          "storm_hours": 982,
+          "mae": 0.608,
+          "mae_persistence": 0.6732,
+          "mae_improvement_vs_persistence": 0.0969,
+          "mae_during_storms": 1.3072,
+          "mae_persistence_during_storms": 1.1099,
+          "brier": 0.023,
+          "brier_climatology": 0.03715,
+          "brier_persistence": 0.03622,
+          "brier_skill_vs_climatology": 0.3809,
+          "brier_skill_vs_persistence": 0.365,
+          "storm_pod_at_p50": 0.3666,
+          "storm_far_at_p50": 0.2829,
+          "finite": true
+        },
+        "validation": {
+          "samples": 17135,
+          "storm_hours": 163,
+          "mae": 0.5234,
+          "mae_persistence": 0.5858,
+          "mae_improvement_vs_persistence": 0.1065,
+          "mae_during_storms": 1.4478,
+          "mae_persistence_during_storms": 1.2166,
+          "brier": 0.00716,
+          "brier_climatology": 0.00979,
+          "brier_persistence": 0.01231,
+          "brier_skill_vs_climatology": 0.2688,
+          "brier_skill_vs_persistence": 0.4189,
+          "storm_pod_at_p50": 0.1963,
+          "storm_far_at_p50": 0.2558,
+          "finite": true
+        }
+      }
     }
   ]
 }

@@ -37,3 +37,7 @@ data/mesh/
 
 # Organisations, API keys (hashed) and usage metering
 data/commerce/
+
+# ML training data (downloaded, never committed)
+ml/data/
+__pycache__/
