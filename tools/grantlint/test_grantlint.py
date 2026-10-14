@@ -33,8 +33,12 @@ class Limits(unittest.TestCase):
         self.assertNotIn(("FAIL", "BP"), levels(f))
 
     def test_annexes_dont_count_toward_core(self):
-        f = gl.lint(RULES, {"BP": bp(20) + ["Annex B"] * 6, "IP": ["p"], "CL": CL_OK})
+        f = gl.lint(RULES, {"BP": bp(20) + ["Annex B"] * 4, "IP": ["p"], "CL": CL_OK})  # 20 core + 5 annex = 25 total
         self.assertNotIn(("FAIL", "BP"), levels(f))
+
+    def test_business_plan_over_25_pages_with_annexes_fails(self):
+        f = gl.lint(RULES, {"BP": bp(18) + ["Annex"] * 9, "IP": ["p"], "CL": CL_OK})
+        self.assertTrue(any(l == "FAIL" and "28 pages in total, limit 25" in m for l, k, m in f))
 
     def test_incubation_proposal_over_10_pages_fails(self):
         f = gl.lint(RULES, {"BP": bp(15), "IP": ["p"] * 12, "CL": CL_OK})

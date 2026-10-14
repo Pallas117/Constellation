@@ -16,6 +16,8 @@
       "label": "Business Plan",
       "max_pages": 20,
       "ideal_pages": 15,
+      "max_total_pages": 25,
+      "total_source": "template: \"The maximum size of this Business Plan is 25 pages, including any annexes\"",
       "annex_heading": "^\\s*annex",
       "limit_source": "template: \"The core section should ideally not exceed 15 pages, with 20 pages as a maximum\"",
       "sections": [
@@ -56,6 +58,7 @@
     "Incentive: total within £51,724.00; no more than 50% (£25,862.00) on office rental, spend outside the UK and entrepreneur salaries (Incubation Proposal template).",
     "MFA: total of declared MFA plus this award stays under £315,000 (Cover Letter template).",
     "Fonts: \"Don't change or reduce the font size\" (templates) — compare against the template by eye.",
+    "Template colour: \"Remove all blue text before saving and submitting the final version\" (Business Plan template) — text colour isn't visible to grantlint.",
     "Every number traces to the answer bank or is labelled as an assumption; product status lines match the answer bank word for word.",
     "Tell the Edinburgh Programme Manager in advance about any support or reasonable adjustments needed."
   ]

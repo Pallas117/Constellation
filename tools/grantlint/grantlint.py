@@ -87,6 +87,8 @@ def lint(rules, docs, templates=None):
             add("FAIL", key, f"{label}: {n} {what}, limit {spec['max_pages']} ({spec.get('limit_source', 'call guidance')})")
         elif spec.get("ideal_pages") and n > spec["ideal_pages"]:
             add("WARN", key, f"{label}: {n} {what}; guidance says ideally {spec['ideal_pages']}, max {spec['max_pages']}")
+        if spec.get("max_total_pages") and paged and len(pages) > spec["max_total_pages"]:
+            add("FAIL", key, f"{label}: {len(pages)} pages in total, limit {spec['max_total_pages']} including annexes ({spec.get('total_source', 'call guidance')})")
         for sec in spec.get("sections", []):
             span = section_pages(pages, sec["start"], sec["end"])
             if span is None:
