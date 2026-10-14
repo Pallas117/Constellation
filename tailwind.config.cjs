@@ -15,7 +15,23 @@ module.exports = {
   ],
   theme: {
     extend: {
+      // Lightbound Brand Room: IBM Plex Sans for headlines/body, JetBrains Mono for labels and telemetry.
+      fontFamily: {
+        sans: ['"IBM Plex Sans"', 'ui-sans-serif', 'system-ui', 'sans-serif'],
+        mono: ['"JetBrains Mono"', 'ui-monospace', 'SFMono-Regular', 'Menlo', 'monospace'],
+      },
+      borderRadius: {
+        lg: 'var(--radius)',
+        md: 'calc(var(--radius) - 2px)',
+        sm: 'calc(var(--radius) - 4px)',
+      },
       colors: {
+        signal: 'hsl(var(--signal))',
+        caution: 'hsl(var(--amber))',
+        sun: 'hsl(var(--sun))',
+        earth: 'hsl(var(--earth))',
+        charcoal: 'hsl(var(--charcoal))',
+        panel: 'hsl(var(--panel))',
         border: 'hsl(var(--border))',
         input: 'hsl(var(--input))',
         ring: 'hsl(var(--ring))',

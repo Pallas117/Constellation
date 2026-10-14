@@ -8,7 +8,8 @@ export const LATEST_MAX_AGE_MS = 15 * 60 * 1000;
  * rather than presented as live.
  */
 export function withFreshness(point: CanonicalSpaceWeatherPoint, nowMs = Date.now()): CanonicalSpaceWeatherPoint {
-  const t = Date.parse(point.timestamp);
+  // Judge by when the values were measured; a recently issued point can carry old values.
+  const t = Date.parse(point.observedAt ?? point.timestamp);
   if (Number.isFinite(t) && nowMs - t <= LATEST_MAX_AGE_MS) {
     return point;
   }

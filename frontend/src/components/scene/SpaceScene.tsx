@@ -7,13 +7,17 @@
 
 'use client'; // Mark as client component (for Next.js compatibility, if migrated)
 
-import { Suspense, useRef, useEffect } from 'react';
-import { Canvas, useFrame, useThree } from '@react-three/fiber';
+import { Suspense, useRef, useEffect, useMemo, useState } from 'react';
+import { Canvas, useThree } from '@react-three/fiber';
 import { OrbitControls, Stars, PerspectiveCamera } from '@react-three/drei';
 import * as THREE from 'three';
 import { Earth } from './Earth';
 import { VanAllenBelts } from './VanAllenBelts';
-import { Magnetosphere } from './Magnetosphere';
+import { Magnetosphere, type MagnetosphereModelInfo } from './Magnetosphere';
+import { hoverHandlers } from './scene-hover';
+import { ShaderWarmup } from './ShaderWarmup';
+import { dipoleTiltRad, type SolarWindDrivers } from '@/lib/physics/geomagnetic';
+import { useNow } from '@/hooks/useNow';
 import { OrbitRings } from './OrbitRings';
 import { RadiationDataOverlay } from './RadiationDataOverlay';
 import { RadiationDataOverlayLOD } from './RadiationDataOverlayLOD';
@@ -60,7 +64,32 @@ interface SpaceSceneProps {
   encodingMode?: 'color' | 'size' | 'both';
   /** MMS tetrahedron-derived reconnection vectors */
   mmsVectors?: MMSReconVectorPoint[];
+  /** Live solar wind drivers for the field-line model (Bz/By nT, Pdyn nPa, Kp) */
+  solarWindDrivers?: Partial<SolarWindDrivers>;
+  /** Average live drivers over 5 min before tracing field lines (default true). */
+  smoothDrivers?: boolean;
+  /** Called with the field model each time the scene retraces. */
+  onModelUpdate?: (info: MagnetosphereModelInfo) => void;
+  /** Camera preset; change `viewRequest` to re-apply the same preset. */
+  view?: SceneView;
+  viewRequest?: number;
+  /** Report Earth and the boundaries under the pointer (see scene-hover.ts). */
+  hoverable?: boolean;
 }
+
+export type SceneView = 'overview' | 'dayside' | 'meridian' | 'tail' | 'polar';
+
+type Vec = [number, number, number];
+/** Camera position and orbit target per preset (scene units = Earth radii, Sun at +x). */
+export const SCENE_VIEWS: Record<SceneView, { position: Vec; target: Vec; label: string }> = {
+  overview: { position: [6, 5, 18], target: [0, 0, 0], label: 'Overview' },
+  dayside: { position: [26, 4, 6], target: [3, 0, 0], label: 'From the Sun' },
+  meridian: { position: [-4, 2, 44], target: [-6, 0, 0], label: 'Noon–midnight' },
+  tail: { position: [-34, 9, 16], target: [-12, 0, 0], label: 'Magnetotail' },
+  polar: { position: [-1.5, 24, 3], target: [0, 0, 0], label: 'North pole' },
+};
+
+const DEFAULT_CAMERA: Vec = SCENE_VIEWS.overview.position;
 
 const SceneContent = ({
   layers,
@@ -77,17 +106,32 @@ const SceneContent = ({
   encodingMode = 'color',
   mmsVectors,
   highFidelity,
+  solarWindDrivers,
+  smoothDrivers = true,
+  onModelUpdate,
+  hoverable = false,
+  view = 'overview',
+  viewRequest = 0,
 }: Omit<SpaceSceneProps, 'canvasRef'>) => {
   const groupRef = useRef<THREE.Group>(null);
+  // GSM frame: the dipole tilts toward/away from the Sun with season and UT.
+  const epochMs = useNow(5 * 60_000);
+  const dipoleTilt = useMemo(() => dipoleTiltRad(epochMs), [epochMs]);
   const controlsRef = useRef<any>(null);
   const { camera } = useThree();
 
-  useFrame((state) => {
-    // Subtle scene rotation for dynamic feel
-    if (groupRef.current) {
-      groupRef.current.rotation.y = Math.sin(state.clock.elapsedTime * 0.1) * 0.1;
+  // Apply camera presets on request.
+  useEffect(() => {
+    const preset = SCENE_VIEWS[view] ?? SCENE_VIEWS.overview;
+    camera.position.set(...preset.position);
+    camera.lookAt(...preset.target);
+    if (controlsRef.current) {
+      controlsRef.current.target.set(...preset.target);
+      controlsRef.current.update();
     }
-  });
+  }, [camera, view, viewRequest]);
+
+  // No decorative scene sway: the Sun stays fixed on +x so geometry reads as data.
 
   // Keyboard navigation for globe control
   useEffect(() => {
@@ -162,10 +206,12 @@ const SceneContent = ({
           event.preventDefault();
           // Reset view
           if (camera instanceof THREE.PerspectiveCamera) {
-            camera.position.set(0, 3, 12);
+            camera.position.set(...DEFAULT_CAMERA);
             camera.lookAt(0, 0, 0);
             camera.updateProjectionMatrix();
           }
+          controlsRef.current.target.set(0, 0, 0);
+          controlsRef.current.update();
           if (groupRef.current) {
             groupRef.current.rotation.set(0, 0, 0);
           }
@@ -179,12 +225,12 @@ const SceneContent = ({
 
   return (
     <>
-      <PerspectiveCamera makeDefault position={[0, 3, 12]} fov={45} />
+      <PerspectiveCamera makeDefault position={DEFAULT_CAMERA} fov={45} />
       <OrbitControls
         ref={controlsRef}
         enablePan={false}
         minDistance={5}
-        maxDistance={30}
+        maxDistance={70}
         enableDamping
         dampingFactor={0.05}
         rotateSpeed={0.5}
@@ -216,19 +262,31 @@ const SceneContent = ({
 
       {/* Main scene group */}
       <group ref={groupRef}>
-        <Earth visible={layers.earth} />
+        <group {...(hoverable ? { userData: { hoverTarget: 'earth' }, ...hoverHandlers } : {})}>
+          <Earth visible={layers.earth} />
+        </group>
         
-        <VanAllenBelts 
-          visible={layers.belts} 
-          intensity={0.5 + beltIntensity * 0.5}
-          compression={magnetopauseCompression}
-          highFidelity={Boolean(highFidelity)}
-        />
-        
+        {/* Belts are symmetric about the dipole axis: tilt them with it. */}
+        <group rotation={[0, 0, -dipoleTilt]}>
+          <VanAllenBelts
+            visible={layers.belts}
+            intensity={0.5 + beltIntensity * 0.5}
+            compression={magnetopauseCompression}
+            highFidelity={Boolean(highFidelity)}
+          />
+        </group>
+
         <Magnetosphere
           visible={layers.magnetosphere || layers.fieldLines}
+          showSurfaces={layers.magnetosphere}
+          showFieldLines={layers.fieldLines}
           compression={magnetopauseCompression}
           reconnectionStrength={reconnectionStrength}
+          drivers={solarWindDrivers}
+          smoothing={smoothDrivers}
+          onModelUpdate={onModelUpdate}
+          epochMs={epochMs}
+          hoverable={hoverable}
         />
 
         <MHDWaves visible={layers.mhdWaves !== false} />
@@ -277,16 +335,31 @@ const SceneContent = ({
   );
 };
 
+/** Only mention the warm-up if it takes long enough to notice (a first visit). */
+const PREPARING_NOTICE_MS = 400;
+
 export const SpaceScene = (props: SpaceSceneProps) => {
+  // Nothing renders until every shader is compiled: the first draw of an
+  // uncompiled material blocks the main thread (see ShaderWarmup).
+  const [ready, setReady] = useState(false);
+  const [slow, setSlow] = useState(false);
+  useEffect(() => {
+    if (ready) return;
+    const t = window.setTimeout(() => setSlow(true), PREPARING_NOTICE_MS);
+    return () => window.clearTimeout(t);
+  }, [ready]);
+
   return (
     <div
       role="application"
       aria-label="3D space weather visualization. Use arrow keys to rotate, plus/minus to zoom, and R to reset view."
+      aria-busy={!ready}
       tabIndex={0}
-      className="w-full h-full focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2"
+      className="relative w-full h-full focus:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-signal/40"
     >
       <Canvas
         ref={props.canvasRef}
+        frameloop={ready ? 'always' : 'never'}
         gl={{ 
           antialias: true, 
           alpha: true,
@@ -294,12 +367,22 @@ export const SpaceScene = (props: SpaceSceneProps) => {
           powerPreference: 'high-performance',
         }}
         dpr={[1, 2]}
-        className="w-full h-full"
+        // Transparent until warmed up: ShaderWarmup draws a frame out of sight first.
+        className={`w-full h-full transition-opacity duration-500 motion-reduce:transition-none ${ready ? 'opacity-100' : 'opacity-0'}`}
       >
         <Suspense fallback={null}>
           <SceneContent {...props} />
+          <ShaderWarmup onReady={() => setReady(true)} />
         </Suspense>
       </Canvas>
+      {!ready && slow && (
+        <p
+          role="status"
+          className="pointer-events-none absolute inset-0 flex items-center justify-center font-mono text-[10px] uppercase tracking-[0.14em] text-muted-foreground"
+        >
+          <span className="animate-pulse">Preparing the field model…</span>
+        </p>
+      )}
     </div>
   );
 };

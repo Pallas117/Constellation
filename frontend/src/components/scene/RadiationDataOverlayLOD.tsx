@@ -115,18 +115,19 @@ function downsampleData(
 }
 
 /**
- * Glowing dot shader material with LOD support
+ * Glowing dot shader material with LOD support. Exported so the scene can compile
+ * it before the first storm toggle (see ShaderWarmup).
  */
-const createGlowMaterial = (pointSize: number) => {
+export const createGlowMaterial = (pointSize: number) => {
   return new THREE.ShaderMaterial({
     uniforms: {
       time: { value: 0 },
       glowIntensity: { value: 1.0 },
       pointSize: { value: pointSize },
     },
+    // `color` is declared by three for vertexColors; declaring it again fails to compile.
     vertexShader: `
       attribute float size;
-      attribute vec3 color;
       varying vec3 vColor;
       varying float vSize;
       

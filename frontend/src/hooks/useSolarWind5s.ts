@@ -1,13 +1,17 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { CanonicalSpaceWeatherPoint } from "@/lib/types/space-weather";
-import { getAccessToken, getAuthHeaders } from "@/lib/api/auth";
+import { getAccessToken } from "@/lib/api/auth";
+import { useFeedSession, usePolledFeed, type FeedStatus } from "@/hooks/usePolledFeed";
+import { wsOrigin } from "@/lib/api/base-url";
+import { lookbackSince, mergeSeries, SERIES_MAX_POINTS } from "@/lib/api/feed-series";
 
-const FEED_ENDPOINT = "/api/feed/space-weather/5s?lookback=PT24H&limit=17280";
+// Signed in: the 24 h, 5 s feed (`user` role). Signed out: only the public
+// latest point, about once a minute (NOAA updates each minute). The auth-only
+// route is never requested without a session, because CyberTiger counts 401s.
+const FEED_ENDPOINT = "/api/feed/space-weather/5s";
+const PUBLIC_LATEST_ENDPOINT = "/api/feed/space-weather/latest";
 const POLL_INTERVAL_MS = 5000;
-
-function getBaseUrl(): string {
-  return import.meta.env.VITE_HELIO_PROXY_URL ?? "http://127.0.0.1:3001";
-}
+const PUBLIC_POLL_INTERVAL_MS = 60_000;
 
 export interface SolarWind5sState {
   points: CanonicalSpaceWeatherPoint[];
@@ -15,54 +19,48 @@ export interface SolarWind5sState {
   loading: boolean;
   error: string | null;
   source: "polling" | "websocket";
+  /** Signed-out visitors get the public latest point only. */
+  scope: "full" | "public-latest";
+  status: FeedStatus;
 }
 
-export function useSolarWind5s(): SolarWind5sState {
+const parseSeries = (json: unknown): CanonicalSpaceWeatherPoint[] => {
+  const points = (json as { points?: CanonicalSpaceWeatherPoint[] } | null)?.points;
+  return Array.isArray(points) ? points : [];
+};
+
+const parseLatest = (json: unknown): CanonicalSpaceWeatherPoint[] =>
+  json && typeof json === "object" && "timestamp" in json ? [json as CanonicalSpaceWeatherPoint] : [];
+
+// Backfill 24 h once, then ask only for points newer than the last one held.
+const seriesPath = (path: string, held: CanonicalSpaceWeatherPoint[] | null) =>
+  `${path}?lookback=${lookbackSince(held, Date.now())}&limit=${SERIES_MAX_POINTS}`;
+const latestPath = (path: string) => path;
+
+export interface SolarWind5sOptions {
+  /** false: latest point only, once a minute, even when signed in (the landing). */
+  history?: boolean;
+}
+
+export function useSolarWind5s({ history = true }: SolarWind5sOptions = {}): SolarWind5sState {
+  const session = useFeedSession();
+  const full = history && session.signedIn;
+  const feed = usePolledFeed({
+    path: session.resolved ? (full ? FEED_ENDPOINT : PUBLIC_LATEST_ENDPOINT) : null,
+    intervalMs: full ? POLL_INTERVAL_MS : PUBLIC_POLL_INTERVAL_MS,
+    parse: full ? parseSeries : parseLatest,
+    nextPath: full ? seriesPath : latestPath,
+    reduce: mergeSeries,
+    restartKey: session.userKey,
+  });
+
   const [points, setPoints] = useState<CanonicalSpaceWeatherPoint[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
   const [source, setSource] = useState<"polling" | "websocket">("polling");
   const wsRef = useRef<WebSocket | null>(null);
 
   useEffect(() => {
-    let mounted = true;
-
-    const fetchFeed = async () => {
-      try {
-        const response = await fetch(`${getBaseUrl()}${FEED_ENDPOINT}`, {
-          headers: await getAuthHeaders(),
-        });
-        if (!response.ok) {
-          throw new Error(`Feed HTTP ${response.status}`);
-        }
-        const json = (await response.json()) as {
-          points?: CanonicalSpaceWeatherPoint[];
-        };
-        if (!mounted) {
-          return;
-        }
-        setPoints(Array.isArray(json.points) ? json.points : []);
-        setError(null);
-      } catch (err) {
-        if (!mounted) {
-          return;
-        }
-        setError(err instanceof Error ? err.message : "Failed to fetch feed");
-      } finally {
-        if (mounted) {
-          setLoading(false);
-        }
-      }
-    };
-
-    fetchFeed();
-    const timer = setInterval(fetchFeed, POLL_INTERVAL_MS);
-
-    return () => {
-      mounted = false;
-      clearInterval(timer);
-    };
-  }, []);
+    if (feed.data) setPoints(feed.data);
+  }, [feed.data]);
 
   useEffect(() => {
     const wsEnabled = String(import.meta.env.VITE_HELIO_WS_ENABLED ?? "false") === "true";
@@ -74,13 +72,13 @@ export function useSolarWind5s(): SolarWind5sState {
     let cancelled = false;
 
     const connect = async () => {
-      const base = getBaseUrl().replace(/^http/i, "ws");
+      const base = wsOrigin();
       const token = await getAccessToken();
       if (!token || cancelled) {
         setSource("polling");
         return;
       }
-      const wsUrl = `${base}/ws/feed/space-weather?token=${encodeURIComponent(token)}`;
+      const wsUrl = `${base}/ws/feed/space-weather`; // session cookie authenticates; never put tokens in URLs
       ws = new WebSocket(wsUrl);
       wsRef.current = ws;
 
@@ -97,13 +95,8 @@ export function useSolarWind5s(): SolarWind5sState {
           if (message.topic !== "space-weather" || !message.payload) {
             return;
           }
-          setPoints((prev) => {
-            const next = [...prev, message.payload];
-            const dedup = new Map(next.map((point) => [point.timestamp, point]));
-            return Array.from(dedup.values()).sort(
-              (a, b) => Date.parse(a.timestamp) - Date.parse(b.timestamp),
-            );
-          });
+          const payload = message.payload;
+          setPoints((prev) => mergeSeries(prev, [payload]));
         } catch {
           // Ignore malformed websocket payloads.
         }
@@ -137,8 +130,10 @@ export function useSolarWind5s(): SolarWind5sState {
   return {
     points,
     latest,
-    loading,
-    error,
+    loading: feed.loading,
+    error: feed.error,
     source,
+    scope: full ? "full" : "public-latest",
+    status: feed.status,
   };
 }

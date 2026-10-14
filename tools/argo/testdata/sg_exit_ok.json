@@ -1,0 +1,2 @@
+{"online":true,"gateway":"172.20.10.1","loc":"SG","dns":{"ok":true},"captive":{"ok":true,"status":200},
+ "api":{"ok":true,"status":405},"tailscale":{"running":true,"exit_node":"exit-sg-1"}}
