@@ -64,6 +64,12 @@ export class EMAInterpolator {
   }
 
   setTarget(newTarget: InterpolatedData): void {
+    // A repeat of the same measurement (the feed re-sends every tick) only refreshes the
+    // timestamp and flags; restarting the tween would keep the display short of the value.
+    if (sameMeasurement(this.target, newTarget)) {
+      this.target = { ...newTarget };
+      return;
+    }
     // Transfer current interpolated values to starting point
     this.current = this.getInterpolated();
     this.target = { ...newTarget };
@@ -197,6 +203,19 @@ export function lerp(a: number, b: number, t: number): number {
 function lerpNullable(a: number | null, b: number | null, t: number): number | null {
   if (a == null || b == null) return b;
   return lerp(a, b, t);
+}
+
+/** True when two readings carry the same measured values (timestamps and flags aside). */
+export function sameMeasurement(a: InterpolatedData, b: InterpolatedData): boolean {
+  return (
+    a.solarWind.speed === b.solarWind.speed &&
+    a.solarWind.density === b.solarWind.density &&
+    a.solarWind.pressure === b.solarWind.pressure &&
+    a.imfBz === b.imfBz &&
+    a.kpIndex === b.kpIndex &&
+    a.protonFlux === b.protonFlux &&
+    a.electronFlux === b.electronFlux
+  );
 }
 
 export function clamp(value: number, min: number, max: number): number {

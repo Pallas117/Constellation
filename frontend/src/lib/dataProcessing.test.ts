@@ -69,6 +69,26 @@ test("unknown flux is handled by interpolation and visuals without NaN", () => {
   for (const v of Object.values(params)) assert.ok(Number.isFinite(v));
 });
 
+test("a repeated measurement refreshes the timestamp without restarting the tween", () => {
+  const realNow = Date.now;
+  let now = 1_000_000;
+  Date.now = () => now;
+  try {
+    const first = canonicalToInterpolated(canonical)!;
+    const interp = new EMAInterpolator({ ...first, solarWind: { ...first.solarWind, speed: 0 } }, 2000);
+    interp.setTarget(first);
+    now += 2000;
+    assert.equal(interp.getInterpolated().solarWind.speed, first.solarWind.speed, "tween lands on the value");
+    const repeat = canonicalToInterpolated({ ...canonical, timestamp: "2026-10-10T12:00:05.000Z" })!;
+    interp.setTarget(repeat);
+    const out = interp.getInterpolated();
+    assert.equal(out.solarWind.speed, first.solarWind.speed, "no restart toward the same value");
+    assert.equal(out.timestamp.toISOString(), "2026-10-10T12:00:05.000Z");
+  } finally {
+    Date.now = realNow;
+  }
+});
+
 test("maps measured GOES particle flux, and keeps a missing channel unknown (GAU-112)", () => {
   const reading = { value: 0.25, energy: ">=10 MeV", satellite: "GOES-18", timestamp: "2026-10-10T11:55:00.000Z" };
   const d = canonicalToInterpolated({ ...canonical, particles: { protons: reading, electrons: null } });

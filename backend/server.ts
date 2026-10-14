@@ -535,8 +535,25 @@ app.post("/api/ai/nowcast/train", requireRole("admin"), async (_req, res) => {
 
 const server = http.createServer(app);
 
-const wsSpaceWeather = new WebSocketServer({ server, path: "/ws/feed/space-weather" });
-const wsMmsRecon = new WebSocketServer({ server, path: "/ws/feed/mms-reconnection" });
+// Upgrades are routed by path. Two servers attached with { server, path } each see every upgrade,
+// and the non-matching one aborts it with a 400, killing sockets the other just accepted.
+const wsSpaceWeather = new WebSocketServer({ noServer: true });
+const wsMmsRecon = new WebSocketServer({ noServer: true });
+const wsByPath = new Map<string, WebSocketServer>([
+  ["/ws/feed/space-weather", wsSpaceWeather],
+  ["/ws/feed/mms-reconnection", wsMmsRecon],
+]);
+
+server.on("upgrade", (req, socket, head) => {
+  const pathname = (req.url ?? "").split("?")[0];
+  const wss = wsByPath.get(pathname);
+  if (!wss) {
+    socket.write("HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\n");
+    socket.destroy();
+    return;
+  }
+  wss.handleUpgrade(req, socket, head, (ws) => wss.emit("connection", ws, req));
+});
 
 type AuthedSocket = WebSocket & { auth?: AuthContext };
 

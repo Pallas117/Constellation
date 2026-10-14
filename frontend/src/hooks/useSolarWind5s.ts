@@ -1,22 +1,16 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { CanonicalSpaceWeatherPoint } from "@/lib/types/space-weather";
 import { getAuthHeaders } from "@/lib/api/auth";
+import { subscribeSpaceWeather } from "@/lib/api/space-weather-socket";
 
 const MAX_POINTS = 17280; // 24 h at 5 s
 const HISTORY_ENDPOINT = `/api/feed/space-weather/5s?lookback=PT24H&limit=${MAX_POINTS}`;
 // Fallback polling only asks for the recent tail; the 24 h history is loaded once.
 const TAIL_ENDPOINT = "/api/feed/space-weather/5s?lookback=PT1M&limit=12";
 const POLL_INTERVAL_MS = 5000;
-const WS_RETRY_BASE_MS = 1000;
-const WS_RETRY_MAX_MS = 30000;
 
 function getBaseUrl(): string {
   return import.meta.env.VITE_HELIO_PROXY_URL ?? "http://127.0.0.1:3001";
-}
-
-/** Push is the default; set VITE_HELIO_WS_ENABLED=false to poll only. */
-function wsEnabled(): boolean {
-  return String(import.meta.env.VITE_HELIO_WS_ENABLED ?? "true") !== "false";
 }
 
 /** Merge incoming points into the feed by timestamp, keeping order and the 24 h cap. */
@@ -96,70 +90,17 @@ export function useSolarWind5s(): SolarWind5sState {
     };
   }, []);
 
-  useEffect(() => {
-    if (!wsEnabled()) {
-      return;
-    }
-
-    let ws: WebSocket | null = null;
-    let cancelled = false;
-    let retryTimer: ReturnType<typeof setTimeout> | null = null;
-    let attempt = 0;
-
-    const scheduleReconnect = () => {
-      if (cancelled) return;
-      const delay = Math.min(WS_RETRY_MAX_MS, WS_RETRY_BASE_MS * 2 ** attempt);
-      attempt += 1;
-      retryTimer = setTimeout(connect, delay);
-    };
-
-    function connect() {
-      if (cancelled) return;
-      // The session cookie authenticates the upgrade; credentials never go in the URL.
-      const base = getBaseUrl().replace(/^http/i, "ws");
-      ws = new WebSocket(`${base}/ws/feed/space-weather`);
-
-      ws.onopen = () => {
-        attempt = 0;
-        socketOpen.current = true;
-        setSource("websocket");
-      };
-
-      ws.onmessage = (event) => {
-        try {
-          const message = JSON.parse(event.data) as {
-            topic?: string;
-            payload?: CanonicalSpaceWeatherPoint;
-          };
-          if (message.topic !== "space-weather" || !message.payload) {
-            return;
-          }
-          const point = message.payload;
-          setPoints((prev) => mergePoints(prev, [point]));
-        } catch {
-          // Ignore malformed websocket payloads.
-        }
-      };
-
-      ws.onclose = () => {
-        socketOpen.current = false;
-        setSource("polling");
-        scheduleReconnect();
-      };
-    }
-
-    connect();
-
-    return () => {
-      cancelled = true;
-      if (retryTimer) clearTimeout(retryTimer);
-      socketOpen.current = false;
-      if (ws) {
-        ws.onclose = null;
-        ws.close();
-      }
-    };
-  }, []);
+  useEffect(
+    () =>
+      subscribeSpaceWeather({
+        onPoint: (point) => setPoints((prev) => mergePoints(prev, [point])),
+        onStatus: (open) => {
+          socketOpen.current = open;
+          setSource(open ? "websocket" : "polling");
+        },
+      }),
+    [],
+  );
 
   const latest = useMemo(
     () => (points.length > 0 ? points[points.length - 1] : null),
