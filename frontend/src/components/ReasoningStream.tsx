@@ -2,7 +2,7 @@
  * ReasoningStream — LLM / RAG inference panel + 72-hour ML forecast widget.
  *
  * Self-contained; wraps GaussRagPanel with bottom-centre positioning and
- * the LSTM anomaly-probability banner. GPU-isolated via will-change.
+ * the 72-hour anomaly-probability banner (or "unavailable" when no trained model is deployed). GPU-isolated via will-change.
  */
 
 import { GaussRagPanel } from './GaussRagPanel';
@@ -16,21 +16,37 @@ const containerStyle: React.CSSProperties = {
 };
 
 function ForecastBanner() {
-  const { forecast, loading } = useAnomalyForecast();
+  const { forecast, loading, error } = useAnomalyForecast();
 
-  if (loading || !forecast) {
+  if (loading && !forecast) {
     return (
       <div className="flex items-center gap-2 px-3 py-1.5 bg-black/50 border border-primary/10 text-[8px] font-mono text-primary/30 uppercase tracking-widest">
         <Activity size={8} className="animate-pulse" />
-        LSTM_FORECAST: COMPUTING...
+        FORECAST: AWAITING_NODE
+      </div>
+    );
+  }
+
+  // No trained model (or no answer): say so. Never show a probability we do not have.
+  if (!forecast || !('anomalyProbability' in forecast)) {
+    const reason = forecast && 'reason' in forecast ? forecast.reason : error ?? 'No forecast';
+    return (
+      <div
+        className="flex items-center gap-2 px-3 py-1.5 bg-black/50 border border-primary/10 text-[8px] font-mono text-muted-foreground uppercase tracking-widest"
+        title={reason}
+      >
+        <Activity size={8} />
+        FORECAST: UNAVAILABLE &nbsp;|&nbsp; {reason}
       </div>
     );
   }
 
   const pct = (forecast.anomalyProbability * 100).toFixed(1);
   const kpMax = forecast.predictedKpMax.toFixed(1);
-  const isHighRisk = forecast.predictedKpMax >= 5;
-  const isSevere = forecast.predictedKpMax >= 7;
+  // Severity follows the storm probability: it has held-out skill, while the Kp estimate trails
+  // persistence during storms (see the model's gate warnings).
+  const isHighRisk = forecast.anomalyProbability >= 0.2;
+  const isSevere = forecast.anomalyProbability >= 0.5;
 
   const colour = isSevere
     ? 'border-red-500/60 text-red-400'
@@ -48,13 +64,13 @@ function ForecastBanner() {
       <Icon size={10} className="mt-0.5 shrink-0" />
       <div className="space-y-0.5 text-left">
         <p className="text-[9px] font-bold uppercase tracking-wider">
-          72H_LSTM_FORECAST &nbsp;|&nbsp; P(anomaly) = {pct}% &nbsp;|&nbsp; Kp_max ≈ {kpMax}
+          {forecast.horizonHours}H_FORECAST &nbsp;|&nbsp; P(G1+) = {pct}% &nbsp;|&nbsp; Kp ≈ {kpMax}
         </p>
         <p className="text-[8px] opacity-70 font-mono truncate max-w-[440px]">
           {forecast.warningMessage}
         </p>
         <p className="text-[7px] opacity-40 font-mono">
-          CI: [{(forecast.confidenceInterval[0] * 100).toFixed(0)}%,
+          ENSEMBLE: [{(forecast.confidenceInterval[0] * 100).toFixed(0)}%,
           {(forecast.confidenceInterval[1] * 100).toFixed(0)}%]
           &nbsp; MDL: {forecast.modelVersion}
         </p>
@@ -78,7 +94,7 @@ export function ReasoningStream() {
       </div>
 
       <p className="text-[8px] text-primary/30 font-bold uppercase tracking-[0.4em]">
-        FEED_SRC: NOAA_SWPC // NASA_DSCOVR // LSTM_72H
+        FEED_SRC: NOAA_SWPC // NASA_DSCOVR
       </p>
     </div>
   );

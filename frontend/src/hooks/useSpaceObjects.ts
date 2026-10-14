@@ -11,61 +11,6 @@ export interface UseSpaceObjectsReturn {
   error: string | null;
 }
 
-const calculateUndetectedCandidates = (
-  data: InterpolatedData,
-  catalog: SpaceObjectCatalogEntry[]
-): SpaceObjectDetectionAlert | null => {
-  // Only raise candidates from live, measured inputs. Unmeasured flux or stale data
-  // must never produce a detection alert.
-  if (data.isStale || data.tier !== 0 || data.source === 'unavailable' || data.electronFlux == null) {
-    return null;
-  }
-  const stormFactor = Math.max(0, data.kpIndex - 4);
-  const fluxFactor = Math.max(0, (data.electronFlux - 2200) / 2200);
-  const candidateCount = Math.min(3, Math.round(stormFactor + fluxFactor));
-
-  if (candidateCount === 0) {
-    return null;
-  }
-
-  const severity = candidateCount >= 3 ? 'high' : candidateCount === 2 ? 'moderate' : 'low';
-  const candidates = Array.from({ length: candidateCount }, (_, index) => {
-    const longitude = ((data.timestamp.getUTCSeconds() * 6 + index * 120) % 360) - 180;
-    return {
-      id: `UNTRACKED-${index + 1}`,
-      name: `Untracked object ${index + 1}`,
-      category: 'unknown' as const,
-      orbitType: 'GEO' as const,
-      altitude: 35786,
-      inclination: 0.1,
-      raan: (index * 60) % 360,
-      meanMotion: 1.0027,
-      latitude: 0,
-      longitude,
-      owner: 'UNKNOWN',
-      agency: 'UNKNOWN',
-      signalProfile: 'unknown',
-      tags: ['anomaly', 'untracked', 'candidate'],
-      lastSeen: data.timestamp.toISOString(),
-    };
-  });
-
-  return {
-    timestamp: data.timestamp.toISOString(),
-    severity,
-    description:
-      'Radiation anomaly footprint suggests at least one object is present in GEO that is not matched by the catalog.',
-    candidateCount,
-    candidates: candidates.map((candidate) => ({
-      id: candidate.id,
-      name: candidate.name,
-      orbitType: candidate.orbitType,
-      altitude: candidate.altitude,
-      category: candidate.category,
-    })),
-  };
-};
-
 const fetchRemoteCatalog = async (proxyUrl: string): Promise<SpaceObjectCatalogEntry[]> => {
   const response = await fetch(`${proxyUrl}/api/feed/space-objects`);
   if (!response.ok) {
@@ -79,10 +24,13 @@ const fetchRemoteCatalog = async (proxyUrl: string): Promise<SpaceObjectCatalogE
   return data.objects as SpaceObjectCatalogEntry[];
 };
 
-export const useSpaceObjects = (data: InterpolatedData): UseSpaceObjectsReturn => {
+export const useSpaceObjects = (_data: InterpolatedData): UseSpaceObjectsReturn => {
   const { mode } = useConnectivity();
   const [catalog, setCatalog] = useState<SpaceObjectCatalogEntry[]>([]);
-  const [alert, setAlert] = useState<SpaceObjectDetectionAlert | null>(null);
+  // No detection source is connected (GAU-89). A Kp/flux heuristic used to invent "untracked GEO
+  // objects" here, with longitudes taken from the clock; until a real detector feeds this, the
+  // alert stays empty rather than showing objects nobody observed.
+  const alert: SpaceObjectDetectionAlert | null = null;
   const [isReady, setIsReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -119,10 +67,6 @@ export const useSpaceObjects = (data: InterpolatedData): UseSpaceObjectsReturn =
       active = false;
     };
   }, [mode]);
-
-  useEffect(() => {
-    setAlert(calculateUndetectedCandidates(data, catalog));
-  }, [data, catalog]);
 
   return {
     catalog,

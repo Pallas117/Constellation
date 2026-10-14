@@ -12,7 +12,7 @@ import {
   type AuthenticatedRequest,
 } from "./auth.js";
 import { CyberTigerDaemon } from "./cybertiger/daemon.js";
-import { inferNowcast, inferAnomalyForecast, triggerTraining } from "./ml-client/client.js";
+import { inferNowcast, triggerTraining } from "./ml-client/client.js";
 import {
   getAuroraMap,
   getCanonicalFeed,
@@ -20,6 +20,7 @@ import {
   getLatestMms,
   getMmsFeed,
   getSourceStatus,
+  seedCanonical,
 } from "./state.js";
 import type {
   CanonicalSpaceWeatherPoint,
@@ -35,6 +36,7 @@ import { createSwapPlan, rebalanceDeviceNetwork } from "./services/device-swap-m
 import { encodeCanonicalPoint } from "./lib/proto.js";
 import { linkGuardian } from "./lib/connectivity.js";
 import { bedrock } from "./lib/local-db.js";
+import { diskFreeBytes, overall, readTpms } from "./lib/tpm.js";
 import { SPACE_OBJECT_CATALOG } from "./lib/space-object-catalog.js";
 import { auth } from "./better-auth.js";
 import { toNodeHandler } from "better-auth/node";
@@ -171,10 +173,24 @@ async function fetchMmsFromDb(
   return null;
 }
 
-app.get("/health", (_req, res) => {
+async function currentTpms() {
+  return readTpms({
+    pipeline: worker.getPipelineLatency(),
+    failedWrites: bedrock.failedWrites,
+    diskFreeBytes: await diskFreeBytes(bedrock.dataDir),
+    rssBytes: process.memoryUsage().rss,
+    sources: getSourceStatus(),
+    skill: worker.forecastSkill.skill(),
+  });
+}
+
+app.get("/health", async (_req, res) => {
+  // Public: overall TPM status and the ids of red measures only, no values. GAU-122.
+  const tpms = await currentTpms();
   res.json({
     ok: true,
     timestamp: new Date().toISOString(),
+    tpm: { status: overall(tpms), red: tpms.filter((t) => t.status === "red").map((t) => t.id) },
   });
 });
 
@@ -316,14 +332,22 @@ app.get("/api/feed/space-objects", (_req, res) => {
   });
 });
 
-// 72-hour LSTM Anomaly Forecast endpoint
+// 72-hour anomaly forecast: a trained model's output, or an explicit "unavailable"
 app.get("/api/forecast/anomaly", async (_req, res) => {
-  try {
-    const forecast = await inferAnomalyForecast([]);
+  // Serve the ingest loop's forecast (computed from its last 6 h of measured points every 5 min)
+  // instead of calling the model with no data on every request. GAU-115.
+  const forecast = worker.getLatestForecast();
+  if (forecast) {
     res.json(forecast);
-  } catch (err) {
-    res.status(500).json({ error: "Forecast generation failed" });
+    return;
   }
+  res.json({
+    available: false,
+    modelVersion: null,
+    generatedAt: new Date().toISOString(),
+    horizonHours: 3,
+    reason: "No forecast computed yet; the ingest loop runs one every 5 min.",
+  });
 });
 
 app.get("/api/feed/space-weather/latest/proto", async (req: AuthenticatedRequest, res) => {
@@ -430,6 +454,17 @@ app.get("/api/security/cybertiger/status", requireRole("operator"), (_req: Authe
 
 app.get("/api/system/connectivity", (req: AuthenticatedRequest, res) => {
   res.json(linkGuardian.getStatus());
+});
+
+// Per-stage ingest latency and the age of the data being served (fresh / degraded / stale / stalled).
+app.get("/api/system/pipeline", (_req: AuthenticatedRequest, res) => {
+  res.json(worker.getPipelineLatency());
+});
+
+// Technical performance measures with thresholds and margins (NASA SE §6.7). GAU-122.
+app.get("/api/system/tpm", async (_req: AuthenticatedRequest, res) => {
+  const tpms = await currentTpms();
+  res.json({ generatedAt: new Date().toISOString(), status: overall(tpms), measures: tpms });
 });
 
 app.get("/api/security/cybertiger/events", requireRole("admin"), (req: AuthenticatedRequest, res) => {
@@ -620,7 +655,9 @@ const worker = new IngestionWorker((result: IngestionTickResult) => {
 
 selfHealer.register({
   onRequestTraining: async () => {
-    return triggerTraining();
+    // The self-healer only needs to know training was requested; log the outcome instead.
+    const result = await triggerTraining();
+    if (!result.started) console.warn(`[SelfHealer] ${result.message}`);
   },
   onResetIngestion: () => {
     worker.stop();
@@ -640,6 +677,16 @@ export async function startBackend(options?: { host?: string; port?: number }): 
     const address = server.address();
     const actualPort = typeof address === "object" && address?.port ? address.port : port;
     return { app, server, host, port: actualPort };
+  }
+
+  // Reload the last 24 h from bedrock so the feed history and the 6 h forecast window survive a
+  // restart instead of starting empty. GAU-117.
+  try {
+    const since = Date.now() - 24 * 60 * 60 * 1000;
+    const seeded = seedCanonical(await bedrock.getCanonicalSince(since, 20_000));
+    if (seeded > 0) console.log(`[backend] reloaded ${seeded} canonical points from bedrock`);
+  } catch (error) {
+    console.warn("[backend] bedrock reload failed; starting with an empty buffer", error);
   }
 
   return new Promise((resolve, reject) => {

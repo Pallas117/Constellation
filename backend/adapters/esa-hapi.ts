@@ -13,6 +13,33 @@ export interface ESAReadout {
    * blended into the solar-wind IMF.
    */
   magneticFieldNec: { x: number; y: number; z: number };
+  /** Where the sample was taken (geocentric ITRF), so it is usable as LEO/ionospheric context. */
+  position: {
+    latitudeDeg: number;
+    longitudeDeg: number;
+    radiusKm: number;
+    altitudeKm: number;
+  } | null;
+  /** |B| at the satellite (nT), dominated by the main field; see docs/adr/swarm-not-an-imf-source.md. */
+  fieldMagnitudeNt: number;
+}
+
+const EARTH_MEAN_RADIUS_KM = 6371.2;
+
+/**
+ * Row for `parameters=Latitude,Longitude,Radius,B_NEC`: `[time, lat, lon, radius_m, [n, e, c]]`.
+ * Returns null when any value is missing (VirES NaN-fills trailing samples).
+ */
+export function parseSwarmRow(row: unknown): {
+  timestamp: string; latitudeDeg: number; longitudeDeg: number; radiusKm: number; n: number; e: number; c: number;
+} | null {
+  if (!Array.isArray(row) || row.length !== 5 || typeof row[0] !== "string" || !Array.isArray(row[4])) return null;
+  const nec = parseNecRow([row[0], row[4]]);
+  const [lat, lon, radiusM] = row.slice(1, 4).map((v) => (v === null || v === "" ? Number.NaN : Number(v)));
+  if (!nec || ![lat, lon, radiusM].every(Number.isFinite) || Math.abs(lat) > 90 || radiusM < 6.3e6 || radiusM > 8e6) {
+    return null;
+  }
+  return { timestamp: nec.timestamp, latitudeDeg: lat, longitudeDeg: lon, radiusKm: radiusM / 1000, n: nec.n, e: nec.e, c: nec.c };
 }
 
 let latestStatus: SourceStatus = {
@@ -101,19 +128,19 @@ export async function fetchEsaReadout(): Promise<ESAReadout | null> {
     const stopDate = await fetchStopDate(DATASET);
     const stop = new Date(Math.min(Date.now(), stopDate.getTime()));
     const start = new Date(stop.getTime() - 15 * 60 * 1000);
-    const data = (await fetchHapiDataset(DATASET, "B_NEC", toIso(start), toIso(stop))) as { data?: unknown[] };
+    const data = (await fetchHapiDataset(DATASET, "Latitude,Longitude,Radius,B_NEC", toIso(start), toIso(stop))) as { data?: unknown[] };
 
     if (!Array.isArray(data.data) || data.data.length === 0) {
       throw new Error("ESA HAPI returned no rows");
     }
 
     // Trailing samples are often NaN-filled; use the latest complete one.
-    let parsed: ReturnType<typeof parseNecRow> = null;
+    let parsed: ReturnType<typeof parseSwarmRow> = null;
     for (let i = data.data.length - 1; i >= 0 && !parsed; i -= 1) {
-      parsed = parseNecRow(data.data[i]);
+      parsed = parseSwarmRow(data.data[i]);
     }
     if (!parsed) {
-      throw new Error("ESA HAPI returned no complete B_NEC sample");
+      throw new Error("ESA HAPI returned no complete Swarm sample");
     }
     const { timestamp, n, e, c } = parsed;
 
@@ -128,6 +155,13 @@ export async function fetchEsaReadout(): Promise<ESAReadout | null> {
     return {
       timestamp,
       magneticFieldNec: vec(n, e, c),
+      position: {
+        latitudeDeg: parsed.latitudeDeg,
+        longitudeDeg: parsed.longitudeDeg,
+        radiusKm: parsed.radiusKm,
+        altitudeKm: parsed.radiusKm - EARTH_MEAN_RADIUS_KM,
+      },
+      fieldMagnitudeNt: Math.hypot(n, e, c),
     };
   } catch (error) {
     latestStatus = {

@@ -79,6 +79,9 @@ function propagationDelaySeconds(speedKmS: number): number {
 
 const DST_REINIT_GAP_HOURS = 3;
 
+export const DST_MODEL_METHOD = "model: O'Brien & McPherron (2000) ring-current";
+export const DST_DERIVED_FROM = ["solarWind.speed", "magneticField.z", "solarWind.dynamicPressure"];
+
 /**
  * Dst model estimate from O'Brien & McPherron (2000): the pressure-corrected ring
  * current Dst-star relaxes toward Q * tau, d(Dst-star)/dt = Q - Dst-star / tau, integrated exactly over
@@ -213,6 +216,7 @@ export function computeCanonicalPoint(
   const dtMs = previousTimestamp ? Date.parse(input.timestamp) - Date.parse(previousTimestamp) : Number.NaN;
   const dtHours = Number.isFinite(dtMs) ? dtMs / 3_600_000 : null;
   const dst = input.dst ?? estimateDst(speed, state.magneticField.z, pdyn, previousDst, dtHours);
+  const dstMeasured = input.dst != null;
   const dstSlope = previousDst == null || !dtHours || dtHours <= 0 ? 0 : (dst - previousDst) / dtHours;
 
   const sorted = [...couplingWindow].sort((a, b) => a - b);
@@ -252,6 +256,9 @@ export function computeCanonicalPoint(
     indices: {
       kp,
       dst,
+      // A modelled Dst must never pass for a measurement (GAU-63 provenance invariant).
+      dstMethod: dstMeasured ? "measured" : DST_MODEL_METHOD,
+      dstDerivedFrom: dstMeasured ? [] : DST_DERIVED_FROM,
     },
     coupling: {
       newell,

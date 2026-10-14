@@ -48,9 +48,7 @@ export function Nav({
                     GAUSS // <span className="text-primary opacity-80">AURORA</span>
                 </h1>
                 <div className="mt-1 flex flex-col gap-0.5">
-                    <p className="text-[8px] text-primary/60 uppercase tracking-[0.25em] font-bold">
-                        STATE: NOMINAL_B // SSA_TRACK_ACTIVE
-                    </p>
+                    {/* SSA state comes from the detector (unknown when none is connected), never a hardcoded "NOMINAL" (GAU-81). */}
                     {spaceObjectSummary ? (
                       <p className="text-[8px] text-primary/60 uppercase tracking-[0.25em] font-bold">
                         {spaceObjectSummary}

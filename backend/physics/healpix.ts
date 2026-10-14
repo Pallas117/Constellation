@@ -110,8 +110,59 @@ export function buildAuroraGrid(
     });
   }
 
-  const harmonics = sphericalHarmonics(grid, 8);
+  const harmonics = latLonGridHarmonics(grid, nLat, nLon, 8);
   return { grid, harmonics };
+}
+
+/**
+ * sphericalHarmonics for a regular lat/lon lattice (row-major, nLat x nLon), computed separably:
+ * sum over pixels of f*N*P_l^m(cos theta)*trig(m phi) = sum_rows N*P_l^m(x_r) * sum_cols f*trig(m phi_c).
+ * Same result as the generic version, about lMax*nLat/2 times less work (~1 s -> ~10 ms at nside 64).
+ */
+export function latLonGridHarmonics(
+  grid: AuroraGridPoint[],
+  nLat: number,
+  nLon: number,
+  lMax = 8,
+): SphericalHarmonicCoefficients {
+  if (grid.length !== nLat * nLon) return sphericalHarmonics(grid, lMax);
+
+  // Per row r and order m >= 0: C[r][m] = sum_c f*cos(m phi_c), S[r][m] = sum_c f*sin(m phi_c).
+  const cosSum = Array.from({ length: nLat }, () => new Float64Array(lMax + 1));
+  const sinSum = Array.from({ length: nLat }, () => new Float64Array(lMax + 1));
+  const rowX = new Float64Array(nLat);
+  for (let r = 0; r < nLat; r += 1) {
+    rowX[r] = Math.cos((90 - grid[r * nLon].lat) * DEG_TO_RAD);
+    for (let c = 0; c < nLon; c += 1) {
+      const point = grid[r * nLon + c];
+      const phi = point.lon * DEG_TO_RAD;
+      for (let m = 0; m <= lMax; m += 1) {
+        cosSum[r][m] += point.energyFlux * Math.cos(m * phi);
+        sinSum[r][m] += point.energyFlux * Math.sin(m * phi);
+      }
+    }
+  }
+
+  const coefficients: Array<{ l: number; m: number; re: number; im: number }> = [];
+  const powerSpectrum: Array<{ l: number; cL: number }> = [];
+  for (let l = 0; l <= lMax; l += 1) {
+    let cLAccum = 0;
+    for (let m = -l; m <= l; m += 1) {
+      const absM = Math.abs(m);
+      const norm = Math.sqrt(((2 * l + 1) / (4 * Math.PI)) * (factorial(l - absM) / factorial(l + absM)));
+      const scale = m === 0 ? norm : Math.SQRT2 * norm;
+      let re = 0;
+      for (let r = 0; r < nLat; r += 1) {
+        const trig = m >= 0 ? cosSum[r][absM] : sinSum[r][absM];
+        re += scale * associatedLegendre(l, absM, rowX[r]) * trig;
+      }
+      re /= grid.length;
+      coefficients.push({ l, m, re, im: 0 });
+      cLAccum += re * re;
+    }
+    powerSpectrum.push({ l, cL: cLAccum / (2 * l + 1) });
+  }
+  return { lMax, coefficients, powerSpectrum };
 }
 
 export function sphericalHarmonics(

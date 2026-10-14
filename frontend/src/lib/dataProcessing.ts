@@ -217,7 +217,8 @@ export function transformApiResponse(response: SpaceWeatherResponse): Interpolat
     timestamp: new Date(response.timestamp),
     isStale: response.flags.stale,
     source: response.flags.source,
-    tier: response.flags.tier ?? 0,
+    // A response that does not state its tier is not known to be live (GAU-114).
+    tier: response.flags.tier ?? 3,
   };
 }
 
@@ -289,8 +290,9 @@ export function canonicalToInterpolated(data: unknown): InterpolatedData | null 
     solarWind: { speed: sw.speed, density: sw.density, pressure: sw.dynamicPressure },
     imfBz: b.z,
     kpIndex: idx.kp,
-    protonFlux: null,
-    electronFlux: null,
+    // Measured GOES flux when the backend has a current reading; otherwise unknown (null), never 0.
+    protonFlux: isFiniteNumber(d.particles?.protons?.value) ? d.particles.protons.value : null,
+    electronFlux: isFiniteNumber(d.particles?.electrons?.value) ? d.particles.electrons.value : null,
     timestamp: ts,
     isStale: q.stale === true || tier === 3,
     source: typeof d.source === 'string' ? d.source : 'unknown',
