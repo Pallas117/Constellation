@@ -1,13 +1,13 @@
 /**
  * Space Scene Component
  * Main 3D visualization scene with Earth, orbits, and radiation data
- * 
+ *
  * Note: Client-side component - uses WebGL/Three.js
  */
 
 'use client'; // Mark as client component (for Next.js compatibility, if migrated)
 
-import { Suspense, useRef, useEffect, useMemo, useState } from 'react';
+import { Suspense, useCallback, useRef, useEffect, useMemo, useState } from 'react';
 import { Canvas, useThree } from '@react-three/fiber';
 import { OrbitControls, Stars, PerspectiveCamera } from '@react-three/drei';
 import * as THREE from 'three';
@@ -112,7 +112,9 @@ const SceneContent = ({
   hoverable = false,
   view = 'overview',
   viewRequest = 0,
-}: Omit<SpaceSceneProps, 'canvasRef'>) => {
+  stage,
+  onStageCommitted,
+}: Omit<SpaceSceneProps, 'canvasRef'> & { stage: number; onStageCommitted: (stage: number) => void }) => {
   const groupRef = useRef<THREE.Group>(null);
   // GSM frame: the dipole tilts toward/away from the Sun with season and UT.
   const epochMs = useNow(5 * 60_000);
@@ -238,78 +240,92 @@ const SceneContent = ({
 
       {/* Ambient lighting */}
       <ambientLight intensity={0.1} />
-      
+
       {/* Sun light from the right */}
       <directionalLight
         position={[20, 5, 10]}
         intensity={1.5}
         color="#fff5e6"
       />
-      
+
       {/* Subtle fill light */}
       <pointLight position={[-10, 0, -10]} intensity={0.2} color="#4488ff" />
 
       {/* Stars background */}
-      <Stars
-        radius={100}
-        depth={50}
-        count={5000}
-        factor={4}
-        saturation={0}
-        fade
-        speed={0.5}
-      />
+      {stage >= STAGE.belts && (
+        <Stars
+          radius={100}
+          depth={50}
+          count={5000}
+          factor={4}
+          saturation={0}
+          fade
+          speed={0.5}
+        />
+      )}
 
       {/* Main scene group */}
       <group ref={groupRef}>
-        <group {...(hoverable ? { userData: { hoverTarget: 'earth' }, ...hoverHandlers } : {})}>
-          <Earth visible={layers.earth} />
-        </group>
-        
+        {stage >= STAGE.earth && (
+          <group {...(hoverable ? { userData: { hoverTarget: 'earth' }, ...hoverHandlers } : {})}>
+            <Earth visible={layers.earth} />
+          </group>
+        )}
+
         {/* Belts are symmetric about the dipole axis: tilt them with it. */}
-        <group rotation={[0, 0, -dipoleTilt]}>
-          <VanAllenBelts
-            visible={layers.belts}
-            intensity={0.5 + beltIntensity * 0.5}
+        {stage >= STAGE.belts && (
+          <group rotation={[0, 0, -dipoleTilt]}>
+            <VanAllenBelts
+              visible={layers.belts}
+              intensity={0.5 + beltIntensity * 0.5}
+              compression={magnetopauseCompression}
+              highFidelity={Boolean(highFidelity)}
+            />
+          </group>
+        )}
+
+        {stage >= STAGE.magnetosphere && (
+          <Magnetosphere
+            visible={layers.magnetosphere || layers.fieldLines}
+            showSurfaces={layers.magnetosphere}
+            showFieldLines={layers.fieldLines}
             compression={magnetopauseCompression}
-            highFidelity={Boolean(highFidelity)}
+            reconnectionStrength={reconnectionStrength}
+            drivers={solarWindDrivers}
+            smoothing={smoothDrivers}
+            onModelUpdate={onModelUpdate}
+            epochMs={epochMs}
+            hoverable={hoverable}
           />
-        </group>
+        )}
 
-        <Magnetosphere
-          visible={layers.magnetosphere || layers.fieldLines}
-          showSurfaces={layers.magnetosphere}
-          showFieldLines={layers.fieldLines}
-          compression={magnetopauseCompression}
-          reconnectionStrength={reconnectionStrength}
-          drivers={solarWindDrivers}
-          smoothing={smoothDrivers}
-          onModelUpdate={onModelUpdate}
-          epochMs={epochMs}
-          hoverable={hoverable}
-        />
+        {stage >= STAGE.rest && <MHDWaves visible={layers.mhdWaves !== false} />}
 
-        <MHDWaves visible={layers.mhdWaves !== false} />
-
-        <MMSReconnectionVectors
-          visible={layers.mmsReconnection !== false}
-          vectors={mmsVectors ?? []}
-        />
+        {stage >= STAGE.rest && (
+          <MMSReconnectionVectors
+            visible={layers.mmsReconnection !== false}
+            vectors={mmsVectors ?? []}
+          />
+        )}
 
         {/* Orbit rings for LEO, MEO, GEO */}
-        <OrbitRings
-          visible={layers.orbitRings !== false}
-          orbitFilter={orbitFilter}
-        />
+        {stage >= STAGE.rest && (
+          <OrbitRings
+            visible={layers.orbitRings !== false}
+            orbitFilter={orbitFilter}
+          />
+        )}
 
-        <SpaceObjectOverlay
-          objects={spaceObjects ?? []}
-          alert={spaceObjectAlert}
-          visible={layers.orbitRings !== false}
-        />
+        {stage >= STAGE.rest && (
+          <SpaceObjectOverlay
+            objects={spaceObjects ?? []}
+            alert={spaceObjectAlert}
+            visible={layers.orbitRings !== false}
+          />
+        )}
 
         {/* Radiation data overlay with LOD optimization */}
-        {data && data.length > 0 && (
+        {stage >= STAGE.rest && data && data.length > 0 && (
           enableLOD ? (
             <RadiationDataOverlayLOD
               data={data}
@@ -331,9 +347,25 @@ const SceneContent = ({
           )
         )}
       </group>
+      <StageCommitted stage={stage} onCommit={onStageCommitted} />
     </>
   );
 };
+
+/**
+ * The scene mounts in stages, one task each, instead of in one long commit:
+ * the WebGL context, then Earth, then belts and stars, then the magnetosphere,
+ * then the rest, then the shader warm-up. Nothing shows until the warm-up is done.
+ */
+const STAGE = { context: 0, earth: 1, belts: 2, magnetosphere: 3, rest: 4, warmup: 5 } as const;
+
+/** Reports each stage once it is committed inside the R3F tree. */
+function StageCommitted({ stage, onCommit }: { stage: number; onCommit: (stage: number) => void }) {
+  useEffect(() => {
+    onCommit(stage);
+  }, [stage, onCommit]);
+  return null;
+}
 
 /** Only mention the warm-up if it takes long enough to notice (a first visit). */
 const PREPARING_NOTICE_MS = 400;
@@ -349,6 +381,19 @@ export const SpaceScene = (props: SpaceSceneProps) => {
     return () => window.clearTimeout(t);
   }, [ready]);
 
+  // Create the WebGL context in its own task, after the page's first commit.
+  const [canvasOn, setCanvasOn] = useState(false);
+  useEffect(() => {
+    const t = window.setTimeout(() => setCanvasOn(true), 0);
+    return () => window.clearTimeout(t);
+  }, []);
+  // Each committed stage schedules the next in a new task.
+  const [stage, setStage] = useState<number>(STAGE.context);
+  const onStageCommitted = useCallback((committed: number) => {
+    if (committed >= STAGE.warmup) return;
+    window.setTimeout(() => setStage((cur) => (cur === committed ? committed + 1 : cur)), 0);
+  }, []);
+
   return (
     <div
       role="application"
@@ -357,24 +402,26 @@ export const SpaceScene = (props: SpaceSceneProps) => {
       tabIndex={0}
       className="relative w-full h-full focus:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-signal/40"
     >
-      <Canvas
-        ref={props.canvasRef}
-        frameloop={ready ? 'always' : 'never'}
-        gl={{ 
-          antialias: true, 
-          alpha: true,
-          preserveDrawingBuffer: true,
-          powerPreference: 'high-performance',
-        }}
-        dpr={[1, 2]}
-        // Transparent until warmed up: ShaderWarmup draws a frame out of sight first.
-        className={`w-full h-full transition-opacity duration-500 motion-reduce:transition-none ${ready ? 'opacity-100' : 'opacity-0'}`}
-      >
-        <Suspense fallback={null}>
-          <SceneContent {...props} />
-          <ShaderWarmup onReady={() => setReady(true)} />
-        </Suspense>
-      </Canvas>
+      {canvasOn && (
+        <Canvas
+          ref={props.canvasRef}
+          frameloop={ready ? 'always' : 'never'}
+          gl={{
+            antialias: true,
+            alpha: true,
+            preserveDrawingBuffer: true,
+            powerPreference: 'high-performance',
+          }}
+          dpr={[1, 2]}
+          // Transparent until warmed up: ShaderWarmup draws a frame out of sight first.
+          className={`w-full h-full transition-opacity duration-500 motion-reduce:transition-none ${ready ? 'opacity-100' : 'opacity-0'}`}
+        >
+          <Suspense fallback={null}>
+            <SceneContent {...props} stage={stage} onStageCommitted={onStageCommitted} />
+            {stage >= STAGE.warmup && <ShaderWarmup onReady={() => setReady(true)} />}
+          </Suspense>
+        </Canvas>
+      )}
       {!ready && slow && (
         <p
           role="status"

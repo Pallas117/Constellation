@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { lazy, Suspense, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { ChevronDown, Info, Layers, PanelRight, RotateCcw, Video, Zap } from "lucide-react";
 import { LayerToggles } from "@/components/ui/LayerToggles";
@@ -8,11 +8,9 @@ import { SpaceScene, SCENE_VIEWS, type SceneView } from "@/components/scene/Spac
 import type { MagnetosphereModelInfo } from "@/components/scene/Magnetosphere";
 import { FeedStatus, HudButton, HudCluster, HudStat, SceneKey, fmt, signed, type Tone } from "@/components/hud/Hud";
 import { GEO_RE, SceneHoverTip } from "@/components/hud/SceneHoverTip";
-import { AuroraCastMap } from "@/components/heliophysics/AuroraCastMap";
-import { SolarWindSpeedChart } from "@/components/heliophysics/SolarWindSpeedChart";
-import { useAuroraMap } from "@/hooks/useAuroraMap";
 import { useMMSReconnection } from "@/hooks/useMMSReconnection";
 import { useSolarWind5s } from "@/hooks/useSolarWind5s";
+import { useNearViewport } from "@/hooks/useNearViewport";
 import type { LayerVisibility } from "@/components/types";
 import type { RadiationDataPoint } from "@/lib/types/radiation";
 import mockSolarStormData from "@/data/mock_solar_storm.json";
@@ -20,6 +18,10 @@ import { beltVisuals, liveDrivers, standoffIfReference } from "@/lib/physics/liv
 import { useNow } from "@/hooks/useNow";
 
 const VIEW_KEYS = Object.keys(SCENE_VIEWS) as SceneView[];
+// Below the fold: its own chunk (with the charting library), loaded when scrolled to.
+const HistorySection = lazy(() => import("@/components/heliophysics/HistorySection"));
+/** The scene and HUD need only the latest point; the 24 h history fetches its own. */
+const LIVE_BACKFILL_MS = 15 * 60_000;
 const STORM_RADIATION = mockSolarStormData as unknown as RadiationDataPoint[];
 
 const bzTone = (bz: number | undefined): Tone =>
@@ -66,9 +68,10 @@ const HeliophysicsDashboard = () => {
   const [modelInfo, setModelInfo] = useState<MagnetosphereModelInfo | null>(null);
   const [simulateStorm, setSimulateStorm] = useState(false);
 
-  const solarWind = useSolarWind5s();
+  const solarWind = useSolarWind5s({ backfillMs: LIVE_BACKFILL_MS });
   const mms = useMMSReconnection();
-  const aurora = useAuroraMap();
+  const historyRef = useRef<HTMLElement>(null);
+  const showHistory = useNearViewport(historyRef);
   const latest = solarWind.latest;
   const now = useNow(60_000);
 
@@ -481,14 +484,17 @@ const HeliophysicsDashboard = () => {
         </a>
       </section>
 
-      <section id="history" aria-label="History" className="mx-auto grid max-w-[1600px] gap-4 p-4 md:p-6 lg:grid-cols-2">
-        <SolarWindSpeedChart
-          points={solarWind.points}
-          loading={solarWind.loading}
-          error={solarWind.error}
-          source={solarWind.source}
-        />
-        <AuroraCastMap map={aurora.map} loading={aurora.loading} error={aurora.error} />
+      <section
+        id="history"
+        ref={historyRef}
+        aria-label="History"
+        className="mx-auto grid min-h-[360px] max-w-[1600px] gap-4 p-4 md:p-6 lg:grid-cols-2"
+      >
+        {showHistory && (
+          <Suspense fallback={<p className="text-sm text-muted-foreground">Loading the 24 h history…</p>}>
+            <HistorySection livePoints={solarWind.points} source={solarWind.source} />
+          </Suspense>
+        )}
       </section>
     </main>
   );
