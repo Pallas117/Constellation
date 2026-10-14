@@ -7,7 +7,7 @@
 
 'use client'; // Mark as client component (for Next.js compatibility, if migrated)
 
-import { Suspense, useCallback, useRef, useEffect, useMemo, useState } from 'react';
+import { Component, Suspense, useCallback, useRef, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Canvas, useThree } from '@react-three/fiber';
 import { OrbitControls, Stars, PerspectiveCamera } from '@react-three/drei';
 import * as THREE from 'three';
@@ -370,16 +370,49 @@ function StageCommitted({ stage, onCommit }: { stage: number; onCommit: (stage: 
 /** Only mention the warm-up if it takes long enough to notice (a first visit). */
 const PREPARING_NOTICE_MS = 400;
 
+/**
+ * Without WebGL (a blocked GPU, a locked-down browser, some VMs) the renderer
+ * throws on creation. Contain it here so the page and its live readouts keep
+ * working, instead of the whole route falling into the app's error screen.
+ */
+class SceneBoundary extends Component<{ children: ReactNode; onFail: () => void }, { failed: boolean }> {
+  state = { failed: false };
+
+  static getDerivedStateFromError() {
+    return { failed: true };
+  }
+
+  componentDidCatch(error: Error) {
+    console.error('3D scene unavailable:', error.message);
+    this.props.onFail();
+  }
+
+  render() {
+    if (this.state.failed) {
+      return (
+        <div role="status" className="flex h-full w-full items-center justify-center p-6 text-center">
+          <p className="max-w-xs font-mono text-[11px] uppercase leading-relaxed tracking-[0.14em] text-muted-foreground">
+            3D view unavailable: this browser could not start WebGL. The readouts still update live.
+          </p>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
 export const SpaceScene = (props: SpaceSceneProps) => {
   // Nothing renders until every shader is compiled: the first draw of an
   // uncompiled material blocks the main thread (see ShaderWarmup).
   const [ready, setReady] = useState(false);
+  const [failed, setFailed] = useState(false);
+  const onFail = useCallback(() => setFailed(true), []);
   const [slow, setSlow] = useState(false);
   useEffect(() => {
-    if (ready) return;
+    if (ready || failed) return;
     const t = window.setTimeout(() => setSlow(true), PREPARING_NOTICE_MS);
     return () => window.clearTimeout(t);
-  }, [ready]);
+  }, [ready, failed]);
 
   // Create the WebGL context in its own task, after the page's first commit.
   const [canvasOn, setCanvasOn] = useState(false);
@@ -398,31 +431,33 @@ export const SpaceScene = (props: SpaceSceneProps) => {
     <div
       role="application"
       aria-label="3D space weather visualization. Use arrow keys to rotate, plus/minus to zoom, and R to reset view."
-      aria-busy={!ready}
+      aria-busy={!ready && !failed}
       tabIndex={0}
       className="relative w-full h-full focus:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-signal/40"
     >
       {canvasOn && (
-        <Canvas
-          ref={props.canvasRef}
-          frameloop={ready ? 'always' : 'never'}
-          gl={{
-            antialias: true,
-            alpha: true,
-            preserveDrawingBuffer: true,
-            powerPreference: 'high-performance',
-          }}
-          dpr={[1, 2]}
-          // Transparent until warmed up: ShaderWarmup draws a frame out of sight first.
-          className={`w-full h-full transition-opacity duration-500 motion-reduce:transition-none ${ready ? 'opacity-100' : 'opacity-0'}`}
-        >
-          <Suspense fallback={null}>
-            <SceneContent {...props} stage={stage} onStageCommitted={onStageCommitted} />
-            {stage >= STAGE.warmup && <ShaderWarmup onReady={() => setReady(true)} />}
-          </Suspense>
-        </Canvas>
+        <SceneBoundary onFail={onFail}>
+          <Canvas
+            ref={props.canvasRef}
+            frameloop={ready ? 'always' : 'never'}
+            gl={{
+              antialias: true,
+              alpha: true,
+              preserveDrawingBuffer: true,
+              powerPreference: 'high-performance',
+            }}
+            dpr={[1, 2]}
+            // Transparent until warmed up: ShaderWarmup draws a frame out of sight first.
+            className={`w-full h-full transition-opacity duration-500 motion-reduce:transition-none ${ready ? 'opacity-100' : 'opacity-0'}`}
+          >
+            <Suspense fallback={null}>
+              <SceneContent {...props} stage={stage} onStageCommitted={onStageCommitted} />
+              {stage >= STAGE.warmup && <ShaderWarmup onReady={() => setReady(true)} />}
+            </Suspense>
+          </Canvas>
+        </SceneBoundary>
       )}
-      {!ready && slow && (
+      {!ready && !failed && slow && (
         <p
           role="status"
           className="pointer-events-none absolute inset-0 flex items-center justify-center font-mono text-[10px] uppercase tracking-[0.14em] text-muted-foreground"

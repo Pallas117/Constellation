@@ -9,6 +9,7 @@ import { SolarWindSpeedChart } from "@/components/heliophysics/SolarWindSpeedCha
 import { useAuroraMap } from "@/hooks/useAuroraMap";
 import { apiBase } from "@/lib/api/base-url";
 import { mergeSeries, SERIES_MAX_POINTS, SERIES_WINDOW_MS } from "@/lib/api/feed-series";
+import { HttpFailure } from "@/lib/api/http-error";
 import type { CanonicalSpaceWeatherPoint } from "@/lib/types/space-weather";
 
 /** One 24 h backfill of the 5 s feed (the `user`-role route; the page is behind sign-in). */
@@ -23,7 +24,7 @@ function useDayBackfill(): { points: CanonicalSpaceWeatherPoint[] | null; error:
       signal: controller.signal,
     })
       .then(async (response) => {
-        if (!response.ok) throw new Error(`History HTTP ${response.status}`);
+        if (!response.ok) throw new HttpFailure("Couldn't load the 24 h history", response.status);
         const json = (await response.json()) as { points?: CanonicalSpaceWeatherPoint[] };
         setPoints(mergeSeries(null, Array.isArray(json.points) ? json.points : []));
       })
