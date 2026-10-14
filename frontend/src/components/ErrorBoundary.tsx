@@ -25,22 +25,31 @@ export class ErrorBoundary extends Component<Props, State> {
 
   public render() {
     if (this.state.hasError) {
+      // Visitors get a plain message; the stack (which names internals) only in development.
       return (
-        <div className="min-h-screen bg-slate-950 text-white flex flex-col items-center justify-center p-8 font-mono">
-          <h1 className="text-2xl text-red-500 mb-4 font-bold uppercase tracking-tighter">System Error Detected</h1>
-          <div className="bg-black/50 p-6 border border-red-500/30 rounded max-w-2xl w-full">
-            <p className="text-red-400 mb-4">{this.state.error?.message}</p>
-            <pre className="text-[10px] opacity-50 overflow-auto max-h-60 mt-4 leading-tight">
-              {this.state.error?.stack}
-            </pre>
+        <main role="alert" className="flex min-h-[100dvh] items-center justify-center bg-background px-4 text-foreground">
+          <div className="hud-panel w-full max-w-lg p-8">
+            <p className="brand-label">00_ERROR</p>
+            <h1 className="mt-3 text-2xl font-semibold">Something went wrong on this page.</h1>
+            <p className="mt-2 text-sm text-muted-foreground">
+              Reloading usually fixes it. If it keeps happening, tell the Gauss team what you were doing.
+            </p>
+            {import.meta.env.DEV && this.state.error && (
+              <pre className="mt-4 max-h-60 overflow-auto rounded-md border border-border bg-background p-3 font-mono text-[11px] leading-tight text-muted-foreground">
+                {this.state.error.message}
+                {"\n"}
+                {this.state.error.stack}
+              </pre>
+            )}
+            <button
+              type="button"
+              onClick={() => window.location.reload()}
+              className="mt-6 inline-flex min-h-10 items-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90"
+            >
+              Reload the page
+            </button>
           </div>
-          <button
-            onClick={() => window.location.reload()}
-            className="mt-8 px-6 py-2 border border-blue-500/50 hover:bg-blue-500/20 text-blue-400 uppercase text-xs tracking-widest transition-colors"
-          >
-            Attempt System Reboot
-          </button>
-        </div>
+        </main>
       );
     }
 

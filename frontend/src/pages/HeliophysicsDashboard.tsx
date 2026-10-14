@@ -16,6 +16,7 @@ import type { RadiationDataPoint } from "@/lib/types/radiation";
 import mockSolarStormData from "@/data/mock_solar_storm.json";
 import { beltVisuals, liveDrivers, standoffIfReference } from "@/lib/physics/live-drivers";
 import { useNow } from "@/hooks/useNow";
+import { useDocumentTitle } from "@/hooks/useDocumentTitle";
 
 const VIEW_KEYS = Object.keys(SCENE_VIEWS) as SceneView[];
 // Below the fold: its own chunk (with the charting library), loaded when scrolled to.
@@ -54,6 +55,8 @@ function Readout({ label, value, unit, tone = "default", hint }: { label: string
 /* ------------------------------------------------------------------------- */
 
 const HeliophysicsDashboard = () => {
+  useDocumentTitle("Heliophysics");
+
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [layers, setLayers] = useState<LayerVisibility>({
     earth: true,
@@ -196,7 +199,7 @@ const HeliophysicsDashboard = () => {
         {/* Top edge: identity and feed left, controls right */}
         <header className="pointer-events-none absolute inset-x-0 top-0 z-10 flex items-start justify-between gap-3 p-3 md:p-4">
           <div className="flex min-w-0 flex-col items-start gap-1.5">
-            <Link to="/" className="brand-label pointer-events-auto text-[10px]">
+            <Link to="/" className="brand-label pointer-events-auto inline-flex min-h-6 items-center text-[10px]">
               Gauss Aurora<span className="hidden sm:inline"> · Heliophysics</span>
             </Link>
             <h1 className="text-sm font-semibold leading-tight text-foreground/90 md:text-base">
@@ -478,7 +481,7 @@ const HeliophysicsDashboard = () => {
 
         <a
           href="#history"
-          className="pointer-events-auto absolute bottom-4 left-1/2 z-10 hidden -translate-x-1/2 items-center gap-1 rounded-full px-3 py-1 font-mono text-[9px] uppercase tracking-[0.14em] text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring lg:inline-flex"
+          className="pointer-events-auto absolute bottom-4 left-1/2 z-10 hidden -translate-x-1/2 items-center gap-1 rounded-full min-h-6 px-3 py-1 font-mono text-[9px] uppercase tracking-[0.14em] text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring lg:inline-flex"
         >
           24 h history <ChevronDown size={12} aria-hidden="true" />
         </a>

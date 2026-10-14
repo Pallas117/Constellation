@@ -1,7 +1,6 @@
 /**
- * Root Tailwind config to ensure PostCSS/Tailwind finds `content` and theme
- * when running Vite from workspace root (Playwright dev server). This mirrors
- * `frontend/tailwind.config.ts` but is plain JS so PostCSS can load it reliably.
+ * The only Tailwind config (Lightbound brand tokens). frontend/postcss.config.js
+ * points here explicitly, so it applies whichever directory Vite runs from.
  */
 module.exports = {
   darkMode: ['class'],
@@ -11,7 +10,6 @@ module.exports = {
     './frontend/components/**/*.{ts,tsx,js,jsx}',
     './frontend/pages/**/*.{ts,tsx,js,jsx}',
     './frontend/app/**/*.{ts,tsx,js,jsx}',
-    './frontend/**/*.{html,js,ts,jsx,tsx}'
   ],
   theme: {
     extend: {
@@ -64,14 +62,6 @@ module.exports = {
         card: {
           DEFAULT: 'hsl(var(--card))',
           foreground: 'hsl(var(--card-foreground))',
-        },
-        space: {
-          deep: 'hsl(var(--space-deep))',
-          nebula: 'hsl(var(--space-nebula))',
-        },
-        belt: {
-          inner: 'hsl(var(--belt-inner))',
-          outer: 'hsl(var(--belt-outer))',
         },
       }
     }

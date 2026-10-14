@@ -5,8 +5,11 @@ import { registerDeviceWithLogin } from "@/lib/device-auth";
 import { Link, useNavigate, useLocation } from "react-router-dom";
 import { Github, LogIn } from "lucide-react";
 import { apiBase } from "@/lib/api/base-url";
+import { useDocumentTitle } from "@/hooks/useDocumentTitle";
 
 export default function Login() {
+  useDocumentTitle("Sign in");
+
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
@@ -160,7 +163,7 @@ export default function Login() {
 
         <Link
           to="/"
-          className="mt-6 block text-center text-sm text-muted-foreground transition-colors hover:text-foreground"
+          className="mt-4 block py-2 text-center text-sm text-muted-foreground transition-colors hover:text-foreground"
         >
           ← Back to the live landing page
         </Link>
