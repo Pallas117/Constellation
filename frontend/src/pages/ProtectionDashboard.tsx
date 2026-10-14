@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useDeviceSwapPlan } from "@/hooks/useDeviceSwapPlan";
 import { useSolarWind5s } from "@/hooks/useSolarWind5s";
+import { measuredDrivers } from "@/lib/measured";
 
 const ProtectionDashboard = () => {
   const { plan, loading, error, lastUpdated, rebalanceMessage, rebalance } = useDeviceSwapPlan();
@@ -33,13 +34,19 @@ const ProtectionDashboard = () => {
   }, [plan]);
 
   const weatherRisk = useMemo(() => {
-    if (!latest) {
-      return { label: "Unknown", description: "No solar wind feed available yet.", score: 0 };
+    // Stale or incomplete data is unknown, never "Stable" (GAU-114).
+    const drivers = measuredDrivers(latest);
+    if (!drivers) {
+      return {
+        label: "Unknown",
+        description: latest
+          ? "Space weather data is stale or incomplete; conditions are unknown."
+          : "No solar wind feed available yet.",
+        score: 0,
+      };
     }
 
-    const speed = latest.solarWind.speed ?? 400;
-    const kp = latest.indices?.kp ?? 2;
-    const bz = latest.magneticField?.z ?? 0;
+    const { speed, kp, bz } = drivers;
     const score = Math.min(100, Math.max(0, Math.round((kp * 9) + Math.abs(bz) * 3 + ((speed - 300) / 15))));
 
     let label = "Stable";
