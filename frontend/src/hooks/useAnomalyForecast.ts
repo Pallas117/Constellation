@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
+import { apiBase } from "@/lib/api/base-url";
 
-const PROXY_URL = import.meta.env.VITE_HELIO_PROXY_URL || 'http://127.0.0.1:3001';
+const PROXY_URL = apiBase();
 
 export interface AnomalyForecast {
   modelVersion: string;

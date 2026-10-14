@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
 import type { MMSReconVectorPoint } from "@/lib/types/space-weather";
 import { getAuthHeaders } from "@/lib/api/auth";
+import { apiBase } from "@/lib/api/base-url";
 
 const POLL_INTERVAL_MS = 5000;
 
 function getBaseUrl(): string {
-  return import.meta.env.VITE_HELIO_PROXY_URL ?? "http://127.0.0.1:3001";
+  return apiBase();
 }
 
 export interface MMSReconnectionState {

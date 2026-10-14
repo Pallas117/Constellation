@@ -1,12 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { CanonicalSpaceWeatherPoint } from "@/lib/types/space-weather";
 import { getAccessToken, getAuthHeaders } from "@/lib/api/auth";
+import { apiBase, wsOrigin } from "@/lib/api/base-url";
 
 const FEED_ENDPOINT = "/api/feed/space-weather/5s?lookback=PT24H&limit=17280";
 const POLL_INTERVAL_MS = 5000;
 
 function getBaseUrl(): string {
-  return import.meta.env.VITE_HELIO_PROXY_URL ?? "http://127.0.0.1:3001";
+  return apiBase();
 }
 
 export interface SolarWind5sState {
@@ -74,7 +75,7 @@ export function useSolarWind5s(): SolarWind5sState {
     let cancelled = false;
 
     const connect = async () => {
-      const base = getBaseUrl().replace(/^http/i, "ws");
+      const base = wsOrigin();
       const token = await getAccessToken();
       if (!token || cancelled) {
         setSource("polling");
