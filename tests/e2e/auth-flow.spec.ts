@@ -20,6 +20,8 @@ const AUTH_SESSION = {
     updatedAt: new Date().toISOString(),
     name: 'Operator Gauss',
     image: null,
+    // Operators land on /operator; without a role the guard treats this as a user.
+    role: 'operator',
   },
 };
 
@@ -28,12 +30,12 @@ test.describe('Authentication Flow & Route Splitting', () => {
     await mockUiApis(page, { auth: false });
     await page.goto('/?e2e=true');
     
-    // Verify the premium marketing view elements
+    // Public landing: brand header, operator entry point, fail-closed feed state
     await expect(page.locator('h1')).toHaveText(/Gauss Aurora/);
-    await expect(page.locator('text=Operator Portal')).toBeVisible();
-    
-    // Ensure Skunkworks elements are explicitly NOT visible on the public page
-    await expect(page.locator('text=Logic_Ckt_State')).not.toBeVisible();
+    await expect(page.getByRole('link', { name: /operator portal/i })).toBeVisible();
+
+    // Operator console panels are explicitly NOT on the public page
+    await expect(page.getByText('Feed source')).not.toBeVisible();
   });
 
   test('Redirects unauthenticated users from /operator to /login', async ({ page }) => {
@@ -62,8 +64,8 @@ test.describe('Authentication Flow & Route Splitting', () => {
     // Should be intercepted by ProtectedRoute and bounced to /login
     await expect(page).toHaveURL(/.*\/login/);
     
-    // Verify the secure gateway UI
-    await expect(page.locator('h1')).toHaveText(/Gauss Operator.*Auth Gateway/s);
+    // Verify the sign-in page
+    await expect(page.locator('h1')).toHaveText(/Sign in to Gauss/);
   });
 
   test('Authenticates successfully and launches the Mission Control HUD', async ({ page }) => {
@@ -108,8 +110,8 @@ test.describe('Authentication Flow & Route Splitting', () => {
       page.click('button[type="submit"]')
     ]);
     
-    // Verify Skunkworks specific HUD items are now accessible
-    await expect(page.locator('text=Logic_Ckt_State').first()).toBeVisible({ timeout: 15000 });
-    await expect(page.locator('text=Primary_Sensors').first()).toBeVisible({ timeout: 15000 });
+    // Operator console panels are now accessible
+    await expect(page.getByRole('heading', { name: /solar_wind/i })).toBeVisible({ timeout: 15000 });
+    await expect(page.getByText('Feed source')).toBeVisible({ timeout: 15000 });
   });
 });

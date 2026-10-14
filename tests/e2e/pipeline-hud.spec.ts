@@ -37,7 +37,7 @@ async function servePipeline(page: Page, body: unknown, status = 200) {
   );
 }
 
-const hud = (page: Page) => page.locator(".hud-panel", { hasText: "DIAG // DATA_FLOW_LAYER" });
+const hud = (page: Page) => page.getByRole("region", { name: "05_DATA_PATH" });
 
 // ProtectedRoute on main reads `session.session.user.id`, but Better Auth returns
 // `{ session, user }`, so the mocked session in mockUiApis is always bounced to /login (the

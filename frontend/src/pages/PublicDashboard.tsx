@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { Globe, KeyRound, Lock, Orbit } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { GaussGlobe } from '@/components/GaussGlobe';
+import { SceneBoundary } from '@/components/ErrorBoundary';
 import { PilotPanels } from '@/components/PilotPanels';
 import type { MagnetosphereModelInfo } from '@/components/scene/Magnetosphere';
 import { FeedStatus, HudCluster, HudStat, fmt, signed } from '@/components/hud/Hud';
@@ -56,17 +57,19 @@ export default function PublicDashboard() {
   return (
     <div className="relative h-[100dvh] w-full overflow-hidden bg-black font-sans text-foreground">
       <div className="absolute inset-0 z-0">
-        <GaussGlobe
-          layers={LAYERS}
-          visualParams={visualParams}
-          encodingMode="color"
-          canvasRef={canvasRef}
-          isE2E={isE2E}
-          solarWindDrivers={drivers}
-          smoothDrivers={!live.propagated}
-          onModelUpdate={setModelInfo}
-          hoverable
-        />
+        <SceneBoundary>
+          <GaussGlobe
+            layers={LAYERS}
+            visualParams={visualParams}
+            encodingMode="color"
+            canvasRef={canvasRef}
+            isE2E={isE2E}
+            solarWindDrivers={drivers}
+            smoothDrivers={!live.propagated}
+            onModelUpdate={setModelInfo}
+            hoverable
+          />
+        </SceneBoundary>
       </div>
       <div
         aria-hidden="true"

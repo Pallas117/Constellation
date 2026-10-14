@@ -1,97 +1,64 @@
-import { InterpolatedData } from '@/hooks/useSpaceWeather';
+import type { InterpolatedData } from '@/hooks/useSpaceWeather';
+import { StatusBadge } from '@/components/brand/StatusBadge';
+import { bzStatus, feedState, FEED_LABEL, kpStatus, speedStatus, type ReadoutStatus } from '@/lib/readout-status';
 
 interface HUDProps {
   data: InterpolatedData;
 }
 
-const getKpStatus = (kp: number): 'normal' | 'elevated' | 'high' => {
-  if (kp >= 7) return 'high';
-  if (kp >= 4) return 'elevated';
-  return 'normal';
-};
-
-const getBzStatus = (bz: number): 'normal' | 'elevated' | 'high' => {
-  if (bz <= -10) return 'high';
-  if (bz <= -5) return 'elevated';
-  return 'normal';
-};
-
-const getSpeedStatus = (speed: number): 'normal' | 'elevated' | 'high' => {
-  if (speed >= 600) return 'high';
-  if (speed >= 450) return 'elevated';
-  return 'normal';
-};
-
-const DataRow = ({ label, value, unit, status = 'normal' }: { label: string; value: string | number; unit: string; status?: string }) => (
-  <div className="sql-row">
-    <span className="sql-label">{label}</span>
-    <span className={`sql-value ${status === 'high' ? 'text-destructive phosphor-text' : 'phosphor-text'}`}>
-      {typeof value === 'number' ? value.toFixed(1) : value}
-      <span className="ml-1 opacity-40 text-[9px]">{unit}</span>
-    </span>
+/** One telemetry row. Only non-nominal values get a status word, so problems stand out. */
+const DataRow = ({ label, value, unit, status }: { label: string; value: string; unit: string; status?: ReadoutStatus | null }) => (
+  <div className="flex items-center justify-between gap-3 border-b border-charcoal py-1.5 last:border-b-0">
+    <dt className="font-mono text-xs uppercase tracking-[0.06em] text-muted-foreground">{label}</dt>
+    <dd className="flex items-center gap-2 font-mono tabular-nums">
+      {status && status.tone !== 'nominal' && <StatusBadge tone={status.tone}>{status.word}</StatusBadge>}
+      <span className="text-sm font-medium text-foreground">{value}</span>
+      <span className="w-9 text-[11px] text-muted-foreground">{unit}</span>
+    </dd>
   </div>
 );
 
+/**
+ * Solar-wind telemetry for the operator console. Fails closed: with no
+ * measurement every value is "—" (the hook's placeholder numbers never show).
+ */
 export const HUD = ({ data }: HUDProps) => {
-  const getStatusColor = (tier: number) => {
-    switch (tier) {
-      case 0: return 'text-primary';
-      case 1: return 'text-primary/70';
-      case 2: return 'text-cyan-400';
-      case 3: return 'text-amber-500';
-      default: return 'text-muted-foreground';
-    }
-  };
-
-  const statusLabels = ['LIVE', 'REDUNDANT', 'SYNTHETIC', 'STALE'];
-  const statusLabel = statusLabels[data.tier] || 'UNKNOWN';
+  const feed = feedState(data);
+  const measured = feed !== 'unavailable';
+  const fixed = (n: number) => (measured ? n.toFixed(1) : '—');
 
   return (
-    <div className="hud-panel min-w-[240px] border-primary/20 bg-black/40">
-      {/* Table Header */}
-      <div className="sql-header p-1 flex justify-between items-center px-2">
-        <span>GAUSS // SENSOR_ARRAY</span>
-        <span className={getStatusColor(data.tier)}>{statusLabel}</span>
+    <section aria-labelledby="hud-title" className="hud-panel p-3">
+      <div className="mb-1 flex items-center justify-between gap-3">
+        <h2 id="hud-title" className="brand-label">03_SOLAR_WIND</h2>
+        {feed !== 'live' && <StatusBadge tone="caution">{FEED_LABEL[feed]}</StatusBadge>}
       </div>
-
-      <div className="sql-grid">
+      <dl>
         <DataRow
-          label="Wind_Velocity"
-          value={data.solarWind.speed}
-          unit="KM/S"
-          status={getSpeedStatus(data.solarWind.speed)}
+          label="Wind speed"
+          value={measured ? String(Math.round(data.solarWind.speed)) : '—'}
+          unit="km/s"
+          status={measured ? speedStatus(data.solarWind.speed) : null}
         />
+        <DataRow label="Density" value={fixed(data.solarWind.density)} unit="cm⁻³" />
         <DataRow
-          label="Plasma_Density"
-          value={data.solarWind.density}
-          unit="P/CM3"
+          label="IMF Bz"
+          value={measured ? `${data.imfBz > 0 ? '+' : ''}${data.imfBz.toFixed(1)}` : '—'}
+          unit="nT"
+          status={measured ? bzStatus(data.imfBz) : null}
         />
+        <DataRow label="Kp" value={fixed(data.kpIndex)} unit="/ 9" status={measured ? kpStatus(data.kpIndex) : null} />
         <DataRow
-          label="IMF_BZ_FIELD"
-          value={data.imfBz}
-          unit="NT"
-          status={getBzStatus(data.imfBz)}
+          label="Proton flux"
+          value={measured && data.protonFlux != null ? data.protonFlux.toFixed(1) : '—'}
+          unit="pfu"
         />
-        <DataRow
-          label="GEOMAG_KP"
-          value={data.kpIndex}
-          unit="IDX"
-          status={getKpStatus(data.kpIndex)}
-        />
-        <DataRow
-          label="PROTON_FLUX"
-          value={data.protonFlux ?? 'N/A'}
-          unit="PFU"
-        />
-      </div>
-
-      {/* Table Footer */}
-      <div className="p-1 px-2 border-t border-primary/10 flex justify-between items-center opacity-40 text-[9px]">
-        <span>REF_ID: 0x{data.tier.toString(16).toUpperCase()}</span>
-        <span>{data.timestamp.toISOString().split('T')[1].split('.')[0]} Z</span>
-      </div>
-      
-      <div className="scanline" />
-    </div>
+      </dl>
+      <p className="mt-2 font-mono text-[11px] text-muted-foreground">
+        {measured
+          ? `Measured ${data.timestamp.toISOString().slice(11, 19)} UTC`
+          : 'No measurement from any connected source'}
+      </p>
+    </section>
   );
 };

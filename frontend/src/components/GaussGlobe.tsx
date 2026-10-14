@@ -96,48 +96,37 @@ export interface EncodingPanelProps {
     setEncodingMode: (mode: EncodingMode) => void;
 }
 
+const ENCODINGS: { mode: EncodingMode; label: string; aria: string }[] = [
+    { mode: 'color', label: 'Colour', aria: 'Use color encoding for radiation flux' },
+    { mode: 'size', label: 'Size', aria: 'Use particle size encoding for radiation flux (colorblind accessible)' },
+    { mode: 'both', label: 'Both', aria: 'Use both color and size encoding for radiation flux' },
+];
+
 export function EncodingPanel({
     encodingMode,
     setEncodingMode,
 }: EncodingPanelProps) {
     return (
-        <div
-            className="hud-panel p-3 min-w-[160px] animate-fade-in-up"
-            style={{ animationDelay: '0.2s' }}
-        >
-            <div className="scanline" />
-            <h3 className="text-xs font-semibold tracking-wider text-muted-foreground mb-3 px-1">
-                ENCODING
-            </h3>
-            <div className="space-y-1">
-                <button
-                    onClick={() => setEncodingMode('color')}
-                    data-active={encodingMode === 'color'}
-                    className="toggle-button flex items-center gap-2 w-full"
-                    aria-pressed={encodingMode === 'color'}
-                    aria-label="Use color encoding for radiation flux"
-                >
-                    <span>Color</span>
-                </button>
-                <button
-                    onClick={() => setEncodingMode('size')}
-                    data-active={encodingMode === 'size'}
-                    className="toggle-button flex items-center gap-2 w-full"
-                    aria-pressed={encodingMode === 'size'}
-                    aria-label="Use particle size encoding for radiation flux (colorblind accessible)"
-                >
-                    <span>Size</span>
-                </button>
-                <button
-                    onClick={() => setEncodingMode('both')}
-                    data-active={encodingMode === 'both'}
-                    className="toggle-button flex items-center gap-2 w-full"
-                    aria-pressed={encodingMode === 'both'}
-                    aria-label="Use both color and size encoding for radiation flux"
-                >
-                    <span>Both</span>
-                </button>
+        <section className="hud-panel p-3" aria-labelledby="encoding-label">
+            <h2 id="encoding-label" className="mb-2 font-mono text-xs uppercase tracking-[0.06em] text-muted-foreground">
+                Flux encoding
+            </h2>
+            <div role="group" aria-labelledby="encoding-label" className="grid grid-cols-3 gap-0.5 rounded-md border border-charcoal p-0.5">
+                {ENCODINGS.map(({ mode, label, aria }) => (
+                    <button
+                        key={mode}
+                        type="button"
+                        onClick={() => setEncodingMode(mode)}
+                        aria-pressed={encodingMode === mode}
+                        aria-label={aria}
+                        className={`rounded px-2 py-1.5 text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
+                            encodingMode === mode ? 'bg-secondary font-medium text-foreground' : 'text-muted-foreground hover:text-foreground'
+                        }`}
+                    >
+                        {label}
+                    </button>
+                ))}
             </div>
-        </div>
+        </section>
     );
 }
