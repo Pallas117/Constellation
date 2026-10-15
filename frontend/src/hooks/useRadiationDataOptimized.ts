@@ -6,7 +6,7 @@
  */
 
 import { useState, useCallback, useMemo, useEffect } from 'react';
-import { useQuery, useQueryClient, useQueries } from '@tanstack/react-query';
+import { queryOptions, useQuery, useQueryClient, useQueries } from '@tanstack/react-query';
 import type {
   RadiationMeasurement,
   RadiationDataFilter,
@@ -101,7 +101,7 @@ export function useRadiationDataOptimized(
       // NASA OMNI query
       ...(sources.includes('nasa-omni')
         ? [
-            {
+            queryOptions({
               ...NASAClient.getQueryOptions({
                 startDate,
                 endDate,
@@ -111,25 +111,25 @@ export function useRadiationDataOptimized(
                 resolution: 'hourly',
               }),
               refetchInterval: realTime ? updateInterval : false,
-            },
+            }),
           ]
         : []),
       // ERG/Arase query
       ...(sources.includes('erg-arase') && csvSources['erg-arase']
         ? [
-            {
+            queryOptions({
               ...ERGClient.getQueryOptions(csvSources['erg-arase']),
               refetchInterval: false, // CSV files don't change
-            },
+            }),
           ]
         : []),
       // CSES query
       ...(sources.includes('cses') && csvSources['cses']
         ? [
-            {
+            queryOptions({
               ...CSESClient.getQueryOptions(csvSources['cses']),
               refetchInterval: false, // CSV files don't change
-            },
+            }),
           ]
         : []),
     ],
