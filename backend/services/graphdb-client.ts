@@ -20,13 +20,32 @@ export interface GraphTrace {
   edges: GraphEdge[];
 }
 
+// Labels, relationship types and path lengths can't be Cypher parameters, so they
+// are interpolated. Only plain identifiers and small integers get that far.
+const CYPHER_IDENTIFIER = /^[A-Za-z_][A-Za-z0-9_]{0,63}$/;
+export const MAX_TRACE_DEPTH = 6;
+
+export function assertCypherIdentifier(value: string, what: string): string {
+  if (typeof value !== "string" || !CYPHER_IDENTIFIER.test(value)) {
+    throw new Error(`Invalid ${what}: must be a plain identifier`);
+  }
+  return value;
+}
+
+export function assertTraceDepth(depth: number): number {
+  if (!Number.isInteger(depth) || depth < 1 || depth > MAX_TRACE_DEPTH) {
+    throw new Error(`Invalid trace depth: must be an integer from 1 to ${MAX_TRACE_DEPTH}`);
+  }
+  return depth;
+}
+
 export class GraphDBClient {
   private driver: Driver;
   private maxConcurrentSessions = 10;
   private activeSessions = 0;
   private sessionQueue: Array<() => void> = [];
 
-  constructor(uri: string = 'bolt://localhost:7687', user: string = 'neo4j', pass: string = 'password') {
+  constructor(uri: string, user: string, pass: string) {
     this.driver = neo4j.driver(uri, neo4j.auth.basic(user, pass));
   }
 
@@ -57,13 +76,16 @@ export class GraphDBClient {
   }
 
   async injectFact(nodeA: GraphNode, edge: GraphEdge, nodeB: GraphNode): Promise<void> {
+    const labelA = assertCypherIdentifier(nodeA.label, "node label");
+    const labelB = assertCypherIdentifier(nodeB.label, "node label");
+    const relType = assertCypherIdentifier(edge.type, "relationship type");
     const session = await this.acquireSession();
     try {
       await session.executeWrite(tx => 
         tx.run(`
-          MERGE (a:${nodeA.label} {id: $idA}) SET a += $propsA
-          MERGE (b:${nodeB.label} {id: $idB}) SET b += $propsB
-          MERGE (a)-[r:${edge.type}]->(b) SET r += $propsR
+          MERGE (a:${labelA} {id: $idA}) SET a += $propsA
+          MERGE (b:${labelB} {id: $idB}) SET b += $propsB
+          MERGE (a)-[r:${relType}]->(b) SET r += $propsR
         `, {
           idA: nodeA.id, propsA: nodeA.properties,
           idB: nodeB.id, propsB: nodeB.properties,
@@ -77,11 +99,12 @@ export class GraphDBClient {
   }
 
   async traceAnomalyPath(anomalyId: string, depth: number = 3): Promise<GraphTrace> {
+    const maxHops = assertTraceDepth(depth);
     const session = await this.acquireSession();
     try {
       const result = await session.executeRead(tx =>
         tx.run(`
-          MATCH path = (a {id: $anomalyId})-[:CAUSED_BY|IMPACTS|CAUSES*1..${depth}]-(origin)
+          MATCH path = (a {id: $anomalyId})-[:CAUSED_BY|IMPACTS|CAUSES*1..${maxHops}]-(origin)
           RETURN path
         `, { anomalyId })
       );
