@@ -34,8 +34,8 @@ Dose rate from flux (thin target, single species): Ḋ [Gy/s] = 1.602×10⁻¹�
 S1 ≥10, S2 ≥10², S3 ≥10³, S4 ≥10⁴, S5 ≥10⁵.
 
 ## Known weak spots in this repo (check before trusting)
-- `frontend/src/lib/utils/radiation-calculations.ts` `calculateDoseRate`: computes flux × mean energy × ad-hoc factor and labels it mSv/h. That is physically invalid (no stopping power, Sv applied to unspecified material, sr not integrated). Treat it as a relative intensity index until it is replaced.
-- `getAlertLevel` in `radiation.ts`: thresholds need a cited source (S-scale for protons; for electrons, GOES >2 MeV 1000 pfu as the internal-charging alert).
+- **No dose-rate or alert-threshold code exists.** The old unmounted helpers were deleted as dead code (Constellation #74): one computed flux × mean energy × an ad-hoc factor and labelled it mSv/h, and another used uncited alert thresholds. If you add either, compute dose with stopping power as above, name the target material, and cite thresholds (S-scale for protons; for electrons, GOES >2 MeV at 1000 pfu as the internal-charging alert).
+- **The radiation overlay is relative, not physical.** `scene/RadiationDataOverlay(LOD).tsx` colour and size points by log flux normalised to each dataset's own min and max, so a colour means nothing across datasets. `RadiationDataPoint.flux` (`lib/types/radiation.ts`) has no unit. The only data is the six-point mock storm in `frontend/src/data/mock_solar_storm.json`. A real source has to state its unit (differential or integral, per sr or omnidirectional) where it enters.
 - Belt visuals (`scene/VanAllenBelts.tsx`) are qualitative. They are now tilted with the dipole, but they do not yet respond to storm-time dropout or enhancement.
 
 ## Validation
