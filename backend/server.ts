@@ -556,23 +556,56 @@ app.post("/api/ai/nowcast/train", requireRole("admin"), async (_req, res) => {
 
 const server = http.createServer(app);
 
-const wsSpaceWeather = new WebSocketServer({ server, path: "/ws/feed/space-weather" });
-const wsMmsRecon = new WebSocketServer({ server, path: "/ws/feed/mms-reconnection" });
+// Upgrades are routed by path. Two servers attached with { server, path } each see every upgrade,
+// and the non-matching one aborts it with a 400, killing sockets the other just accepted.
+const wsSpaceWeather = new WebSocketServer({ noServer: true });
+const wsMmsRecon = new WebSocketServer({ noServer: true });
+const wsByPath = new Map<string, WebSocketServer>([
+  ["/ws/feed/space-weather", wsSpaceWeather],
+  ["/ws/feed/mms-reconnection", wsMmsRecon],
+]);
+
+server.on("upgrade", (req, socket, head) => {
+  const pathname = (req.url ?? "").split("?")[0];
+  const wss = wsByPath.get(pathname);
+  if (!wss) {
+    socket.write("HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\n");
+    socket.destroy();
+    return;
+  }
+  wss.handleUpgrade(req, socket, head, (ws) => wss.emit("connection", ws, req));
+});
 
 type AuthedSocket = WebSocket & { auth?: AuthContext };
 
-let broadcastCount = 0;
+const satRepeatCount = new Map<string, number>();
 
-function broadcast(wss: WebSocketServer, topic: string, payload: unknown): void {
+/**
+ * Push a topic update to authenticated sockets. A new measurement always goes out at once; in SAT
+ * mode an unchanged repeat is sent only every 3rd tick per topic (~15 s) to save bandwidth.
+ */
+function broadcast(
+  wss: WebSocketServer,
+  topic: string,
+  payload: unknown,
+  opts: { newData: boolean; dataTimestamp?: string | null },
+): void {
   const link = linkGuardian.getStatus();
-  broadcastCount++;
 
-  // Satellite (SAT) Mode Throttling: Only broadcast every 3rd tick (~3s frequency) to save bandwidth
-  if (link.mode === "SAT" && broadcastCount % 3 !== 0) {
-    return;
+  if (link.mode === "SAT" && !opts.newData) {
+    const repeats = (satRepeatCount.get(topic) ?? 0) + 1;
+    satRepeatCount.set(topic, repeats);
+    if (repeats % 3 !== 0) {
+      return;
+    }
   }
 
-  const body = JSON.stringify({ topic, payload, timestamp: new Date().toISOString() });
+  const body = JSON.stringify({
+    topic,
+    payload,
+    timestamp: new Date().toISOString(),
+    dataTimestamp: opts.dataTimestamp ?? null,
+  });
   for (const client of wss.clients) {
     const socket = client as AuthedSocket;
     if (socket.readyState === 1 && socket.auth) {
@@ -644,12 +677,21 @@ wsMmsRecon.on("connection", async (socket: AuthedSocket, req) => {
   );
 });
 
+let lastBroadcastMeasurement: string | null = null;
+
 const worker = new IngestionWorker((result: IngestionTickResult) => {
   if (result.canonicalPoint) {
-    broadcast(wsSpaceWeather, "space-weather", result.canonicalPoint);
+    const dataTimestamp = result.pipeline?.dataTimestamp ?? null;
+    const newData = dataTimestamp !== null && dataTimestamp !== lastBroadcastMeasurement;
+    lastBroadcastMeasurement = dataTimestamp;
+    broadcast(wsSpaceWeather, "space-weather", result.canonicalPoint, { newData, dataTimestamp });
   }
   if (result.mmsVector) {
-    broadcast(wsMmsRecon, "mms-reconnection", result.mmsVector);
+    // A vector is only produced from a fresh fetch.
+    broadcast(wsMmsRecon, "mms-reconnection", result.mmsVector, {
+      newData: true,
+      dataTimestamp: result.mmsVector.timestamp,
+    });
   }
 });
 

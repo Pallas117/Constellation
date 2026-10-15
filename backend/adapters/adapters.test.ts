@@ -6,7 +6,7 @@ import { fetchEsaReadout, parseNecRow } from "./esa-hapi.js";
 import { getJaxaStatus, probeJaxaCatalog } from "./jaxa-erg.js";
 import { fetchMmsCdawebSamples, getMmsCdawebStatus } from "./mms-cdaweb.js";
 import { fetchMmsBurstWindows, getMmsLaspStatus } from "./mms-lasp.js";
-import { fetchNoaaReadout, swpcTimeToIso } from "./noaa-swpc.js";
+import { fetchNoaaReadout, pickFreshestPair, resetNoaaCache, swpcTimeToIso } from "./noaa-swpc.js";
 
 type Route = (url: string) => { status: number; body: unknown } | undefined;
 
@@ -104,6 +104,68 @@ test("NOAA: without an active wind record the newest complete one is used", asyn
   assert.ok(readout);
   assert.equal(readout.spacecraft, "IMAP");
   assert.deepEqual({ ...readout.velocityGse }, { x: -999, y: 0, z: 0 }, "bulk speed along -X when no GSE vector");
+});
+
+test("NOAA: a 304 reuses the cached body so fast polling costs no payload", async () => {
+  resetNoaaCache();
+  const route = rtswRoute();
+  const seen: Array<string | null> = [];
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+    const url = String(input instanceof Request ? input.url : input);
+    const ifNoneMatch = new Headers(init?.headers).get("if-none-match");
+    if (url.includes("rtsw_wind_1m")) seen.push(ifNoneMatch);
+    if (ifNoneMatch === `"v1"`) return new Response(null, { status: 304 });
+    const hit = route(url)!;
+    return new Response(JSON.stringify(hit.body), { status: 200, headers: { etag: `"v1"` } });
+  }) as typeof fetch;
+  try {
+    const first = await fetchNoaaReadout();
+    const second = await fetchNoaaReadout();
+    assert.ok(first && second);
+    assert.deepEqual(seen, [null, `"v1"`], "second poll is conditional");
+    assert.equal(second.timestamp, first.timestamp);
+    assert.equal(second.density, first.density);
+  } finally {
+    globalThis.fetch = realFetch;
+    resetNoaaCache();
+  }
+});
+
+test("NOAA: freshest policy picks one spacecraft newest in both wind and mag", () => {
+  const wind = [
+    { time_tag: "2026-10-15T03:19:00", active: true, source: "SOLAR1", proton_speed: 500, proton_density: 5 },
+    { time_tag: "2026-10-15T03:22:00", active: false, source: "ACE", proton_speed: 510, proton_density: 6 },
+    { time_tag: "2026-10-15T03:23:00", active: false, source: "IMAP", proton_speed: 520, proton_density: 7 },
+  ];
+  const mag = [
+    { time_tag: "2026-10-15T03:19:00", active: true, source: "SOLAR1", bx_gse: 1, by_gse: 2, bz_gse: 3 },
+    { time_tag: "2026-10-15T03:22:00", active: false, source: "ACE", bx_gse: 4, by_gse: 5, bz_gse: 6 },
+    { time_tag: "2026-10-15T03:20:00", active: false, source: "IMAP", bx_gse: 7, by_gse: 8, bz_gse: 9 },
+  ];
+  const pair = pickFreshestPair(wind, mag);
+  assert.ok(pair);
+  // IMAP wind is newest, but its mag lags; ACE is newest in both.
+  assert.equal(pair.wind.rec.source, "ACE");
+  assert.equal(pair.mag.rec.source, "ACE");
+  assert.equal(pair.wind.time, "2026-10-15T03:22:00.000Z");
+  assert.equal(pickFreshestPair(wind, []), null, "no pair without mag");
+});
+
+test("NOAA: default policy stays on the SWPC active spacecraft", async () => {
+  resetNoaaCache();
+  const prev = process.env.NOAA_RTSW_SOURCE;
+  delete process.env.NOAA_RTSW_SOURCE;
+  try {
+    const readout = await withFetch(rtswRoute(), fetchNoaaReadout);
+    assert.equal(readout?.spacecraft, "SOLAR1");
+    process.env.NOAA_RTSW_SOURCE = "freshest";
+    const fresh = await withFetch(rtswRoute(), fetchNoaaReadout);
+    assert.equal(fresh?.spacecraft, "IMAP", "freshest takes the newer IMAP pair");
+  } finally {
+    if (prev === undefined) delete process.env.NOAA_RTSW_SOURCE;
+    else process.env.NOAA_RTSW_SOURCE = prev;
+  }
 });
 
 test("ESA: parses nested and flat HAPI B_NEC rows and rejects malformed ones (GAU-50)", () => {
