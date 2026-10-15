@@ -45,7 +45,7 @@ const ESA_MS = 10000;
 const JAXA_MS = 60000;
 const MMS_MS = 10 * 60 * 1000; // archival L2 product; polling faster gains nothing
 const LASP_MS = 60000;
-const GOES_MS = 60000; // GOES publishes every 5 min; a 60 s poll keeps worst-case lag under 6 min
+const GOES_MS = 20000; // GOES publishes every 5 min; conditional GETs make a 20 s poll a 304 between updates
 const KYOTO_DST_MS = 10 * 60 * 1000; // hourly product
 
 // Freshness is judged by the age of the measurement itself, not by whether a fetch ran

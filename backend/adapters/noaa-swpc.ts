@@ -1,3 +1,4 @@
+import { fetchJsonConditional, resetConditionalCache } from "../lib/conditional-fetch.js";
 import { vec } from "../physics/coordinates.js";
 import type { DataSource, SourceStatus } from "../types.js";
 
@@ -38,35 +39,11 @@ const finite = (v: unknown): number | null => {
   return Number.isFinite(n) ? n : null;
 };
 
-// SWPC serves ETag/Last-Modified, so a fast poll costs a 304 until a product changes
-// (the RTSW files are ~4 MB raw). Bodies are kept so a 304 still yields a readout.
-const conditionalCache = new Map<string, { etag: string | null; lastModified: string | null; body: unknown }>();
+// Conditional GETs: the RTSW files are ~4 MB raw, but a 15 s poll costs a 304 between updates.
+const fetchJson = (url: string): Promise<unknown> => fetchJsonConditional(url);
 
 /** Test hook: forget cached bodies and validators. */
-export function resetNoaaCache(): void {
-  conditionalCache.clear();
-}
-
-async function fetchJson(url: string): Promise<unknown> {
-  const cached = conditionalCache.get(url);
-  const headers: Record<string, string> = {};
-  if (cached?.etag) headers["If-None-Match"] = cached.etag;
-  if (cached?.lastModified) headers["If-Modified-Since"] = cached.lastModified;
-  const response = await fetch(url, { headers, signal: AbortSignal.timeout(8000) });
-  if (response.status === 304 && cached) {
-    return cached.body;
-  }
-  if (!response.ok) {
-    throw new Error(`${url} returned HTTP ${response.status}`);
-  }
-  const body: unknown = await response.json();
-  const etag = response.headers.get("etag");
-  const lastModified = response.headers.get("last-modified");
-  if (etag || lastModified) {
-    conditionalCache.set(url, { etag, lastModified, body });
-  }
-  return body;
-}
+export const resetNoaaCache = resetConditionalCache;
 
 /** SWPC time_tags are UTC but carry no zone ("2026-10-10 12:00:00.000"); make that explicit. */
 export function swpcTimeToIso(value: unknown): string | null {
@@ -101,6 +78,48 @@ export function pickRtsw(data: unknown, fields: string[]): { rec: Rec; time: str
   return best ? { rec: best.rec, time: best.time } : null;
 }
 
+type Picked = { rec: Rec; time: string; ms: number; active: boolean };
+
+function newestBySource(data: unknown, fields: string[]): Map<string, Picked> {
+  const out = new Map<string, Picked>();
+  if (!Array.isArray(data)) return out;
+  for (const item of data) {
+    if (!item || typeof item !== "object" || Array.isArray(item)) continue;
+    const rec = item as Rec;
+    const time = swpcTimeToIso(rec.time_tag);
+    if (!time || !fields.every((f) => finite(rec[f]) !== null)) continue;
+    const ms = Date.parse(time);
+    const source = String(rec.source ?? "unknown");
+    const prev = out.get(source);
+    if (!prev || ms > prev.ms) out.set(source, { rec, time, ms, active: rec.active === true });
+  }
+  return out;
+}
+
+/**
+ * Opt-in (NOAA_RTSW_SOURCE=freshest): the single L1 spacecraft whose wind AND mag are newest,
+ * judged by the older of the two. SWPC's `active` spacecraft can trail the others by minutes;
+ * wind and mag are never mixed across spacecraft. Ties go to the active one.
+ */
+export function pickFreshestPair(
+  windData: unknown,
+  magData: unknown,
+): { wind: { rec: Rec; time: string }; mag: { rec: Rec; time: string } } | null {
+  const winds = newestBySource(windData, ["proton_speed", "proton_density"]);
+  const mags = newestBySource(magData, ["bx_gse", "by_gse", "bz_gse"]);
+  let best: { wind: Picked; mag: Picked; ms: number; active: boolean } | null = null;
+  for (const [source, wind] of winds) {
+    const mag = mags.get(source);
+    if (!mag) continue;
+    const ms = Math.min(wind.ms, mag.ms);
+    const active = wind.active || mag.active;
+    if (!best || ms > best.ms || (ms === best.ms && active && !best.active)) {
+      best = { wind, mag, ms, active };
+    }
+  }
+  return best ? { wind: best.wind, mag: best.mag } : null;
+}
+
 /** Latest planetary Kp; accepts the current object rows and the legacy array-of-arrays layout. */
 export function latestKp(data: unknown): number | null {
   if (!Array.isArray(data)) return null;
@@ -121,8 +140,10 @@ export async function fetchNoaaReadout(): Promise<NOAAReadout | null> {
       fetchJson(OVATION_URL).catch(() => null),
     ]);
 
-    const wind = pickRtsw(windData, ["proton_speed", "proton_density"]);
-    const mag = pickRtsw(magData, ["bx_gse", "by_gse", "bz_gse"]);
+    const freshest =
+      process.env.NOAA_RTSW_SOURCE === "freshest" ? pickFreshestPair(windData, magData) : null;
+    const wind = freshest?.wind ?? pickRtsw(windData, ["proton_speed", "proton_density"]);
+    const mag = freshest?.mag ?? pickRtsw(magData, ["bx_gse", "by_gse", "bz_gse"]);
     const kp = latestKp(kpData);
     if (!wind) throw new Error("NOAA RTSW wind: no complete record");
     if (!mag) throw new Error("NOAA RTSW mag: no complete record");

@@ -1,3 +1,4 @@
+import { fetchJsonConditional } from "../lib/conditional-fetch.js";
 import type { DataSource, ParticleReading, SourceStatus } from "../types.js";
 
 const SOURCE: DataSource = "goes-swpc";
@@ -60,13 +61,9 @@ export function freshReading(reading: ParticleReading | null, nowMs: number): Pa
   return age >= 0 && age <= PARTICLE_MAX_AGE_MS ? reading : null;
 }
 
-async function fetchJson(url: string, label: string): Promise<unknown> {
-  const response = await fetch(url, { signal: AbortSignal.timeout(8000) });
-  if (!response.ok) {
-    throw new Error(`GOES ${label} feed returned HTTP ${response.status}`);
-  }
-  return response.json();
-}
+// Conditional GETs, so the 20 s poll costs a 304 until the 5-minute product changes.
+const fetchJson = (url: string, label: string): Promise<unknown> =>
+  fetchJsonConditional(url, `GOES ${label} feed`);
 
 export async function fetchGoesParticles(nowMs = Date.now()): Promise<GoesParticleReadout | null> {
   try {
