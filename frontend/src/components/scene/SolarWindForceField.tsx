@@ -103,7 +103,7 @@ const SolarWindWaves = ({
     
     for (let i = 0; i < totalParticles; i++) {
       // Wave phase determines position along the stream
-      let t = (wavePhases[i] + time * speedFactor) % 1;
+      const t = (wavePhases[i] + time * speedFactor) % 1;
       
       const theta = particleData[i * 2];
       const phi = particleData[i * 2 + 1];

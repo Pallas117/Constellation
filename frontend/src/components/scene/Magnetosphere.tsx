@@ -157,7 +157,7 @@ const FieldLineParticles = ({ fieldLines }: { fieldLines: { points: THREE.Vector
       if (!line) continue;
       
       const speed = line.isOpen ? 0.4 : 0.25;
-      let t = (offsets[i] + time * speed) % 1;
+      const t = (offsets[i] + time * speed) % 1;
       
       const pointIdx = Math.floor(t * (line.points.length - 1));
       const nextIdx = Math.min(pointIdx + 1, line.points.length - 1);
@@ -258,7 +258,7 @@ const CurrentSheetParticles = () => {
     const time = state.clock.elapsedTime;
     
     for (let i = 0; i < particleCount; i++) {
-      let t = (offsets[i] + time * 0.15) % 1;
+      const t = (offsets[i] + time * 0.15) % 1;
       const x = -4 - t * 35;
       const waver = Math.sin(time * 2 + offsets[i] * 10) * 0.2;
       
@@ -351,7 +351,7 @@ const SolarWindParticles = ({ compression }: { compression: number }) => {
     
     for (let i = 0; i < particleCount; i++) {
       const speed = 0.3;
-      let t = (offsets[i] + time * speed) % 1;
+      const t = (offsets[i] + time * speed) % 1;
       
       const startX = 25;
       const endX = r0 + 1;
