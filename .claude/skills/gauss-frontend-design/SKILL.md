@@ -45,7 +45,7 @@ Source of truth is the "Lightbound Brand Room" artifact (https://claude.ai/artif
 - Mobile: check 375px width; panels stack (`lg:grid-cols-[1fr_320px]` pattern).
 
 ## Verify
-1. `npx tsc --noEmit -p frontend/tsconfig.app.json`. Errors already exist in radiation utils, PublicDashboard and others, so report only new ones.
+1. `npm run lint` (tsc on `frontend/tsconfig.app.json` and `frontend/tsconfig.node.json`). It is clean, so any error is yours to fix.
 2. Run Vite on a free port (`npx vite --config frontend/vite.config.ts --port 8091 --strictPort`) and open `/heliophysics` (public) in the Browser pane. Wait ~5 s for the canvas, check console errors and take a screenshot.
 3. Data hooks must only poll routes the viewer's role can use (`PUBLIC_READ_PATHS` for signed-out pages). CyberTiger counts 401/403s and auto-blocks the IP, so a 401 in the console is a bug, not noise.
 4. `npm run build` before a PR.
