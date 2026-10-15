@@ -94,11 +94,12 @@ export function useSolarWind5s(): SolarWind5sState {
             topic?: string;
             payload?: CanonicalSpaceWeatherPoint;
           };
-          if (message.topic !== "space-weather" || !message.payload) {
+          const payload = message.payload;
+          if (message.topic !== "space-weather" || !payload) {
             return;
           }
           setPoints((prev) => {
-            const next = [...prev, message.payload];
+            const next = [...prev, payload];
             const dedup = new Map(next.map((point) => [point.timestamp, point]));
             return Array.from(dedup.values()).sort(
               (a, b) => Date.parse(a.timestamp) - Date.parse(b.timestamp),

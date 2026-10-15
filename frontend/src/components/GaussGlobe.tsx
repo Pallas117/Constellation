@@ -24,7 +24,7 @@ export interface GaussGlobeProps {
     layers: LayerVisibility;
     visualParams: VisualizationParams;
     encodingMode: EncodingMode;
-    canvasRef: RefObject<HTMLCanvasElement | null>;
+    canvasRef: RefObject<HTMLCanvasElement>;
     spaceObjects?: SpaceObjectCatalogEntry[];
     spaceObjectAlert?: SpaceObjectDetectionAlert | null;
     isE2E?: boolean;
