@@ -12,7 +12,13 @@ import {
   type Vector3,
 } from "./coordinates.js";
 
-let nativeMhd: any = null;
+/** The optional C++ kernel (build/Release/mhd_native.node); each export falls back to TS. */
+interface NativeMhd {
+  dynamicPressureNpa?: (densityCm3: number, speedKmS: number) => number;
+  newellCoupling?: (speedKmS: number, btNt: number, byNt: number, bzNt: number) => number;
+}
+
+let nativeMhd: NativeMhd | null = null;
 try {
   // Attempt to load the native C++ physics core if compiled
   nativeMhd = require("../../build/Release/mhd_native.node");

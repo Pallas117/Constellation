@@ -1,12 +1,14 @@
 import test from "node:test";
 import assert from "node:assert";
+import type { AddressInfo } from "node:net";
 import express from "express";
+import type { AuthenticatedRequest } from "./auth.js";
 import router from "./device-registry.js";
 
 const app = express();
 app.use(express.json());
-app.use((req, _res, next) => {
-  (req as any).auth = {
+app.use((req: AuthenticatedRequest, _res, next) => {
+  req.auth = {
     userId: "test-user",
     email: "test@example.com",
     role: "operator",
@@ -18,7 +20,7 @@ app.use((req, _res, next) => {
 app.use("/api/device", router);
 
 const server = app.listen(0);
-const port = (server.address() as any).port;
+const port = (server.address() as AddressInfo).port;
 const base = `http://127.0.0.1:${port}`;
 
 test("device registry can register a device and retrieve it", async (t) => {

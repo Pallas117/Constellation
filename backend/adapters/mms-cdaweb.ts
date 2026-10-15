@@ -27,7 +27,8 @@ function toIso(ts: Date): string {
   return ts.toISOString().replace(/\.\d{3}Z$/, "Z");
 }
 
-async function hapiJson(path: string, params: Record<string, string>): Promise<any> {
+/** HAPI responses are untrusted JSON: read fields through `field` and validate them. */
+async function hapiJson(path: string, params: Record<string, string>): Promise<unknown> {
   const url = new URL(`${HAPI_BASE}/${path}`);
   for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v);
   const response = await fetch(url, {
@@ -38,6 +39,10 @@ async function hapiJson(path: string, params: Record<string, string>): Promise<a
     throw new Error(`CDAWeb HAPI ${params.id ?? path} returned HTTP ${response.status}`);
   }
   return response.json();
+}
+
+function field(value: unknown, key: string): unknown {
+  return typeof value === "object" && value !== null ? (value as Record<string, unknown>)[key] : undefined;
 }
 
 // Field from FGM survey L2 (HAPI sub-dataset @0). Position from MEC: FGM's own
@@ -51,7 +56,8 @@ async function stopDate(id: ScId): Promise<number> {
   const cached = stopDateCache.get(id);
   if (cached && Date.now() - cached.fetchedAt < STOP_DATE_TTL_MS) return cached.stop;
   const info = await hapiJson("info", { id: fieldId(id) });
-  const stop = typeof info?.stopDate === "string" ? Date.parse(info.stopDate) : Number.NaN;
+  const stopDateField = field(info, "stopDate");
+  const stop = typeof stopDateField === "string" ? Date.parse(stopDateField) : Number.NaN;
   if (!Number.isFinite(stop)) throw new Error(`CDAWeb HAPI ${fieldId(id)} has no stopDate`);
   stopDateCache.set(id, { stop, fetchedAt: Date.now() });
   return stop;
@@ -104,13 +110,13 @@ async function fetchSpacecraft(id: ScId, start: string, stop: string): Promise<M
   // Pad the MEC window by one cadence each side so the B sample is bracketed.
   const mecStart = toIso(new Date(Date.parse(start) - MEC_CADENCE_MS));
   const mecStop = toIso(new Date(Date.parse(stop) + MEC_CADENCE_MS));
-  const [field, ephem] = await Promise.all([
+  const [fgm, ephem] = await Promise.all([
     hapiJson("data", { id: fieldId(id), parameters: `${id}_fgm_b_gsm_srvy_l2_clean`, "time.min": start, "time.max": stop, format: "json" }),
     hapiJson("data", { id: ephemId(id), parameters: `${id}_mec_r_gsm`, "time.min": mecStart, "time.max": mecStop, format: "json" }),
   ]);
 
-  const b = lastValidVectorRow(field?.data);
-  const r = b ? interpolatePosition(ephem?.data, b.time) : null;
+  const b = lastValidVectorRow(field(fgm, "data"));
+  const r = b ? interpolatePosition(field(ephem, "data"), b.time) : null;
   if (!b || !r) {
     // Missing or fill-valued components are not data; never substitute zeros.
     return null;

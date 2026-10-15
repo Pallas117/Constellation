@@ -1,10 +1,10 @@
 // backend/services/graphdb-client.ts
-import neo4j, { Driver, Session } from 'neo4j-driver';
+import neo4j, { Driver, Path, Session } from 'neo4j-driver';
 
 export interface GraphNode {
   id: string;
   label: string;
-  properties: Record<string, any>;
+  properties: Record<string, unknown>;
 }
 
 export interface GraphEdge {
@@ -12,7 +12,7 @@ export interface GraphEdge {
   sourceId: string;
   targetId: string;
   type: string;
-  properties: Record<string, any>;
+  properties: Record<string, unknown>;
 }
 
 export interface GraphTrace {
@@ -90,8 +90,8 @@ export class GraphDBClient {
       const edges: GraphEdge[] = [];
 
       result.records.forEach(record => {
-        const path = record.get('path');
-        path.segments.forEach((segment: any) => {
+        const path: Path = record.get('path');
+        path.segments.forEach((segment) => {
           nodes.push({
             id: segment.start.properties.id,
             label: segment.start.labels[0],
