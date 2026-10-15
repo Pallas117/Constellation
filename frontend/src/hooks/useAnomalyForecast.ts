@@ -1,41 +1,19 @@
-import { useState, useEffect } from 'react';
-import { apiBase } from "@/lib/api/base-url";
+import { useFeedSession, usePolledFeed } from '@/hooks/usePolledFeed';
+import { ANOMALY_FORECAST_PATH, parseAnomalyForecast, type AnomalyForecast } from '@/lib/api/anomaly-forecast';
 
-const PROXY_URL = apiBase();
+export type { AnomalyForecast };
 
-export interface AnomalyForecast {
-  modelVersion: string;
-  generatedAt: string;
-  horizonHours: number;
-  anomalyProbability: number;
-  predictedKpMax: number;
-  warningMessage: string;
-  confidenceInterval: [number, number];
-}
-
+// `user` route: never requested without a session, because CyberTiger counts 401s.
 export function useAnomalyForecast(pollIntervalMs = 300_000) {
-  const [forecast, setForecast] = useState<AnomalyForecast | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const session = useFeedSession();
+  const feed = usePolledFeed({
+    path: session.resolved && session.signedIn ? ANOMALY_FORECAST_PATH : null,
+    intervalMs: pollIntervalMs,
+    maxBackoffMs: 4 * pollIntervalMs,
+    parse: parseAnomalyForecast,
+    disabledStatus: session.resolved ? 'sign-in-required' : 'waiting',
+    restartKey: session.userKey,
+  });
 
-  async function fetch_() {
-    try {
-      const res = await fetch(`${PROXY_URL}/api/forecast/anomaly`);
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      setForecast(await res.json() as AnomalyForecast);
-      setError(null);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Unknown error');
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  useEffect(() => {
-    fetch_();
-    const id = setInterval(fetch_, pollIntervalMs);
-    return () => clearInterval(id);
-  }, [pollIntervalMs]);
-
-  return { forecast, loading, error };
+  return { forecast: feed.data, loading: feed.loading, error: feed.error };
 }

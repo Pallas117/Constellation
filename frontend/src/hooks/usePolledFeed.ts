@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { classifyResponse, startPolling, type PollOutcome } from "@/lib/api/feed-poller";
 import { useSession } from "@/lib/auth-client";
 import { apiBase } from "@/lib/api/base-url";
+import { roleOf, type Role } from "@/lib/roles";
 
 export function getBackendBaseUrl(): string {
   return apiBase();
@@ -18,6 +19,8 @@ export interface PolledFeed<T> {
   status: FeedStatus;
   loading: boolean;
   error: string | null;
+  /** Consecutive failed attempts; 0 after a success. */
+  failures: number;
 }
 
 export interface PolledFeedOptions<T> {
@@ -53,6 +56,7 @@ export function usePolledFeed<T>({
   const [data, setData] = useState<T | null>(null);
   const [status, setStatus] = useState<FeedStatus>("waiting");
   const [error, setError] = useState<string | null>(null);
+  const [failures, setFailures] = useState(0);
   const parseRef = useRef(parse);
   parseRef.current = parse;
   const nextPathRef = useRef(nextPath);
@@ -93,8 +97,10 @@ export function usePolledFeed<T>({
     const stop = startPolling({
       poll,
       policy: { baseMs: intervalMs, maxMs: maxBackoffMs },
-      onSchedule: (delay, outcome) => {
-        if (!mounted || outcome.kind === "ok" || delay === null) return;
+      onSchedule: (delay, outcome, consecutive) => {
+        if (!mounted) return;
+        setFailures(consecutive);
+        if (outcome.kind === "ok" || delay === null) return;
         setStatus("backing-off");
         setError(
           outcome.kind === "rate-limited"
@@ -117,12 +123,12 @@ export function usePolledFeed<T>({
     };
   }, [path, intervalMs, maxBackoffMs, disabledStatus, signInMessage, restartKey]);
 
-  return { data, status, loading: status === "waiting", error };
+  return { data, status, loading: status === "waiting", error, failures };
 }
 
 /** Signed-in state for choosing which feeds a page may poll. */
-export function useFeedSession(): { resolved: boolean; signedIn: boolean; userKey: string } {
+export function useFeedSession(): { resolved: boolean; signedIn: boolean; userKey: string; role: Role | null } {
   const { data, isPending } = useSession();
   const user = (data as { user?: { id?: string } } | null | undefined)?.user;
-  return { resolved: !isPending, signedIn: Boolean(user), userKey: user?.id ?? "anon" };
+  return { resolved: !isPending, signedIn: Boolean(user), userKey: user?.id ?? "anon", role: user ? roleOf(user) : null };
 }

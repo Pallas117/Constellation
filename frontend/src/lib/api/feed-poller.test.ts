@@ -154,6 +154,25 @@ describe("startPolling", () => {
     assert.equal(calls, 2, "no polls after stop");
   });
 
+  it("reports consecutive failures, back to 0 after a success", async () => {
+    const outcomes: PollOutcome[] = [{ kind: "error", status: 503 }, { kind: "error" }, { kind: "ok" }, { kind: "error" }];
+    const failures: number[] = [];
+    let calls = 0;
+    const stop = startPolling({
+      poll: async () => outcomes[calls++] ?? { kind: "ok" },
+      policy,
+      random: noJitter,
+      onSchedule: (_d, _o, f) => failures.push(f),
+    });
+    await flush();
+    for (const step of [10_000, 20_000, 5_000]) {
+      mock.timers.tick(step);
+      await flush();
+    }
+    assert.deepEqual(failures, [1, 2, 0, 1]);
+    stop();
+  });
+
   it("treats a thrown poll as an error and backs off", async () => {
     const delays: (number | null)[] = [];
     const stop = startPolling({
