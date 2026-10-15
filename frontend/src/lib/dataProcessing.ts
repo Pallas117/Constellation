@@ -138,10 +138,6 @@ export function unavailableData(): InterpolatedData {
   };
 }
 
-export function isUnavailable(data: InterpolatedData): boolean {
-  return data.source === 'unavailable';
-}
-
 // ============================================================================
 // DERIVED VISUALIZATION PARAMETERS
 // ============================================================================
@@ -197,10 +193,6 @@ export function lerp(a: number, b: number, t: number): number {
 function lerpNullable(a: number | null, b: number | null, t: number): number | null {
   if (a == null || b == null) return b;
   return lerp(a, b, t);
-}
-
-export function clamp(value: number, min: number, max: number): number {
-  return Math.min(max, Math.max(min, value));
 }
 
 export function transformApiResponse(response: SpaceWeatherResponse): InterpolatedData {
