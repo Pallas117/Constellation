@@ -3,6 +3,7 @@ import { useConnectivity } from '@/hooks/useConnectivity';
 import { SPACE_OBJECT_CATALOG } from '@/lib/data/spaceObjectCatalog';
 import type { InterpolatedData } from '@/hooks/useSpaceWeather';
 import type { SpaceObjectCatalogEntry, SpaceObjectDetectionAlert } from '@/lib/types/space-object';
+import { apiBase } from "@/lib/api/base-url";
 
 export interface UseSpaceObjectsReturn {
   catalog: SpaceObjectCatalogEntry[];
@@ -98,7 +99,7 @@ export const useSpaceObjects = (data: InterpolatedData): UseSpaceObjectsReturn =
           return;
         }
 
-        const proxyUrl = import.meta.env.VITE_HELIO_PROXY_URL || 'http://127.0.0.1:3001';
+        const proxyUrl = apiBase();
         const remoteCatalog = await fetchRemoteCatalog(proxyUrl);
         if (!active) return;
 
