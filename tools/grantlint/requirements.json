@@ -1,0 +1,109 @@
+{
+  "_readme": "What each tracked call asks for, mapped to answer_bank.json keys for scripts/ops/funding_autofill.py. Limits are copied from the cited source; 'confirm' marks items not yet visible. kind: field (copy a value), choice (pick an option), narrative (write to the limit from the seeds), document (upload).",
+  "calls": {
+    "GAU-103": {
+      "name": "Innovate UK: Efficient, Structured and Controllable AI Systems",
+      "deadline": "2026-11-18T11:00:00+00:00",
+      "source": "https://apply-for-innovation-funding.service.gov.uk/competition/2582/overview/9fdb47a5-011c-4c47-ac5e-c426e295fe89 (read 13 Oct 2026)",
+      "rules": {"no_urls": true, "costs_gbp": [50000, 150000]},
+      "items": [
+        {"id": "S1.title", "section": "Project details", "ask": "Project title, start date and duration (1-3 months; start by 1 Apr 2027, end by 30 Jun 2027)", "kind": "field", "answers": []},
+        {"id": "S1.category", "section": "Project details", "ask": "Research category", "kind": "choice", "answers": []},
+        {"id": "S1.summary", "section": "Project details", "ask": "Project summary", "kind": "narrative", "limit": {"words": 400}, "answers": ["problem", "solution", "offer"]},
+        {"id": "S1.public", "section": "Project details", "ask": "Public description (published if funded; no commercially sensitive information)", "kind": "narrative", "limit": {"words": 400}, "answers": ["one_liner", "problem", "solution"]},
+        {"id": "S1.scope", "section": "Project details", "ask": "Scope: technical novelty and hypothesis-driven experimentation, the technical asset, how it could underpin future products, TRL justification", "kind": "narrative", "limit": {"words": 800}, "answers": ["solution", "product_status", "trl"]},
+        {"id": "S1.subsidy", "section": "Project details", "ask": "State aid / subsidy questions", "kind": "field", "answers": ["mfa_received"]},
+        {"id": "Q1", "section": "Application questions", "ask": "Themes: select one main theme", "kind": "choice", "answers": []},
+        {"id": "Q2", "section": "Application questions", "ask": "Applicant location: name and full registered address", "kind": "field", "limit": {"words": 100}, "answers": ["company_legal_name", "registered_address"]},
+        {"id": "Q3", "section": "Application questions", "ask": "Animal testing (Yes/No)", "kind": "choice", "answers": ["animal_testing"]},
+        {"id": "Q4", "section": "Application questions", "ask": "Permits and licences", "kind": "choice", "answers": ["permits"]},
+        {"id": "Q5", "section": "Application questions", "ask": "International collaboration: collaborators, countries, service providers, or confirm none", "kind": "narrative", "limit": {"words": 100}, "answers": ["international_collab"]},
+        {"id": "Q6", "section": "Application questions", "ask": "Export licence (Yes/No)", "kind": "choice", "answers": ["export_dual_use"]},
+        {"id": "Q7", "section": "Application questions", "ask": "Trusted Research and Innovation: dual-use, NSI Act areas, export licence status, UK Strategic Export Control List", "kind": "narrative", "limit": {"words": 400}, "answers": ["export_dual_use"]},
+        {"id": "Q8", "section": "Scored", "ask": "Intellectual property (IP) position, freedom to operate (FTO) and defensibility", "kind": "narrative", "limit": {"words": 400}, "answers": ["ip_position"]},
+        {"id": "Q9", "section": "Scored", "ask": "Need, technical development, validation and outputs (optional appendix: 2 A4 pages)", "kind": "narrative", "limit": {"words": 800}, "answers": ["problem", "solution", "product_status", "regulatory_driver"]},
+        {"id": "Q10", "section": "Scored", "ask": "Approach and innovation (optional appendix: 2 A4 pages)", "kind": "narrative", "limit": {"words": 400}, "answers": ["solution", "interfaces"]},
+        {"id": "Q11", "section": "Scored", "ask": "Team and resources", "kind": "narrative", "limit": {"words": 600}, "answers": ["team_ceo", "team_cto", "team_strategy", "team_ai", "team_ops", "team_gaps"]},
+        {"id": "Q11.cvs", "section": "Scored", "ask": "Mandatory appendix: a one-page PDF CV for every project team member (missing CVs cap Q11 at 5)", "kind": "document", "answers": []},
+        {"id": "Q12", "section": "Scored", "ask": "Market awareness", "kind": "narrative", "limit": {"words": 400}, "answers": ["target_customers", "market_size", "competition"]},
+        {"id": "Q13", "section": "Scored", "ask": "Wider impacts", "kind": "narrative", "limit": {"words": 400}, "answers": ["regulatory_driver"]},
+        {"id": "Q14", "section": "Scored", "ask": "Project management", "kind": "narrative", "limit": {"words": 400}, "answers": []},
+        {"id": "Q14.plan", "section": "Scored", "ask": "Mandatory appendix: project plan or Gantt chart (PDF, 2 A4 pages)", "kind": "document", "answers": []},
+        {"id": "Q15", "section": "Scored", "ask": "Risks", "kind": "narrative", "limit": {"words": 400}, "answers": []},
+        {"id": "Q15.register", "section": "Scored", "ask": "Mandatory appendix: risk register (PDF, 2 A4 pages)", "kind": "document", "answers": []},
+        {"id": "Q16", "section": "Scored", "ask": "Added value", "kind": "narrative", "limit": {"words": 400}, "answers": ["funding_to_date"]},
+        {"id": "Q17", "section": "Scored", "ask": "Costs and value for money (total eligible costs GBP 50k-150k)", "kind": "narrative", "limit": {"words": 400}, "answers": []},
+        {"id": "S3", "section": "Finances", "ask": "Project costs, organisation details and funding details", "kind": "field", "answers": ["sme_size", "annual_revenue"]},
+        {"id": "S4", "section": "Project impact", "ask": "Project Impact questions (not scored)", "kind": "narrative", "answers": []}
+      ]
+    },
+    "GAU-105": {
+      "name": "ESA BIC UK (next call ~Q2 2027)",
+      "deadline": null,
+      "source": "ESA BIC UK Issue C templates (Business Plan, Incubation Proposal, Cover Letter and Requirements Checklist, Space Connection Assessment, Tables & Figures)",
+      "rules": {"grantlint": "tools/grantlint/rules/esa_bic_uk.json"},
+      "items": [
+        {"id": "BP", "section": "Documents", "ask": "Business Plan: 25 pages maximum including annexes; core ideally 15, maximum 20; remove all blue text", "kind": "document", "limit": {"pages": 20}, "answers": []},
+        {"id": "BP1", "section": "Business Plan", "ask": "1 Executive Summary (maximum 1 page): opportunity incl. space connection, problem and solution, market, competitive advantage, business model, vision, IP, team", "kind": "narrative", "limit": {"pages": 1}, "answers": ["problem", "solution", "space_connection", "target_customers", "business_model", "ip_position"]},
+        {"id": "BP2.1", "section": "Business Plan", "ask": "2.1 The Team: founders, leader, supporters", "kind": "narrative", "answers": ["team_ceo", "team_cto", "team_strategy", "team_ai", "team_ops", "team_gaps", "partners"]},
+        {"id": "BP2.2", "section": "Business Plan", "ask": "2.2 The Company: date of establishment (under 5 years), legal status, developments during incubation", "kind": "narrative", "answers": ["company_legal_name", "company_type", "incorporated", "funding_to_date", "product_status"]},
+        {"id": "BP3", "section": "Business Plan", "ask": "3 Value Proposition", "kind": "narrative", "answers": ["problem", "solution", "offer"]},
+        {"id": "BP4.1", "section": "Business Plan", "ask": "4.1 The Space Connection (qualifies the application)", "kind": "narrative", "answers": ["space_connection"]},
+        {"id": "BP4.2", "section": "Business Plan", "ask": "4.2 The Technology", "kind": "narrative", "answers": ["solution", "interfaces"]},
+        {"id": "BP4.3", "section": "Business Plan", "ask": "4.3 The Readiness Level (see the IRL template)", "kind": "field", "answers": ["trl"]},
+        {"id": "BP4.4", "section": "Business Plan", "ask": "4.4 R&D strategy", "kind": "narrative", "answers": []},
+        {"id": "BP4.5", "section": "Business Plan", "ask": "4.5 Intellectual Property: protection and owner", "kind": "narrative", "answers": ["ip_position"]},
+        {"id": "BP5", "section": "Business Plan", "ask": "5 Market Analysis: context, demand, segmentation, validation, competition, advantages", "kind": "narrative", "answers": ["target_customers", "market_size", "competition"]},
+        {"id": "BP6", "section": "Business Plan", "ask": "6 The Business Model", "kind": "narrative", "answers": ["business_model", "offer"]},
+        {"id": "BP7", "section": "Business Plan", "ask": "7 Risk: SWOT and risk analysis", "kind": "narrative", "answers": []},
+        {"id": "BP8", "section": "Business Plan", "ask": "8 Cost Structure, Financing and Financial Projection", "kind": "narrative", "answers": ["annual_revenue", "funding_to_date"]},
+        {"id": "IP", "section": "Documents", "ask": "Incubation Proposal: maximum 10 pages including cover page and any annexes", "kind": "document", "limit": {"pages": 10}, "answers": []},
+        {"id": "IP1", "section": "Incubation Proposal", "ask": "1 Activity Proposal: milestone planning (PLAN table) and task descriptions; costs one line per sub-task with each cost shown", "kind": "narrative", "answers": []},
+        {"id": "IP2", "section": "Incubation Proposal", "ask": "2 Management", "kind": "narrative", "answers": ["team_ceo", "team_cto"]},
+        {"id": "IP3", "section": "Incubation Proposal", "ask": "3 Financing and Funding Request: incentive up to GBP 51,724; no more than 50% on rent, non-UK spend and salaries; FUNDING table", "kind": "narrative", "answers": []},
+        {"id": "IP4", "section": "Incubation Proposal", "ask": "4 Support Request: technical and IPR, business, office", "kind": "narrative", "answers": []},
+        {"id": "CL", "section": "Documents", "ask": "Cover Letter and Requirements Checklist (signed), incl. company details, owners and shareholding, resubmission section", "kind": "document", "answers": ["company_legal_name", "company_number", "registered_address", "contact_name"]},
+        {"id": "CL.mfa", "section": "Cover Letter", "ask": "Declaration of Minimal Financial Assistance (threshold GBP 315,000): every line filled, 'N/A' if none", "kind": "field", "answers": ["mfa_received"]},
+        {"id": "SCA", "section": "Documents", "ask": "Space Connection Assessment", "kind": "document", "answers": ["space_connection"]},
+        {"id": "TF", "section": "Documents", "ask": "Tables & Figures workbook (PLAN and FUNDING tables)", "kind": "document", "answers": []},
+        {"id": "ADJ", "section": "Before applying", "ask": "Tell the Programme Manager for your location about any support or reasonable adjustments (STFC, 7 Sep 2026)", "kind": "field", "answers": []}
+      ]
+    },
+    "GAU-104": {
+      "name": "Innovate UK BridgeAI: AI for Decision Critical Systems",
+      "deadline": "2026-12-08T11:00:00+00:00",
+      "source": "https://iuk-business-connect.org.uk/?p=138704 (secondary). Questions appear on the Innovation Funding Service when it opens on 21 Oct 2026: confirm then",
+      "rules": {"no_urls": true},
+      "items": [
+        {"id": "confirm", "section": "Whole application", "ask": "Copy the question list and word limits from IFS on 21 Oct (expect the standard Innovate UK structure, as GAU-103)", "kind": "field", "answers": []},
+        {"id": "summary", "section": "Project details (expected)", "ask": "Project summary", "kind": "narrative", "limit": {"words": 400}, "answers": ["problem", "solution", "offer"]},
+        {"id": "team", "section": "Expected", "ask": "Team and resources", "kind": "narrative", "answers": ["team_ceo", "team_cto", "team_strategy", "team_ai", "team_ops"]},
+        {"id": "market", "section": "Expected", "ask": "Market awareness: decision-critical AI users", "kind": "narrative", "answers": ["target_customers", "market_size"]}
+      ]
+    },
+    "GAU-118": {
+      "name": "MonacoTech incubator",
+      "deadline": "2026-11-17T23:59:00+01:00",
+      "source": "https://monacotech.mc/en/ (application on Dealum; form fields visible only when opened)",
+      "rules": {},
+      "items": [
+        {"id": "gate", "section": "Eligibility", "ask": "Agree to create a company in Monaco within 18 months; EUR 310/month per desk", "kind": "field", "answers": []},
+        {"id": "company", "section": "Expected on Dealum", "ask": "Company name, stage, contact", "kind": "field", "answers": ["company_legal_name", "contact_name", "contact_email"]},
+        {"id": "pitch", "section": "Expected on Dealum", "ask": "Problem, solution, prototype and initial traction", "kind": "narrative", "answers": ["problem", "solution", "product_status"]},
+        {"id": "team", "section": "Expected on Dealum", "ask": "Team", "kind": "narrative", "answers": ["team_ceo", "team_cto", "team_strategy"]},
+        {"id": "fields", "section": "Whole application", "ask": "Capture the real Dealum questions into this file when the form is opened", "kind": "field", "answers": []}
+      ]
+    },
+    "GAU-119": {
+      "name": "EWOR fellowship (Applied AI Co-Founder)",
+      "deadline": null,
+      "source": "https://eworgmbh.teamtailor.com/jobs/8521502-applied-ai-co-founder-cmo-100-remote-m-f-d (application form behind 'Apply for this job')",
+      "rules": {},
+      "items": [
+        {"id": "decide", "section": "Before applying", "ask": "Individual fellowship (salary or up to EUR 500k): fit with Lightbound, Europe/Americas residency rule, equity/IP terms", "kind": "field", "answers": []},
+        {"id": "contact", "section": "Expected", "ask": "Name, email, CV/LinkedIn", "kind": "field", "answers": ["contact_name", "contact_email"]},
+        {"id": "venture", "section": "Expected", "ask": "What you are building and why you", "kind": "narrative", "answers": ["one_liner", "problem", "team_ceo"]}
+      ]
+    }
+  }
+}
