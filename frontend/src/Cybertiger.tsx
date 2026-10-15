@@ -13,6 +13,8 @@ import ProtectionDashboard from "./pages/ProtectionDashboard";
 import { ProtectedRoute } from "./components/ProtectedRoute";
 import NotFound from "./pages/NotFound";
 import HeliophysicsDashboard from "./pages/HeliophysicsDashboard";
+import MeshDashboard from "./pages/MeshDashboard";
+import ApiKeys from "./pages/ApiKeys";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 
 const queryClient = new QueryClient();
@@ -32,20 +34,43 @@ const App = () => (
                 <Route 
                   path="/operator" 
                   element={
-                    <ProtectedRoute>
+                    <ProtectedRoute minRole="operator">
                       <OperatorDashboard />
                     </ProtectedRoute>
                   } 
                 />
                 <Route path="/member" element={<MemberHub />} />
-                <Route path="/heliophysics" element={<HeliophysicsDashboard />} />
+                <Route
+                  path="/heliophysics"
+                  element={
+                    <ProtectedRoute minRole="user">
+                      <HeliophysicsDashboard />
+                    </ProtectedRoute>
+                  }
+                />
                 <Route 
                   path="/protection" 
                   element={
-                    <ProtectedRoute>
+                    <ProtectedRoute minRole="operator">
                       <ProtectionDashboard />
                     </ProtectedRoute>
                   } 
+                />
+                <Route
+                  path="/mesh"
+                  element={
+                    <ProtectedRoute minRole="staff">
+                      <MeshDashboard />
+                    </ProtectedRoute>
+                  }
+                />
+                <Route
+                  path="/account/api"
+                  element={
+                    <ProtectedRoute minRole="user">
+                      <ApiKeys />
+                    </ProtectedRoute>
+                  }
                 />
                 {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
                 <Route path="*" element={<NotFound />} />

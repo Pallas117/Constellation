@@ -1,6 +1,7 @@
 import { Link } from "react-router-dom";
 import { SpaceWeatherVisualization } from '@/components/SpaceWeatherVisualization';
 import { useOperatorNotifications } from "@/hooks/useOperatorNotifications";
+import { MeshStatusPill } from "@/components/MeshStatusPill";
 
 export default function OperatorDashboard() {
   useOperatorNotifications();
@@ -18,6 +19,7 @@ export default function OperatorDashboard() {
         >
           Protection Research
         </Link>
+        <MeshStatusPill />
       </div>
     </main>
   );

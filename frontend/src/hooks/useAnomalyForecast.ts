@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react';
 import { getAuthHeaders } from '@/lib/api/auth';
+import { apiBase } from '@/lib/api/base-url';
 
-const PROXY_URL = import.meta.env.VITE_HELIO_PROXY_URL || 'http://127.0.0.1:3001';
+const PROXY_URL = apiBase();
 
 /** Mirrors backend AnomalyForecastResponse: a model forecast, or an explicit "unavailable". */
 export type AnomalyForecast =

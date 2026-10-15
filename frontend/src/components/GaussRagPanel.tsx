@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Database, Search, Terminal as TerminalIcon } from 'lucide-react';
+import { apiBase } from "@/lib/api/base-url";
 
 type RagStatus = {
   ok: boolean;
@@ -15,7 +16,7 @@ type RagQueryResponse = {
 };
 
 const RAG_BASE =
-  import.meta.env.VITE_GAUSS_RAG_URL || 'http://127.0.0.1:3001';
+  import.meta.env.VITE_GAUSS_RAG_URL || apiBase();
 
 const DEFAULT_INDEX_DIR =
   import.meta.env.VITE_GAUSS_RAG_INDEX_DIR || '/Users/josh/Documents/lightbound';
