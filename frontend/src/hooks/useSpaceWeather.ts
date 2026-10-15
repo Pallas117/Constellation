@@ -1,24 +1,24 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import {
   InterpolatedData,
   VisualizationParams,
   calculateVisualizationParams,
-  transformApiResponse,
-  validateSpaceWeatherResponse,
   applyDecay,
-  canonicalToInterpolated,
   unavailableData,
-  DATA_EXPIRY_MS,
 } from '@/lib/dataProcessing';
+import {
+  SPACE_WEATHER_LATEST_PATH,
+  liveDataLost,
+  parseSpaceWeatherReading,
+  spaceWeatherPolling,
+} from '@/lib/api/space-weather-feed';
+import { usePolledFeed } from './usePolledFeed';
 import { useConnectivity } from './useConnectivity';
-import { apiBase } from "@/lib/api/base-url";
 
 // ============================================================================
 // CONFIGURATION
 // ============================================================================
 
-const UPDATE_INTERVAL = 60000; // 1 minute
-const MARK_UNAVAILABLE_AFTER = 3; // Consecutive failures before showing "no data"
 const STALENESS_RECHECK_MS = 30000; // re-render so a value that stops updating turns stale
 
 // No simulated fallback: without a live feed the UI shows "unavailable" (see
@@ -41,75 +41,28 @@ export interface UseSpaceWeatherReturn {
 }
 
 export const useSpaceWeather = (): UseSpaceWeatherReturn => {
-  const [data, setData] = useState<InterpolatedData>(unavailableData());
-  const [visualParams, setVisualParams] = useState<VisualizationParams>(() => 
-    calculateVisualizationParams(unavailableData())
-  );
-  const [lastUpdate, setLastUpdate] = useState<Date | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  
   const [, setTick] = useState(0);
-  const failureCountRef = useRef(0);
-
-  const show = useCallback((next: InterpolatedData) => {
-    setData(next);
-    setVisualParams(calculateVisualizationParams(next));
-  }, []);
 
   // ============================================================================
   // DATA FETCHING
   // ============================================================================
 
-  const fetchData = useCallback(async () => {
-    try {
-      console.log('[SpaceWeather] Fetching data from edge function...');
-      
-      const proxyUrl = apiBase();
-      const response = await fetch(`${proxyUrl}/api/feed/space-weather/latest`);
-      
-      if (!response.ok) {
-        throw new Error(`Proxy HTTP ${response.status}`);
-      }
+  // Public route, so no session needed. Interval follows the link: 1 min in the
+  // cloud, 3 min over satellite, no polling when air-gapped. Backoff, the stop on
+  // 401/403 and the pause while the tab is hidden come from usePolledFeed.
+  const { mode } = useConnectivity();
+  const polling = spaceWeatherPolling(mode);
+  const feed = usePolledFeed({
+    path: polling ? SPACE_WEATHER_LATEST_PATH : null,
+    intervalMs: polling?.intervalMs ?? 0,
+    maxBackoffMs: polling?.maxBackoffMs,
+    parse: parseSpaceWeatherReading,
+  });
 
-      const responseData = await response.json();
-
-      // The backend serves CanonicalSpaceWeatherPoint; the legacy edge-function shape is
-      // still accepted.
-      const legacy = validateSpaceWeatherResponse(responseData);
-      const transformed = canonicalToInterpolated(responseData) ?? (legacy ? transformApiResponse(legacy) : null);
-
-      if (!transformed) {
-        throw new Error('Invalid response format');
-      }
-
-      show(transformed);
-
-      failureCountRef.current = 0;
-      setLastUpdate(new Date());
-      setError(null);
-      
-      console.log('[SpaceWeather] Data updated:', {
-        source: transformed.source,
-        stale: transformed.isStale,
-        solarWind: transformed.solarWind.speed.toFixed(0) + ' km/s',
-        bz: transformed.imfBz.toFixed(1) + ' nT',
-        kp: transformed.kpIndex,
-      });
-
-    } catch (err) {
-      failureCountRef.current++;
-      const errorMsg = err instanceof Error ? err.message : 'Unknown error';
-      console.error('[SpaceWeather] Fetch error:', errorMsg);
-      
-      if (failureCountRef.current >= MARK_UNAVAILABLE_AFTER) {
-        console.log('[SpaceWeather] Live data unavailable');
-        show(unavailableData());
-        setError('Live data unavailable');
-      } else {
-        setError(`Fetch failed: ${errorMsg}`);
-      }
-    }
-  }, [show]);
+  const lost = liveDataLost(feed.failures);
+  const reading = feed.data;
+  const data = useMemo(() => (lost || !reading ? unavailableData() : reading.data), [lost, reading]);
+  const visualParams = useMemo(() => calculateVisualizationParams(data), [data]);
 
   // ============================================================================
   // STALENESS RECHECK
@@ -119,26 +72,6 @@ export const useSpaceWeather = (): UseSpaceWeatherReturn => {
     const id = setInterval(() => setTick((n) => n + 1), STALENESS_RECHECK_MS);
     return () => clearInterval(id);
   }, []);
-
-  // ============================================================================
-  // DATA REFRESH INTERVAL
-  // ============================================================================
-
-  const { mode } = useConnectivity();
-
-  useEffect(() => {
-    // Initial fetch
-    fetchData();
-    
-    // Adaptive interval: 1m for CLOUD, 3m for SAT, No polling for AIRGAP
-    let intervalTime = UPDATE_INTERVAL;
-    if (mode === 'SAT') intervalTime = UPDATE_INTERVAL * 3;
-    if (mode === 'AIRGAP') return; 
-
-    const interval = setInterval(fetchData, intervalTime);
-    
-    return () => clearInterval(interval);
-  }, [fetchData, mode]);
 
   // ============================================================================
   // RETURN
@@ -153,8 +86,8 @@ export const useSpaceWeather = (): UseSpaceWeatherReturn => {
     visualParams,
     isStale: effective.isStale || effective.tier === 3,
     source: effective.source,
-    lastUpdate,
-    error,
+    lastUpdate: reading?.receivedAt ?? null,
+    error: lost ? 'Live data unavailable' : feed.error,
   };
 };
 

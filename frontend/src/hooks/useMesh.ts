@@ -1,39 +1,24 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useState } from "react";
 import { getAuthHeaders } from "@/lib/api/auth";
 import { apiBase } from "@/lib/api/base-url";
-import { describeHttpFailure, HttpFailure } from "@/lib/api/http-error";
+import { describeHttpFailure } from "@/lib/api/http-error";
+import {
+  MESH_ONBOARDING_PATH,
+  MESH_POLL_INTERVAL_MS,
+  canUseMesh,
+  meshDevicesPath,
+  parseMeshDevices,
+  parseMeshOnboarding,
+  type OnboardingStep,
+} from "@/lib/api/mesh";
+import { useFeedSession, usePolledFeed } from "@/hooks/usePolledFeed";
 
-const POLL_INTERVAL_MS = 30_000;
+export type { MeshDevice, MeshReport, OnboardingStep } from "@/lib/api/mesh";
+
+const NO_STEPS: OnboardingStep[] = [];
 
 function getBaseUrl(): string {
   return apiBase();
-}
-
-export interface MeshReport {
-  class: string;
-  reason: string;
-  loc: string;
-  tailscale: boolean;
-  exitNode: string;
-  breakerOpen: boolean;
-  argoVersion: string;
-  checkedAt: string;
-  receivedAt: string;
-}
-
-export interface MeshDevice {
-  name: string;
-  enrolledAt: string;
-  owner?: string;
-  last?: MeshReport;
-}
-
-export interface OnboardingStep {
-  id: string;
-  title: string;
-  command: string | null;
-  detail: string;
-  pending?: boolean;
 }
 
 async function api(path: string, init: RequestInit = {}) {
@@ -45,41 +30,31 @@ async function api(path: string, init: RequestInit = {}) {
 }
 
 export function useMesh() {
-  const [steps, setSteps] = useState<OnboardingStep[]>([]);
-  const [devices, setDevices] = useState<MeshDevice[] | null>(null);
-  const [canEnroll, setCanEnroll] = useState(false);
-  const [canSeeTeam, setCanSeeTeam] = useState(false);
-  const [canRevokeAny, setCanRevokeAny] = useState(false);
-  const [me, setMe] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const session = useFeedSession();
+  // Every /api/mesh route needs staff, and CyberTiger counts 401/403s: a session
+  // that can't use the mesh never asks.
+  const meshAllowed = canUseMesh(session.signedIn, session.role);
+  // Bumped after enrol/revoke so both feeds fetch again straight away.
+  const [generation, setGeneration] = useState(0);
+  const restartKey = `${session.userKey}:${generation}`;
 
-  const refresh = useCallback(async () => {
-    try {
-      const onboarding = await api("/onboarding");
-      if (!onboarding.ok) throw new HttpFailure("Couldn't load the mesh", onboarding.status);
-      const info = await onboarding.json();
-      setSteps(info.steps);
-      setCanEnroll(info.canEnroll === true);
-      setCanSeeTeam(info.canSeeTeam === true);
-      setCanRevokeAny(info.canRevokeAny === true);
-      setMe(typeof info.me === "string" ? info.me : null);
-      setError(null);
-      // Only call /devices when allowed: 403s count as auth failures in CyberTiger.
-      // Staff get their own devices back; operators get the whole team.
-      if (info.canEnroll !== true) return;
-      const res = await api("/devices");
-      if (!res.ok) throw new HttpFailure("Couldn't load your devices", res.status);
-      setDevices((await res.json()).devices);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Mesh request failed");
-    }
-  }, []);
+  const onboarding = usePolledFeed({
+    path: session.resolved && meshAllowed ? MESH_ONBOARDING_PATH : null,
+    intervalMs: MESH_POLL_INTERVAL_MS,
+    parse: parseMeshOnboarding,
+    disabledStatus: session.resolved ? "sign-in-required" : "waiting",
+    signInMessage: "Couldn't load the mesh: sign in with a staff account.",
+    restartKey,
+  });
+  const devices = usePolledFeed({
+    path: meshDevicesPath(meshAllowed, onboarding.status === "live", onboarding.data),
+    intervalMs: MESH_POLL_INTERVAL_MS,
+    parse: parseMeshDevices,
+    signInMessage: "Couldn't load your devices: sign in with a staff account.",
+    restartKey,
+  });
 
-  useEffect(() => {
-    void refresh();
-    const timer = setInterval(() => void refresh(), POLL_INTERVAL_MS);
-    return () => clearInterval(timer);
-  }, [refresh]);
+  const refresh = useCallback(() => setGeneration((n) => n + 1), []);
 
   /** Returns the one-time device token, or throws. */
   const enroll = useCallback(
@@ -87,7 +62,7 @@ export function useMesh() {
       const res = await api("/devices", { method: "POST", body: JSON.stringify({ name }) });
       const body = await res.json();
       if (!res.ok) throw new Error(body.error ?? describeHttpFailure("Couldn't enrol the device", res.status));
-      void refresh();
+      refresh();
       return body.token as string;
     },
     [refresh],
@@ -96,10 +71,21 @@ export function useMesh() {
   const revoke = useCallback(
     async (name: string) => {
       await api(`/devices/${encodeURIComponent(name)}`, { method: "DELETE" });
-      void refresh();
+      refresh();
     },
     [refresh],
   );
 
-  return { steps, devices, me, canEnroll, canSeeTeam, canRevokeAny, error, enroll, revoke };
+  const info = onboarding.data;
+  return {
+    steps: info?.steps ?? NO_STEPS,
+    devices: info?.canEnroll ? devices.data : null,
+    me: info?.me ?? null,
+    canEnroll: info?.canEnroll ?? false,
+    canSeeTeam: info?.canSeeTeam ?? false,
+    canRevokeAny: info?.canRevokeAny ?? false,
+    error: onboarding.error ?? devices.error,
+    enroll,
+    revoke,
+  };
 }

@@ -62,8 +62,11 @@ export interface PollerOptions {
   policy: BackoffPolicy;
   /** Called once when polling stops because of 401/403. */
   onUnauthorized?: (status: number) => void;
-  /** Called after every attempt with the scheduled delay (null = stopped). */
-  onSchedule?: (delayMs: number | null, outcome: PollOutcome) => void;
+  /**
+   * Called after every attempt with the scheduled delay (null = stopped) and the
+   * number of consecutive failures so far (0 after a success).
+   */
+  onSchedule?: (delayMs: number | null, outcome: PollOutcome, failures: number) => void;
   random?: () => number;
 }
 
@@ -102,7 +105,7 @@ export function startPolling(options: PollerOptions): () => void {
 
     failures = outcome.kind === "ok" ? 0 : failures + 1;
     const delay = nextDelay(outcome, failures, policy, random);
-    onSchedule?.(delay, outcome);
+    onSchedule?.(delay, outcome, failures);
     if (delay === null) {
       stopped = true;
       if (outcome.kind === "unauthorized") onUnauthorized?.(outcome.status);
