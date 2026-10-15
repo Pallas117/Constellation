@@ -59,7 +59,8 @@
     "deploy": "node --import tsx scripts/release/deploy.ts",
     "rollback": "node --import tsx scripts/release/deploy.ts --rollback",
     "perf:check": "npm run build && du -sh frontend/dist",
-    "release:prepare": "npm run quality:full && npm run security:full && npm test"
+    "release:prepare": "npm run quality:full && npm run security:full && npm test",
+    "test:website": "node --test website/site.test.mjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",
