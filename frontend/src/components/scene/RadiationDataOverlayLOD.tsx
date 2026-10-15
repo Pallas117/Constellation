@@ -9,7 +9,7 @@
 'use client'; // Mark as client component (for Next.js compatibility, if migrated)
 
 import { useMemo, useRef, useState, useEffect } from 'react';
-import { useFrame, useThree } from '@react-three/fiber';
+import { useFrame, useThree, type ThreeEvent } from '@react-three/fiber';
 import * as THREE from 'three';
 import type { RadiationDataPoint } from '@/lib/types/radiation';
 
@@ -310,12 +310,14 @@ export const RadiationDataOverlayLOD = ({
   });
 
   // Handle pointer events for click detection
-  const handlePointerDown = (event: any) => {
+  const handlePointerDown = (event: ThreeEvent<PointerEvent>) => {
     if (!onPointClick || !pointsRef.current || !geometry) return;
 
     event.stopPropagation();
     
-    const rect = event.target.getBoundingClientRect();
+    const el = event.nativeEvent.target;
+    if (!(el instanceof Element)) return;
+    const rect = el.getBoundingClientRect();
     const mouse = new THREE.Vector2();
     mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
     mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
