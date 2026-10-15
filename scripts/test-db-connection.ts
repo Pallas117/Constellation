@@ -2,7 +2,16 @@
 import { GraphDBClient } from '../backend/services/graphdb-client';
 
 async function main() {
-  const client = new GraphDBClient();
+  const pass = process.env.NEO4J_PASS;
+  if (!pass) {
+    console.error("Set NEO4J_PASS (and optionally NEO4J_URI, NEO4J_USER) to run this check.");
+    process.exit(1);
+  }
+  const client = new GraphDBClient(
+    process.env.NEO4J_URI || "bolt://localhost:7687",
+    process.env.NEO4J_USER || "neo4j",
+    pass,
+  );
   
   try {
     console.log("Attempting to connect to Neo4j...");
