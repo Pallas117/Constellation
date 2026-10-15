@@ -110,7 +110,7 @@ export function useRadiationDataOptimized(
                 energyRange: filter.energyRange,
                 resolution: 'hourly',
               }),
-              refetchInterval: realTime ? updateInterval : false,
+              refetchInterval: realTime ? updateInterval : (false as const),
             },
           ]
         : []),
@@ -119,7 +119,7 @@ export function useRadiationDataOptimized(
         ? [
             {
               ...ERGClient.getQueryOptions(csvSources['erg-arase']),
-              refetchInterval: false, // CSV files don't change
+              refetchInterval: false as const, // CSV files don't change
             },
           ]
         : []),
@@ -128,7 +128,7 @@ export function useRadiationDataOptimized(
         ? [
             {
               ...CSESClient.getQueryOptions(csvSources['cses']),
-              refetchInterval: false, // CSV files don't change
+              refetchInterval: false as const, // CSV files don't change
             },
           ]
         : []),

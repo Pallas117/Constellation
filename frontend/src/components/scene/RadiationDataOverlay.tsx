@@ -385,8 +385,6 @@ export const RadiationDataContours = ({
             color={mesh.color}
             transparent
             opacity={0.8}
-            emissive={mesh.color}
-            emissiveIntensity={0.5}
           />
         </mesh>
       ))}

@@ -4,6 +4,7 @@
 
 import type {
   RadiationMeasurement,
+  RadiationZone,
   RadiationDataPoint,
   RadiationTimeSeries,
   RadiationDataFilter,
