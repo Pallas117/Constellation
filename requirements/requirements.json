@@ -1,6 +1,6 @@
 {
   "$comment": "Constellation requirements baseline (GAU-120). NASA SP-2016-6105 Rev 2 §6.2/§5.3. Methods: T test, A analysis, I inspection, D demonstration. T evidence = exact test names; A/I/D evidence = repo paths. Verified by `npm run verify`.",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "requirements": [
     {
       "id": "REQ-ING-001",
@@ -361,6 +361,19 @@
         "deploy: healthy release is activated and recorded; dry run changes nothing (GAU-123)",
         "deploy: an unhealthy release rolls back automatically (GAU-123)",
         "rollback: returns to the previous healthy release (GAU-123)"
+      ]
+    },
+    {
+      "id": "REQ-OPS-004",
+      "title": "Host resource balancing",
+      "statement": "When memory, battery or disk run short, the host guard shall shed only optional load (local model server, nightly learning, Low Power Mode, rebuildable caches), shall undo it when conditions recover, and shall never touch the live services or user files.",
+      "rationale": "8 GB laptop on battery and hotspot; observed 2% battery, 5 GB disk, 80% swap (GAU-100, GAU-126).",
+      "parent": "GAU-126",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "ops resilience and balance tests (bash)",
+        "Kp model unit tests (python)"
       ]
     }
   ]

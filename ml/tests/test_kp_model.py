@@ -72,5 +72,23 @@ class KpModelTest(unittest.TestCase):
         promoted.write_text(before)
 
 
+  def test_nightly_job_skips_while_balance_has_paused_learning(self):
+    """GAU-126: the nightly job honours the battery-saving pause and never promotes."""
+    import os
+    import tempfile
+    with tempfile.TemporaryDirectory() as home:
+      flag = Path(home) / "Library" / "Application Support" / "Gauss" / "learning-paused"
+      flag.parent.mkdir(parents=True)
+      flag.touch()
+      result = subprocess.run(
+        [sys.executable, "-I", str(ML_DIR / "train" / "nightly.py"), "--telemetry", "/nonexistent"],
+        capture_output=True, text=True, env={**os.environ, "HOME": home},
+      )
+      self.assertEqual(result.returncode, 0, result.stderr)
+      out = json.loads(result.stdout)
+      self.assertEqual(out["status"], "paused")
+      self.assertEqual(out["live_points"], 0)
+
+
 if __name__ == "__main__":
   unittest.main()
