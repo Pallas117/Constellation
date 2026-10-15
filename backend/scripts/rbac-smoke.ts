@@ -81,7 +81,7 @@ async function requestJson(url: string, init?: RequestInit, context = "http"): P
       signal: init?.signal ?? AbortSignal.timeout(12_000),
     });
   } catch (error) {
-    throw new Error(`[${context}] fetch failed for ${url}: ${formatNetworkError(error)}`);
+    throw new Error(`[${context}] fetch failed for ${url}: ${formatNetworkError(error)}`, { cause: error });
   }
   const raw = await response.text();
   let body: unknown = null;

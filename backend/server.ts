@@ -26,6 +26,7 @@ import {
 import type {
   CanonicalSpaceWeatherPoint,
   IngestionTickResult,
+  MMSReconVectorPoint,
   NowcastInferenceRequest,
 } from "./types.js";
 import { withFreshness } from "./lib/freshness.js";
@@ -179,7 +180,7 @@ async function fetchMmsFromDb(
   lookbackMs: number,
   limit: number,
   accessToken?: string,
-): Promise<any[] | null> {
+): Promise<MMSReconVectorPoint[] | null> {
   // Supabase database access has been removed; memory and bedrock are the current sources.
   return null;
 }

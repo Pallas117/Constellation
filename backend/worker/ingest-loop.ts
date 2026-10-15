@@ -252,9 +252,8 @@ export class IngestionWorker {
     }
 
     let mmsVector: MMSReconVectorPoint | null = null;
-    let mmsSamples: MMSSpacecraftSample[] = [];
     if (link.mode !== "AIRGAP" && this.shouldFetch("mms", MMS_MS)) {
-      mmsSamples = await fetchMmsCdawebSamples();
+      const mmsSamples: MMSSpacecraftSample[] = await fetchMmsCdawebSamples();
       if (mmsSamples.length >= 4 && withinSkewWindow(mmsSamples, 1.5)) {
         mmsVector = computeMMSReconnectionVector(mmsSamples);
       }

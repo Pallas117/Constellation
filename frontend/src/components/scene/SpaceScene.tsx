@@ -7,7 +7,7 @@
 
 'use client'; // Mark as client component (for Next.js compatibility, if migrated)
 
-import { Component, Suspense, useCallback, useRef, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { Component, Suspense, useCallback, useRef, useEffect, useMemo, useState, type ComponentRef, type ReactNode } from 'react';
 import { Canvas, useThree } from '@react-three/fiber';
 import { OrbitControls, Stars, PerspectiveCamera } from '@react-three/drei';
 import * as THREE from 'three';
@@ -119,7 +119,7 @@ const SceneContent = ({
   // GSM frame: the dipole tilts toward/away from the Sun with season and UT.
   const epochMs = useNow(5 * 60_000);
   const dipoleTilt = useMemo(() => dipoleTiltRad(epochMs), [epochMs]);
-  const controlsRef = useRef<any>(null);
+  const controlsRef = useRef<ComponentRef<typeof OrbitControls>>(null);
   const { camera } = useThree();
 
   // Apply camera presets on request.

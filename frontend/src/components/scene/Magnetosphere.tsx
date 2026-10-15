@@ -256,7 +256,7 @@ const FieldLineTracers = memo(function FieldLineTracers({ data, count = 520 }: {
     geometry.attributes.position.needsUpdate = true;
   });
 
-  const material = useMemo(makeTracerMaterial, []);
+  const material = useMemo(() => makeTracerMaterial(), []);
   useEffect(() => () => material.dispose(), [material]);
 
   return <points ref={pointsRef} geometry={geometry} material={material} frustumCulled={false} />;

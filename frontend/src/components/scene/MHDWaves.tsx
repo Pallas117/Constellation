@@ -119,7 +119,7 @@ export const MHDWaves = ({
       depthWrite: true,
       linewidth: 2,
     });
-  }, [amplitude, speed]);
+  }, []);
 
   // ---- Fast magnetosonic: ripple on a disc (compressional wave) ----
   const fastWaveGeometry = useMemo(() => {
@@ -200,7 +200,7 @@ export const MHDWaves = ({
       depthWrite: false,
       blending: THREE.AdditiveBlending,
     });
-  }, [amplitude, speed]);
+  }, []);
 
   useEffect(
     () => () => {
