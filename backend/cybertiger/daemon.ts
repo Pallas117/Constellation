@@ -50,6 +50,8 @@ export interface CyberTigerInspectDecision {
   allowed: boolean;
   requestId: string;
   ip: string;
+  /** A process on this machine talking to us directly (not via the local proxy). */
+  local?: boolean;
   status?: number;
   message?: string;
 }
@@ -57,6 +59,7 @@ export interface CyberTigerInspectDecision {
 export interface CyberTigerRecordResponseInput {
   requestId: string;
   ip: string;
+  local?: boolean;
   method: string;
   path: string;
   status: number;
@@ -116,6 +119,10 @@ function normalizeIp(raw: string | undefined): string {
   return raw.trim().toLowerCase();
 }
 
+export function isLoopback(ip: string): boolean {
+  return ip === "::1" || ip.startsWith("127.") || ip.startsWith("::ffff:127.");
+}
+
 function safePath(path: string): string {
   return path.length > 300 ? `${path.slice(0, 300)}...` : path;
 }
@@ -160,30 +167,52 @@ export class CyberTigerDaemon {
     };
   }
 
+  /**
+   * The client's address. X-Forwarded-For is trusted only from the local
+   * reverse proxy (a loopback peer, e.g. `tailscale serve`), and then only its
+   * last entry — the one that proxy appended. Earlier entries, and the header
+   * from anyone else, are client-controlled and would let an attacker dodge
+   * blocks or get other addresses blocked.
+   */
   extractClientIp(req: Request): string {
-    const forwarded = req.headers["x-forwarded-for"];
-    if (typeof forwarded === "string" && forwarded.trim()) {
-      const first = forwarded.split(",")[0];
-      return normalizeIp(first);
+    const peer = normalizeIp(req.socket?.remoteAddress ?? req.ip ?? undefined);
+    const header = req.headers["x-forwarded-for"];
+    const forwarded = (Array.isArray(header) ? header.join(",") : header ?? "")
+      .split(",")
+      .map((part) => part.trim())
+      .filter(Boolean);
+    if (isLoopback(peer) && forwarded.length > 0) {
+      return normalizeIp(forwarded[forwarded.length - 1]);
     }
-    if (Array.isArray(forwarded) && forwarded.length > 0) {
-      return normalizeIp(forwarded[0]);
-    }
-    return normalizeIp(req.ip ?? req.socket.remoteAddress ?? undefined);
+    return peer;
+  }
+
+  /**
+   * A process on this machine connecting directly (no proxy headers). It is
+   * never auto-blocked: blocking it only takes Gauss down for its owner (one
+   * stale tab would cut off Argo and the local console), and anyone local
+   * already controls the machine. It is still rate-limited and still gets
+   * 401/403. Tailnet visitors arrive via the proxy with forwarding headers and
+   * are blocked under their own address as normal.
+   */
+  isDirectLocal(req: Request): boolean {
+    const peer = normalizeIp(req.socket?.remoteAddress ?? req.ip ?? undefined);
+    return isLoopback(peer) && !req.headers["x-forwarded-for"] && !req.headers["tailscale-user-login"];
   }
 
   inspectRequest(req: Request): CyberTigerInspectDecision {
     const requestId = randomUUID();
     const ip = this.extractClientIp(req);
+    const local = this.isDirectLocal(req);
 
     if (!this.config.enabled) {
-      return { allowed: true, requestId, ip };
+      return { allowed: true, requestId, ip, local };
     }
 
     this.counters.totalInspected += 1;
     this.cleanupExpiredBlocks();
 
-    const blocked = this.blocklist.get(ip);
+    const blocked = local ? undefined : this.blocklist.get(ip);
     if (blocked && blocked.untilMs > Date.now()) {
       this.counters.blocked += 1;
       this.addEvent({
@@ -217,7 +246,7 @@ export class CyberTigerDaemon {
         requestId,
         message: `Matched signature: ${signature.name}`,
       });
-      this.blockIp(ip, `signature:${signature.name}`, undefined, {
+      if (!local) this.blockIp(ip, `signature:${signature.name}`, undefined, {
         requestId,
         method: req.method,
         path: safePath(req.originalUrl ?? req.url),
@@ -252,7 +281,7 @@ export class CyberTigerDaemon {
       };
     }
 
-    return { allowed: true, requestId, ip };
+    return { allowed: true, requestId, ip, local };
   }
 
   recordResponse(input: CyberTigerRecordResponseInput): void {
@@ -263,7 +292,7 @@ export class CyberTigerDaemon {
     const path = safePath(input.path);
     if (input.status === 401 || input.status === 403) {
       this.counters.authFailures += 1;
-      const breach = this.registerAuthFailure(input.ip);
+      const breach = input.local ? false : this.registerAuthFailure(input.ip);
       this.addEvent({
         type: "auth.failure",
         severity: "medium",

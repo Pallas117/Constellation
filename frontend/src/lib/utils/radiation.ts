@@ -10,6 +10,7 @@ import type {
   OrbitType,
   ParticleType,
   EnergyRange,
+  AlertLevel,
 } from '@/lib/types/radiation';
 
 /**
@@ -435,22 +436,90 @@ function lerp(a: number, b: number, t: number): number {
 }
 
 /**
- * Determine alert level based on flux values
+ * Lower edge (MeV) of the integral-flux channel each cited threshold is defined on.
  */
-export function getAlertLevel(flux: number, particleType: ParticleType): 'low' | 'moderate' | 'high' | 'severe' {
-  // Thresholds in particles/(cm²·s·sr·MeV) - these are example values
-  const thresholds = {
-    electron: { moderate: 1e4, high: 1e5, severe: 1e6 },
-    proton: { moderate: 1e2, high: 1e3, severe: 1e4 },
-    alpha: { moderate: 1e1, high: 1e2, severe: 1e3 },
-    heavy_ion: { moderate: 1e0, high: 1e1, severe: 1e2 },
-  };
+export const ALERT_CHANNEL_MEV: Partial<Record<ParticleType, number>> = {
+  proton: 10,
+  electron: 2,
+};
 
-  const thresh = thresholds[particleType] || thresholds.electron;
-
-  if (flux >= thresh.severe) return 'severe';
-  if (flux >= thresh.high) return 'high';
-  if (flux >= thresh.moderate) return 'moderate';
-  return 'low';
+/**
+ * NOAA Space Weather Scale for solar radiation storms, S1–S5, from the GOES
+ * ≥10 MeV integral proton flux (5-minute average) in pfu = cm⁻²·s⁻¹·sr⁻¹.
+ * S1 ≥ 10, S2 ≥ 10², S3 ≥ 10³, S4 ≥ 10⁴, S5 ≥ 10⁵ pfu; 0 below S1.
+ * Source: NOAA SWPC, https://www.swpc.noaa.gov/noaa-scales-explanation
+ */
+export function noaaSolarRadiationStormLevel(protonFluxPfu: number): 0 | 1 | 2 | 3 | 4 | 5 {
+  if (protonFluxPfu >= 1e5) return 5;
+  if (protonFluxPfu >= 1e4) return 4;
+  if (protonFluxPfu >= 1e3) return 3;
+  if (protonFluxPfu >= 1e2) return 2;
+  if (protonFluxPfu >= 1e1) return 1;
+  return 0;
 }
 
+/**
+ * SWPC Electron Event alert (ALTEF3): GOES >2 MeV integral electron flux above
+ * 1000 pfu, the deep-dielectric (internal) charging threshold.
+ * Source: NOAA SWPC, https://www.swpc.noaa.gov/products/goes-electron-flux
+ */
+export const SWPC_ELECTRON_ALERT_PFU = 1000;
+
+/**
+ * Determine alert level from a unidirectional integral flux J(>E) in pfu
+ * (cm⁻²·s⁻¹·sr⁻¹), measured on the channel in ALERT_CHANNEL_MEV:
+ *
+ * - proton, J(≥10 MeV): NOAA S-scale. S1–S2 (Minor, Moderate) → moderate,
+ *   S3 (Strong) → high, S4–S5 (Severe, Extreme) → severe.
+ * - electron, J(>2 MeV): the SWPC 1000 pfu internal-charging alert → high.
+ *   SWPC publishes no other electron level, so moderate and severe are unused.
+ *
+ * Returns null for alpha and heavy ions, which have no cited flux threshold,
+ * and for a negative or non-finite flux.
+ */
+export function getAlertLevel(integralFluxPfu: number, particleType: ParticleType): AlertLevel | null {
+  if (!(Number.isFinite(integralFluxPfu) && integralFluxPfu >= 0)) return null;
+
+  if (particleType === 'proton') {
+    const s = noaaSolarRadiationStormLevel(integralFluxPfu);
+    if (s >= 4) return 'severe';
+    if (s === 3) return 'high';
+    if (s >= 1) return 'moderate';
+    return 'low';
+  }
+  if (particleType === 'electron') {
+    return integralFluxPfu >= SWPC_ELECTRON_ALERT_PFU ? 'high' : 'low';
+  }
+  return null;
+}
+
+const ALERT_ORDER: AlertLevel[] = ['low', 'moderate', 'high', 'severe'];
+
+/**
+ * Most severe alert level across particle species, from differential
+ * measurements j(E) in cm⁻²·s⁻¹·sr⁻¹·MeV⁻¹.
+ *
+ * Each bin gives j × (the part of the bin at or above the channel energy) as a
+ * lower bound on J(>E): flux above the bin's upper edge is not observed. The
+ * level per species uses the largest such bound, so it can understate but
+ * never overstate. Returns null when no measurement reaches a cited channel.
+ */
+export function getAlertLevelFromMeasurements(measurements: RadiationMeasurement[]): AlertLevel | null {
+  const bestPfu = new Map<ParticleType, number>();
+  for (const m of measurements) {
+    const channel = ALERT_CHANNEL_MEV[m.particleType];
+    if (channel === undefined || !(m.energyRange.max > channel)) continue;
+    if (!(Number.isFinite(m.particleFlux) && m.particleFlux >= 0)) continue;
+    const pfu = m.particleFlux * (m.energyRange.max - Math.max(m.energyRange.min, channel));
+    bestPfu.set(m.particleType, Math.max(bestPfu.get(m.particleType) ?? 0, pfu));
+  }
+
+  let worst: AlertLevel | null = null;
+  for (const [particleType, pfu] of bestPfu) {
+    const level = getAlertLevel(pfu, particleType);
+    if (level && (worst === null || ALERT_ORDER.indexOf(level) > ALERT_ORDER.indexOf(worst))) {
+      worst = level;
+    }
+  }
+  return worst;
+}

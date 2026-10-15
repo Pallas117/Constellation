@@ -89,7 +89,23 @@ func main() {
 		if gw, mac := localGateway(ctx); skipTick(store.Load(), gw, mac, time.Now()) {
 			return
 		}
-		err = withLock(store, func() { flush(); loop.Tick(ctx) })
+		err = withLock(store, func() {
+			flush()
+			loop.Tick(ctx)
+			maybeSendWeekly(store, phone, time.Now())
+		})
+	case "summary": // what Argo caught, fixed and learned in the last 7 days
+		now := time.Now()
+		st := store.Load()
+		text := weeklySummary(store.Incidents(), st.Networks, now.Add(-summaryEvery), now)
+		fmt.Println(text)
+		if len(os.Args) > 2 && os.Args[2] == "--send" {
+			if phone == nil {
+				err = errors.New("phone alerts are not set up; run `argo phone <number>`")
+			} else {
+				phone.Send("Argo weekly", text, now)
+			}
+		}
 	case "preflight":
 		os.Exit(preflight())
 	case "run":
@@ -116,7 +132,7 @@ func main() {
 	case "version":
 		fmt.Println("argo", version)
 	default:
-		fmt.Fprintln(os.Stderr, "usage: argo [status|doctor|fix|report|on|off|preflight|run -- cmd|phone <handle>|test|off|enroll URL DEVICE|install|uninstall|version]")
+		fmt.Fprintln(os.Stderr, "usage: argo [status|doctor|fix|report|on|off|preflight|run -- cmd|phone <handle>|test|off|summary [--send]|enroll URL DEVICE|install|uninstall|version]")
 		os.Exit(2)
 	}
 	if err != nil {

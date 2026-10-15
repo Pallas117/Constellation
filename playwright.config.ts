@@ -1,6 +1,8 @@
 import { defineConfig, devices } from "@playwright/test";
 
-const baseURL = process.env.PW_BASE_URL || "http://127.0.0.1:8080";
+// PW_PORT lets the suite run beside the always-on services, which hold :8080.
+const port = process.env.PW_PORT || "8080";
+const baseURL = process.env.PW_BASE_URL || `http://127.0.0.1:${port}`;
 
 export default defineConfig({
   testDir: "./tests/e2e",
@@ -17,7 +19,7 @@ export default defineConfig({
     video: "retain-on-failure",
   },
   webServer: {
-    command: "npm run dev -- --host 127.0.0.1 --port 8080",
+    command: `npm run dev -- --host 127.0.0.1 --port ${port}`,
     url: baseURL,
     reuseExistingServer: false,
     timeout: 120_000,

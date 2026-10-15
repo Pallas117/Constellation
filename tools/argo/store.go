@@ -28,20 +28,22 @@ func (s Store) path(name string) string { return filepath.Join(s.Dir, name) }
 // State is the loop's memory between ticks. Breaker and backoff numbers
 // mirror mesh-heal: 4 attempts, 60s·2^(n-1) capped at 15 min, 30 min open.
 type State struct {
-	Class        Class          `json:"class"`
-	Reason       string         `json:"reason"`
-	Fingerprint  string         `json:"fingerprint"`
-	Loc          string         `json:"loc,omitempty"`
-	CheckedAt    time.Time      `json:"checked_at"`
-	IncidentAt   time.Time      `json:"incident_at,omitempty"`
-	Attempts     int            `json:"attempts"`
-	LastFixAt    time.Time      `json:"last_fix_at,omitempty"`
-	LastFix      string         `json:"last_fix,omitempty"`
-	BreakerUntil time.Time      `json:"breaker_until,omitempty"`
-	Networks     map[string]Net `json:"networks,omitempty"` // fingerprint → what worked there
-	Tailscale    Tailscale      `json:"tailscale"`
-	Gateway      string         `json:"gateway,omitempty"`
-	GatewayMAC   string         `json:"gateway_mac,omitempty"`
+	Class        Class     `json:"class"`
+	Reason       string    `json:"reason"`
+	Fingerprint  string    `json:"fingerprint"`
+	Loc          string    `json:"loc,omitempty"`
+	CheckedAt    time.Time `json:"checked_at"`
+	IncidentAt   time.Time `json:"incident_at,omitempty"`
+	Attempts     int       `json:"attempts"`
+	LastFixAt    time.Time `json:"last_fix_at,omitempty"`
+	LastFix      string    `json:"last_fix,omitempty"`
+	BreakerUntil time.Time `json:"breaker_until,omitempty"`
+	// LastSummaryAt is when the weekly iMessage summary was last sent.
+	LastSummaryAt time.Time      `json:"last_summary_at,omitempty"`
+	Networks      map[string]Net `json:"networks,omitempty"` // fingerprint → what worked there
+	Tailscale     Tailscale      `json:"tailscale"`
+	Gateway       string         `json:"gateway,omitempty"`
+	GatewayMAC    string         `json:"gateway_mac,omitempty"`
 }
 
 // Net remembers which fix resolved each class on one network.

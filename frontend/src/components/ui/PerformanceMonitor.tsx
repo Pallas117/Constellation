@@ -63,22 +63,13 @@ export const PerformanceMonitor = ({ visible = true }: PerformanceMonitorProps) 
 
   if (!visible) return null;
 
-  const fpsColor = stats.fps >= 55 ? 'text-green-400' : stats.fps >= 30 ? 'text-yellow-400' : 'text-red-400';
-
+  // Render rate of the 3D scene; only a slow frame rate earns a colour.
   return (
-    <div className="absolute top-6 right-32 pointer-events-auto">
-      <div className="hud-panel px-3 py-2 animate-fade-in-up flex items-center gap-4">
-        <div className="scanline" />
-        <div className="flex items-center gap-2">
-          <span className="text-[10px] text-muted-foreground uppercase font-bold tracking-tighter">FPS</span>
-          <span className={`text-sm font-mono font-bold ${fpsColor}`}>{stats.fps}</span>
-        </div>
-        <div className="h-4 w-[1px] bg-primary/20" />
-        <div className="flex items-center gap-2">
-          <span className="text-[10px] text-muted-foreground uppercase font-bold tracking-tighter">LATENCY</span>
-          <span className="text-sm font-mono font-bold text-primary">{stats.avgFrameTime} ms</span>
-        </div>
-      </div>
-    </div>
+    <span
+      className={`font-mono text-[11px] tabular-nums ${stats.fps < 30 ? 'text-caution' : 'text-muted-foreground'}`}
+      title="Scene render rate and mean frame time"
+    >
+      {stats.fps} fps · {stats.avgFrameTime} ms
+    </span>
   );
 };

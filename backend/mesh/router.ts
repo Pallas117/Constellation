@@ -17,9 +17,9 @@ export function exitNodesFromEnv(raw = process.env.MESH_EXIT_NODES ?? "") {
 
 export function onboardingSteps(exitNodes = exitNodesFromEnv()) {
   return [
-    { id: "tailscale", title: "Install Tailscale and join the tailnet", command: "brew install --cask tailscale", detail: "Sign in with your Lightbound account, then ask an admin to approve the device." },
+    { id: "tailscale", title: "Install Tailscale and join the tailnet", command: "brew install --cask tailscale", detail: "Open Tailscale and sign in with your Lightbound Google Workspace account; an admin approves new devices in the Tailscale admin console." },
     { id: "argo", title: "Build and install Argo", command: "cd tools/argo && go build -o ~/.local/bin/argo . && argo install", detail: "argo install only writes the LaunchAgent plist; it prints the launchctl command for you to run." },
-    { id: "enroll", title: "Connect Argo to Gauss", command: "argo enroll <gauss-tailnet-url> <device-name>", detail: "An admin creates the device token on this page. Paste it when prompted; it is never put on the command line." },
+    { id: "enroll", title: "Connect Argo to Gauss", command: "argo enroll <gauss-tailnet-url> <device-name>", detail: "Create a device token on this page (Enroll this laptop). Paste it when prompted; it is never put on the command line." },
     { id: "verify", title: "Check your exit country", command: "argo doctor", detail: "class must be OK and loc must be MY or SG. A Hong Kong eSIM shows REGION: switch to a Malaysian SIM." },
     {
       id: "exit-node",
@@ -63,18 +63,32 @@ export function createMeshRouters(store = new MeshStore(path.resolve(process.env
     res.json({ ok: true });
   });
 
-  /** Mounted after session auth. Team network state is operator-only. */
+  /**
+   * Mounted after session auth. staff+ onboard and manage their own devices;
+   * operator+ see the whole team; admin can revoke any device. The page only
+   * calls routes the role allows (onboarding says which), because every 403
+   * counts as an auth failure in CyberTiger and polling one would auto-block
+   * the caller's IP.
+   */
   const ui = express.Router();
-  // canSeeTeam lets the page skip /devices for viewers: a 403 there counts as an
-  // auth failure in CyberTiger, and polling it would auto-block the viewer's IP.
-  ui.get("/onboarding", (req: AuthenticatedRequest, res) => {
-    const canSeeTeam = req.auth ? roleSatisfies(req.auth.role, "operator") : false;
-    res.json({ ok: true, steps: onboardingSteps(), canSeeTeam });
+  const isAdmin = (req: AuthenticatedRequest) => (req.auth ? roleSatisfies(req.auth.role, "admin") : false);
+  const isOperator = (req: AuthenticatedRequest) => (req.auth ? roleSatisfies(req.auth.role, "operator") : false);
+
+  ui.get("/onboarding", requireRole("staff"), (req: AuthenticatedRequest, res) => {
+    res.json({
+      ok: true,
+      steps: onboardingSteps(),
+      me: req.auth!.userId,
+      canEnroll: true,
+      canSeeTeam: isOperator(req),
+      canRevokeAny: isAdmin(req),
+    });
   });
-  ui.get("/devices", requireRole("operator"), (_req, res) => {
-    res.json({ ok: true, devices: store.list() });
+  ui.get("/devices", requireRole("staff"), (req: AuthenticatedRequest, res) => {
+    const devices = store.list();
+    res.json({ ok: true, devices: isOperator(req) ? devices : devices.filter((d) => d.owner === req.auth!.userId) });
   });
-  ui.post("/devices", requireRole("admin"), (req: AuthenticatedRequest, res) => {
+  ui.post("/devices", requireRole("staff"), (req: AuthenticatedRequest, res) => {
     const name = typeof req.body?.name === "string" ? req.body.name.trim().toLowerCase() : "";
     const result = store.enroll(name, req.auth!.userId);
     if ("error" in result) {
@@ -83,8 +97,16 @@ export function createMeshRouters(store = new MeshStore(path.resolve(process.env
     }
     res.status(201).json({ ok: true, name: result.device.name, token: result.token, note: "Shown once. Paste it into `argo enroll`." });
   });
-  ui.delete("/devices/:name", requireRole("admin"), (req, res) => {
-    res.status(store.revoke(String(req.params.name)) ? 204 : 404).end();
+  ui.delete("/devices/:name", requireRole("staff"), (req: AuthenticatedRequest, res) => {
+    const name = String(req.params.name);
+    const device = store.list().find((d) => d.name === name);
+    // Someone else's device looks the same as a missing one, so names can't be probed.
+    if (!device || (device.owner !== req.auth!.userId && !isAdmin(req))) {
+      res.status(404).end();
+      return;
+    }
+    store.revoke(name);
+    res.status(204).end();
   });
 
   return { agent, ui };

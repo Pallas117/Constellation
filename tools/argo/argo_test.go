@@ -355,3 +355,44 @@ func TestSkipTickOnlyWhenNothingCanHaveChanged(t *testing.T) {
 		}
 	}
 }
+
+func TestWeeklySummary(t *testing.T) {
+	to := time.Date(2026, 10, 17, 9, 0, 0, 0, time.UTC)
+	from := to.Add(-summaryEvery)
+	in := []Incident{
+		{Time: from.Add(-time.Hour), Event: "open", Class: Region}, // before the week: ignored
+		{Time: from.Add(time.Hour), Event: "open", Class: Region},
+		{Time: from.Add(2 * time.Hour), Event: "resolved", Class: Region, Fix: "switch-network"},
+		{Time: from.Add(3 * time.Hour), Event: "open", Class: Offline},
+		{Time: from.Add(4 * time.Hour), Event: "resolved", Class: Offline, Fix: "wait"},
+	}
+	nets := map[string]Net{"a": {FirstSeen: from.Add(-48 * time.Hour)}, "b": {FirstSeen: from.Add(time.Hour)}}
+	got := weeklySummary(in, nets, from, to)
+	for _, want := range []string{"2 problem(s) (OFFLINE 1, REGION 1)", "fixed 1, 1 cleared on their own", "Networks known: 2 (1 new this week)"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("summary %q missing %q", got, want)
+		}
+	}
+	if quiet := weeklySummary(nil, nets, from, to); !strings.Contains(quiet, "no network problems") {
+		t.Errorf("quiet week: %q", quiet)
+	}
+}
+
+func TestWeeklySummarySendsOncePerWeekNotOnInstall(t *testing.T) {
+	s := Store{Dir: t.TempDir()}
+	var sent []string
+	p := newPhone("+60123456789", "judith")
+	p.Queue = s.path("q.jsonl")
+	p.send = func(_, text string) error { sent = append(sent, text); return nil }
+	t0 := time.Date(2026, 10, 10, 9, 0, 0, 0, time.UTC)
+	maybeSendWeekly(s, p, t0)
+	maybeSendWeekly(s, p, t0.Add(6*24*time.Hour))
+	if len(sent) != 0 {
+		t.Fatalf("sent too early: %v", sent)
+	}
+	maybeSendWeekly(s, p, t0.Add(7*24*time.Hour))
+	maybeSendWeekly(s, p, t0.Add(7*24*time.Hour+time.Hour))
+	if len(sent) != 1 || !strings.Contains(sent[0], "Argo weekly") {
+		t.Fatalf("want exactly one weekly message, got %v", sent)
+	}
+}

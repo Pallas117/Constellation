@@ -49,5 +49,28 @@ class KpModelTest(unittest.TestCase):
       bad.unlink()
 
 
+  def test_promotion_pointing_at_a_missing_file_is_a_failed_load_not_no_model(self):
+    """FMEA (GAU-121): a broken deployment must not read as 'no model deployed'."""
+    import importlib
+    import kp_model
+    promoted = MODELS_DIR / "promoted.json"
+    before = promoted.read_text() if promoted.exists() else None
+    promoted.write_text(json.dumps({"file": "does-not-exist.json", "version": "ghost"}))
+    try:
+      with self.assertRaises(FileNotFoundError):
+        kp_model.KpForecaster.load_promoted()
+      sys.path.insert(0, str(ML_DIR / "infer"))
+      server = importlib.import_module("infer_server")
+      server._model_loaded = False
+      out = server.anomaly({"sequence": []})
+      self.assertFalse(out["available"])
+      self.assertIn("failed to load", out["reason"])
+    finally:
+      if before is None:
+        promoted.unlink()
+      else:
+        promoted.write_text(before)
+
+
 if __name__ == "__main__":
   unittest.main()

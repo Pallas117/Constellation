@@ -48,15 +48,23 @@ function runChecks(): ControlCheck[] {
       : "AUTH_REQUIRED=false detected. Use only for local non-production debugging.",
   });
 
-  const hasRoleGate = checkFileContains("backend/server.ts", /requireRole\("admin"\)|requireRole\("operator"\)/);
+  // Role gates live in one deny-by-default table (backend/rbac.ts) applied to every /api route;
+  // rbac.test.ts fails if a declared route has no policy. Per-route requireRole() also counts.
+  const centralPolicy =
+    checkFileContains("backend/server.ts", /app\.use\("\/api",\s*enforceApiPolicy\)/) &&
+    checkFileContains("backend/rbac.ts", /access:\s*"(operator|admin)"/);
+  const perRouteGate = checkFileContains("backend/server.ts", /requireRole\("admin"\)|requireRole\("operator"\)/);
+  const hasRoleGate = centralPolicy || perRouteGate;
   checks.push({
     id: "NIST-CSF-PR.AA",
     framework: "NIST CSF 2.0",
     title: "Role-based authorization control",
     status: hasRoleGate ? "pass" : "fail",
-    details: hasRoleGate
-      ? "Role gate calls found in backend routes."
-      : "No role gate calls detected in backend routes.",
+    details: centralPolicy
+      ? "Deny-by-default role policy (backend/rbac.ts) enforced on every /api route."
+      : perRouteGate
+        ? "Role gate calls found in backend routes."
+        : "No role gate detected: neither the API policy table nor per-route requireRole().",
   });
 
   const hasAuditEvents = checkFileContains("backend/cybertiger/daemon.ts", /type:\s*"auth\.failure"|type:\s*"ip\.blocked"/);

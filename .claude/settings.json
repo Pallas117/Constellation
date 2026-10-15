@@ -7,10 +7,15 @@
       "Read(./test-results/**)",
       "Read(./data/bedrock/**)",
       "Read(./data/mesh/**)",
+      "Read(./data/commerce/**)",
       "Read(./package-lock.json)",
       "Read(./.auth.db)",
       "Read(./.env)",
-      "Read(./.env.*)"
+      "Read(./.env.local)",
+      "Read(./.env.*.local)",
+      "Read(./.env.production)",
+      "Read(./.env.development)",
+      "Read(./.env.test)"
     ]
   }
 }
