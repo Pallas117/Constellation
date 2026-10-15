@@ -58,7 +58,6 @@ export const API_POLICY: ReadonlyArray<{ method: string; path: string; access: A
 
   // Operators: console tools
   { method: "GET", path: "/rag/status", access: "operator" },
-  { method: "POST", path: "/rag/index", access: "operator" },
   { method: "POST", path: "/rag/query", access: "operator" },
   { method: "GET", path: "/security/cybertiger/status", access: "operator" },
   { method: "GET", path: "/system/tpm", access: "operator" }, // TPM values (GAU-122); /health has the public summary

@@ -24,7 +24,6 @@ export default defineConfig({
     reuseExistingServer: false,
     timeout: 120_000,
     env: {
-      VITE_GAUSS_RAG_URL: "http://127.0.0.1:3002",
       VITE_HELIO_PROXY_URL: "http://127.0.0.1:3001",
     },
   },
