@@ -147,11 +147,3 @@ export interface AuroraMapResponse {
     powerSpectrum: Array<{ l: number; cL: number }>;
   };
 }
-
-export interface SourceStatus {
-  source: string;
-  lastSeen: string | null;
-  latencySeconds: number | null;
-  healthy: boolean;
-  message?: string;
-}
