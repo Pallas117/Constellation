@@ -1,73 +1,43 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo } from "react";
 import type { MMSReconVectorPoint } from "@/lib/types/space-weather";
-import { getAuthHeaders } from "@/lib/api/auth";
+import { useFeedSession, usePolledFeed, type FeedStatus } from "@/hooks/usePolledFeed";
 
 const POLL_INTERVAL_MS = 5000;
-
-function getBaseUrl(): string {
-  return import.meta.env.VITE_HELIO_PROXY_URL ?? "http://127.0.0.1:3001";
-}
+const ENDPOINT = "/api/feed/mms/reconnection?lookback=PT2H&limit=1440";
 
 export interface MMSReconnectionState {
   vectors: MMSReconVectorPoint[];
   latest: MMSReconVectorPoint | null;
   loading: boolean;
   error: string | null;
+  status: FeedStatus;
 }
 
+const EMPTY: MMSReconVectorPoint[] = [];
+
+const parse = (json: unknown) => {
+  const vectors = (json as { vectors?: MMSReconVectorPoint[] } | null)?.vectors;
+  return Array.isArray(vectors) ? vectors : [];
+};
+
 export function useMMSReconnection(): MMSReconnectionState {
-  const [vectors, setVectors] = useState<MMSReconVectorPoint[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    let mounted = true;
-
-    const fetchVectors = async () => {
-      try {
-        const response = await fetch(
-          `${getBaseUrl()}/api/feed/mms/reconnection?lookback=PT2H&limit=1440`,
-          {
-            headers: await getAuthHeaders(),
-          },
-        );
-        if (!response.ok) {
-          throw new Error(`MMS feed HTTP ${response.status}`);
-        }
-        const json = (await response.json()) as { vectors?: MMSReconVectorPoint[] };
-        if (!mounted) {
-          return;
-        }
-        setVectors(Array.isArray(json.vectors) ? json.vectors : []);
-        setError(null);
-      } catch (err) {
-        if (!mounted) {
-          return;
-        }
-        setError(err instanceof Error ? err.message : "Failed to fetch MMS vectors");
-      } finally {
-        if (mounted) {
-          setLoading(false);
-        }
-      }
-    };
-
-    fetchVectors();
-    const timer = setInterval(fetchVectors, POLL_INTERVAL_MS);
-
-    return () => {
-      mounted = false;
-      clearInterval(timer);
-    };
-  }, []);
+  // `user`-role route: never request it signed out (CyberTiger counts 401s).
+  const session = useFeedSession();
+  const feed = usePolledFeed({
+    path: session.resolved && session.signedIn ? ENDPOINT : null,
+    intervalMs: POLL_INTERVAL_MS,
+    parse,
+    disabledStatus: session.resolved ? "sign-in-required" : "waiting",
+    signInMessage: "Sign in to see MMS reconnection vectors.",
+    restartKey: session.userKey,
+  });
+  const vectors = feed.data ?? EMPTY;
 
   return {
     vectors,
-    latest: useMemo(
-      () => (vectors.length > 0 ? vectors[vectors.length - 1] : null),
-      [vectors],
-    ),
-    loading,
-    error,
+    latest: useMemo(() => (vectors.length > 0 ? vectors[vectors.length - 1] : null), [vectors]),
+    loading: feed.loading,
+    error: feed.error,
+    status: feed.status,
   };
 }

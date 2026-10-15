@@ -1,14 +1,16 @@
 import http from "node:http";
+import path from "node:path";
 import { pathToFileURL } from "node:url";
 import cors from "cors";
 import express from "express";
 import { WebSocket, WebSocketServer } from "ws";
 import {
+  authenticateOptional,
   authenticateRequest,
   authenticateSocket,
-  requireRole,
   roleSatisfies,
   type AuthContext,
+  type AuthRole,
   type AuthenticatedRequest,
 } from "./auth.js";
 import { CyberTigerDaemon } from "./cybertiger/daemon.js";
@@ -38,10 +40,14 @@ import { linkGuardian } from "./lib/connectivity.js";
 import { bedrock } from "./lib/local-db.js";
 import { diskFreeBytes, overall, readTpms } from "./lib/tpm.js";
 import { SPACE_OBJECT_CATALOG } from "./lib/space-object-catalog.js";
-import { auth } from "./better-auth.js";
+import { auth, ssoAllowedDomain, ssoGithubEnabled, ssoGoogleEnabled } from "./better-auth.js";
 import { toNodeHandler } from "better-auth/node";
 import { SelfHealerAgent } from "./cybertiger/self-healer.js";
 import deviceRegistryRouter from "./device-registry.js";
+import { createMeshRouters } from "./mesh/router.js";
+import { enforceApiPolicy, isPublic } from "./rbac.js";
+import { CommerceStore } from "./commerce/store.js";
+import { createDataApiRouter, createOrgRouter, createPilotRequestHandler } from "./commerce/routers.js";
 
 const app = express();
 const cyberTiger = new CyberTigerDaemon();
@@ -68,6 +74,7 @@ type CyberTigerRequest = AuthenticatedRequest & {
   security?: {
     requestId: string;
     ip: string;
+    local?: boolean;
     startedAtMs: number;
     path: string;
     method: string;
@@ -90,7 +97,9 @@ const allowedOrigins = (process.env.ALLOWED_ORIGINS ?? "http://localhost:8080,ht
   .filter(Boolean);
 const allowedOriginSet = new Set(allowedOrigins);
 
-function isAllowedOrigin(origin: string | null | undefined): boolean {
+const LOOPBACK_HOSTNAMES = new Set(["localhost", "127.0.0.1", "[::1]"]);
+
+export function isAllowedOrigin(origin: string | null | undefined): boolean {
   if (!origin) {
     return true; // Allow requests without Origin header
   }
@@ -99,8 +108,12 @@ function isAllowedOrigin(origin: string | null | undefined): boolean {
     return true;
   }
   // In development, be more permissive
-  if (process.env.NODE_ENV !== "production" && origin?.includes("localhost") || origin?.includes("127.0.0.1")) {
-    return true;
+  if (process.env.NODE_ENV !== "production") {
+    try {
+      return LOOPBACK_HOSTNAMES.has(new URL(origin).hostname);
+    } catch {
+      return false;
+    }
   }
   return false;
 }
@@ -202,6 +215,7 @@ app.use("/api", (req: express.Request, res: express.Response, next: express.Next
   tracked.security = {
     requestId: decision.requestId,
     ip: decision.ip,
+    local: decision.local,
     startedAtMs: start,
     path: req.originalUrl ?? req.url,
     method: req.method,
@@ -216,6 +230,7 @@ app.use("/api", (req: express.Request, res: express.Response, next: express.Next
     cyberTiger.recordResponse({
       requestId: detail.requestId,
       ip: detail.ip,
+      local: detail.local,
       method: detail.method,
       path: detail.path,
       status: res.statusCode,
@@ -235,6 +250,55 @@ app.use("/api", (req: express.Request, res: express.Response, next: express.Next
 
   next();
 });
+// Tells the login page which sign-in methods to offer (public, no secrets).
+app.get("/api/sso-options", (_req, res) => {
+  const any = ssoGoogleEnabled || ssoGithubEnabled;
+  res.json({ google: ssoGoogleEnabled, github: ssoGithubEnabled, domain: any ? ssoAllowedDomain : null });
+});
+
+// Argo agents report with a device token, so this sits before session auth.
+const mesh = createMeshRouters();
+app.use("/api/mesh", mesh.agent);
+
+// Paid data API: organisation API keys, plans, quotas and metering. Keys, not
+// sessions, so this also sits before session auth (backend/commerce/).
+const commerce = new CommerceStore(path.resolve(process.env.COMMERCE_DB_PATH ?? "data/commerce/commerce.db"));
+app.use(
+  "/api/v1",
+  createDataApiRouter(commerce, {
+    latest: async () => {
+      const fromDb = await fetchCanonicalFromDb(5 * 60 * 1000, 1);
+      const point = fromDb && fromDb.length > 0 ? fromDb[fromDb.length - 1] : getLatestCanonical();
+      return point ? withFreshness(point) : null;
+    },
+    history: async (lookbackMs, limit) => {
+      const fromDb = await fetchCanonicalFromDb(lookbackMs, limit);
+      return fromDb ? { source: "database", points: fromDb } : { source: "memory", points: filterByLookback(getCanonicalFeed(), lookbackMs, limit) };
+    },
+    sources: () => getSourceStatus(),
+  }),
+);
+
+// Who may call what lives in one table (backend/rbac.ts). Public routes (the
+// open landing visualisation) attach a session if present; all others need one.
+app.use(
+  "/api",
+  withAsyncMiddleware((req, res, next) =>
+    isPublic(req.method, req.path) ? authenticateOptional(req, res, next) : authenticateRequest(req, res, next),
+  ),
+);
+app.use("/api", enforceApiPolicy);
+
+// Organisation self-service: keys and usage for members (policy: backend/rbac.ts).
+app.use("/api/orgs", createOrgRouter(commerce));
+
+// Public "Request a pilot" form on the landing page.
+app.post("/api/pilot-requests", createPilotRequestHandler(commerce));
+
+// Mesh & Network page: onboarding for everyone signed in, team status for operators.
+app.use("/api/mesh", mesh.ui);
+
+// RAG endpoints: status for any signed-in user, index/query for operators.
 app.get("/api/rag/status", (_req, res) => {
   res.json({
     ok: true,
@@ -259,7 +323,7 @@ app.post("/api/rag/query", async (req: express.Request, res: express.Response) =
       return;
     }
 
-    console.log(`[backend] Processing agentic RAG query: "${query}"`);
+    console.log(`[backend] Processing agentic RAG query (${query.length} chars)`);
     const result = await reasoningEngine.generateVerifiedTacticalResponse(query);
 
     res.json({
@@ -275,8 +339,6 @@ app.post("/api/rag/query", async (req: express.Request, res: express.Response) =
     });
   }
 });
-
-app.use("/api", withAsyncMiddleware(authenticateRequest));
 
 // Device lifecycle endpoints (requires operator session)
 app.use("/api/device", deviceRegistryRouter);
@@ -445,7 +507,7 @@ app.get("/api/feed/sources/status", (req: AuthenticatedRequest, res) => {
   });
 });
 
-app.get("/api/security/cybertiger/status", requireRole("operator"), (_req: AuthenticatedRequest, res) => {
+app.get("/api/security/cybertiger/status", (_req: AuthenticatedRequest, res) => {
   res.json({
     timestamp: new Date().toISOString(),
     status: cyberTiger.getStatus(),
@@ -467,16 +529,17 @@ app.get("/api/system/tpm", async (_req: AuthenticatedRequest, res) => {
   res.json({ generatedAt: new Date().toISOString(), status: overall(tpms), measures: tpms });
 });
 
-app.get("/api/security/cybertiger/events", requireRole("admin"), (req: AuthenticatedRequest, res) => {
+app.get("/api/security/cybertiger/events", (req: AuthenticatedRequest, res) => {
   const limit = Math.max(1, Math.min(Number(req.query.limit ?? 200), 2000));
+  const events = cyberTiger.getEvents(limit);
   res.json({
     timestamp: new Date().toISOString(),
-    count: limit,
-    events: cyberTiger.getEvents(limit),
+    count: events.length,
+    events,
   });
 });
 
-app.post("/api/security/cybertiger/block", requireRole("admin"), (req: AuthenticatedRequest, res) => {
+app.post("/api/security/cybertiger/block", (req: AuthenticatedRequest, res) => {
   const input = req.body as { ip?: string; reason?: string; seconds?: number };
   const ip = (input.ip ?? "").trim();
   if (!ip) {
@@ -497,7 +560,7 @@ app.post("/api/security/cybertiger/block", requireRole("admin"), (req: Authentic
   res.json({ ok: true, ip, reason, seconds: Number.isFinite(seconds) && seconds > 0 ? seconds : null });
 });
 
-app.post("/api/security/cybertiger/unblock", requireRole("admin"), (req: AuthenticatedRequest, res) => {
+app.post("/api/security/cybertiger/unblock", (req: AuthenticatedRequest, res) => {
   const input = req.body as { ip?: string };
   const ip = (input.ip ?? "").trim();
   if (!ip) {
@@ -511,7 +574,7 @@ app.post("/api/security/cybertiger/unblock", requireRole("admin"), (req: Authent
   res.json({ ok: removed, ip });
 });
 
-app.post("/api/ai/nowcast/infer", requireRole("operator"), async (req: AuthenticatedRequest, res) => {
+app.post("/api/ai/nowcast/infer", async (req: AuthenticatedRequest, res) => {
   try {
     const body = req.body as Partial<NowcastInferenceRequest>;
     const sequence = Array.isArray(body.sequence) ? body.sequence : [];
@@ -541,7 +604,7 @@ app.post("/api/ai/nowcast/infer", requireRole("operator"), async (req: Authentic
   }
 });
 
-app.post("/api/ai/nowcast/train", requireRole("admin"), async (_req, res) => {
+app.post("/api/ai/nowcast/train", async (_req, res) => {
   try {
     const result = await triggerTraining();
     if (!result.started) {
@@ -583,7 +646,7 @@ function broadcast(wss: WebSocketServer, topic: string, payload: unknown): void 
 
 async function guardSocketConnection(
   socket: AuthedSocket,
-  requiredRole: "viewer" | "operator" | "admin",
+  requiredRole: AuthRole,
   req: http.IncomingMessage,
 ): Promise<boolean> {
   const requestOrigin = typeof req.headers.origin === "string" ? req.headers.origin : null;
@@ -611,7 +674,7 @@ async function guardSocketConnection(
 }
 
 wsSpaceWeather.on("connection", async (socket: AuthedSocket, req) => {
-  const allowed = await guardSocketConnection(socket, "viewer", req);
+  const allowed = await guardSocketConnection(socket, "user", req);
   if (!allowed) return;
 
   socket.send(
@@ -620,7 +683,7 @@ wsSpaceWeather.on("connection", async (socket: AuthedSocket, req) => {
       payload: {
         stream: "space-weather",
         message: "Connected",
-        role: socket.auth?.role ?? "viewer",
+        role: socket.auth?.role ?? "user",
         timestamp: new Date().toISOString(),
       },
     }),
@@ -628,7 +691,7 @@ wsSpaceWeather.on("connection", async (socket: AuthedSocket, req) => {
 });
 
 wsMmsRecon.on("connection", async (socket: AuthedSocket, req) => {
-  const allowed = await guardSocketConnection(socket, "viewer", req);
+  const allowed = await guardSocketConnection(socket, "user", req);
   if (!allowed) return;
 
   socket.send(
@@ -637,7 +700,7 @@ wsMmsRecon.on("connection", async (socket: AuthedSocket, req) => {
       payload: {
         stream: "mms-reconnection",
         message: "Connected",
-        role: socket.auth?.role ?? "viewer",
+        role: socket.auth?.role ?? "user",
         timestamp: new Date().toISOString(),
       },
     }),

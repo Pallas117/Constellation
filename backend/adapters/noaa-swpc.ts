@@ -1,5 +1,6 @@
-import { vec } from "../physics/coordinates.js";
+import type { Vector3 } from "../physics/coordinates.js";
 import type { DataSource, SourceStatus } from "../types.js";
+import { buildL1Series, checkDensity, type DensityCheck, type L1Sample } from "./rtsw-series.js";
 
 const SOURCE: DataSource = "noaa-swpc";
 
@@ -7,18 +8,38 @@ const SOURCE: DataSource = "noaa-swpc";
 // /products/solar-wind/{plasma,mag}-1-day.json products have been retired (HTTP 404).
 const RTSW_WIND_URL = "https://services.swpc.noaa.gov/json/rtsw/rtsw_wind_1m.json";
 const RTSW_MAG_URL = "https://services.swpc.noaa.gov/json/rtsw/rtsw_mag_1m.json";
+// Running estimate of planetary Kp for the current 3-hour interval, updated each minute.
+const KP_1M_URL = "https://services.swpc.noaa.gov/json/planetary_k_index_1m.json";
 const KP_URL = "https://services.swpc.noaa.gov/products/noaa-planetary-k-index.json";
 const OVATION_URL = "https://services.swpc.noaa.gov/json/ovation_aurora_latest.json";
 
+/** The L1 history kept for propagation: the slowest plausible wind (200 km/s) takes 2.1 h. */
+const SERIES_KEEP_MS = 3 * 3_600_000;
+
+export interface KpReading {
+  value: number;
+  /** Start of the Kp interval (3-hourly) or the estimate's minute. */
+  observedAt: string | null;
+  kind: "estimated-1m" | "planetary-3h";
+}
+
 export interface NOAAReadout {
-  /** Measurement time: the older of the wind and mag samples, so freshness is never overstated. */
+  /** Measurement time: the older of the paired wind and mag samples, so freshness is never overstated. */
   timestamp: string;
   /** L1 spacecraft the sample came from (e.g. DSCOVR, ACE, IMAP, SOLAR1). */
   spacecraft: string;
   density: number;
-  velocityGse: { x: number; y: number; z: number };
-  magneticFieldGse: { x: number; y: number; z: number };
+  velocityGse: Vector3;
+  /** As published by SWPC; null when only GSE is available. */
+  velocityGsm?: Vector3 | null;
+  magneticFieldGse: Vector3;
+  magneticFieldGsm?: Vector3 | null;
   kp: number;
+  kpReading?: KpReading;
+  /** The last 3 h of validated 1-minute L1 samples, oldest first. */
+  series?: L1Sample[];
+  /** Set when another L1 spacecraft disagrees on density by more than 2x. */
+  densityCheck?: DensityCheck | null;
   ovation: unknown | null;
 }
 
@@ -57,82 +78,94 @@ export function swpcTimeToIso(value: unknown): string | null {
   return Number.isFinite(ms) ? new Date(ms).toISOString() : null;
 }
 
-/**
- * RTSW lists every L1 spacecraft per minute (newest first) and marks the operational one
- * `active`. Take the newest active record with all required fields finite; if no
- * spacecraft is active, fall back to the newest complete record from any of them.
- */
-export function pickRtsw(data: unknown, fields: string[]): { rec: Rec; time: string } | null {
-  if (!Array.isArray(data)) return null;
-  let bestActive: { rec: Rec; time: string; ms: number } | null = null;
-  let bestAny: { rec: Rec; time: string; ms: number } | null = null;
-  for (const item of data) {
-    if (!item || typeof item !== "object" || Array.isArray(item)) continue;
-    const rec = item as Rec;
-    const time = swpcTimeToIso(rec.time_tag);
-    if (!time || !fields.every((f) => finite(rec[f]) !== null)) continue;
-    const ms = Date.parse(time);
-    if (!bestAny || ms > bestAny.ms) bestAny = { rec, time, ms };
-    if (rec.active === true && (!bestActive || ms > bestActive.ms)) bestActive = { rec, time, ms };
-  }
-  const best = bestActive ?? bestAny;
-  return best ? { rec: best.rec, time: best.time } : null;
-}
-
-/** Latest planetary Kp; accepts the current object rows and the legacy array-of-arrays layout. */
-export function latestKp(data: unknown): number | null {
+/** Latest 3-hourly planetary Kp; accepts the current object rows and the legacy array-of-arrays layout. */
+export function latestKp(data: unknown): KpReading | null {
   if (!Array.isArray(data)) return null;
   for (let i = data.length - 1; i >= 0; i -= 1) {
     const row = data[i];
     const kp = Array.isArray(row) ? finite(row[1]) : row && typeof row === "object" ? finite((row as Rec).Kp) : null;
-    if (kp !== null) return Math.min(9, Math.max(0, kp));
+    const time = Array.isArray(row) ? row[0] : row && typeof row === "object" ? (row as Rec).time_tag : null;
+    if (kp !== null) return { value: Math.min(9, Math.max(0, kp)), observedAt: swpcTimeToIso(time), kind: "planetary-3h" };
   }
   return null;
 }
 
+/** Newest running estimate of Kp for the current 3-hour interval. */
+export function latestKp1m(data: unknown): KpReading | null {
+  if (!Array.isArray(data)) return null;
+  let best: { kp: number; time: string } | null = null;
+  for (const row of data) {
+    if (!row || typeof row !== "object" || Array.isArray(row)) continue;
+    const rec = row as Rec;
+    const kp = finite(rec.estimated_kp) ?? finite(rec.kp_index);
+    const time = swpcTimeToIso(rec.time_tag);
+    if (kp === null || !time) continue;
+    if (!best || Date.parse(time) > Date.parse(best.time)) best = { kp, time };
+  }
+  return best ? { value: Math.min(9, Math.max(0, best.kp)), observedAt: best.time, kind: "estimated-1m" } : null;
+}
+
+/** A completed 3-hour Kp older than this (interval start) no longer describes now. */
+const KP_3H_MAX_AGE_MS = 6 * 3_600_000;
+
+/**
+ * Kp for now: the higher of the running estimate for the current 3-hour interval and
+ * the last completed interval. The running estimate covers only the minutes so far, so
+ * it restarts near 0 each interval (0.33 at 09:39 UT on 2026-10-12, after a 06-09 UT
+ * interval of 3.33): alone it under-reads for much of every interval. The completed value
+ * alone lags a rise by up to 3 h. Taking the higher never under-reports activity.
+ */
+export function currentKp(estimate: KpReading | null, completed: KpReading | null, nowMs: number): KpReading | null {
+  const start = completed?.observedAt ? Date.parse(completed.observedAt) : NaN;
+  const recent = completed && Number.isFinite(start) && nowMs - start <= KP_3H_MAX_AGE_MS ? completed : null;
+  if (!estimate) return recent ?? completed;
+  if (!recent) return estimate;
+  return estimate.value > recent.value ? estimate : recent;
+}
+
 export async function fetchNoaaReadout(): Promise<NOAAReadout | null> {
   try {
-    const [windData, magData, kpData, ovation] = await Promise.all([
+    const [windData, magData, kp1mData, kpData, ovation] = await Promise.all([
       fetchJson(RTSW_WIND_URL),
       fetchJson(RTSW_MAG_URL),
-      fetchJson(KP_URL),
+      fetchJson(KP_1M_URL).catch(() => null),
+      fetchJson(KP_URL).catch(() => null),
       fetchJson(OVATION_URL).catch(() => null),
     ]);
 
-    const wind = pickRtsw(windData, ["proton_speed", "proton_density"]);
-    const mag = pickRtsw(magData, ["bx_gse", "by_gse", "bz_gse"]);
-    const kp = latestKp(kpData);
-    if (!wind) throw new Error("NOAA RTSW wind: no complete record");
-    if (!mag) throw new Error("NOAA RTSW mag: no complete record");
-    if (kp === null) throw new Error("NOAA Kp: no valid value");
+    const all = buildL1Series(windData, magData);
+    const latest = all.at(-1);
+    const kp = currentKp(latestKp1m(kp1mData), latestKp(kpData), all.at(-1)?.t ?? Date.now());
+    if (!latest) throw new Error("NOAA RTSW: no complete, plausible wind+mag record");
+    if (!kp) throw new Error("NOAA Kp: no valid value");
 
-    const timestamp = Date.parse(wind.time) <= Date.parse(mag.time) ? wind.time : mag.time;
-    const speed = finite(wind.rec.proton_speed)!;
-
-    // Use the measured GSE velocity when published; otherwise the bulk flow is taken as
-    // anti-sunward along X.
-    const vx = finite(wind.rec.proton_vx_gse);
-    const vy = finite(wind.rec.proton_vy_gse);
-    const vz = finite(wind.rec.proton_vz_gse);
-    const velocityGse = vx !== null && vy !== null && vz !== null ? vec(vx, vy, vz) : vec(-speed, 0, 0);
-
-    const spacecraft = String(wind.rec.source ?? mag.rec.source ?? "unknown");
+    const timestamp = new Date(latest.t).toISOString();
+    const series = all.filter((x) => x.t > latest.t - SERIES_KEEP_MS);
+    const densityCheck = checkDensity(windData, latest.spacecraft, latest.t);
     latestStatus = {
       source: SOURCE,
       lastSeen: timestamp,
-      latencySeconds: Math.max(0, (Date.now() - Date.parse(timestamp)) / 1000),
+      latencySeconds: Math.max(0, (Date.now() - latest.t) / 1000),
       healthy: true,
-      message: `NOAA SWPC RTSW OK (${spacecraft})`,
+      message: densityCheck
+        ? `NOAA SWPC RTSW OK (${latest.spacecraft}); density disagrees with ${densityCheck.reference} ` +
+          `(${densityCheck.density.toFixed(2)} vs ${densityCheck.referenceDensity.toFixed(2)} cm^-3)`
+        : `NOAA SWPC RTSW OK (${latest.spacecraft})`,
     };
 
     return {
       timestamp,
-      spacecraft,
-      density: finite(wind.rec.proton_density)!,
-      velocityGse,
-      // RTSW publishes native GSE components; no frame conversion needed.
-      magneticFieldGse: vec(finite(mag.rec.bx_gse)!, finite(mag.rec.by_gse)!, finite(mag.rec.bz_gse)!),
-      kp,
+      spacecraft: latest.spacecraft,
+      density: latest.density,
+      velocityGse: latest.velocityGse,
+      velocityGsm: latest.velocityGsm,
+      // RTSW publishes native GSE and GSM components; no local conversion is needed.
+      magneticFieldGse: latest.magneticFieldGse,
+      magneticFieldGsm: latest.magneticFieldGsm,
+      kp: kp.value,
+      kpReading: kp,
+      series,
+      densityCheck,
       // No measured Dst here: SWPC does not publish it in these products, so the nowcast
       // derives its own model estimate rather than receiving a Kp-synthesised value.
       ovation,

@@ -77,8 +77,42 @@ export interface UncertaintyEnvelope {
   sigma: number;
 }
 
+/** The solar wind reaching Earth now: L1 values one ballistic travel time ago, 5-min mean, GSM. */
+export interface ArrivingSolarWind {
+  /** Last L1 measurement in the mean. */
+  observedAt: string;
+  /** When it reached Earth. */
+  arrivedAt: string;
+  travelSeconds: number;
+  spacecraft: string;
+  samples: number;
+  bz: number;
+  by: number;
+  density: number;
+  speed: number;
+  dynamicPressure: number;
+}
+
+/** The operational spacecraft's density disagrees with another L1 spacecraft by more than 2x. */
+export interface DensityDisagreement {
+  spacecraft: string;
+  density: number;
+  reference: string;
+  referenceDensity: number;
+  ratio: number;
+  minutes: number;
+}
+
 export interface CanonicalSpaceWeatherPoint {
+  /** When the point was issued (5 s ingest tick). */
   timestamp: string;
+  /** When its L1 values were measured; freshness is judged from this. */
+  observedAt?: string | null;
+  /** L1 spacecraft the values came from. */
+  spacecraft?: string;
+  /** Null until 3 h of L1 history covers one travel time, or when the feed is lost. */
+  arriving?: ArrivingSolarWind | null;
+  densityCheck?: DensityDisagreement | null;
   source: DataSource | "fusion";
   rho: number;
   velocity: {
@@ -111,6 +145,9 @@ export interface CanonicalSpaceWeatherPoint {
     dstMethod: string;
     /** Canonical fields dst was derived from; empty when measured. */
     dstDerivedFrom: string[];
+    /** "estimated-1m" (current) or "planetary-3h" (lags up to 3 h). */
+    kpKind?: "estimated-1m" | "planetary-3h";
+    kpObservedAt?: string | null;
   };
   coupling: {
     newell: number;

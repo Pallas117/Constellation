@@ -32,14 +32,11 @@ test("Dst: strong driving deepens over hours and relaxes back after", () => {
 });
 
 test("nowcast: constant input keeps Bz's sign and value across ticks (no component-mean shift)", () => {
-  const first = computeCanonicalPoint(input("2026-10-10T04:50:00Z", -3.9), null, [], null);
-  let state = first.state;
+  const first = computeCanonicalPoint(input("2026-10-10T04:50:00Z", -3.9), [], null);
   let point = first.point;
   for (let i = 1; i <= 5; i += 1) {
     const ts = new Date(Date.parse("2026-10-10T04:50:00Z") + i * 5000).toISOString();
-    const next = computeCanonicalPoint(input(ts, -3.9), state, [], point.indices.dst, point.timestamp);
-    state = next.state;
-    point = next.point;
+    point = computeCanonicalPoint(input(ts, -3.9), [], point.indices.dst, point.timestamp).point;
   }
   // Only the slow GSE->GSM rotation over 25 s may move it; the old projection moved it by nT.
   assert.ok(Math.abs(point.magneticField.z - first.point.magneticField.z) < 0.01);
@@ -55,18 +52,18 @@ test("modelled Dst is labelled with its method and inputs; a measured Dst says s
     magneticFieldGse: vec(1, 2, -8),
     kp: 3,
   };
-  const modelled = computeCanonicalPoint(input, null, [], null).point.indices;
+  const modelled = computeCanonicalPoint(input, [], null).point.indices;
   assert.equal(modelled.dstMethod, DST_MODEL_METHOD);
   assert.deepEqual(modelled.dstDerivedFrom, ["solarWind.speed", "magneticField.z", "solarWind.dynamicPressure"]);
 
-  const measured = computeCanonicalPoint({ ...input, dst: -35 }, null, [], null).point.indices;
+  const measured = computeCanonicalPoint({ ...input, dst: -35 }, [], null).point.indices;
   assert.equal(measured.dst, -35);
   assert.equal(measured.dstMethod, "measured");
   assert.deepEqual(measured.dstDerivedFrom, []);
 
   // The provenance survives the protobuf feed.
   const { encodeCanonicalPoint, decodeCanonicalPoint } = await import("../lib/proto.js");
-  const point = computeCanonicalPoint(input, null, [], null).point;
+  const point = computeCanonicalPoint(input, [], null).point;
   const decoded = await decodeCanonicalPoint(await encodeCanonicalPoint(point));
   assert.equal(decoded.indices.dstMethod, DST_MODEL_METHOD);
   assert.deepEqual([...decoded.indices.dstDerivedFrom], modelled.dstDerivedFrom);
