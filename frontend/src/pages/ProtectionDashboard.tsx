@@ -70,7 +70,7 @@ const ProtectionDashboard = () => {
     const researchSignal = Math.round((assignmentSummary.averageScore / 2) + weatherRisk.score / 10 + underPressure * 3);
 
     return `Protecting ${protectedCount} of ${assignmentSummary.total} connected devices using SWAP tiering. Current heliophysics stress: ${weatherRisk.label}. This summary is a live signal for research into how space weather cascades through power, compute, and thermal systems, with a performance signal of ${researchSignal}.`;
-  }, [plan, assignmentSummary, weatherRisk]);
+  }, [plan, latest, assignmentSummary, weatherRisk]);
 
   return (
     <main className="min-h-screen w-full bg-background text-foreground">
