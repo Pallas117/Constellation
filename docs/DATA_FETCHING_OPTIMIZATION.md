@@ -1,330 +1,111 @@
-# Data Fetching Optimization & Caching Strategy
+# Data Fetching & Rendering Performance
 
-This document describes the comprehensive caching strategy and data fetching optimizations implemented for the space radiation web app.
+This document describes how the frontend fetches live feeds from the Gauss backend and how the 3D radiation overlay keeps large datasets cheap to draw.
 
 ## Architecture Overview
 
-The app uses a **service-based architecture** with typed clients for each data source, combined with **React Query (TanStack Query)** for intelligent caching and revalidation.
+The frontend talks only to the Gauss backend (`/api/...`, base URL from `apiBase()` in `lib/api/base-url.ts`). The backend fetches and caches the upstream sources (NOAA, NASA and others), so there are no per-source API clients in the browser.
 
-## Service Clients
+Live feeds poll through one hook, `usePolledFeed` (`hooks/usePolledFeed.ts`), built on the polling loop in `lib/api/feed-poller.ts`. There is no client-side query cache: `Cybertiger.tsx` still mounts a TanStack `QueryClientProvider`, but nothing calls `useQuery`. Each hook holds its own latest data in React state.
 
-### Directory Structure
+## Polled feeds
 
-```
-src/services/
-├── nasa-client.ts    # NASA OMNI API client
-├── erg-client.ts     # ERG/Arase CSV client
-├── cses-client.ts    # CSES CSV client
-└── index.ts          # Central exports
-```
+### Polling rules (`lib/api/feed-poller.ts`)
 
-### NASA OMNI Client (`nasa-client.ts`)
+CyberTiger counts 401/403 responses and auto-blocks the caller's IP, and the backend rate-limits with 429. The poller is built around that:
 
-**Features:**
-- Typed query options for React Query
-- Automatic cache strategy based on data age:
-  - **Static data** (>7 days old): 1 hour stale time, 24 hour cache
-  - **Recent data** (1-7 days old): 5 minute stale time, 30 minute cache
-  - **Real-time data** (<1 day old): 1 minute stale time, 5 minute cache
-- Automatic revalidation based on data freshness
+| Response | What the poller does |
+|----------|----------------------|
+| 2xx | Next poll after the base interval |
+| 401 / 403 | Stops until the session changes; retrying can't fix it |
+| 429 | Exponential backoff, honouring `Retry-After` |
+| Network error, 404, 5xx | Exponential backoff |
 
-**Usage:**
+- Backoff doubles per consecutive failure up to `maxBackoffMs` (default 5 min), with ±20% jitter so many tabs don't retry in lockstep.
+- One request at a time: a `setTimeout` chain, never `setInterval`.
+- Nothing is fetched while the tab is hidden; a poll that fell due while hidden runs when the tab is visible again.
+
+### `usePolledFeed`
+
 ```tsx
-import { NASAClient } from '@/services';
-
-// Get query options for React Query
-const queryOptions = NASAClient.getQueryOptions({
-  startDate: new Date('2024-01-01'),
-  endDate: new Date('2024-01-08'),
-  orbitType: 'LEO',
-  particleType: 'proton',
-  resolution: 'hourly',
+const feed = usePolledFeed({
+  path: session.resolved && session.signedIn ? ENDPOINT : null, // null = don't poll
+  intervalMs: 5000,
+  parse: parseResponse,
+  disabledStatus: session.resolved ? 'sign-in-required' : 'waiting',
+  restartKey: session.userKey, // a new user restarts polling
 });
-
-// Use with React Query
-const { data } = useQuery(queryOptions);
+// feed.data, feed.status ('waiting' | 'live' | 'backing-off' | 'sign-in-required'), feed.error
 ```
 
-### ERG/Arase Client (`erg-client.ts`)
+- Requests carry the better-auth session cookie (`credentials: 'include'`). No bearer tokens, and nothing goes in the URL.
+- A route the current role can't use must get `path: null`, so the UI never polls a route that would return 401/403.
+- `nextPath` and `reduce` make a feed incremental: ask only for points newer than what is held, then merge them in (see `lib/api/feed-series.ts`).
+- `useFeedSession()` gives `{ resolved, signedIn, userKey }` for building `path` and `restartKey`.
 
-**Features:**
-- Optimized for static CSV files
-- Long cache times (1 hour stale, 24 hour cache)
-- File modification time tracking for cache invalidation
-- No automatic refetching (CSV files don't change)
+### Hooks that use it
 
-**Usage:**
-```tsx
-import { ERGClient } from '@/services';
+| Hook | Endpoint | Interval | Signed out |
+|------|----------|----------|------------|
+| `useSolarWind5s` | `/api/feed/space-weather/5s` (signed in, with history) or `/api/feed/space-weather/latest` | 5 s, or 60 s for `latest` | Polls `latest` |
+| `useMMSReconnection` | `/api/feed/mms/reconnection?lookback=PT2H&limit=1440` | 5 s | `sign-in-required`, not polled |
+| `useAuroraMap` | `/api/feed/aurora/map?projection=gsm` | 5 s | `sign-in-required`, not polled |
 
-const queryOptions = ERGClient.getQueryOptions('/data/erg-arase.csv');
-const { data } = useQuery(queryOptions);
-```
+`useSolarWind5s` keeps a 24 h series (at most 17,280 points), merged by timestamp. The `backfillMs` option shortens the first request for pages that only need the current drivers. With `VITE_HELIO_WS_ENABLED=true` it also listens on `/ws/feed/space-weather` (session cookie auth) and reports `source: 'websocket'` while that is open.
 
-### CSES Client (`cses-client.ts`)
+### Fetchers not yet on `usePolledFeed`
 
-**Features:**
-- Similar to ERG client
-- Optimized for static CSV files
-- Long cache times
+These still run their own `fetch` + `setInterval` loops, so they don't get the poller's backoff or its pause while the tab is hidden:
 
-## Caching Strategy
-
-### React Query Configuration
-
-#### Static Orbital Data (CSV files)
-```tsx
-{
-  staleTime: 60 * 60 * 1000,      // 1 hour
-  gcTime: 24 * 60 * 60 * 1000,    // 24 hours
-  refetchOnWindowFocus: false,
-  refetchOnReconnect: false,
-}
-```
-
-#### Recent Historical Data (1-7 days)
-```tsx
-{
-  staleTime: 5 * 60 * 1000,        // 5 minutes
-  gcTime: 30 * 60 * 1000,         // 30 minutes
-  refetchOnWindowFocus: false,
-  refetchOnReconnect: true,
-}
-```
-
-#### Real-time Data (<1 day)
-```tsx
-{
-  staleTime: 60 * 1000,            // 1 minute
-  gcTime: 5 * 60 * 1000,          // 5 minutes
-  refetchInterval: 60000,          // Auto-refetch every minute
-  refetchOnWindowFocus: true,
-  refetchOnReconnect: true,
-}
-```
-
-### Cache Key Strategy
-
-Query keys are structured hierarchically:
-```tsx
-['nasa-omni', startDate, endDate, orbitType, particleType, energyRange, resolution]
-['erg-arase', sourceUrl, lastModified]
-['cses', sourceUrl, lastModified]
-```
-
-This ensures:
-- Separate caches for different queries
-- Automatic invalidation when parameters change
-- Efficient cache sharing for identical queries
-
-## Optimized Hook: `useRadiationDataOptimized`
-
-The optimized hook uses service clients with proper caching:
-
-```tsx
-import { useRadiationDataOptimized } from '@/hooks/useRadiationDataOptimized';
-
-const {
-  measurements,
-  filteredMeasurements,
-  timeSeries,
-  isLoading,
-  error,
-  refetch,
-} = useRadiationDataOptimized({
-  realTime: true,
-  sources: ['nasa-omni', 'erg-arase'],
-  csvSources: {
-    'erg-arase': '/data/erg-arase.csv',
-  },
-});
-```
-
-**Benefits:**
-- Automatic cache management per data source
-- Parallel fetching with `useQueries`
-- Optimized revalidation based on data type
-- Reduced redundant API calls
+- `useSpaceWeather`: `/api/feed/space-weather/latest` every 60 s (3 min on a satellite link, not at all when air-gapped; see `useConnectivity`)
+- `useAnomalyForecast`: `/api/forecast/anomaly` on its own `setInterval`
+- `useMesh`: `/api/mesh/*` every 30 s (it only asks for `/devices` when the role allows it)
+- `useSpaceObjects`: `/api/feed/space-objects` once on mount
 
 ## 3D Rendering Optimizations
 
-### Level-of-Detail (LOD) System
+The radiation overlay (`components/scene/RadiationDataOverlayLOD.tsx`) is described in full in [SCENE_RADIATION_VISUALIZATION.md](SCENE_RADIATION_VISUALIZATION.md). In short:
 
-The app implements a comprehensive LOD system to maintain 60fps:
+### Level-of-Detail (LOD)
 
-#### LOD Levels
+| LOD | Camera distance (Earth radii) | Max Points | Point Size |
+|-----|-------------------------------|------------|------------|
+| 0   | ≤ 5                           | Unlimited  | 0.10       |
+| 1   | 5–10                          | 50,000     | 0.08       |
+| 2   | 10–15                         | 20,000     | 0.06       |
+| 3   | > 15                          | 5,000      | 0.04       |
 
-| LOD | Max Points | Point Size | Use Case |
-|-----|------------|------------|----------|
-| 0   | Unlimited  | 1.0x       | Small datasets, close-up view |
-| 1   | 50,000     | 0.8x       | Medium datasets |
-| 2   | 20,000     | 0.6x       | Large datasets |
-| 3   | 5,000      | 0.4x       | Very large datasets, far view |
+- With `lodLevel` undefined (the default from `SpaceScene`), the level follows camera distance, checked every 100 ms. Frame rate is not measured.
+- Above a level's cap, points are downsampled uniformly (every n-th point).
+- `<SpaceScene enableLOD={false}>` uses the plain `RadiationDataOverlay` instead, which draws every point.
 
-#### Automatic LOD Adjustment
+### Points rendering
 
-The `useLOD` hook automatically adjusts LOD based on:
-- **FPS performance**: Increases LOD if FPS drops below target
-- **Dataset size**: Selects appropriate LOD for data volume
-- **Camera distance**: Adjusts based on view distance (in LOD component)
-
-**Usage:**
-```tsx
-import { useLOD } from '@/hooks/useLOD';
-
-const { lodLevel, maxPoints, pointSize } = useLOD({
-  datasetSize: data.length,
-  targetFPS: 60,
-  autoAdjust: true,
-});
-```
-
-### Instanced Rendering
-
-The `RadiationDataOverlayLOD` component uses:
-- **THREE.Points** for efficient instanced rendering
-- **BufferGeometry** with typed arrays for GPU-friendly data
-- **Custom shaders** for glowing effects
-- **Uniform downsampling** for LOD levels
-
-**Performance Benefits:**
-- Single draw call for all points
-- GPU-accelerated rendering
-- Minimal CPU overhead
-- Maintains 60fps with 50k+ points
+- All points are one `THREE.Points` object: a single draw call
+- `BufferGeometry` with typed arrays for position, color and size
+- Custom glow shader with additive blending
+- `ShaderWarmup` compiles the overlay's shader before the first storm toggle, so turning it on doesn't stall a frame
 
 ## Client-Side Component Markers
 
-Components that use WebGL/Three.js are marked with `'use client'` directive:
+These scene components carry a `'use client'` directive (a no-op under Vite, kept in case of a Next.js migration):
 
 - `SpaceScene.tsx`
-- `Earth.tsx`
+- `MHDWaves.tsx`
 - `RadiationDataOverlay.tsx`
 - `RadiationDataOverlayLOD.tsx`
-
-This ensures:
-- Proper code splitting
-- Client-side only rendering
-- Reduced bundle size for server-side rendering (if migrated to Next.js)
-
-## Best Practices
-
-### 1. Use Service Clients
-
-Always use service clients instead of direct API calls:
-```tsx
-// ✅ Good
-const queryOptions = NASAClient.getQueryOptions(options);
-const { data } = useQuery(queryOptions);
-
-// ❌ Bad
-const data = await fetchOMNIData(params); // No caching
-```
-
-### 2. Leverage React Query Caching
-
-Let React Query handle caching automatically:
-```tsx
-// ✅ Good - React Query manages cache
-const { data } = useQuery(queryOptions);
-
-// ❌ Bad - Manual state management
-const [data, setData] = useState([]);
-useEffect(() => { fetchData().then(setData); }, []);
-```
-
-### 3. Enable LOD for Large Datasets
-
-Always enable LOD for datasets > 10,000 points:
-```tsx
-// ✅ Good
-<SpaceScene
-  data={data}
-  enableLOD={true}
-  lodLevel={autoLOD ? undefined : 2}
-/>
-
-// ❌ Bad - No LOD optimization
-<SpaceScene data={data} />
-```
-
-### 4. Use Appropriate Cache Times
-
-Match cache times to data characteristics:
-- Static CSV files: Long cache (1+ hours)
-- Historical API data: Medium cache (5-30 minutes)
-- Real-time data: Short cache (1-5 minutes)
-
-## Performance Monitoring
-
-The app includes performance monitoring to track:
-- FPS (target: 60fps)
-- Dataset size
-- Frame time
-- Cache hit rates (via React Query DevTools)
-
-Use `usePerformanceMonitor` hook to track performance:
-```tsx
-const { metrics, warning, error } = usePerformanceMonitor({
-  datasetSize: data.length,
-  fpsThreshold: 60,
-});
-```
-
-## Migration Notes
-
-### From `useRadiationData` to `useRadiationDataOptimized`
-
-The optimized hook provides the same API with better caching:
-
-```tsx
-// Old
-const data = useRadiationData({ sources: ['nasa-omni'] });
-
-// New (same API, better caching)
-const data = useRadiationDataOptimized({ sources: ['nasa-omni'] });
-```
-
-### Enabling LOD
-
-To enable LOD optimization:
-```tsx
-<SpaceScene
-  data={radiationData}
-  enableLOD={true}  // Enable LOD
-  lodLevel={undefined}  // Auto-adjust, or set manually (0-3)
-/>
-```
+- `SpaceObjectOverlay.tsx`
 
 ## Testing
 
-### Cache Testing
+Unit tests run with `npm test`:
 
-1. Load data and verify cache hit
-2. Change query parameters and verify new fetch
-3. Wait for stale time and verify revalidation
-4. Check React Query DevTools for cache status
-
-### Performance Testing
-
-1. Load large dataset (50k+ points)
-2. Verify LOD auto-adjustment
-3. Monitor FPS (should stay ~60fps)
-4. Test with different LOD levels manually
-
-### Load Testing
-
-1. Test with multiple data sources simultaneously
-2. Verify parallel fetching works correctly
-3. Check memory usage with large caches
-4. Test cache eviction (gcTime)
+- `lib/api/feed-poller.test.ts`: response classification, `Retry-After` parsing, backoff and jitter, and the polling loop (stops on 401, backs off on 429, never overlaps requests)
+- `lib/api/feed-series.test.ts`: incremental lookback, series merging and trimming, minute buckets
+- `lib/api/base-url.test.ts`: API base URL resolution
 
 ## Future Enhancements
 
+- [ ] Move `useSpaceWeather`, `useAnomalyForecast` and `useMesh` onto `usePolledFeed`
+- [ ] Remove the unused `QueryClientProvider`, or start using it
 - [ ] Service Worker for offline caching
-- [ ] IndexedDB for persistent cache storage
-- [ ] WebSocket for real-time data streaming
-- [ ] Request deduplication
-- [ ] Prefetching for predicted queries
-- [ ] Cache compression for large datasets
-
