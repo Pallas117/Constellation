@@ -57,6 +57,13 @@ export function displayPath(filePath: unknown): string {
 
 const finite = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) ? v : 0);
 
+/** The service reports index time as epoch seconds (or, from older builds, an ISO string). */
+function isoTime(v: unknown): string | null {
+  if (typeof v === "number" && Number.isFinite(v) && v > 0) return new Date(v * 1000).toISOString();
+  if (typeof v === "string" && !Number.isNaN(Date.parse(v))) return new Date(v).toISOString();
+  return null;
+}
+
 async function call(path: string, init?: RequestInit): Promise<{ ok: true; body: unknown } | { ok: false; reason: string }> {
   const base = memoryBaseUrl();
   if (!base) return { ok: false, reason: "Memory service not configured (GAUSS_MEMORY_URL must be a loopback http URL)." };
@@ -82,7 +89,7 @@ export async function memoryStatus(): Promise<MemoryStatus> {
     chunks: finite(b.chunks),
     nodes: finite(b.nodes),
     edges: finite(b.edges),
-    lastIndexAt: typeof b.lastIndexAt === "string" ? b.lastIndexAt : null,
+    lastIndexAt: isoTime(b.lastIndexAt),
   };
 }
 

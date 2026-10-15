@@ -149,7 +149,9 @@ export function GaussRagPanel() {
         setError(json.error || 'Query failed');
       } else {
         setAnswer(json.answer || '');
-        setSources(json.sources || []);
+        // Evidence comes back per chunk; list each source file once.
+        const seen = new Set<string>();
+        setSources((json.sources || []).filter((s) => !seen.has(s.filePath) && seen.add(s.filePath)));
       }
     } catch (e) {
       setError('Could not reach Gauss RAG server');

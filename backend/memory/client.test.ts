@@ -31,7 +31,8 @@ test("status and answers pass through only verified evidence and no local paths"
     }
     res.setHeader("content-type", "application/json");
     if (req.url === "/api/rag/status") {
-      res.end(JSON.stringify({ ok: true, state: "nominal", dbPath: "/Users/someone/catalog.sqlite", documents: 3, chunks: 40, nodes: 12, edges: 30, lastIndexAt: "2026-10-15T01:00:00Z" }));
+      // Real services report lastIndexAt in epoch seconds.
+      res.end(JSON.stringify({ ok: true, state: "nominal", dbPath: "/Users/someone/catalog.sqlite", documents: 3, chunks: 40, nodes: 12, edges: 30, lastIndexAt: 1792026000 }));
       return;
     }
     let body = "";
@@ -60,7 +61,7 @@ test("status and answers pass through only verified evidence and no local paths"
   });
 
   const status = await memoryStatus();
-  assert.deepEqual(status, { available: true, state: "nominal", documents: 3, chunks: 40, nodes: 12, edges: 30, lastIndexAt: "2026-10-15T01:00:00Z" });
+  assert.deepEqual(status, { available: true, state: "nominal", documents: 3, chunks: 40, nodes: 12, edges: 30, lastIndexAt: "2026-10-15T01:00:00.000Z" });
   assert.equal(JSON.stringify(status).includes("/Users/"), false);
 
   const answer = await memoryQuery("What drives Kp?", 99);
