@@ -2,24 +2,43 @@
 
 export const ANOMALY_FORECAST_PATH = "/api/forecast/anomaly";
 
-export interface AnomalyForecast {
-  modelVersion: string;
-  generatedAt: string;
-  horizonHours: number;
-  anomalyProbability: number;
-  predictedKpMax: number;
-  warningMessage: string;
-  confidenceInterval: [number, number];
-}
+/** Mirrors backend AnomalyForecastResponse: a model forecast, or an explicit "unavailable". */
+export type AnomalyForecast =
+  | {
+      available: true;
+      modelVersion: string;
+      generatedAt: string;
+      horizonHours: number;
+      anomalyProbability: number;
+      predictedKpMax: number;
+      warningMessage: string;
+      confidenceInterval: [number, number];
+    }
+  | {
+      available: false;
+      modelVersion: null;
+      generatedAt: string;
+      horizonHours: number;
+      reason: string;
+    };
+
+type ForecastFields = Partial<Record<"available" | "reason" | keyof Extract<AnomalyForecast, { available: true }>, unknown>>;
 
 const isNumber = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v);
 
 /**
  * Checks the fields the forecast widget formats, so a malformed body counts as
- * a failed poll instead of crashing the panel.
+ * a failed poll instead of crashing the panel. With no trained model the
+ * backend answers `available: false` and a reason, which is kept as such.
  */
 export function parseAnomalyForecast(json: unknown): AnomalyForecast {
-  const f = (json ?? {}) as Partial<Record<keyof AnomalyForecast, unknown>>;
+  const f = (json ?? {}) as ForecastFields;
+  if (f.available === false) {
+    if (typeof f.reason !== "string" || typeof f.generatedAt !== "string" || !isNumber(f.horizonHours)) {
+      throw new Error("Invalid forecast format");
+    }
+    return { available: false, modelVersion: null, generatedAt: f.generatedAt, horizonHours: f.horizonHours, reason: f.reason };
+  }
   const ci = f.confidenceInterval;
   if (
     typeof f.modelVersion !== "string" ||
@@ -36,6 +55,7 @@ export function parseAnomalyForecast(json: unknown): AnomalyForecast {
     throw new Error("Invalid forecast format");
   }
   return {
+    available: true,
     modelVersion: f.modelVersion,
     generatedAt: f.generatedAt,
     horizonHours: f.horizonHours,

@@ -14,7 +14,20 @@ const forecast = {
 
 describe("parseAnomalyForecast", () => {
   it("returns the fields the widget formats", () => {
-    assert.deepEqual(parseAnomalyForecast({ ...forecast, extra: "ignored" }), forecast);
+    assert.deepEqual(parseAnomalyForecast({ ...forecast, extra: "ignored" }), { available: true, ...forecast });
+    assert.deepEqual(parseAnomalyForecast({ available: true, ...forecast }), { available: true, ...forecast });
+  });
+
+  it("keeps the backend's explicit unavailable instead of failing the poll", () => {
+    const unavailable = {
+      available: false,
+      modelVersion: null,
+      generatedAt: "2026-10-15T10:00:00.000Z",
+      horizonHours: 72,
+      reason: "No trained anomaly model is deployed.",
+    };
+    assert.deepEqual(parseAnomalyForecast({ ...unavailable, anomalyProbability: 0.5 }), unavailable);
+    assert.throws(() => parseAnomalyForecast({ ...unavailable, reason: undefined }), /Invalid forecast format/);
   });
 
   it("throws on the backend's error body and on fields the widget would crash on", () => {
