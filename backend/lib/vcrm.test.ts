@@ -70,3 +70,18 @@ test("FMEA: mitigated needs passing evidence; gaps are reported; broken evidence
   assert.equal(res[1].residualRisk, 20);
   assert.match(renderFmeaMarkdown(res), /20 \*\*HIGH\*\*/);
 });
+
+test("VCRM: an unescaped '>' in a test name does not swallow later test cases (GAU-127)", () => {
+  const xml = `<testsuites>
+    <testcase name="travel time L1 -> Earth follows the flow" time="0.1" classname="test" file="x"/>
+    <testcase name=">2 MeV electrons alert" time="0.1" classname="test" file="x"/>
+    <testcase name="after" time="0.1" classname="test" file="x"/>
+    <testcase name="fails" time="0.1" classname="test" file="x"><failure message="a > b">x</failure></testcase>
+  </testsuites>`;
+  const o = parseJunit(xml);
+  assert.equal(o.get("travel time L1 -> Earth follows the flow"), "pass");
+  assert.equal(o.get(">2 MeV electrons alert"), "pass");
+  assert.equal(o.get("after"), "pass");
+  assert.equal(o.get("fails"), "fail");
+  assert.equal(o.size, 4);
+});

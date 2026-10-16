@@ -7,6 +7,9 @@ Whitespace-separated words; fill values (999.9, 9999., 99.99, 99) become NaN.
 from __future__ import annotations
 
 import hashlib
+import ssl
+import subprocess
+import urllib.error
 import urllib.request
 from pathlib import Path
 from typing import Dict, Iterable
@@ -35,10 +38,28 @@ def ensure_year(year: int, data_dir: Path = DATA_DIR) -> Path:
   path = data_dir / f"omni2_{year}.dat"
   if not path.exists() or path.stat().st_size == 0:
     tmp = path.with_suffix(".part")
-    with urllib.request.urlopen(BASE_URL.format(year=year), timeout=120) as resp, open(tmp, "wb") as out:
-      out.write(resp.read())
+    download(BASE_URL.format(year=year), tmp)
     tmp.replace(path)
   return path
+
+
+def _tls_context() -> ssl.SSLContext:
+  """Verified TLS. python.org builds ship without CA certs, so prefer certifi's bundle when present."""
+  try:
+    import certifi
+    return ssl.create_default_context(cafile=certifi.where())
+  except ImportError:
+    return ssl.create_default_context()
+
+
+def download(url: str, dest: Path) -> None:
+  """Fetch with certificate verification always on (GAU-127): urllib with a CA bundle, else curl,
+  which verifies against the macOS system trust store. Never disables verification."""
+  try:
+    with urllib.request.urlopen(url, timeout=120, context=_tls_context()) as resp, open(dest, "wb") as out:
+      out.write(resp.read())
+  except (urllib.error.URLError, ssl.SSLError):
+    subprocess.run(["curl", "-fsSL", "--max-time", "180", "-o", str(dest), url], check=True)
 
 
 def sha256(path: Path) -> str:

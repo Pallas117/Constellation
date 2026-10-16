@@ -6,10 +6,13 @@ import { Link, useNavigate, useLocation } from "react-router-dom";
 import { Github, LogIn } from "lucide-react";
 import { apiBase } from "@/lib/api/base-url";
 import { safeRedirectPath } from "@/lib/safe-redirect";
+import { useDocumentTitle } from "@/hooks/useDocumentTitle";
 
 const SSO_FAILED_MESSAGE = "Single sign-on failed. Use your Lightbound Google Workspace account.";
 
 export default function Login() {
+  useDocumentTitle("Sign in");
+
   const location = useLocation();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -163,7 +166,7 @@ export default function Login() {
 
         <Link
           to="/"
-          className="mt-6 block text-center text-sm text-muted-foreground transition-colors hover:text-foreground"
+          className="mt-4 block py-2 text-center text-sm text-muted-foreground transition-colors hover:text-foreground"
         >
           ← Back to the live landing page
         </Link>

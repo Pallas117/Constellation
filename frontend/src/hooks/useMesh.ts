@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { getAuthHeaders } from "@/lib/api/auth";
 import { apiBase } from "@/lib/api/base-url";
+import { describeHttpFailure, HttpFailure } from "@/lib/api/http-error";
 
 const POLL_INTERVAL_MS = 30_000;
 
@@ -70,7 +71,7 @@ async function loadMesh(): Promise<(prev: MeshState) => MeshState> {
   let info;
   try {
     const onboarding = await api("/onboarding");
-    if (!onboarding.ok) throw new Error(`Mesh HTTP ${onboarding.status}`);
+    if (!onboarding.ok) throw new HttpFailure("Couldn't load the mesh", onboarding.status);
     info = await onboarding.json();
   } catch (err) {
     const error = errorMessage(err);
@@ -89,7 +90,7 @@ async function loadMesh(): Promise<(prev: MeshState) => MeshState> {
   if (info.canEnroll !== true) return (prev) => ({ ...prev, ...next });
   try {
     const res = await api("/devices");
-    if (!res.ok) throw new Error(`Mesh HTTP ${res.status}`);
+    if (!res.ok) throw new HttpFailure("Couldn't load your devices", res.status);
     const devices: MeshDevice[] = (await res.json()).devices;
     return (prev) => ({ ...prev, ...next, devices });
   } catch (err) {
@@ -124,7 +125,7 @@ export function useMesh() {
     async (name: string): Promise<string> => {
       const res = await api("/devices", { method: "POST", body: JSON.stringify({ name }) });
       const body = await res.json();
-      if (!res.ok) throw new Error(body.error ?? `HTTP ${res.status}`);
+      if (!res.ok) throw new Error(body.error ?? describeHttpFailure("Couldn't enrol the device", res.status));
       void refresh();
       return body.token as string;
     },

@@ -91,4 +91,10 @@
     @apply font-mono text-[11px] font-bold uppercase text-signal;
     letter-spacing: 0.12em;
   }
+
+  /* Readout label: JetBrains Mono, muted, as in the HUD */
+  .stat-label {
+    @apply font-mono text-[10px] font-bold uppercase leading-none text-muted-foreground;
+    letter-spacing: 0.14em;
+  }
 }

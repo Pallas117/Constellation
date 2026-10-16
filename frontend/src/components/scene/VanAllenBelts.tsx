@@ -1,6 +1,18 @@
-import { useEffect, useRef, useMemo } from 'react';
+import { useEffect, useMemo } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
+import {
+  beltParticles,
+  beltShells,
+  DAYSIDE_SQUEEZE,
+  ELECTRON_BELT,
+  ELECTRON_PARTICLES,
+  PARTICLE_PERIOD_S,
+  PROTON_BELT,
+  PROTON_PARTICLES,
+  type BeltSpec,
+  type ParticleSpec,
+} from '@/lib/physics/belts';
 
 interface VanAllenBeltsProps {
   visible: boolean;
@@ -9,289 +21,200 @@ interface VanAllenBeltsProps {
   highFidelity?: boolean;
 }
 
-/**
- * Creates L-shell geometry following dipole magnetic field equation:
- * r = L * cos²(λ) where λ is magnetic latitude
- * 
- * This creates realistic crescent-shaped radiation belt cross-sections
- * that bulge at the equator and pinch toward the poles.
- */
-function createLShellGeometry(
-  innerL: number,
-  outerL: number,
-  latitudeRange: number,
-  longitudeSegments: number,
-  latitudeSegments: number,
-  compression: number
-): THREE.BufferGeometry {
+interface BeltLook {
+  /** Brand colour at quiet times, and what it heats to in a storm (sRGB, written as-is). */
+  base: [number, number, number];
+  hot: [number, number, number];
+  opacity: number;
+  /** Gradient-curvature drift: protons drift west (-1), electrons east (+1). */
+  drift: number;
+}
+
+// Shells are the faint ambient glow; the particles carry the colour.
+const PROTONS: BeltLook = { base: [0.906, 0.694, 0.29], hot: [0.761, 0.333, 0.165], opacity: 0.08, drift: -1 }; // #E7B14A → #C2552A
+const ELECTRONS: BeltLook = { base: [0.8, 1.0, 0.0], hot: [0.92, 1.0, 0.45], opacity: 0.025, drift: 1 }; // #CCFF00, whitening
+/** Shell drift pattern speed: whole turns per PARTICLE_PERIOD_S so the wrapped clock never jumps. */
+const SHELL_DRIFT = ((Math.PI * 2) * 38) / PARTICLE_PERIOD_S;
+
+function shellGeometry(spec: BeltSpec, highFidelity: boolean, compression: number): THREE.BufferGeometry {
+  const mesh = beltShells(spec, highFidelity ? 128 : 48, highFidelity ? 64 : 24, compression);
   const geometry = new THREE.BufferGeometry();
-  const vertices: number[] = [];
-  const uvs: number[] = [];
-  const indices: number[] = [];
-
-  // Generate vertices following L-shell parametric equations
-  for (let i = 0; i <= latitudeSegments; i++) {
-    // Magnetic latitude from -latitudeRange to +latitudeRange
-    const latFraction = i / latitudeSegments;
-    const lambda = (latFraction - 0.5) * 2 * latitudeRange * (Math.PI / 180);
-    const cosLambda = Math.cos(lambda);
-    const cos2Lambda = cosLambda * cosLambda;
-
-    for (let j = 0; j <= longitudeSegments; j++) {
-      const lonFraction = j / longitudeSegments;
-      const phi = lonFraction * Math.PI * 2;
-
-      // Interpolate between inner and outer L-shells for belt thickness
-      // Use middle of the belt for the main surface
-      const L = (innerL + outerL) / 2;
-      const thickness = (outerL - innerL) / 2;
-
-      // Dipole field: r = L * cos²(λ)
-      let r = L * cos2Lambda;
-
-      // Apply day/night compression asymmetry
-      // Sunward side (positive X) is compressed, nightside is stretched
-      const sunwardFactor = Math.cos(phi);
-      const compressionEffect = 1 - (compression - 1) * 0.15 * sunwardFactor;
-      r *= compressionEffect;
-
-      // Convert to Cartesian coordinates
-      // In dipole coordinates: x = r*cos(λ)*cos(φ), y = r*sin(λ), z = r*cos(λ)*sin(φ)
-      const x = r * cosLambda * Math.cos(phi);
-      const y = r * Math.sin(lambda);
-      const z = r * cosLambda * Math.sin(phi);
-
-      vertices.push(x, y, z);
-      uvs.push(lonFraction, latFraction);
-    }
-  }
-
-  // Generate indices for triangle strip
-  for (let i = 0; i < latitudeSegments; i++) {
-    for (let j = 0; j < longitudeSegments; j++) {
-      const current = i * (longitudeSegments + 1) + j;
-      const next = current + longitudeSegments + 1;
-
-      indices.push(current, next, current + 1);
-      indices.push(current + 1, next, next + 1);
-    }
-  }
-
-  geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
-  geometry.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
-  geometry.setIndex(indices);
+  geometry.setAttribute('position', new THREE.BufferAttribute(mesh.positions, 3));
+  geometry.setAttribute('aWeight', new THREE.BufferAttribute(mesh.weights, 1));
+  geometry.setIndex(new THREE.BufferAttribute(mesh.indices, 1));
   geometry.computeVertexNormals();
-
   return geometry;
 }
 
+function beltMaterial(look: BeltLook): THREE.ShaderMaterial {
+  return new THREE.ShaderMaterial({
+    uniforms: {
+      uTime: { value: 0 },
+      uIntensity: { value: 0.8 },
+      uOpacity: { value: look.opacity },
+      uDrift: { value: look.drift },
+      uBase: { value: new THREE.Vector3(...look.base) },
+      uHot: { value: new THREE.Vector3(...look.hot) },
+    },
+    vertexShader: `
+      attribute float aWeight;
+      varying float vWeight;
+      varying float vLon;
+      varying vec3 vNormalV;
+      varying vec3 vViewV;
+      void main() {
+        vWeight = aWeight;
+        vLon = atan(-position.z, position.x); // east-positive longitude (x sunward, y north)
+        vec4 mv = modelViewMatrix * vec4(position, 1.0);
+        vViewV = -mv.xyz;
+        vNormalV = normalMatrix * normal;
+        gl_Position = projectionMatrix * mv;
+      }
+    `,
+    fragmentShader: `
+      uniform float uTime;
+      uniform float uIntensity;
+      uniform float uOpacity;
+      uniform float uDrift;
+      uniform vec3 uBase;
+      uniform vec3 uHot;
+      varying float vWeight;
+      varying float vLon;
+      varying vec3 vNormalV;
+      varying vec3 vViewV;
+      void main() {
+        // Optically thin glow: brightness follows the path length through each shell.
+        float facing = abs(dot(normalize(vNormalV), normalize(vViewV)));
+        float path = min(1.0 / max(facing, 0.3), 3.0) / 3.0;
+        // Slow azimuthal drift, opposite for protons and electrons.
+        float drift = 0.88 + 0.12 * sin(vLon * 5.0 - uDrift * uTime * ${SHELL_DRIFT.toFixed(6)});
+        vec3 color = mix(uBase, uHot, smoothstep(0.85, 1.0, uIntensity));
+        float alpha = vWeight * path * drift * uOpacity * (0.6 + 0.4 * uIntensity);
+        gl_FragColor = vec4(color, alpha);
+      }
+    `,
+    transparent: true,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+    side: THREE.DoubleSide,
+  });
+}
+
+function particleGeometry(spec: BeltSpec, motion: ParticleSpec, count: number, seed: number): THREE.BufferGeometry {
+  const p = beltParticles(spec, motion, count, seed);
+  const geometry = new THREE.BufferGeometry();
+  // Positions are computed in the shader; this only sets the draw count.
+  geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(count * 3), 3));
+  geometry.setAttribute('aL', new THREE.BufferAttribute(p.l, 1));
+  geometry.setAttribute('aMirror', new THREE.BufferAttribute(p.mirror, 1));
+  geometry.setAttribute('aPhase', new THREE.BufferAttribute(p.phase, 1));
+  geometry.setAttribute('aLon', new THREE.BufferAttribute(p.lon, 1));
+  geometry.setAttribute('aBounce', new THREE.BufferAttribute(p.bounceRate, 1));
+  geometry.setAttribute('aDrift', new THREE.BufferAttribute(p.driftRate, 1));
+  return geometry;
+}
+
+/** Trapped particles bouncing between mirror points and drifting in longitude (lib/physics/belts particlePosition, on the GPU). */
+function particleMaterial(color: [number, number, number], opacity: number): THREE.ShaderMaterial {
+  return new THREE.ShaderMaterial({
+    uniforms: {
+      uTime: { value: 0 },
+      uSqueeze: { value: 0 },
+      uScale: { value: 450 },
+      uOpacity: { value: opacity },
+      uColor: { value: new THREE.Vector3(...color) },
+    },
+    vertexShader: `
+      attribute float aL;
+      attribute float aMirror;
+      attribute float aPhase;
+      attribute float aLon;
+      attribute float aBounce;
+      attribute float aDrift;
+      uniform float uTime;
+      uniform float uSqueeze;
+      uniform float uScale;
+      void main() {
+        float lambda = aMirror * sin(aPhase + aBounce * uTime);
+        float lon = aLon + aDrift * uTime;
+        float c = cos(lambda);
+        float r = aL * c * c * (1.0 - uSqueeze * (aL / 6.0) * cos(lon));
+        vec4 mv = modelViewMatrix * vec4(r * c * cos(lon), r * sin(lambda), -r * c * sin(lon), 1.0);
+        gl_Position = projectionMatrix * mv;
+        gl_PointSize = clamp(0.1 * uScale / -mv.z, 2.0, 6.0);
+      }
+    `,
+    fragmentShader: `
+      uniform vec3 uColor;
+      uniform float uOpacity;
+      void main() {
+        float d = length(gl_PointCoord - 0.5);
+        gl_FragColor = vec4(uColor, smoothstep(0.5, 0.1, d) * uOpacity);
+      }
+    `,
+    transparent: true,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+  });
+}
+
 /**
- * Van Allen Belts - Optimized NASA SVS Style with L-Shell Geometry
+ * Van Allen belts: nested dipole L-shells weighted by trapped-particle density
+ * (see lib/physics/belts) as a faint glow, with the trapped particles on top:
+ * amber protons inside drifting west, lime electrons outside drifting east (the Gauss mark).
  */
 export const VanAllenBelts = ({ visible, intensity, compression = 1, highFidelity = false }: VanAllenBeltsProps) => {
-  const innerBeltRef = useRef<THREE.Mesh<THREE.BufferGeometry, THREE.ShaderMaterial>>(null);
-  const outerBeltRef = useRef<THREE.Mesh<THREE.BufferGeometry, THREE.ShaderMaterial>>(null);
+  // Compression follows the live pressure; rebuild only for visible changes.
+  const squeeze = Math.round(compression * 100) / 100;
+  const protonGeometry = useMemo(() => shellGeometry(PROTON_BELT, highFidelity, squeeze), [highFidelity, squeeze]);
+  const electronGeometry = useMemo(() => shellGeometry(ELECTRON_BELT, highFidelity, squeeze), [highFidelity, squeeze]);
+  useEffect(() => () => protonGeometry.dispose(), [protonGeometry]);
+  useEffect(() => () => electronGeometry.dispose(), [electronGeometry]);
 
-  // Inner belt geometry - reduced segments for performance (32x16 instead of 64x32)
-  const innerBeltGeometry = useMemo(() => {
-    const lonSeg = highFidelity ? 128 : 32;
-    const latSeg = highFidelity ? 64 : 16;
-    return createLShellGeometry(1.4, 2.4, 50, lonSeg, latSeg, compression);
-  }, [compression, highFidelity]);
+  const protonCount = highFidelity ? 1800 : 900;
+  const electronCount = highFidelity ? 3600 : 1800;
+  const protonDots = useMemo(() => particleGeometry(PROTON_BELT, PROTON_PARTICLES, protonCount, 11), [protonCount]);
+  const electronDots = useMemo(() => particleGeometry(ELECTRON_BELT, ELECTRON_PARTICLES, electronCount, 23), [electronCount]);
+  useEffect(() => () => protonDots.dispose(), [protonDots]);
+  useEffect(() => () => electronDots.dispose(), [electronDots]);
+  const protonDotMaterial = useMemo(() => particleMaterial(PROTONS.base, 0.9), []);
+  const electronDotMaterial = useMemo(() => particleMaterial(ELECTRONS.base, 0.8), []);
 
-  // Outer belt geometry - reduced segments for performance
-  const outerBeltGeometry = useMemo(() => {
-    const lonSeg = highFidelity ? 128 : 32;
-    const latSeg = highFidelity ? 64 : 16;
-    return createLShellGeometry(3.2, 5.0, 60, lonSeg, latSeg, compression);
-  }, [compression, highFidelity]);
-  // Compression follows the live pressure, so geometries are replaced often: free the old ones.
-  useEffect(() => () => innerBeltGeometry.dispose(), [innerBeltGeometry]);
-  useEffect(() => () => outerBeltGeometry.dispose(), [outerBeltGeometry]);
-
-  // Inner belt material (proton belt)
-  const innerBeltMaterial = useMemo(() => {
-    return new THREE.ShaderMaterial({
-      uniforms: {
-        uTime: { value: 0 },
-        uIntensity: { value: 0 }, // set every frame
-      },
-      vertexShader: `
-        varying vec2 vUv;
-        varying vec3 vPosition;
-        varying float vRadialDist;
-        
-        void main() {
-          vUv = uv;
-          vPosition = position;
-          // Distance from Earth center for intensity falloff
-          vRadialDist = length(position);
-          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-        }
-      `,
-      fragmentShader: `
-        uniform float uTime;
-        uniform float uIntensity;
-        varying vec2 vUv;
-        varying vec3 vPosition;
-        varying float vRadialDist;
-        
-        void main() {
-          // Brand: inner-belt protons are amber, heating to Sun under high flux
-          vec3 lowColor = vec3(0.45, 0.30, 0.10);   // dim amber
-          vec3 midColor = vec3(0.906, 0.694, 0.290); // #E7B14A amber
-          vec3 highColor = vec3(0.761, 0.333, 0.165); // #C2552A sun
-          
-          // Color based on intensity
-          vec3 color = mix(
-            lowColor,
-            mix(midColor, highColor, smoothstep(0.5, 1.0, uIntensity)),
-            smoothstep(0.0, 0.5, uIntensity)
-          );
-          
-          // Latitude-based intensity (stronger at equator)
-          float latitudeFactor = abs(vUv.y - 0.5) * 2.0;
-          float equatorBand = 1.0 - smoothstep(0.0, 0.8, latitudeFactor);
-          equatorBand = pow(equatorBand, 0.6);
-          
-          // Radial falloff within the belt
-          float normalizedR = (vRadialDist - 1.4) / (2.4 - 1.4);
-          float radialBand = sin(normalizedR * 3.14159);
-          radialBand = pow(radialBand, 0.5);
-          
-          // Subtle flow animation along longitude
-          float flow = sin(vUv.x * 20.0 - uTime * 2.0) * 0.1 + 0.9;
-          
-          // Pulsing based on intensity
-          float pulse = 0.9 + 0.1 * sin(uTime * 1.5);
-          
-          float alpha = equatorBand * radialBand * flow * pulse * (0.5 + uIntensity * 0.5);
-          
-          gl_FragColor = vec4(color * (0.8 + equatorBand * 0.4), alpha * 0.45);
-        }
-      `,
-      transparent: true,
-      blending: THREE.AdditiveBlending,
-      depthWrite: false,
-      side: THREE.DoubleSide,
-    });
-  }, []);
-
-  // Outer belt material (electron belt)
-  const outerBeltMaterial = useMemo(() => {
-    return new THREE.ShaderMaterial({
-      uniforms: {
-        uTime: { value: 0 },
-        uIntensity: { value: 0 }, // set every frame
-      },
-      vertexShader: `
-        varying vec2 vUv;
-        varying vec3 vPosition;
-        varying float vRadialDist;
-        
-        void main() {
-          vUv = uv;
-          vPosition = position;
-          vRadialDist = length(position);
-          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-        }
-      `,
-      fragmentShader: `
-        uniform float uTime;
-        uniform float uIntensity;
-        varying vec2 vUv;
-        varying vec3 vPosition;
-        varying float vRadialDist;
-        
-        void main() {
-          // Brand: outer-belt electrons are signal lime, whitening under high flux
-          vec3 lowColor = vec3(0.35, 0.45, 0.0);    // dim lime
-          vec3 midColor = vec3(0.8, 1.0, 0.0);      // #CCFF00 signal lime
-          vec3 highColor = vec3(0.92, 1.0, 0.45);    // hot lime, stays on-signal
-          
-          vec3 color = mix(
-            lowColor,
-            mix(midColor, highColor, smoothstep(0.5, 1.0, uIntensity)),
-            smoothstep(0.0, 0.5, uIntensity)
-          );
-          
-          // Latitude-based intensity with wider spread for outer belt
-          float latitudeFactor = abs(vUv.y - 0.5) * 2.0;
-          float equatorBand = 1.0 - smoothstep(0.0, 0.85, latitudeFactor);
-          equatorBand = pow(equatorBand, 0.5);
-          
-          // Radial distribution - outer belt is more diffuse
-          float normalizedR = (vRadialDist - 3.2) / (5.0 - 3.2);
-          float radialBand = sin(normalizedR * 3.14159);
-          radialBand = pow(radialBand, 0.4);
-          
-          // Different flow speed for outer belt
-          float flow = sin(vUv.x * 15.0 - uTime * 1.5) * 0.15 + 0.85;
-          
-          float pulse = 0.85 + 0.15 * sin(uTime * 1.2 + 1.0);
-          
-          float alpha = equatorBand * radialBand * flow * pulse * (0.4 + uIntensity * 0.6);
-          
-          gl_FragColor = vec4(color * (0.7 + equatorBand * 0.5), alpha * 0.35);
-        }
-      `,
-      transparent: true,
-      blending: THREE.AdditiveBlending,
-      depthWrite: false,
-      side: THREE.DoubleSide,
-    });
-  }, []);
-
+  const protonMaterial = useMemo(() => beltMaterial(PROTONS), []);
+  const electronMaterial = useMemo(() => beltMaterial(ELECTRONS), []);
   useEffect(
     () => () => {
-      innerBeltMaterial.dispose();
-      outerBeltMaterial.dispose();
+      protonMaterial.dispose();
+      electronMaterial.dispose();
+      protonDotMaterial.dispose();
+      electronDotMaterial.dispose();
     },
-    [innerBeltMaterial, outerBeltMaterial],
+    [protonMaterial, electronMaterial, protonDotMaterial, electronDotMaterial],
   );
 
   useFrame((state) => {
-    const time = state.clock.elapsedTime;
-    const clampedIntensity = 0.3 + intensity * 0.7;
-    
-    for (const belt of [innerBeltRef.current, outerBeltRef.current]) {
-      if (!belt) continue;
-      belt.material.uniforms.uTime.value = time;
-      belt.material.uniforms.uIntensity.value = clampedIntensity;
+    if (!visible) return;
+    const time = state.clock.elapsedTime % PARTICLE_PERIOD_S;
+    const level = 0.3 + intensity * 0.7;
+    for (const material of [protonMaterial, electronMaterial]) {
+      material.uniforms.uTime.value = time;
+      material.uniforms.uIntensity.value = level;
+    }
+    const scale = (state.size.height * state.viewport.dpr) / 2;
+    for (const material of [protonDotMaterial, electronDotMaterial]) {
+      material.uniforms.uTime.value = time;
+      material.uniforms.uSqueeze.value = (1 - Math.min(1, squeeze)) * DAYSIDE_SQUEEZE;
+      material.uniforms.uScale.value = scale;
     }
   });
 
-  if (!visible) return null;
-
+  // Stays mounted when hidden, so its shaders are warmed up with the rest and a toggle never compiles.
   return (
-    <group>
-      {/* Inner Belt - Proton belt following L-shell geometry */}
-      <mesh 
-        ref={innerBeltRef} 
-        geometry={innerBeltGeometry}
-        material={innerBeltMaterial}
-        frustumCulled
-      />
-      
-      {/* Outer Belt - Electron belt following L-shell geometry */}
-      <mesh 
-        ref={outerBeltRef} 
-        geometry={outerBeltGeometry}
-        material={outerBeltMaterial}
-        frustumCulled
-      />
-      
-      {/* Slot region glow - reduced segments */}
-      <mesh>
-        <torusGeometry args={[2.8, 0.12, 8, 32]} />
-        <meshBasicMaterial 
-          color="#001133" 
-          transparent 
-          opacity={0.1} 
-          blending={THREE.AdditiveBlending}
-          depthWrite={false}
-        />
-      </mesh>
+    <group visible={visible}>
+      <mesh geometry={protonGeometry} material={protonMaterial} />
+      <mesh geometry={electronGeometry} material={electronMaterial} />
+      <points geometry={protonDots} material={protonDotMaterial} frustumCulled={false} />
+      <points geometry={electronDots} material={electronDotMaterial} frustumCulled={false} />
     </group>
   );
 };
