@@ -20,6 +20,15 @@ type RagQueryResponse = {
 const RAG_BASE =
   import.meta.env.VITE_GAUSS_RAG_URL || apiBase();
 
+async function loadRagStatus(): Promise<RagStatus> {
+  try {
+    const res = await fetch(`${RAG_BASE}/api/rag/status`);
+    return (await res.json()) as RagStatus;
+  } catch {
+    return { ok: false, error: 'Gauss RAG server not reachable' };
+  }
+}
+
 const DEFAULT_INDEX_DIR =
   import.meta.env.VITE_GAUSS_RAG_INDEX_DIR || '';
 
@@ -123,17 +132,17 @@ export function GaussRagPanel() {
   }, []);
 
   async function fetchStatus() {
-    try {
-      const res = await fetch(`${RAG_BASE}/api/rag/status`);
-      const json = (await res.json()) as RagStatus;
-      setStatus(json);
-    } catch (e) {
-      setStatus({ ok: false, error: 'Gauss RAG server not reachable' });
-    }
+    setStatus(await loadRagStatus());
   }
 
   useEffect(() => {
-    void fetchStatus();
+    let cancelled = false;
+    void loadRagStatus().then((next) => {
+      if (!cancelled) setStatus(next);
+    });
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   async function handleIndex() {
