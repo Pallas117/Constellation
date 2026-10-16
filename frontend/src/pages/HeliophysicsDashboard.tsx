@@ -4,9 +4,11 @@ import { ChevronDown, Info, Layers, PanelRight, RotateCcw, Video, Zap } from "lu
 import { LayerToggles } from "@/components/ui/LayerToggles";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
-import { SpaceScene, SCENE_VIEWS, type SceneView } from "@/components/scene/SpaceScene";
+import { SpaceScene } from "@/components/scene/SpaceScene";
+import { SCENE_VIEWS, type SceneView } from "@/components/scene/scene-views";
 import type { MagnetosphereModelInfo } from "@/components/scene/Magnetosphere";
-import { FeedStatus, HudButton, HudCluster, HudStat, SceneKey, fmt, signed, type Tone } from "@/components/hud/Hud";
+import { FeedStatus, HudButton, HudCluster, HudStat, SceneKey, type Tone } from "@/components/hud/Hud";
+import { fmt, signed } from "@/components/hud/format";
 import { GEO_RE, SceneHoverTip } from "@/components/hud/SceneHoverTip";
 import { AuroraCastMap } from "@/components/heliophysics/AuroraCastMap";
 import { SolarWindSpeedChart } from "@/components/heliophysics/SolarWindSpeedChart";

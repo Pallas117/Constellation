@@ -18,6 +18,7 @@ import { usePrefersReducedMotion } from '@/hooks/usePrefersReducedMotion';
 import { useTracedMagnetosphere } from './useTracedMagnetosphere';
 import { hoverHandlers, setSceneHover, type HoverTarget } from './scene-hover';
 import { seeded } from './seeded';
+import { GLOW_POINT_FRAG, GLOW_POINT_VERT, makeTracerMaterial } from './point-materials';
 
 /** 1 = normal animation, 0 = frozen (prefers-reduced-motion). */
 const MotionScale = createContext(1);
@@ -268,40 +269,6 @@ const FieldLineTracers = memo(function FieldLineTracers({ data, count = 520 }: {
 
   return <points ref={pointsRef} geometry={geometry} material={material} frustumCulled={false} />;
 });
-
-/** Tracer particle material. Exported so the scene can compile it before the first trace. */
-export function makeTracerMaterial(): THREE.ShaderMaterial {
-  return new THREE.ShaderMaterial({
-    vertexShader: GLOW_POINT_VERT,
-    fragmentShader: GLOW_POINT_FRAG,
-    transparent: true,
-    depthWrite: false,
-    blending: THREE.AdditiveBlending,
-  });
-}
-
-const GLOW_POINT_VERT = /* glsl */ `
-  attribute float size;
-  attribute vec3 color;
-  varying vec3 vColor;
-  void main() {
-    vColor = color;
-    vec4 mv = modelViewMatrix * vec4(position, 1.0);
-    gl_PointSize = size * (260.0 / -mv.z);
-    gl_Position = projectionMatrix * mv;
-  }
-`;
-
-const GLOW_POINT_FRAG = /* glsl */ `
-  varying vec3 vColor;
-  void main() {
-    float d = length(gl_PointCoord - 0.5);
-    if (d > 0.5) discard;
-    float core = exp(-d * d * 40.0);
-    float halo = exp(-d * d * 10.0) * 0.45;
-    gl_FragColor = vec4(vColor * (core + halo), core + halo);
-  }
-`;
 
 /* ------------------------------------------------------------------------- */
 /* Boundaries                                                                */
