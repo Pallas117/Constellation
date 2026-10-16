@@ -5,7 +5,7 @@
  * Note: Client-side hook
  */
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useCallback } from 'react';
 import { usePerformanceMonitor } from './usePerformanceMonitor';
 
 export interface UseLODOptions {
@@ -45,7 +45,7 @@ export function useLOD(options: UseLODOptions = {}): UseLODReturn {
     targetFPS = 60,
   } = options;
 
-  const [lodLevel, setLODLevelState] = useState(initialLOD);
+  const [manualLOD, setLODLevelState] = useState(initialLOD);
 
   // Monitor performance
   const { metrics } = usePerformanceMonitor({
@@ -54,40 +54,15 @@ export function useLOD(options: UseLODOptions = {}): UseLODReturn {
     enabled: autoAdjust,
   });
 
-  // Auto-adjust LOD based on performance
-  useEffect(() => {
-    if (!autoAdjust) return;
-
-    let newLOD = lodLevel;
-
-    // If FPS is below target, increase LOD (reduce detail)
-    if (metrics.fps < targetFPS - 5) {
-      newLOD = Math.min(lodLevel + 1, LOD_LEVELS.length - 1);
-    }
-    // If FPS is well above target and dataset is small, decrease LOD (increase detail)
-    else if (metrics.fps > targetFPS + 10 && datasetSize < LOD_LEVELS[lodLevel].maxPoints) {
-      newLOD = Math.max(lodLevel - 1, 0);
-    }
-
-    if (newLOD !== lodLevel) {
-      setLODLevelState(newLOD);
-    }
-  }, [autoAdjust, metrics.fps, targetFPS, datasetSize, lodLevel]);
-
-  // Auto-adjust based on dataset size
-  useEffect(() => {
-    if (!autoAdjust) return;
-
-    // Find appropriate LOD for dataset size
-    for (let i = LOD_LEVELS.length - 1; i >= 0; i--) {
-      if (datasetSize <= LOD_LEVELS[i].maxPoints) {
-        if (i !== lodLevel) {
-          setLODLevelState(i);
-        }
-        break;
-      }
-    }
-  }, [autoAdjust, datasetSize, lodLevel]);
+  // Auto mode derives the level each render: the coarsest level that still holds the whole
+  // dataset, one level coarser while FPS is below target. (Two effects used to set it; the
+  // dataset effect undid every FPS step, so a slow scene re-rendered in a loop.)
+  let lodLevel = manualLOD;
+  if (autoAdjust) {
+    lodLevel = LOD_LEVELS.length - 1;
+    while (lodLevel > 0 && datasetSize > LOD_LEVELS[lodLevel].maxPoints) lodLevel--;
+    if (metrics.fps < targetFPS - 5) lodLevel = Math.min(lodLevel + 1, LOD_LEVELS.length - 1);
+  }
 
   const setLODLevel = useCallback((level: number) => {
     const clamped = Math.max(0, Math.min(level, LOD_LEVELS.length - 1));
