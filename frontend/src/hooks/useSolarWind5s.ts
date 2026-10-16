@@ -37,6 +37,7 @@ const parseLatest = (json: unknown): CanonicalSpaceWeatherPoint[] => (isCanonica
 const seriesPath = (path: string, held: CanonicalSpaceWeatherPoint[] | null) =>
   `${path}?lookback=${lookbackSince(held, Date.now())}&limit=${SERIES_MAX_POINTS}`;
 const latestPath = (path: string) => path;
+const NO_POINTS: CanonicalSpaceWeatherPoint[] = [];
 
 export interface SolarWind5sOptions {
   /** false: latest point only, once a minute, even when signed in (the landing). */
@@ -55,13 +56,14 @@ export function useSolarWind5s({ history = true }: SolarWind5sOptions = {}): Sol
     restartKey: session.userKey,
   });
 
-  const [points, setPoints] = useState<CanonicalSpaceWeatherPoint[]>([]);
+  // Points pushed over the websocket since the last poll; the polled series is the base.
+  const [pushed, setPushed] = useState<CanonicalSpaceWeatherPoint[]>([]);
   const [source, setSource] = useState<"polling" | "websocket">("polling");
   const wsRef = useRef<WebSocket | null>(null);
-
-  useEffect(() => {
-    if (feed.data) setPoints(feed.data);
-  }, [feed.data]);
+  const points = useMemo(
+    () => (pushed.length > 0 ? mergeSeries(feed.data, pushed) : feed.data ?? NO_POINTS),
+    [feed.data, pushed],
+  );
 
   useEffect(() => {
     const wsEnabled = String(import.meta.env.VITE_HELIO_WS_ENABLED ?? "false") === "true";
@@ -97,7 +99,7 @@ export function useSolarWind5s({ history = true }: SolarWind5sOptions = {}): Sol
             return;
           }
           const payload = message.payload;
-          setPoints((prev) => mergeSeries(prev, [payload]));
+          setPushed((prev) => mergeSeries(prev, [payload]));
         } catch {
           // Ignore malformed websocket payloads.
         }

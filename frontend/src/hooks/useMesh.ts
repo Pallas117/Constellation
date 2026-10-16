@@ -43,42 +43,81 @@ async function api(path: string, init: RequestInit = {}) {
   });
 }
 
+interface MeshState {
+  steps: OnboardingStep[];
+  devices: MeshDevice[] | null;
+  canEnroll: boolean;
+  canSeeTeam: boolean;
+  canRevokeAny: boolean;
+  me: string | null;
+  error: string | null;
+}
+
+const INITIAL_MESH_STATE: MeshState = {
+  steps: [],
+  devices: null,
+  canEnroll: false,
+  canSeeTeam: false,
+  canRevokeAny: false,
+  me: null,
+  error: null,
+};
+
+const errorMessage = (err: unknown) => (err instanceof Error ? err.message : "Mesh request failed");
+
+/** One poll of the onboarding info (and the device list when allowed), as an update to the held state. */
+async function loadMesh(): Promise<(prev: MeshState) => MeshState> {
+  let info;
+  try {
+    const onboarding = await api("/onboarding");
+    if (!onboarding.ok) throw new Error(`Mesh HTTP ${onboarding.status}`);
+    info = await onboarding.json();
+  } catch (err) {
+    const error = errorMessage(err);
+    return (prev) => ({ ...prev, error });
+  }
+  const next = {
+    steps: info.steps,
+    canEnroll: info.canEnroll === true,
+    canSeeTeam: info.canSeeTeam === true,
+    canRevokeAny: info.canRevokeAny === true,
+    me: typeof info.me === "string" ? info.me : null,
+    error: null,
+  };
+  // Only call /devices when allowed: 403s count as auth failures in CyberTiger.
+  // Staff get their own devices back; operators get the whole team.
+  if (info.canEnroll !== true) return (prev) => ({ ...prev, ...next });
+  try {
+    const res = await api("/devices");
+    if (!res.ok) throw new Error(`Mesh HTTP ${res.status}`);
+    const devices: MeshDevice[] = (await res.json()).devices;
+    return (prev) => ({ ...prev, ...next, devices });
+  } catch (err) {
+    const error = errorMessage(err);
+    return (prev) => ({ ...prev, ...next, error });
+  }
+}
+
 export function useMesh() {
-  const [steps, setSteps] = useState<OnboardingStep[]>([]);
-  const [devices, setDevices] = useState<MeshDevice[] | null>(null);
-  const [canEnroll, setCanEnroll] = useState(false);
-  const [canSeeTeam, setCanSeeTeam] = useState(false);
-  const [canRevokeAny, setCanRevokeAny] = useState(false);
-  const [me, setMe] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [state, setState] = useState<MeshState>(INITIAL_MESH_STATE);
 
   const refresh = useCallback(async () => {
-    try {
-      const onboarding = await api("/onboarding");
-      if (!onboarding.ok) throw new Error(`Mesh HTTP ${onboarding.status}`);
-      const info = await onboarding.json();
-      setSteps(info.steps);
-      setCanEnroll(info.canEnroll === true);
-      setCanSeeTeam(info.canSeeTeam === true);
-      setCanRevokeAny(info.canRevokeAny === true);
-      setMe(typeof info.me === "string" ? info.me : null);
-      setError(null);
-      // Only call /devices when allowed: 403s count as auth failures in CyberTiger.
-      // Staff get their own devices back; operators get the whole team.
-      if (info.canEnroll !== true) return;
-      const res = await api("/devices");
-      if (!res.ok) throw new Error(`Mesh HTTP ${res.status}`);
-      setDevices((await res.json()).devices);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Mesh request failed");
-    }
+    setState(await loadMesh());
   }, []);
 
   useEffect(() => {
-    void refresh();
-    const timer = setInterval(() => void refresh(), POLL_INTERVAL_MS);
-    return () => clearInterval(timer);
-  }, [refresh]);
+    let cancelled = false;
+    const poll = async () => {
+      const update = await loadMesh();
+      if (!cancelled) setState(update);
+    };
+    void poll();
+    const timer = setInterval(() => void poll(), POLL_INTERVAL_MS);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, []);
 
   /** Returns the one-time device token, or throws. */
   const enroll = useCallback(
@@ -100,5 +139,6 @@ export function useMesh() {
     [refresh],
   );
 
+  const { steps, devices, me, canEnroll, canSeeTeam, canRevokeAny, error } = state;
   return { steps, devices, me, canEnroll, canSeeTeam, canRevokeAny, error, enroll, revoke };
 }
