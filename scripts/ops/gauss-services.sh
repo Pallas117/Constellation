@@ -6,6 +6,7 @@
 #   scripts/ops/gauss-services.sh install <checkout-dir>   build + write + load agents
 #   scripts/ops/gauss-services.sh status                   agent state + health checks
 #   scripts/ops/gauss-services.sh check                    pre-demo checklist (exit 1 if anything is off)
+#   scripts/ops/gauss-services.sh resilience               battery, memory, network and phone alerts before closing the lid (exit 1 if not)
 #   scripts/ops/gauss-services.sh tailnet on|off           share Gauss on your tailnet only (tailscale serve)
 #   scripts/ops/gauss-services.sh awake setup|on|off       keep running with the lid closed (setup: once, asks for sudo)
 #   scripts/ops/gauss-services.sh restart                  restart services
@@ -16,7 +17,8 @@
 # data collected so far and records a new model version; an awake guard keeps
 # the Mac awake with the lid closed, except on battery at or below
 # GAUSS_AWAKE_MIN_BATTERY% (default 10, the mesh's critical-battery level), where it
-# lets the Mac sleep again.
+# lets the Mac sleep again. It texts the phone (via `argo notify`) at
+# GAUSS_AWAKE_WARN_BATTERY% (default 20), at the floor, and when the charger can't keep up.
 # The site is shared at GAUSS_PUBLIC_URL (default: this Mac's tailnet name over
 # HTTP, encrypted by Tailscale; never exposed to the internet). It is built with a
 # same-origin API (/api, /ws), so the one build works at http://127.0.0.1:8080 on
@@ -29,7 +31,7 @@ set -euo pipefail
 AGENTS="$HOME/Library/LaunchAgents"
 LOGS="$HOME/Library/Logs/gauss"
 UID_DOMAIN="gui/$(id -u)"
-NODE="${NODE:-$(command -v node)}"
+NODE="${NODE:-$(command -v node || true)}" # only install needs it; the guard must run without it
 LABELS=(uk.lightbound.gauss-backend uk.lightbound.gauss-frontend uk.lightbound.gauss-learning uk.lightbound.gauss-awake)
 SERVICES=(uk.lightbound.gauss-backend uk.lightbound.gauss-frontend)
 SUDOERS=/etc/sudoers.d/gauss-awake
@@ -37,6 +39,15 @@ AWAKE_OFF="$HOME/Library/Application Support/Gauss/awake-off"
 # Same floor the mesh uses for its own devices: below 10% a device is flagged
 # (backend/services/device-registry.ts) and swapped out (device-swap-manager.ts).
 AWAKE_MIN_BATTERY="${GAUSS_AWAKE_MIN_BATTERY:-10}"
+AWAKE_WARN_BATTERY="${GAUSS_AWAKE_WARN_BATTERY:-20}" # phone warning before the floor
+ARGO="${ARGO:-$HOME/.local/bin/argo}"
+MEM_MIN_FREE="${GAUSS_MEM_MIN_FREE:-15}" # phone alert at or below this system-wide free %
+SWAP_MAX="${GAUSS_SWAP_MAX:-90}"         # ... or at or above this swap use %
+DISK_MIN_GB="${GAUSS_DISK_MIN_GB:-8}"   # ... or below this many GB free on the boot volume
+WATCH_DIR="$HOME/Library/Application Support/Gauss"
+GUARD_HEARTBEAT="$WATCH_DIR/guard.heartbeat" # Argo restarts the guard if this goes stale
+WATCH_KICKS="$WATCH_DIR/watch-kicks"         # "<label> <epoch>" per watchdog restart
+WATCH_MAX_KICKS=3
 
 tailnet_url() {
   local name
@@ -101,10 +112,119 @@ awake_set() { # awake_set 0|1 <reason>
   echo "$(date '+%F %T') lid-closed awake $([ "$1" = 1 ] && echo on || echo off): $2"
 }
 
+# Phone alerts go through Argo's iMessage channel (masked, queued while
+# offline, rate-limited per key); silently skipped if Argo isn't installed.
+phone() { [ -x "$ARGO" ] && "$ARGO" notify "$@" >/dev/null 2>&1 || true; }
+
+battery_alerts() { # battery_alerts <pmset batt output> <pct>
+  local batt=$1 pct=$2
+  [ -n "$pct" ] || return 0
+  if [ "$(sleep_disabled)" = 1 ] && [ ! -f "$SUDOERS" ]; then
+    phone -key awake-unguarded -every 6h "Gauss: no battery cutoff" \
+      "Sleep is disabled but the awake guard isn't set up, so nothing stops the battery running flat (${pct}%). Run: gauss-services.sh awake setup"
+  fi
+  if [[ "$batt" == *"'AC Power'"* ]]; then
+    if [ "$pct" -le "$AWAKE_WARN_BATTERY" ] && [[ "$batt" == *"discharging"* || "$batt" == *"not charging"* ]]; then
+      phone -key charger-weak -every 1h "Gauss: charger can't keep up" \
+        "Battery ${pct}% and not gaining on AC. Use a 30W+ USB-C charger or ease the load."
+    fi
+  elif [ "$pct" -le "$AWAKE_MIN_BATTERY" ]; then
+    phone -key battery-critical -every 30m "Gauss: battery ${pct}%" \
+      "At the ${AWAKE_MIN_BATTERY}% floor: letting the Mac sleep. Plug in to keep background work running."
+  elif [ "$pct" -le "$AWAKE_WARN_BATTERY" ]; then
+    phone -key battery-low -every 30m "Gauss: battery ${pct}%" \
+      "On battery. The Mac sleeps at ${AWAKE_MIN_BATTERY}% and background work pauses; plug in soon."
+  fi
+}
+
+# Memory: an 8 GB Mac running Gauss, Claude sessions and builds can run out
+# and macOS then kills or freezes background work. "free" is macOS's own
+# system-wide free percentage; swap is how much of the swap file is in use.
+memory_stats() { # prints "<free%> <swap used%>"
+  local free swap
+  free=$(memory_pressure -Q 2>/dev/null | awk -F': ' '/free percentage/{gsub(/%/,"",$2); print $2+0}' || true)
+  swap=$(sysctl -n vm.swapusage 2>/dev/null | awk '{t=$3; u=$6; gsub(/M/,"",t); gsub(/M/,"",u); print (t>0 ? int(u*100/t) : 0)}' || true)
+  echo "${free:-100} ${swap:-0}"
+}
+# Disk: swap files live on the boot volume, so a near-full disk turns memory
+# pressure into killed apps and failed builds (seen: 5 GB free with 5 GB swap).
+disk_free_gb() { df -g / 2>/dev/null | awk 'NR==2{print $4+0}'; }
+disk_alerts() { # disk_alerts <free GB>
+  [ "${1:-999}" -lt "$DISK_MIN_GB" ] && phone -key disk-low -every 6h "Gauss: disk ${1} GB free" \
+    "Swap and builds need room; below ${DISK_MIN_GB} GB macOS may kill apps. Clear caches or old builds."
+  return 0
+}
+top_memory() { ps -Acmo rss=,comm= 2>/dev/null | awk 'NR==1{printf "%s %.1f GB", $2, $1/1048576}'; }
+
+memory_alerts() { # memory_alerts <free%> <swap used%>
+  local free=$1 swap=$2
+  if [ "$free" -le "$MEM_MIN_FREE" ]; then
+    phone -key memory-low -every 30m "Gauss: memory ${free}% free" \
+      "Background work may be killed. Biggest: $(top_memory). Close apps or stop a build."
+  fi
+  if [ "$swap" -ge "$SWAP_MAX" ]; then
+    phone -key swap-high -every 1h "Gauss: swap ${swap}% used" \
+      "The Mac is short of memory and slowing down. Biggest: $(top_memory)."
+  fi
+}
+
+# Redundancy: this guard and Argo watch each other. The guard touches a
+# heartbeat Argo checks (tools/argo/watch.go); the guard restarts Argo and
+# mesh-heal when theirs go stale, and the services after two failed health
+# checks in a row. At most WATCH_MAX_KICKS restarts per job per hour, then
+# it only alerts: something that dies on start needs a human.
+mtime_age_min() { local m; m=$(stat -f %m "$1" 2>/dev/null) || { echo 99999; return; }; echo $(( ($(date +%s) - m) / 60 )); }
+loaded() { launchctl print "$UID_DOMAIN/$1" >/dev/null 2>&1; }
+
+kick() { # kick <label> <reason>: rate-limited launchctl kickstart, logged and alerted
+  local label=$1 reason=$2 now; now=$(date +%s)
+  local recent; recent=$({ awk -v l="$label" -v n="$now" '$1==l && n-$2<3600' "$WATCH_KICKS" 2>/dev/null || true; } | wc -l | tr -d ' ')
+  if [ "$recent" -ge "$WATCH_MAX_KICKS" ]; then
+    phone -key "watch-$label" -every 1h "Gauss: $label keeps failing" "$reason after $recent restarts this hour. Check its log."
+    return 0
+  fi
+  echo "$label $now" >>"$WATCH_KICKS"
+  awk -v n="$now" 'n-$2<86400' "$WATCH_KICKS" >"$WATCH_KICKS.tmp" 2>/dev/null && mv "$WATCH_KICKS.tmp" "$WATCH_KICKS"
+  if launchctl kickstart -k "$UID_DOMAIN/$label" >/dev/null 2>&1; then
+    echo "$(date '+%F %T') watchdog restarted $label: $reason"
+  else
+    phone -key "watch-$label" -every 1h "Gauss: can't restart $label" "$reason; launchctl kickstart failed."
+  fi
+}
+
+watch_peers() {
+  mkdir -p "$(dirname "$GUARD_HEARTBEAT")"; touch "$GUARD_HEARTBEAT"
+  local age
+  # Argo only rewrites state.json on a full probe (~5 min), so allow 15.
+  if loaded uk.lightbound.argo && [ ! -e "$HOME/.local/state/argo/disabled" ]; then
+    age=$(mtime_age_min "$HOME/.local/state/argo/state.json")
+    [ "$age" -gt 15 ] && kick uk.lightbound.argo "no Argo check for ${age} min"
+  fi
+  if loaded uk.lightbound.mesh-heal; then
+    age=$(mtime_age_min "$HOME/.local/share/mesh-heal/state")
+    [ "$age" -gt 10 ] && kick uk.lightbound.mesh-heal "no mesh-heal check for ${age} min"
+  fi
+  local svc url strikes
+  for svc in backend:http://127.0.0.1:3001/health frontend:http://127.0.0.1:8080/; do
+    url=${svc#*:}; svc=uk.lightbound.gauss-${svc%%:*}
+    loaded "$svc" || continue
+    strikes="$WATCH_DIR/$svc.strikes"
+    if [ "$(code "$url")" = 200 ]; then rm -f "$strikes"; continue; fi
+    echo x >>"$strikes"
+    [ "$(wc -l <"$strikes" | tr -d ' ')" -ge 2 ] && { rm -f "$strikes"; kick "$svc" "health check failed twice"; }
+  done
+  return 0
+}
+
 awake_guard() { # run every minute by the awake agent
-  [ -f "$SUDOERS" ] || return 0 # not set up; status and check say so
+  watch_peers
   local batt pct
   batt=$(pmset -g batt); pct=$(grep -Eo '[0-9]+%' <<<"$batt" | head -1 | tr -d % || true)
+  battery_alerts "$batt" "$pct"
+  local free swap; read -r free swap < <(memory_stats)
+  memory_alerts "$free" "$swap"
+  disk_alerts "$(disk_free_gb)"
+  [ -f "$SUDOERS" ] || return 0 # not set up; status and check say so
   if [ -f "$AWAKE_OFF" ]; then
     awake_set 0 "turned off"
   elif [[ "$batt" == *"'AC Power'"* ]] || [ -z "$pct" ]; then
@@ -146,13 +266,58 @@ health() {
   return 0
 }
 
-check() { # pre-demo checklist
-  local fail=0 ok
-  item() { if [ "$1" = ok ]; then printf '  \033[32m✓\033[0m %s\n' "$2"; else printf '  \033[31m✗\033[0m %s\n' "$2"; fail=1; fi; }
-  local argo; argo=$("$HOME/.local/bin/argo" status 2>/dev/null || echo "argo missing")
+# item ok|no <text>: one checklist line; a "no" sets the caller's $fail.
+item() { if [ "$1" = ok ]; then printf '  \033[32m✓\033[0m %s\n' "$2"; else printf '  \033[31m✗\033[0m %s\n' "$2"; fail=1; fi; }
+
+network_item() {
+  local argo ok; argo=$("$ARGO" status 2>/dev/null || echo "argo missing")
   case "$argo" in "● OK MY"*|"● OK SG"*|"● WPAD_RISK MY"*|"● WPAD_RISK SG"*) ok=ok ;; *) ok=no ;; esac
   [[ "$argo" == *stale* ]] && ok=no
   item $ok "network: $argo"
+}
+
+resilience() { # can background work survive the lid closed, the battery, memory and the network?
+  local fail=0 ok batt pct free swap
+  batt=$(pmset -g batt); pct=$(grep -Eo '[0-9]+%' <<<"$batt" | head -1 | tr -d % || true)
+  if [[ "$batt" == *"'AC Power'"* ]]; then
+    local note=""
+    if [ "${pct:-100}" -gt "$AWAKE_WARN_BATTERY" ]; then ok=ok
+    elif [[ "$batt" == *discharging* || "$batt" == *"not charging"* ]]; then ok=no note=", not gaining: use a 30W+ charger"
+    else ok=no note=", charging but too low to unplug yet"
+    fi
+    item $ok "battery ${pct:-?}% on AC$note"
+  else
+    [ "${pct:-0}" -gt "$AWAKE_WARN_BATTERY" ] && ok=ok || ok=no
+    item $ok "battery ${pct:-?}% on battery (sleeps at ${AWAKE_MIN_BATTERY}%)"
+  fi
+  local awake; awake=$(awake_state); item "${awake%% *}" "lid closed: ${awake#* }"
+  read -r free swap < <(memory_stats)
+  [ "$free" -gt "$MEM_MIN_FREE" ] && [ "$swap" -lt "$SWAP_MAX" ] && ok=ok || ok=no
+  item $ok "memory ${free}% free, swap ${swap}% used$([ $ok = no ] && echo "; biggest: $(top_memory)")"
+  local disk; disk=$(disk_free_gb)
+  [ "${disk:-0}" -ge "$DISK_MIN_GB" ] && ok=ok || ok=no
+  item $ok "disk ${disk:-?} GB free$([ $ok = no ] && echo " (need ${DISK_MIN_GB}+ for swap and builds)")"
+  network_item
+  local heal="$HOME/.local/share/mesh-heal/state"
+  [ -n "$(find "$heal" -mmin -5 2>/dev/null)" ] && ok=ok || ok=no
+  item $ok "tailnet self-heal (mesh-heal) $([ $ok = ok ] && echo "checked in the last 5 min" || echo "not running: launchctl kickstart $UID_DOMAIN/uk.lightbound.mesh-heal")"
+  local usage; usage=$("$ARGO" notify 2>&1 || true) # no args: a new argo prints notify's own usage
+  if [[ "$usage" != *"argo notify ["* ]]; then
+    item no "phone alerts: argo is too old for 'argo notify' (rebuild: cd tools/argo && go build -trimpath -o ~/.local/bin/argo .)"
+  elif ! python3 -Ic 'import json,os,sys; sys.exit(not json.load(open(os.path.expanduser("~/.config/argo/config.json"))).get("phone_to"))' 2>/dev/null; then
+    item no "phone alerts: no phone set (argo phone <+60... or Apple ID email>)"
+  else
+    item ok "phone alerts: iMessage via argo notify"
+  fi
+  grep -q claude-phone-hook "$HOME/.claude/settings.json" 2>/dev/null && ok=ok || ok=no
+  item $ok "Claude Code prompts forwarded to the phone$([ $ok = no ] && echo " (Notification hook missing)")"
+  [ $fail = 0 ] && echo "Resilient: safe to close the lid and go." || echo "Not resilient yet: fix the ✗ items above."
+  return $fail
+}
+
+check() { # pre-demo checklist
+  local fail=0 ok
+  network_item
   [ "$(code http://127.0.0.1:3001/health)" = 200 ] && ok=ok || ok=no; item $ok "backend up (:3001)"
   [ "$(code http://127.0.0.1:8080/)" = 200 ] && ok=ok || ok=no; item $ok "website up (:8080)"
   # The path a browser on this Mac takes: page origin -> preview proxy -> backend.
@@ -245,6 +410,9 @@ case "${1:-}" in
     ;;
   check)
     check
+    ;;
+  resilience)
+    resilience
     ;;
   awake)
     case "${2:-}" in
