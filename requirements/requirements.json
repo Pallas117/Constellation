@@ -1,6 +1,6 @@
 {
   "$comment": "Constellation requirements baseline (GAU-120). NASA SP-2016-6105 Rev 2 §6.2/§5.3. Methods: T test, A analysis, I inspection, D demonstration. T evidence = exact test names; A/I/D evidence = repo paths. Verified by `npm run verify`.",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "requirements": [
     {
       "id": "REQ-ING-001",
@@ -361,6 +361,48 @@
         "deploy: healthy release is activated and recorded; dry run changes nothing (GAU-123)",
         "deploy: an unhealthy release rolls back automatically (GAU-123)",
         "rollback: returns to the previous healthy release (GAU-123)"
+      ]
+    },
+    {
+      "id": "REQ-WM-001",
+      "title": "Deterministic, tamper-evident world records",
+      "statement": "Every world-state record shall have a deterministic id and a SHA-256 checksum over its canonical content, and validation shall reject records whose content, id or schema do not match.",
+      "rationale": "GAU-39 acceptance: deterministic IDs and checksums for every record; replays must be comparable.",
+      "parent": "GAU-39",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "GAU-39: ids and checksums are deterministic, and tampering is detected",
+        "GAU-39: replay of a storm gives identical records, an onset event, an advisory and a transition"
+      ]
+    },
+    {
+      "id": "REQ-WM-002",
+      "title": "State reconstructable from bounded observations",
+      "statement": "World state shall be reconstructable from a bounded, time-windowed observation sequence, independent of input order, using no stale or future observations, and without mutating operational data.",
+      "rationale": "GAU-39 acceptance; exploratory coupling must not alter operational state.",
+      "parent": "GAU-39",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "GAU-39: state is reconstructed from a bounded window; stale and future observations are not used",
+        "GAU-39: reconstruction is order-independent and does not mutate its inputs",
+        "GAU-39: live world state uses only the needed window of the feed, newest first"
+      ]
+    },
+    {
+      "id": "REQ-WM-003",
+      "title": "Provenance on every world value",
+      "statement": "Every world-state value shall state whether it is measured, derived or unknown, with the observations or variables and method it rests on; missing inputs shall yield unknown, never a default.",
+      "rationale": "GAU-39 acceptance: every derived value has provenance and truth state (GAU-63 invariant).",
+      "parent": "GAU-39",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "GAU-39: observations carry only measured values, with unit, frame, platform and evidence",
+        "GAU-39: derived values carry method and inputs; unknown inputs give unknown, never a default",
+        "GAU-39: a lost source becomes a source-lost event, not silently carried",
+        "GAU-39: a forecast is a hypothesis resolved against observed state"
       ]
     }
   ]

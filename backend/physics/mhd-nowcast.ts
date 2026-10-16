@@ -53,7 +53,7 @@ export interface MhdState {
   magneticField: Vector3;
 }
 
-function dynamicPressureNpa(densityCm3: number, speedKmS: number): number {
+export function dynamicPressureNpa(densityCm3: number, speedKmS: number): number {
   if (nativeMhd?.dynamicPressureNpa) {
     return nativeMhd.dynamicPressureNpa(densityCm3, speedKmS);
   }
@@ -64,7 +64,7 @@ function toTeslasFromNt(nt: number): number {
   return nt * 1e-9;
 }
 
-function newellCoupling(speedKmS: number, btNt: number, byNt: number, bzNt: number): number {
+export function newellCoupling(speedKmS: number, btNt: number, byNt: number, bzNt: number): number {
   if (nativeMhd?.newellCoupling) {
     return nativeMhd.newellCoupling(speedKmS, btNt, byNt, bzNt);
   }
