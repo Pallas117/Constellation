@@ -14,8 +14,7 @@ import {
   type AuthenticatedRequest,
 } from "./auth.js";
 import { CyberTigerDaemon } from "./cybertiger/daemon.js";
-import { inferNowcast, triggerTraining } from "./ml-client/client.js";
-import { anomalyForecastRoute } from "./ml-client/forecast-route.js";
+import { inferNowcast, inferAnomalyForecast, triggerTraining } from "./ml-client/client.js";
 import {
   getAuroraMap,
   getCanonicalFeed,
@@ -379,8 +378,15 @@ app.get("/api/feed/space-objects", (_req, res) => {
   });
 });
 
-// 72-hour LSTM Anomaly Forecast endpoint; 503 when no model is configured.
-app.get("/api/forecast/anomaly", anomalyForecastRoute);
+// 72-hour LSTM Anomaly Forecast endpoint
+app.get("/api/forecast/anomaly", async (_req, res) => {
+  try {
+    const forecast = await inferAnomalyForecast([]);
+    res.json(forecast);
+  } catch (err) {
+    res.status(500).json({ error: "Forecast generation failed" });
+  }
+});
 
 app.get("/api/feed/space-weather/latest/proto", async (req: AuthenticatedRequest, res) => {
   const fromDb = await fetchCanonicalFromDb(5 * 60 * 1000, 1, req.auth?.token);

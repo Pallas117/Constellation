@@ -20,7 +20,7 @@ import {
 } from "../state.js";
 import { linkGuardian } from "../lib/connectivity.js";
 import { bedrock } from "../lib/local-db.js";
-import { anomalyForecastConfigured, inferAnomalyForecast } from "../ml-client/client.js";
+import { inferAnomalyForecast } from "../ml-client/client.js";
 import type {
   CanonicalSpaceWeatherPoint,
   IngestionTickResult,
@@ -264,8 +264,7 @@ export class IngestionWorker {
       await fetchMmsBurstWindows();
     }
 
-    // No model configured means no forecast; nothing is generated in its place.
-    if (anomalyForecastConfigured() && this.shouldFetch("ml-forecast", 300000)) {
+    if (this.shouldFetch("ml-forecast", 300000)) {
       try {
         this.latestForecast = await inferAnomalyForecast(this.couplingWindow);
       } catch (err) {
