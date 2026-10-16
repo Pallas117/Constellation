@@ -1,8 +1,8 @@
 /**
  * ReasoningStream — LLM / RAG inference panel + 72-hour ML forecast widget.
  *
- * Self-contained; wraps GaussRagPanel and
- * the LSTM anomaly-probability banner. Bottom centre from md up; in the phone column below.
+ * Self-contained; wraps GaussRagPanel and the 72-hour anomaly-probability banner
+ * (or "unavailable" when no trained model is deployed). Bottom centre from md up; in the phone column below.
  */
 
 import { GaussRagPanel } from './GaussRagPanel';
@@ -11,13 +11,28 @@ import { AlertTriangle, Activity, ShieldCheck } from 'lucide-react';
 
 
 function ForecastBanner() {
-  const { forecast, loading } = useAnomalyForecast();
+  const { forecast, loading, error } = useAnomalyForecast();
 
-  if (loading || !forecast) {
+  if (loading && !forecast) {
     return (
       <div className="flex items-center gap-2 px-3 py-1.5 bg-black/50 border border-border text-[8px] font-mono text-muted-foreground uppercase tracking-widest">
         <Activity size={8} className="animate-pulse" />
-        LSTM_FORECAST: COMPUTING...
+        72H_FORECAST: AWAITING_NODE
+      </div>
+    );
+  }
+
+  // No trained model (or no answer): say so. Never show a probability we do not have.
+  if (!forecast || !('anomalyProbability' in forecast)) {
+    const reason = forecast && 'reason' in forecast ? forecast.reason : error ?? 'No forecast';
+    return (
+      <div
+        role="status"
+        className="flex items-center gap-2 px-3 py-1.5 bg-black/50 border border-border text-[8px] font-mono text-muted-foreground uppercase tracking-widest"
+        title={reason}
+      >
+        <Activity size={8} />
+        72H_FORECAST: UNAVAILABLE &nbsp;|&nbsp; {reason}
       </div>
     );
   }
@@ -43,7 +58,7 @@ function ForecastBanner() {
       <Icon size={10} className="mt-0.5 shrink-0" />
       <div className="space-y-0.5 text-left">
         <p className="text-[9px] font-bold uppercase tracking-wider">
-          72H_LSTM_FORECAST &nbsp;|&nbsp; P(anomaly) = {pct}% &nbsp;|&nbsp; Kp_max ≈ {kpMax}
+          72H_FORECAST &nbsp;|&nbsp; P(anomaly) = {pct}% &nbsp;|&nbsp; Kp_max ≈ {kpMax}
         </p>
         <p className="text-[8px] opacity-70 font-mono truncate max-w-[440px]">
           {forecast.warningMessage}
@@ -72,7 +87,7 @@ export function ReasoningStream() {
       </div>
 
       <p className="font-mono text-[9px] uppercase tracking-[0.14em] text-muted-foreground">
-        Sources: NOAA SWPC real-time solar wind (L1) · 72 h LSTM forecast
+        Sources: NOAA SWPC real-time solar wind (L1)
       </p>
     </div>
   );

@@ -378,7 +378,7 @@ app.get("/api/feed/space-objects", (_req, res) => {
   });
 });
 
-// 72-hour LSTM Anomaly Forecast endpoint
+// 72-hour anomaly forecast: a trained model's output, or an explicit "unavailable"
 app.get("/api/forecast/anomaly", async (_req, res) => {
   try {
     const forecast = await inferAnomalyForecast([]);
