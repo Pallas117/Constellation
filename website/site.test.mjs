@@ -55,6 +55,6 @@ test("security: strict CSP, no scripts, no inline styles, nothing loaded from el
 });
 
 test("low memory: the whole site stays under 40 KB", () => {
-  const total = ["index.html", "styles.css", "favicon.svg"].reduce((n, f) => n + statSync(join(dir, f)).size, 0);
+  const total = ["index.html", "styles.css", "favicon.svg", "xorbita.png"].reduce((n, f) => n + statSync(join(dir, f)).size, 0);
   assert.ok(total < 40 * 1024, `site is ${total} bytes`);
 });

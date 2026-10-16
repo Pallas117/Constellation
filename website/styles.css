@@ -69,3 +69,6 @@ main > section.band > * { max-width: calc(var(--max) - 2 * var(--pad)); margin-i
 
 footer { border-top: 1px solid var(--line); padding: 2rem var(--pad); color: var(--muted); font-size: .85rem; }
 footer p { max-width: var(--max); margin: 0 auto .4rem; }
+
+.logos { display: flex; flex-wrap: wrap; align-items: center; gap: 1.5rem; margin: 1rem 0 0; }
+.logos img { display: block; height: 40px; width: auto; }
