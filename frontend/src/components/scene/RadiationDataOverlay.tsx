@@ -157,7 +157,6 @@ export const RadiationDataOverlay = ({
   const materialRef = useRef<THREE.ShaderMaterial>(null);
   const pointsRef = useRef<THREE.Points>(null);
   const { camera } = useThree();
-  const filteredDataRef = useRef<RadiationDataPoint[]>([]);
   const raycasterRef = useRef(new THREE.Raycaster());
 
   // Filter and process data
@@ -167,9 +166,6 @@ export const RadiationDataOverlay = ({
     // Filter by orbit type
     const filtered = data.filter((d) => orbitFilter.includes(d.orbitType));
     if (filtered.length === 0) return null;
-
-    // Store filtered data for click detection
-    filteredDataRef.current = filtered;
 
     // Calculate min/max flux for color normalization
     const fluxes = filtered.map((d) => d.flux);
@@ -227,7 +223,8 @@ export const RadiationDataOverlay = ({
       }
     });
 
-    return { positions, colors, sizes, count: filtered.length };
+    // `filtered` maps a clicked point index back to its data point.
+    return { positions, colors, sizes, count: filtered.length, filtered };
   }, [data, orbitFilter, encodingMode]);
 
   // Create geometry
@@ -296,8 +293,8 @@ export const RadiationDataOverlay = ({
           }
         }
         
-        if (closestIndex >= 0 && closestIndex < filteredDataRef.current.length) {
-          onPointClick(filteredDataRef.current[closestIndex], closestIndex);
+        if (processedData && closestIndex >= 0 && closestIndex < processedData.filtered.length) {
+          onPointClick(processedData.filtered[closestIndex], closestIndex);
         }
       }
     }

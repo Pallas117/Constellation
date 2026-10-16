@@ -181,7 +181,6 @@ export const RadiationDataOverlayLOD = ({
   const materialRef = useRef<THREE.ShaderMaterial>(null);
   const pointsRef = useRef<THREE.Points>(null);
   const { camera } = useThree();
-  const filteredDataRef = useRef<RadiationDataPoint[]>([]);
   const raycasterRef = useRef(new THREE.Raycaster());
   const [currentLOD, setCurrentLOD] = useState(lodLevel);
 
@@ -228,7 +227,6 @@ export const RadiationDataOverlayLOD = ({
 
     // Apply LOD downsampling
     filtered = downsampleData(filtered, effectiveMaxPoints);
-    filteredDataRef.current = filtered;
 
     // Calculate min/max flux for color normalization
     const minFlux = filtered.reduce((min, d) => Math.min(min, d.flux), Infinity);
@@ -284,7 +282,8 @@ export const RadiationDataOverlayLOD = ({
       }
     });
 
-    return { positions, colors, sizes, count: filtered.length };
+    // `filtered` maps a clicked point index back to its data point.
+    return { positions, colors, sizes, count: filtered.length, filtered };
   }, [data, orbitFilter, effectiveMaxPoints, lodConfig.pointSize, encodingMode]);
 
   // Create geometry
@@ -341,8 +340,8 @@ export const RadiationDataOverlayLOD = ({
         }
       }
       
-      if (closestIndex >= 0 && closestIndex < filteredDataRef.current.length) {
-        onPointClick(filteredDataRef.current[closestIndex], closestIndex);
+      if (processedData && closestIndex >= 0 && closestIndex < processedData.filtered.length) {
+        onPointClick(processedData.filtered[closestIndex], closestIndex);
       }
     }
   };

@@ -11,6 +11,7 @@ import { useRef, useMemo } from 'react';
 import { useFrame } from '@react-three/fiber';
 import { Sphere, useTexture } from '@react-three/drei';
 import * as THREE from 'three';
+import { seeded } from './seeded';
 
 interface EarthProps {
   visible: boolean;
@@ -60,12 +61,12 @@ export const Earth = ({ visible }: EarthProps) => {
     ctx.ellipse(430, 180, 25, 20, 0, 0, Math.PI * 2);
     ctx.fill();
 
-    // Add some variation
+    // Add some variation (seeded, so the texture is the same on every build)
     for (let i = 0; i < 200; i++) {
-      const x = Math.random() * 512;
-      const y = Math.random() * 256;
-      const r = Math.random() * 10 + 2;
-      ctx.fillStyle = `rgba(${20 + Math.random() * 20}, ${50 + Math.random() * 30}, ${40 + Math.random() * 20}, 0.3)`;
+      const x = seeded(i, 0) * 512;
+      const y = seeded(i, 1) * 256;
+      const r = seeded(i, 2) * 10 + 2;
+      ctx.fillStyle = `rgba(${20 + seeded(i, 3) * 20}, ${50 + seeded(i, 4) * 30}, ${40 + seeded(i, 5) * 20}, 0.3)`;
       ctx.beginPath();
       ctx.arc(x, y, r, 0, Math.PI * 2);
       ctx.fill();

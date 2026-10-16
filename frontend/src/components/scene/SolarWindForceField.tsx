@@ -1,6 +1,7 @@
 import { useRef, useMemo } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
+import { seeded } from './seeded';
 
 interface SolarWindForceFieldProps {
   visible: boolean;
@@ -67,17 +68,17 @@ const SolarWindWaves = ({
       
       for (let i = 0; i < particlesPerWave; i++) {
         const idx = wave * particlesPerWave + i;
-        const theta = (Math.random() - 0.5) * Math.PI * 0.8; // Vertical spread
-        const phi = (Math.random() - 0.5) * Math.PI * 0.8;   // Horizontal spread
+        const theta = (seeded(idx, 0) - 0.5) * Math.PI * 0.8; // Vertical spread
+        const phi = (seeded(idx, 1) - 0.5) * Math.PI * 0.8;   // Horizontal spread
         
         // Start positions (far from Earth)
         positions[idx * 3] = 35;
         positions[idx * 3 + 1] = 0;
         positions[idx * 3 + 2] = 0;
         
-        sizes[idx] = 0.15 + Math.random() * 0.2;
-        alphas[idx] = 0.4 + Math.random() * 0.6;
-        wavePhases[idx] = basePhase + Math.random() * 0.1;
+        sizes[idx] = 0.15 + seeded(idx, 2) * 0.2;
+        alphas[idx] = 0.4 + seeded(idx, 3) * 0.6;
+        wavePhases[idx] = basePhase + seeded(idx, 4) * 0.1;
         particleData[idx * 2] = theta;
         particleData[idx * 2 + 1] = phi;
       }

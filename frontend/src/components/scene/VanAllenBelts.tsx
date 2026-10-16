@@ -89,8 +89,8 @@ function createLShellGeometry(
  * Van Allen Belts - Optimized NASA SVS Style with L-Shell Geometry
  */
 export const VanAllenBelts = ({ visible, intensity, compression = 1, highFidelity = false }: VanAllenBeltsProps) => {
-  const innerBeltRef = useRef<THREE.Mesh>(null);
-  const outerBeltRef = useRef<THREE.Mesh>(null);
+  const innerBeltRef = useRef<THREE.Mesh<THREE.BufferGeometry, THREE.ShaderMaterial>>(null);
+  const outerBeltRef = useRef<THREE.Mesh<THREE.BufferGeometry, THREE.ShaderMaterial>>(null);
 
   // Inner belt geometry - reduced segments for performance (32x16 instead of 64x32)
   const innerBeltGeometry = useMemo(() => {
@@ -114,7 +114,7 @@ export const VanAllenBelts = ({ visible, intensity, compression = 1, highFidelit
     return new THREE.ShaderMaterial({
       uniforms: {
         uTime: { value: 0 },
-        uIntensity: { value: intensity },
+        uIntensity: { value: 0 }, // set every frame
       },
       vertexShader: `
         varying vec2 vUv;
@@ -182,7 +182,7 @@ export const VanAllenBelts = ({ visible, intensity, compression = 1, highFidelit
     return new THREE.ShaderMaterial({
       uniforms: {
         uTime: { value: 0 },
-        uIntensity: { value: intensity },
+        uIntensity: { value: 0 }, // set every frame
       },
       vertexShader: `
         varying vec2 vUv;
@@ -254,13 +254,10 @@ export const VanAllenBelts = ({ visible, intensity, compression = 1, highFidelit
     const time = state.clock.elapsedTime;
     const clampedIntensity = 0.3 + intensity * 0.7;
     
-    if (innerBeltMaterial) {
-      innerBeltMaterial.uniforms.uTime.value = time;
-      innerBeltMaterial.uniforms.uIntensity.value = clampedIntensity;
-    }
-    if (outerBeltMaterial) {
-      outerBeltMaterial.uniforms.uTime.value = time;
-      outerBeltMaterial.uniforms.uIntensity.value = clampedIntensity;
+    for (const belt of [innerBeltRef.current, outerBeltRef.current]) {
+      if (!belt) continue;
+      belt.material.uniforms.uTime.value = time;
+      belt.material.uniforms.uIntensity.value = clampedIntensity;
     }
   });
 

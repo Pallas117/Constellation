@@ -338,7 +338,7 @@ const SceneContent = ({
 /** Only mention the warm-up if it takes long enough to notice (a first visit). */
 const PREPARING_NOTICE_MS = 400;
 
-export const SpaceScene = (props: SpaceSceneProps) => {
+export const SpaceScene = ({ canvasRef, ...sceneProps }: SpaceSceneProps) => {
   // Nothing renders until every shader is compiled: the first draw of an
   // uncompiled material blocks the main thread (see ShaderWarmup).
   const [ready, setReady] = useState(false);
@@ -358,7 +358,7 @@ export const SpaceScene = (props: SpaceSceneProps) => {
       className="relative w-full h-full focus:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-signal/40"
     >
       <Canvas
-        ref={props.canvasRef}
+        ref={canvasRef}
         frameloop={ready ? 'always' : 'never'}
         gl={{ 
           antialias: true, 
@@ -371,7 +371,7 @@ export const SpaceScene = (props: SpaceSceneProps) => {
         className={`w-full h-full transition-opacity duration-500 motion-reduce:transition-none ${ready ? 'opacity-100' : 'opacity-0'}`}
       >
         <Suspense fallback={null}>
-          <SceneContent {...props} />
+          <SceneContent {...sceneProps} />
           <ShaderWarmup onReady={() => setReady(true)} />
         </Suspense>
       </Canvas>
