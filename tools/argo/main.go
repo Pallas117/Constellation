@@ -34,7 +34,9 @@ type Config struct {
 	Device    string            `json:"device,omitempty"`     // display name in Gauss
 	ExitNodes map[string]string `json:"exit_nodes,omitempty"` // tailscale hostname → country (MY/SG only)
 	PhoneTo   string            `json:"phone_to,omitempty"`   // your own iMessage handle for phone alerts
-	Watch     []Peer            `json:"watch,omitempty"`      // LaunchAgents Argo keeps alive; default: awake guard + mesh-heal
+	// "sms" sends SMS first: iMessages to your own number arrive silently, with no banner.
+	PhoneService string `json:"phone_service,omitempty"`
+	Watch        []Peer `json:"watch,omitempty"` // LaunchAgents Argo keeps alive; default: awake guard + mesh-heal
 }
 
 func (c Config) peers() []Peer {
@@ -68,7 +70,7 @@ func main() {
 		cmd = os.Args[1]
 	}
 	cfg, store := loadConfig(), DefaultStore()
-	phone := newPhone(cfg.PhoneTo, cfg.Device)
+	phone := newPhoneFor(cfg)
 	loop := Loop{Prober: SystemProber{ExitNodes: cfg.ExitNodes}, Store: store, Fx: realEffects{phone: phone}}
 	flush := func() {
 		if phone != nil {

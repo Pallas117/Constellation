@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -43,6 +44,25 @@ func newPhone(to, device string) *Phone {
 	return &Phone{To: to, Queue: filepath.Join(DefaultStore().Dir, "phone-queue.jsonl"), Device: device, send: iMessage}
 }
 
+// newPhoneFor builds the phone from config, choosing the send order.
+func newPhoneFor(cfg Config) *Phone {
+	p := newPhone(cfg.PhoneTo, cfg.Device)
+	if p != nil && strings.EqualFold(cfg.PhoneService, "sms") && strings.HasPrefix(p.To, "+") {
+		p.send = smsFirst
+	}
+	return p
+}
+
+// smsFirst sends an SMS (via the iPhone's Text Message Forwarding), which
+// shows a banner even when it comes from your own number, then falls back to
+// iMessage.
+func smsFirst(to, text string) error {
+	if err := messagesSend("SMS", to, text); err == nil {
+		return nil
+	}
+	return messagesSend("iMessage", to, text)
+}
+
 // iMessage sends over iMessage, then falls back to SMS (the iPhone's Text
 // Message Forwarding) for a phone-number handle, so one broken service
 // doesn't silence alerts. Handle and text are argv items, never
@@ -57,8 +77,14 @@ func iMessage(to, text string) error {
 	return err
 }
 
+// A send that macOS hasn't authorised (or Messages that hangs) times out
+// instead of holding the tick for the ~2 min AppleEvent default.
+const sendTimeout = 30 * time.Second
+
 func messagesSend(service, to, text string) error {
-	out, err := exec.Command("osascript",
+	ctx, cancel := context.WithTimeout(context.Background(), sendTimeout)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "osascript",
 		"-e", "on run argv",
 		"-e", `tell application "Messages"`,
 		"-e", "set svc to 1st account whose service type = "+service, // constant, not user input
@@ -142,14 +168,14 @@ func phoneSetup(args []string, cfg Config) error {
 	}
 	switch args[0] {
 	case "test":
-		p := newPhone(cfg.PhoneTo, cfg.Device)
+		p := newPhoneFor(cfg)
 		if p == nil {
 			return errors.New("no phone configured; run `argo phone <your number or Apple ID email>`")
 		}
 		if err := p.send(p.To, fmt.Sprintf("Argo test from %s: phone alerts are working.", p.Device)); err != nil {
 			return err
 		}
-		fmt.Println("sent an iMessage to", p.To)
+		fmt.Println("sent a test alert to", p.To)
 		return nil
 	case "off":
 		cfg.PhoneTo = ""

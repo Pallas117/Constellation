@@ -29,7 +29,11 @@ Optional extras:
   Argo sends an iMessage from this Mac's Messages app to your own handle, so no app or token is needed.
   macOS asks once to let Argo control Messages. Messages carry only the masked title and reason. Alerts
   raised while offline are queued (up to 20) and sent on the next tick with internet. `argo phone off`
-  turns them off.
+  turns them off. An iMessage to your own number arrives without a banner; for alerts you'll notice, set
+  `"phone_service": "sms"` in `~/.config/argo/config.json` (SMS first via Text Message Forwarding, then
+  iMessage). The background agent needs its own Automation → Messages permission: after every rebuild of the
+  ad-hoc-signed binary, macOS asks again on the first background send, and sends time out after 30 s until
+  someone clicks Allow.
 - **Alerts from other tools.** `argo notify [-key K -every 30m] TITLE MESSAGE` sends through the same
   channel, mask and offline queue, at most once per interval per key. The gauss-awake battery guard
   uses it (battery low, at the sleep floor, charger can't keep up, no cutoff configured), as do
