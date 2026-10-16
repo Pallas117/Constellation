@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { useMesh, type MeshDevice } from "@/hooks/useMesh";
+import { useDocumentTitle } from "@/hooks/useDocumentTitle";
 
 const STALE_MS = 15 * 60 * 1000;
 
@@ -37,6 +38,8 @@ function ago(iso?: string) {
 }
 
 const MeshDashboard = () => {
+  useDocumentTitle("Mesh");
+
   const { steps, devices, me, canEnroll, canSeeTeam, canRevokeAny, error, enroll, revoke } = useMesh();
   const [name, setName] = useState("");
   const [issued, setIssued] = useState<{ name: string; token: string } | null>(null);
@@ -58,7 +61,7 @@ const MeshDashboard = () => {
       <section className="px-4 py-6 sm:px-8">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
           <div>
-            <p className="text-sm uppercase tracking-[0.3em] text-primary/80">Mesh & Network</p>
+            <p className="brand-label">00_MESH_NETWORK</p>
             <h1 className="mt-2 text-3xl font-semibold tracking-tight">Team connectivity</h1>
             <p className="mt-3 max-w-2xl text-sm text-muted-foreground">
               Each laptop runs Argo, which keeps Claude Code connected on hotspots and public Wi-Fi and reports a short status here over the

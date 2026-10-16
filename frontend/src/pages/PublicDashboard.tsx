@@ -12,6 +12,7 @@ import { useSolarWind5s } from '@/hooks/useSolarWind5s';
 import { useNow } from '@/hooks/useNow';
 import { useSession } from '@/lib/auth-client';
 import { beltVisuals, liveDrivers, standoffIfReference } from '@/lib/physics/live-drivers';
+import { useDocumentTitle } from '@/hooks/useDocumentTitle';
 
 const LAYERS = {
   earth: true,
@@ -32,6 +33,8 @@ const fadeIn = (delay: number) => ({
 });
 
 export default function PublicDashboard() {
+  useDocumentTitle();
+
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const { data: session } = useSession();
   const signedIn = Boolean(session?.user?.id);

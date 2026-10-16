@@ -5,8 +5,11 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useDeviceSwapPlan } from "@/hooks/useDeviceSwapPlan";
 import { useSolarWind5s } from "@/hooks/useSolarWind5s";
 import { driverReadings, weatherRisk } from "@/lib/measured";
+import { useDocumentTitle } from "@/hooks/useDocumentTitle";
 
 const ProtectionDashboard = () => {
+  useDocumentTitle("Protection");
+
   const { plan, loading, error, lastUpdated, rebalanceMessage, rebalance } = useDeviceSwapPlan();
   const solarWind = useSolarWind5s();
   const latest = solarWind.latest;
@@ -66,7 +69,7 @@ const ProtectionDashboard = () => {
       <section className="px-4 py-6 sm:px-8">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
           <div>
-            <p className="text-sm uppercase tracking-[0.3em] text-primary/80">Protection Intelligence</p>
+            <p className="brand-label">00_PROTECTION</p>
             <h1 className="mt-2 text-3xl font-semibold tracking-tight">Device SWAP Resilience & Heliophysics Research</h1>
             <p className="mt-3 max-w-2xl text-sm text-muted-foreground">
               Correlate current magnetospheric stress with operational device health. Use adaptive SWAP load management to protect critical infrastructure and capture impact signals for civilization-scale resilience research.
@@ -179,17 +182,17 @@ const ProtectionDashboard = () => {
             <p>{impactNarrative}</p>
             <div className="grid gap-3 sm:grid-cols-3">
               <div className="rounded-xl border border-border bg-muted p-4">
-                <div className="flex items-center gap-2 text-xs uppercase tracking-[0.24em] text-muted-foreground mb-2">Protection margin</div>
+                <div className="stat-label mb-2">Protection margin</div>
                 <div className="text-xl font-semibold">{assignmentSummary.high + assignmentSummary.critical}</div>
                 <div className="text-xs text-muted-foreground">devices at elevated tiers</div>
               </div>
               <div className="rounded-xl border border-border bg-muted p-4">
-                <div className="flex items-center gap-2 text-xs uppercase tracking-[0.24em] text-muted-foreground mb-2">Storm pressure</div>
+                <div className="stat-label mb-2">Storm pressure</div>
                 <div className="text-xl font-semibold">{latest?.solarWind?.dynamicPressure?.toFixed(2) ?? "n/a"} nPa</div>
                 <div className="text-xs text-muted-foreground">dynamic pressure</div>
               </div>
               <div className="rounded-xl border border-border bg-muted p-4">
-                <div className="flex items-center gap-2 text-xs uppercase tracking-[0.24em] text-muted-foreground mb-2">Rebalance status</div>
+                <div className="stat-label mb-2">Rebalance status</div>
                 <div className="text-xl font-semibold">{rebalanceMessage ? "Updated" : "Idle"}</div>
                 <div className="text-xs text-muted-foreground">{rebalanceMessage ?? "No recent rebalance"}</div>
               </div>

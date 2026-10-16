@@ -72,6 +72,13 @@ describe('liveDrivers', () => {
     assert.equal(liveDrivers(null, NOW).mode, 'none');
   });
 
+  it('treats a point missing quality, indices or plasma as no data instead of crashing', () => {
+    const partial = { timestamp: new Date(NOW).toISOString(), solarWind: { speed: 400 } } as unknown as CanonicalSpaceWeatherPoint;
+    const r = liveDrivers(partial, NOW);
+    assert.equal(r.mode, 'none');
+    assert.equal(r.drivers, undefined);
+  });
+
   it('fails closed on an unparseable measurement time', () => {
     assert.equal(liveDrivers(reading(0, { observedAt: 'nope' }), NOW).mode, 'none');
   });
