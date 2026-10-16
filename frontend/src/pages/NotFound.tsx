@@ -1,13 +1,10 @@
 import { Link, useLocation } from "react-router-dom";
-import { useEffect } from "react";
 import { Button } from "@/components/ui/button";
+import { useDocumentTitle } from "@/hooks/useDocumentTitle";
 
 const NotFound = () => {
+  useDocumentTitle("Page not found");
   const location = useLocation();
-
-  useEffect(() => {
-    console.error("404 Error: User attempted to access non-existent route:", location.pathname);
-  }, [location.pathname]);
 
   return (
     <main className="flex min-h-dvh items-center justify-center bg-background p-4 text-foreground">

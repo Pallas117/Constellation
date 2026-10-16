@@ -1,4 +1,5 @@
 import { getAuthHeaders } from "./auth";
+import { HttpFailure } from "./http-error";
 
 export interface DeviceSwapAssignment {
   id: string;
@@ -25,8 +26,7 @@ export async function getDeviceSwapPlan(): Promise<DeviceSwapPlan> {
   const headers = await getAuthHeaders();
   const response = await fetch(DEVICE_SWAP_PLAN_URL, { headers });
   if (!response.ok) {
-    const text = await response.text();
-    throw new Error(`Failed to load SWAP plan: ${response.status} ${text}`);
+    throw new HttpFailure("Couldn't load the SWAP plan", response.status);
   }
   const json = await response.json();
   if (!json?.ok || !json?.plan) {
@@ -48,8 +48,7 @@ export async function requestDeviceSwapRebalance(payload: {
   });
 
   if (!response.ok) {
-    const text = await response.text();
-    throw new Error(`Failed to rebalance SWAP network: ${response.status} ${text}`);
+    throw new HttpFailure("Couldn't rebalance the SWAP network", response.status);
   }
 
   const json = await response.json();

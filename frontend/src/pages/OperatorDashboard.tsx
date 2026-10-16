@@ -4,8 +4,11 @@ import { useOperatorNotifications } from "@/hooks/useOperatorNotifications";
 import { MeshStatusPill } from "@/components/MeshStatusPill";
 import { StatusBadge } from "@/components/brand/StatusBadge";
 import { Button } from "@/components/ui/button";
+import { useDocumentTitle } from "@/hooks/useDocumentTitle";
 
 export default function OperatorDashboard() {
+  useDocumentTitle("Operator console");
+
   useOperatorNotifications();
 
   return (

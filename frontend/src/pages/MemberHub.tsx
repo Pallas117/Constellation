@@ -2,6 +2,7 @@ import { Link } from "react-router-dom";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Globe, Sparkles, ShieldCheck } from "lucide-react";
+import { useDocumentTitle } from "@/hooks/useDocumentTitle";
 
 const PILLARS = [
   {
@@ -25,6 +26,8 @@ const PILLARS = [
 ];
 
 export default function MemberHub() {
+  useDocumentTitle("Member hub");
+
   return (
     <main className="min-h-dvh w-full bg-background px-4 py-8 text-foreground sm:px-8">
       <div className="mx-auto max-w-6xl space-y-6">

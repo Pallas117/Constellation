@@ -68,11 +68,17 @@ const NONE: LiveDrivers = {
   kp: null,
 };
 
+/** A point without the parts the drivers read (a partial or foreign payload) counts as no data, never a crash. */
+function complete(p: CanonicalSpaceWeatherPoint): boolean {
+  const q = p as Partial<CanonicalSpaceWeatherPoint>;
+  return Boolean(q.quality && q.indices && q.magneticField && q.solarWind);
+}
+
 export function liveDrivers(latest: CanonicalSpaceWeatherPoint | null, nowMs: number, simulate = false): LiveDrivers {
   if (simulate) {
     return { ...NONE, mode: 'simulated', drivers: G4_DRIVERS, plasma: G4_PLASMA };
   }
-  if (!latest) return NONE;
+  if (!latest || !complete(latest)) return NONE;
 
   const measured = Date.parse(latest.observedAt ?? latest.timestamp);
   const age = (nowMs - measured) / 60_000;
