@@ -71,7 +71,7 @@ export default function MemberHub() {
           ))}
         </section>
 
-        <Link to="/" className="inline-block text-sm text-muted-foreground transition-colors hover:text-foreground">
+        <Link to="/" className="inline-block py-2 text-sm text-muted-foreground transition-colors hover:text-foreground">
           ← Back to the live landing page
         </Link>
       </div>

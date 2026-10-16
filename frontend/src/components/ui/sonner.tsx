@@ -1,15 +1,18 @@
 import { Toaster as Sonner, toast } from "sonner";
+import { useIsMobile } from "@/hooks/use-mobile";
 
 type ToasterProps = React.ComponentProps<typeof Sonner>;
 
 const Toaster = ({ ...props }: ToasterProps) => {
+  const phone = useIsMobile();
   // One dark look (Brand Room): never follow a light OS theme.
   return (
     <Sonner
       theme="dark"
-      // Top centre, under the console toolbar: clear of every corner panel.
-      position="top-center"
-      offset={80}
+      // Clear of the console header and side columns: top centre below the
+      // header on wide screens; at the bottom on phones, where the header wraps.
+      position={phone ? "bottom-center" : "top-center"}
+      offset={phone ? 16 : 112}
       className="toaster group"
       toastOptions={{
         classNames: {
