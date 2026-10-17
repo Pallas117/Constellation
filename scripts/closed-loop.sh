@@ -59,7 +59,7 @@ if [[ "${DRY_RUN}" != "true" ]]; then
 fi
 
 # ── Step 3: TypeScript typecheck ──────────────────────────────────────────────
-log "Step 3: npm run lint (strict tsc: frontend app, Vite config, backend)"
+log "Step 3: npm run lint (strict tsc: frontend, backend, e2e tests, scripts)"
 if npm run lint --silent 2>>"${LOG_FILE}"; then
   ok "TypeScript clean"
 else

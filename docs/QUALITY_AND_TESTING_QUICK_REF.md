@@ -26,7 +26,7 @@ git push origin v1.0.0   # Triggers release workflow
 ### Quality Checks
 | Command | Does |
 |---------|------|
-| `npm run quality:types` | TypeScript strict type check (frontend app, Vite config, backend) |
+| `npm run quality:types` | TypeScript strict type check (frontend, backend, e2e tests, scripts) |
 | `npm run quality:lint` | ESLint checking |
 | `npm run quality:full` | Both together |
 
