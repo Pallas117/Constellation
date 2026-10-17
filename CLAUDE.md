@@ -4,7 +4,7 @@
 
 ## Repo facts
 - Node 22 (`.nvmrc`), matching CI. Native modules (better-sqlite3) must be built with the same Node that runs them.
-- Backend tests: `npm test` (node:test via tsx, writes bedrock data to a temp dir). Full gate: `npm run audit:adherence`.
+- Backend tests: `npm test` (node:test via tsx, writes bedrock data to a temp dir). Type check: `npm run quality:types` (strict tsc on the frontend app, Vite config and `backend/tsconfig.json`; keep it at 0 errors). Full gate: `npm run audit:adherence`.
 - Frontend: `npm run dev` (8080), backend: `npm run dev:proxy` (3001), build: `npm run build`.
 - Auth is better-auth on `.auth.db` (email/password + Google Workspace SSO when `GOOGLE_CLIENT_ID/SECRET` are set; SSO sign-ups limited to `SSO_ALLOWED_DOMAIN`). `npm run auth:migrate`, then `npm run auth:set-role -- <email> <user|staff|operator|admin>`.
 - Roles (each includes the ones below): user = live visualisation; staff = + Mesh onboarding of own devices; operator = + operator console and team status; admin = + manage roles and any device. New accounts are `user`.

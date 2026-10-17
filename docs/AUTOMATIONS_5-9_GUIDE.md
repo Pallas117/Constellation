@@ -16,7 +16,7 @@ Ensure code is type-safe and follows linting standards before merging.
 - `.github/workflows/type-safety-lint.yml`
 
 ### Checks
-- `npx tsc --noEmit` with strict type checking
+- `npm run quality:types` (strict tsc on `frontend/tsconfig.app.json`, `frontend/tsconfig.node.json` and `backend/tsconfig.json`)
 - `npx eslint . --format json --output-file eslint-report.json`
 - PR comment with type/lint results
 - Fails PR if type errors exist
