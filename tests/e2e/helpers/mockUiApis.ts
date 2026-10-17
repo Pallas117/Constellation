@@ -161,15 +161,11 @@ export async function mockUiApis(page: Page, options?: { auth?: boolean }): Prom
     await fulfillCorsJson(route, { ok: true, chunkCount: 42 });
   });
 
-  await page.route("**/api/rag/index**", async (route) => {
-    await fulfillCorsJson(route, { ok: true });
-  });
-
   await page.route("**/api/rag/query**", async (route) => {
     await fulfillCorsJson(route, {
       ok: true,
       answer: "Synthetic answer from Playwright mock.",
-      sources: [{ filePath: "/tmp/mock-source.pdf", score: 0.98 }],
+      sources: [{ filePath: "public/mock-source.md", chunkId: "c1", score: 0.98, sourceSha256: null, verified: true }],
     });
   });
 }
