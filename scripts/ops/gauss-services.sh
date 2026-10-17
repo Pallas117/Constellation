@@ -42,8 +42,11 @@ AWAKE_OFF="$HOME/Library/Application Support/Gauss/awake-off"
 AWAKE_MIN_BATTERY="${GAUSS_AWAKE_MIN_BATTERY:-10}"
 AWAKE_WARN_BATTERY="${GAUSS_AWAKE_WARN_BATTERY:-20}" # phone warning before the floor
 ARGO="${ARGO:-$HOME/.local/bin/argo}"
-MEM_MIN_FREE="${GAUSS_MEM_MIN_FREE:-15}" # phone alert at or below this system-wide free %
-SWAP_MAX="${GAUSS_SWAP_MAX:-90}"         # ... or at or above this swap use %
+# Memory uses the kernel's pressure level (kern.memorystatus_vm_pressure_level: 1 normal, 2 warn,
+# 4 critical) and swap in GB; see memory_stats for why not "free %" or swap "% used".
+MEM_ALERT_LEVEL="${GAUSS_MEM_ALERT_LEVEL:-4}" # phone alert at or above this pressure level
+MEM_SHED_LEVEL="${GAUSS_MEM_SHED_LEVEL:-2}"   # balance sheds optional load at or above this level
+SWAP_MAX_GB="${GAUSS_SWAP_MAX_GB:-4}"         # ... or at or above this many GB of swap in use
 DISK_MIN_GB="${GAUSS_DISK_MIN_GB:-8}"   # ... or below this many GB free on the boot volume
 WATCH_DIR="$HOME/Library/Application Support/Gauss"
 GUARD_HEARTBEAT="$WATCH_DIR/guard.heartbeat" # Argo restarts the guard if this goes stale
@@ -147,12 +150,20 @@ battery_alerts() { # battery_alerts <pmset batt output> <pct>
 # Memory: an 8 GB Mac running Gauss, Claude sessions and builds can run out
 # and macOS then kills or freezes background work. "free" is macOS's own
 # system-wide free percentage; swap is how much of the swap file is in use.
-memory_stats() { # prints "<free%> <swap used%>"
-  local free swap
+memory_stats() { # prints "<kernel pressure level> <swap used MB> <free%>"
+  # Decide on the kernel's level, never on memory_pressure's "free percentage": it counts
+  # compressible memory as free and read 40-56% on the dev Mac while the kernel said warn. Swap
+  # "% used" is no better: macOS adds swap files on demand, so 2.7 of 3 GB (89%) was a steady state.
+  # free% is only shown.
+  local level swap free
+  level=$(sysctl -n kern.memorystatus_vm_pressure_level 2>/dev/null || true)
+  swap=$(sysctl -n vm.swapusage 2>/dev/null | awk '{u=$6; gsub(/M/,"",u); print int(u)}' || true)
   free=$(memory_pressure -Q 2>/dev/null | awk -F': ' '/free percentage/{gsub(/%/,"",$2); print $2+0}' || true)
-  swap=$(sysctl -n vm.swapusage 2>/dev/null | awk '{t=$3; u=$6; gsub(/M/,"",t); gsub(/M/,"",u); print (t>0 ? int(u*100/t) : 0)}' || true)
-  echo "${free:-100} ${swap:-0}"
+  echo "${level:-1} ${swap:-0} ${free:-100}"
 }
+pressure_name() { case "$1" in 1) echo normal ;; 2) echo warn ;; 4) echo critical ;; *) echo "level $1" ;; esac; }
+gb() { awk -v m="$1" 'BEGIN{printf "%.1f", m/1024}'; } # MB -> "x.y"
+swap_high() { [ "$1" -ge $((SWAP_MAX_GB * 1024)) ]; }  # swap_high <swap MB>
 # Disk: swap files live on the boot volume, so a near-full disk turns memory
 # pressure into killed apps and failed builds (seen: 5 GB free with 5 GB swap).
 disk_free_gb() { df -g / 2>/dev/null | awk 'NR==2{print $4+0}'; }
@@ -163,15 +174,15 @@ disk_alerts() { # disk_alerts <free GB>
 }
 top_memory() { ps -Acmo rss=,comm= 2>/dev/null | awk 'NR==1{printf "%s %.1f GB", $2, $1/1048576}'; }
 
-memory_alerts() { # memory_alerts <free%> <swap used%>
-  local free=$1 swap=$2
-  if [ "$free" -le "$MEM_MIN_FREE" ]; then
-    phone -key memory-low -every 30m "Gauss: memory ${free}% free" \
+memory_alerts() { # memory_alerts <pressure level> <swap used MB>
+  local level=$1 swap=$2
+  if [ "$level" -ge "$MEM_ALERT_LEVEL" ]; then
+    phone -key memory-low -every 30m "Gauss: memory pressure $(pressure_name "$level")" \
       "Background work may be killed. Biggest: $(top_memory). Close apps or stop a build."
   fi
-  if [ "$swap" -ge "$SWAP_MAX" ]; then
-    phone -key swap-high -every 1h "Gauss: swap ${swap}% used" \
-      "The Mac is short of memory and slowing down. Biggest: $(top_memory)."
+  if swap_high "$swap"; then
+    phone -key swap-high -every 1h "Gauss: swap $(gb "$swap") GB" \
+      "The Mac is short of memory and slowing down, and swap fills the disk. Biggest: $(top_memory)."
   fi
 }
 
@@ -228,8 +239,8 @@ awake_guard() { # run every minute by the awake agent
   local batt pct
   batt=$(pmset -g batt); pct=$(grep -Eo '[0-9]+%' <<<"$batt" | head -1 | tr -d % || true)
   battery_alerts "$batt" "$pct"
-  local free swap; read -r free swap < <(memory_stats)
-  memory_alerts "$free" "$swap"
+  local level swap free; read -r level swap free < <(memory_stats)
+  memory_alerts "$level" "$swap"
   disk_alerts "$(disk_free_gb)"
   balance || true
   [ -f "$SUDOERS" ] || return 0 # not set up; status and check say so
@@ -259,11 +270,11 @@ lowpower_on() { pmset -g 2>/dev/null | awk '$1=="lowpowermode"{v=$2} END{print v
 balance() { # balance [--dry-run]
   local dry=0; [ "${1:-}" = --dry-run ] && dry=1
   if [ "$BALANCE" = 0 ]; then [ $dry = 1 ] && echo "balance is off (GAUSS_BALANCE=0)"; return 0; fi
-  local batt pct on_battery=0 free swap disk mem_short=0 batt_low=0 recovered=0
+  local batt pct on_battery=0 level swap free disk mem_short=0 batt_low=0 recovered=0
   batt=$(pmset -g batt); pct=$(grep -Eo '[0-9]+%' <<<"$batt" | head -1 | tr -d % || true)
   [[ "$batt" != *"'AC Power'"* ]] && [ -n "$pct" ] && on_battery=1
-  read -r free swap < <(memory_stats); disk=$(disk_free_gb)
-  { [ "$free" -le "$MEM_MIN_FREE" ] || [ "$swap" -ge "$SWAP_MAX" ]; } && mem_short=1
+  read -r level swap free < <(memory_stats); disk=$(disk_free_gb)
+  { [ "$level" -ge "$MEM_SHED_LEVEL" ] || swap_high "$swap"; } && mem_short=1
   [ $on_battery = 1 ] && [ "$pct" -le "$AWAKE_WARN_BATTERY" ] && batt_low=1
   { [ $on_battery = 0 ] || [ "${pct:-0}" -gt $((AWAKE_WARN_BATTERY + 10)) ]; } && recovered=1
   local notify=() quiet=()
@@ -289,7 +300,7 @@ balance() { # balance [--dry-run]
   fi
 
   # ${a[@]+"${a[@]}"}: empty arrays are "unbound" under set -u in macOS's bash 3.2
-  local all=(${notify[@]+"${notify[@]}"} ${quiet[@]+"${quiet[@]}"}) state="battery ${pct:-?}%$([ $on_battery = 1 ] && echo ' on battery'), memory ${free}% free, swap ${swap}%, disk ${disk} GB"
+  local all=(${notify[@]+"${notify[@]}"} ${quiet[@]+"${quiet[@]}"}) state="battery ${pct:-?}%$([ $on_battery = 1 ] && echo ' on battery'), memory $(pressure_name "$level") (${free}% free), swap $(gb "$swap") GB, disk ${disk} GB"
   [ ${#all[@]} = 0 ] && { [ $dry = 1 ] && echo "balanced: nothing to do ($state)"; return 0; }
   local summary; summary=$(IFS=';'; echo "${all[*]}" | sed 's/;/; /g')
   if [ $dry = 1 ]; then echo "would report: $summary ($state)"; return 0; fi
@@ -339,7 +350,7 @@ network_item() {
 }
 
 resilience() { # can background work survive the lid closed, the battery, memory and the network?
-  local fail=0 ok batt pct free swap
+  local fail=0 ok batt pct level swap free
   batt=$(pmset -g batt); pct=$(grep -Eo '[0-9]+%' <<<"$batt" | head -1 | tr -d % || true)
   if [[ "$batt" == *"'AC Power'"* ]]; then
     local note=""
@@ -353,9 +364,9 @@ resilience() { # can background work survive the lid closed, the battery, memory
     item $ok "battery ${pct:-?}% on battery (sleeps at ${AWAKE_MIN_BATTERY}%)"
   fi
   local awake; awake=$(awake_state); item "${awake%% *}" "lid closed: ${awake#* }"
-  read -r free swap < <(memory_stats)
-  [ "$free" -gt "$MEM_MIN_FREE" ] && [ "$swap" -lt "$SWAP_MAX" ] && ok=ok || ok=no
-  item $ok "memory ${free}% free, swap ${swap}% used$([ $ok = no ] && echo "; biggest: $(top_memory)")"
+  read -r level swap free < <(memory_stats)
+  [ "$level" -lt "$MEM_ALERT_LEVEL" ] && ! swap_high "$swap" && ok=ok || ok=no
+  item $ok "memory pressure $(pressure_name "$level"), swap $(gb "$swap") GB$([ $ok = no ] && echo "; biggest: $(top_memory)")"
   local disk; disk=$(disk_free_gb)
   [ "${disk:-0}" -ge "$DISK_MIN_GB" ] && ok=ok || ok=no
   item $ok "disk ${disk:-?} GB free$([ $ok = no ] && echo " (need ${DISK_MIN_GB}+ for swap and builds)")"
