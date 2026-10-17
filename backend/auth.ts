@@ -28,7 +28,8 @@ export interface AuthContext {
   token: string;
 }
 
-export type AuthenticatedRequest = Request & { auth?: AuthContext };
+/** `P` types `req.params`; pass the route's params, e.g. `AuthenticatedRequest<{ id: string }>` for "/:id". */
+export type AuthenticatedRequest<P = Request["params"]> = Request<P> & { auth?: AuthContext };
 
 const ROLE_RANK: Record<AuthRole, number> = {
   user: 1,

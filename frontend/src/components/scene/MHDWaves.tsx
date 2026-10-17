@@ -37,8 +37,8 @@ export const MHDWaves = ({
   amplitude = 0.4,
   speed = 1,
 }: MHDWavesProps) => {
-  const shearLinesRef = useRef<THREE.Group>(null);
-  const fastWaveRef = useRef<THREE.Mesh>(null);
+  const shearLinesRef = useRef<THREE.LineSegments<THREE.BufferGeometry, THREE.ShaderMaterial>>(null);
+  const fastWaveRef = useRef<THREE.Mesh<THREE.BufferGeometry, THREE.ShaderMaterial>>(null);
 
   // ---- Shear Alfvén: field lines along B (z) with transverse displacement ----
   // Displacement u_perp ∝ sin(k·z - ω·t), ω = k·V_A
@@ -119,7 +119,7 @@ export const MHDWaves = ({
       depthWrite: true,
       linewidth: 2,
     });
-  }, [amplitude, speed]);
+  }, []); // amplitude and speed are uniforms, set every frame: no rebuild or recompile
 
   // ---- Fast magnetosonic: ripple on a disc (compressional wave) ----
   const fastWaveGeometry = useMemo(() => {
@@ -200,7 +200,7 @@ export const MHDWaves = ({
       depthWrite: false,
       blending: THREE.AdditiveBlending,
     });
-  }, [amplitude, speed]);
+  }, []); // amplitude and speed are uniforms, set every frame: no rebuild or recompile
 
   useEffect(
     () => () => {
@@ -215,15 +215,17 @@ export const MHDWaves = ({
   useFrame((state) => {
     if (!visible) return;
     const t = state.clock.elapsedTime;
-    if (shearMaterial) {
-      shearMaterial.uniforms.time.value = t;
-      shearMaterial.uniforms.amplitude.value = amplitude;
-      shearMaterial.uniforms.speed.value = speed;
+    const shear = shearLinesRef.current?.material;
+    if (shear) {
+      shear.uniforms.time.value = t;
+      shear.uniforms.amplitude.value = amplitude;
+      shear.uniforms.speed.value = speed;
     }
-    if (fastWaveMaterial) {
-      fastWaveMaterial.uniforms.time.value = t;
-      fastWaveMaterial.uniforms.amplitude.value = amplitude * 0.5;
-      fastWaveMaterial.uniforms.speed.value = speed;
+    const fast = fastWaveRef.current?.material;
+    if (fast) {
+      fast.uniforms.time.value = t;
+      fast.uniforms.amplitude.value = amplitude * 0.5;
+      fast.uniforms.speed.value = speed;
     }
   });
 
@@ -234,8 +236,8 @@ export const MHDWaves = ({
   // switching the layer on draws at once instead of stalling to compile.
   return (
     <group name="mhd-waves" visible={visible}>
-      <group ref={shearLinesRef} visible={showShear}>
-        <lineSegments geometry={shearGeometry} material={shearMaterial} />
+      <group visible={showShear}>
+        <lineSegments ref={shearLinesRef} geometry={shearGeometry} material={shearMaterial} />
       </group>
       <mesh
         ref={fastWaveRef}

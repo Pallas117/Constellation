@@ -1,4 +1,4 @@
-import { createContext, memo, useContext, useEffect, useLayoutEffect, useMemo, useRef } from 'react';
+import { createContext, memo, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import { LineSegments2 } from 'three/examples/jsm/lines/LineSegments2.js';
@@ -17,6 +17,8 @@ import { fillRevolution, revolutionTopology } from '@/lib/physics/revolution';
 import { usePrefersReducedMotion } from '@/hooks/usePrefersReducedMotion';
 import { useTracedMagnetosphere } from './useTracedMagnetosphere';
 import { hoverHandlers, setSceneHover, type HoverTarget } from './scene-hover';
+import { seeded } from './seeded';
+import { GLOW_POINT_FRAG, GLOW_POINT_VERT, makeTracerMaterial } from './point-materials';
 
 /** 1 = normal animation, 0 = frozen (prefers-reduced-motion). */
 const MotionScale = createContext(1);
@@ -31,14 +33,6 @@ const MORPH_TAU = 0.9; // boundaries settle in ~2-3 s
 const FADE_TAU = 0.35; // field-line crossfade completes in ~1.2 s
 const LINE_OPACITY = 0.6;
 const LINE_WIDTH_PX = 1.1;
-
-/** Deterministic per-index random in [0, 1): particles keep their identity across retraces. */
-function seeded(i: number, salt = 0): number {
-  let t = (i * 0x9e3779b1 + salt * 0x85ebca6b + 0x6d2b79f5) >>> 0;
-  t = Math.imul(t ^ (t >>> 15), t | 1);
-  t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-  return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-}
 
 export interface MagnetosphereModelInfo {
   /** Drivers the shown geometry was traced from (5-min mean for live data). */
@@ -136,6 +130,9 @@ const FieldLinePool = ({ data }: { data: FieldRenderData | null }) => {
   const camera = useThree((st) => st.camera);
   const scene = useThree((st) => st.scene);
   const slots = useMemo(() => [makeLineSlot(), makeLineSlot()], []);
+  // Mutations go through the mounted objects' refs; `slots` itself is only rendered.
+  const slotA = useRef<LineSegments2>(null);
+  const slotB = useRef<LineSegments2>(null);
   const active = useRef(-1);
 
   // Compile the fat-line shader while the worker traces the first field, so
@@ -143,8 +140,8 @@ const FieldLinePool = ({ data }: { data: FieldRenderData | null }) => {
   // (~190 ms measured in Chrome). Non-blocking where the driver supports
   // KHR_parallel_shader_compile; both slots share the compiled program.
   useEffect(() => {
-    gl.compileAsync(slots[0], camera, scene).catch(() => undefined);
-  }, [gl, camera, scene, slots]);
+    if (slotA.current) gl.compileAsync(slotA.current, camera, scene).catch(() => undefined);
+  }, [gl, camera, scene]);
 
   useEffect(
     () => () => {
@@ -157,20 +154,23 @@ const FieldLinePool = ({ data }: { data: FieldRenderData | null }) => {
   );
 
   useLayoutEffect(() => {
-    for (const slot of slots) slot.material.resolution.set(size.width, size.height);
-  }, [slots, size.width, size.height]);
+    for (const slot of [slotA.current, slotB.current]) slot?.material.resolution.set(size.width, size.height);
+  }, [size.width, size.height]);
 
   // A new trace goes into the idle slot and fades in; the other fades out.
   useEffect(() => {
     if (!data) return;
     const next = active.current === 0 ? 1 : 0;
-    writeLineSlot(slots[next], data);
-    slots[next].material.opacity = 0;
+    const slot = next === 0 ? slotA.current : slotB.current;
+    if (!slot) return;
+    writeLineSlot(slot, data);
+    slot.material.opacity = 0;
     active.current = next;
-  }, [data, slots]);
+  }, [data]);
 
   useFrame((_, dt) => {
-    slots.forEach((slot, i) => {
+    [slotA.current, slotB.current].forEach((slot, i) => {
+      if (!slot) return;
       const mat = slot.material;
       mat.opacity = damp(mat.opacity, i === active.current ? LINE_OPACITY : 0, dt, tau);
       slot.visible = mat.opacity > 0.002;
@@ -179,8 +179,8 @@ const FieldLinePool = ({ data }: { data: FieldRenderData | null }) => {
 
   return (
     <>
-      <primitive object={slots[0]} />
-      <primitive object={slots[1]} />
+      <primitive ref={slotA} object={slots[0]} />
+      <primitive ref={slotB} object={slots[1]} />
     </>
   );
 };
@@ -214,7 +214,7 @@ const FieldLineTracers = memo(function FieldLineTracers({ data, count = 520 }: {
     }
     const lineIdx = new Uint16Array(count);
     const phase = new Float32Array(count);
-    const colors = geometry.attributes.color.array as Float32Array;
+    const colors = new Float32Array(count * 3);
     for (let i = 0; i < count; i++) {
       let r = seeded(i, 1) * (total || 1);
       let k = 0;
@@ -223,14 +223,22 @@ const FieldLineTracers = memo(function FieldLineTracers({ data, count = 520 }: {
       phase[i] = seeded(i, 2);
       colors.set(data.pathOpen[k] ? OPEN_NEAR : CLOSED_NEAR, i * 3);
     }
-    geometry.attributes.color.needsUpdate = true;
-    return { lineIdx, phase, length };
-  }, [data, count, geometry]);
+    return { lineIdx, phase, length, colors };
+  }, [data, count]);
+
+  // Recolour before the next frame draws.
+  useLayoutEffect(() => {
+    const color = pointsRef.current?.geometry.attributes.color;
+    if (!color) return;
+    (color.array as Float32Array).set(assign.colors);
+    color.needsUpdate = true;
+  }, [assign]);
 
   useFrame((state) => {
     const pts = pointsRef.current;
     if (!pts || assign.length.length === 0) return;
-    const pos = geometry.attributes.position.array as Float32Array;
+    const position = pts.geometry.attributes.position;
+    const pos = position.array as Float32Array;
     const time = animTime(state.clock.elapsedTime);
     const { pathPoints, pathCum, pathStart, pathOpen } = data;
     for (let i = 0; i < count; i++) {
@@ -253,48 +261,14 @@ const FieldLineTracers = memo(function FieldLineTracers({ data, count = 520 }: {
       pos[i * 3 + 1] = pathPoints[lo * 3 + 1] + (pathPoints[hi * 3 + 1] - pathPoints[lo * 3 + 1]) * f;
       pos[i * 3 + 2] = pathPoints[lo * 3 + 2] + (pathPoints[hi * 3 + 2] - pathPoints[lo * 3 + 2]) * f;
     }
-    geometry.attributes.position.needsUpdate = true;
+    position.needsUpdate = true;
   });
 
-  const material = useMemo(makeTracerMaterial, []);
+  const material = useMemo(() => makeTracerMaterial(), []);
   useEffect(() => () => material.dispose(), [material]);
 
   return <points ref={pointsRef} geometry={geometry} material={material} frustumCulled={false} />;
 });
-
-/** Tracer particle material. Exported so the scene can compile it before the first trace. */
-export function makeTracerMaterial(): THREE.ShaderMaterial {
-  return new THREE.ShaderMaterial({
-    vertexShader: GLOW_POINT_VERT,
-    fragmentShader: GLOW_POINT_FRAG,
-    transparent: true,
-    depthWrite: false,
-    blending: THREE.AdditiveBlending,
-  });
-}
-
-const GLOW_POINT_VERT = /* glsl */ `
-  attribute float size;
-  attribute vec3 color;
-  varying vec3 vColor;
-  void main() {
-    vColor = color;
-    vec4 mv = modelViewMatrix * vec4(position, 1.0);
-    gl_PointSize = size * (260.0 / -mv.z);
-    gl_Position = projectionMatrix * mv;
-  }
-`;
-
-const GLOW_POINT_FRAG = /* glsl */ `
-  varying vec3 vColor;
-  void main() {
-    float d = length(gl_PointCoord - 0.5);
-    if (d > 0.5) discard;
-    float core = exp(-d * d * 40.0);
-    float halo = exp(-d * d * 10.0) * 0.45;
-    gl_FragColor = vec4(vColor * (core + halo), core + halo);
-  }
-`;
 
 /* ------------------------------------------------------------------------- */
 /* Boundaries                                                                */
@@ -362,11 +336,14 @@ const MP_PHI = 64;
 const Magnetopause = ({ r0, alpha, reconnection, hover }: { r0: number; alpha: number; reconnection: number; hover: boolean }) => {
   const animTime = useAnimTime();
   const tau = useTau(MORPH_TAU);
+  const meshRef = useRef<THREE.Mesh<THREE.BufferGeometry, THREE.ShaderMaterial>>(null);
   const shape = useRef({ r0, alpha });
-  const geometry = useMemo(() => {
-    const g = revolutionTopology(MP_THETA, MP_PHI);
-    fillRevolution(g, (th) => shueRadius(th, shape.current.r0, shape.current.alpha), TAIL_LENGTH, MP_THETA, MP_PHI);
-    return g;
+  const geometry = useMemo(() => revolutionTopology(MP_THETA, MP_PHI), []);
+  // Fill the mount-time shape before the first frame; useFrame morphs it from there.
+  useLayoutEffect(() => {
+    const g = meshRef.current?.geometry;
+    const cur = shape.current;
+    if (g) fillRevolution(g, (th) => shueRadius(th, cur.r0, cur.alpha), TAIL_LENGTH, MP_THETA, MP_PHI);
   }, []);
   const material = useMemo(
     () =>
@@ -389,17 +366,20 @@ const Magnetopause = ({ r0, alpha, reconnection, hover }: { r0: number; alpha: n
     [],
   );
   useFrame(({ clock }, dt) => {
+    const mesh = meshRef.current;
+    if (!mesh) return;
     const cur = shape.current;
     if (Math.abs(cur.r0 - r0) > 1e-4 || Math.abs(cur.alpha - alpha) > 1e-5) {
       cur.r0 = damp(cur.r0, r0, dt, tau);
       cur.alpha = damp(cur.alpha, alpha, dt, tau);
-      fillRevolution(geometry, (th) => shueRadius(th, cur.r0, cur.alpha), TAIL_LENGTH, MP_THETA, MP_PHI);
+      fillRevolution(mesh.geometry, (th) => shueRadius(th, cur.r0, cur.alpha), TAIL_LENGTH, MP_THETA, MP_PHI);
     }
-    material.uniforms.uTime.value = animTime(clock.elapsedTime);
-    material.uniforms.uReconnection.value = damp(material.uniforms.uReconnection.value, reconnection, dt, tau);
-    material.uniforms.uR0.value = cur.r0;
+    const u = mesh.material.uniforms;
+    u.uTime.value = animTime(clock.elapsedTime);
+    u.uReconnection.value = damp(u.uReconnection.value, reconnection, dt, tau);
+    u.uR0.value = cur.r0;
   });
-  return <mesh geometry={geometry} material={material} {...hoverProps('magnetopause', hover)} />;
+  return <mesh ref={meshRef} geometry={geometry} material={material} {...hoverProps('magnetopause', hover)} />;
 };
 
 const BS_THETA = 48;
@@ -410,11 +390,13 @@ const bowShockRadius = (standoff: number) => (th: number) => (standoff * (1 + BS
 const BowShock = ({ standoff, pdyn, hover }: { standoff: number; pdyn: number; hover: boolean }) => {
   const animTime = useAnimTime();
   const tau = useTau(MORPH_TAU);
+  const meshRef = useRef<THREE.Mesh<THREE.BufferGeometry, THREE.ShaderMaterial>>(null);
   const shape = useRef(standoff);
-  const geometry = useMemo(() => {
-    const g = revolutionTopology(BS_THETA, BS_PHI);
-    fillRevolution(g, bowShockRadius(shape.current), 16, BS_THETA, BS_PHI);
-    return g;
+  const geometry = useMemo(() => revolutionTopology(BS_THETA, BS_PHI), []);
+  // Fill the mount-time shape before the first frame; useFrame morphs it from there.
+  useLayoutEffect(() => {
+    const g = meshRef.current?.geometry;
+    if (g) fillRevolution(g, bowShockRadius(shape.current), 16, BS_THETA, BS_PHI);
   }, []);
   const material = useMemo(
     () =>
@@ -430,14 +412,17 @@ const BowShock = ({ standoff, pdyn, hover }: { standoff: number; pdyn: number; h
     [],
   );
   useFrame(({ clock }, dt) => {
+    const mesh = meshRef.current;
+    if (!mesh) return;
     if (Math.abs(shape.current - standoff) > 1e-4) {
       shape.current = damp(shape.current, standoff, dt, tau);
-      fillRevolution(geometry, bowShockRadius(shape.current), 16, BS_THETA, BS_PHI);
+      fillRevolution(mesh.geometry, bowShockRadius(shape.current), 16, BS_THETA, BS_PHI);
     }
-    material.uniforms.uTime.value = animTime(clock.elapsedTime);
-    material.uniforms.uPressure.value = damp(material.uniforms.uPressure.value, pdyn, dt, tau);
+    const u = mesh.material.uniforms;
+    u.uTime.value = animTime(clock.elapsedTime);
+    u.uPressure.value = damp(u.uPressure.value, pdyn, dt, tau);
   });
-  return <mesh geometry={geometry} material={material} {...hoverProps('bowShock', hover)} />;
+  return <mesh ref={meshRef} geometry={geometry} material={material} {...hoverProps('bowShock', hover)} />;
 };
 
 /* ------------------------------------------------------------------------- */
@@ -467,7 +452,7 @@ const CURRENT_SHEET_FRAG = /* glsl */ `
 const CurrentSheet = ({ tilt, reconnection, width, hover }: { tilt: number; reconnection: number; width: number; hover: boolean }) => {
   const animTime = useAnimTime();
   const tau = useTau(MORPH_TAU);
-  const meshRef = useRef<THREE.Mesh>(null);
+  const meshRef = useRef<THREE.Mesh<THREE.BufferGeometry, THREE.ShaderMaterial>>(null);
   const shape = useRef({ tilt, width });
   // Unit width; scaled per frame so a new width morphs instead of rebuilding.
   const geometry = useMemo(() => {
@@ -496,19 +481,28 @@ const CurrentSheet = ({ tilt, reconnection, width, hover }: { tilt: number; reco
       }),
     [],
   );
+  // Position and scale are only ever set here (not as props), so a re-render never
+  // snaps the sheet away from its morph; the first frame places it.
+  const place = (mesh: THREE.Mesh) => {
+    mesh.position.y = 10 * Math.tan(shape.current.tilt);
+    mesh.scale.y = shape.current.width;
+  };
+  useLayoutEffect(() => {
+    if (meshRef.current) place(meshRef.current);
+  }, []);
   useFrame(({ clock }, dt) => {
+    const mesh = meshRef.current;
+    if (!mesh) return;
     const s = shape.current;
     s.tilt = damp(s.tilt, tilt, dt, tau);
     s.width = damp(s.width, width, dt, tau);
-    if (meshRef.current) {
-      meshRef.current.position.y = 10 * Math.tan(s.tilt);
-      meshRef.current.scale.y = s.width;
-    }
-    material.uniforms.uTime.value = animTime(clock.elapsedTime);
-    const rec = damp(material.uniforms.uReconnection.value, reconnection, dt, tau);
-    material.uniforms.uReconnection.value = rec;
+    place(mesh);
+    const u = mesh.material.uniforms;
+    u.uTime.value = animTime(clock.elapsedTime);
+    const rec = damp(u.uReconnection.value, reconnection, dt, tau);
+    u.uReconnection.value = rec;
     // Near-Earth X-line moves earthward under strong driving.
-    material.uniforms.uXLine.value = -26 + 8 * rec;
+    u.uXLine.value = -26 + 8 * rec;
   });
   // Plane lies in scene XZ (GSM XY); hinge it to the tilted neutral sheet.
   return (
@@ -517,8 +511,6 @@ const CurrentSheet = ({ tilt, reconnection, width, hover }: { tilt: number; reco
       geometry={geometry}
       material={material}
       rotation={[-Math.PI / 2, 0, 0]}
-      position={[0, 10 * Math.tan(shape.current.tilt), 0]}
-      scale={[1, shape.current.width, 1]}
       {...hoverProps('currentSheet', hover)}
     />
   );
@@ -646,6 +638,7 @@ function fillOvals(g: THREE.BufferGeometry, tilt: number, equatorward: number, p
 const AuroralOvals = ({ tilt, oval, kp }: { tilt: number; oval: TracedModel['oval']; kp: number }) => {
   const animTime = useAnimTime();
   const tau = useTau(MORPH_TAU);
+  const meshRef = useRef<THREE.Mesh<THREE.BufferGeometry, THREE.ShaderMaterial>>(null);
   const shape = useRef({ tilt, eq: oval.equatorward, pol: oval.poleward });
   const geometry = useMemo(() => {
     const uvs: number[] = [];
@@ -672,9 +665,13 @@ const AuroralOvals = ({ tilt, oval, kp }: { tilt: number; oval: TracedModel['ova
     g.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
     g.setAttribute('aNight', new THREE.Float32BufferAttribute(night, 1));
     g.setIndex(indices);
-    const s = shape.current;
-    fillOvals(g, s.tilt, s.eq, s.pol);
     return g;
+  }, []);
+  // Fill the mount-time ovals before the first frame; useFrame morphs them from there.
+  useLayoutEffect(() => {
+    const g = meshRef.current?.geometry;
+    const s = shape.current;
+    if (g) fillOvals(g, s.tilt, s.eq, s.pol);
   }, []);
 
   const material = useMemo(
@@ -700,17 +697,20 @@ const AuroralOvals = ({ tilt, oval, kp }: { tilt: number; oval: TracedModel['ova
     [],
   );
   useFrame(({ clock }, dt) => {
+    const mesh = meshRef.current;
+    if (!mesh) return;
     const s = shape.current;
     if (Math.abs(s.tilt - tilt) > 1e-5 || Math.abs(s.eq - oval.equatorward) > 1e-3 || Math.abs(s.pol - oval.poleward) > 1e-3) {
       s.tilt = damp(s.tilt, tilt, dt, tau);
       s.eq = damp(s.eq, oval.equatorward, dt, tau);
       s.pol = damp(s.pol, oval.poleward, dt, tau);
-      fillOvals(geometry, s.tilt, s.eq, s.pol);
+      fillOvals(mesh.geometry, s.tilt, s.eq, s.pol);
     }
-    material.uniforms.uTime.value = animTime(clock.elapsedTime);
-    material.uniforms.uKp.value = damp(material.uniforms.uKp.value, kp, dt, tau);
+    const u = mesh.material.uniforms;
+    u.uTime.value = animTime(clock.elapsedTime);
+    u.uKp.value = damp(u.uKp.value, kp, dt, tau);
   });
-  return <mesh geometry={geometry} material={material} />;
+  return <mesh ref={meshRef} geometry={geometry} material={material} />;
 };
 
 /* ------------------------------------------------------------------------- */
@@ -739,7 +739,7 @@ export const Magnetosphere = ({
   }, [compression, reconnectionStrength, drivers?.bz, drivers?.by, drivers?.pdyn, drivers?.kp]);
 
   // Fall back to a fixed epoch per mount so tracing stays stable without a clock.
-  const mountEpoch = useMemo(() => Date.now(), []);
+  const [mountEpoch] = useState(() => Date.now());
   const model = useTracedMagnetosphere(resolved, epochMs ?? mountEpoch, { smooth: smoothing, tailLength: TAIL_LENGTH });
   const state = model.current;
   const reducedMotion = usePrefersReducedMotion();
@@ -747,7 +747,9 @@ export const Magnetosphere = ({
   const reconnection = THREE.MathUtils.clamp(-model.drivers.bz / 15, 0, 1);
 
   const onModelUpdateRef = useRef(onModelUpdate);
-  onModelUpdateRef.current = onModelUpdate;
+  useLayoutEffect(() => {
+    onModelUpdateRef.current = onModelUpdate;
+  });
   useEffect(() => {
     onModelUpdateRef.current?.({
       drivers: model.drivers,

@@ -59,8 +59,8 @@ if [[ "${DRY_RUN}" != "true" ]]; then
 fi
 
 # ── Step 3: TypeScript typecheck ──────────────────────────────────────────────
-log "Step 3: tsc --noEmit"
-if npx tsc --noEmit 2>>"${LOG_FILE}"; then
+log "Step 3: npm run lint (strict tsc: frontend, backend, e2e tests, scripts)"
+if npm run lint --silent 2>>"${LOG_FILE}"; then
   ok "TypeScript clean"
 else
   err "TypeScript errors — aborting cycle"

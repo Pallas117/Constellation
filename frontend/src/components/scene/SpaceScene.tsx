@@ -7,7 +7,7 @@
 
 'use client'; // Mark as client component (for Next.js compatibility, if migrated)
 
-import { Component, Suspense, useCallback, useRef, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { Component, Suspense, useCallback, useRef, useEffect, useMemo, useState, type ComponentRef, type ReactNode } from 'react';
 import { Canvas, useThree } from '@react-three/fiber';
 import { OrbitControls, Stars, PerspectiveCamera } from '@react-three/drei';
 import * as THREE from 'three';
@@ -27,6 +27,7 @@ import type { MMSReconVectorPoint } from '@/lib/types/space-weather';
 import { MMSReconnectionVectors } from './MMSReconnectionVectors';
 import { SpaceObjectOverlay } from './SpaceObjectOverlay';
 import type { SpaceObjectCatalogEntry, SpaceObjectDetectionAlert } from '@/lib/types/space-object';
+import { SCENE_VIEWS, type SceneView, type Vec } from './scene-views';
 
 interface LayerVisibility {
   earth: boolean;
@@ -77,17 +78,6 @@ interface SpaceSceneProps {
   hoverable?: boolean;
 }
 
-export type SceneView = 'overview' | 'dayside' | 'meridian' | 'tail' | 'polar';
-
-type Vec = [number, number, number];
-/** Camera position and orbit target per preset (scene units = Earth radii, Sun at +x). */
-export const SCENE_VIEWS: Record<SceneView, { position: Vec; target: Vec; label: string }> = {
-  overview: { position: [6, 5, 18], target: [0, 0, 0], label: 'Overview' },
-  dayside: { position: [26, 4, 6], target: [3, 0, 0], label: 'From the Sun' },
-  meridian: { position: [-4, 2, 44], target: [-6, 0, 0], label: 'Noon–midnight' },
-  tail: { position: [-34, 9, 16], target: [-12, 0, 0], label: 'Magnetotail' },
-  polar: { position: [-1.5, 24, 3], target: [0, 0, 0], label: 'North pole' },
-};
 
 const DEFAULT_CAMERA: Vec = SCENE_VIEWS.overview.position;
 
@@ -119,7 +109,7 @@ const SceneContent = ({
   // GSM frame: the dipole tilts toward/away from the Sun with season and UT.
   const epochMs = useNow(5 * 60_000);
   const dipoleTilt = useMemo(() => dipoleTiltRad(epochMs), [epochMs]);
-  const controlsRef = useRef<any>(null);
+  const controlsRef = useRef<ComponentRef<typeof OrbitControls>>(null);
   const { camera } = useThree();
 
   // Apply camera presets on request.
@@ -401,7 +391,7 @@ class SceneBoundary extends Component<{ children: ReactNode; onFail: () => void 
   }
 }
 
-export const SpaceScene = (props: SpaceSceneProps) => {
+export const SpaceScene = ({ canvasRef, ...sceneProps }: SpaceSceneProps) => {
   // Nothing renders until every shader is compiled: the first draw of an
   // uncompiled material blocks the main thread (see ShaderWarmup).
   const [ready, setReady] = useState(false);
@@ -438,7 +428,7 @@ export const SpaceScene = (props: SpaceSceneProps) => {
       {canvasOn && (
         <SceneBoundary onFail={onFail}>
           <Canvas
-            ref={props.canvasRef}
+            ref={canvasRef}
             frameloop={ready ? 'always' : 'never'}
             gl={{
               antialias: true,
@@ -451,7 +441,7 @@ export const SpaceScene = (props: SpaceSceneProps) => {
             className={`w-full h-full transition-opacity duration-500 motion-reduce:transition-none ${ready ? 'opacity-100' : 'opacity-0'}`}
           >
             <Suspense fallback={null}>
-              <SceneContent {...props} stage={stage} onStageCommitted={onStageCommitted} />
+              <SceneContent {...sceneProps} stage={stage} onStageCommitted={onStageCommitted} />
               {stage >= STAGE.warmup && <ShaderWarmup onReady={() => setReady(true)} />}
             </Suspense>
           </Canvas>

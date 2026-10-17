@@ -195,7 +195,7 @@ export async function fetchOMNIData(
     return measurements;
   } catch (error) {
     console.error('Error fetching OMNI data:', error);
-    throw new Error(`Failed to fetch OMNI data: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    throw new Error(`Failed to fetch OMNI data: ${error instanceof Error ? error.message : 'Unknown error'}`, { cause: error });
   }
 }
 
