@@ -7,6 +7,7 @@
 #   scripts/ops/gauss-services.sh status                   agent state + health checks
 #   scripts/ops/gauss-services.sh check                    pre-demo checklist (exit 1 if anything is off)
 #   scripts/ops/gauss-services.sh resilience               battery, memory, network and phone alerts before closing the lid (exit 1 if not)
+#   scripts/ops/gauss-services.sh balance [--dry-run]      shed optional load now when memory, battery or disk run short (the guard runs it every minute)
 #   scripts/ops/gauss-services.sh tailnet on|off           share Gauss on your tailnet only (tailscale serve)
 #   scripts/ops/gauss-services.sh awake setup|on|off       keep running with the lid closed (setup: once, asks for sudo)
 #   scripts/ops/gauss-services.sh restart                  restart services
@@ -48,6 +49,12 @@ WATCH_DIR="$HOME/Library/Application Support/Gauss"
 GUARD_HEARTBEAT="$WATCH_DIR/guard.heartbeat" # Argo restarts the guard if this goes stale
 WATCH_KICKS="$WATCH_DIR/watch-kicks"         # "<label> <epoch>" per watchdog restart
 WATCH_MAX_KICKS=3
+# balance: safe, reversible load shedding (GAU-126). GAUSS_BALANCE=0 turns it off.
+BALANCE="${GAUSS_BALANCE:-1}"
+LOCAL_CODER="${GAUSS_LOCAL_CODER:-$HOME/.local/bin/local-coder}"   # optional on-device model server
+DISK_CLEANUP="${GAUSS_DISK_CLEANUP:-$HOME/.local/bin/disk-cleanup}" # allowlisted cache cleanup
+LEARNING_PAUSED="$WATCH_DIR/learning-paused"      # ml/train/nightly.py skips while this exists
+LOWPOWER_BY_BALANCE="$WATCH_DIR/lowpower-by-balance" # only undo Low Power Mode that balance set
 
 tailnet_url() {
   local name
@@ -224,6 +231,7 @@ awake_guard() { # run every minute by the awake agent
   local free swap; read -r free swap < <(memory_stats)
   memory_alerts "$free" "$swap"
   disk_alerts "$(disk_free_gb)"
+  balance || true
   [ -f "$SUDOERS" ] || return 0 # not set up; status and check say so
   if [ -f "$AWAKE_OFF" ]; then
     awake_set 0 "turned off"
@@ -239,6 +247,60 @@ awake_guard() { # run every minute by the awake agent
   return 0
 }
 
+lowpower_on() { pmset -g 2>/dev/null | awk '$1=="lowpowermode"{v=$2} END{print v+0}'; }
+
+# balance: when memory, battery or disk run short, shed *optional* load. Every action is safe to
+# repeat and is undone automatically when conditions recover. It never touches the live
+# backend/frontend, other people's processes or user files:
+#   memory short or battery low  -> stop the local model server (local-coder; restarts on demand)
+#   battery low on battery power  -> pause nightly learning; Low Power Mode if `awake setup` allowed it
+#   back on AC (or battery > warn+10%) -> resume learning; undo Low Power Mode that balance set
+#   disk below DISK_MIN_GB        -> allowlisted disk-cleanup (rebuildable caches only)
+balance() { # balance [--dry-run]
+  local dry=0; [ "${1:-}" = --dry-run ] && dry=1
+  if [ "$BALANCE" = 0 ]; then [ $dry = 1 ] && echo "balance is off (GAUSS_BALANCE=0)"; return 0; fi
+  local batt pct on_battery=0 free swap disk mem_short=0 batt_low=0 recovered=0
+  batt=$(pmset -g batt); pct=$(grep -Eo '[0-9]+%' <<<"$batt" | head -1 | tr -d % || true)
+  [[ "$batt" != *"'AC Power'"* ]] && [ -n "$pct" ] && on_battery=1
+  read -r free swap < <(memory_stats); disk=$(disk_free_gb)
+  { [ "$free" -le "$MEM_MIN_FREE" ] || [ "$swap" -ge "$SWAP_MAX" ]; } && mem_short=1
+  [ $on_battery = 1 ] && [ "$pct" -le "$AWAKE_WARN_BATTERY" ] && batt_low=1
+  { [ $on_battery = 0 ] || [ "${pct:-0}" -gt $((AWAKE_WARN_BATTERY + 10)) ]; } && recovered=1
+  local notify=() quiet=()
+  act() { if [ $dry = 1 ]; then echo "would: $*"; else "$@" >/dev/null 2>&1 || true; fi; }
+
+  if { [ $mem_short = 1 ] || [ $batt_low = 1 ]; } && pgrep -f mlx_lm.server >/dev/null 2>&1; then
+    if [ -x "$LOCAL_CODER" ]; then act "$LOCAL_CODER" stop; else act pkill -f mlx_lm.server; fi
+    notify+=("stopped the local model server")
+  fi
+  if [ $batt_low = 1 ]; then
+    if [ ! -f "$LEARNING_PAUSED" ]; then act mkdir -p "$WATCH_DIR"; act touch "$LEARNING_PAUSED"; quiet+=("paused nightly learning"); fi
+    if [ "$(lowpower_on)" = 0 ] && sudo -n -l /usr/bin/pmset -a lowpowermode 1 >/dev/null 2>&1; then
+      act sudo -n /usr/bin/pmset -a lowpowermode 1; act touch "$LOWPOWER_BY_BALANCE"; notify+=("Low Power Mode on")
+    fi
+  elif [ $recovered = 1 ]; then
+    if [ -f "$LEARNING_PAUSED" ]; then act rm -f "$LEARNING_PAUSED"; quiet+=("resumed nightly learning"); fi
+    if [ -f "$LOWPOWER_BY_BALANCE" ]; then
+      act sudo -n /usr/bin/pmset -a lowpowermode 0; act rm -f "$LOWPOWER_BY_BALANCE"; notify+=("Low Power Mode off")
+    fi
+  fi
+  if [ "$disk" -lt "$DISK_MIN_GB" ] && [ -x "$DISK_CLEANUP" ]; then
+    act "$DISK_CLEANUP" --apply --if-below "$DISK_MIN_GB"; notify+=("cleared rebuildable caches")
+  fi
+
+  # ${a[@]+"${a[@]}"}: empty arrays are "unbound" under set -u in macOS's bash 3.2
+  local all=(${notify[@]+"${notify[@]}"} ${quiet[@]+"${quiet[@]}"}) state="battery ${pct:-?}%$([ $on_battery = 1 ] && echo ' on battery'), memory ${free}% free, swap ${swap}%, disk ${disk} GB"
+  [ ${#all[@]} = 0 ] && { [ $dry = 1 ] && echo "balanced: nothing to do ($state)"; return 0; }
+  local summary; summary=$(IFS=';'; echo "${all[*]}" | sed 's/;/; /g')
+  if [ $dry = 1 ]; then echo "would report: $summary ($state)"; return 0; fi
+  mkdir -p "$LOGS"; echo "$(date '+%F %T') balance: $summary ($state)" >>"$LOGS/balance.log"
+  if [ ${#notify[@]} -gt 0 ]; then
+    local extra=""; [ $mem_short = 1 ] && extra=" Biggest: $(top_memory)."
+    phone -key balance -every 1h "Gauss: rebalanced" "$(IFS=';'; echo "${notify[*]}" | sed 's/;/; /g') ($state).$extra"
+  fi
+  return 0
+}
+
 awake_state() { # "ok|no <description>" for status and check
   if [ -f "$AWAKE_OFF" ]; then echo "no lid-closed awake turned off ('$0 awake on' to resume)"
   elif [ ! -f "$SUDOERS" ]; then echo "no lid-closed awake not set up ('$0 awake setup', once)"
@@ -248,9 +310,9 @@ awake_state() { # "ok|no <description>" for status and check
   fi
 }
 
-awake_setup() { # one-time sudo: allow exactly the three pmset commands the guard uses
+awake_setup() { # one-time sudo: allow exactly the pmset commands the guard and balance use
   local tmp; tmp=$(mktemp)
-  printf '%s ALL=(root) NOPASSWD: /usr/bin/pmset -a disablesleep 0, /usr/bin/pmset -a disablesleep 1, /usr/bin/pmset sleepnow\n' "$(id -un)" >"$tmp"
+  printf '%s ALL=(root) NOPASSWD: /usr/bin/pmset -a disablesleep 0, /usr/bin/pmset -a disablesleep 1, /usr/bin/pmset sleepnow, /usr/bin/pmset -a lowpowermode 0, /usr/bin/pmset -a lowpowermode 1\n' "$(id -un)" >"$tmp"
   echo "Installing $SUDOERS (sudo asks for your password once):"; cat "$tmp"
   if sudo /usr/sbin/visudo -cqf "$tmp" && sudo /usr/bin/install -m 0440 -o root -g wheel "$tmp" "$SUDOERS"; then
     rm -f "$tmp"; awake_guard; awake_state | cut -d' ' -f2-
@@ -372,7 +434,8 @@ except Exception:
 import json, sys
 try:
     m = json.load(open(sys.argv[1]))["models"][-1]
-    print("ok last learning run %s UTC (%s, %s samples)" % (m["trained_at"][:16].replace("T", " "), m["version"], m.get("metrics", {}).get("samples", 0)))
+    gate = "gate passed" if (m.get("gate") or {}).get("passed") else "gate FAILED" if m.get("gate") else "no gate"
+    print("ok last learning run %s UTC (%s, %s, %s)" % (m["trained_at"][:16].replace("T", " "), m["version"], gate, m.get("status", "?")))
 except Exception:
     print("no no learning run recorded yet (runs nightly at 03:00)")
 ' "$dir/ml/models/registry.json" 2>/dev/null || echo "no no learning run recorded yet")
@@ -413,6 +476,9 @@ case "${1:-}" in
     ;;
   resilience)
     resilience
+    ;;
+  balance)
+    balance "${2:-}"
     ;;
   awake)
     case "${2:-}" in
