@@ -12,7 +12,10 @@ pass=0; failed=0
 stub() { printf '#!/bin/bash\n%s\n' "$2" >"$T/bin/$1"; chmod +x "$T/bin/$1"; }
 stub pmset 'if [ "$1 $2" = "-g batt" ]; then printf "Now drawing from '"'"'%s'"'"'\n -InternalBattery-0 (id=1)\t%s\n" "$SRC" "$BATT"; else printf " SleepDisabled\t\t%s\n" "${SD:-0}"; fi'
 stub memory_pressure 'echo "System-wide memory free percentage: ${FREE:-50}%"'
-stub sysctl 'echo "total = 6144.00M  used = ${SWAPUSED:-1000}.00M  free = 0.00M  (encrypted)"'
+stub sysctl 'case "$*" in
+  *pressure_level*) echo "${LEVEL:-1}" ;;
+  *) echo "total = 6144.00M  used = ${SWAPUSED:-1000}.00M  free = 0.00M  (encrypted)" ;;
+esac'
 stub ps 'echo "2097152 node"'
 stub ioreg 'echo "\"AppleClamshellState\" = No"'
 stub launchctl 'case "$1" in
@@ -41,7 +44,7 @@ run() { # run <args...>: gauss-services.sh with the stubs; alerts land in $LOG
     MLX="${MLX:-0}" ACTIONS="$T/actions" GAUSS_BALANCE="${GAUSS_BALANCE:-1}" \
     LOADED="${LOADED:-}" HEALTH="${HEALTH:-200}" DISKGB="${DISKGB:-50}" \
     SRC="${SRC:-AC Power}" BATT="${BATT:-80%; charging; present: true}" SD="${SD:-0}" \
-    FREE="${FREE:-50}" SWAPUSED="${SWAPUSED:-1000}" OLD_ARGO="${OLD_ARGO:-}" bash "$SCRIPT" "$@"
+    LEVEL="${LEVEL:-1}" FREE="${FREE:-50}" SWAPUSED="${SWAPUSED:-1000}" OLD_ARGO="${OLD_ARGO:-}" bash "$SCRIPT" "$@"
 }
 expect() { # expect <name> <condition-exit-code>
   if [ "$2" = 0 ]; then pass=$((pass + 1)); else failed=$((failed + 1)); echo "FAIL: $1"; sed 's/^/    alerts: /' "$T/log"; fi
@@ -61,12 +64,24 @@ SRC="Battery Power" BATT="9%; discharging; 0:20 remaining present: true" run awa
 SRC="Battery Power" BATT="55%; discharging; 4:00 remaining present: true" run awake guard
 [ -z "$(alerts)" ]; expect "55% on battery: no alerts" $?
 
-# Memory
+# Memory: the kernel's pressure level and swap GB decide, never "free %" or swap "% used"
+LEVEL=4 run awake guard
+[ "$(alerts)" = "memory-low" ] && grep -q "memory pressure critical" "$T/log" && grep -q "node 2.0 GB" "$T/log"
+expect "critical pressure: alert names the biggest process" $?
+LEVEL=2 run awake guard
+[ -z "$(alerts)" ]; expect "warn pressure alone: no phone alert" $?
 FREE=10 run awake guard
-[ "$(alerts)" = "memory-low" ] && grep -q "node 2.0 GB" "$T/log"; expect "10% free memory: alert names the biggest process" $?
-SWAPUSED=5800 run awake guard
-[ "$(alerts)" = "swap-high" ]; expect "94% swap: alert" $?
-FREE=40 SWAPUSED=3000 run awake guard
+[ -z "$(alerts)" ]; expect "10% 'free' at normal pressure: no alert (free % is not the signal)" $?
+SWAPUSED=4200 run awake guard
+[ "$(alerts)" = "swap-high" ] && grep -q "swap 4.1 GB" "$T/log"; expect "4.1 GB swap: alert" $?
+stub sysctl 'case "$*" in *pressure_level*) echo 2 ;; *) echo "total = 3072.00M  used = 2800.00M  free = 272.00M  (encrypted)" ;; esac'
+run awake guard
+[ -z "$(alerts)" ]; expect "2.8 of 3 GB swap (91%; macOS adds swap files on demand): no alert" $?
+stub sysctl 'case "$*" in
+  *pressure_level*) echo "${LEVEL:-1}" ;;
+  *) echo "total = 6144.00M  used = ${SWAPUSED:-1000}.00M  free = 0.00M  (encrypted)" ;;
+esac'
+LEVEL=1 SWAPUSED=3000 run awake guard
 [ -z "$(alerts)" ]; expect "healthy memory: no alerts" $?
 
 # Disk (seen on the dev Mac: 5 GB free with 5 GB of swap)
@@ -117,9 +132,15 @@ HEALTH=000 LOADED="uk.lightbound.gauss-backend" run awake guard
 # balance (GAU-126): shed optional load, undo it when conditions recover
 acts() { tr '\n' ';' <"$T/actions" | sed 's/;$//'; }
 PAUSED="$T/home/Library/Application Support/Gauss/learning-paused"
+MLX=1 LEVEL=4 run awake guard
+[ "$(acts)" = "local-coder stop" ] && [ "$(alerts)" = "memory-low balance" ]; expect "critical pressure with the local model running: stopped, one balance alert" $?
+MLX=1 LEVEL=2 run awake guard
+[ "$(acts)" = "local-coder stop" ] && [ "$(alerts)" = "balance" ]; expect "warn pressure: the local model is shed before it gets critical" $?
+MLX=1 SWAPUSED=4200 run awake guard
+[ "$(acts)" = "local-coder stop" ]; expect "4.1 GB swap: the local model is shed" $?
 MLX=1 FREE=10 run awake guard
-[ "$(acts)" = "local-coder stop" ] && [ "$(alerts)" = "memory-low balance" ]; expect "memory short with the local model running: stopped, one balance alert" $?
-FREE=10 run awake guard
+[ -z "$(acts)" ]; expect "10% 'free' at normal pressure: nothing shed" $?
+LEVEL=4 run awake guard
 [ -z "$(acts)" ] && [ "$(alerts)" = "memory-low" ]; expect "memory short, nothing optional running: no action" $?
 SRC="Battery Power" BATT="18%; discharging; present: true" run awake guard
 [ -f "$PAUSED" ] && [ "$(alerts)" = "battery-low" ]; expect "battery 18%: learning paused quietly (log only)" $?
@@ -130,9 +151,9 @@ SRC="AC Power" BATT="26%; charging; present: true" run awake guard
 [ ! -f "$PAUSED" ]; expect "back on AC: learning resumed" $?
 DISKGB=5 run awake guard
 [ "$(acts)" = "disk-cleanup --apply --if-below 8" ] && [ "$(alerts)" = "disk-low balance" ]; expect "disk 5 GB: allowlisted cleanup runs" $?
-MLX=1 FREE=10 GAUSS_BALANCE=0 run awake guard
+MLX=1 LEVEL=4 GAUSS_BALANCE=0 run awake guard
 [ -z "$(acts)" ]; expect "GAUSS_BALANCE=0: balance does nothing" $?
-out=$(MLX=1 FREE=10 run balance --dry-run)
+out=$(MLX=1 LEVEL=4 run balance --dry-run)
 [ -z "$(acts)" ] && [[ "$out" == *"would: $T/home/.local/bin/local-coder stop"* ]]; expect "balance --dry-run only reports" $?
 out=$(run balance --dry-run)
 [[ "$out" == "balanced: nothing to do"* ]]; expect "healthy machine: nothing to do" $?
@@ -142,12 +163,12 @@ echo '{"phone_to":"+60123456789"}' >"$T/home/.config/argo/config.json"
 echo '{"hooks":{"Notification":[{"hooks":[{"type":"command","command":"~/.local/bin/claude-phone-hook"}]}]}}' >"$T/home/.claude/settings.json"
 touch "$T/home/.local/share/mesh-heal/state"
 out=$(run resilience | plain)
-for want in "✓ battery 80% on AC" "✓ memory 50% free, swap 16% used" "✓ disk 50 GB free" "✓ network: ● OK MY" "✓ tailnet self-heal" \
+for want in "✓ battery 80% on AC" "✓ memory pressure normal, swap 1.0 GB" "✓ disk 50 GB free" "✓ network: ● OK MY" "✓ tailnet self-heal" \
   "✓ phone alerts: iMessage via argo notify" "✓ Claude Code prompts forwarded"; do
   [[ "$out" == *"$want"* ]]; expect "resilience shows '$want'" $?
 done
-out=$(OLD_ARGO=1 FREE=8 SRC="AC Power" BATT="6%; AC attached; not charging present: true" run resilience | plain); rc=$? # pipefail: resilience's own exit code
-[ $rc = 1 ] && [[ "$out" == *"✗ phone alerts: argo is too old"* && "$out" == *"✗ memory 8% free"* && "$out" == *"✗ battery 6% on AC, not gaining"* ]]
+out=$(OLD_ARGO=1 LEVEL=4 SRC="AC Power" BATT="6%; AC attached; not charging present: true" run resilience | plain); rc=$? # pipefail: resilience's own exit code
+[ $rc = 1 ] && [[ "$out" == *"✗ phone alerts: argo is too old"* && "$out" == *"✗ memory pressure critical"* && "$out" == *"✗ battery 6% on AC, not gaining"* ]]
 expect "resilience fails on an old argo, low memory and a weak charger" $?
 [ -z "$(alerts)" ]; expect "resilience only reports; it sends no alerts" $?
 out=$(SRC="AC Power" BATT="7%; charging; 2:00 remaining present: true" run resilience | plain)
