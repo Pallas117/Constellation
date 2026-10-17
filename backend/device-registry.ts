@@ -9,7 +9,7 @@ import {
   updateDeviceStatus,
   updateDeviceTelemetry,
 } from "./services/device-registry.js";
-import { verifyProof } from "./services/device-auth.js";
+import { deviceProofsEnabled, verifyProof } from "./services/device-auth.js";
 import { createSwapPlan, rebalanceDeviceNetwork } from "./services/device-swap-manager.js";
 
 const router = express.Router();
@@ -153,6 +153,13 @@ router.post("/:id/proof", (req: AuthenticatedRequest, res) => {
   const device = getDevice(req.params.id);
   if (!device) {
     res.status(404).json({ ok: false, error: "Device not found" });
+    return;
+  }
+
+  // No usable DEVICE_AUTH_SECRET: proofs are disabled. Say so, and leave the device's status
+  // alone instead of marking it untrusted for the server's own misconfiguration (GAU-97).
+  if (!deviceProofsEnabled()) {
+    res.status(503).json({ ok: false, error: "Device proofs are not configured on this server" });
     return;
   }
 

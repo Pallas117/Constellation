@@ -14,7 +14,9 @@ This document describes the repository-native device registration and proofing f
 - `POST /api/device/:id/proof`
   - Authenticated route.
   - Request body: `{ sig, timestamp, nonce? }`
-  - Verifies HMAC proof against a derived device secret.
+  - Verifies HMAC proof against a derived device secret: `200` marks the device `trusted`,
+    `401` marks it `untrusted` (including malformed signatures), and `503` means proofs are
+    disabled because `DEVICE_AUTH_SECRET` is not configured (status unchanged).
 
 - `POST /api/device/:id/heartbeat`
   - Authenticated route.
@@ -30,8 +32,13 @@ This document describes the repository-native device registration and proofing f
 
 ## Secret
 
-- `DEVICE_AUTH_SECRET`: HMAC secret used to derive per-device secrets.
-- Fallback value is used only in local development if the environment variable is not set.
+- `DEVICE_AUTH_SECRET`: HMAC key used to derive per-device secrets. Use at least 32 random
+  characters, e.g. `openssl rand -hex 32`, in every environment including local development.
+- There is no fallback key. If the variable is unset, shorter than 32 characters or a value that
+  has been public in this repo, device proofs are disabled (fail closed): `POST /api/device/:id/proof`
+  answers `503` and leaves the device status unchanged, and the server logs one error (never the key).
+- `npm run check:security-compliance` reports this as control `NIST-IA-3`.
+- Rotating the key invalidates every outstanding device proof.
 
 ## Frontend
 
