@@ -148,7 +148,7 @@ export class CommerceStore {
   listKeys(orgId: string): ApiKeyInfo[] {
     return (
       this.db
-        .prepare("SELECT id, org_id, name, prefix, created_by, created_at, last_used_at, revoked_at FROM api_keys WHERE org_id = ? ORDER BY created_at")
+        .prepare("SELECT id, org_id, name, prefix, created_by, created_at, last_used_at, revoked_at FROM api_keys WHERE org_id = ? ORDER BY created_at, rowid")
         .all(orgId) as Array<Record<string, string | null>>
     ).map((r) => ({
       id: r.id!,
@@ -191,7 +191,8 @@ export class CommerceStore {
 
   listPilotRequests(): PilotRequest[] {
     return (
-      this.db.prepare("SELECT id, name, email, company, interest, use_case, created_at FROM pilot_requests ORDER BY created_at DESC").all() as Array<
+      // rowid breaks created_at ties (same second, or a fixed test clock) in insertion order.
+      this.db.prepare("SELECT id, name, email, company, interest, use_case, created_at FROM pilot_requests ORDER BY created_at DESC, rowid DESC").all() as Array<
         Record<string, string>
       >
     ).map((r) => ({

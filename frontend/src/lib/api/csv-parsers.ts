@@ -39,7 +39,7 @@ export function parseERGAraseCSV(
     if (columns.length < 5) continue; // Minimum required columns
     
     try {
-      const timestamp = columns[0] ?? new Date().toISOString();
+      const timestamp = columns[0] ?? '';
       // Use NaN checks to distinguish between missing values and actual 0
       const energyMinRaw = columns[1] ? parseFloat(columns[1]) : NaN;
       const energyMaxRaw = columns[2] ? parseFloat(columns[2]) : NaN;
@@ -71,8 +71,12 @@ export function parseERGAraseCSV(
         altitude < 35786 ? 'MEO' :
         'GEO';
       
+      // Rows whose time cannot be parsed are skipped, never stamped "now" (GAU-114).
+      const ts = normalizeTimestamp(timestamp);
+      if (!ts) continue;
+
       const measurement: RadiationMeasurement = {
-        timestamp: normalizeTimestamp(timestamp),
+        timestamp: ts,
         particleFlux: flux,
         altitude,
         L_shell,
@@ -126,7 +130,7 @@ export function parseCSESCSV(
     if (columns.length < 4) continue; // Minimum required columns
     
     try {
-      const timestamp = columns[0] ?? new Date().toISOString();
+      const timestamp = columns[0] ?? '';
       const flux = parseFloat(columns[1]);
       // Use NaN checks to distinguish between missing values and actual 0
       const altitudeRaw = columns[2] ? parseFloat(columns[2]) : NaN;
@@ -150,8 +154,12 @@ export function parseCSESCSV(
         particleTypeStr.includes('alpha') ? 'alpha' :
         'electron';
       
+      // Rows whose time cannot be parsed are skipped, never stamped "now" (GAU-114).
+      const ts = normalizeTimestamp(timestamp);
+      if (!ts) continue;
+
       const measurement: RadiationMeasurement = {
-        timestamp: normalizeTimestamp(timestamp),
+        timestamp: ts,
         particleFlux: flux,
         altitude,
         L_shell,
@@ -233,7 +241,7 @@ export function parseGenericRadiationCSV(
         return columns[index];
       };
       
-      const timestamp = getColumn('timestamp', 0) ?? new Date().toISOString();
+      const timestamp = getColumn('timestamp', 0) ?? '';
       const fluxStr = getColumn('particleFlux', 1);
       const flux = fluxStr ? parseFloat(fluxStr) : NaN;
       const altitudeStr = getColumn('altitude', 2);
@@ -267,8 +275,12 @@ export function parseGenericRadiationCSV(
       const orbitType: OrbitType = options.orbitType || 
         (altitude < 2000 ? 'LEO' : altitude < 35786 ? 'MEO' : 'GEO');
       
+      // Rows whose time cannot be parsed are skipped, never stamped "now" (GAU-114).
+      const ts = normalizeTimestamp(timestamp);
+      if (!ts) continue;
+
       const measurement: RadiationMeasurement = {
-        timestamp: normalizeTimestamp(timestamp),
+        timestamp: ts,
         particleFlux: flux,
         altitude,
         L_shell,
@@ -358,9 +370,9 @@ function parseCSVLine(line: string): string[] {
 }
 
 /**
- * Normalize timestamp to ISO 8601 format
+ * Normalize timestamp to ISO 8601 format, or null when it cannot be parsed.
  */
-function normalizeTimestamp(timestamp: string): string {
+function normalizeTimestamp(timestamp: string): string | null {
   try {
     const date = new Date(timestamp);
     if (isNaN(date.getTime())) {
@@ -374,22 +386,23 @@ function normalizeTimestamp(timestamp: string): string {
         const match = timestamp.match(format);
         if (match) {
           const [, year, month, day, hour = '00', minute = '00', second = '00'] = match;
-          return new Date(
+          // Instrument timestamps are UTC; never interpret them in the local timezone.
+          return new Date(Date.UTC(
             parseInt(year),
             parseInt(month) - 1,
             parseInt(day),
             parseInt(hour),
             parseInt(minute),
             parseInt(second)
-          ).toISOString();
+          )).toISOString();
         }
       }
       
-      return new Date().toISOString(); // Fallback to current time
+      return null;
     }
     return date.toISOString();
   } catch {
-    return new Date().toISOString();
+    return null;
   }
 }
 

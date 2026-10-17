@@ -113,32 +113,15 @@ else
   CLEAN_FEED="${RAW_FEED}"
 fi
 
-# ── Step 7: Dataset Builder ───────────────────────────────────────────────────
-log "Step 7: Dataset Builder"
-if [[ -f "${CLEAN_FEED}" ]]; then
-  python3 ml/train/dataset_builder.py \
-    --input "${CLEAN_FEED}" \
-    --output ml/data/train_dataset.jsonl \
-    --input-steps 24 \
-    --horizon-steps 12 \
-    2>>"${LOG_FILE}" && ok "Dataset built" || log "[WARN] Dataset builder failed"
-fi
-
-# ── Step 8: Model Training ────────────────────────────────────────────────────
-log "Step 8: Model training"
-if [[ -f "ml/data/train_dataset.jsonl" ]]; then
-  SAMPLE_COUNT=$(wc -l < ml/data/train_dataset.jsonl)
-  log "  Training on ${SAMPLE_COUNT} samples"
-  if [[ "${DRY_RUN}" != "true" ]]; then
-    python3 ml/train/train_unet.py \
-      --dataset ml/data/train_dataset.jsonl \
-      --model-version "unet-auto-$(date +%Y%m%d%H%M)" \
-      2>>"${LOG_FILE}" && ok "Training complete" || log "[WARN] Training failed"
-  else
-    ok "(dry-run) Training skipped"
-  fi
+# ── Steps 7-8: Kp forecaster training (GAU-113) ───────────────────────────────
+# Trains on NASA OMNI2 history and writes a *candidate* with held-out metrics and its
+# promotion-gate result. It never promotes: run `python3 ml/train/train_kp.py --promote FILE`
+# deliberately after reviewing the gate.
+log "Step 7-8: Kp forecaster training (candidate only)"
+if [[ "${DRY_RUN}" != "true" ]]; then
+  python3 ml/train/train_kp.py >>"${LOG_FILE}" 2>&1 && ok "Kp candidate trained and evaluated" || log "[WARN] Kp training failed"
 else
-  log "[WARN] No training dataset — skipping training"
+  ok "(dry-run) Training skipped"
 fi
 
 # ── Step 9: Apple MLX LoRA fine-tune (Mac/Apple Silicon only) ─────────────────

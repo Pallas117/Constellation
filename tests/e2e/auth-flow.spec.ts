@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { fulfillCorsJson, mockUiApis } from './helpers/mockUiApis';
+import { mockUiApis } from './helpers/mockUiApis';
 
 const AUTH_SESSION = {
   session: {
@@ -20,6 +20,7 @@ const AUTH_SESSION = {
     updatedAt: new Date().toISOString(),
     name: 'Operator Gauss',
     image: null,
+    // Operators land on /operator; without a role the guard treats this as a user.
     role: 'operator',
   },
 };
@@ -29,12 +30,12 @@ test.describe('Authentication Flow & Route Splitting', () => {
     await mockUiApis(page, { auth: false });
     await page.goto('/?e2e=true');
     
-    // Verify the premium marketing view elements
+    // Public landing: brand header, operator entry point, fail-closed feed state
     await expect(page.locator('h1')).toHaveText(/Gauss Aurora/);
-    await expect(page.locator('text=Operator Portal')).toBeVisible();
-    
-    // The operator console is not part of the public page
-    await expect(page.getByText('00_OPERATOR')).not.toBeVisible();
+    await expect(page.getByRole('link', { name: /operator portal/i })).toBeVisible();
+
+    // Operator console panels are explicitly NOT on the public page
+    await expect(page.getByText('Feed source')).not.toBeVisible();
   });
 
   test('Redirects unauthenticated users from /operator to /login', async ({ page }) => {
@@ -43,11 +44,19 @@ test.describe('Authentication Flow & Route Splitting', () => {
     await mockUiApis(page, { auth: false });
 
     await page.route('**/get-session', async (route) => {
-      await fulfillCorsJson(route, { session: authenticated ? AUTH_SESSION.session : null, user: authenticated ? AUTH_SESSION.user : null });
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ session: authenticated ? AUTH_SESSION.session : null, user: authenticated ? AUTH_SESSION.user : null }),
+      });
     });
 
     await page.route('**/api/auth/get-session', async (route) => {
-      await fulfillCorsJson(route, { session: authenticated ? AUTH_SESSION.session : null, user: authenticated ? AUTH_SESSION.user : null });
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ session: authenticated ? AUTH_SESSION.session : null, user: authenticated ? AUTH_SESSION.user : null }),
+      });
     });
 
     await page.goto('/operator?e2e=true');
@@ -55,7 +64,7 @@ test.describe('Authentication Flow & Route Splitting', () => {
     // Should be intercepted by ProtectedRoute and bounced to /login
     await expect(page).toHaveURL(/.*\/login/);
     
-    // The sign-in page
+    // Verify the sign-in page
     await expect(page.locator('h1')).toHaveText(/Sign in to Gauss/);
   });
 
@@ -65,17 +74,29 @@ test.describe('Authentication Flow & Route Splitting', () => {
     await mockUiApis(page, { auth: false });
 
     await page.route('**/get-session', async (route) => {
-      await fulfillCorsJson(route, { session: authenticated ? AUTH_SESSION.session : null, user: authenticated ? AUTH_SESSION.user : null });
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ session: authenticated ? AUTH_SESSION.session : null, user: authenticated ? AUTH_SESSION.user : null }),
+      });
     });
 
     await page.route('**/sign-in/email', async (route) => {
       authenticated = true;
-      await fulfillCorsJson(route, AUTH_SESSION);
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify(AUTH_SESSION),
+      });
     });
 
     await page.route('**/api/auth/sign-in/email', async (route) => {
       authenticated = true;
-      await fulfillCorsJson(route, AUTH_SESSION);
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify(AUTH_SESSION),
+      });
     });
 
     await page.goto('/login?e2e=true');
@@ -89,8 +110,8 @@ test.describe('Authentication Flow & Route Splitting', () => {
       page.click('button[type="submit"]')
     ]);
     
-    // The operator console is now accessible
-    await expect(page.getByRole('heading', { name: /00_OPERATOR/ })).toBeVisible({ timeout: 15000 });
-    await expect(page.getByText('02_SOLAR_WIND')).toBeVisible({ timeout: 15000 });
+    // Operator console panels are now accessible
+    await expect(page.getByRole('heading', { name: /solar_wind/i })).toBeVisible({ timeout: 15000 });
+    await expect(page.getByText('Feed source')).toBeVisible({ timeout: 15000 });
   });
 });

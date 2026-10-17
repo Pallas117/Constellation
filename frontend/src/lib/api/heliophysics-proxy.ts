@@ -2,6 +2,7 @@ import type {
   AuroraMapResponse,
   CanonicalSpaceWeatherPoint,
   MMSReconVectorPoint,
+  PipelineLatencySnapshot,
   SourceStatus,
 } from "@/lib/types/space-weather";
 import { getAuthHeaders } from "@/lib/api/auth";
@@ -63,4 +64,14 @@ export async function fetchSourceStatus(): Promise<SourceStatus[]> {
   }
   const json = (await response.json()) as { sources?: SourceStatus[] };
   return Array.isArray(json.sources) ? json.sources : [];
+}
+
+export async function fetchPipelineLatency(): Promise<PipelineLatencySnapshot> {
+  const response = await fetch(`${BASE_URL}/api/system/pipeline`, {
+    headers: await getAuthHeaders(),
+  });
+  if (!response.ok) {
+    throw new Error(`Pipeline latency HTTP ${response.status}`);
+  }
+  return response.json() as Promise<PipelineLatencySnapshot>;
 }

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { vec } from "./coordinates.js";
-import { computeCanonicalPoint, estimateDst, type MhdInput } from "./mhd-nowcast.js";
+import { computeCanonicalPoint, DST_MODEL_METHOD, estimateDst, type MhdInput } from "./mhd-nowcast.js";
 
 const input = (timestamp: string, bz: number): MhdInput => ({
   timestamp,
@@ -41,4 +41,30 @@ test("nowcast: constant input keeps Bz's sign and value across ticks (no compone
   // Only the slow GSE->GSM rotation over 25 s may move it; the old projection moved it by nT.
   assert.ok(Math.abs(point.magneticField.z - first.point.magneticField.z) < 0.01);
   assert.ok(point.magneticField.z < 0, "southward IMF stays southward");
+});
+
+test("modelled Dst is labelled with its method and inputs; a measured Dst says so (GAU-84)", async () => {
+  const input: MhdInput = {
+    timestamp: "2026-10-12T00:00:00Z",
+    source: "fusion",
+    density: 6,
+    velocityGse: vec(-450, 0, 0),
+    magneticFieldGse: vec(1, 2, -8),
+    kp: 3,
+  };
+  const modelled = computeCanonicalPoint(input, [], null).point.indices;
+  assert.equal(modelled.dstMethod, DST_MODEL_METHOD);
+  assert.deepEqual(modelled.dstDerivedFrom, ["solarWind.speed", "magneticField.z", "solarWind.dynamicPressure"]);
+
+  const measured = computeCanonicalPoint({ ...input, dst: -35 }, [], null).point.indices;
+  assert.equal(measured.dst, -35);
+  assert.equal(measured.dstMethod, "measured");
+  assert.deepEqual(measured.dstDerivedFrom, []);
+
+  // The provenance survives the protobuf feed.
+  const { encodeCanonicalPoint, decodeCanonicalPoint } = await import("../lib/proto.js");
+  const point = computeCanonicalPoint(input, [], null).point;
+  const decoded = await decodeCanonicalPoint(await encodeCanonicalPoint(point));
+  assert.equal(decoded.indices.dstMethod, DST_MODEL_METHOD);
+  assert.deepEqual([...decoded.indices.dstDerivedFrom], modelled.dstDerivedFrom);
 });

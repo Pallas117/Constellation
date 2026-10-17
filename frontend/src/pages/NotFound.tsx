@@ -1,4 +1,5 @@
 import { Link, useLocation } from "react-router-dom";
+import { Button } from "@/components/ui/button";
 import { useDocumentTitle } from "@/hooks/useDocumentTitle";
 
 const NotFound = () => {
@@ -6,19 +7,14 @@ const NotFound = () => {
   const location = useLocation();
 
   return (
-    <main className="flex min-h-[100dvh] items-center justify-center bg-background px-4">
-      <div className="hud-panel w-full max-w-md p-8">
-        <p className="brand-label">00_NOT_FOUND · 404</p>
-        <h1 className="mt-3 text-2xl font-semibold">There's nothing at this address.</h1>
-        <p className="mt-2 break-words text-sm text-muted-foreground">
-          <code className="font-mono text-foreground">{location.pathname}</code> isn't a page on Gauss Aurora.
-        </p>
-        <Link
-          to="/"
-          className="mt-6 inline-flex min-h-10 items-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90"
-        >
-          Go to the live landing page
-        </Link>
+    <main className="flex min-h-dvh items-center justify-center bg-background p-4 text-foreground">
+      <div className="hud-panel w-full max-w-sm p-6">
+        <p className="brand-label">404_NOT_FOUND</p>
+        <h1 className="mt-2 text-2xl font-semibold leading-tight">There's no page here.</h1>
+        <p className="mt-2 break-all font-mono text-xs text-muted-foreground">{location.pathname}</p>
+        <Button asChild variant="outline" className="mt-6">
+          <Link to="/">Back to the live landing page</Link>
+        </Button>
       </div>
     </main>
   );

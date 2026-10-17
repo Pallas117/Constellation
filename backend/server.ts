@@ -14,7 +14,7 @@ import {
   type AuthenticatedRequest,
 } from "./auth.js";
 import { CyberTigerDaemon } from "./cybertiger/daemon.js";
-import { inferNowcast, inferAnomalyForecast, triggerTraining } from "./ml-client/client.js";
+import { inferNowcast, triggerTraining } from "./ml-client/client.js";
 import {
   getAuroraMap,
   getCanonicalFeed,
@@ -22,6 +22,7 @@ import {
   getLatestMms,
   getMmsFeed,
   getSourceStatus,
+  seedCanonical,
 } from "./state.js";
 import type {
   CanonicalSpaceWeatherPoint,
@@ -30,13 +31,13 @@ import type {
 } from "./types.js";
 import { withFreshness } from "./lib/freshness.js";
 import { IngestionWorker } from "./worker/ingest-loop.js";
-import { NotebookLMClient } from "./services/notebooklm-client.js";
-import { GraphDBClient } from "./services/graphdb-client.js";
-import { AgenticReasoningEngine } from "./services/agentic-reasoning.js";
+import { MAX_QUERY_CHARS, memoryQuery, memoryStatus } from "./memory/client.js";
+import { worldStateFromFeed } from "./world/build.js";
 import { createSwapPlan, rebalanceDeviceNetwork } from "./services/device-swap-manager.js";
 import { encodeCanonicalPoint } from "./lib/proto.js";
 import { linkGuardian } from "./lib/connectivity.js";
 import { bedrock } from "./lib/local-db.js";
+import { diskFreeBytes, overall, readTpms } from "./lib/tpm.js";
 import { SPACE_OBJECT_CATALOG } from "./lib/space-object-catalog.js";
 import { auth, ssoAllowedDomain, ssoGithubEnabled, ssoGoogleEnabled } from "./better-auth.js";
 import { toNodeHandler } from "better-auth/node";
@@ -55,18 +56,6 @@ const selfHealer = new SelfHealerAgent({ proxyPort: Number(process.env.PROXY_POR
 selfHealer.on("heal-event", (evt) => {
   console.log(`[SelfHealer→CyberTiger] ${evt.layer}: ${evt.diagnosis}`);
 });
-
-// RAG Services Initialization
-const notebookApi = new NotebookLMClient(
-  process.env.NOTEBOOK_LM_ID || "notebook_alpha_gauss",
-  process.env.NOTEBOOK_LM_API_KEY || "gauss_key_mock"
-);
-const graphDb = new GraphDBClient(
-  process.env.NEO4J_URI || "bolt://localhost:7687",
-  process.env.NEO4J_USER || "neo4j",
-  process.env.NEO4J_PASS || "password"
-);
-const reasoningEngine = new AgenticReasoningEngine(notebookApi, graphDb);
 
 type CyberTigerRequest = AuthenticatedRequest & {
   security?: {
@@ -184,10 +173,24 @@ async function fetchMmsFromDb(
   return null;
 }
 
-app.get("/health", (_req, res) => {
+async function currentTpms() {
+  return readTpms({
+    pipeline: worker.getPipelineLatency(),
+    failedWrites: bedrock.failedWrites,
+    diskFreeBytes: await diskFreeBytes(bedrock.dataDir),
+    rssBytes: process.memoryUsage().rss,
+    sources: getSourceStatus(),
+    skill: worker.forecastSkill.skill(),
+  });
+}
+
+app.get("/health", async (_req, res) => {
+  // Public: overall TPM status and the ids of red measures only, no values. GAU-122.
+  const tpms = await currentTpms();
   res.json({
     ok: true,
     timestamp: new Date().toISOString(),
+    tpm: { status: overall(tpms), red: tpms.filter((t) => t.status === "red").map((t) => t.id) },
   });
 });
 
@@ -283,45 +286,34 @@ app.post("/api/pilot-requests", createPilotRequestHandler(commerce));
 app.use("/api/mesh", mesh.ui);
 
 // RAG endpoints: status for any signed-in user, index/query for operators.
-app.get("/api/rag/status", (_req, res) => {
-  res.json({
-    ok: true,
-    chunkCount: 42, // Mocked for now
-  });
-});
-
-app.post("/api/rag/index", (req, res) => {
-  const { dir } = req.body as { dir?: string };
-  console.log(`[backend] Indexing directory: ${dir || "default"}`);
-  // Mock indexing process
-  setTimeout(() => {
-    res.json({ ok: true, message: "Indexing complete" });
-  }, 1000);
+// Knowledge memory: the Cosmic Brain sidecar (backend/memory/client.ts, docs/memory-sidecar.md).
+// Nothing here is mocked: when the service is down the reply says so, never a canned count or
+// answer. Indexing is an operator task on the memory host and has no route here.
+app.get("/api/rag/status", async (_req, res) => {
+  const status = await memoryStatus();
+  if (!status.available) {
+    res.status(503).json({ ok: false, error: status.reason });
+    return;
+  }
+  res.json({ ok: true, chunkCount: status.chunks, ...status });
 });
 
 app.post("/api/rag/query", async (req: express.Request, res: express.Response) => {
-  try {
-    const { query } = req.body as { query: string };
-    if (!query) {
-      res.status(400).json({ ok: false, error: "Missing query" });
-      return;
-    }
-
-    console.log(`[backend] Processing agentic RAG query (${query.length} chars)`);
-    const result = await reasoningEngine.generateVerifiedTacticalResponse(query);
-
-    res.json({
-      ok: true,
-      answer: result.answer,
-      sources: result.traces.map(t => ({ filePath: t, score: 0.99 }))
-    });
-  } catch (error) {
-    console.error("[backend] RAG query failed", error);
-    res.status(500).json({ 
-      ok: false, 
-      error: error instanceof Error ? error.message : "Agentic Reasoning failed" 
-    });
+  const { query, topK } = (req.body ?? {}) as { query?: unknown; topK?: unknown };
+  if (typeof query !== "string" || !query.trim()) {
+    res.status(400).json({ ok: false, error: "Missing query" });
+    return;
   }
+  if (query.length > MAX_QUERY_CHARS) {
+    res.status(400).json({ ok: false, error: `Query longer than ${MAX_QUERY_CHARS} characters` });
+    return;
+  }
+  const result = await memoryQuery(query, typeof topK === "number" ? topK : 8);
+  if (!result.available) {
+    res.status(503).json({ ok: false, error: result.reason });
+    return;
+  }
+  res.json({ ok: true, answer: result.answer, sources: result.sources });
 });
 
 // Device lifecycle endpoints (requires operator session)
@@ -378,14 +370,22 @@ app.get("/api/feed/space-objects", (_req, res) => {
   });
 });
 
-// 72-hour LSTM Anomaly Forecast endpoint
+// 72-hour anomaly forecast: a trained model's output, or an explicit "unavailable"
 app.get("/api/forecast/anomaly", async (_req, res) => {
-  try {
-    const forecast = await inferAnomalyForecast([]);
+  // Serve the ingest loop's forecast (computed from its last 6 h of measured points every 5 min)
+  // instead of calling the model with no data on every request. GAU-115.
+  const forecast = worker.getLatestForecast();
+  if (forecast) {
     res.json(forecast);
-  } catch (err) {
-    res.status(500).json({ error: "Forecast generation failed" });
+    return;
   }
+  res.json({
+    available: false,
+    modelVersion: null,
+    generatedAt: new Date().toISOString(),
+    horizonHours: 3,
+    reason: "No forecast computed yet; the ingest loop runs one every 5 min.",
+  });
 });
 
 app.get("/api/feed/space-weather/latest/proto", async (req: AuthenticatedRequest, res) => {
@@ -494,12 +494,31 @@ app.get("/api/system/connectivity", (req: AuthenticatedRequest, res) => {
   res.json(linkGuardian.getStatus());
 });
 
+// Per-stage ingest latency and the age of the data being served (fresh / degraded / stale / stalled).
+app.get("/api/system/pipeline", (_req: AuthenticatedRequest, res) => {
+  res.json(worker.getPipelineLatency());
+});
+
+// Typed world state (GAU-39): reconstructed read-only from the live feed; never writes back.
+app.get("/api/world/state", (_req: AuthenticatedRequest, res) => {
+  const { state, observations } = worldStateFromFeed(getCanonicalFeed(), new Date().toISOString());
+  const used = new Set(state.observationIds);
+  res.json({ state, observations: observations.filter((o) => used.has(o.id)) });
+});
+
+// Technical performance measures with thresholds and margins (NASA SE §6.7). GAU-122.
+app.get("/api/system/tpm", async (_req: AuthenticatedRequest, res) => {
+  const tpms = await currentTpms();
+  res.json({ generatedAt: new Date().toISOString(), status: overall(tpms), measures: tpms });
+});
+
 app.get("/api/security/cybertiger/events", (req: AuthenticatedRequest, res) => {
   const limit = Math.max(1, Math.min(Number(req.query.limit ?? 200), 2000));
+  const events = cyberTiger.getEvents(limit);
   res.json({
     timestamp: new Date().toISOString(),
-    count: limit,
-    events: cyberTiger.getEvents(limit),
+    count: events.length,
+    events,
   });
 });
 
@@ -682,7 +701,9 @@ const worker = new IngestionWorker((result: IngestionTickResult) => {
 
 selfHealer.register({
   onRequestTraining: async () => {
-    return triggerTraining();
+    // The self-healer only needs to know training was requested; log the outcome instead.
+    const result = await triggerTraining();
+    if (!result.started) console.warn(`[SelfHealer] ${result.message}`);
   },
   onResetIngestion: () => {
     worker.stop();
@@ -702,6 +723,16 @@ export async function startBackend(options?: { host?: string; port?: number }): 
     const address = server.address();
     const actualPort = typeof address === "object" && address?.port ? address.port : port;
     return { app, server, host, port: actualPort };
+  }
+
+  // Reload the last 24 h from bedrock so the feed history and the 6 h forecast window survive a
+  // restart instead of starting empty. GAU-117.
+  try {
+    const since = Date.now() - 24 * 60 * 60 * 1000;
+    const seeded = seedCanonical(await bedrock.getCanonicalSince(since, 20_000));
+    if (seeded > 0) console.log(`[backend] reloaded ${seeded} canonical points from bedrock`);
+  } catch (error) {
+    console.warn("[backend] bedrock reload failed; starting with an empty buffer", error);
   }
 
   return new Promise((resolve, reject) => {

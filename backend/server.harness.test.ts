@@ -17,6 +17,10 @@ test("backend harness starts and responds to /health", async (t) => {
   const body = await response.json();
   assert.strictEqual(body.ok, true);
   assert.ok(typeof body.timestamp === "string");
+  // GAU-122: public TPM summary only (status and red ids), never values.
+  assert.ok(["green", "amber", "red", "insufficient"].includes(body.tpm.status));
+  assert.ok(Array.isArray(body.tpm.red));
+  assert.equal(JSON.stringify(body.tpm).includes("value"), false);
 
   t.after(async () => {
     await stopBackend();

@@ -70,12 +70,12 @@ export const LayerToggles = ({ layers, onToggle, label = '00_LAYERS' }: LayerTog
                 <span
                   aria-hidden="true"
                   className={`relative h-4 w-7 shrink-0 rounded-full border transition-colors ${
-                    active ? 'border-signal bg-signal/20' : 'border-charcoal bg-transparent'
+                    active ? 'border-foreground/70 bg-foreground/15' : 'border-charcoal bg-transparent'
                   }`}
                 >
                   <span
                     className={`absolute top-0.5 h-2.5 w-2.5 rounded-full transition-all ${
-                      active ? 'left-3.5 bg-signal' : 'left-0.5 bg-muted-foreground'
+                      active ? 'left-3.5 bg-foreground' : 'left-0.5 bg-muted-foreground'
                     }`}
                   />
                 </span>

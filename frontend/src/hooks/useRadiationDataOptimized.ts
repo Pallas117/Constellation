@@ -20,7 +20,7 @@ import {
   filterRadiationData,
   createTimeSeries,
   calculateStatistics,
-  getAlertLevel,
+  getAlertLevelFromMeasurements,
 } from '@/lib/utils/radiation';
 
 export interface UseRadiationDataOptimizedOptions {
@@ -210,8 +210,7 @@ export function useRadiationDataOptimized(
       new Set(recentMeasurements.map((m) => m.orbitType))
     ) as OrbitType[];
 
-    const dominantParticleType = recentMeasurements[0]?.particleType || 'electron';
-    const alertLevel = getAlertLevel(averageFlux, dominantParticleType);
+    const alertLevel = getAlertLevelFromMeasurements(recentMeasurements);
 
     return {
       timestamp: new Date().toISOString(),

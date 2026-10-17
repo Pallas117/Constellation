@@ -5,6 +5,7 @@ import { registerDeviceWithLogin } from "@/lib/device-auth";
 import { Link, useNavigate, useLocation } from "react-router-dom";
 import { Github, LogIn } from "lucide-react";
 import { apiBase } from "@/lib/api/base-url";
+import { safeRedirectPath } from "@/lib/safe-redirect";
 import { useDocumentTitle } from "@/hooks/useDocumentTitle";
 
 export default function Login() {
@@ -27,7 +28,7 @@ export default function Login() {
   const hasFrom = Boolean(location.state?.from?.pathname);
   const fromPath = location.state?.from?.pathname || "/operator";
   const fromSearch = location.state?.from?.search || location.search || "";
-  const from = `${fromPath}${fromSearch}`;
+  const from = safeRedirectPath(`${fromPath}${fromSearch}`, "/operator");
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();

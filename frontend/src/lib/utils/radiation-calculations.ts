@@ -1,43 +1,86 @@
 /**
  * Utility functions for radiation calculations
- * Dose rate and magnetic field calculations
+ * Absorbed dose rate and magnetic field calculations
  */
 
-import type { RadiationMeasurement, RadiationDataPoint } from '@/lib/types/radiation';
+import type {
+  EnergyRange,
+  ParticleType,
+  RadiationMeasurement,
+  RadiationDataPoint,
+} from '@/lib/types/radiation';
+import { hasStoppingPowerTable, meanStoppingPowerSi } from '@/lib/physics/stopping-power';
+
+/** 1 MeV/g in Gy (J/kg): 1.602176634e-13 J per 1e-3 kg. */
+export const GRAY_PER_MEV_PER_GRAM = 1.602176634e-10;
 
 /**
- * Calculate dose rate from particle flux
- * Simplified calculation - actual dose rate depends on many factors
- * 
- * @param flux Particle flux in particles/(cm²·s·sr·MeV)
- * @param energyRange Energy range in MeV
+ * Omnidirectional flux (cm⁻²·s⁻¹) from unidirectional flux (cm⁻²·s⁻¹·sr⁻¹),
+ * assuming an isotropic distribution: Φ = ∫ j dΩ = 4π·j.
+ */
+export function unidirectionalToOmnidirectional(unidirectionalFlux: number): number {
+  return 4 * Math.PI * unidirectionalFlux;
+}
+
+/**
+ * Thin-target absorbed dose rate for one particle species:
+ * Ḋ [Gy/s] = 1.602e-10 × Φ [cm⁻²·s⁻¹] × S [MeV·cm²/g].
+ *
+ * @param omnidirectionalFlux Φ in cm⁻²·s⁻¹
+ * @param stoppingPower Mass stopping power S of the target material in MeV·cm²/g
+ */
+export function absorbedDoseRate(omnidirectionalFlux: number, stoppingPower: number): number {
+  return GRAY_PER_MEV_PER_GRAM * omnidirectionalFlux * stoppingPower;
+}
+
+export interface DoseRate {
+  /** Absorbed dose rate in Gy/s, in the material below */
+  grayPerSecond: number;
+  /** Target material. Gy(Si) is the TID unit for electronics; it is not a Sv. */
+  material: 'Si';
+  /** Omnidirectional flux in the energy bin, cm⁻²·s⁻¹ */
+  omnidirectionalFlux: number;
+  /** Bin-averaged electronic mass stopping power, MeV·cm²/g (NIST PSTAR/ESTAR) */
+  stoppingPower: number;
+}
+
+/**
+ * Absorbed dose rate in a thin, unshielded silicon layer from one energy bin.
+ *
+ * Assumptions (state them wherever the number is shown):
+ * - the flux is isotropic, so Φ = 4π·j·ΔE;
+ * - j is flat across the bin, so the bin uses the bin-averaged S̄;
+ * - the layer is thin: no shielding, and particles lose little energy in it.
+ *
+ * @param flux Differential unidirectional flux j(E) in cm⁻²·s⁻¹·sr⁻¹·MeV⁻¹,
+ *   the unit the lib/api adapters report
+ * @param energyRange Energy bin in MeV
  * @param particleType Type of particle
- * @returns Dose rate in mSv/h (millisieverts per hour)
+ * @returns The dose rate, or null when it cannot be computed: no stopping-power
+ *   table for the particle (alpha, heavy ions), an empty bin, a bin outside the
+ *   NIST table, or a negative or non-finite flux
  */
 export function calculateDoseRate(
   flux: number,
-  energyRange: { min: number; max: number },
-  particleType: 'proton' | 'electron' | 'alpha' | 'heavy_ion'
-): number {
-  // Average energy in MeV
-  const avgEnergy = (energyRange.min + energyRange.max) / 2;
+  energyRange: EnergyRange,
+  particleType: ParticleType
+): DoseRate | null {
+  if (!hasStoppingPowerTable(particleType) || !(Number.isFinite(flux) && flux >= 0)) return null;
 
-  // Conversion factors (simplified, actual values depend on particle type and energy)
-  // These are approximate values for space radiation
-  const conversionFactors: Record<string, number> = {
-    proton: 1.0e-6, // Approximate conversion factor for protons
-    electron: 5.0e-7, // Electrons have lower stopping power
-    alpha: 2.0e-6, // Alpha particles have higher stopping power
-    heavy_ion: 3.0e-6, // Heavy ions have highest stopping power
+  const stoppingPower = meanStoppingPowerSi(particleType, energyRange);
+  if (stoppingPower === null) return null;
+
+  // Integral unidirectional flux in the bin (cm⁻²·s⁻¹·sr⁻¹), then over 4π sr.
+  const omnidirectionalFlux = unidirectionalToOmnidirectional(
+    flux * (energyRange.max - energyRange.min)
+  );
+
+  return {
+    grayPerSecond: absorbedDoseRate(omnidirectionalFlux, stoppingPower),
+    material: 'Si',
+    omnidirectionalFlux,
+    stoppingPower,
   };
-
-  const factor = conversionFactors[particleType] || 1.0e-6;
-
-  // Dose rate = flux × energy × conversion factor
-  // Convert from per second to per hour
-  const doseRate = flux * avgEnergy * factor * 3600; // mSv/h
-
-  return Math.max(0, doseRate);
 }
 
 /**
@@ -80,9 +123,11 @@ export function estimateMagneticField(
 }
 
 /**
- * Calculate dose rate for a radiation measurement
+ * Absorbed dose rate in Si for a radiation measurement (see calculateDoseRate)
  */
-export function getDoseRateFromMeasurement(measurement: RadiationMeasurement | RadiationDataPoint): number {
+export function getDoseRateFromMeasurement(
+  measurement: RadiationMeasurement | RadiationDataPoint
+): DoseRate | null {
   if ('particleFlux' in measurement) {
     return calculateDoseRate(
       measurement.particleFlux,
