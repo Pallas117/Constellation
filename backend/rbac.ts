@@ -31,6 +31,7 @@ export const API_POLICY: ReadonlyArray<{ method: string; path: string; access: A
   { method: "GET", path: "/feed/mms/reconnection", access: "user" },
   { method: "GET", path: "/feed/mms/reconnection/latest", access: "user" },
   { method: "GET", path: "/feed/sources/status", access: "user" },
+  { method: "GET", path: "/world/state", access: "user" }, // typed world state, read-only (GAU-39)
   { method: "GET", path: "/system/pipeline", access: "user" }, // operator-view data-flow HUD (GAU-110)
   { method: "GET", path: "/forecast/anomaly", access: "user" },
 

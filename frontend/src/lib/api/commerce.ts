@@ -1,4 +1,5 @@
 import { apiBase } from "./base-url";
+import { describeHttpFailure } from "./http-error";
 // Client for organisation self-service (/api/orgs) and the public pilot form.
 // Session cookies are attached by lib/api/backend-credentials.
 
@@ -46,7 +47,7 @@ async function call<T>(path: string, init: RequestInit = {}): Promise<T> {
   });
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
-    throw new Error(body.error ?? `HTTP ${res.status}`);
+    throw new Error(body.error ?? describeHttpFailure("Request failed", res.status));
   }
   return res.status === 204 ? (undefined as T) : ((await res.json()) as T);
 }

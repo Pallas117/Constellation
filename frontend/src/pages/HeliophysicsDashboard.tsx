@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { lazy, Suspense, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { ChevronDown, Info, Layers, PanelRight, RotateCcw, Video, Zap } from "lucide-react";
 import { LayerToggles } from "@/components/ui/LayerToggles";
@@ -8,18 +8,21 @@ import { SpaceScene, SCENE_VIEWS, type SceneView } from "@/components/scene/Spac
 import type { MagnetosphereModelInfo } from "@/components/scene/Magnetosphere";
 import { FeedStatus, HudButton, HudCluster, HudStat, SceneKey, fmt, signed, type Tone } from "@/components/hud/Hud";
 import { GEO_RE, SceneHoverTip } from "@/components/hud/SceneHoverTip";
-import { AuroraCastMap } from "@/components/heliophysics/AuroraCastMap";
-import { SolarWindSpeedChart } from "@/components/heliophysics/SolarWindSpeedChart";
-import { useAuroraMap } from "@/hooks/useAuroraMap";
 import { useMMSReconnection } from "@/hooks/useMMSReconnection";
 import { useSolarWind5s } from "@/hooks/useSolarWind5s";
+import { useNearViewport } from "@/hooks/useNearViewport";
 import type { LayerVisibility } from "@/components/types";
 import type { RadiationDataPoint } from "@/lib/types/radiation";
 import mockSolarStormData from "@/data/mock_solar_storm.json";
 import { beltVisuals, liveDrivers, standoffIfReference } from "@/lib/physics/live-drivers";
 import { useNow } from "@/hooks/useNow";
+import { useDocumentTitle } from "@/hooks/useDocumentTitle";
 
 const VIEW_KEYS = Object.keys(SCENE_VIEWS) as SceneView[];
+// Below the fold: its own chunk (with the charting library), loaded when scrolled to.
+const HistorySection = lazy(() => import("@/components/heliophysics/HistorySection"));
+/** The scene and HUD need only the latest point; the 24 h history fetches its own. */
+const LIVE_BACKFILL_MS = 15 * 60_000;
 const STORM_RADIATION = mockSolarStormData as unknown as RadiationDataPoint[];
 
 const bzTone = (bz: number | undefined): Tone =>
@@ -52,6 +55,8 @@ function Readout({ label, value, unit, tone = "default", hint }: { label: string
 /* ------------------------------------------------------------------------- */
 
 const HeliophysicsDashboard = () => {
+  useDocumentTitle("Heliophysics");
+
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [layers, setLayers] = useState<LayerVisibility>({
     earth: true,
@@ -66,9 +71,10 @@ const HeliophysicsDashboard = () => {
   const [modelInfo, setModelInfo] = useState<MagnetosphereModelInfo | null>(null);
   const [simulateStorm, setSimulateStorm] = useState(false);
 
-  const solarWind = useSolarWind5s();
+  const solarWind = useSolarWind5s({ backfillMs: LIVE_BACKFILL_MS });
   const mms = useMMSReconnection();
-  const aurora = useAuroraMap();
+  const historyRef = useRef<HTMLElement>(null);
+  const showHistory = useNearViewport(historyRef);
   const latest = solarWind.latest;
   const now = useNow(60_000);
 
@@ -193,7 +199,7 @@ const HeliophysicsDashboard = () => {
         {/* Top edge: identity and feed left, controls right */}
         <header className="pointer-events-none absolute inset-x-0 top-0 z-10 flex items-start justify-between gap-3 p-3 md:p-4">
           <div className="flex min-w-0 flex-col items-start gap-1.5">
-            <Link to="/" className="brand-label pointer-events-auto text-[10px]">
+            <Link to="/" className="brand-label pointer-events-auto inline-flex min-h-6 items-center text-[10px]">
               Gauss Aurora<span className="hidden sm:inline"> · Heliophysics</span>
             </Link>
             <h1 className="text-sm font-semibold leading-tight text-foreground/90 md:text-base">
@@ -475,20 +481,23 @@ const HeliophysicsDashboard = () => {
 
         <a
           href="#history"
-          className="pointer-events-auto absolute bottom-4 left-1/2 z-10 hidden -translate-x-1/2 items-center gap-1 rounded-full px-3 py-1 font-mono text-[9px] uppercase tracking-[0.14em] text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring lg:inline-flex"
+          className="pointer-events-auto absolute bottom-4 left-1/2 z-10 hidden -translate-x-1/2 items-center gap-1 rounded-full min-h-6 px-3 py-1 font-mono text-[9px] uppercase tracking-[0.14em] text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring lg:inline-flex"
         >
           24 h history <ChevronDown size={12} aria-hidden="true" />
         </a>
       </section>
 
-      <section id="history" aria-label="History" className="mx-auto grid max-w-[1600px] gap-4 p-4 md:p-6 lg:grid-cols-2">
-        <SolarWindSpeedChart
-          points={solarWind.points}
-          loading={solarWind.loading}
-          error={solarWind.error}
-          source={solarWind.source}
-        />
-        <AuroraCastMap map={aurora.map} loading={aurora.loading} error={aurora.error} />
+      <section
+        id="history"
+        ref={historyRef}
+        aria-label="History"
+        className="mx-auto grid min-h-[360px] max-w-[1600px] gap-4 p-4 md:p-6 lg:grid-cols-2"
+      >
+        {showHistory && (
+          <Suspense fallback={<p className="text-sm text-muted-foreground">Loading the 24 h history…</p>}>
+            <HistorySection livePoints={solarWind.points} source={solarWind.source} />
+          </Suspense>
+        )}
       </section>
     </main>
   );

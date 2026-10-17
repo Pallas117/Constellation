@@ -42,7 +42,9 @@ const unescapeXml = (s: string) => s.replace(/&(quot|apos|lt|gt|amp);/g, (m) => 
 export function parseJunit(xml: string): Map<string, TestOutcome> {
   const out = new Map<string, TestOutcome>();
   const rank: Record<TestOutcome, number> = { pass: 0, skipped: 1, fail: 2 };
-  const re = /<testcase\b([^>]*?)(\/>|>([\s\S]*?)<\/testcase>)/g;
+  // Node's reporter leaves ">" unescaped inside attribute values (e.g. "L1 -> Earth"), so read
+  // attributes as quoted strings instead of stopping at the first ">".
+  const re = /<testcase\b((?:[^>"]|"[^"]*")*?)(\/>|>([\s\S]*?)<\/testcase>)/g;
   for (let m = re.exec(xml); m; m = re.exec(xml)) {
     const name = /\bname="([^"]*)"/.exec(m[1])?.[1];
     if (name === undefined) continue;

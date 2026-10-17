@@ -32,6 +32,7 @@ import type {
 import { withFreshness } from "./lib/freshness.js";
 import { IngestionWorker } from "./worker/ingest-loop.js";
 import { MAX_QUERY_CHARS, memoryQuery, memoryStatus } from "./memory/client.js";
+import { worldStateFromFeed } from "./world/build.js";
 import { createSwapPlan, rebalanceDeviceNetwork } from "./services/device-swap-manager.js";
 import { encodeCanonicalPoint } from "./lib/proto.js";
 import { linkGuardian } from "./lib/connectivity.js";
@@ -496,6 +497,13 @@ app.get("/api/system/connectivity", (req: AuthenticatedRequest, res) => {
 // Per-stage ingest latency and the age of the data being served (fresh / degraded / stale / stalled).
 app.get("/api/system/pipeline", (_req: AuthenticatedRequest, res) => {
   res.json(worker.getPipelineLatency());
+});
+
+// Typed world state (GAU-39): reconstructed read-only from the live feed; never writes back.
+app.get("/api/world/state", (_req: AuthenticatedRequest, res) => {
+  const { state, observations } = worldStateFromFeed(getCanonicalFeed(), new Date().toISOString());
+  const used = new Set(state.observationIds);
+  res.json({ state, observations: observations.filter((o) => used.has(o.id)) });
 });
 
 // Technical performance measures with thresholds and margins (NASA SE §6.7). GAU-122.
