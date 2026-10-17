@@ -26,6 +26,7 @@ import {
 } from "./state.js";
 import type {
   CanonicalSpaceWeatherPoint,
+  MMSReconVectorPoint,
   IngestionTickResult,
   NowcastInferenceRequest,
 } from "./types.js";
@@ -182,7 +183,7 @@ async function fetchMmsFromDb(
   lookbackMs: number,
   limit: number,
   accessToken?: string,
-): Promise<any[] | null> {
+): Promise<MMSReconVectorPoint[] | null> {
   // Supabase database access has been removed; memory and bedrock are the current sources.
   return null;
 }
@@ -376,7 +377,7 @@ app.get("/api/feed/space-weather/latest", async (req: AuthenticatedRequest, res)
   // LEVEL 4 REDUNDANCY: Bedrock Fallback for latest
   if (!point) {
     const local = await bedrock.getRecent(1);
-    const mapped = local.filter(l => l.type === "canonical").map(l => l.data);
+    const mapped = local.filter(l => l.type === "canonical").map(l => l.data as CanonicalSpaceWeatherPoint);
     if (mapped.length > 0) point = mapped[0];
   }
 
@@ -420,7 +421,7 @@ app.get("/api/feed/space-weather/latest/proto", async (req: AuthenticatedRequest
   // Bedrock fallback for proto
   if (!point) {
     const local = await bedrock.getRecent(1);
-    const mapped = local.filter(l => l.type === "canonical").map(l => l.data);
+    const mapped = local.filter(l => l.type === "canonical").map(l => l.data as CanonicalSpaceWeatherPoint);
     if (mapped.length > 0) point = mapped[0];
   }
 
@@ -469,7 +470,7 @@ app.get("/api/feed/mms/reconnection/latest", async (req: AuthenticatedRequest, r
   // LEVEL 4 REDUNDANCY: Bedrock Fallback for latest MMS
   if (!vector) {
     const local = await bedrock.getRecent(1);
-    const mapped = local.filter(l => l.type === "mms").map(l => l.data);
+    const mapped = local.filter(l => l.type === "mms").map(l => l.data as MMSReconVectorPoint);
     if (mapped.length > 0) vector = mapped[0];
   }
 

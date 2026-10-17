@@ -98,8 +98,8 @@ function limbMaterial(): THREE.ShaderMaterial {
 
 export const Earth = ({ visible }: EarthProps) => {
   const earthRef = useRef<THREE.Mesh>(null);
-  const globe = useMemo(globeMaterial, []);
-  const limb = useMemo(limbMaterial, []);
+  const globe = useMemo(() => globeMaterial(), []);
+  const limb = useMemo(() => limbMaterial(), []);
   useEffect(
     () => () => {
       globe.dispose();

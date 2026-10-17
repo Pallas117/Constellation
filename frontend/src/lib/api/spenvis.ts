@@ -125,7 +125,7 @@ export async function fetchSPENVISData(
     return measurements;
   } catch (error) {
     console.error('Error fetching SPENVIS data:', error);
-    throw new Error(`Failed to fetch SPENVIS data: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    throw new Error(`Failed to fetch SPENVIS data: ${error instanceof Error ? error.message : 'Unknown error'}`, { cause: error });
   }
 }
 
