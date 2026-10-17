@@ -108,7 +108,7 @@
     "dotenv": "^17.4.2",
     "embla-carousel-react": "^8.6.0",
     "express": "^4.21.2",
-    "flatgeobuf": "^4.4.0",
+    "flatgeobuf": "^4.5.0",
     "framer-motion": "^12.38.0",
     "input-otp": "^1.4.2",
     "lucide-react": "^0.462.0",
