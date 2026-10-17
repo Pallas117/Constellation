@@ -380,12 +380,11 @@ export const RadiationDataContours = ({
       {meshes.map((mesh, i) => (
         <mesh key={i} position={[mesh.position.x, mesh.position.y, mesh.position.z]}>
           <sphereGeometry args={[mesh.size, 8, 8]} />
+          {/* Unlit on purpose: the colour encodes flux, so scene lighting must not shade it. */}
           <meshBasicMaterial
             color={mesh.color}
             transparent
             opacity={0.8}
-            emissive={mesh.color}
-            emissiveIntensity={0.5}
           />
         </mesh>
       ))}
