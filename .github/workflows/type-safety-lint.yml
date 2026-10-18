@@ -198,7 +198,7 @@ jobs:
             fi
           fi
 
-status-check:
+  status-check:
     name: All Type/Lint Checks
     runs-on: ubuntu-latest
     needs: [typescript-strict, eslint, unused-imports, bundle-size-check]
