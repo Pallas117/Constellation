@@ -3,6 +3,10 @@ import test from "node:test";
 import express from "express";
 import type { AuthContext, AuthRole } from "./auth.js";
 import router from "./device-registry.js";
+import type { DeviceRecord } from "./types.js";
+
+type DeviceBody = { device: DeviceRecord };
+type DeviceList = { devices: DeviceRecord[] };
 
 // Each request picks its identity from the x-test-user / x-test-role headers.
 const app = express();
@@ -36,8 +40,8 @@ const telemetry = { temperatureC: 40, batteryPercent: 80, powerWatts: 10, comput
 test("devices can only be modified and listed by their owner or an admin", async (t) => {
   t.after(() => server.close());
 
-  const aliceDevice = (await (await call("/register", "alice", { body: { fingerprintHash: "fp-alice" } })).json()).device;
-  const bobDevice = (await (await call("/register", "bob", { body: { fingerprintHash: "fp-bob" } })).json()).device;
+  const aliceDevice = ((await (await call("/register", "alice", { body: { fingerprintHash: "fp-alice" } })).json()) as DeviceBody).device;
+  const bobDevice = ((await (await call("/register", "bob", { body: { fingerprintHash: "fp-bob" } })).json()) as DeviceBody).device;
 
   await t.test("another user cannot heartbeat, set status or push telemetry", async () => {
     for (const [path, body] of [
@@ -48,7 +52,8 @@ test("devices can only be modified and listed by their owner or an admin", async
       const res = await call(`/${aliceDevice.id}/${path}`, "bob", { body });
       assert.equal(res.status, 404, `bob should not reach alice's /${path}`);
     }
-    const after = (await (await call("/", "alice")).json()).devices.find((d: { id: string }) => d.id === aliceDevice.id);
+    const after = ((await (await call("/", "alice")).json()) as DeviceList).devices.find((d) => d.id === aliceDevice.id);
+    assert.ok(after, "alice still sees her device");
     assert.equal(after.status, aliceDevice.status);
     assert.equal(after.telemetry, aliceDevice.telemetry);
   });
@@ -63,7 +68,7 @@ test("devices can only be modified and listed by their owner or an admin", async
     assert.equal((await call(`/${aliceDevice.id}/status`, "alice", { body: { status: "trusted" } })).status, 200);
     const res = await call(`/${aliceDevice.id}/telemetry`, "alice", { body: telemetry });
     assert.equal(res.status, 200);
-    assert.equal((await res.json()).device.telemetry.temperatureC, 40);
+    assert.equal(((await res.json()) as DeviceBody).device.telemetry?.temperatureC, 40);
   });
 
   await t.test("an admin can modify any device", async () => {
@@ -72,7 +77,7 @@ test("devices can only be modified and listed by their owner or an admin", async
 
   await t.test("listing returns only the caller's devices unless admin", async () => {
     const ids = async (user: string, role?: AuthRole) =>
-      ((await (await call("/", user, { role })).json()).devices as { id: string }[]).map((d) => d.id);
+      ((await (await call("/", user, { role })).json()) as DeviceList).devices.map((d) => d.id);
     assert.deepEqual(await ids("alice"), [aliceDevice.id]);
     assert.deepEqual(await ids("bob"), [bobDevice.id]);
     assert.deepEqual(await ids("mallory"), []);

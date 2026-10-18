@@ -3,14 +3,23 @@ import { signIn, useSession } from "@/lib/auth-client";
 import { landingFor, roleOf } from "@/lib/roles";
 import { registerDeviceWithLogin } from "@/lib/device-auth";
 import { Link, useNavigate, useLocation } from "react-router-dom";
-import { Shield, Fingerprint } from "lucide-react";
+import { Github, LogIn } from "lucide-react";
 import { apiBase } from "@/lib/api/base-url";
+import { safeRedirectPath } from "@/lib/safe-redirect";
+import { useDocumentTitle } from "@/hooks/useDocumentTitle";
 
 export default function Login() {
+  useDocumentTitle("Sign in");
+
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
-  const [sso, setSso] = useState<{ google: boolean; domain: string | null }>({ google: false, domain: null });
+  const [sso, setSso] = useState<{ google: boolean; github: boolean; domain: string | null }>({
+    google: false,
+    github: false,
+    domain: null,
+  });
+  const anySso = sso.google || sso.github;
   const navigate = useNavigate();
   const location = useLocation();
   const { data: session } = useSession();
@@ -19,7 +28,7 @@ export default function Login() {
   const hasFrom = Boolean(location.state?.from?.pathname);
   const fromPath = location.state?.from?.pathname || "/operator";
   const fromSearch = location.state?.from?.search || location.search || "";
-  const from = `${fromPath}${fromSearch}`;
+  const from = safeRedirectPath(`${fromPath}${fromSearch}`, "/operator");
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -52,88 +61,114 @@ export default function Login() {
     const base = apiBase();
     fetch(`${base}/api/sso-options`)
       .then((res) => (res.ok ? res.json() : null))
-      .then((options) => options && setSso(options))
+      .then((options) => options && setSso({ google: Boolean(options.google), github: Boolean(options.github), domain: options.domain ?? null }))
       .catch(() => undefined);
     if (new URLSearchParams(location.search).has("error")) {
       setError("Single sign-on failed. Use your Lightbound Google Workspace account.");
     }
   }, [location.search]);
 
-  const handleGoogle = async () => {
+  const handleSso = async (provider: "google" | "github") => {
     setError("");
     const back = `${window.location.origin}/login`;
-    await signIn.social({ provider: "google", callbackURL: back, errorCallbackURL: back });
+    await signIn.social({ provider, callbackURL: back, errorCallbackURL: back });
   };
 
   return (
-    <div className="h-screen w-screen bg-black flex items-center justify-center font-mono overflow-hidden relative">
-      <div className="absolute inset-0 scanline opacity-30 pointer-events-none" />
-      <div className="w-full max-w-sm p-8 border border-primary/30 z-10 bg-black/80 hud-panel glow-border animate-fade-in-up">
-        <div className="flex flex-col items-center mb-6">
-          <Shield className="w-12 h-12 text-primary mb-2 animate-pulse" />
-          <h1 className="text-primary text-xl tracking-[0.3em] uppercase phosphor-text text-center">
-            Gauss
-            <br />
-            Auth Gateway
-          </h1>
-          <p className="mt-3 text-[10px] uppercase text-primary/50 tracking-[0.35em] text-center">
-            Team sign-in for staff, operators and admins. The live visualisation is open to everyone.
-          </p>
-        </div>
-        
-        {error && <div className="text-amber-500 text-xs mb-4 text-center">{error}</div>}
+    <main className="flex min-h-screen w-full items-center justify-center bg-background px-4 py-10 text-foreground">
+      <div className="hud-panel w-full max-w-sm p-8">
+        <p className="brand-label">00_SIGN_IN · GAUSS AURORA</p>
+        <h1 className="mt-2 text-2xl font-semibold leading-tight">Sign in to Gauss.</h1>
+        <p className="mt-2 text-sm text-muted-foreground">
+          Accounts get the full heliophysics view; staff, operators and admins also get their team tools. The landing
+          page stays open to everyone.
+        </p>
 
-        {sso.google && (
+        {error && (
+          <p role="alert" className="mt-4 rounded-md border border-caution/50 bg-caution/10 px-3 py-2 text-sm text-caution">
+            {error}
+          </p>
+        )}
+
+        {anySso && (
           <>
-            <button
-              type="button"
-              onClick={() => void handleGoogle()}
-              className="w-full border border-primary/60 text-primary hover:bg-primary/20 transition-all p-3 text-xs tracking-[0.2em] uppercase flex items-center justify-center gap-2"
-            >
-              Sign in with Google Workspace
-            </button>
-            <p className="mt-2 text-center text-[10px] text-primary/50">@{sso.domain} accounts</p>
-            <div className="my-4 flex items-center gap-3 text-[10px] uppercase tracking-widest text-primary/40">
-              <span className="h-px flex-1 bg-primary/20" />
+            <div className="mt-6 space-y-2">
+              {sso.google && (
+                <button
+                  type="button"
+                  onClick={() => void handleSso("google")}
+                  className="flex w-full items-center justify-center gap-2 rounded-md border border-charcoal bg-panel px-3 py-2.5 text-sm font-medium text-foreground transition-colors hover:bg-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                >
+                  Continue with Google Workspace
+                </button>
+              )}
+              {sso.github && (
+                <button
+                  type="button"
+                  onClick={() => void handleSso("github")}
+                  className="flex w-full items-center justify-center gap-2 rounded-md border border-charcoal bg-panel px-3 py-2.5 text-sm font-medium text-foreground transition-colors hover:bg-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                >
+                  <Github className="h-4 w-4" aria-hidden="true" />
+                  Continue with GitHub
+                </button>
+              )}
+            </div>
+            <p className="mt-2 text-center text-xs text-muted-foreground">
+              New accounts: verified @{sso.domain} email
+            </p>
+            <div className="my-5 flex items-center gap-3 font-mono text-[11px] uppercase tracking-[0.12em] text-muted-foreground">
+              <span className="h-px flex-1 bg-charcoal" />
               or email
-              <span className="h-px flex-1 bg-primary/20" />
+              <span className="h-px flex-1 bg-charcoal" />
             </div>
           </>
         )}
-        
-        <form onSubmit={handleLogin} className="space-y-4">
+
+        <form onSubmit={handleLogin} className={`space-y-4 ${anySso ? "" : "mt-6"}`}>
           <div>
-            <label className="text-primary/60 text-[10px] uppercase tracking-wider block mb-1">Email</label>
-            <input 
-              type="email" 
+            <label htmlFor="login-email" className="mb-1.5 block text-sm font-medium">
+              Email
+            </label>
+            <input
+              id="login-email"
+              type="email"
+              autoComplete="email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              className="w-full bg-black border border-primary/30 text-primary p-2 text-sm focus:outline-none focus:border-primary glow-border transition-colors"
+              className="w-full rounded-md border border-charcoal bg-black px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus-visible:border-signal focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
               required
             />
           </div>
           <div>
-            <label className="text-primary/60 text-[10px] uppercase tracking-wider block mb-1">Password</label>
-            <input 
-              type="password" 
+            <label htmlFor="login-password" className="mb-1.5 block text-sm font-medium">
+              Password
+            </label>
+            <input
+              id="login-password"
+              type="password"
+              autoComplete="current-password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              className="w-full bg-black border border-primary/30 text-primary p-2 text-sm focus:outline-none focus:border-primary glow-border transition-colors tracking-widest"
+              className="w-full rounded-md border border-charcoal bg-black px-3 py-2 text-sm text-foreground focus-visible:border-signal focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
               required
             />
           </div>
-          <button 
+          <button
             type="submit"
-            className="w-full bg-primary/10 border border-primary text-primary hover:bg-primary/20 hover:phosphor-text transition-all p-3 text-xs tracking-[0.2em] uppercase mt-4 flex items-center justify-center gap-2"
+            className="mt-2 flex w-full items-center justify-center gap-2 rounded-md bg-signal px-3 py-2.5 text-sm font-semibold text-background transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
           >
-            <Fingerprint className="w-4 h-4" />
-            Authenticate
+            <LogIn className="h-4 w-4" aria-hidden="true" />
+            Sign in
           </button>
         </form>
-        <Link to="/" className="mt-6 block text-center text-[10px] uppercase tracking-widest text-primary/50 hover:text-primary">
-          ← Live visualisation
+
+        <Link
+          to="/"
+          className="mt-4 block py-2 text-center text-sm text-muted-foreground transition-colors hover:text-foreground"
+        >
+          ← Back to the live landing page
         </Link>
       </div>
-    </div>
+    </main>
   );
 }

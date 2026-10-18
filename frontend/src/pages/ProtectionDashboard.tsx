@@ -1,11 +1,15 @@
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useDeviceSwapPlan } from "@/hooks/useDeviceSwapPlan";
 import { useSolarWind5s } from "@/hooks/useSolarWind5s";
+import { driverReadings, weatherRisk } from "@/lib/measured";
+import { useDocumentTitle } from "@/hooks/useDocumentTitle";
 
 const ProtectionDashboard = () => {
+  useDocumentTitle("Protection");
+
   const { plan, loading, error, lastUpdated, rebalanceMessage, rebalance } = useDeviceSwapPlan();
   const solarWind = useSolarWind5s();
   const latest = solarWind.latest;
@@ -32,49 +36,40 @@ const ProtectionDashboard = () => {
     };
   }, [plan]);
 
-  const weatherRisk = useMemo(() => {
-    if (!latest) {
-      return { label: "Unknown", description: "No solar wind feed available yet.", score: 0 };
-    }
+  // A stopped feed keeps its last point, so the clock ages it into "stale" between polls.
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const clock = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(clock);
+  }, []);
 
-    const speed = latest.solarWind.speed ?? 400;
-    const kp = latest.indices?.kp ?? 2;
-    const bz = latest.magneticField?.z ?? 0;
-    const score = Math.min(100, Math.max(0, Math.round((kp * 9) + Math.abs(bz) * 3 + ((speed - 300) / 15))));
-
-    let label = "Stable";
-    let description = "Current conditions are below the threshold for operational impact.";
-
-    if (score > 80) {
-      label = "Severe Storm";
-      description = "Strong solar wind pressure and southward IMF make device protection critical now.";
-    } else if (score > 50) {
-      label = "Active Warning";
-      description = "Geomagnetic activity is rising. Prioritize thermal and load redistribution across SWAP tiers.";
-    } else if (score > 25) {
-      label = "Moderate Risk";
-      description = "Transitions in the magnetosphere can begin to influence sensitive routing and power budgets.";
-    }
-
-    return { label, description, score };
-  }, [latest]);
+  // Stale, over-age or incomplete data is unknown, never "Stable", a score of 0 or an old
+  // reading shown as current (GAU-114 / GAU-81).
+  const risk = useMemo(() => weatherRisk(latest, now), [latest, now]);
+  const readings = useMemo(() => driverReadings(latest, now), [latest, now]);
 
   const impactNarrative = useMemo(() => {
     if (!plan || !latest) return "Awaiting device telemetry and space weather data to build correlation signals.";
 
     const protectedCount = plan.assignments.filter((assignment) => assignment.tier >= 2).length;
-    const underPressure = assignmentSummary.critical + assignmentSummary.high;
-    const researchSignal = Math.round((assignmentSummary.averageScore / 2) + weatherRisk.score / 10 + underPressure * 3);
+    const protecting = `Protecting ${protectedCount} of ${assignmentSummary.total} connected devices using SWAP tiering.`;
+    // An unknown risk is not a zero risk: no performance signal is built from it.
+    if (risk.score === null) {
+      return `${protecting} Current heliophysics stress is unknown (no current measurement), so no performance signal is computed.`;
+    }
 
-    return `Protecting ${protectedCount} of ${assignmentSummary.total} connected devices using SWAP tiering. Current heliophysics stress: ${weatherRisk.label}. This summary is a live signal for research into how space weather cascades through power, compute, and thermal systems, with a performance signal of ${researchSignal}.`;
-  }, [plan, assignmentSummary, weatherRisk]);
+    const underPressure = assignmentSummary.critical + assignmentSummary.high;
+    const researchSignal = Math.round((assignmentSummary.averageScore / 2) + risk.score / 10 + underPressure * 3);
+
+    return `${protecting} Current heliophysics stress: ${risk.label}. This summary is a live signal for research into how space weather cascades through power, compute, and thermal systems, with a performance signal of ${researchSignal}.`;
+  }, [plan, latest, assignmentSummary, risk]);
 
   return (
     <main className="min-h-screen w-full bg-background text-foreground">
       <section className="px-4 py-6 sm:px-8">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
           <div>
-            <p className="text-sm uppercase tracking-[0.3em] text-primary/80">Protection Intelligence</p>
+            <p className="brand-label">00_PROTECTION</p>
             <h1 className="mt-2 text-3xl font-semibold tracking-tight">Device SWAP Resilience & Heliophysics Research</h1>
             <p className="mt-3 max-w-2xl text-sm text-muted-foreground">
               Correlate current magnetospheric stress with operational device health. Use adaptive SWAP load management to protect critical infrastructure and capture impact signals for civilization-scale resilience research.
@@ -101,26 +96,32 @@ const ProtectionDashboard = () => {
             <div className="grid gap-3 sm:grid-cols-2">
               <div className="rounded-xl border border-border bg-muted p-4">
                 <p className="text-xs uppercase text-muted-foreground">Risk Level</p>
-                <p className="mt-2 text-2xl font-semibold">{weatherRisk.label}</p>
+                <p className="mt-2 text-2xl font-semibold">{risk.label}</p>
               </div>
               <div className="rounded-xl border border-border bg-muted p-4">
                 <p className="text-xs uppercase text-muted-foreground">Threat Score</p>
-                <p className="mt-2 text-2xl font-semibold">{weatherRisk.score}</p>
+                {risk.score === null ? (
+                  <p className="mt-2 text-2xl font-semibold text-muted-foreground">Unknown</p>
+                ) : (
+                  <p className="mt-2 text-2xl font-semibold">{risk.score}</p>
+                )}
               </div>
             </div>
 
             <div className="grid gap-3 sm:grid-cols-2">
-              <div className="rounded-xl border border-border bg-muted p-4">
-                <p className="text-xs uppercase text-muted-foreground">IMF Bz</p>
-                <p className="mt-2 text-lg font-semibold">{latest?.magneticField?.z?.toFixed(1) ?? "n/a"} nT</p>
-              </div>
-              <div className="rounded-xl border border-border bg-muted p-4">
-                <p className="text-xs uppercase text-muted-foreground">Kp Index</p>
-                <p className="mt-2 text-lg font-semibold">{latest?.indices?.kp ?? "n/a"}</p>
-              </div>
+              {[
+                { title: "IMF Bz", reading: readings.bz },
+                { title: "Kp Index", reading: readings.kp },
+              ].map(({ title, reading }) => (
+                <div key={title} className="rounded-xl border border-border bg-muted p-4">
+                  <p className="text-xs uppercase text-muted-foreground">{title}</p>
+                  <p className={`mt-2 text-lg font-semibold${reading.current ? "" : " text-muted-foreground"}`}>{reading.text}</p>
+                  {reading.note ? <p className="text-xs text-muted-foreground">{reading.note}</p> : null}
+                </div>
+              ))}
             </div>
 
-            <p className="text-sm leading-6 text-muted-foreground">{weatherRisk.description}</p>
+            <p className="text-sm leading-6 text-muted-foreground">{risk.description}</p>
             <p className="text-xs text-muted-foreground">Feed source: {solarWind.source} · Updated {lastUpdated ? lastUpdated.toLocaleTimeString() : "soon"}</p>
           </CardContent>
         </Card>
@@ -181,17 +182,17 @@ const ProtectionDashboard = () => {
             <p>{impactNarrative}</p>
             <div className="grid gap-3 sm:grid-cols-3">
               <div className="rounded-xl border border-border bg-muted p-4">
-                <div className="flex items-center gap-2 text-xs uppercase tracking-[0.24em] text-muted-foreground mb-2">Protection margin</div>
+                <div className="stat-label mb-2">Protection margin</div>
                 <div className="text-xl font-semibold">{assignmentSummary.high + assignmentSummary.critical}</div>
                 <div className="text-xs text-muted-foreground">devices at elevated tiers</div>
               </div>
               <div className="rounded-xl border border-border bg-muted p-4">
-                <div className="flex items-center gap-2 text-xs uppercase tracking-[0.24em] text-muted-foreground mb-2">Storm pressure</div>
+                <div className="stat-label mb-2">Storm pressure</div>
                 <div className="text-xl font-semibold">{latest?.solarWind?.dynamicPressure?.toFixed(2) ?? "n/a"} nPa</div>
                 <div className="text-xs text-muted-foreground">dynamic pressure</div>
               </div>
               <div className="rounded-xl border border-border bg-muted p-4">
-                <div className="flex items-center gap-2 text-xs uppercase tracking-[0.24em] text-muted-foreground mb-2">Rebalance status</div>
+                <div className="stat-label mb-2">Rebalance status</div>
                 <div className="text-xl font-semibold">{rebalanceMessage ? "Updated" : "Idle"}</div>
                 <div className="text-xs text-muted-foreground">{rebalanceMessage ?? "No recent rebalance"}</div>
               </div>

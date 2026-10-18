@@ -1,6 +1,7 @@
 import { Database, ShieldCheck } from "lucide-react";
 import { PilotRequestDialog } from "@/components/PilotRequestDialog";
 import type { PilotInterest } from "@/lib/api/commerce";
+import { HudButton, HudCluster } from "@/components/hud/Hud";
 
 const OFFERS: Array<{ interest: PilotInterest; icon: typeof Database; title: string; body: string; points: string[] }> = [
   {
@@ -19,34 +20,35 @@ const OFFERS: Array<{ interest: PilotInterest; icon: typeof Database; title: str
   },
 ];
 
-/** "Available on pilot" offers under the open visualisation. */
-export function PilotPanels() {
+/** "Available on pilot" offers, as a compact HUD cluster over the open visualisation. */
+export function PilotPanels({ className }: { className?: string }) {
   return (
-    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 w-full max-w-5xl mx-auto pointer-events-auto">
-      {OFFERS.map(({ interest, icon: Icon, title, body, points }) => (
-        <div key={interest} className="bg-white/5 border border-white/10 rounded-2xl p-5 backdrop-blur-xl flex flex-col gap-3">
-          <div className="flex items-center justify-between gap-3">
-            <div className="flex items-center gap-2 text-sm font-medium tracking-wide uppercase text-white/80">
-              <Icon className="w-4 h-4 text-sky-300" />
+    <HudCluster label="Available on pilot" className={className}>
+      <p className="px-2.5 pt-1.5 font-mono text-[9px] font-bold uppercase tracking-[0.14em] text-muted-foreground">
+        Available on pilot
+      </p>
+      <div className="flex flex-wrap gap-1.5 p-1.5">
+        {OFFERS.map(({ interest, icon: Icon, title, body, points }) => (
+          <PilotRequestDialog key={interest} interest={interest}>
+            <HudButton
+              label={`Request a pilot: ${title}`}
+              side="top"
+              hint={
+                <>
+                  <span className="block font-medium text-foreground">{title}</span>
+                  <span className="mt-1 block text-muted-foreground">{body}</span>
+                  <span className="mt-1 block text-muted-foreground">{points.join(" · ")}</span>
+                  <span className="mt-1 block text-signal">Click to request a pilot</span>
+                </>
+              }
+              className="text-foreground"
+            >
+              <Icon size={14} aria-hidden="true" />
               {title}
-            </div>
-            <span className="rounded-full border border-white/20 px-2.5 py-0.5 text-[10px] uppercase tracking-widest text-white/60">
-              Available on pilot
-            </span>
-          </div>
-          <p className="text-sm text-white/60 leading-relaxed">{body}</p>
-          <ul className="text-xs text-white/50 space-y-1">
-            {points.map((p) => (
-              <li key={p}>· {p}</li>
-            ))}
-          </ul>
-          <PilotRequestDialog interest={interest}>
-            <button className="self-start mt-1 rounded-full bg-white/10 hover:bg-white/20 border border-white/20 px-4 py-2 text-sm font-medium transition-colors">
-              Request a pilot
-            </button>
+            </HudButton>
           </PilotRequestDialog>
-        </div>
-      ))}
-    </div>
+        ))}
+      </div>
+    </HudCluster>
   );
 }

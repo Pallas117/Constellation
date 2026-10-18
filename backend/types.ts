@@ -4,6 +4,8 @@ export type DataSource =
   | "jaxa-erg"
   | "mms-cdaweb"
   | "mms-lasp"
+  | "goes-swpc"
+  | "kyoto-dst"
   | "model-nowcast"
   | "synthetic-nowcast";
 
@@ -75,8 +77,42 @@ export interface UncertaintyEnvelope {
   sigma: number;
 }
 
+/** The solar wind reaching Earth now: L1 values one ballistic travel time ago, 5-min mean, GSM. */
+export interface ArrivingSolarWind {
+  /** Last L1 measurement in the mean. */
+  observedAt: string;
+  /** When it reached Earth. */
+  arrivedAt: string;
+  travelSeconds: number;
+  spacecraft: string;
+  samples: number;
+  bz: number;
+  by: number;
+  density: number;
+  speed: number;
+  dynamicPressure: number;
+}
+
+/** The operational spacecraft's density disagrees with another L1 spacecraft by more than 2x. */
+export interface DensityDisagreement {
+  spacecraft: string;
+  density: number;
+  reference: string;
+  referenceDensity: number;
+  ratio: number;
+  minutes: number;
+}
+
 export interface CanonicalSpaceWeatherPoint {
+  /** When the point was issued (5 s ingest tick). */
   timestamp: string;
+  /** When its L1 values were measured; freshness is judged from this. */
+  observedAt?: string | null;
+  /** L1 spacecraft the values came from. */
+  spacecraft?: string;
+  /** Null until 3 h of L1 history covers one travel time, or when the feed is lost. */
+  arriving?: ArrivingSolarWind | null;
+  densityCheck?: DensityDisagreement | null;
   source: DataSource | "fusion";
   rho: number;
   velocity: {
@@ -105,6 +141,13 @@ export interface CanonicalSpaceWeatherPoint {
   indices: {
     kp: number;
     dst: number;
+    /** "measured", or the model that derived dst (no source here measures Dst). GAU-63/GAU-84. */
+    dstMethod: string;
+    /** Canonical fields dst was derived from; empty when measured. */
+    dstDerivedFrom: string[];
+    /** "estimated-1m" (current) or "planetary-3h" (lags up to 3 h). */
+    kpKind?: "estimated-1m" | "planetary-3h";
+    kpObservedAt?: string | null;
   };
   coupling: {
     newell: number;
@@ -119,6 +162,11 @@ export interface CanonicalSpaceWeatherPoint {
     reason: string;
   };
   quality: QualityFlags;
+  /** Measured GOES particle flux; null per channel when missing or older than 30 min. */
+  particles?: {
+    protons: ParticleReading | null;
+    electrons: ParticleReading | null;
+  };
   uncertainty: {
     speed: UncertaintyEnvelope;
     density: UncertaintyEnvelope;
@@ -176,6 +224,16 @@ export interface SphericalHarmonicCoefficients {
   powerSpectrum: Array<{ l: number; cL: number }>;
 }
 
+export interface ParticleReading {
+  /** Integral flux, particles cm^-2 s^-1 sr^-1 (pfu for protons). */
+  value: number;
+  /** Energy channel, e.g. ">=10 MeV". */
+  energy: string;
+  satellite: string | null;
+  /** Measurement time (UTC). */
+  timestamp: string;
+}
+
 export interface SourceStatus {
   source: DataSource;
   lastSeen: string | null;
@@ -191,17 +249,21 @@ export interface NowcastInferenceRequest {
 
 export interface NowcastInferenceResponse {
   modelVersion: string;
+  /** "model": trained weights. "heuristic": a fixed formula with no learned parameters. */
+  method: "model" | "heuristic";
   generatedAt: string;
   horizonMinutes: number;
   predictions: Array<{
     timestamp: string;
     geomagneticPerturbation: number;
     auroraIntensity: number;
-    confidence: number;
+    /** null when the method has no calibrated confidence. */
+    confidence: number | null;
   }>;
 }
 
-export interface AnomalyForecastResponse {
+export interface AnomalyForecastAvailable {
+  available: true;
   modelVersion: string;
   generatedAt: string;
   horizonHours: number;
@@ -209,6 +271,49 @@ export interface AnomalyForecastResponse {
   predictedKpMax: number;
   warningMessage: string;
   confidenceInterval: [number, number];
+}
+
+/** No trained model is deployed or it could not answer: say so instead of inventing a number. */
+export interface AnomalyForecastUnavailable {
+  available: false;
+  modelVersion: null;
+  generatedAt: string;
+  horizonHours: number;
+  reason: string;
+}
+
+export type AnomalyForecastResponse = AnomalyForecastAvailable | AnomalyForecastUnavailable;
+
+export interface PipelineStageLatency {
+  stage: string;
+  lastMs: number;
+  p50Ms: number;
+  p95Ms: number;
+  maxMs: number;
+  budgetMs: number | null;
+  overBudget: boolean;
+  samples: number;
+  errors: number;
+  timeouts: number;
+  lastAt: string;
+}
+
+export interface PipelineLatencySnapshot {
+  generatedAt: string;
+  /** fresh: live data, all stages in budget; degraded: ageing data or a stage over budget;
+   *  stale: no measurement within maxAgeMs; stalled: the ingest loop itself stopped ticking. */
+  status: "fresh" | "degraded" | "stale" | "stalled";
+  tickIntervalMs: number;
+  ticks: number;
+  skippedTicks: number;
+  lastTickAt: string | null;
+  lastTickAgeMs: number | null;
+  /** Timestamp and age of the newest real measurement feeding the nowcast. */
+  dataTimestamp: string | null;
+  dataAgeMs: number | null;
+  freshMs: number;
+  maxAgeMs: number;
+  stages: PipelineStageLatency[];
 }
 
 export interface IngestionTickResult {
@@ -222,5 +327,6 @@ export interface IngestionTickResult {
     harmonics: SphericalHarmonicCoefficients;
   } | null;
   anomalyForecast?: AnomalyForecastResponse | null;
+  pipeline?: PipelineLatencySnapshot;
 }
 

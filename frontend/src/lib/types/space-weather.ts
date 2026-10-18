@@ -4,6 +4,8 @@ export interface QualityFlags {
   interpolated: boolean;
   extrapolated: boolean;
   lowConfidence: boolean;
+  /** 0 live, 1 measured but ageing (10-15 min), 3 no measurement within 15 min. 2 is not emitted. */
+  tier?: 0 | 1 | 2 | 3;
 }
 
 export interface UncertaintyEnvelope {
@@ -12,8 +14,38 @@ export interface UncertaintyEnvelope {
   sigma: number;
 }
 
+/** The solar wind reaching Earth now: L1 values one ballistic travel time ago, 5-min mean, GSM. */
+export interface ArrivingSolarWind {
+  observedAt: string;
+  arrivedAt: string;
+  travelSeconds: number;
+  spacecraft: string;
+  samples: number;
+  bz: number;
+  by: number;
+  density: number;
+  speed: number;
+  dynamicPressure: number;
+}
+
+/** The operational spacecraft's density disagrees with another L1 spacecraft by more than 2x. */
+export interface DensityDisagreement {
+  spacecraft: string;
+  density: number;
+  reference: string;
+  referenceDensity: number;
+  ratio: number;
+  minutes: number;
+}
+
 export interface CanonicalSpaceWeatherPoint {
+  /** When the point was issued (5 s ingest tick). */
   timestamp: string;
+  /** When its L1 values were measured; judge freshness from this. */
+  observedAt?: string | null;
+  spacecraft?: string;
+  arriving?: ArrivingSolarWind | null;
+  densityCheck?: DensityDisagreement | null;
   source: string;
   rho: number;
   velocity: {
@@ -42,6 +74,8 @@ export interface CanonicalSpaceWeatherPoint {
   indices: {
     kp: number;
     dst: number;
+    kpKind?: "estimated-1m" | "planetary-3h";
+    kpObservedAt?: string | null;
   };
   coupling: {
     newell: number;
@@ -54,6 +88,11 @@ export interface CanonicalSpaceWeatherPoint {
   alerts: {
     stormTier: "quiet" | "watch" | "warning" | "severe";
     reason: string;
+  };
+  /** Measured GOES particle flux; null per channel when missing or older than 30 min. */
+  particles?: {
+    protons: ParticleReading | null;
+    electrons: ParticleReading | null;
   };
   quality: QualityFlags;
   uncertainty: {
@@ -120,4 +159,42 @@ export interface SourceStatus {
   latencySeconds: number | null;
   healthy: boolean;
   message?: string;
+}
+
+export interface PipelineStageLatency {
+  stage: string;
+  lastMs: number;
+  p50Ms: number;
+  p95Ms: number;
+  maxMs: number;
+  budgetMs: number | null;
+  overBudget: boolean;
+  samples: number;
+  errors: number;
+  timeouts: number;
+  lastAt: string;
+}
+
+/** Mirrors backend PipelineLatencySnapshot (GET /api/system/pipeline). */
+export interface PipelineLatencySnapshot {
+  generatedAt: string;
+  status: "fresh" | "degraded" | "stale" | "stalled";
+  tickIntervalMs: number;
+  ticks: number;
+  skippedTicks: number;
+  lastTickAt: string | null;
+  lastTickAgeMs: number | null;
+  dataTimestamp: string | null;
+  dataAgeMs: number | null;
+  freshMs: number;
+  maxAgeMs: number;
+  stages: PipelineStageLatency[];
+}
+
+export interface ParticleReading {
+  /** Integral flux, particles cm^-2 s^-1 sr^-1 (pfu for protons). */
+  value: number;
+  energy: string;
+  satellite: string | null;
+  timestamp: string;
 }

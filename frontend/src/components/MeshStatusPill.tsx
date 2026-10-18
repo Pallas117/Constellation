@@ -21,12 +21,11 @@ export function MeshStatusPill() {
   return (
     <Link
       to="/mesh"
-      className={`rounded-full border px-4 py-2 text-sm font-medium transition ${
-        attention
-          ? "border-destructive/60 bg-destructive/15 text-destructive hover:bg-destructive/25"
-          : "border-primary/50 bg-primary/10 text-primary hover:bg-primary/20"
+      className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium transition-colors hover:bg-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
+        attention ? "border-caution/60 text-caution" : "border-charcoal text-foreground"
       }`}
     >
+      <span aria-hidden="true" className={`h-1.5 w-1.5 rounded-full ${attention ? "bg-caution" : "bg-muted-foreground"}`} />
       {label}
     </Link>
   );

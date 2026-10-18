@@ -15,19 +15,19 @@ test("smoke: control rail and centered LLM chat interactions", async ({ page }) 
 
   const layerNames = [
     /earth layer/i,
-    /vbelt layer/i,
-    /mopause layer/i,
-    /flines layer/i,
-    /mhdwav layer/i,
-    /recon layer/i,
+    /radiation belts layer/i,
+    /boundaries layer/i,
+    /field lines layer/i,
+    /mhd waves layer/i,
+    /mms reconnection layer/i,
   ];
 
   for (const layerName of layerNames) {
-    const button = page.getByRole("button", { name: layerName });
-    const before = await button.getAttribute("aria-pressed");
-    await button.click();
+    const toggle = page.getByRole("switch", { name: layerName });
+    const before = await toggle.getAttribute("aria-checked");
+    await toggle.click();
     const expectedAfter = before === "true" ? "false" : "true";
-    await expect(button).toHaveAttribute("aria-pressed", expectedAfter);
+    await expect(toggle).toHaveAttribute("aria-checked", expectedAfter);
   }
 
   const colorEncodingButton = page.getByRole("button", {
@@ -47,24 +47,18 @@ test("smoke: control rail and centered LLM chat interactions", async ({ page }) 
   await colorEncodingButton.click();
   await expect(colorEncodingButton).toHaveAttribute("aria-pressed", "true");
 
-  const themeTrigger = page.getByRole("button", { name: /current theme:/i });
-  await themeTrigger.click();
-  await page.getByRole("menuitem", { name: /mode_drk/i }).click();
+  // One brand look: the theme is always dark, there is no switcher.
   await expect
     .poll(async () =>
       page.evaluate(() => document.documentElement.classList.contains("dark")),
     )
     .toBe(true);
 
-  await themeTrigger.click();
-  await page.getByRole("menuitem", { name: /mode_lit/i }).click();
-  await expect
-    .poll(async () =>
-      page.evaluate(() => document.documentElement.classList.contains("dark")),
-    )
-    .toBe(false);
+  const fidelity = page.getByRole("switch", { name: /high-fidelity belts/i });
+  await fidelity.click();
+  await expect(fidelity).toHaveAttribute("aria-checked", "true");
 
-  const screenshotButton = page.getByRole("button", { name: /sec_cap/i });
+  const screenshotButton = page.getByRole("button", { name: /save screenshot/i });
   const downloadPromise = page
     .waitForEvent("download", { timeout: 5_000 })
     .catch(() => null);
@@ -77,14 +71,11 @@ test("smoke: control rail and centered LLM chat interactions", async ({ page }) 
 
   await expect(page.getByText(/42 knowledge chunks/i)).toBeVisible();
 
-  await page.getByRole("button", { name: /r_index_lgb/i }).click();
-  await expect(page.getByText(/42 knowledge chunks/i)).toBeVisible();
-
   await page
-    .getByPlaceholder(/\[ENTER_QUERY_INPUT\.\.\.\]/i)
+    .getByRole("textbox", { name: /question for the knowledge base/i })
     .fill("What is the synthetic status?");
-  await page.getByRole("button", { name: /exec_query_rag/i }).click();
+  await page.getByRole("button", { name: /^ask$/i }).click();
 
   await expect(page.getByText(/synthetic answer from playwright mock/i)).toBeVisible();
-  await expect(page.getByText(/\/tmp\/mock-source\.pdf/i)).toBeVisible();
+  await expect(page.getByText("public/mock-source.md")).toBeVisible();
 });

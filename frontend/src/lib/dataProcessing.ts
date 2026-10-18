@@ -2,6 +2,8 @@
 // DATA PROCESSING & INTERPOLATION ENGINE
 // ============================================================================
 
+import type { CanonicalSpaceWeatherPoint } from './types/space-weather';
+
 export interface SpaceWeatherResponse {
   timestamp: string;
   solarWind: {
@@ -217,7 +219,8 @@ export function transformApiResponse(response: SpaceWeatherResponse): Interpolat
     timestamp: new Date(response.timestamp),
     isStale: response.flags.stale,
     source: response.flags.source,
-    tier: response.flags.tier ?? 0,
+    // A response that does not state its tier is not known to be live (GAU-114).
+    tier: response.flags.tier ?? 3,
   };
 }
 
@@ -262,35 +265,46 @@ export function validateSpaceWeatherResponse(data: unknown): SpaceWeatherRespons
 const isFiniteNumber = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
 
 /**
+ * True when `data` carries what every consumer of a canonical point reads: a valid
+ * timestamp, the quality block, solar wind, Bz and Kp. Anything else is treated as
+ * no data, so one malformed response can't take a page down.
+ */
+export function isCanonicalPoint(data: unknown): data is CanonicalSpaceWeatherPoint {
+  if (!data || typeof data !== 'object') return false;
+  const d = data as Record<string, any>;
+  return (
+    typeof d.timestamp === 'string' &&
+    !Number.isNaN(Date.parse(d.timestamp)) &&
+    typeof d.quality === 'object' &&
+    d.quality !== null &&
+    isFiniteNumber(d.solarWind?.speed) &&
+    isFiniteNumber(d.solarWind?.density) &&
+    isFiniteNumber(d.solarWind?.dynamicPressure) &&
+    isFiniteNumber(d.magneticField?.z) &&
+    isFiniteNumber(d.indices?.kp)
+  );
+}
+
+/**
  * Maps the backend's CanonicalSpaceWeatherPoint. It carries no particle flux, so those
  * stay null instead of being filled in.
  */
 export function canonicalToInterpolated(data: unknown): InterpolatedData | null {
-  if (!data || typeof data !== 'object') return null;
+  if (!isCanonicalPoint(data)) return null;
   const d = data as Record<string, any>;
-  const ts = typeof d.timestamp === 'string' ? new Date(d.timestamp) : null;
-  if (!ts || Number.isNaN(ts.getTime())) return null;
+  const ts = new Date(d.timestamp);
   const sw = d.solarWind;
   const b = d.magneticField;
   const idx = d.indices;
   const q = d.quality;
-  if (
-    !sw || !b || !idx || !q ||
-    !isFiniteNumber(sw.speed) ||
-    !isFiniteNumber(sw.density) ||
-    !isFiniteNumber(sw.dynamicPressure) ||
-    !isFiniteNumber(b.z) ||
-    !isFiniteNumber(idx.kp)
-  ) {
-    return null;
-  }
   const tier = isFiniteNumber(q.tier) ? q.tier : 3;
   return {
     solarWind: { speed: sw.speed, density: sw.density, pressure: sw.dynamicPressure },
     imfBz: b.z,
     kpIndex: idx.kp,
-    protonFlux: null,
-    electronFlux: null,
+    // Measured GOES flux when the backend has a current reading; otherwise unknown (null), never 0.
+    protonFlux: isFiniteNumber(d.particles?.protons?.value) ? d.particles.protons.value : null,
+    electronFlux: isFiniteNumber(d.particles?.electrons?.value) ? d.particles.electrons.value : null,
     timestamp: ts,
     isStale: q.stale === true || tier === 3,
     source: typeof d.source === 'string' ? d.source : 'unknown',

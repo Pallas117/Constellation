@@ -1,9 +1,17 @@
 import { useEffect, useRef } from "react";
+import { useNavigate } from "react-router-dom";
 import { toast } from "@/components/ui/sonner";
 import { useSolarWind5s } from "@/hooks/useSolarWind5s";
+import { measuredDrivers } from "@/lib/measured";
 
+/** One toast, updated in place as conditions change, so a long storm never stacks alerts. */
+const TOAST_ID = "space-weather";
+
+/** Storm alerts for the operator console, raised once per change of conditions. */
 export function useOperatorNotifications() {
-  const solarWind = useSolarWind5s();
+  // The latest point is enough (and L1 data is 1-minute cadence): no 24 h backfill.
+  const solarWind = useSolarWind5s({ history: false });
+  const navigate = useNavigate();
   const lastNotificationRef = useRef<string | null>(null);
 
   useEffect(() => {
@@ -12,48 +20,48 @@ export function useOperatorNotifications() {
       return;
     }
 
-    const kp = point.indices?.kp ?? 0;
-    const bz = point.magneticField?.z ?? 0;
-    const speed = point.solarWind.speed ?? 0;
-
-    let title = "";
-    let description = "";
-    let variant: "default" | "success" | "destructive" = "default";
-
-    if (kp >= 6 || bz <= -8 || speed >= 700) {
-      title = "Critical Space Weather Alert";
-      description = `Severe conditions detected: Kp ${kp}, IMF Bz ${bz.toFixed(1)} nT, solar wind ${Math.round(speed)} km/s. Execute protective actions now.`;
-      variant = "destructive";
-    } else if (kp >= 4 || bz <= -4 || speed >= 600) {
-      title = "Elevated Space Risk";
-      description = `High geomagnetic stress is building (${kp} Kp, ${bz.toFixed(1)} nT Bz). Review thermal margins and schedule workload reductions.`;
-      variant = "destructive";
-    } else if (bz >= 3 && speed < 450 && kp <= 2) {
-      title = "Safe Opportunity Window";
-      description = `Calm solar wind and northward IMF are creating a low-risk window for attitude maneuvers and communications uplink.`;
-      variant = "success";
-    } else {
-      title = "Stable Operator Status";
-      description = `Space weather is nominal. Continue monitoring, but primary systems remain within safe margins.`;
-      variant = "default";
-    }
-
-    const fingerprint = `${title}:${description}`;
-    if (fingerprint === lastNotificationRef.current) {
+    // Missing or stale data is unknown, never "nominal" (GAU-114). Same toast id,
+    // so it also replaces a standing storm alert rather than sitting beside it.
+    const measured = measuredDrivers(point);
+    if (!measured) {
+      if (lastNotificationRef.current !== "unknown") {
+        lastNotificationRef.current = "unknown";
+        toast("Space weather data unavailable", {
+          id: TOAST_ID,
+          description: "No current measurement: conditions are unknown, not nominal.",
+          duration: 12000,
+        });
+      }
       return;
     }
 
+    const { kp, bz, speed } = measured;
+    const protect = { label: "Open protection", onClick: () => navigate("/protection") };
+
+    let notify: () => void;
+    let fingerprint: string;
+    if (kp >= 6 || bz <= -8 || speed >= 700) {
+      const description = `Severe conditions: Kp ${kp}, IMF Bz ${bz.toFixed(1)} nT, solar wind ${Math.round(speed)} km/s. Take protective actions now.`;
+      fingerprint = `critical:${description}`;
+      notify = () => toast.error("Critical space weather alert", { id: TOAST_ID, description, duration: Infinity, action: protect });
+    } else if (kp >= 4 || bz <= -4 || speed >= 600) {
+      const description = `Geomagnetic stress is building (Kp ${kp}, Bz ${bz.toFixed(1)} nT). Review thermal margins and plan workload reductions.`;
+      fingerprint = `elevated:${description}`;
+      notify = () => toast.warning("Elevated space weather risk", { id: TOAST_ID, description, duration: 20000, action: protect });
+    } else if (bz >= 3 && speed < 450 && kp <= 2) {
+      const description = "Calm solar wind and northward IMF: a low-risk window for attitude manoeuvres and uplinks.";
+      fingerprint = `window:${description}`;
+      notify = () => toast.success("Safe opportunity window", { id: TOAST_ID, description, duration: 12000 });
+    } else {
+      const description = "Space weather is nominal; primary systems are within safe margins.";
+      fingerprint = `nominal:${description}`;
+      notify = () => toast("Conditions nominal", { id: TOAST_ID, description, duration: 8000 });
+    }
+
+    if (fingerprint === lastNotificationRef.current) {
+      return;
+    }
     lastNotificationRef.current = fingerprint;
-    toast(title, {
-      description,
-      variant,
-      duration: 12000,
-      action: {
-        label: "View status",
-        onClick: () => {
-          window.location.href = "/operator";
-        },
-      },
-    });
-  }, [solarWind.latest]);
+    notify();
+  }, [solarWind.latest, navigate]);
 }
