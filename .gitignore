@@ -12,6 +12,8 @@ dist
 frontend/dist
 dist-ssr
 build
+# compiled C/C++ objects (node-gyp builds into build/)
+*.o
 test-results
 bun.lockb
 .auth.db
