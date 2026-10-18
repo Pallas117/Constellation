@@ -2,6 +2,7 @@ import type { MMSReconVectorPoint, MMSTetrahedronQuality } from "../types.js";
 import {
   add,
   cross,
+  dot,
   magnitude,
   normalize,
   scale,
@@ -14,6 +15,11 @@ const MU0 = 4e-7 * Math.PI;
 const RE_KM = 6371.2;
 /** Minimum tetrahedron regularity (volume / volume of a regular tetrahedron of the same mean edge). */
 const MIN_REGULARITY = 0.05;
+/**
+ * MDD: the normal is trusted only when the largest eigenvalue of G·Gᵀ dominates the next one by
+ * this factor (a locally 1-D boundary). Otherwise the frame is reported as unknown (zeros).
+ */
+export const MDD_MIN_EIGEN_RATIO = 4;
 
 export interface MMSSpacecraftSample {
   id: "mms1" | "mms2" | "mms3" | "mms4";
@@ -242,13 +248,93 @@ function toQuality(
   };
 }
 
-function estimateLmn(barycenterB: Vector3, gradient: Matrix3): {
+/** Eigen-decomposition of a symmetric 3x3 matrix (cyclic Jacobi). Eigenvalues sorted descending. */
+export function symmetricEigen3(m: Matrix3): { values: number[]; vectors: Vector3[] } {
+  const a = [
+    [m.a11, m.a12, m.a13],
+    [m.a21, m.a22, m.a23],
+    [m.a31, m.a32, m.a33],
+  ];
+  const v = [
+    [1, 0, 0],
+    [0, 1, 0],
+    [0, 0, 1],
+  ];
+  for (let sweep = 0; sweep < 50; sweep += 1) {
+    const off = a[0][1] ** 2 + a[0][2] ** 2 + a[1][2] ** 2;
+    if (off < 1e-30 * (a[0][0] ** 2 + a[1][1] ** 2 + a[2][2] ** 2 + 1e-300)) break;
+    for (const [p, q] of [[0, 1], [0, 2], [1, 2]] as const) {
+      if (Math.abs(a[p][q]) < 1e-300) continue;
+      const theta = (a[q][q] - a[p][p]) / (2 * a[p][q]);
+      const t = Math.sign(theta || 1) / (Math.abs(theta) + Math.sqrt(theta * theta + 1));
+      const c = 1 / Math.sqrt(t * t + 1);
+      const sn = t * c;
+      for (let k = 0; k < 3; k += 1) {
+        const akp = a[k][p];
+        const akq = a[k][q];
+        a[k][p] = c * akp - sn * akq;
+        a[k][q] = sn * akp + c * akq;
+      }
+      for (let k = 0; k < 3; k += 1) {
+        const apk = a[p][k];
+        const aqk = a[q][k];
+        a[p][k] = c * apk - sn * aqk;
+        a[q][k] = sn * apk + c * aqk;
+      }
+      for (let k = 0; k < 3; k += 1) {
+        const vkp = v[k][p];
+        const vkq = v[k][q];
+        v[k][p] = c * vkp - sn * vkq;
+        v[k][q] = sn * vkp + c * vkq;
+      }
+    }
+  }
+  const order = [0, 1, 2].sort((i, j) => a[j][j] - a[i][i]);
+  return {
+    values: order.map((i) => a[i][i]),
+    vectors: order.map((i) => vec(v[0][i], v[1][i], v[2][i])),
+  };
+}
+
+const UNKNOWN_FRAME = { l: vec(0, 0, 0), m: vec(0, 0, 0), n: vec(0, 0, 0) };
+
+/**
+ * LMN boundary frame by minimum directional derivative (Shi et al., 2005, GRL 32, L12105).
+ * gradient.aij = dB_j/dx_i, so (G·Gᵀ)_ik = sum_j dB_j/dx_i dB_j/dx_k. Its dominant eigenvector is
+ * the direction of maximum field variation: the boundary normal N. L is the field projected onto
+ * the boundary plane (the reconnecting component) and M = N x L completes the right-handed frame.
+ * When no direction dominates, the boundary is not locally 1-D and the frame is unknown.
+ */
+export function estimateLmn(barycenterB: Vector3, gradient: Matrix3): {
   l: Vector3;
   m: Vector3;
   n: Vector3;
 } {
-  const n = normalize(rowToVector(gradient, 1));
-  const l = normalize(barycenterB);
+  const g = gradient;
+  const row = (i: 1 | 2 | 3) => rowToVector(g, i);
+  const r1 = row(1);
+  const r2 = row(2);
+  const r3 = row(3);
+  const ggT: Matrix3 = {
+    a11: dot(r1, r1), a12: dot(r1, r2), a13: dot(r1, r3),
+    a21: dot(r2, r1), a22: dot(r2, r2), a23: dot(r2, r3),
+    a31: dot(r3, r1), a32: dot(r3, r2), a33: dot(r3, r3),
+  };
+  const { values, vectors } = symmetricEigen3(ggT);
+  const [lMax, lMid] = values;
+  if (!(lMax > 0) || lMax < MDD_MIN_EIGEN_RATIO * Math.max(lMid, 0)) {
+    return UNKNOWN_FRAME;
+  }
+
+  let n = normalize(vectors[0]);
+  const inPlane = sub(barycenterB, scale(n, dot(barycenterB, n)));
+  const l = normalize(inPlane);
+  if (magnitude(l) === 0) {
+    // Field along the normal: no reconnecting component to define L.
+    return UNKNOWN_FRAME;
+  }
+  // N's sign is arbitrary; take the one with positive x (else positive z) so the frame is reproducible.
+  if ((Math.abs(n.x) > 1e-9 ? n.x : n.z) < 0) n = scale(n, -1);
   const m = normalize(cross(n, l));
   return { l, m, n };
 }

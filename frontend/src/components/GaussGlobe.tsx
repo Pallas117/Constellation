@@ -96,10 +96,10 @@ export interface EncodingPanelProps {
     setEncodingMode: (mode: EncodingMode) => void;
 }
 
-const ENCODINGS: { mode: EncodingMode; label: string; description: string }[] = [
-    { mode: 'color', label: 'Colour', description: 'Colour shows radiation flux' },
-    { mode: 'size', label: 'Size', description: 'Particle size shows radiation flux (colour-blind safe)' },
-    { mode: 'both', label: 'Both', description: 'Colour and size show radiation flux' },
+const ENCODINGS: { mode: EncodingMode; label: string; aria: string }[] = [
+    { mode: 'color', label: 'Colour', aria: 'Use color encoding for radiation flux' },
+    { mode: 'size', label: 'Size', aria: 'Use particle size encoding for radiation flux (colorblind accessible)' },
+    { mode: 'both', label: 'Both', aria: 'Use both color and size encoding for radiation flux' },
 ];
 
 export function EncodingPanel({
@@ -107,27 +107,26 @@ export function EncodingPanel({
     setEncodingMode,
 }: EncodingPanelProps) {
     return (
-        <div className="hud-panel w-full bg-panel/85 p-3 backdrop-blur-md">
-            <p id="encoding-label" className="stat-label mb-2">Flux encoding</p>
-            <div role="radiogroup" aria-labelledby="encoding-label" className="grid grid-cols-3 gap-1 rounded-md border border-border p-0.5">
-                {ENCODINGS.map(({ mode, label, description }) => (
+        <section className="hud-panel p-3" aria-labelledby="encoding-label">
+            <h2 id="encoding-label" className="mb-2 font-mono text-xs uppercase tracking-[0.06em] text-muted-foreground">
+                Flux encoding
+            </h2>
+            <div role="group" aria-labelledby="encoding-label" className="grid grid-cols-3 gap-0.5 rounded-md border border-charcoal p-0.5">
+                {ENCODINGS.map(({ mode, label, aria }) => (
                     <button
                         key={mode}
                         type="button"
-                        role="radio"
-                        aria-checked={encodingMode === mode}
-                        title={description}
                         onClick={() => setEncodingMode(mode)}
-                        className={`min-h-8 rounded px-2 text-xs transition-colors ${
-                            encodingMode === mode
-                                ? 'bg-foreground text-background'
-                                : 'text-muted-foreground hover:text-foreground'
+                        aria-pressed={encodingMode === mode}
+                        aria-label={aria}
+                        className={`rounded px-2 py-1.5 text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
+                            encodingMode === mode ? 'bg-secondary font-medium text-foreground' : 'text-muted-foreground hover:text-foreground'
                         }`}
                     >
                         {label}
                     </button>
                 ))}
             </div>
-        </div>
+        </section>
     );
 }

@@ -9,7 +9,7 @@ description: Design system, component inventory, react-three-fiber scene convent
 React 18 + Vite (`frontend/vite.config.ts`, alias `@` → `frontend/src`), Tailwind + shadcn/ui (`frontend/src/components/ui/*`), three 0.169 + @react-three/fiber 8 + drei 9, React Router in `frontend/src/Cybertiger.tsx`.
 
 ## Design language: Lightbound Brand Room
-Source of truth is the "Lightbound Brand Room" artifact (https://claude.ai/artifact/Uxvk64fWtQovS8bpeqbg4s, 9 Oct 2026). Tokens are in `frontend/src/index.css` and the Tailwind names in `tailwind.config.cjs`:
+Source of truth is the "Lightbound Brand Room" artifact (https://claude.ai/artifact/Uxvk64fWtQovS8bpeqbg4s, 9 Oct 2026). Tokens are in `frontend/src/index.css` and the Tailwind names in `tailwind.config.cjs` (the only Tailwind config; `frontend/postcss.config.js` loads it by path). The Figma library "Lightbound Brand System — Gauss Aurora UI" (https://www.figma.com/design/5VORhyyI6BQwW2HTuU5BWL) mirrors them as variables whose code syntax is the CSS token, plus the components below:
 
 | Token | Hex | Tailwind | Use |
 |---|---|---|---|
@@ -27,6 +27,12 @@ Source of truth is the "Lightbound Brand Room" artifact (https://claude.ai/artif
 - Labels: `.brand-label` = mono, uppercase, 0.12em tracking, lime, numbered to the page: `01_FIELD_MODEL`.
 - Cards: `.hud-panel` (panel ground, charcoal border, 10px radius). Numbers: `font-mono tabular-nums` with units in muted text.
 - Don't use `amber-400`-style Tailwind palettes for brand colours; use `caution`/`sun`/`earth`/`signal`.
+- Shared components (`frontend/src/components/brand/`, same names in Figma):
+  - `StatusBadge` tone `signal | neutral | caution | risk`. `signal` is the one lime element per view (usually live-feed state). Risk keeps warm-white text with a Sun edge: Sun text on panel is ~4.2:1, below AA for small type.
+  - `Readout` (+ `Meter`, `KpMeter`): label, mono value, unit, status. Pass `status={null}` with value "—" when there is no measurement.
+  - Status words and thresholds live in `lib/readout-status.ts` (speed, Bz, Kp G-scale, feed state); the landing page and operator HUD both use it.
+- Nominal states are neutral, not lime. Toggles and switches are warm white.
+- Wrap every `GaussGlobe` in `SceneBoundary` (from `components/ErrorBoundary`) so a WebGL failure only blanks the scene.
 - Scene encoding: closed field lines warm white→Earth blue; open amber→Sun; inner belt protons amber; outer belt electrons and aurora lime; magnetopause Earth blue; reconnection hot spot Sun.
 - Note: GAU-9 mentions "Volt Green / Solar Red / Inter". The Brand Room supersedes that.
 

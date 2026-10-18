@@ -1,70 +1,66 @@
 /**
- * Nav — title, sensor readout and left-rail controls (frame-rate monitor in development only).
+ * Operator console chrome: the header bar and the left control rail.
  *
- * Owns the UI chrome that surrounds the 3D globe — everything except the
- * scene viewport itself and the bottom RAG panel.
+ * Each sits in its own grid cell in SpaceWeatherVisualization, so nothing
+ * overlaps at any width. The scene viewport, telemetry column and assistant
+ * live alongside.
  */
 
-import { type RefObject, type ReactNode } from 'react';
-import { HUD } from './ui/HUD';
+import { type ReactNode, type RefObject } from 'react';
 import { LayerToggles } from './ui/LayerToggles';
 import { ScreenshotButton } from './ui/ScreenshotButton';
 import { PerformanceMonitor } from './ui/PerformanceMonitor';
+import { StatusBadge } from './brand/StatusBadge';
+import { FEED_LABEL, type FeedState } from '@/lib/readout-status';
 import type { LayerVisibility } from './types';
-import type { InterpolatedData } from '@/hooks/useSpaceWeather';
 
-// ---------------------------------------------------------------------------
-// Props
-// ---------------------------------------------------------------------------
-
-export interface NavProps {
-    data: InterpolatedData;
-    layers: LayerVisibility;
-    onToggle: (layer: keyof LayerVisibility) => void;
-    canvasRef: RefObject<HTMLCanvasElement | null>;
-    spaceObjectSummary?: string;
-    /** Slot for extra controls rendered after LayerToggles (e.g. encoding panel) */
-    children?: ReactNode;
+export function ConsoleHeader({
+    feed,
+    summary,
+    actions,
+}: {
+    feed: FeedState;
+    /** One line under the title, e.g. tracked-object count. */
+    summary?: string;
+    /** Page-specific links and status pills. */
+    actions?: ReactNode;
+}) {
+    return (
+        <header className="pointer-events-auto flex flex-wrap items-center justify-between gap-x-4 gap-y-2 rounded-lg border border-charcoal bg-panel/95 px-4 py-3 animate-fade-in-up">
+            <div className="min-w-0">
+                <p className="brand-label">01_OPERATOR_CONSOLE</p>
+                <h1 className="text-xl font-semibold leading-tight">Gauss Aurora</h1>
+                {summary && <p className="mt-0.5 text-xs text-muted-foreground">{summary}</p>}
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+                {actions}
+                <PerformanceMonitor />
+                {/* The one lime element in the console: is the feed live? */}
+                <StatusBadge tone={feed === 'live' ? 'signal' : 'caution'} pulse={feed === 'live'}>
+                    {FEED_LABEL[feed]}
+                </StatusBadge>
+            </div>
+        </header>
+    );
 }
 
-// ---------------------------------------------------------------------------
-// Component
-// ---------------------------------------------------------------------------
-
-export function Nav({
-    data,
+export function ControlRail({
     layers,
     onToggle,
     canvasRef,
-    spaceObjectSummary,
     children,
-}: NavProps) {
+}: {
+    layers: LayerVisibility;
+    onToggle: (layer: keyof LayerVisibility) => void;
+    canvasRef: RefObject<HTMLCanvasElement | null>;
+    /** Extra controls after the layer switches (encoding, fidelity). */
+    children?: ReactNode;
+}) {
     return (
-        <>
-            {/* Top left — title */}
-            <div className="hud-panel pointer-events-auto bg-panel/85 px-4 py-3 backdrop-blur-md md:absolute md:left-6 md:top-6">
-                <h1 className="brand-label">00_OPERATOR · GAUSS AURORA</h1>
-                {spaceObjectSummary ? <p className="stat-label mt-2">{spaceObjectSummary}</p> : null}
-            </div>
-
-            {/* Top right — Data feed HUD */}
-            <div className="pointer-events-auto flex flex-col gap-1 md:absolute md:right-6 md:top-6 md:items-end">
-                <HUD data={data} />
-            </div>
-
-            {/* Frame-rate readout: a development aid, not part of the console. */}
-            {import.meta.env.DEV && (
-                <div className="pointer-events-auto opacity-40 transition-opacity hover:opacity-100">
-                    <PerformanceMonitor visible={true} />
-                </div>
-            )}
-
-            {/* Left rail — Controls and actions */}
-            <div className="pointer-events-auto flex flex-col gap-2 md:absolute md:left-6 md:top-1/2 md:-translate-y-1/2 md:items-start">
-                <LayerToggles layers={layers} onToggle={onToggle} label="01_LAYERS" />
-                {children}
-                <ScreenshotButton canvasRef={canvasRef} />
-            </div>
-        </>
+        <nav aria-label="Scene controls" className="pointer-events-auto flex flex-col gap-2 animate-fade-in-up">
+            <LayerToggles layers={layers} onToggle={onToggle} label="02_LAYERS" />
+            {children}
+            <ScreenshotButton canvasRef={canvasRef} />
+        </nav>
     );
 }

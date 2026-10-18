@@ -209,7 +209,8 @@ except Exception:
 import json, sys
 try:
     m = json.load(open(sys.argv[1]))["models"][-1]
-    print("ok last learning run %s UTC (%s, %s samples)" % (m["trained_at"][:16].replace("T", " "), m["version"], m.get("metrics", {}).get("samples", 0)))
+    gate = "gate passed" if (m.get("gate") or {}).get("passed") else "gate FAILED" if m.get("gate") else "no gate"
+    print("ok last learning run %s UTC (%s, %s, %s)" % (m["trained_at"][:16].replace("T", " "), m["version"], gate, m.get("status", "?")))
 except Exception:
     print("no no learning run recorded yet (runs nightly at 03:00)")
 ' "$dir/ml/models/registry.json" 2>/dev/null || echo "no no learning run recorded yet")

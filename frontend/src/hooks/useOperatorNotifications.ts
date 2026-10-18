@@ -2,6 +2,7 @@ import { useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "@/components/ui/sonner";
 import { useSolarWind5s } from "@/hooks/useSolarWind5s";
+import { measuredDrivers } from "@/lib/measured";
 
 /** One toast, updated in place as conditions change, so a long storm never stacks alerts. */
 const TOAST_ID = "space-weather";
@@ -19,9 +20,22 @@ export function useOperatorNotifications() {
       return;
     }
 
-    const kp = point.indices?.kp ?? 0;
-    const bz = point.magneticField?.z ?? 0;
-    const speed = point.solarWind.speed ?? 0;
+    // Missing or stale data is unknown, never "nominal" (GAU-114). Same toast id,
+    // so it also replaces a standing storm alert rather than sitting beside it.
+    const measured = measuredDrivers(point);
+    if (!measured) {
+      if (lastNotificationRef.current !== "unknown") {
+        lastNotificationRef.current = "unknown";
+        toast("Space weather data unavailable", {
+          id: TOAST_ID,
+          description: "No current measurement: conditions are unknown, not nominal.",
+          duration: 12000,
+        });
+      }
+      return;
+    }
+
+    const { kp, bz, speed } = measured;
     const protect = { label: "Open protection", onClick: () => navigate("/protection") };
 
     let notify: () => void;

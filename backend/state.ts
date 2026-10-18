@@ -48,6 +48,16 @@ export function pushCanonical(point: CanonicalSpaceWeatherPoint): void {
   }
 }
 
+/**
+ * Reload the live buffer from persisted points after a restart (oldest first). Only when the
+ * buffer is empty, so it never duplicates points the worker has already pushed. GAU-117.
+ */
+export function seedCanonical(points: CanonicalSpaceWeatherPoint[]): number {
+  if (canonicalFeed.length > 0) return 0;
+  for (const point of points.slice(-MAX_POINTS)) pushCanonical(point);
+  return Math.min(points.length, MAX_POINTS);
+}
+
 export function pushMms(point: MMSReconVectorPoint): void {
   mmsFeed.push(point);
   if (mmsFeed.length > MAX_MMS_POINTS) {
