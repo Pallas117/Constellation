@@ -34,6 +34,17 @@ type Config struct {
 	Device    string            `json:"device,omitempty"`     // display name in Gauss
 	ExitNodes map[string]string `json:"exit_nodes,omitempty"` // tailscale hostname → country (MY/SG only)
 	PhoneTo   string            `json:"phone_to,omitempty"`   // your own iMessage handle for phone alerts
+	// "sms" sends SMS first: iMessages to your own number arrive silently, with no banner.
+	PhoneService string   `json:"phone_service,omitempty"`
+	Watch        []Peer   `json:"watch,omitempty"`   // LaunchAgents Argo keeps alive; default: awake guard + mesh-heal
+	Devices      []string `json:"devices,omitempty"` // tailnet hostnames to watch; default: this user's phones
+}
+
+func (c Config) peers() []Peer {
+	if c.Watch == nil {
+		return defaultPeers()
+	}
+	return c.Watch
 }
 
 func saveConfig(c Config) error {
@@ -60,7 +71,7 @@ func main() {
 		cmd = os.Args[1]
 	}
 	cfg, store := loadConfig(), DefaultStore()
-	phone := newPhone(cfg.PhoneTo, cfg.Device)
+	phone := newPhoneFor(cfg)
 	loop := Loop{Prober: SystemProber{ExitNodes: cfg.ExitNodes}, Store: store, Fx: realEffects{phone: phone}}
 	flush := func() {
 		if phone != nil {
@@ -86,12 +97,15 @@ func main() {
 		if store.Disabled() {
 			return
 		}
+		// Every minute, even when the network probe is skipped: cheap (file stats).
+		_ = withLock(store, func() { watchPeers(cfg.peers(), store, realWatchFx(phone, store), time.Now()) })
 		if gw, mac := localGateway(ctx); skipTick(store.Load(), gw, mac, time.Now()) {
 			return
 		}
 		err = withLock(store, func() {
 			flush()
 			loop.Tick(ctx)
+			watchDevices(ctx, cfg.Devices, store, phone, time.Now())
 			maybeSendWeekly(store, phone, time.Now())
 		})
 	case "summary": // what Argo caught, fixed and learned in the last 7 days
@@ -121,6 +135,23 @@ func main() {
 			err = nil
 		}
 		fmt.Println("argo active.")
+	case "watch": // run the peer watchdog once and say what it did
+		err = withLock(store, func() {
+			for _, l := range watchPeers(cfg.peers(), store, realWatchFx(phone, store), time.Now()) {
+				fmt.Println(l)
+			}
+			fmt.Println("watch: done")
+		})
+	case "devices": // which watched tailnet devices (default: your phones) are offline
+		lines := watchDevices(ctx, cfg.Devices, store, nil, time.Now())
+		for _, l := range lines {
+			fmt.Println(l)
+		}
+		if len(lines) == 0 {
+			fmt.Println("devices: all watched devices are on the tailnet (or this Mac is off it)")
+		}
+	case "notify": // for mesh-heal, the awake guard and Claude Code hooks
+		err = notifyCmd(os.Args[2:], phone, store, time.Now())
 	case "phone":
 		err = phoneSetup(os.Args[2:], cfg)
 	case "enroll":
@@ -132,7 +163,7 @@ func main() {
 	case "version":
 		fmt.Println("argo", version)
 	default:
-		fmt.Fprintln(os.Stderr, "usage: argo [status|doctor|fix|report|on|off|preflight|run -- cmd|phone <handle>|test|off|summary [--send]|enroll URL DEVICE|install|uninstall|version]")
+		fmt.Fprintln(os.Stderr, "usage: argo [status|doctor|fix|report|on|off|preflight|run -- cmd|phone <handle>|test|off|notify TITLE MSG|watch|summary [--send]|enroll URL DEVICE|install|uninstall|version]")
 		os.Exit(2)
 	}
 	if err != nil {

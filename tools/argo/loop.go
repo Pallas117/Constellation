@@ -149,7 +149,9 @@ func (l Loop) Tick(ctx context.Context) State {
 		}
 		st.IncidentAt, st.Attempts, st.LastFix = now, 0, ""
 		_ = l.Store.Append(Incident{Time: now, Event: "open", Class: class, Fingerprint: fp, Detail: reason})
-		l.Fx.Notify("Argo: "+string(class), reason) // rate limit: only on class change
+		if class != Offline { // a Mac with no network can't send it; it would arrive stale
+			l.Fx.Notify("Argo: "+string(class), reason) // rate limit: only on class change
+		}
 	}
 	st.Class, st.Reason = class, reason
 
@@ -200,12 +202,19 @@ func (l Loop) Tick(ctx context.Context) State {
 	if st.Attempts >= maxAttempts {
 		st.BreakerUntil = now.Add(breakerCooldwn)
 		msg := fmt.Sprintf("%s persists after %d attempts. %s", class, st.Attempts, firstSay(plan))
-		l.Fx.Notify("Argo needs you", msg)
+		// One text when the breaker first opens, then at most every escalateEvery: the breaker
+		// reopens every 30 min, which sent 71 texts in one week. None for OFFLINE (see above).
+		remind := shouldNotify(l.Store, "escalated-"+string(class), escalateEvery, now)
+		if class != Offline && (st.Attempts == maxAttempts || remind) {
+			l.Fx.Notify("Argo needs you", msg)
+		}
 		_ = l.Store.Append(Incident{Time: now, Event: "escalated", Class: class, Fingerprint: fp, Detail: msg})
 	}
 	l.finish(st)
 	return st
 }
+
+const escalateEvery = 2 * time.Hour
 
 func (l Loop) resolve(st *State, c Class, now time.Time, fix string) {
 	if fix == "" {
