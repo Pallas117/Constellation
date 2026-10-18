@@ -7,7 +7,8 @@ JavaScript, no third-party requests, and no secrets.
 | Page | What it is |
 |---|---|
 | `/` | Hero: the brand kit's ray-traced black-hole film. Doors show live data: Gauss shows space weather now, Constellation shows the next launch, Turnstone is classified. |
-| `/gauss/` | The GAU-12 evidence-first Gauss page (replay pilot, claims and boundaries). Ends with the other doors (Constellation shows the next launch). |
+| `/gauss/` | The GAU-12 evidence-first Gauss page. It leads with Fleet Integration and has an on-page menu. A script-free **replay demo** walks one synthetic storm through the nominal, degraded, abstain, unknown and blocked states, labelled as screening evidence. Also: claims and boundaries, plans and prices, CCSDS/XTCE/Yamcs/ONNX fit, team. Ends with the other doors. |
+| `/gauss/evidence/` | A synthetic **sample evidence report**: record states, decisions, unknowns and limits, provenance. Clearly labelled; not a mission record. |
 | `/constellation/` | The community: next 10 launches worldwide, space weather now, a calendar feed, intel rules, and how to join. Ends with the other doors. |
 | `/turnstone/` | Mark and "Classified." only (secret project; `noindex`). |
 | `/gauss/apply/` | Pilot brief in the sales plan's three steps (fit, readiness, pilot brief). Plan links preselect the package. |
@@ -15,6 +16,7 @@ JavaScript, no third-party requests, and no secrets.
 | `/app/` | Signed-in workspace: quote and Stripe payment, billing state, pilot progress, space weather, Constellation membership. |
 | `/app/admin/` | For `ADMIN_EMAILS`: approve with a quote, set plan, billing, pilot step; invite Constellation members (free). |
 | `/privacy/` | What is kept, why, for how long, and how to have it deleted. |
+| `/pilot`, `/sales` | Redirects into the Gauss flow (the entry points named in the sales plan), via `public/_redirects`. |
 | `/api/launches`, `/api/launches.ics`, `/api/space-weather`, `/api/health` | JSON, a calendar feed and a health check. |
 
 Flow, all in CSS:

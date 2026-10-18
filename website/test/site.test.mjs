@@ -16,7 +16,7 @@ const size = (f) => statSync(join(pub, f)).size;
 const text = (s) => s.replace(/<!--[\s\S]*?-->/g, " ").replace(/<[^>]+>/g, " ").replace(/&#39;/g, "'").replace(/\s+/g, " ");
 const PAGES = { "/": "index.html", "/gauss/": "gauss/index.html", "/constellation/": "constellation/index.html", "/turnstone/": "turnstone/index.html", "/404": "404.html",
   "/gauss/apply/": "gauss/apply/index.html", "/constellation/apply/": "constellation/apply/index.html", "/privacy/": "privacy/index.html",
-  "/app/": "app/index.html", "/app/admin/": "app/admin/index.html" };
+  "/app/": "app/index.html", "/app/admin/": "app/admin/index.html", "/gauss/evidence/": "gauss/evidence/index.html" };
 const html = Object.fromEntries(Object.entries(PAGES).map(([route, f]) => [route, read(f)]));
 const API_ROUTES = new Set(["/api/launches", "/api/launches.ics", "/api/space-weather", "/api/health", "/cdn-cgi/access/logout"]);
 
@@ -212,8 +212,40 @@ test("plans: packages and prices follow the sales plan; honest features only", (
   const plans = renderPlans();
   for (const label of Object.values(expected)) assert.ok(plans.includes(label), label);
   assert.match(plans, /never commands a spacecraft/);
-  assert.match(text(html["/gauss/"]), new RegExp(`Paid: ${expected.pilot}`), "the pilot terms quote the same range");
+  assert.match(plans, /Federated Bridge Node[^<]*hosted-payload or in-orbit demonstration[^<]*Future work, not on sale/, "future IOD work labelled");
   assert.match(html["/gauss/"], /<!--live:plans-->[\s\S]*Flight Candidate Adapter[\s\S]*<!--\/live:plans-->/, "static fallback keeps the gated roadmap");
+});
+
+test("GAU-12: leads with Fleet Integration; the replay demo and evidence link are there and labelled synthetic", () => {
+  const hero = gauss.match(/<section class="hero-gauss[^"]*"[\s\S]*?<\/section>/)[0];
+  assert.match(hero, /01_GAUSS · FLEET INTEGRATION/);
+  assert.match(text(hero), /mission-data, ground-segment and mission-operations teams/, "buyer named as in the sales plan");
+  assert.match(text(hero), /ground-first mission-data assurance and protection layer/, "product statement from the sales plan");
+  assert.match(hero, /href="#replay"/);
+  const replay = gauss.match(/<section id="replay"[\s\S]*?<\/section>/)[0];
+  assert.match(text(replay), /Synthetic · screening evidence/);
+  assert.match(text(replay), /Illustrative data, not a mission record/);
+  for (const state of ["nominal", "degraded", "abstain", "unknown", "blocked"]) assert.match(replay, new RegExp(`class="st ${state}"`), state);
+  assert.match(replay, /Deterministic fallback/);
+  assert.match(replay, /href="\/gauss\/evidence\/"/, "evidence link");
+  const evidence = read("gauss/evidence/index.html");
+  assert.match(text(evidence), /Synthetic · screening evidence/);
+  assert.match(text(evidence), /not a mission record/);
+  for (const rx of [/\bdose\b/i, /\bdamage\b/i, /failure[- ]probabilit/i]) assert.doesNotMatch(text(evidence), rx);
+  assert.match(text(html["/"].match(/<section class="hero"[\s\S]*?<\/section>/)[0]), /Gauss tells satellite, ground-segment and onboard(?:-|&#8209;)AI teams which mission data they can trust/, "wedge and buyer on the first screen");
+});
+
+test("sales-plan entry points: /pilot and /sales redirect into the Gauss flow", () => {
+  const rules = Object.fromEntries(read("_redirects").split("\n").filter((l) => l.trim() && !l.startsWith("#")).map((l) => l.trim().split(/\s+/)).map(([f, t, c]) => [f, [t, c]]));
+  assert.deepEqual(rules, { "/pilot": ["/gauss/apply/?plan=pilot", "301"], "/sales": ["/gauss/#plans", "301"] });
+});
+
+test("no page claims what the requirements rule out", () => {
+  // Gauss Aurora docs: business memo, partner boundaries, validation pack (claims the site must not make).
+  const pages = [...Object.values(html), read("gauss/evidence/index.html"), JSON.stringify({ TIERS, FEATURES })].map(text).join(" ");
+  for (const rx of [/data[- ]cent(re|er) constellation/i, /online (model )?weight/i, /failure[- ]probabilit/i, /rad(iation)?[- ](hard|toleran)/i,
+    /\bPQC\b|post-quantum|quantum-ready/i, /\bendorse/i, /eight-state/i, /\bLunaNet\b/i, /mission control as a service|ops-as-a-service/i])
+    assert.doesNotMatch(pages, rx, `found ${rx}`);
 });
 
 test("Constellation is free and invite-only: no prices, no payment, invitation wording", () => {

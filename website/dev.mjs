@@ -60,6 +60,10 @@ for (const line of readFileSync(join(root, "_headers"), "utf8").split("\n")) {
   }
 }
 
+// _redirects: "from to status" lines (exact paths only; that's all this site uses).
+const redirects = new Map(readFileSync(join(root, "_redirects"), "utf8").split("\n").filter((l) => l.trim() && !l.trim().startsWith("#"))
+  .map((l) => l.trim().split(/\s+/)).map(([from, to, status]) => [from, { to, status: Number(status) || 301 }]));
+
 const TYPES = { ".html": "text/html; charset=utf-8", ".css": "text/css; charset=utf-8", ".js": "text/javascript", ".svg": "image/svg+xml",
   ".woff2": "font/woff2", ".mp4": "video/mp4", ".jpg": "image/jpeg", ".png": "image/png", ".ico": "image/x-icon", ".txt": "text/plain; charset=utf-8" };
 
@@ -85,7 +89,8 @@ const ASSETS = {
     const { pathname } = new URL(request.url);
     const abs = normalize(join(root, decodeURIComponent(pathname)));
     if (!abs.startsWith(root) || pathname.split("/").some((s) => s.startsWith("_") || s.startsWith("."))) return serveFile(join(root, "404.html"), pathname, request, 404);
-    const redirect = (to) => new Response(null, { status: 307, headers: { location: to } });
+    const redirect = (to, status = 307) => new Response(null, { status, headers: { location: to } });
+    if (redirects.has(pathname)) return redirect(redirects.get(pathname).to, redirects.get(pathname).status);
     if (existsSync(abs) && statSync(abs).isDirectory()) {
       if (!pathname.endsWith("/")) return redirect(`${pathname}/`);
       if (existsSync(join(abs, "index.html"))) return serveFile(join(abs, "index.html"), pathname, request);

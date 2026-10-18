@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; img-src 'self'; media-src 'self'; font-src 'self'; base-uri 'none'; form-action 'self'">
+<meta name="theme-color" content="#050505">
+<meta name="referrer" content="strict-origin-when-cross-origin">
+<meta name="description" content="A synthetic sample of the evidence report a Gauss pilot delivers.">
+<link rel="canonical" href="https://lightbound.uk/gauss/evidence/">
+<title>Sample evidence report · Gauss</title>
+<link rel="preload" href="/assets/fonts/plex-sans-600.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/assets/site.css">
+<link rel="icon" href="/favicon.ico" sizes="any">
+<link rel="icon" href="/assets/lightbound-favicon-32.png" type="image/png">
+</head>
+<body class="page">
+<a class="skip" href="#main">Skip to content</a>
+<header class="top">
+  <div class="wrap bar">
+  <a class="brand" href="/" aria-label="Lightbound, home"><picture><source media="(max-width: 560px)" srcset="/assets/marks/lightbound-mark-colour-dark.svg"><img src="/assets/marks/lightbound-horizontal-colour-dark.svg" alt="Lightbound" width="128" height="40"></picture></a>
+  <nav aria-label="Main">
+    <a href="/gauss/" aria-current="page">Gauss</a>
+    <a href="/constellation/">Constellation</a>
+    <a href="/turnstone/" class="opt">Turnstone</a>
+    <a href="/app/" class="signin">Sign in</a>
+  </nav>
+  </div>
+</header>
+
+<main id="main">
+<section class="page-hero" aria-labelledby="hero-h">
+  <div class="wrap">
+    <div class="section-head"><div><p class="k">01_GAUSS · SAMPLE EVIDENCE REPORT</p><h1 id="hero-h">Sample evidence report.</h1></div><span class="chip">Synthetic · screening evidence</span></div>
+    <p class="lead">The shape of what a pilot delivers, filled with synthetic data. It is not a mission record. Your report covers your own telemetry and inference logs.</p>
+    <dl class="report-head">
+      <div><dt>Scope</dt><dd>One asset group, one historical replay, one near-live feed</dd></div>
+      <div><dt>Window</dt><dd>Six hours around a G3 geomagnetic storm (synthetic)</dd></div>
+      <div><dt>Inputs</dt><dd>CCSDS packets with an XTCE dictionary, an onboard-AI inference log, public NOAA space-weather scales</dd></div>
+      <div><dt>Acceptance outcome</dt><dd>Every inference produced from stale or corrupted inputs is flagged before anyone acts on it</dd></div>
+    </dl>
+  </div>
+</section>
+
+<section aria-labelledby="states-h">
+  <div class="wrap">
+    <p class="label">01_RECORD_STATES</p>
+    <h2 id="states-h">What held up, and what didn't.</h2>
+    <div class="tw"><table class="table states">
+      <thead><tr><th>State</th><th>Records</th><th>Meaning</th></tr></thead>
+      <tbody>
+        <tr><td><span class="st nominal">Nominal</span></td><td>1,240</td><td>Fresh inputs, provenance complete, inside expected bounds</td></tr>
+        <tr><td><span class="st degraded">Degraded</span></td><td>96</td><td>Usable with lowered confidence; produced under elevated stress</td></tr>
+        <tr><td><span class="st abstain">Abstain</span></td><td>18</td><td>No output given: the inputs could not be trusted</td></tr>
+        <tr><td><span class="st unknown">Unknown</span></td><td>41</td><td>Input missing or older than the freshness limit; never shown as nominal</td></tr>
+        <tr><td><span class="st blocked">Blocked</span></td><td>7</td><td>Packet integrity check failed; record excluded</td></tr>
+      </tbody>
+    </table></div>
+    <p class="src">Synthetic counts, for illustration.</p>
+  </div>
+</section>
+
+<section aria-labelledby="decisions-h">
+  <div class="wrap two">
+    <div>
+      <p class="label">02_DECISIONS</p>
+      <h2 id="decisions-h">What Gauss did.</h2>
+      <ul class="ticks">
+        <li>Flagged 96 inferences made during the storm window, with the conditions at the time attached</li>
+        <li>Withheld 18 outputs and used the deterministic fallback, marked as such</li>
+        <li>Kept 41 records unknown through a 12-minute link gap</li>
+        <li>Excluded 7 records that failed packet integrity checks</li>
+      </ul>
+    </div>
+    <div>
+      <p class="label">03_UNKNOWNS_AND_LIMITS</p>
+      <h2>What this report does not say.</h2>
+      <ul class="crosses">
+        <li>No hardware evidence for the target processor, so no radiation-effect figures are given</li>
+        <li>Model calibration was not assessed in this sample</li>
+        <li>Simulation results would be labelled as simulation; this whole page is synthetic</li>
+        <li>Advisory only: decisions stay with the operators</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<section aria-labelledby="prov-h">
+  <div class="wrap">
+    <p class="label">04_PROVENANCE</p>
+    <h2 id="prov-h">Every value, traceable.</h2>
+    <p class="lead">Each exported decision carries its source, time, freshness and uncertainty. A sample row:</p>
+    <div class="tw"><table class="table mono">
+      <thead><tr><th>record</th><th>source</th><th>received</th><th>age</th><th>state</th><th>policy</th><th>reason</th></tr></thead>
+      <tbody><tr><td>pkt-0412</td><td>CCSDS APID 0x2A1</td><td>03:14:07Z</td><td>2 s</td><td>degraded</td><td>degrade</td><td>bit-error rate above window limit during G3</td></tr></tbody>
+    </table></div>
+    <p class="actions"><a class="btn" href="/gauss/apply/?plan=pilot">Get this for your mission</a> <a class="btn ghost" href="/gauss/#replay">Back to the replay</a></p>
+  </div>
+</section>
+</main>
+<footer class="wrap">
+  <div class="cols">
+    <div>
+      <p>Lightbound Limited · registered in England and Wales, company no. 14573199 · 30A Commercial Street, Harrogate, HG1 1AX</p>
+      <p><a href="/privacy/">Privacy</a></p>
+    </div>
+    <nav aria-label="Footer"><a href="/gauss/">Gauss</a><a href="/constellation/">Constellation</a><a href="/turnstone/">Turnstone</a><a href="mailto:jzwnathan@lightbound.uk">Contact</a></nav>
+  </div>
+</footer>
+</body>
+</html>

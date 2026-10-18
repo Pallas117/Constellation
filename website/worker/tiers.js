@@ -22,22 +22,25 @@ export const FEATURES = Object.freeze({
   archive: "Your archive and mission dictionary, integrated",
   ground: "Yamcs and ground-segment integration, with acceptance work",
   adapter: "Target-processor and mission-specific validation",
+  review: "An evidence report and a review session with your team",
 });
 
 export const TIERS = Object.freeze([
   {
     id: "pilot",
     name: "Design-partner pilot",
+    short: "Pilot",
     stage: "Start here",
     outcome: "One asset group, one historical replay, one live or near-live feed, one measurable acceptance outcome.",
     price: { min: 20_000, max: 40_000, unit: "per pilot" },
     billing: "payment", // one Stripe payment
-    features: ["replay", "feed", "acceptance", "provenance", "correlation", "evidence"],
-    entry: "Bounded and paid. Fixed price agreed from your scope before you pay.",
+    features: ["replay", "feed", "acceptance", "provenance", "correlation", "review"],
+    entry: "Bounded and paid: about 30 days, at a fixed price agreed from your scope before you pay.",
   },
   {
     id: "fleet_integration",
     name: "Fleet Integration",
+    short: "Fleet Integration",
     stage: "Now",
     outcome: "Recurring mission-data quality, provenance, radiation correlation and evidence exports.",
     price: { min: 60_000, max: 125_000, unit: "a year" },
@@ -48,6 +51,7 @@ export const TIERS = Object.freeze([
   {
     id: "mission_integration",
     name: "Mission integration",
+    short: "Mission integration",
     stage: "Project",
     outcome: "Your archive, mission dictionary, Yamcs and ground integration, and acceptance work.",
     price: { min: 120_000, max: 300_000, unit: "one-off" },
@@ -58,6 +62,7 @@ export const TIERS = Object.freeze([
   {
     id: "flight_candidate_adapter",
     name: "Flight Candidate Adapter",
+    short: "Flight adapter",
     stage: "Gated",
     outcome: "Target-processor and mission-specific validation, after hardware and operator gates.",
     price: { min: 750_000, max: 2_500_000, unit: "one-off" },
@@ -74,6 +79,8 @@ export const gbpShort = (pounds) => (pounds >= 1_000_000 ? `£${+(pounds / 1_000
 /** £28,000 from pence */
 export const gbp = (pence) => `£${(pence / 100).toLocaleString("en-GB", { minimumFractionDigits: pence % 100 ? 2 : 0 })}`;
 export const priceLabel = (t) => (SHOW_PRICES ? `${gbpShort(t.price.min)}–${gbpShort(t.price.max)} ${t.price.unit}` : "Priced per scope");
+/** Short form for tight spaces (the plan picker on a phone): "Pilot · £20k–£40k". */
+export const optionLabel = (t) => `${t.short} · ${gbpShort(t.price.min)}–${gbpShort(t.price.max)}${t.billing === "subscription" ? " a year" : ""}`;
 export const quoteInRange = (t, pounds) => Number.isFinite(pounds) && pounds >= t.price.min && pounds <= t.price.max;
 
 /** Where a pilot is up to; shown to the customer, set by an admin. */

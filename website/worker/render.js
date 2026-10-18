@@ -35,7 +35,7 @@ export function countdown(netIso, precision, now) {
   const m = Math.floor(ms / 60_000);
   const d = Math.floor(m / 1440);
   const h = Math.floor((m % 1440) / 60);
-  return d > 0 ? `T${MINUS}${d} d ${h} h` : `T${MINUS}${h} h ${m % 60} min`;
+  return d > 0 ? `T${MINUS}${d}\u00a0d ${h}\u00a0h` : `T${MINUS}${h}\u00a0h ${m % 60}\u00a0min`;
 }
 
 const signed = (v) => (v > 0 ? `+${v}` : v < 0 ? `${MINUS}${Math.abs(v)}` : "0");
@@ -68,11 +68,13 @@ export function weatherSummary(w) {
 const scaleText = (w) =>
   ["G", "S", "R"].map((k) => (levelClass(w[k].level) ? `<span class="${levelClass(w[k].level)}">` : "<span>") + `${k}${w[k].level ?? "?"}</span>`).join(" · ");
 
+const NB = "\u00a0"; // keep numbers with their units on one line
+
 function windLine(w) {
   const parts = [];
-  if (w.kp) parts.push(`Kp ${w.kp.value.toFixed(1)}`);
-  if (w.wind?.speed !== null && w.wind?.speed !== undefined) parts.push(`solar wind ${Math.round(w.wind.speed)} km/s`);
-  if (w.wind?.bz !== null && w.wind?.bz !== undefined) parts.push(`Bz ${signed(w.wind.bz)} nT`);
+  if (w.kp) parts.push(`Kp${NB}${w.kp.value.toFixed(1)}`);
+  if (w.wind?.speed !== null && w.wind?.speed !== undefined) parts.push(`solar wind ${Math.round(w.wind.speed)}${NB}km/s`);
+  if (w.wind?.bz !== null && w.wind?.bz !== undefined) parts.push(`Bz${NB}${signed(w.wind.bz)}${NB}nT`);
   return parts.join(" · ");
 }
 
@@ -190,5 +192,6 @@ export function renderPlans() {
   }).join("");
   return `<ol class="plans">${cards}</ol>` +
     `<p class="note">Your price is a fixed quote inside the range, agreed from your scope before you pay. Pilots and Fleet Integration are paid securely through Stripe; ` +
-    `project work is invoiced by milestone. Every plan is advisory: Gauss shows evidence and never commands a spacecraft. Already a customer? <a href="/app/">Sign in</a>.</p>`;
+    `project work is invoiced by milestone. Every plan is advisory: Gauss shows evidence and never commands a spacecraft. Already a customer? <a href="/app/">Sign in</a>.</p>` +
+    `<p class="note"><strong>Later, a strategic option:</strong> Federated Bridge Node, a hosted-payload or in-orbit demonstration, considered only after the stages before it. Future work, not on sale.</p>`;
 }

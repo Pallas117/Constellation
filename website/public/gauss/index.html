@@ -7,7 +7,7 @@
 <meta name="theme-color" content="#050505">
 <meta name="referrer" content="strict-origin-when-cross-origin">
 <title>Gauss by Lightbound · radiation-aware mission-data assurance</title>
-<meta name="description" content="Gauss replays satellite telemetry and onboard-AI logs against real space-weather conditions, so ground teams can see which data and model outputs to trust, with the evidence attached.">
+<meta name="description" content="Gauss Fleet Integration: a ground-first mission-data assurance and protection layer. It replays satellite telemetry and onboard-AI logs against the space weather they met, with the evidence attached.">
 <link rel="canonical" href="https://lightbound.uk/gauss/">
 <link rel="preload" href="/assets/fonts/plex-sans-600.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="/assets/site.css">
@@ -33,17 +33,46 @@
 <section class="hero-gauss page-hero" aria-labelledby="hero-h">
   <div class="wrap">
     <img class="lockup vt-gauss" src="/assets/marks/gauss-aurora-horizontal-colour-dark.svg" alt="Gauss Aurora" width="361" height="100">
-    <p class="k">01_GAUSS · Ground-first mission-data assurance</p>
+    <p class="k">01_GAUSS · FLEET INTEGRATION</p>
     <h1 id="hero-h">Know which satellite data and onboard-AI outputs you can trust.</h1>
     <p class="lead">Radiation and space weather can silently corrupt telemetry and AI results in orbit. A corrupted output looks the same as a good one. Gauss replays your telemetry and inference logs against the space environment they were produced in, and shows your ground team what held up, what didn't, and what is unknown.</p>
-    <p class="who"><strong>Built for</strong> onboard-AI and orbital-compute teams, and satellite operations teams who need evidence, not dashboards.</p>
-    <p class="actions"><a class="btn" href="/gauss/apply/?plan=pilot">Start with a pilot</a> <a class="btn ghost" href="#plans">See the plans</a></p>
+    <p class="who"><strong>Built for</strong> mission-data, ground-segment and mission-operations teams, and onboard-AI and orbital-compute teams who need evidence, not dashboards. Fleet Integration is a ground-first mission-data assurance and protection layer.</p>
+    <p class="actions"><a class="btn" href="/gauss/apply/?plan=pilot">Start with a pilot</a> <a class="btn ghost" href="#replay">Watch a replay</a></p>
+    <nav class="subnav" aria-label="On this page"><a href="#replay">Replay demo</a><a href="#how">How it works</a><a href="#plans">Plans and prices</a><a href="#fit">Where it fits</a><a href="#team">Team</a><a href="#contact">Contact</a></nav>
+  </div>
+</section>
+
+<section id="replay" aria-labelledby="replay-h">
+  <div class="wrap">
+    <div class="section-head"><div><p class="k">01_REPLAY</p><h2 id="replay-h">One storm, replayed record by record.</h2></div><span class="chip">Synthetic · screening evidence</span></div>
+    <p class="lead">An illustrative pass through a geomagnetic storm. Watch what Gauss does to each telemetry record and each onboard-AI output as conditions change.</p>
+    <figure class="replay-chart">
+      <svg viewBox="0 0 600 120" role="img" aria-labelledby="rc-t" preserveAspectRatio="none">
+        <title id="rc-t">Synthetic stress index: quiet, rising to a storm peak, then recovering</title>
+        <rect x="200" y="0" width="200" height="120" fill="#E7B14A" fill-opacity="0.08"/>
+        <line x1="0" y1="110" x2="600" y2="110" stroke="#252A2A" stroke-width="1"/>
+        <path d="M0 100 C60 98 90 96 120 92 S170 70 200 52 S260 12 300 10 S350 28 400 52 S470 86 520 96 S580 100 600 100 L600 110 L0 110 Z" fill="#E7B14A" fill-opacity="0.14"/>
+        <path d="M0 100 C60 98 90 96 120 92 S170 70 200 52 S260 12 300 10 S350 28 400 52 S470 86 520 96 S580 100 600 100" fill="none" stroke="#E7B14A" stroke-width="2" vector-effect="non-scaling-stroke"/>
+      </svg>
+      <figcaption>Synthetic stress index (illustrative). Shaded: storm window.</figcaption>
+    </figure>
+    <ol class="replay">
+      <li><span class="t">T&minus;24 min</span><span class="env">G0 · quiet</span><span class="st nominal">Nominal</span><span class="st nominal">Run</span><span class="why">Inputs fresh, provenance complete.</span></li>
+      <li><span class="t">T&minus;12 min</span><span class="env">G1 · field turning</span><span class="st nominal">Nominal</span><span class="st nominal">Run</span><span class="why">Watch: geomagnetic stress rising.</span></li>
+      <li><span class="t">Storm onset</span><span class="env">G2 · particles rising</span><span class="st degraded">Degraded</span><span class="st degraded">Degrade</span><span class="why">Bit errors climbing; outputs flagged, confidence lowered.</span></li>
+      <li><span class="t">Peak</span><span class="env">G3 · storm</span><span class="st blocked">Blocked</span><span class="st abstain">Abstain</span><span class="why">Packet integrity failed; no trusted input, so no output.</span></li>
+      <li><span class="t">T+10 min</span><span class="env">G2 · easing</span><span class="st unknown">Unknown</span><span class="st fallback">Fallback</span><span class="why">Link gap: records stay unknown, never "nominal". Deterministic fallback used.</span></li>
+      <li><span class="t">T+30 min</span><span class="env">G0 · recovered</span><span class="st nominal">Nominal</span><span class="st nominal">Run</span><span class="why">Quality gate passed; every flagged record is in the report.</span></li>
+    </ol>
+    <p class="replay-key">Each step reads top to bottom: <span>space environment</span>, then the <span>telemetry record state</span>, the <span>onboard-AI output policy</span>, and what the evidence records.</p>
+    <p class="note">Illustrative data, not a mission record. In a pilot, the same replay runs on your own telemetry and inference logs, against the public space-weather record. Gauss is observe-only and advisory: decisions stay with your operators.</p>
+    <p class="actions"><a class="btn" href="/gauss/evidence/">See a sample evidence report</a> <a class="btn ghost" href="/gauss/apply/?plan=pilot">Start with a pilot</a></p>
   </div>
 </section>
 
 <section id="how" aria-labelledby="how-h">
   <div class="wrap">
-    <p class="k">01_HOW_IT_WORKS</p>
+    <p class="k">02_HOW_IT_WORKS</p>
     <h2 id="how-h">How a replay pilot works</h2>
     <p class="lead">Fleet Integration v0.1 runs on the ground, on your own logs. Nothing is installed on a spacecraft.</p>
     <ol class="steps">
@@ -53,19 +82,6 @@
       <li><h3>Get the evidence</h3><p>A report your engineers and assurance reviewers can check, with success metrics agreed before the pilot starts.</p></li>
     </ol>
     <p class="note">Status: a working software prototype ingests live NOAA and NASA HAPI space-weather data today. Ingest of your own logs and the evidence export are being built for the first pilots.</p>
-  </div>
-</section>
-
-<section id="pilot" aria-labelledby="pilot-h">
-  <div class="wrap">
-    <p class="k">02_PILOT</p>
-    <h2 id="pilot-h">The 30-day replay pilot</h2>
-    <ul class="facts">
-      <li><strong>Scope</strong> Your historical telemetry and inference logs, replayed against the conditions they were recorded in.</li>
-      <li><strong>Success metrics</strong> Agreed in writing before day one.</li>
-      <li><strong>Output</strong> An evidence report and a review session with your team.</li>
-      <li><strong>Terms</strong> Paid: £20k–£40k per pilot, a fixed price agreed from your scope before you start, paid securely through Stripe.</li>
-    </ul>
   </div>
 </section>
 
@@ -117,6 +133,7 @@
       <li><strong>CCSDS and XTCE</strong> Packet identity and telemetry definitions, as your ground segment already uses them.</li>
       <li><strong>Yamcs</strong> Replay from mission-control archives.</li>
       <li><strong>ONNX</strong> Model portability across processors, for teams whose models run in orbit.</li>
+      <li><strong>Your operators decide</strong> Observe-only and advisory, with deterministic fallback. Gauss consumes the mission data you already have and never replaces mission control.</li>
     </ul>
     <p class="note">Design-partner paths: we are working towards validation pilots with <strong>JAOPS</strong> and <strong>xOrbita</strong>.</p>
     <p class="logos"><img src="/assets/partners/xorbita.png" alt="xOrbita" width="122" height="40" loading="lazy" decoding="async"></p>

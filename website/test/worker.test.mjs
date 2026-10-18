@@ -101,8 +101,8 @@ test("feed state: live, then stale (still shown, labelled), offline when there i
 // ---- Rendering ----
 test("times: countdowns and dates follow the launch's stated precision", () => {
   const now = Date.parse("2026-10-17T13:00:00Z");
-  assert.equal(countdown("2026-10-19T10:30:00Z", "MIN", now), "T−1 d 21 h");
-  assert.equal(countdown("2026-10-17T15:05:00Z", "SEC", now), "T−2 h 5 min");
+  assert.equal(countdown("2026-10-19T10:30:00Z", "MIN", now), "T\u22121\u00a0d 21\u00a0h", "units stay with their numbers");
+  assert.equal(countdown("2026-10-17T15:05:00Z", "SEC", now), "T\u22122\u00a0h 5\u00a0min");
   assert.equal(countdown("2026-10-29T00:00:00Z", "DAY", now), "In 12 d");
   assert.equal(countdown("2026-10-31T00:00:00Z", "M", now), "NET Oct");
   assert.equal(whenText("2026-10-21T03:35:00Z", "HR"), "21 Oct, ~03:35 UTC");
@@ -124,8 +124,8 @@ test("doors show live readouts, nothing when data is missing, and say when data 
   const now = RECORDED_AT;
   const launches = { data: normaliseLaunches(fixture("launches")), fetchedAt: new Date(now).toISOString() };
   const weather = { data: normaliseWeather({ scales: fixture("scales"), kp: fixture("kp"), wind: fixture("wind"), mag: fixture("mag") }), fetchedAt: new Date(now).toISOString() };
-  assert.match(renderConstellationDoor(launches, now), /Next launch<\/span><span class="door-big">T−1 d 21 h<\/span><span class="door-line">Falcon 9 Block 5 · Bandwagon 5/);
-  assert.match(renderGaussDoor(weather, now), /G0<\/span> · <span>S0<\/span> · <span>R0<\/span>.*Kp 0\.7 · solar wind 431 km\/s · Bz \+2 nT/);
+  assert.match(renderConstellationDoor(launches, now), /Next launch<\/span><span class="door-big">T\u22121\u00a0d 21\u00a0h<\/span><span class="door-line">Falcon 9 Block 5 · Bandwagon 5/);
+  assert.match(renderGaussDoor(weather, now), /G0<\/span> · <span>S0<\/span> · <span>R0<\/span>.*Kp\u00a00\.7 · solar wind 431\u00a0km\/s · Bz\u00a0\+2\u00a0nT/);
   assert.equal(renderGaussDoor(null, now), "");
   assert.equal(renderConstellationDoor({ data: [] }, now), "");
   assert.match(renderGaussDoor(weather, now + 3 * 60 * MIN), /class="as-of">as of 17 Oct 13:00 UTC/);

@@ -4,10 +4,10 @@
 // hidden honeypot field plus a per-IP hourly limit) and uses post/redirect/get, so a refresh never
 // resubmits. No personal data ever goes into a URL.
 import { esc } from "./render.js";
-import { TIERS, priceLabel } from "./tiers.js";
+import { TIERS, optionLabel } from "./tiers.js";
 import { rateLimited, saveApplication, APPLICATION_DAYS } from "./data.js";
 
-const PLANS = TIERS.map((t) => [t.id, `${t.name} (${priceLabel(t)})`]);
+const PLANS = TIERS.map((t) => [t.id, optionLabel(t)]);
 const opts = (...xs) => xs.map((x) => [x, x]);
 
 const FIELD = {
