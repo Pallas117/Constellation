@@ -182,6 +182,70 @@ footer nav{display:flex;flex-wrap:wrap;gap:8px 20px}
 footer nav a{color:var(--muted)}
 footer p{margin:0 0 6px}
 
+/* Sign-in pill in the header */
+.top nav a.signin{border:1px solid rgba(243,240,232,.4);border-radius:999px;padding:6px 14px;color:var(--warm);white-space:nowrap}
+.top nav a.signin:hover{border-color:var(--warm)}
+
+/* Forms: plain HTML, validated on the server */
+.narrow{max-width:760px}
+.form{display:grid;gap:18px;margin-top:32px}
+.field{display:grid;gap:6px}
+.field label{font-weight:600}
+.form input:not([type=checkbox]),.form select,.form textarea{width:100%;font:inherit;color:var(--warm);background:var(--panel);border:1px solid var(--char);border-radius:8px;padding:12px 14px}
+.form textarea{resize:vertical;min-height:140px}
+.form input:focus,.form select:focus,.form textarea:focus{outline:2px solid var(--lime);outline-offset:1px}
+.form [aria-invalid=true]{border-color:var(--amber)}
+.err{color:var(--amber);font-size:14px;margin:0}
+.form-errors{border:1px solid rgba(231,177,74,.5);border-radius:8px;padding:12px 14px;color:var(--amber)}
+.form-errors p{margin:0}
+.check{display:flex;gap:10px;align-items:flex-start;color:var(--muted);font-size:15px}
+.check input{margin-top:4px;width:18px;height:18px;flex:none;accent-color:var(--lime)}
+.hp{position:absolute;left:-9999px;width:1px;height:1px;overflow:hidden}
+.sent{margin-top:32px;border:1px solid var(--char);border-radius:var(--radius);background:var(--panel);padding:28px}
+.sent h2{margin-top:10px}
+
+/* Gauss plans */
+.plans{list-style:none;margin:0;padding:0;display:grid;gap:16px;grid-template-columns:repeat(auto-fit,minmax(min(100%,300px),1fr))}
+.plan{border:1px solid var(--char);border-radius:var(--radius);background:var(--panel);padding:24px;display:grid;gap:10px;align-content:start}
+.plan.now{border-color:rgba(243,240,232,.45)}
+.plan h3{font-size:24px}
+.plan p{margin:0}
+.plan .aud{color:var(--muted)}
+.plan .price{font-size:20px;font-weight:600;margin-top:6px}
+
+/* Workspace */
+.chip.tier{color:var(--warm);border-color:rgba(243,240,232,.4)}
+.chip.tier::before{display:none}
+.track{list-style:none;margin:8px 0 0;padding:0;display:grid;gap:8px}
+.track li{position:relative;padding-left:26px;color:var(--muted)}
+.track li::before{content:"";position:absolute;left:3px;top:.5em;width:9px;height:9px;border-radius:50%;border:1px solid var(--muted)}
+.track li.done{color:var(--warm)}
+.track li.done::before{background:var(--warm);border-color:var(--warm)}
+.track li.here{color:var(--warm);font-weight:600}
+.track li.here::before{background:var(--lime);border-color:var(--lime)}
+.plan-lists{margin-top:32px}
+.plan-lists .m,.app-card .m{color:var(--muted);font-size:15px}
+.locked{list-style:none;margin:0 0 12px;padding:0;display:grid;gap:14px}
+.locked li{position:relative;padding-left:28px;color:var(--muted)}
+.locked li::before{content:"";position:absolute;left:2px;top:.5em;width:9px;height:9px;border-radius:50%;border:1px solid var(--muted)}
+.btn[aria-disabled=true]{opacity:.6;cursor:default}
+
+/* Admin */
+.apps{list-style:none;margin:0 0 24px;padding:0;display:grid;gap:12px}
+.app-card{border:1px solid var(--char);border-radius:var(--radius);background:var(--panel);padding:18px;display:grid;gap:8px}
+.app-head{display:flex;justify-content:space-between;gap:12px;color:var(--muted);font-size:13px}
+.app-card h3 .muted{font-weight:400;font-size:15px}
+.app-card p{margin:0}
+.msg{white-space:pre-wrap;border-left:2px solid var(--char);padding-left:12px}
+.inline{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.inline select,.inline input{font:inherit;font-size:14px;color:var(--warm);background:var(--black);border:1px solid var(--char);border-radius:8px;padding:8px 10px}
+.inline .btn{min-height:38px;padding:0 14px;font-size:14px}
+.table{width:100%;border-collapse:collapse;font-size:14px}
+.table th,.table td{text-align:left;padding:12px 8px;border-bottom:1px solid var(--char);vertical-align:top}
+.table th{font:700 11px var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+.tw{overflow-x:auto}
+.add{margin:16px 0 32px}
+
 /* Page-to-page continuity: a door's mark flies into the page it opens (native view transitions,
    no script; browsers without them just load the page). */
 @media (prefers-reduced-motion:no-preference){
@@ -202,7 +266,8 @@ footer p{margin:0 0 6px}
   .door .go{margin-top:6px}
   .door-big{font-size:22px}
   .top nav{font-size:14px;gap:14px}
-  .top nav .opt{display:none}
+  .top nav a.signin{padding:5px 10px}
   .hero-copy{padding-bottom:28px}
   .btn{flex:1 1 auto;justify-content:center}
 }
+@media (max-width:400px){.top nav .opt{display:none}}

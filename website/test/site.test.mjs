@@ -6,14 +6,19 @@ import { readFileSync, readdirSync, statSync, existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { SECURITY_HEADERS } from "../worker/headers.js";
+import { renderApplyForm } from "../worker/forms.js";
+import { renderPlans } from "../worker/render.js";
+import { FEATURES, SHOW_PRICES, TIERS } from "../worker/tiers.js";
 
 const pub = join(dirname(fileURLToPath(import.meta.url)), "..", "public");
 const read = (f) => readFileSync(join(pub, f), "utf8");
 const size = (f) => statSync(join(pub, f)).size;
 const text = (s) => s.replace(/<!--[\s\S]*?-->/g, " ").replace(/<[^>]+>/g, " ").replace(/&#39;/g, "'").replace(/\s+/g, " ");
-const PAGES = { "/": "index.html", "/gauss/": "gauss/index.html", "/constellation/": "constellation/index.html", "/turnstone/": "turnstone/index.html", "/404": "404.html" };
+const PAGES = { "/": "index.html", "/gauss/": "gauss/index.html", "/constellation/": "constellation/index.html", "/turnstone/": "turnstone/index.html", "/404": "404.html",
+  "/gauss/apply/": "gauss/apply/index.html", "/constellation/apply/": "constellation/apply/index.html", "/privacy/": "privacy/index.html",
+  "/app/": "app/index.html", "/app/admin/": "app/admin/index.html" };
 const html = Object.fromEntries(Object.entries(PAGES).map(([route, f]) => [route, read(f)]));
-const API_ROUTES = new Set(["/api/launches", "/api/launches.ics", "/api/space-weather", "/api/health"]);
+const API_ROUTES = new Set(["/api/launches", "/api/launches.ics", "/api/space-weather", "/api/health", "/cdn-cgi/access/logout"]);
 
 function walk(dir) {
   return readdirSync(dir, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? walk(join(dir, e.name)) : [join(dir, e.name)]));
@@ -28,7 +33,7 @@ test("GAU-12: Gauss wedge, buyer and call to action are in the first screen", ()
   const hero = gauss.match(/<section class="hero-gauss[^"]*"[\s\S]*?<\/section>/)[0];
   assert.match(text(hero), /trust/i);
   assert.match(text(hero), /Built for .*(onboard-AI|orbital-compute|satellite operations)/);
-  assert.match(hero, /href="#contact"/, "call to action in the hero");
+  assert.match(hero, /href="\/gauss\/apply\/\?plan=pilot"/, "call to action in the hero");
 });
 
 test("GAU-12: no unsupported flight, qualification, dose, damage, customer or A*STAR/QPIN claims", () => {
@@ -70,10 +75,11 @@ test("landing: the tagline is the headline, over the kit's black-hole film", () 
 });
 
 test("every page has one h1, the same main navigation and the same footer links", () => {
-  const nav = (p) => [...(p.match(/<nav aria-label="Main">([\s\S]*?)<\/nav>/)?.[1] ?? "").matchAll(/href="([^"]+)"/g)].map((m) => m[1]).slice(0, 3);
+  const nav = (p) => [...(p.match(/<nav aria-label="Main">([\s\S]*?)<\/nav>/)?.[1] ?? "").matchAll(/href="([^"]+)"/g)].map((m) => m[1]);
   for (const [route, page] of Object.entries(html)) {
     assert.equal((page.match(/<h1[\s>]/g) || []).length, 1, `${route}: exactly one h1`);
-    assert.deepEqual(nav(page), ["/gauss/", "/constellation/", "/turnstone/"], `${route}: main nav`);
+    const auth = route.startsWith("/app/") ? "/cdn-cgi/access/logout" : "/app/";
+    assert.deepEqual(nav(page), ["/gauss/", "/constellation/", "/turnstone/", auth], `${route}: main nav ends with sign in/out`);
     assert.match(page, /<html lang="en-GB">/);
     assert.match(page, /<a class="skip" href="#main">/);
   }
@@ -122,7 +128,7 @@ test("every link and resource resolves", () => {
   for (const [route, page] of Object.entries(html)) {
     const ids = new Set([...page.matchAll(/\sid="([^"]+)"/g)].map((m) => m[1]));
     for (const [, target] of page.matchAll(/href="#([^"]+)"/g)) assert.ok(ids.has(target), `${route}: #${target} has no target`);
-    for (const [, url] of page.matchAll(/(?:href|src|srcset)="(\/[^"#]*)(?:#[^"]*)?"/g)) {
+    for (const [, url] of page.matchAll(/(?:href|src|srcset)="(\/[^"#?]*)(?:[?#][^"]*)?"/g)) {
       if (API_ROUTES.has(url)) continue;
       const file = url.endsWith("/") ? `${url}index.html` : url;
       assert.ok(existsSync(join(pub, file)) && size(file) > 0, `${route}: ${url} missing`);
@@ -176,4 +182,39 @@ test("budgets: first view under 200 KB before the film; film under 300 KB; whole
   assert.ok(size("assets/media/blackhole-720p.mp4") < 300 * 1024, "film too big");
   const total = walk(pub).reduce((n, f) => n + statSync(f).size, 0);
   assert.ok(total < 1024 * 1024, `site is ${total} bytes`);
+});
+
+// ---- Applications, plans and sign-in ----
+test("apply pages: the static form is exactly what the Worker renders, and posts to our own origin", () => {
+  for (const kind of ["gauss", "constellation"]) {
+    const page = html[`/${kind}/apply/`];
+    const fallback = page.match(/<!--live:apply-->([\s\S]*?)<!--\/live:apply-->/)[1];
+    assert.equal(fallback, renderApplyForm(kind), `${kind}: static form drifted from forms.js`);
+    assert.match(fallback, /<form class="form" method="post" action="\/api\/apply">/);
+    assert.match(fallback, /name="consent" value="yes" required/);
+    assert.match(fallback, /<div class="hp" aria-hidden="true">/, "honeypot present");
+    assert.match(fallback, /<a href="\/privacy\/">Privacy<\/a>/);
+  }
+  assert.match(SECURITY_HEADERS["Content-Security-Policy"], /form-action 'self'/);
+  assert.match(read("assets/site.css"), /\.hp\{position:absolute;left:-9999px/);
+});
+
+test("plans: honest features only; prices stay hidden until approved", () => {
+  const words = JSON.stringify({ TIERS, FEATURES });
+  for (const rx of [/mitigation/i, /qrnn|qubit|quantum/i, /automat/i, /\bcommand/i, /certif|complian|qualif/i, /air-gapped/i, /early warning/i, /\bdispatch/i])
+    assert.doesNotMatch(words, rx, `tiers.js claims ${rx}`);
+  assert.equal(SHOW_PRICES, false, "list prices are not approved for publication (GAU-65)");
+  const plans = renderPlans();
+  assert.doesNotMatch(plans, /\$\d/);
+  assert.equal((plans.match(/Priced per scope/g) || []).length, TIERS.length);
+  assert.match(plans, /never commands a spacecraft/);
+  assert.match(html["/gauss/"], /<!--live:plans-->[\s\S]*Flight Candidate Adapter[\s\S]*<!--\/live:plans-->/, "static fallback keeps the gated roadmap");
+});
+
+test("signed-in pages are private shells; the Worker fills them only after sign-in", () => {
+  for (const route of ["/app/", "/app/admin/"]) {
+    assert.match(html[route], /<meta name="robots" content="noindex">/);
+    assert.doesNotMatch(html[route], /@example|@lightbound\.uk(?!")/i, "no personal data in a static shell");
+  }
+  assert.match(html["/privacy/"], /180 days/);
 });

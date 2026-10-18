@@ -10,14 +10,14 @@ import { FEEDS, feedState, normaliseLaunches, normaliseWeather, readFeed, refres
 import { countdown, esc, renderConstellationDoor, renderGaussDoor, renderIcs, renderLaunches, renderWeather, whenText } from "../worker/render.js";
 import { SECURITY_HEADERS } from "../worker/headers.js";
 import { RECORDED_AT, fixture, makeFetch } from "./fixtures/fetch.mjs";
+import { memoryKV } from "./fixtures/kv.mjs";
+import { makeAccess } from "./fixtures/access.mjs";
+import { accessIdentity, isAdmin } from "../worker/auth.js";
+import { getAccount, listApplications, putAccount, saveApplication } from "../worker/data.js";
 
 const pub = join(dirname(fileURLToPath(import.meta.url)), "..", "public");
 const MIN = 60_000;
 
-function memoryKV() {
-  const m = new Map();
-  return { map: m, get: async (k, o) => (m.has(k) ? ((o?.type ?? o) === "json" ? JSON.parse(m.get(k)) : m.get(k)) : null), put: async (k, v) => void m.set(k, String(v)) };
-}
 // Just enough of Cloudflare's asset binding for the live pages.
 const ASSETS = {
   async fetch(input) {
@@ -211,4 +211,147 @@ test("routes: a fresh deploy fetches once in the background, before the first cr
   await settle();
   assert.equal(f.calls.length, 5);
   assert.ok(await readFeed(fresh, "launches"));
+});
+
+// ---- Sign-in (Cloudflare Access JWT) ----
+test("sign-in: only a valid Access JWT for our team and application counts", async () => {
+  const access = await makeAccess();
+  const other = await makeAccess(); // same kid, different key: a forged token
+  const env = { ...access.env };
+  const req = (token) => new Request("https://lightbound.uk/app/", { headers: token ? { "cf-access-jwt-assertion": token } : {} });
+  assert.deepEqual(await accessIdentity(req(await access.sign("Ops@Example.test")), env), { email: "ops@example.test" });
+  assert.equal(await accessIdentity(req(null), env), null, "no token");
+  assert.equal(await accessIdentity(req(await other.sign("ops@example.test")), env), null, "wrong key");
+  assert.equal(await accessIdentity(req(await access.sign("ops@example.test", { aud: ["another-app"] })), env), null, "wrong audience");
+  assert.equal(await accessIdentity(req(await access.sign("ops@example.test", { iss: "https://evil.cloudflareaccess.com" })), env), null, "wrong issuer");
+  assert.equal(await accessIdentity(req(await access.sign("ops@example.test", { exp: Math.floor(Date.now() / 1000) - 5 })), env), null, "expired");
+  assert.equal(await accessIdentity(req(await access.sign("ops@example.test", {}, { alg: "none" })), env), null, "alg none");
+  const [h, , sig] = (await access.sign("ops@example.test")).split(".");
+  const tampered = Buffer.from(JSON.stringify({ aud: ["lightbound-dev"], email: "admin@example.test", iss: "https://dev.cloudflareaccess.local", exp: 9e9 })).toString("base64url");
+  assert.equal(await accessIdentity(req(`${h}.${tampered}.${sig}`), env), null, "tampered claims");
+  const plain = new Request("https://lightbound.uk/app/", { headers: { "cf-access-authenticated-user-email": "admin@example.test" } });
+  assert.equal(await accessIdentity(plain, env), null, "a bare email header is never trusted");
+  assert.equal(await accessIdentity(req(await access.sign("ops@example.test")), { ...env, ACCESS_AUD: "" }), null, "unconfigured = locked");
+  assert.ok(isAdmin({ ADMIN_EMAILS: "a@x.test, Boss@X.test" }, "boss@x.test"));
+  assert.ok(!isAdmin({ ADMIN_EMAILS: "" }, "boss@x.test"));
+});
+
+// ---- Applications ----
+async function appEnv() {
+  const access = await makeAccess();
+  return { access, env: { ASSETS, LIVE: memoryKV(), DATA: memoryKV(), ADMIN_EMAILS: "boss@example.test", ...access.env } };
+}
+const post = (path, body, headers = {}) => new Request(`https://lightbound.uk${path}`, {
+  method: "POST", body: new URLSearchParams(body).toString(),
+  headers: { origin: "https://lightbound.uk", "content-type": "application/x-www-form-urlencoded", "cf-connecting-ip": "203.0.113.9", ...headers },
+});
+const goodGauss = { kind: "gauss", name: "Ops Example", email: "ops@example.test", org: "Example Space", role: "Mission ops", plan: "active_mission_defense",
+  message: "Two smallsats flying ONNX models; we want evidence after the May storm.", consent: "yes" };
+async function send(env, request) {
+  const { ctx, settle } = context();
+  const res = await worker.fetch(request, env, ctx);
+  await settle();
+  return res;
+}
+
+test("apply: a good application is stored and redirected (post/redirect/get), with a 180-day expiry", async () => {
+  const { env } = await appEnv();
+  const res = await send(env, post("/api/apply", goodGauss));
+  assert.equal(res.status, 303);
+  assert.equal(res.headers.get("location"), "/gauss/apply/?sent=1");
+  const [app] = await listApplications(env);
+  assert.deepEqual([app.kind, app.email, app.plan, app.status], ["gauss", "ops@example.test", "active_mission_defense", "new"]);
+  const stored = env.DATA.map.get(`app:${app.id}`);
+  assert.ok(stored.exp - Date.now() / 1000 > 179 * 86400 && stored.exp - Date.now() / 1000 <= 180 * 86400);
+  const sent = await (await send(env, new Request("https://lightbound.uk/gauss/apply/?sent=1"))).text();
+  assert.match(sent, /Thank you\. Your application is with the Lightbound team\./);
+});
+
+test("apply: bad input comes back with errors and the values escaped; nothing stored", async () => {
+  const { env } = await appEnv();
+  const res = await send(env, post("/api/apply", { ...goodGauss, name: "<b>x</b>", email: "nope", message: "short", consent: "" }));
+  assert.equal(res.status, 422);
+  const page = await res.text();
+  assert.match(page, /Please check: email, message, privacy agreement\./);
+  assert.match(page, /value="&lt;b&gt;x&lt;\/b&gt;"/);
+  assert.doesNotMatch(page, /<b>x<\/b>/);
+  assert.equal((await listApplications(env)).length, 0);
+});
+
+test("apply: cross-site posts, bots, odd encodings and floods are turned away", async () => {
+  const { env } = await appEnv();
+  assert.equal((await send(env, post("/api/apply", goodGauss, { origin: "https://evil.example" }))).status, 403);
+  assert.equal((await send(env, post("/api/apply", goodGauss, { "content-type": "text/plain" }))).status, 415);
+  assert.equal((await send(env, post("/api/apply", { ...goodGauss, kind: "admin" }))).status, 400);
+  assert.equal((await send(env, new Request("https://lightbound.uk/api/apply"))).status, 405);
+  const bot = await send(env, post("/api/apply", { ...goodGauss, website: "http://spam.example" }));
+  assert.equal(bot.status, 303, "bots see success");
+  assert.equal((await listApplications(env)).length, 0, "but nothing is stored");
+  for (let i = 0; i < 5; i++) assert.equal((await send(env, post("/api/apply", goodGauss))).status, 303);
+  assert.equal((await send(env, post("/api/apply", goodGauss))).status, 429, "sixth in an hour from one address");
+  assert.ok(![...env.DATA.map.keys()].some((k) => k.includes("203.0.113.9")), "raw IP never stored");
+});
+
+test("apply page: the plan in the link is preselected; unknown plans fall back to the pilot", async () => {
+  const { env } = await appEnv();
+  assert.match(await (await send(env, new Request("https://lightbound.uk/gauss/apply/?plan=sovereign_shield"))).text(), /<option value="sovereign_shield" selected>/);
+  assert.match(await (await send(env, new Request("https://lightbound.uk/gauss/apply/?plan=%22%3E%3Cscript%3E"))).text(), /<option value="pilot" selected>/);
+});
+
+// ---- Workspace and admin ----
+const as = async (access, email, path, init = {}) =>
+  new Request(`https://lightbound.uk${path}`, { ...init, headers: { ...(init.headers ?? {}), "cf-access-jwt-assertion": await access.sign(email) } });
+
+test("workspace: signed out gets 401; no plan gets the apply route; a plan shows what it includes", async () => {
+  const { env, access } = await appEnv();
+  const out = await send(env, new Request("https://lightbound.uk/app/"));
+  assert.equal(out.status, 401);
+  assert.equal(out.headers.get("cache-control"), "private, no-store");
+  const none = await (await send(env, await as(access, "new@example.test", "/app/"))).text();
+  assert.match(none, /no Gauss plan yet/);
+  assert.match(none, /href="\/gauss\/apply\/"/);
+  await putAccount(env, { email: "ops@example.test", name: "Ops", org: "Example Space", tier: "tactical_fleet", pilot: "Replay running" }, "test");
+  const res = await send(env, await as(access, "ops@example.test", "/app/"));
+  assert.equal(res.headers.get("x-robots-tag"), "noindex");
+  const page = await res.text();
+  assert.match(page, /chip tier">Tactical Fleet/);
+  assert.match(page, /aria-current="step">Replay running/);
+  assert.match(page, /Included in Tactical Fleet/);
+  assert.match(page, /Next: Active Mission Defense/);
+  assert.match(page, /Console link coming by email/);
+  assert.doesNotMatch(page, /Applications and accounts/, "no admin link for customers");
+});
+
+test("admin: only ADMIN_EMAILS; approving a Gauss application creates the account with its plan", async () => {
+  const { env, access } = await appEnv();
+  await send(env, post("/api/apply", goodGauss));
+  assert.equal((await send(env, await as(access, "ops@example.test", "/app/admin/"))).status, 403);
+  const adminPage = await (await send(env, await as(access, "boss@example.test", "/app/admin/"))).text();
+  assert.match(adminPage, /New \(1\)/);
+  assert.match(adminPage, /Two smallsats flying ONNX models/);
+  const [app] = await listApplications(env);
+  const decide = async (email, extra = {}) => send(env, await as(access, email, "/app/admin/decide", {
+    method: "POST", body: new URLSearchParams({ id: app.id, decision: "approve", tier: "active_mission_defense" }).toString(),
+    headers: { origin: "https://lightbound.uk", "content-type": "application/x-www-form-urlencoded", ...extra },
+  }));
+  assert.equal((await decide("ops@example.test")).status, 403, "customers cannot approve");
+  assert.equal((await decide("boss@example.test", { origin: "https://evil.example" })).status, 403, "cross-site");
+  assert.equal((await decide("boss@example.test")).status, 303);
+  const acct = await getAccount(env, "ops@example.test");
+  assert.deepEqual([acct.tier, acct.pilot, acct.org, acct.updatedBy], ["active_mission_defense", "Scoping", "Example Space", "boss@example.test"]);
+  assert.equal((await listApplications(env))[0].status, "approved");
+});
+
+test("admin: accounts can be set and removed", async () => {
+  const { env, access } = await appEnv();
+  const form = async (body) => send(env, await as(access, "boss@example.test", "/app/admin/account", {
+    method: "POST", body: new URLSearchParams(body).toString(), headers: { origin: "https://lightbound.uk", "content-type": "application/x-www-form-urlencoded" },
+  }));
+  assert.equal((await form({ email: "Lead@Example.test", tier: "sovereign_shield", pilot: "", community: "member", action: "save" })).status, 303);
+  assert.deepEqual([(await getAccount(env, "lead@example.test")).tier, (await getAccount(env, "lead@example.test")).community], ["sovereign_shield", "member"]);
+  await form({ email: "lead@example.test", tier: "bogus", action: "save" });
+  assert.equal((await getAccount(env, "lead@example.test")).tier, null, "unknown plans are dropped");
+  await form({ email: "lead@example.test", action: "delete" });
+  assert.equal(await getAccount(env, "lead@example.test"), null);
+  assert.equal((await saveApplication(env, { kind: "constellation", name: "A", email: "a@example.test" })).status, "new");
 });

@@ -52,7 +52,8 @@
     "release:prepare": "npm run quality:full && npm run security:full && npm test",
     "test:website": "node --test website/test/site.test.mjs website/test/worker.test.mjs",
     "site:dev": "node website/dev.mjs",
-    "site:dev:offline": "node website/dev.mjs --offline"
+    "site:dev:offline": "node website/dev.mjs --offline",
+    "site:forms": "node website/tools/sync_forms.mjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",

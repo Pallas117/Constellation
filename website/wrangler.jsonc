@@ -9,12 +9,24 @@
     "html_handling": "auto-trailing-slash",
     "not_found_handling": "404-page",
     // Everything else is a static file: free, and never runs the Worker.
-    "run_worker_first": ["/", "/gauss/", "/constellation/", "/api/*"]
+    "run_worker_first": ["/", "/gauss/", "/constellation/", "/gauss/apply/", "/constellation/apply/", "/app", "/app/*", "/api/*"]
   },
   // Refresh launches and space weather into KV. Free plan: 5 cron triggers per account.
   "triggers": { "crons": ["*/15 * * * *"] },
-  // Create once with `npx wrangler@4 kv namespace create LIVE` and paste the id here (it is not a secret).
-  "kv_namespaces": [{ "binding": "LIVE", "id": "REPLACE_WITH_KV_NAMESPACE_ID" }],
+  // Create once each with `npx wrangler@4 kv namespace create LIVE` / `... create DATA` and paste the
+  // ids here (they are not secrets). LIVE = feed cache; DATA = applications and accounts.
+  "kv_namespaces": [
+    { "binding": "LIVE", "id": "REPLACE_WITH_LIVE_NAMESPACE_ID" },
+    { "binding": "DATA", "id": "REPLACE_WITH_DATA_NAMESPACE_ID" }
+  ],
+  // Not secrets. ACCESS_* come from the Cloudflare Access application protecting lightbound.uk/app
+  // (Zero Trust > Access > Applications: the team domain and the application's AUD tag).
+  "vars": {
+    "ACCESS_TEAM_DOMAIN": "REPLACE_TEAM.cloudflareaccess.com",
+    "ACCESS_AUD": "REPLACE_WITH_ACCESS_APPLICATION_AUD",
+    "ADMIN_EMAILS": "jzwnathan@lightbound.uk",
+    "GAUSS_APP_URL": ""
+  },
   "observability": { "enabled": true }
   // When the workers.dev preview looks right, uncomment to serve lightbound.uk (adds proxied A/AAAA
   // records only; the Google Workspace MX records are not touched):

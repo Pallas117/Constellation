@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; img-src 'self'; media-src 'self'; font-src 'self'; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; img-src 'self'; media-src 'self'; font-src 'self'; base-uri 'none'; form-action 'self'">
 <meta name="theme-color" content="#050505">
 <meta name="referrer" content="strict-origin-when-cross-origin">
 <title>Gauss by Lightbound · radiation-aware mission-data assurance</title>
@@ -23,8 +23,8 @@
   <nav aria-label="Main">
     <a href="/gauss/" aria-current="page">Gauss</a>
     <a href="/constellation/">Constellation</a>
-    <a href="/turnstone/">Turnstone</a>
-    <a href="#contact" class="opt">Contact</a>
+    <a href="/turnstone/" class="opt">Turnstone</a>
+    <a href="/app/" class="signin">Sign in</a>
   </nav>
   </div>
 </header>
@@ -37,7 +37,7 @@
     <h1 id="hero-h">Know which satellite data and onboard-AI outputs you can trust.</h1>
     <p class="lead">Radiation and space weather can silently corrupt telemetry and AI results in orbit. A corrupted output looks the same as a good one. Gauss replays your telemetry and inference logs against the space environment they were produced in, and shows your ground team what held up, what didn't, and what is unknown.</p>
     <p class="who"><strong>Built for</strong> onboard-AI and orbital-compute teams, and satellite operations teams who need evidence, not dashboards.</p>
-    <p class="actions"><a class="btn" href="#contact">Book a 30-day replay pilot</a> <a class="btn ghost" href="#how">How it works</a></p>
+    <p class="actions"><a class="btn" href="/gauss/apply/?plan=pilot">Book a 30-day replay pilot</a> <a class="btn ghost" href="#plans">See the plans</a></p>
   </div>
 </section>
 
@@ -94,15 +94,17 @@
   </div>
 </section>
 
-<section id="roadmap" aria-labelledby="roadmap-h">
+<section id="plans" aria-labelledby="plans-h">
   <div class="wrap">
-    <p class="k">04_ROADMAP</p>
-    <h2 id="roadmap-h">One product, delivered in gated stages</h2>
+    <p class="k">04_PLANS</p>
+    <h2 id="plans-h">One product, delivered in gated stages</h2>
+    <!--live:plans-->
     <ol class="stages">
       <li class="now"><span class="label">Now</span><h3>Fleet Integration</h3><p>Ground-side replay, quality and provenance, radiation correlation, bounded inference and operator evidence.</p></li>
       <li><span class="label">Gated</span><h3>Flight Candidate Adapter</h3><p>Only with a named mission, target processor, mission dictionary, hardware evidence and operator authority.</p></li>
       <li><span class="label">Gated</span><h3>Federated Bridge Node</h3><p>A hosted-payload or in-orbit demonstration option, considered only after the stages before it.</p></li>
     </ol>
+    <!--/live:plans-->
   </div>
 </section>
 
@@ -139,8 +141,8 @@
   <div class="wrap">
     <p class="k">07_CONTACT</p>
     <h2 id="contact-h">Talk to us</h2>
-    <p class="lead">Tell us about your mission and the logs you have. We'll reply with whether a replay pilot fits and what it would cover. The Gauss app opens to pilot teams first.</p>
-    <p class="actions"><a class="btn" href="mailto:jzwnathan@lightbound.uk?subject=Gauss%20replay%20pilot">Email Joshua Nathan</a> <a class="btn ghost" href="mailto:jzwnathan@lightbound.uk?subject=Gauss%20app%20access">Request app access</a></p>
+    <p class="lead">Tell us about your mission and the logs you have. We'll reply with whether a replay pilot fits and what it would cover. Approved teams sign in to their Gauss workspace.</p>
+    <p class="actions"><a class="btn" href="/gauss/apply/">Apply</a> <a class="btn ghost" href="mailto:jzwnathan@lightbound.uk?subject=Gauss">Email Joshua Nathan</a> <a class="btn ghost" href="/app/">Sign in</a></p>
   </div>
 </section>
 

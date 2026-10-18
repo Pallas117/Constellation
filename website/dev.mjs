@@ -1,15 +1,20 @@
 // Local preview of lightbound.uk with the real Worker code: node website/dev.mjs [--port 8788] [--offline]
 // Emulates what Cloudflare provides: static assets from public/ (with _headers, trailing-slash
 // handling, 404 page and byte ranges for the film), run_worker_first routing from wrangler.jsonc,
-// an in-memory KV, and the 15-minute cron. --offline uses the test fixtures instead of the live feeds.
+// in-memory KV (LIVE and DATA), the 15-minute cron, and Cloudflare Access for /app/*: a local key
+// pair signs the same kind of JWT Access sends, so the Worker's real verification code runs.
+// --offline uses the recorded feed data instead of the live feeds. Demo accounts use example.test.
 import { createServer } from "node:http";
 import { readFileSync, statSync, existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
-import { dirname, extname, join, normalize, sep } from "node:path";
+import { dirname, extname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
 import worker from "./worker/index.js";
 import { refreshFeeds } from "./worker/feeds.js";
+import { putAccount, saveApplication } from "./worker/data.js";
 import { fixtureFetch } from "./test/fixtures/fetch.mjs";
+import { memoryKV } from "./test/fixtures/kv.mjs";
+import { makeAccess } from "./test/fixtures/access.mjs";
 
 const dir = dirname(fileURLToPath(import.meta.url));
 const root = join(dir, "public");
@@ -87,35 +92,66 @@ const ASSETS = {
   },
 };
 
-const store = new Map();
-const LIVE = {
-  async get(key, opts) {
-    const v = store.get(key);
-    return v === undefined ? null : (opts?.type ?? opts) === "json" ? JSON.parse(v) : v;
-  },
-  async put(key, value) {
-    store.set(key, String(value));
-  },
+// ---- Cloudflare Access, emulated: a dev key pair signs the JWT the Worker verifies ----
+const access = await makeAccess();
+const env = {
+  ASSETS, LIVE: memoryKV(), DATA: memoryKV(),
+  ...config.vars,
+  ...access.env,
 };
-const env = { ASSETS, LIVE };
+const admin = String(env.ADMIN_EMAILS).split(",")[0].trim();
 const ctx = { waitUntil: (p) => Promise.resolve(p).catch((e) => console.error(e)), passThroughOnException() {} };
 const fetchImpl = offline ? fixtureFetch : fetch;
 const refresh = async () => console.log(new Date().toISOString(), "refresh", JSON.stringify(await refreshFeeds(env, { fetchImpl })));
 
+// Demo data so the workspace and admin pages have something to show (dev only).
+await putAccount(env, { email: "pilot@example.test", name: "Pilot team", org: "Example Orbital", tier: "tactical_fleet", pilot: "Data received" }, "dev-seed");
+await saveApplication(env, { kind: "constellation", name: "Ada Example", email: "ada@example.test", role: "Satellite operations engineer", link: "https://example.test/ada", message: "I run ground passes for a small LEO fleet and track debris conjunctions in my spare time.", consent: true });
+await saveApplication(env, { kind: "gauss", name: "Ops Example", email: "ops@example.test", org: "Example Space Ltd", role: "Head of mission operations", plan: "pilot", message: "We fly ONNX models on two smallsats and want to know which outputs to trust after the May storm.", consent: true });
+
 await refresh();
 setInterval(refresh, 15 * 60_000).unref();
 
+const cookie = (req, name) => (req.headers.cookie ?? "").split(";").map((c) => c.trim().split("=")).find(([k]) => k === name)?.[1];
+const devLogin = (redirect) => `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Sign in (local) · Lightbound</title><link rel="stylesheet" href="/assets/site.css">
+<main class="vault wrap"><div class="narrow"><p class="k">LOCAL_PREVIEW · CLOUDFLARE_ACCESS</p><h1>Sign in</h1>
+<p class="muted">On lightbound.uk, Cloudflare Access shows its own sign-in page and emails a one-time code. Locally, pick who to be:</p>
+<p class="actions"><a class="btn" href="/__dev/login?as=${encodeURIComponent(admin)}&amp;redirect=${encodeURIComponent(redirect)}">Admin (${admin})</a>
+<a class="btn ghost" href="/__dev/login?as=pilot%40example.test&amp;redirect=${encodeURIComponent(redirect)}">Pilot customer</a>
+<a class="btn ghost" href="/__dev/login?as=visitor%40example.test&amp;redirect=${encodeURIComponent(redirect)}">Signed in, no plan</a></p></div></main>`;
+
 createServer(async (req, res) => {
   try {
-    const url = `http://${req.headers.host ?? `127.0.0.1:${port}`}${req.url}`;
-    const request = new Request(url, { method: req.method, headers: req.headers });
-    const { pathname } = new URL(url);
-    const response = patterns.some((rx) => rx.test(pathname)) ? await worker.fetch(request, env, ctx) : await ASSETS.fetch(request);
+    const url = new URL(`http://${req.headers.host ?? `127.0.0.1:${port}`}${req.url}`);
+    const send = (status, headers, body = "") => {
+      res.writeHead(status, headers);
+      res.end(body);
+    };
+    if (url.pathname === "/__dev/login") {
+      const as = url.searchParams.get("as");
+      const to = url.searchParams.get("redirect")?.startsWith("/") ? url.searchParams.get("redirect") : "/app/";
+      if (as && /^[^@\s]+@[^@\s]+$/.test(as)) return send(302, { location: to, "set-cookie": `dev_access=${encodeURIComponent(as)}; Path=/; HttpOnly; SameSite=Lax` });
+      return send(200, { "content-type": "text/html; charset=utf-8" }, devLogin(to));
+    }
+    if (url.pathname === "/cdn-cgi/access/logout") return send(302, { location: "/", "set-cookie": "dev_access=; Path=/; Max-Age=0" });
+
+    const headers = new Headers(Object.entries(req.headers).filter(([, v]) => typeof v === "string"));
+    if (url.pathname === "/app" || url.pathname.startsWith("/app/")) {
+      const who = cookie(req, "dev_access");
+      if (!who) return send(302, { location: `/__dev/login?redirect=${encodeURIComponent(url.pathname)}` });
+      headers.set("cf-access-jwt-assertion", await access.sign(decodeURIComponent(who)));
+    }
+    headers.set("cf-connecting-ip", req.socket.remoteAddress ?? "127.0.0.1");
+    const chunks = [];
+    for await (const c of req) chunks.push(c);
+    const body = ["GET", "HEAD"].includes(req.method) ? undefined : Buffer.concat(chunks);
+    const request = new Request(url, { method: req.method, headers, body });
+    const response = patterns.some((rx) => rx.test(url.pathname)) ? await worker.fetch(request, env, ctx) : await ASSETS.fetch(request);
     res.writeHead(response.status, Object.fromEntries(response.headers));
     res.end(Buffer.from(await response.arrayBuffer()));
-    console.log(response.status, req.method, req.url);
+    console.log(response.status, req.method, url.pathname);
   } catch (err) {
     console.error(err);
     res.writeHead(500).end("dev server error\n");
   }
-}).listen(port, "127.0.0.1", () => console.log(`lightbound.uk preview on http://127.0.0.1:${port}/${offline ? " (offline fixtures)" : ""}`));
+}).listen(port, "127.0.0.1", () => console.log(`lightbound.uk preview on http://127.0.0.1:${port}/${offline ? " (offline fixtures)" : ""}  ·  sign in: /app/`));
