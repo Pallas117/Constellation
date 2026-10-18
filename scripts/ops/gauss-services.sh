@@ -215,6 +215,18 @@ except Exception:
     print("no no learning run recorded yet (runs nightly at 03:00)")
 ' "$dir/ml/models/registry.json" 2>/dev/null || echo "no no learning run recorded yet")
   item "${learned%% *}" "${learned#* }"
+  # Memory service (gauss-brain, LaunchAgents from its scripts/memory-services.sh) and its local answer model.
+  local memory; memory=$({ curl -s -m 5 "${GAUSS_MEMORY_URL:-http://127.0.0.1:3002}/api/memory/status" || true; } | python3 -Ic '
+import json, sys
+try:
+    s = json.load(sys.stdin)
+    print(("ok" if s.get("ok") and s.get("documents", 0) > 0 else "no") + " memory service: %s documents, %s passages" % (s.get("documents", 0), s.get("chunks", 0)))
+except Exception:
+    print("no memory service not running (gauss-brain: scripts/memory-services.sh install)")
+')
+  item "${memory%% *}" "${memory#* }"
+  [ "$(code "${GAUSS_BRAIN_URL:-http://127.0.0.1:3032}/v1/models")" = 200 ] && ok=ok || ok=no
+  item $ok "answer model up (${GAUSS_BRAIN_URL:-http://127.0.0.1:3032})"
   [ $fail = 0 ] && echo "Ready to demo." || echo "Not ready: fix the ✗ items above."
   return $fail
 }
