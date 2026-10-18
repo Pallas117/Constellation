@@ -1,0 +1,22 @@
+// lightbound.uk: one Cloudflare Worker with static assets. Deploy: see website/README.md.
+{
+  "name": "lightbound-site",
+  "main": "worker/index.js",
+  "compatibility_date": "2026-09-01",
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS",
+    "html_handling": "auto-trailing-slash",
+    "not_found_handling": "404-page",
+    // Everything else is a static file: free, and never runs the Worker.
+    "run_worker_first": ["/", "/constellation/", "/api/*"]
+  },
+  // Refresh launches and space weather into KV. Free plan: 5 cron triggers per account.
+  "triggers": { "crons": ["*/15 * * * *"] },
+  // Create once with `npx wrangler@4 kv namespace create LIVE` and paste the id here (it is not a secret).
+  "kv_namespaces": [{ "binding": "LIVE", "id": "REPLACE_WITH_KV_NAMESPACE_ID" }],
+  "observability": { "enabled": true }
+  // When the workers.dev preview looks right, uncomment to serve lightbound.uk (adds proxied A/AAAA
+  // records only; the Google Workspace MX records are not touched):
+  // ,"routes": [{ "pattern": "lightbound.uk", "custom_domain": true }]
+}

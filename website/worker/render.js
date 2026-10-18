@@ -1,0 +1,178 @@
+// Server-side HTML for the live sections, plus the launch calendar (.ics). Everything is escaped;
+// the pages stay script-free. Times are always UTC, and every view says how old its data is.
+import { feedState } from "./feeds.js";
+
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+const MINUS = "\u2212";
+const PRECISE = new Set(["SEC", "MIN", "HR"]);
+const L1_KM = 1.5e6; // Sun-Earth L1, about 1.5 million km upstream of Earth
+const SCALE_NAMES = { G: "geomagnetic storm", S: "solar radiation storm", R: "radio blackout" };
+
+export const esc = (v) =>
+  String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+
+const pad = (n) => String(n).padStart(2, "0");
+const hhmm = (d) => `${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}`;
+const dayMon = (d) => `${d.getUTCDate()} ${MONTHS[d.getUTCMonth()]}`;
+
+export function whenText(netIso, precision) {
+  const d = new Date(netIso);
+  if (PRECISE.has(precision)) return `${dayMon(d)}, ${precision === "HR" ? "~" : ""}${hhmm(d)} UTC`;
+  if (precision === "DAY") return `${dayMon(d)} (time TBC)`;
+  return `${MONTHS[d.getUTCMonth()]} ${d.getUTCFullYear()} (date TBC)`;
+}
+
+export function countdown(netIso, precision, now) {
+  const ms = Date.parse(netIso) - now;
+  if (!PRECISE.has(precision)) {
+    if (precision !== "DAY") return `NET ${MONTHS[new Date(netIso).getUTCMonth()]}`;
+    const day = (t) => Math.floor(t / 86_400_000); // calendar days, UTC
+    const days = Math.max(0, day(Date.parse(netIso)) - day(now));
+    return days === 0 ? "Today" : `In ${days} d`;
+  }
+  if (ms <= 0) return "Due now";
+  const m = Math.floor(ms / 60_000);
+  const d = Math.floor(m / 1440);
+  const h = Math.floor((m % 1440) / 60);
+  return d > 0 ? `T${MINUS}${d} d ${h} h` : `T${MINUS}${h} h ${m % 60} min`;
+}
+
+const signed = (v) => (v > 0 ? `+${v}` : v < 0 ? `${MINUS}${Math.abs(v)}` : "0");
+const at = (iso) => (iso ? `${dayMon(new Date(iso))} ${hhmm(new Date(iso))} UTC` : "never");
+
+export function chip({ state, fetchedAt }) {
+  if (state === "offline") return '<span class="chip">Offline</span>';
+  const t = fetchedAt ? new Date(fetchedAt) : null;
+  if (state === "stale") return `<span class="chip stale">Stale · as of ${esc(t ? at(fetchedAt) : "unknown")}</span>`;
+  return `<span class="chip live">Live · ${esc(t ? hhmm(t) : "")} UTC</span>`;
+}
+
+const head = (label, id, title, status) =>
+  `<div class="section-head"><div><p class="label">${esc(label)}</p><h2 id="${esc(id)}">${esc(title)}</h2></div>${chip(status)}</div>`;
+
+const title = (l) => (l.vehicle && l.mission ? `${l.vehicle} · ${l.mission}` : l.name || l.vehicle);
+const where = (l) => [l.provider, l.location].filter(Boolean).join(" · ");
+const upcoming = (items, now) => (items ?? []).filter((l) => Date.parse(l.windowEnd ?? l.net) >= now - 3_600_000);
+
+function levelClass(n) {
+  return n >= 3 ? "lvl-3" : n >= 1 ? "lvl-1" : "";
+}
+
+export function weatherSummary(w) {
+  const active = ["G", "S", "R"].filter((k) => w?.[k]?.level > 0);
+  if (!active.length) return "Quiet: no geomagnetic storm, solar radiation storm or radio blackout in progress.";
+  return `In progress: ${active.map((k) => `${k}${w[k].level} ${w[k].text ?? ""} ${SCALE_NAMES[k]}`.replace(/\s+/g, " ")).join(", ")}.`;
+}
+
+const scaleText = (w) =>
+  ["G", "S", "R"].map((k) => (levelClass(w[k].level) ? `<span class="${levelClass(w[k].level)}">` : "<span>") + `${k}${w[k].level ?? "?"}</span>`).join(" · ");
+
+function windLine(w) {
+  const parts = [];
+  if (w.kp) parts.push(`Kp ${w.kp.value.toFixed(1)}`);
+  if (w.wind?.speed !== null && w.wind?.speed !== undefined) parts.push(`solar wind ${Math.round(w.wind.speed)} km/s`);
+  if (w.wind?.bz !== null && w.wind?.bz !== undefined) parts.push(`Bz ${signed(w.wind.bz)} nT`);
+  return parts.join(" · ");
+}
+
+// Landing page: each door shows its product working instead of describing it. The doors are links,
+// so these readouts contain no links; empty string = nothing to show (the door still works).
+function readout(label, big, line, s) {
+  const asOf = s.state === "stale" ? `<span class="as-of">as of ${esc(at(s.fetchedAt))}</span>` : "";
+  return `<span class="door-now"><span class="label">${esc(label)}</span><span class="door-big">${big}</span><span class="door-line">${esc(line)}</span>${asOf}</span>`;
+}
+
+export function renderGaussDoor(rec, now = Date.now()) {
+  const w = rec?.data;
+  return w ? readout("Space weather now", scaleText(w), windLine(w), feedState("weather", rec, now)) : "";
+}
+
+export function renderConstellationDoor(rec, now = Date.now()) {
+  const next = upcoming(rec?.data, now)[0];
+  return next ? readout("Next launch", esc(countdown(next.net, next.precision, now)), title(next), feedState("launches", rec, now)) : "";
+}
+
+/** Constellation page: the launch schedule. */
+export function renderLaunches(rec, now = Date.now()) {
+  const s = feedState("launches", rec, now);
+  const items = upcoming(rec?.data, now).slice(0, 10);
+  const top = head("01_LAUNCHES", "launches-h", "Upcoming launches, worldwide.", s);
+  if (!items.length) return `${top}<p class="muted">Launch data is unavailable right now. It refreshes automatically.</p>`;
+  const rows = items
+    .map((l) => {
+      const tags = [
+        l.orbit && l.orbit !== "N/A" ? `<span class="tag">${esc(l.orbit)}</span>` : "",
+        l.status ? `<span class="tag${l.status === "Go" ? " go" : l.status === "Hold" ? " hold" : ""}" title="${esc(l.statusName)}">${esc(l.status)}</span>` : "",
+      ].join("");
+      return (
+        `<li class="launch"><div class="when"><b>${esc(countdown(l.net, l.precision, now))}</b><time datetime="${esc(l.net)}">${esc(whenText(l.net, l.precision))}</time></div>` +
+        `<div class="what"><b>${esc(title(l))}</b><span>${esc(where(l))}</span></div><div class="tags">${tags}</div></li>`
+      );
+    })
+    .join("");
+  return `${top}<ol class="launches">${rows}</ol><p class="src">Source: The Space Devs Launch Library 2 · updated ${esc(at(s.fetchedAt))} · every orbital launch attempt worldwide, times UTC.</p>`;
+}
+
+/** Constellation page: space weather in detail. */
+export function renderWeather(rec, now = Date.now()) {
+  const s = feedState("weather", rec, now);
+  const w = rec?.data;
+  const top = head("02_SPACE_WEATHER", "weather-h", "Space weather now.", s);
+  if (!w) return `${top}<p class="muted">Space-weather data is unavailable right now. It refreshes automatically.</p>`;
+  const scale = (k, name) =>
+    `<article class="tile"><h3 class="label">${esc(name)}</h3><p class="${`big ${levelClass(w[k].level)}`.trim()}">${k}${w[k].level ?? "?"}</p><p class="m">${esc(w[k].text ?? "unknown")}</p></article>`;
+  const kp = w.kp
+    ? `<article class="tile"><h3 class="label">Planetary Kp index</h3><p class="big">${esc(w.kp.value.toFixed(1))}</p><p class="m">3-hour interval from ${esc(hhmm(new Date(w.kp.at)))} UTC. Kp 5 or more is a geomagnetic storm.</p></article>`
+    : "";
+  const speed = w.wind?.speed;
+  const travel = speed > 0 ? ` · at this speed it reaches Earth in about ${Math.round(L1_KM / speed / 60)} min` : "";
+  const wind = w.wind
+    ? `<article class="tile"><h3 class="label">Solar wind at L1</h3><p class="big">${speed !== null ? `${esc(Math.round(speed))} km/s` : "n/a"}</p>` +
+      `<p class="m">${w.wind.bz !== null ? `Bz ${esc(signed(w.wind.bz))} nT` : ""}${w.wind.bt !== null ? `, Bt ${esc(w.wind.bt)} nT` : ""}${esc(travel)}</p></article>`
+    : "";
+  return (
+    `${top}<p class="lead">${esc(weatherSummary(w))}</p><div class="scales">${scale("G", "Geomagnetic storms")}${scale("S", "Solar radiation storms")}${scale("R", "Radio blackouts")}</div>` +
+    `<div class="tiles">${kp}${wind}</div>` +
+    `<p class="src">Source: NOAA Space Weather Prediction Center · scales as of ${esc(at(w.at))} · updated ${esc(at(s.fetchedAt))} · G, S and R are NOAA's storm scales, from 0 (none) to 5 (extreme).</p>`
+  );
+}
+
+// ---- Calendar feed (RFC 5545) ----
+const icsEsc = (v) => String(v ?? "").replace(/\\/g, "\\\\").replace(/;/g, "\\;").replace(/,/g, "\\,").replace(/\r?\n/g, "\\n");
+const icsTime = (iso) => iso.replace(/[-:]/g, "").replace(/\.\d{3}/, "");
+const icsDate = (iso) => iso.slice(0, 10).replace(/-/g, "");
+function fold(line) {
+  // Lines longer than 75 octets are folded with CRLF + space (RFC 5545 3.1).
+  const bytes = new TextEncoder().encode(line);
+  if (bytes.length <= 75) return line;
+  const out = [];
+  let cur = "";
+  for (const ch of line) {
+    if (new TextEncoder().encode(cur + ch).length > (out.length ? 74 : 75)) {
+      out.push(cur);
+      cur = ch;
+    } else cur += ch;
+  }
+  out.push(cur);
+  return out.join("\r\n ");
+}
+
+export function renderIcs(rec, now = Date.now()) {
+  const stamp = icsTime(new Date(rec?.fetchedAt ? Date.parse(rec.fetchedAt) : now).toISOString());
+  const lines = ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//Lightbound//Constellation launches//EN", "CALSCALE:GREGORIAN", "METHOD:PUBLISH",
+    "X-WR-CALNAME:Constellation · upcoming launches", "X-PUBLISHED-TTL:PT1H", "REFRESH-INTERVAL;VALUE=DURATION:PT1H"];
+  for (const l of upcoming(rec?.data, now)) {
+    if (!PRECISE.has(l.precision) && l.precision !== "DAY") continue; // no date yet: nothing to put in a calendar
+    const timed = PRECISE.has(l.precision);
+    const start = new Date(l.net);
+    const end = timed ? new Date(Math.max(Date.parse(l.windowEnd ?? l.net), start.getTime() + 30 * 60_000)) : null;
+    lines.push("BEGIN:VEVENT", `UID:${l.id}@lightbound.uk`, `DTSTAMP:${stamp}`,
+      timed ? `DTSTART:${icsTime(start.toISOString())}` : `DTSTART;VALUE=DATE:${icsDate(l.net)}`,
+      timed ? `DTEND:${icsTime(end.toISOString())}` : `DTEND;VALUE=DATE:${icsDate(new Date(start.getTime() + 86_400_000).toISOString())}`,
+      `SUMMARY:${icsEsc(title(l))}`, `LOCATION:${icsEsc(l.location)}`,
+      `DESCRIPTION:${icsEsc(`${l.provider}\nStatus: ${l.statusName || l.status}\nTime precision: ${l.precision}\nSource: The Space Devs Launch Library 2 via lightbound.uk/constellation`)}`,
+      "END:VEVENT");
+  }
+  lines.push("END:VCALENDAR");
+  return `${lines.map(fold).join("\r\n")}\r\n`;
+}

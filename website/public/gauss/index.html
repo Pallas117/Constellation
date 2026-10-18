@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; img-src 'self'; media-src 'self'; font-src 'self'; base-uri 'none'; form-action 'none'">
+<meta name="referrer" content="strict-origin-when-cross-origin">
+<title>Gauss by Lightbound · radiation-aware mission-data assurance</title>
+<meta name="description" content="Gauss replays satellite telemetry and onboard-AI logs against real space-weather conditions, so ground teams can see which data and model outputs to trust, with the evidence attached.">
+<link rel="canonical" href="https://lightbound.uk/gauss/">
+<link rel="preload" href="/assets/fonts/plex-sans-600.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/assets/site.css">
+<link rel="icon" href="/favicon.ico" sizes="any">
+<link rel="icon" href="/assets/lightbound-favicon-32.png" type="image/png">
+<link rel="apple-touch-icon" href="/assets/apple-touch-icon.png">
+</head>
+<body class="page">
+<a class="skip" href="#main">Skip to content</a>
+<header class="top wrap">
+  <a class="brand" href="/" aria-label="Lightbound, home"><picture><source media="(max-width: 560px)" srcset="/assets/marks/lightbound-mark-colour-dark.svg"><img src="/assets/marks/lightbound-horizontal-colour-dark.svg" alt="Lightbound" width="128" height="40"></picture></a>
+  <nav aria-label="Main">
+    <a href="/gauss/" aria-current="page">Gauss</a>
+    <a href="/constellation/">Constellation</a>
+    <a href="/turnstone/">Turnstone</a>
+    <a href="#contact" class="opt">Contact</a>
+  </nav>
+</header>
+
+<main id="main">
+<section class="hero-gauss page-hero" aria-labelledby="hero-h">
+  <div class="wrap">
+    <img class="lockup" src="/assets/marks/gauss-aurora-horizontal-colour-dark.svg" alt="Gauss Aurora" width="361" height="100">
+    <p class="k">01_GAUSS · Ground-first mission-data assurance</p>
+    <h1 id="hero-h">Know which satellite data and onboard-AI outputs you can trust.</h1>
+    <p class="lead">Radiation and space weather can silently corrupt telemetry and AI results in orbit. A corrupted output looks the same as a good one. Gauss replays your telemetry and inference logs against the space environment they were produced in, and shows your ground team what held up, what didn't, and what is unknown.</p>
+    <p class="who"><strong>Built for</strong> onboard-AI and orbital-compute teams, and satellite operations teams who need evidence, not dashboards.</p>
+    <p class="actions"><a class="btn" href="#contact">Book a 30-day replay pilot</a> <a class="btn ghost" href="#how">How it works</a></p>
+  </div>
+</section>
+
+<section id="how" aria-labelledby="how-h">
+  <div class="wrap">
+    <p class="k">02_HOW_IT_WORKS</p>
+    <h2 id="how-h">How a replay pilot works</h2>
+    <p class="lead">Fleet Integration v0.1 runs on the ground, on your own logs. Nothing is installed on a spacecraft.</p>
+    <ol class="steps">
+      <li><h3>Bring your logs</h3><p>Telemetry (CCSDS/XTCE-shaped packets or Yamcs exports) and onboard inference logs, shared under a data-sharing agreement.</p></li>
+      <li><h3>Correlate with the space environment</h3><p>Each record is lined up with the space-weather conditions at the time: radiation and geomagnetic activity from public NOAA and NASA HAPI services.</p></li>
+      <li><h3>Score quality and provenance</h3><p>Every value carries its source and age. Bounded inference with a deterministic fallback flags outputs taken under stress. Missing or stale inputs stay <em>unknown</em>, never "nominal".</p></li>
+      <li><h3>Get the evidence</h3><p>A report your engineers and assurance reviewers can check, with success metrics agreed before the pilot starts.</p></li>
+    </ol>
+    <p class="note">Status: a working software prototype ingests live NOAA and NASA HAPI space-weather data today. Ingest of your own logs and the evidence export are being built for the first pilots.</p>
+  </div>
+</section>
+
+<section id="pilot" aria-labelledby="pilot-h">
+  <div class="wrap">
+    <p class="k">03_PILOT</p>
+    <h2 id="pilot-h">The 30-day replay pilot</h2>
+    <ul class="facts">
+      <li><strong>Scope</strong> Your historical telemetry and inference logs, replayed against the conditions they were recorded in.</li>
+      <li><strong>Success metrics</strong> Agreed in writing before day one.</li>
+      <li><strong>Output</strong> An evidence report and a review session with your team.</li>
+      <li><strong>Terms</strong> Paid pilot, priced per scope. Ask us for a statement of work.</li>
+    </ul>
+  </div>
+</section>
+
+<section id="claims" aria-labelledby="claims-h">
+  <div class="wrap">
+    <p class="k">04_CLAIMS</p>
+    <h2 id="claims-h">What we claim, and what we don't</h2>
+    <div class="two">
+      <div>
+        <h3>We will show you</h3>
+        <ul class="ticks">
+          <li>Which records were produced under elevated radiation or geomagnetic stress</li>
+          <li>Where data quality or provenance is missing, with "unknown" said plainly</li>
+          <li>Simulation results labelled as simulation</li>
+        </ul>
+      </div>
+      <div>
+        <h3>We don't claim</h3>
+        <ul class="crosses">
+          <li>Flight readiness or space qualification</li>
+          <li>Radiation dose or hardware damage figures</li>
+          <li>Any ability to command a spacecraft: Gauss is advisory only</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="roadmap" aria-labelledby="roadmap-h">
+  <div class="wrap">
+    <p class="k">05_ROADMAP</p>
+    <h2 id="roadmap-h">One product, delivered in gated stages</h2>
+    <ol class="stages">
+      <li class="now"><span class="label">Now</span><h3>Fleet Integration</h3><p>Ground-side replay, quality and provenance, radiation correlation, bounded inference and operator evidence.</p></li>
+      <li><span class="label">Gated</span><h3>Flight Candidate Adapter</h3><p>Only with a named mission, target processor, mission dictionary, hardware evidence and operator authority.</p></li>
+      <li><span class="label">Gated</span><h3>Federated Bridge Node</h3><p>A hosted-payload or in-orbit demonstration option, considered only after the stages before it.</p></li>
+    </ol>
+  </div>
+</section>
+
+<section id="fit" aria-labelledby="fit-h">
+  <div class="wrap">
+    <p class="k">06_FIT</p>
+    <h2 id="fit-h">Where Gauss fits</h2>
+    <p class="lead">We integrate at standard boundaries. We don't replace your mission control.</p>
+    <ul class="facts">
+      <li><strong>CCSDS and XTCE</strong> Packet identity and telemetry definitions, as your ground segment already uses them.</li>
+      <li><strong>Yamcs</strong> Replay from mission-control archives.</li>
+      <li><strong>ONNX</strong> Model portability across processors, for teams whose models run in orbit.</li>
+    </ul>
+    <p class="note">Design-partner paths: we are working towards validation pilots with <strong>JAOPS</strong> and <strong>xOrbita</strong>.</p>
+    <p class="logos"><img src="/assets/partners/xorbita.png" alt="xOrbita" width="122" height="40"></p>
+  </div>
+</section>
+
+<section id="team" aria-labelledby="team-h">
+  <div class="wrap">
+    <p class="k">07_TEAM</p>
+    <h2 id="team-h">Team</h2>
+    <ul class="people">
+      <li><strong>Joshua Nathan</strong> CEO. Aerospace engineering (University of Sheffield), venture leadership.</li>
+      <li><strong>Shubham Hule</strong> CTO. Space-systems engineering (MSc, University of Southampton); lead systems engineer on a commercial LEO satellite; ISO TC 20/SC 14 member.</li>
+      <li><strong>Merve Nur Yaşar</strong> Chief Strategist. PhD researcher in astropolitics; space policy and regulation.</li>
+      <li><strong>Ashwin Kumar</strong> Applied AI and multi-agent systems; edge compute.</li>
+      <li><strong>Aatish Patel</strong> AI systems and revenue operations.</li>
+    </ul>
+  </div>
+</section>
+
+<section id="contact" class="tight" aria-labelledby="contact-h">
+  <div class="wrap">
+    <p class="k">08_CONTACT</p>
+    <h2 id="contact-h">Talk to us</h2>
+    <p class="lead">Tell us about your mission and the logs you have. We'll reply with whether a replay pilot fits and what it would cover. The Gauss app opens to pilot teams first.</p>
+    <p class="actions"><a class="btn" href="mailto:jzwnathan@lightbound.uk?subject=Gauss%20replay%20pilot">Email Joshua Nathan</a> <a class="btn ghost" href="mailto:jzwnathan@lightbound.uk?subject=Gauss%20app%20access">Request app access</a></p>
+  </div>
+</section>
+</main>
+
+<footer class="wrap">
+  <div class="cols">
+    <div>
+      <p>Lightbound Limited · registered in England and Wales, company no. 14573199 · 30A Commercial Street, Harrogate, HG1 1AX</p>
+      <p>Space-weather data: NOAA Space Weather Prediction Center and NASA HAPI services. Gauss is advisory software and does not command spacecraft.</p>
+    </div>
+    <nav aria-label="Footer"><a href="/gauss/">Gauss</a><a href="/constellation/">Constellation</a><a href="/turnstone/">Turnstone</a><a href="mailto:jzwnathan@lightbound.uk">Contact</a></nav>
+  </div>
+</footer>
+</body>
+</html>

@@ -50,7 +50,9 @@
     "test:all": "npm test && npm run test:ui",
     "perf:check": "npm run build && du -sh frontend/dist",
     "release:prepare": "npm run quality:full && npm run security:full && npm test",
-    "test:website": "node --test website/site.test.mjs"
+    "test:website": "node --test website/test/site.test.mjs website/test/worker.test.mjs",
+    "site:dev": "node website/dev.mjs",
+    "site:dev:offline": "node website/dev.mjs --offline"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",
