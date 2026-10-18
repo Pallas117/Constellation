@@ -132,8 +132,39 @@ test("every link and resource resolves", () => {
 });
 
 test("live sections have their markers, with a working static fallback", () => {
-  for (const m of ["gauss-door", "constellation-door"]) assert.match(html["/"], new RegExp(`<!--live:${m}-->[\\s\\S]*?<!--/live:${m}-->`));
-  for (const m of ["launches", "weather"]) assert.match(html["/constellation/"], new RegExp(`<!--live:${m}-->[\\s\\S]+?<!--/live:${m}-->`));
+  const has = (route, m) => assert.match(html[route], new RegExp(`<!--live:${m}-->[\\s\\S]*?<!--/live:${m}-->`), `${route} ${m}`);
+  for (const m of ["gauss-door", "constellation-door"]) has("/", m);
+  for (const m of ["launches", "weather", "gauss-door"]) has("/constellation/", m);
+  has("/gauss/", "constellation-door");
+});
+
+// ---- Flow ----
+test("flow: no dead ends; each product page ends with the other doors, Turnstone leads home", () => {
+  const doors = (p) => [...p.matchAll(/<a class="door" href="([^"]+)"/g)].map((m) => m[1]);
+  assert.deepEqual(doors(html["/"]), ["/gauss/", "/constellation/", "/turnstone/"]);
+  assert.deepEqual(doors(html["/gauss/"]), ["/constellation/", "/turnstone/"]);
+  assert.deepEqual(doors(html["/constellation/"]), ["/gauss/", "/turnstone/"]);
+  assert.match(html["/turnstone/"], /<a class="btn ghost" href="\/">Back to Lightbound<\/a>/);
+});
+
+test("flow: each door's mark carries into its page (view transitions), names unique per page", () => {
+  for (const [route, page] of Object.entries(html)) {
+    const names = [...page.matchAll(/class="[^"]*\bvt-([a-z]+)\b/g)].map((m) => m[1]);
+    assert.equal(new Set(names).size, names.length, `${route}: duplicate view-transition name ${names}`);
+  }
+  assert.match(html["/gauss/"], /class="lockup vt-gauss"/);
+  assert.match(html["/constellation/"], /class="lockup vt-constellation"/);
+  assert.match(html["/turnstone/"], /class="mark vt-turnstone"/);
+  const css = read("assets/site.css");
+  assert.match(css, /@media \(prefers-reduced-motion:no-preference\)\{\s*@view-transition\{navigation:auto\}/, "transitions only without reduced motion");
+  for (const n of ["gauss", "constellation", "turnstone"]) assert.match(css, new RegExp(`\\.vt-${n}\\{view-transition-name:mark-${n}\\}`));
+});
+
+test("flow: the header sticks on every page; anchors land below it", () => {
+  for (const [route, page] of Object.entries(html)) assert.match(page, /<header class="top( over)?">\n  <div class="wrap bar">/, route);
+  const css = read("assets/site.css");
+  assert.match(css, /\.top\{position:sticky;top:0/);
+  assert.match(css, /scroll-padding-top:76px/);
 });
 
 // ---- Budgets: beat a heavy reference site on weight, on an 8 GB laptop or a phone on a hotspot ----

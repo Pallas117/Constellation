@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; img-src 'self'; media-src 'self'; font-src 'self'; base-uri 'none'; form-action 'none'">
+<meta name="theme-color" content="#050505">
 <meta name="referrer" content="strict-origin-when-cross-origin">
 <title>Gauss by Lightbound · radiation-aware mission-data assurance</title>
 <meta name="description" content="Gauss replays satellite telemetry and onboard-AI logs against real space-weather conditions, so ground teams can see which data and model outputs to trust, with the evidence attached.">
@@ -16,7 +17,8 @@
 </head>
 <body class="page">
 <a class="skip" href="#main">Skip to content</a>
-<header class="top wrap">
+<header class="top">
+  <div class="wrap bar">
   <a class="brand" href="/" aria-label="Lightbound, home"><picture><source media="(max-width: 560px)" srcset="/assets/marks/lightbound-mark-colour-dark.svg"><img src="/assets/marks/lightbound-horizontal-colour-dark.svg" alt="Lightbound" width="128" height="40"></picture></a>
   <nav aria-label="Main">
     <a href="/gauss/" aria-current="page">Gauss</a>
@@ -24,12 +26,13 @@
     <a href="/turnstone/">Turnstone</a>
     <a href="#contact" class="opt">Contact</a>
   </nav>
+  </div>
 </header>
 
 <main id="main">
 <section class="hero-gauss page-hero" aria-labelledby="hero-h">
   <div class="wrap">
-    <img class="lockup" src="/assets/marks/gauss-aurora-horizontal-colour-dark.svg" alt="Gauss Aurora" width="361" height="100">
+    <img class="lockup vt-gauss" src="/assets/marks/gauss-aurora-horizontal-colour-dark.svg" alt="Gauss Aurora" width="361" height="100">
     <p class="k">01_GAUSS · Ground-first mission-data assurance</p>
     <h1 id="hero-h">Know which satellite data and onboard-AI outputs you can trust.</h1>
     <p class="lead">Radiation and space weather can silently corrupt telemetry and AI results in orbit. A corrupted output looks the same as a good one. Gauss replays your telemetry and inference logs against the space environment they were produced in, and shows your ground team what held up, what didn't, and what is unknown.</p>
@@ -40,7 +43,7 @@
 
 <section id="how" aria-labelledby="how-h">
   <div class="wrap">
-    <p class="k">02_HOW_IT_WORKS</p>
+    <p class="k">01_HOW_IT_WORKS</p>
     <h2 id="how-h">How a replay pilot works</h2>
     <p class="lead">Fleet Integration v0.1 runs on the ground, on your own logs. Nothing is installed on a spacecraft.</p>
     <ol class="steps">
@@ -55,7 +58,7 @@
 
 <section id="pilot" aria-labelledby="pilot-h">
   <div class="wrap">
-    <p class="k">03_PILOT</p>
+    <p class="k">02_PILOT</p>
     <h2 id="pilot-h">The 30-day replay pilot</h2>
     <ul class="facts">
       <li><strong>Scope</strong> Your historical telemetry and inference logs, replayed against the conditions they were recorded in.</li>
@@ -68,7 +71,7 @@
 
 <section id="claims" aria-labelledby="claims-h">
   <div class="wrap">
-    <p class="k">04_CLAIMS</p>
+    <p class="k">03_CLAIMS</p>
     <h2 id="claims-h">What we claim, and what we don't</h2>
     <div class="two">
       <div>
@@ -93,7 +96,7 @@
 
 <section id="roadmap" aria-labelledby="roadmap-h">
   <div class="wrap">
-    <p class="k">05_ROADMAP</p>
+    <p class="k">04_ROADMAP</p>
     <h2 id="roadmap-h">One product, delivered in gated stages</h2>
     <ol class="stages">
       <li class="now"><span class="label">Now</span><h3>Fleet Integration</h3><p>Ground-side replay, quality and provenance, radiation correlation, bounded inference and operator evidence.</p></li>
@@ -105,7 +108,7 @@
 
 <section id="fit" aria-labelledby="fit-h">
   <div class="wrap">
-    <p class="k">06_FIT</p>
+    <p class="k">05_FIT</p>
     <h2 id="fit-h">Where Gauss fits</h2>
     <p class="lead">We integrate at standard boundaries. We don't replace your mission control.</p>
     <ul class="facts">
@@ -114,13 +117,13 @@
       <li><strong>ONNX</strong> Model portability across processors, for teams whose models run in orbit.</li>
     </ul>
     <p class="note">Design-partner paths: we are working towards validation pilots with <strong>JAOPS</strong> and <strong>xOrbita</strong>.</p>
-    <p class="logos"><img src="/assets/partners/xorbita.png" alt="xOrbita" width="122" height="40"></p>
+    <p class="logos"><img src="/assets/partners/xorbita.png" alt="xOrbita" width="122" height="40" loading="lazy" decoding="async"></p>
   </div>
 </section>
 
 <section id="team" aria-labelledby="team-h">
   <div class="wrap">
-    <p class="k">07_TEAM</p>
+    <p class="k">06_TEAM</p>
     <h2 id="team-h">Team</h2>
     <ul class="people">
       <li><strong>Joshua Nathan</strong> CEO. Aerospace engineering (University of Sheffield), venture leadership.</li>
@@ -134,10 +137,35 @@
 
 <section id="contact" class="tight" aria-labelledby="contact-h">
   <div class="wrap">
-    <p class="k">08_CONTACT</p>
+    <p class="k">07_CONTACT</p>
     <h2 id="contact-h">Talk to us</h2>
     <p class="lead">Tell us about your mission and the logs you have. We'll reply with whether a replay pilot fits and what it would cover. The Gauss app opens to pilot teams first.</p>
     <p class="actions"><a class="btn" href="mailto:jzwnathan@lightbound.uk?subject=Gauss%20replay%20pilot">Email Joshua Nathan</a> <a class="btn ghost" href="mailto:jzwnathan@lightbound.uk?subject=Gauss%20app%20access">Request app access</a></p>
+  </div>
+</section>
+
+<section class="tight" aria-labelledby="more-h">
+  <div class="wrap">
+    <p class="label">08_KEEP_GOING</p>
+    <h2 id="more-h">More from Lightbound.</h2>
+    <ul class="doors">
+      <li><a class="door" href="/constellation/">
+        <img class="mark vt-constellation" src="/assets/marks/constellation-mark-colour-dark.svg" alt="" width="72" height="72" loading="lazy" decoding="async">
+        <span class="label">02_CONSTELLATION</span>
+        <h3>Constellation</h3>
+        <p>The space community.</p>
+        <!--live:constellation-door--><!--/live:constellation-door-->
+        <span class="go">Visit Constellation</span>
+      </a></li>
+      <li><a class="door" href="/turnstone/">
+        <img class="mark vt-turnstone" src="/assets/marks/turnstone-mark-colour-dark.svg" alt="" width="72" height="72" loading="lazy" decoding="async">
+        <span class="label">03_TURNSTONE</span>
+        <h3>Turnstone</h3>
+        <span class="redact" aria-hidden="true"><span></span><span></span></span>
+        <p class="sr">Classified.</p>
+        <span class="go">Restricted</span>
+      </a></li>
+    </ul>
   </div>
 </section>
 </main>

@@ -170,6 +170,8 @@ test("routes: live pages are filled in and carry the security headers", async ()
   const page = await (await call("/constellation/")).text();
   assert.equal((page.match(/<li class="launch">/g) || []).length, 10);
   assert.match(page, /chip live">Live/);
+  assert.match(page, /Space weather now<\/span><span class="door-big">/, "Gauss door readout at the end of the page");
+  assert.match(await (await call("/gauss/")).text(), /Next launch<\/span><span class="door-big">T\u2212/, "Constellation door readout on /gauss/");
   assert.equal(await (await call("/", { method: "HEAD" })).text(), "");
 });
 

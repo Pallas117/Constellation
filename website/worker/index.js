@@ -1,7 +1,8 @@
 // lightbound.uk edge Worker. Static files are served by Cloudflare straight from public/ (free, no
 // Worker run). The Worker runs only for the routes in wrangler.jsonc "run_worker_first":
 //   /                 landing page: the Gauss door shows space weather now, Constellation the next launch
-//   /constellation/   launch schedule and space weather filled in
+//   /gauss/           the "keep going" Constellation door shows the next launch
+//   /constellation/   launch schedule, space weather, and the Gauss door's readout
 //   /api/*            launches.json, launches.ics, space-weather.json, health
 // and on the cron trigger, which refreshes the feeds into KV. Nothing here needs a secret.
 import { FEEDS, feedState, readFeed, refreshFeeds } from "./feeds.js";
@@ -10,7 +11,12 @@ import { withSecurity } from "./headers.js";
 
 const LIVE_PAGES = {
   "/": { "gauss-door": (f, t) => renderGaussDoor(f.weather, t), "constellation-door": (f, t) => renderConstellationDoor(f.launches, t) },
-  "/constellation/": { launches: (f, t) => renderLaunches(f.launches, t), weather: (f, t) => renderWeather(f.weather, t) },
+  "/gauss/": { "constellation-door": (f, t) => renderConstellationDoor(f.launches, t) },
+  "/constellation/": {
+    launches: (f, t) => renderLaunches(f.launches, t),
+    weather: (f, t) => renderWeather(f.weather, t),
+    "gauss-door": (f, t) => renderGaussDoor(f.weather, t),
+  },
 };
 const ATTRIBUTION = {
   launches: "Data: The Space Devs Launch Library 2 (thespacedevs.com)",

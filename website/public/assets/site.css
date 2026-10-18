@@ -7,7 +7,8 @@
 :root{--black:#050505;--panel:#0D1010;--char:#252A2A;--warm:#F3F0E8;--muted:#87938E;--lime:#CCFF00;--amber:#E7B14A;--sun:#C2552A;
   --sans:"IBM Plex Sans",Arial,sans-serif;--mono:"JetBrains Mono","Courier New",monospace;--radius:10px;color-scheme:dark}
 *,*::before,*::after{box-sizing:border-box}
-html{-webkit-text-size-adjust:100%;scroll-behavior:smooth}
+html{-webkit-text-size-adjust:100%;scroll-behavior:smooth;scroll-padding-top:76px}
+::selection{background:var(--lime);color:var(--black)}
 body{margin:0;background:var(--black);color:var(--warm);font:400 16px/1.55 var(--sans);font-feature-settings:"tnum"}
 img,video{display:block;max-width:100%}
 a{color:var(--warm);text-underline-offset:3px;text-decoration-thickness:1px}
@@ -28,9 +29,17 @@ p{margin:0 0 1em}
 .sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
 
 /* Header: logo left, four doors right. Over the film on the landing page. */
-.top{display:flex;align-items:center;justify-content:space-between;gap:16px;padding-block:20px;position:relative;z-index:2}
-.top.over{position:absolute;inset:0 0 auto 0}
-.page .top{border-bottom:1px solid var(--char)}
+/* Header: sticks on every page so the doors are always one tap away. On the landing page it starts
+   clear over the film and turns solid as you scroll (CSS scroll timeline; older browsers keep it
+   in place at the top instead). */
+.top{position:sticky;top:0;z-index:5;background:rgba(5,5,5,.88);-webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px);
+  border-bottom:1px solid var(--char);view-transition-name:site-header}
+.bar{display:flex;align-items:center;justify-content:space-between;gap:16px;padding-block:12px}
+.top.over{position:absolute;inset:0 0 auto 0;background:transparent;border-bottom-color:transparent;-webkit-backdrop-filter:none;backdrop-filter:none}
+@supports (animation-timeline:scroll()){
+  .top.over{position:fixed;animation:solidify linear both;animation-timeline:scroll(root);animation-range:0 40vh}
+  @keyframes solidify{to{background:rgba(5,5,5,.88);border-bottom-color:var(--char);-webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px)}}
+}
 .brand{display:block;padding:4px 0}
 .brand img{height:40px;width:auto}
 .top nav{display:flex;gap:clamp(12px,2.4vw,28px);font-size:15px}
@@ -43,6 +52,7 @@ p{margin:0 0 1em}
 .btn{display:inline-flex;align-items:center;gap:8px;min-height:46px;padding:0 20px;border-radius:999px;background:var(--warm);color:var(--black);
   font-weight:600;text-decoration:none;border:1px solid var(--warm)}
 .btn:hover{background:#fff;color:var(--black)}
+.btn:active{transform:translateY(1px)}
 .btn.ghost{background:transparent;color:var(--warm);border-color:rgba(243,240,232,.45)}
 .btn.ghost:hover{border-color:var(--warm);color:#fff}
 
@@ -83,7 +93,9 @@ section.tight{padding-block:48px}
 .door h3{font-size:24px}
 .door p{color:var(--muted);margin:0}
 .door .go{margin-top:12px;font-weight:600}
-.door .go::after{content:" \2192"}
+.door .go::after{content:"\2192";display:inline-block;margin-left:6px;transition:transform .2s}
+.door:hover .go::after,.door:focus-visible .go::after{transform:translateX(4px)}
+.door:active{transform:scale(.99)}
 .door-now{display:grid;gap:4px;margin-top:10px;padding-top:14px;border-top:1px solid var(--char)}
 .door-big{font-size:26px;font-weight:600;line-height:1.15;color:var(--warm)}
 .door-line{color:var(--muted);font-size:15px}
@@ -170,9 +182,27 @@ footer nav{display:flex;flex-wrap:wrap;gap:8px 20px}
 footer nav a{color:var(--muted)}
 footer p{margin:0 0 6px}
 
+/* Page-to-page continuity: a door's mark flies into the page it opens (native view transitions,
+   no script; browsers without them just load the page). */
+@media (prefers-reduced-motion:no-preference){
+  @view-transition{navigation:auto}
+  ::view-transition-group(*){animation-duration:.45s;animation-timing-function:cubic-bezier(.2,.7,.2,1)}
+}
+::view-transition-old(*),::view-transition-new(*){height:100%;object-fit:contain}
+.vt-gauss{view-transition-name:mark-gauss}
+.vt-constellation{view-transition-name:mark-constellation}
+.vt-turnstone{view-transition-name:mark-turnstone}
+
 @media (max-width:560px){
+  .brand img{height:32px}
+  /* Compact doors: mark left, words right, so all three fit in about one screen. */
+  .door{gap:6px;padding:18px 18px 18px 94px}
+  .door .mark{position:absolute;left:18px;top:20px;width:60px;height:auto;margin:0}
+  .door h3{font-size:21px}
+  .door .go{margin-top:6px}
+  .door-big{font-size:22px}
   .top nav{font-size:14px;gap:14px}
   .top nav .opt{display:none}
-    .hero-copy{padding-bottom:28px}
+  .hero-copy{padding-bottom:28px}
   .btn{flex:1 1 auto;justify-content:center}
 }

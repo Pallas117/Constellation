@@ -74,14 +74,15 @@ export function normaliseWeather({ scales, kp, wind, mag }) {
   return out;
 }
 
-async function fetchJson(url, fetchImpl) {
-  const res = await fetchImpl(url, { headers: { accept: "application/json", "user-agent": UA }, signal: AbortSignal.timeout(10_000) });
+async function fetchJson(url, fetchImpl, timeoutMs = 10_000) {
+  const res = await fetchImpl(url, { headers: { accept: "application/json", "user-agent": UA }, signal: AbortSignal.timeout(timeoutMs) });
   if (!res.ok) throw new Error(`${new URL(url).host} HTTP ${res.status}`);
   return res.json();
 }
 
 const LOADERS = {
-  launches: async (f) => normaliseLaunches(await fetchJson(SOURCES.launches, f)),
+  // LL2's full-detail query can take ~20 s (measured 18 s on 2026-10-18); the cron can afford to wait.
+  launches: async (f) => normaliseLaunches(await fetchJson(SOURCES.launches, f, 30_000)),
   weather: async (f) => {
     // The storm scales are required; Kp and solar wind are extras that may be missing.
     const [scales, kp, wind, mag] = await Promise.allSettled(["scales", "kp", "wind", "mag"].map((k) => fetchJson(SOURCES[k], f)));

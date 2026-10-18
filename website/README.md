@@ -7,10 +7,17 @@ JavaScript, no third-party requests, and no secrets.
 | Page | What it is |
 |---|---|
 | `/` | Hero: the brand kit's ray-traced black-hole film. Doors show live data: Gauss shows space weather now, Constellation shows the next launch, Turnstone is classified. |
-| `/gauss/` | The GAU-12 evidence-first Gauss page (replay pilot, claims and boundaries). |
-| `/constellation/` | The community: next 10 launches worldwide, space weather now, a calendar feed, intel rules, and how to join. |
+| `/gauss/` | The GAU-12 evidence-first Gauss page (replay pilot, claims and boundaries). Ends with the other doors (Constellation shows the next launch). |
+| `/constellation/` | The community: next 10 launches worldwide, space weather now, a calendar feed, intel rules, and how to join. Ends with the other doors. |
 | `/turnstone/` | Mark and "Classified." only (secret project; `noindex`). |
 | `/api/launches`, `/api/launches.ics`, `/api/space-weather`, `/api/health` | JSON, a calendar feed and a health check. |
+
+Flow, all in CSS:
+- The header sticks on every page. On the landing page it starts clear over the film and turns solid
+  as you scroll.
+- A door's mark flies into the page it opens (native view transitions). There are none when the
+  visitor asks for reduced motion, and older browsers just load the page.
+- On phones the doors go compact (mark left, words right), so all three fit in about one screen.
 
 ## How it runs itself
 
@@ -19,7 +26,7 @@ cron every 15 min ──► worker/feeds.js ──► KV (feed:launches, feed:we
                        │  Launch Library 2 (every 30 min)          ▲
                        │  NOAA SWPC scales, Kp, solar wind         │ read only
 visitor ──► Cloudflare ─┬─ static file (free, no Worker run) ──────┘
-                        └─ /, /constellation/, /api/* ──► worker/index.js fills the live sections
+                        └─ /, /gauss/, /constellation/, /api/* ──► worker/index.js fills the live sections
 ```
 
 - **No visitor ever triggers an upstream call.** Pages only read KV. Launch Library 2 allows 15
@@ -37,7 +44,7 @@ visitor ──► Cloudflare ─┬─ static file (free, no Worker run) ──�
 | Limit (Free plan) | This site |
 |---|---|
 | Static asset requests: free and unlimited ([billing](https://developers.cloudflare.com/workers/static-assets/billing-and-limitations/)) | Every image, font, film and CSS file |
-| Worker requests: 100,000 a day ([limits](https://developers.cloudflare.com/workers/platform/limits/)) | One per view of `/` or `/constellation/`, plus API calls |
+| Worker requests: 100,000 a day ([limits](https://developers.cloudflare.com/workers/platform/limits/)) | One per view of `/`, `/gauss/` or `/constellation/`, plus API calls |
 | Cron triggers: 5 per account | 1 |
 | KV: 100,000 reads and 1,000 writes a day ([KV limits](https://developers.cloudflare.com/kv/platform/limits/)) | 2 reads per live page view; at most 192 writes a day |
 
