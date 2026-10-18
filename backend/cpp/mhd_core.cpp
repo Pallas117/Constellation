@@ -38,16 +38,18 @@ inline float magnitude(Vector3 v) {
 }
 
 // Core Physics Functions
-float dynamicPressureNpa(float densityCm3, float speedKmS) {
-    return 1.6726e-6f * densityCm3 * speedKmS * speedKmS;
+// The two kernels exported to Node compute in double, like the TypeScript
+// fallback in backend/physics/mhd-nowcast.ts, so the native and TS paths agree.
+double dynamicPressureNpa(double densityCm3, double speedKmS) {
+    return 1.6726e-6 * densityCm3 * speedKmS * speedKmS;
 }
 
-float newellCoupling(float speedKmS, float btNt, float byNt, float bzNt) {
-    float thetaClock = std::atan2(byNt, bzNt);
-    float sinTerm = std::sin(thetaClock / 2.0f);
-    float speedTerm = std::pow(std::max(speedKmS, 0.0f), 4.0f / 3.0f);
-    float btTerm = std::pow(std::max(btNt, 0.0f), 2.0f / 3.0f);
-    return speedTerm * btTerm * std::pow(std::max(sinTerm, 0.0f), 8.0f / 3.0f);
+double newellCoupling(double speedKmS, double btNt, double byNt, double bzNt) {
+    double thetaClock = std::atan2(byNt, bzNt);
+    double sinTerm = std::sin(thetaClock / 2.0);
+    double speedTerm = std::pow(std::max(speedKmS, 0.0), 4.0 / 3.0);
+    double btTerm = std::pow(std::max(btNt, 0.0), 2.0 / 3.0);
+    return speedTerm * btTerm * std::pow(std::max(sinTerm, 0.0), 8.0 / 3.0);
 }
 
 MhdState conservativeUpdate(const MhdState* prev, float inputRho, Vector3 inputV, Vector3 inputB) {
