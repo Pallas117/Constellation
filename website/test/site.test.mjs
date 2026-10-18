@@ -86,7 +86,9 @@ test("every page has one h1, the same main navigation and the same footer links"
 });
 
 test("colours come only from the Lightbound palette", () => {
-  const allowed = new Set(["#050505", "#0d1010", "#252a2a", "#f3f0e8", "#87938e", "#ccff00", "#e7b14a", "#c2552a", "#fff"]);
+  // Lightbound Design System tokens (v3, 18 Oct 2026), incl. Constellation navy/gold, Turnstone signal/earth blue, status colours.
+  const allowed = new Set(["#050505", "#0d1010", "#252a2a", "#f3f0e8", "#87938e", "#ccff00", "#e7b14a", "#fff",
+    "#081c4d", "#1c3470", "#b0906f", "#318ada", "#f0782a", "#a9aba6", "#4e972f", "#d4673b"]);
   for (const hex of read("assets/site.css").match(/#[0-9a-f]{3,8}\b/gi)) assert.ok(allowed.has(hex.toLowerCase()), `off-palette colour ${hex}`);
 });
 
@@ -160,7 +162,7 @@ test("flow: each door's mark carries into its page (view transitions), names uni
     assert.equal(new Set(names).size, names.length, `${route}: duplicate view-transition name ${names}`);
   }
   assert.match(html["/gauss/"], /class="lockup vt-gauss"/);
-  assert.match(html["/constellation/"], /class="lockup vt-constellation"/);
+  assert.match(html["/constellation/"], /class="lockup[^"]*\bvt-constellation"/);
   assert.match(html["/turnstone/"], /class="mark vt-turnstone"/);
   const css = read("assets/site.css");
   assert.match(css, /@media \(prefers-reduced-motion:no-preference\)\{\s*@view-transition\{navigation:auto\}/, "transitions only without reduced motion");
@@ -276,4 +278,51 @@ test("production config: no Stripe secrets, no local stand-in, no test keys anyw
     if (f.includes(`${join("website", "public", "assets")}`) && !f.endsWith(".css")) continue; // binary assets
     assert.doesNotMatch(readFileSync(f, "utf8"), /\b(sk|rk)_(live|test)_[A-Za-z0-9]{8,}|whsec_[A-Za-z0-9]{8,}/, `${f}: looks like a Stripe key`);
   }
+});
+
+// ---- Brand Book (15-18 Oct 2026): Turnstone v6, Constellation navy and gold, shared status colours ----
+const symbol = (f) => readFileSync(join(pub, "..", "tools", "symbols", f), "utf8");
+test("brand: Turnstone v6 and Constellation marks are the refined Design System symbols, unchanged", () => {
+  assert.equal(read("assets/marks/turnstone-mark-colour-dark.svg"), symbol("turnstone-symbol-colour-dark.svg"));
+  assert.equal(read("assets/marks/turnstone-badge-colour-dark.svg"), symbol("turnstone-badge-symbol-colour-dark.svg"));
+  assert.equal(read("assets/marks/constellation-mark-colour-dark.svg"), symbol("constellation-symbol-colour-dark.svg"));
+  assert.equal(read("assets/marks/constellation-icon-colour-dark.svg"), symbol("constellation-icon-symbol-colour-dark.svg"));
+  const ts = read("assets/marks/turnstone-mark-colour-dark.svg");
+  assert.ok(ts.includes("#318ada") && ts.includes("#f0782a"), "earth-blue feathers and tide, signal-orange legs");
+  const cn = read("assets/marks/constellation-mark-colour-dark.svg");
+  assert.ok(cn.includes("#081c4d") && cn.includes("#b0906f"), "navy disc, gold ring and nodes");
+  for (const f of readdirSync(join(pub, "assets", "marks")).filter((n) => /^(turnstone|constellation)-/.test(n)))
+    assert.doesNotMatch(read(`assets/marks/${f}`), /<filter|<script/, f);
+  assert.match(read("assets/marks/constellation-horizontal-colour-dark.svg"), /aria-label="Constellation, space community group"/);
+});
+
+test("brand: Constellation pages are navy and gold, carry the motto and values, and no Lightbound endorsement", () => {
+  for (const route of ["/constellation/", "/constellation/apply/"]) {
+    assert.match(html[route], /<body class="page brand-constellation">/, route);
+    assert.match(html[route], /<link rel="icon" href="\/assets\/marks\/constellation-icon-colour-dark\.svg"/, route);
+    // The legal line ("operated by Lightbound Limited") stays; no endorsement badge or "from Lightbound" framing.
+    assert.doesNotMatch(text(html[route]), /a Lightbound company|from Lightbound(?!\.uk)|by Lightbound(?! Limited)/i, `${route}: no company badge`);
+  }
+  assert.match(text(html["/constellation/"]), /Per aspera ad astra: through adversity we go beyond\./);
+  for (const v of ["Intentionality", "Radical integrity", "Accountability", "The Golden Rule"]) assert.ok(text(html["/constellation/"]).includes(v), v);
+  const css = read("assets/site.css");
+  assert.match(css, /\.brand-constellation\{--accent:#B0906F;--accent2:#B0906F;--panel:#081C4D;--char:#1C3470;/);
+});
+
+test("brand: Turnstone page shows the v6 mark, wordmark and tagline, and still nothing about what it does", () => {
+  const page = html["/turnstone/"];
+  assert.match(page, /<body class="page brand-turnstone">/);
+  assert.match(page, /<link rel="icon" href="\/assets\/marks\/turnstone-badge-colour-dark\.svg"/);
+  assert.match(text(page), /TURNSTONE A Lightbound company/);
+  assert.match(text(page), /TURNING TIDES/);
+  assert.match(read("assets/site.css"), /\.brand-turnstone\{--accent:#F0782A;--accent2:#318ADA;/);
+});
+
+test("brand: shared status colours and no shadows outside marks and photos", () => {
+  const css = read("assets/site.css");
+  assert.match(css, /--live:#4E972F;--sim:#318ADA;--danger:#D4673B;/);
+  assert.match(css, /\.chip\.live\{color:var\(--live\)\}/, "LIVE is the status green, always with its word");
+  assert.match(gauss, /<span class="chip sim">Synthetic · screening evidence<\/span>/, "synthetic = SIMULATED blue");
+  assert.doesNotMatch(css, /text-shadow|drop-shadow|box-shadow:(?!inset 0 -1px)/, "no drop shadows or glows");
+  assert.match(css, /\.btn\{[^}]*border-radius:4px/, "4 px controls");
 });

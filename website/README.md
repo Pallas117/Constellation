@@ -103,6 +103,26 @@ local Stripe stand-in shows a test checkout and sends a signed webhook to the re
 "Fleet Integration, active" account can try the billing portal, including a simulated failed
 renewal and cancellation. No real keys are used.
 
+## Brand
+
+The Lightbound Brand Book (15 Oct 2026, with 16 and 18 Oct updates) and the Design System tokens (v3) are the rules:
+
+- **Shared:** black ground, warm white, IBM Plex Sans and JetBrains Mono. Status colours always come with their
+  word: LIVE green #4E972F, STALE amber, SIMULATED blue #318ADA (the replay's "synthetic" chips), danger #D4673B.
+  Controls have 4 px corners, cards 10 px. There are no shadows or glows outside the marks and photos.
+- **Lightbound and Gauss:** lime is the accent.
+- **Constellation** (`body.brand-constellation`):
+  - Two colours, navy #081C4D for raised surfaces and gold #B0906F as the accent, with Plex Medium display and
+    wide-caps labels.
+  - The motto "Per aspera ad astra: through adversity we go beyond." and the four values appear on the page.
+  - It carries no Lightbound endorsement badge; the footer only names the site operator.
+  - It uses the refined vector logo and the 3-node icon as its favicon.
+- **Turnstone** (`body.brand-turnstone`):
+  - Mark v6 (the turnstone landing at the tide line), with the ringed badge as favicon.
+  - Signal orange is its one spot colour, and earth blue is accent-2. The wordmark is tracked 32 %, with
+    "Turning tides" as the kicker.
+  - The page still says nothing about what Turnstone does (tests enforce it).
+
 ## Change things
 
 | To change | Edit |
@@ -111,7 +131,8 @@ renewal and cancellation. No real keys are used.
 | Gauss copy (keep the claim rules; the tests enforce them) | `public/gauss/index.html` |
 | Constellation copy, intel rules, join route | `public/constellation/index.html` |
 | Colours, type, layout | `public/assets/site.css` (Brand Room tokens; the tests reject off-palette colours) |
-| Marks, fonts, film (after the brand kit changes) | run `tools/build_assets.py` (header says how) |
+| Marks, fonts, film (after the brand kit changes) | run `tools/build_assets.py`, then `tools/make_lockups.py` (headers say how) |
+| Turnstone or Constellation symbols | copy the refined symbols from the Design System into `tools/symbols/` (README there), then rebuild |
 | Packages, prices, what they include | `worker/tiers.js` |
 | Application questions | `worker/forms.js`, then `npm run site:forms` (copies them into the static pages) |
 | Feed sources or refresh timing | `worker/feeds.js` (`SOURCES`, `FEEDS`) |

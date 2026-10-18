@@ -2,12 +2,13 @@
 
 Run it again whenever the kit changes; the outputs are committed, so deploying needs no build step.
 
-usage: <python with fonttools+brotli> website/tools/build_assets.py <Lightbound Brand Kit dir> <constellation-mark-2026 dir>
-(the second dir is the output of make_constellation_marks.py)
+usage: <python with fonttools+brotli> website/tools/build_assets.py <Lightbound Brand Kit dir>
+Then run make_lockups.py for the Turnstone and Constellation lockups.
 
-- Marks: the kit's SVGs, unchanged except that the embedded C2PA manifest (<metadata>) is removed;
-  it is 8-40 KB of base64 per file and browsers ignore it. Geometry and colours are untouched (kit rule).
-- Fonts: IBM Plex Sans 400/600 and JetBrains Mono 700, subset to Latin + the punctuation the site
+- Marks: Lightbound and Gauss from the kit, unchanged except that the embedded C2PA manifest (<metadata>) is
+  removed (8-40 KB of base64 per file; browsers ignore it). Turnstone v6 and Constellation are the refined flat
+  symbols in tools/symbols/ (Design System, 16-18 Oct), copied unchanged. Geometry and colours untouched (kit rule).
+- Fonts: IBM Plex Sans 400/500/600 (500 = Constellation display) and JetBrains Mono 700, subset to Latin + the punctuation the site
   uses, as woff2. SIL OFL, so self-hosting is allowed.
 - Film: the kit's 720p web loop as is; the poster is re-encoded as JPEG (macOS sips), 532 KB down to about 45 KB.
 """
@@ -28,11 +29,16 @@ KIT_MARKS = [
     "lockups/lightbound-horizontal-colour-dark.svg",
     "marks/gauss-aurora-mark-colour-dark.svg",
     "lockups/gauss-aurora-horizontal-colour-dark.svg",
-    "marks/turnstone-mark-colour-dark.svg",
 ]
-CONSTELLATION = ["marks/constellation-mark-colour-dark.svg", "lockups/constellation-horizontal-colour-dark.svg",
-                 "lockups/constellation-stacked-colour-dark.svg"]
-FONTS = {"IBMPlexSans-Regular.ttf": "plex-sans-400.woff2", "IBMPlexSans-SemiBold.ttf": "plex-sans-600.woff2",
+# Refined symbols (tools/symbols) -> published names.
+SYMBOLS = {
+    "turnstone-symbol-colour-dark.svg": "turnstone-mark-colour-dark.svg",
+    "turnstone-badge-symbol-colour-dark.svg": "turnstone-badge-colour-dark.svg",
+    "constellation-symbol-colour-dark.svg": "constellation-mark-colour-dark.svg",
+    "constellation-icon-symbol-colour-dark.svg": "constellation-icon-colour-dark.svg",
+}
+FONTS = {"IBMPlexSans-Regular.ttf": "plex-sans-400.woff2", "IBMPlexSans-Medium.ttf": "plex-sans-500.woff2",
+         "IBMPlexSans-SemiBold.ttf": "plex-sans-600.woff2",
          "JetBrainsMono-Bold.ttf": "jetbrains-mono-700.woff2"}
 # Basic Latin, Latin-1, typographic punctuation, arrows, minus, approx, bullet.
 UNICODES = "U+0020-007E,U+00A0-00FF,U+0131,U+0152-0153,U+2010-2027,U+2030-203A,U+2190-2193,U+2197,U+2212,U+2248,U+2264-2265,U+25CF"
@@ -45,14 +51,14 @@ def strip_svg(src: Path, dst: Path) -> None:
     dst.write_text(text, encoding="utf-8")
 
 
-def main(kit: Path, constellation: Path) -> None:
+def main(kit: Path) -> None:
     marks, fonts, media = OUT / "marks", OUT / "fonts", OUT / "media"
     for d in (marks, fonts, media):
         d.mkdir(parents=True, exist_ok=True)
     for rel in KIT_MARKS:
         strip_svg(kit / "2026 marks" / rel, marks / Path(rel).name)
-    for rel in CONSTELLATION:
-        shutil.copyfile(constellation / rel, marks / Path(rel).name)
+    for src, dst in SYMBOLS.items():
+        shutil.copyfile(Path(__file__).resolve().parent / "symbols" / src, marks / dst)
     for ttf, woff2 in FONTS.items():
         opts = subset.Options()
         opts.flavor = "woff2"
@@ -77,4 +83,4 @@ def main(kit: Path, constellation: Path) -> None:
 
 
 if __name__ == "__main__":
-    main(Path(sys.argv[1]), Path(sys.argv[2]))
+    main(Path(sys.argv[1]))
