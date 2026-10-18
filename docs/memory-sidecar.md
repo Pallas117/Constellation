@@ -48,6 +48,6 @@ approving: no unsupported flight, qualification, dose, damage, customer or QPIN 
 
 - The service is evidence-only: `GAUSS_BRAIN_URL` (a local model) is unset, so answers
   abstain. The Gauss AI orchestrator (next PR) turns evidence into cited answers with Claude.
-- It runs as LaunchAgents installed from gauss-brain (`scripts/memory-services.sh install public`: memory on :3002, local answer model on :3032). `scripts/ops/gauss-services.sh check` reports both.
+- It runs as LaunchAgents installed from gauss-brain (`scripts/memory-services.sh install public`: memory on :3002, local answer model on :3032). `scripts/ops/gauss-services.sh check` reports both. To serve the operator corpus instead, run `scripts/memory-services.sh install operator` (:3022) and put `GAUSS_MEMORY_URL=http://127.0.0.1:3022` in the live checkout's `.env`; the backend and `check` both read it there.
 - Retrieval always returns its nearest chunks, even for unrelated questions. Callers must
   judge relevance before citing.

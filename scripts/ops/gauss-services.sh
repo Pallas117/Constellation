@@ -216,14 +216,19 @@ except Exception:
 ' "$dir/ml/models/registry.json" 2>/dev/null || echo "no no learning run recorded yet")
   item "${learned%% *}" "${learned#* }"
   # Memory service (gauss-brain, LaunchAgents from its scripts/memory-services.sh) and its local answer model.
-  local memory; memory=$({ curl -s -m 5 "${GAUSS_MEMORY_URL:-http://127.0.0.1:3002}/api/memory/status" || true; } | python3 -Ic '
+  # The backend reads GAUSS_MEMORY_URL from its checkout's .env (e.g. :3022 for the operator instance);
+  # probe the same address. Only that one key is read from .env, never the rest of the file.
+  local memory_url="${GAUSS_MEMORY_URL:-}"
+  [ -z "$memory_url" ] && [ -f "$dir/.env" ] && memory_url=$(sed -n 's/^GAUSS_MEMORY_URL=//p' "$dir/.env" | tail -1)
+  memory_url="${memory_url:-http://127.0.0.1:3002}"
+  local memory; memory=$({ curl -s -m 5 "$memory_url/api/memory/status" || true; } | python3 -Ic '
 import json, sys
 try:
     s = json.load(sys.stdin)
-    print(("ok" if s.get("ok") and s.get("documents", 0) > 0 else "no") + " memory service: %s documents, %s passages" % (s.get("documents", 0), s.get("chunks", 0)))
+    print(("ok" if s.get("ok") and s.get("documents", 0) > 0 else "no") + " memory service (%s): %s documents, %s passages" % (sys.argv[1], s.get("documents", 0), s.get("chunks", 0)))
 except Exception:
-    print("no memory service not running (gauss-brain: scripts/memory-services.sh install)")
-')
+    print("no memory service not running at %s (gauss-brain: scripts/memory-services.sh install)" % sys.argv[1])
+' "$memory_url")
   item "${memory%% *}" "${memory#* }"
   [ "$(code "${GAUSS_BRAIN_URL:-http://127.0.0.1:3032}/v1/models")" = 200 ] && ok=ok || ok=no
   item $ok "answer model up (${GAUSS_BRAIN_URL:-http://127.0.0.1:3032})"
