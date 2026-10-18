@@ -5,10 +5,10 @@ import assert from "node:assert/strict";
 import { readFileSync, readdirSync, statSync, existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import { SECURITY_HEADERS } from "../worker/headers.js";
+import { APP_CSP, SECURITY_HEADERS } from "../worker/headers.js";
 import { renderApplyForm } from "../worker/forms.js";
 import { renderPlans } from "../worker/render.js";
-import { FEATURES, SHOW_PRICES, TIERS } from "../worker/tiers.js";
+import { FEATURES, SHOW_PRICES, TIERS, priceLabel } from "../worker/tiers.js";
 
 const pub = join(dirname(fileURLToPath(import.meta.url)), "..", "public");
 const read = (f) => readFileSync(join(pub, f), "utf8");
@@ -108,9 +108,10 @@ test("Turnstone: mark and name only; nothing says what it does", () => {
 
 // ---- Security ----
 test("security: strict CSP, no scripts, no inline styles or handlers, nothing loaded from elsewhere", () => {
-  const metaCsp = SECURITY_HEADERS["Content-Security-Policy"].replace("; frame-ancestors 'none'", "");
+  const meta = (csp) => csp.replace("; frame-ancestors 'none'", "");
   for (const [route, page] of Object.entries(html)) {
-    assert.ok(page.includes(`http-equiv="Content-Security-Policy" content="${metaCsp}"`), `${route}: meta CSP`);
+    const csp = meta(route.startsWith("/app/") ? APP_CSP : SECURITY_HEADERS["Content-Security-Policy"]);
+    assert.ok(page.includes(`http-equiv="Content-Security-Policy" content="${csp}"`), `${route}: meta CSP`);
     assert.doesNotMatch(page, /<script|\son\w+="|\sstyle=/i, `${route}: script or inline style`);
     for (const [, url] of page.matchAll(/(?:\ssrc|srcset|<link[^>]*\shref)="(https?:[^"]+)"/g))
       assert.match(url, /^https:\/\/lightbound\.uk\//, `${route}: third-party resource ${url}`);
@@ -199,16 +200,30 @@ test("apply pages: the static form is exactly what the Worker renders, and posts
   assert.match(read("assets/site.css"), /\.hp\{position:absolute;left:-9999px/);
 });
 
-test("plans: honest features only; prices stay hidden until approved", () => {
+test("plans: packages and prices follow the sales plan; honest features only", () => {
+  // Gauss Aurora repo, docs/SALES_FEATURE_LIST_AND_ONBOARDING.md (21 Aug 2026), "Commercial packages".
+  const expected = { pilot: "£20k–£40k per pilot", fleet_integration: "£60k–£125k a year", mission_integration: "£120k–£300k one-off", flight_candidate_adapter: "£750k–£2.5m one-off" };
+  assert.equal(SHOW_PRICES, true);
+  assert.deepEqual(Object.fromEntries(TIERS.map((t) => [t.id, priceLabel(t)])), expected);
+  assert.deepEqual(TIERS.map((t) => t.billing), ["payment", "subscription", "invoice", "invoice"]);
   const words = JSON.stringify({ TIERS, FEATURES });
-  for (const rx of [/mitigation/i, /qrnn|qubit|quantum/i, /automat/i, /\bcommand/i, /certif|complian|qualif/i, /air-gapped/i, /early warning/i, /\bdispatch/i])
+  for (const rx of [/mitigation/i, /qrnn|qubit|quantum/i, /automat/i, /\bcommand/i, /certif|complian|qualif/i, /air-gapped/i, /early warning/i, /\bdispatch/i, /\$\d/])
     assert.doesNotMatch(words, rx, `tiers.js claims ${rx}`);
-  assert.equal(SHOW_PRICES, false, "list prices are not approved for publication (GAU-65)");
   const plans = renderPlans();
-  assert.doesNotMatch(plans, /\$\d/);
-  assert.equal((plans.match(/Priced per scope/g) || []).length, TIERS.length);
+  for (const label of Object.values(expected)) assert.ok(plans.includes(label), label);
   assert.match(plans, /never commands a spacecraft/);
+  assert.match(text(html["/gauss/"]), new RegExp(`Paid: ${expected.pilot}`), "the pilot terms quote the same range");
   assert.match(html["/gauss/"], /<!--live:plans-->[\s\S]*Flight Candidate Adapter[\s\S]*<!--\/live:plans-->/, "static fallback keeps the gated roadmap");
+});
+
+test("Constellation is free and invite-only: no prices, no payment, invitation wording", () => {
+  for (const route of ["/constellation/", "/constellation/apply/"]) {
+    assert.doesNotMatch(text(html[route]), /£|\$\d|stripe|price|pay /i, `${route}: no pricing`);
+    assert.match(text(html[route]), /free/i);
+    assert.match(text(html[route]), /invit/i);
+  }
+  assert.match(html["/constellation/apply/"], /<button class="btn" type="submit">Request an invitation<\/button>/);
+  assert.match(text(html["/"]), /The space community\. Free, by invitation\./);
 });
 
 test("signed-in pages are private shells; the Worker fills them only after sign-in", () => {
@@ -217,4 +232,16 @@ test("signed-in pages are private shells; the Worker fills them only after sign-
     assert.doesNotMatch(html[route], /@example|@lightbound\.uk(?!")/i, "no personal data in a static shell");
   }
   assert.match(html["/privacy/"], /180 days/);
+  assert.match(text(html["/privacy/"]), /card or bank details never reach Lightbound/);
+  assert.match(APP_CSP, /form-action 'self' https:\/\/checkout\.stripe\.com https:\/\/billing\.stripe\.com/);
+  assert.doesNotMatch(SECURITY_HEADERS["Content-Security-Policy"], /stripe/, "public pages never post off-site");
+});
+test("production config: no Stripe secrets, no local stand-in, no test keys anywhere in the site", () => {
+  const config = readFileSync(join(pub, "..", "wrangler.jsonc"), "utf8");
+  assert.doesNotMatch(config, /"STRIPE_/, "Stripe values belong in Worker secrets, not wrangler.jsonc");
+  assert.doesNotMatch(config, /"ACCESS_JWKS"/, "the dev signing key must never be configured in production");
+  for (const f of walk(join(pub, ".."))) {
+    if (f.includes(`${join("website", "public", "assets")}`) && !f.endsWith(".css")) continue; // binary assets
+    assert.doesNotMatch(readFileSync(f, "utf8"), /\b(sk|rk)_(live|test)_[A-Za-z0-9]{8,}|whsec_[A-Za-z0-9]{8,}/, `${f}: looks like a Stripe key`);
+  }
 });

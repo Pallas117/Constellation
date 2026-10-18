@@ -11,6 +11,11 @@ export const SECURITY_HEADERS = Object.freeze({
   "Cross-Origin-Opener-Policy": "same-origin",
 });
 
+// Signed-in pages post to /app/checkout and /app/billing, which redirect to Stripe's hosted pages.
+// Browsers apply form-action to that redirect too, so these two Stripe origins are allowed there only.
+export const APP_CSP = SECURITY_HEADERS["Content-Security-Policy"].replace(
+  "form-action 'self'", "form-action 'self' https://checkout.stripe.com https://billing.stripe.com");
+
 export function withSecurity(headers = {}) {
   return { ...SECURITY_HEADERS, ...headers };
 }

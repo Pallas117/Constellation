@@ -10,9 +10,10 @@ JavaScript, no third-party requests, and no secrets.
 | `/gauss/` | The GAU-12 evidence-first Gauss page (replay pilot, claims and boundaries). Ends with the other doors (Constellation shows the next launch). |
 | `/constellation/` | The community: next 10 launches worldwide, space weather now, a calendar feed, intel rules, and how to join. Ends with the other doors. |
 | `/turnstone/` | Mark and "Classified." only (secret project; `noindex`). |
-| `/gauss/apply/`, `/constellation/apply/` | Application forms (plain HTML, no JavaScript). Plan links preselect the plan. |
-| `/app/` | Signed-in Gauss workspace: the customer's plan, pilot progress, space weather, what the next plan adds. |
-| `/app/admin/` | For `ADMIN_EMAILS`: approve or decline applications, set each account's plan, pilot step and membership. |
+| `/gauss/apply/` | Pilot brief in the sales plan's three steps (fit, readiness, pilot brief). Plan links preselect the package. |
+| `/constellation/apply/` | Request an invitation. Constellation is free and invite-only; there is no payment anywhere on its side. |
+| `/app/` | Signed-in workspace: quote and Stripe payment, billing state, pilot progress, space weather, Constellation membership. |
+| `/app/admin/` | For `ADMIN_EMAILS`: approve with a quote, set plan, billing, pilot step; invite Constellation members (free). |
 | `/privacy/` | What is kept, why, for how long, and how to have it deleted. |
 | `/api/launches`, `/api/launches.ics`, `/api/space-weather`, `/api/health` | JSON, a calendar feed and a health check. |
 
@@ -52,34 +53,53 @@ visitor ──► Cloudflare ─┬─ static file (free, no Worker run) ──�
 | Cron triggers: 5 per account | 1 |
 | KV: 100,000 reads and 1,000 writes a day ([KV limits](https://developers.cloudflare.com/kv/platform/limits/)) | 2 reads per live page view; at most 192 writes a day |
 
-## Applications, sign-in and plans
+## Plans, payment and sign-in
 
 ```
-apply form ──POST /api/apply──► DATA KV  app:<id>  (deleted automatically after 180 days)
+/gauss/#plans ── pilot brief ──► DATA KV app:<id> (deleted after 180 days)
                                    │
-admin /app/admin/ ── Approve ──────┴──► DATA KV  acct:<email>  { plan, pilot step, membership }
-                                                     │
-customer ── /app/ ── Cloudflare Access (email one-time code) ──► Worker verifies the signed JWT,
-                                                     └────────── reads acct:<email>, shows the workspace
+/app/admin/ ── Approve with quote (inside the published range) ──► acct:<email> { plan, quote, billing: due }
+                                                                       │
+customer ── /app/ (Cloudflare Access one-time code) ── Pay securely with Stripe ──► Stripe Checkout (Stripe's page)
+                                                                       │
+Stripe ── signed webhook /api/stripe/webhook ──► billing: paid | active | past_due | canceled ──► workspace unlocks
+customer ── Manage billing ──► Stripe billing portal (cards, invoices, cancel)
 ```
 
-- **Plans** live in `worker/tiers.js`: Tactical Fleet (now), Active Mission Defense and Sovereign
-  Shield (gated). The names come from the Lovable build. What each plan includes follows the gated
-  roadmap; the Lovable feature claims (automated mitigation, a quantum surrogate, fixed warning
-  times) are left out, and a test keeps them out. **List prices are hidden** (`SHOW_PRICES = false`)
-  until you approve them (GAU-65).
-- **No passwords anywhere.** Cloudflare Access proves who someone is by emailing a one-time code.
-  The Worker checks Access's signed token (key, audience, issuer, expiry) and never trusts a plain
-  email header. The account record decides what they see; unknown emails get the "apply" page.
-- **Forms are hardened:**
-  - Same-origin posts only.
-  - A hidden honeypot field drops bots.
-  - At most 5 applications an hour per connection, counted against a hashed IP address (never the
-    raw one).
-  - The server validates every field and escapes all output.
-  - Post/redirect/get, so refreshing never resubmits.
-- **Locally:** `npm run site:dev`, then open `/app/`. A local key pair stands in for Access, and you
-  can sign in as the admin, a demo pilot customer, or a signed-in visitor with no plan.
+**Packages and prices** come from the sales plan ("Gauss Aurora sales feature list and onboarding
+flow", Gauss Aurora repo `docs/SALES_FEATURE_LIST_AND_ONBOARDING.md`, 21 Aug 2026). They live in
+`worker/tiers.js`:
+
+| Package | Range | Paid how |
+|---|---|---|
+| Design-partner pilot | £20k–£40k per pilot | One Stripe payment |
+| Fleet Integration | £60k–£125k a year | Yearly Stripe subscription |
+| Mission integration | £120k–£300k one-off | Invoiced by milestone |
+| Flight Candidate Adapter (gated) | £750k–£2.5m one-off | Invoiced by milestone |
+
+Each customer pays a fixed quote that you set inside the range when you approve them. The site
+never offers a cheap self-serve trial: the sales plan sells a paid, bounded pilot. The Lovable tier
+claims (automated mitigation, a quantum surrogate, fixed warning times) stay out, and a test checks.
+
+**Constellation** is free and invite-only. People can request an invitation, or you invite them
+from the admin page. Inviting creates the membership and gives you a draft email to send yourself;
+nothing is sent automatically.
+
+**Security:**
+- No passwords. Cloudflare Access emails a one-time code, and the Worker verifies Access's signed
+  token (key, audience, issuer, expiry).
+- No card data. Payment happens on Stripe's pages. The site only creates the Checkout session and
+  reads Stripe's webhook.
+- Webhooks are trusted only with a valid Stripe signature from the last 5 minutes. An older event
+  never overwrites a newer state, and an event for a different plan is ignored.
+- Only the signed-in pages may redirect a form to `checkout.stripe.com` and `billing.stripe.com`,
+  via a CSP `form-action` exception. Public pages post only to the site itself.
+- Stripe keys are Worker secrets, never in config, URLs, logs or git.
+
+**Locally:** `npm run site:dev`, then go to `/app/`. Pick "Approved, payment due" and press Pay. A
+local Stripe stand-in shows a test checkout and sends a signed webhook to the real Worker code. The
+"Fleet Integration, active" account can try the billing portal, including a simulated failed
+renewal and cancellation. No real keys are used.
 
 ## Change things
 
@@ -90,7 +110,7 @@ customer ── /app/ ── Cloudflare Access (email one-time code) ──► W
 | Constellation copy, intel rules, join route | `public/constellation/index.html` |
 | Colours, type, layout | `public/assets/site.css` (Brand Room tokens; the tests reject off-palette colours) |
 | Marks, fonts, film (after the brand kit changes) | run `tools/build_assets.py` (header says how) |
-| Plans, what they include, prices on/off | `worker/tiers.js` |
+| Packages, prices, what they include | `worker/tiers.js` |
 | Application questions | `worker/forms.js`, then `npm run site:forms` (copies them into the static pages) |
 | Feed sources or refresh timing | `worker/feeds.js` (`SOURCES`, `FEEDS`) |
 | How live sections look | `worker/render.js` |
@@ -119,6 +139,22 @@ npx wrangler@4 kv namespace create DATA    # applications and accounts: paste th
 npx wrangler@4 deploy                      # live at https://lightbound-site.<account>.workers.dev
 ```
 
+Stripe, once (do it in test mode first, then repeat with live keys):
+1. In the Dashboard, under Settings > Payment methods, enable the methods you accept. For amounts
+   this size: card, Bacs Direct Debit and bank transfer.
+2. Under Settings > Billing > Customer portal, allow invoices, payment-method updates and
+   cancellation.
+3. Under Developers > Webhooks, add `https://lightbound.uk/api/stripe/webhook` with these events:
+   - `checkout.session.completed`, `checkout.session.async_payment_succeeded` and
+     `checkout.session.async_payment_failed`
+   - `customer.subscription.created`, `.updated` and `.deleted`
+4. Store the two secrets in the Worker (each prompts for the value, so nothing lands in your shell
+   history):
+   ```bash
+   npx wrangler@4 secret put STRIPE_SECRET_KEY       # a restricted key: Checkout Sessions + Billing Portal write
+   npx wrangler@4 secret put STRIPE_WEBHOOK_SECRET   # the endpoint's signing secret
+   ```
+
 Sign-in, once (Cloudflare dashboard > Zero Trust):
 1. Settings > Authentication: turn on **One-time PIN**.
 2. Access > Applications > Add > Self-hosted: domain `lightbound.uk`, path `app`. Policy: Allow,
@@ -134,6 +170,12 @@ every 15 minutes.
 After that, every change is `npm run test:website`, then `npx wrangler@4 deploy` from `website/`.
 
 ## Not yet verified
+
+- **VAT.** Whether the prices include or exclude VAT, and whether to turn on Stripe Tax. Decide with
+  your accountant before going live; Checkout already collects billing addresses and tax IDs.
+- Payment-method limits for large amounts (card and Bacs limits vary). Check them in the Stripe
+  Dashboard for your account.
+- Stripe API version: the site uses your account's default (set `STRIPE_API_VERSION` to pin one).
 
 - That an Access policy of "Include: Everyone" sends one-time codes to any address. The OTP page says
   codes go only to emails a policy allows. Test it with a non-customer address. If it doesn't, add

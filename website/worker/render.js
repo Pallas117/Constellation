@@ -178,17 +178,17 @@ export function renderIcs(rec, now = Date.now()) {
   return `${lines.map(fold).join("\r\n")}\r\n`;
 }
 
-// ---- Gauss plans (from tiers.js) ----
+// ---- Gauss plans (from tiers.js, priced from the sales plan) ----
 export function renderPlans() {
-  const cards = TIERS.map((t, i) => {
-    const prev = TIERS[i - 1];
-    const own = prev ? t.features.filter((f) => !prev.features.includes(f)) : t.features;
-    const intro = prev ? `<p class="m">Everything in ${esc(prev.name)}, plus:</p>` : "";
-    const now = t.stage === "Now";
-    return `<li class="plan${now ? " now" : ""}"><span class="label">${esc(t.stage)} · ${esc(t.stageName)}</span><h3>${esc(t.name)}</h3>` +
-      `<p class="aud">${esc(t.audience)}</p><p>${esc(t.summary)}</p>${intro}<ul class="ticks">${own.map((f) => `<li>${esc(FEATURES[f])}</li>`).join("")}</ul>` +
-      `<p class="price">${esc(priceLabel(t))}</p><p class="m">${esc(t.entry)}</p>` +
-      `<p class="actions"><a class="btn${now ? "" : " ghost"}" href="/gauss/apply/?plan=${esc(now ? "pilot" : t.id)}">${now ? "Start with a replay pilot" : `Apply for ${esc(t.name)}`}</a></p></li>`;
+  const cards = TIERS.map((t) => {
+    const first = t.id === "pilot";
+    const cta = first ? "Start with a pilot" : t.billing === "invoice" ? `Scope ${t.name.toLowerCase()}` : `Apply for ${t.name}`;
+    return `<li class="plan${first ? " now" : ""}"><span class="label">${esc(t.stage)}</span><h3>${esc(t.name)}</h3>` +
+      `<p class="price">${esc(priceLabel(t))}</p><p>${esc(t.outcome)}</p>` +
+      `<ul class="ticks">${t.features.map((id) => `<li>${esc(FEATURES[id])}</li>`).join("")}</ul><p class="m">${esc(t.entry)}</p>` +
+      `<p class="actions"><a class="btn${first ? "" : " ghost"}" href="/gauss/apply/?plan=${esc(t.id)}">${esc(cta)}</a></p></li>`;
   }).join("");
-  return `<ol class="plans">${cards}</ol><p class="note">Every plan is advisory: Gauss shows evidence and never commands a spacecraft. Already a customer? <a href="/app/">Sign in</a>.</p>`;
+  return `<ol class="plans">${cards}</ol>` +
+    `<p class="note">Your price is a fixed quote inside the range, agreed from your scope before you pay. Pilots and Fleet Integration are paid securely through Stripe; ` +
+    `project work is invoiced by milestone. Every plan is advisory: Gauss shows evidence and never commands a spacecraft. Already a customer? <a href="/app/">Sign in</a>.</p>`;
 }

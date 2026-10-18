@@ -6,9 +6,9 @@
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; img-src 'self'; media-src 'self'; font-src 'self'; base-uri 'none'; form-action 'self'">
 <meta name="theme-color" content="#050505">
 <meta name="referrer" content="strict-origin-when-cross-origin">
-<meta name="description" content="Apply to join Constellation, a space community group.">
+<meta name="description" content="Request an invitation to Constellation, a free space community group.">
 <link rel="canonical" href="https://lightbound.uk/constellation/apply/">
-<title>Apply to join Constellation · Lightbound</title>
+<title>Request an invitation · Constellation</title>
 <link rel="preload" href="/assets/fonts/plex-sans-600.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="/assets/site.css">
 <link rel="icon" href="/favicon.ico" sizes="any">
@@ -31,10 +31,10 @@
 <main id="main">
 <section class="page-hero tight" aria-labelledby="hero-h">
   <div class="wrap narrow">
-    <p class="k">02_CONSTELLATION · APPLY</p>
-    <h1 id="hero-h">Apply to join Constellation.</h1>
-    <p class="lead">Membership is by invitation. A person reads every application.</p>
-    <!--live:apply--><form class="form" method="post" action="/api/apply"><input type="hidden" name="kind" value="constellation"><div class="field"><label for="f-name">Name</label><input id="f-name" name="name" required type="text" maxlength="100" autocomplete="name" value=""></div><div class="field"><label for="f-email">Email</label><input id="f-email" name="email" required type="email" maxlength="254" autocomplete="email" value=""></div><div class="field"><label for="f-role">What you work on</label><input id="f-role" name="role" required type="text" maxlength="120" autocomplete="organization-title" value=""></div><div class="field"><label for="f-link">A link about your work (optional)</label><input id="f-link" name="link" type="url" maxlength="300" autocomplete="url" value=""></div><div class="field"><label for="f-message">Why do you want to join?</label><textarea id="f-message" name="message" required rows="6" minlength="20" maxlength="2000"></textarea></div><div class="hp" aria-hidden="true"><label for="f-website">Leave this empty</label><input id="f-website" name="website" tabindex="-1" autocomplete="off"></div><label class="check"><input type="checkbox" name="consent" value="yes" required> <span>Lightbound may keep this application for up to 180 days to review it. <a href="/privacy/">Privacy</a></span></label><p class="actions"><button class="btn" type="submit">Send application</button></p></form><!--/live:apply-->
+    <p class="k">02_CONSTELLATION · INVITATION</p>
+    <h1 id="hero-h">Request an invitation.</h1>
+    <p class="lead">Constellation is free and invite-only. If a member referred you, say who; a person reads every request.</p>
+    <!--live:apply--><form class="form" method="post" action="/api/apply"><input type="hidden" name="kind" value="constellation"><div class="field"><label for="f-name">Name</label><input id="f-name" name="name" required type="text" maxlength="100" autocomplete="name" value=""></div><div class="field"><label for="f-email">Email</label><input id="f-email" name="email" required type="email" maxlength="254" autocomplete="email" value=""></div><div class="field"><label for="f-role">What you work on</label><input id="f-role" name="role" required type="text" maxlength="120" autocomplete="organization-title" value=""></div><div class="field"><label for="f-referrer">Who invited or referred you (optional)</label><input id="f-referrer" name="referrer" type="text" maxlength="120" autocomplete="off" value=""></div><div class="field"><label for="f-link">A link about your work (optional)</label><input id="f-link" name="link" type="url" maxlength="300" autocomplete="url" value=""></div><div class="field"><label for="f-message">Why you&#39;d like to join</label><textarea id="f-message" name="message" required rows="6" minlength="20" maxlength="2000"></textarea></div><div class="hp" aria-hidden="true"><label for="f-website">Leave this empty</label><input id="f-website" name="website" tabindex="-1" autocomplete="off"></div><label class="check"><input type="checkbox" name="consent" value="yes" required> <span>Lightbound may keep this for up to 180 days to review it. <a href="/privacy/">Privacy</a></span></label><p class="actions"><button class="btn" type="submit">Request an invitation</button></p></form><!--/live:apply-->
   </div>
 </section>
 </main>

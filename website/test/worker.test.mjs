@@ -14,6 +14,8 @@ import { memoryKV } from "./fixtures/kv.mjs";
 import { makeAccess } from "./fixtures/access.mjs";
 import { accessIdentity, isAdmin } from "../worker/auth.js";
 import { getAccount, listApplications, putAccount, saveApplication } from "../worker/data.js";
+import { applyEvent, formEncode, signPayload, verifySignature } from "../worker/stripe.js";
+import { APP_CSP } from "../worker/headers.js";
 
 const pub = join(dirname(fileURLToPath(import.meta.url)), "..", "public");
 const MIN = 60_000;
@@ -239,14 +241,15 @@ test("sign-in: only a valid Access JWT for our team and application counts", asy
 // ---- Applications ----
 async function appEnv() {
   const access = await makeAccess();
-  return { access, env: { ASSETS, LIVE: memoryKV(), DATA: memoryKV(), ADMIN_EMAILS: "boss@example.test", ...access.env } };
+  return { access, env: { ASSETS, LIVE: memoryKV(), DATA: memoryKV(), ADMIN_EMAILS: "boss@example.test", STRIPE_SECRET_KEY: "test-placeholder", STRIPE_WEBHOOK_SECRET: "test-webhook-placeholder", ...access.env } };
 }
 const post = (path, body, headers = {}) => new Request(`https://lightbound.uk${path}`, {
   method: "POST", body: new URLSearchParams(body).toString(),
   headers: { origin: "https://lightbound.uk", "content-type": "application/x-www-form-urlencoded", "cf-connecting-ip": "203.0.113.9", ...headers },
 });
-const goodGauss = { kind: "gauss", name: "Ops Example", email: "ops@example.test", org: "Example Space", role: "Mission ops", plan: "active_mission_defense",
-  message: "Two smallsats flying ONNX models; we want evidence after the May storm.", consent: "yes" };
+const goodGauss = { kind: "gauss", name: "Ops Example", email: "ops@example.test", org: "Example Space", role: "Mission ops",
+  missionType: "Earth observation", stage: "Launched and operating", groundStack: "Yamcs / XTCE", dataAccess: "Historical packet archive",
+  plan: "fleet_integration", timeline: "This quarter", message: "Two smallsats flying ONNX models; we want evidence after the May storm.", consent: "yes" };
 async function send(env, request) {
   const { ctx, settle } = context();
   const res = await worker.fetch(request, env, ctx);
@@ -254,25 +257,26 @@ async function send(env, request) {
   return res;
 }
 
-test("apply: a good application is stored and redirected (post/redirect/get), with a 180-day expiry", async () => {
+test("apply: a good pilot brief is stored and redirected (post/redirect/get), with a 180-day expiry", async () => {
   const { env } = await appEnv();
   const res = await send(env, post("/api/apply", goodGauss));
   assert.equal(res.status, 303);
   assert.equal(res.headers.get("location"), "/gauss/apply/?sent=1");
   const [app] = await listApplications(env);
-  assert.deepEqual([app.kind, app.email, app.plan, app.status], ["gauss", "ops@example.test", "active_mission_defense", "new"]);
+  assert.deepEqual([app.kind, app.email, app.plan, app.status], ["gauss", "ops@example.test", "fleet_integration", "new"]);
   const stored = env.DATA.map.get(`app:${app.id}`);
+  assert.equal(JSON.parse(stored.v).groundStack, "Yamcs / XTCE", "readiness answers kept");
   assert.ok(stored.exp - Date.now() / 1000 > 179 * 86400 && stored.exp - Date.now() / 1000 <= 180 * 86400);
-  const sent = await (await send(env, new Request("https://lightbound.uk/gauss/apply/?sent=1"))).text();
-  assert.match(sent, /Thank you\. Your application is with the Lightbound team\./);
+  assert.match(await (await send(env, new Request("https://lightbound.uk/gauss/apply/?sent=1"))).text(), /we'll reply with a fixed quote/);
+  assert.match(await (await send(env, new Request("https://lightbound.uk/constellation/apply/?sent=1"))).text(), /Membership is free and by invitation/);
 });
 
 test("apply: bad input comes back with errors and the values escaped; nothing stored", async () => {
   const { env } = await appEnv();
-  const res = await send(env, post("/api/apply", { ...goodGauss, name: "<b>x</b>", email: "nope", message: "short", consent: "" }));
+  const res = await send(env, post("/api/apply", { ...goodGauss, name: "<b>x</b>", email: "nope", missionType: "Spy satellite", message: "short", consent: "" }));
   assert.equal(res.status, 422);
   const page = await res.text();
-  assert.match(page, /Please check: email, message, privacy agreement\./);
+  assert.match(page, /Please check: email, mission type, message, privacy agreement\./);
   assert.match(page, /value="&lt;b&gt;x&lt;\/b&gt;"/);
   assert.doesNotMatch(page, /<b>x<\/b>/);
   assert.equal((await listApplications(env)).length, 0);
@@ -292,63 +296,181 @@ test("apply: cross-site posts, bots, odd encodings and floods are turned away", 
   assert.ok(![...env.DATA.map.keys()].some((k) => k.includes("203.0.113.9")), "raw IP never stored");
 });
 
-test("apply page: the plan in the link is preselected; unknown plans fall back to the pilot", async () => {
+test("apply page: the package in the link is preselected; unknown values fall back to the pilot", async () => {
   const { env } = await appEnv();
-  assert.match(await (await send(env, new Request("https://lightbound.uk/gauss/apply/?plan=sovereign_shield"))).text(), /<option value="sovereign_shield" selected>/);
+  assert.match(await (await send(env, new Request("https://lightbound.uk/gauss/apply/?plan=mission_integration"))).text(), /<option value="mission_integration" selected>/);
   assert.match(await (await send(env, new Request("https://lightbound.uk/gauss/apply/?plan=%22%3E%3Cscript%3E"))).text(), /<option value="pilot" selected>/);
 });
 
-// ---- Workspace and admin ----
+// ---- Workspace, billing and admin ----
 const as = async (access, email, path, init = {}) =>
   new Request(`https://lightbound.uk${path}`, { ...init, headers: { ...(init.headers ?? {}), "cf-access-jwt-assertion": await access.sign(email) } });
+const formPost = async (access, email, path, body = {}, origin = "https://lightbound.uk") => as(access, email, path, {
+  method: "POST", body: new URLSearchParams(body).toString(), headers: { origin, "content-type": "application/x-www-form-urlencoded" },
+});
+function stripeMock(fail = false) {
+  const calls = [];
+  const f = async (url, init) => {
+    calls.push({ url: String(url), body: new URLSearchParams(init.body), auth: init.headers.authorization });
+    if (fail) return new Response('{"error":{"code":"api_error"}}', { status: 500 });
+    const path = new URL(url).pathname;
+    return Response.json(path.endsWith("/checkout/sessions") ? { id: "cs_test_1", url: "https://checkout.stripe.com/c/pay/cs_test_1" } : { url: "https://billing.stripe.com/p/session/test_1" });
+  };
+  f.calls = calls;
+  return f;
+}
+async function withFetch(f, fn) {
+  const real = globalThis.fetch;
+  globalThis.fetch = f;
+  try {
+    return await fn();
+  } finally {
+    globalThis.fetch = real;
+  }
+}
 
-test("workspace: signed out gets 401; no plan gets the apply route; a plan shows what it includes", async () => {
+test("workspace: signed out gets 401; pending applicants see their status; members see Constellation", async () => {
   const { env, access } = await appEnv();
   const out = await send(env, new Request("https://lightbound.uk/app/"));
   assert.equal(out.status, 401);
   assert.equal(out.headers.get("cache-control"), "private, no-store");
-  const none = await (await send(env, await as(access, "new@example.test", "/app/"))).text();
-  assert.match(none, /no Gauss plan yet/);
-  assert.match(none, /href="\/gauss\/apply\/"/);
-  await putAccount(env, { email: "ops@example.test", name: "Ops", org: "Example Space", tier: "tactical_fleet", pilot: "Replay running" }, "test");
-  const res = await send(env, await as(access, "ops@example.test", "/app/"));
-  assert.equal(res.headers.get("x-robots-tag"), "noindex");
-  const page = await res.text();
-  assert.match(page, /chip tier">Tactical Fleet/);
-  assert.match(page, /aria-current="step">Replay running/);
-  assert.match(page, /Included in Tactical Fleet/);
-  assert.match(page, /Next: Active Mission Defense/);
-  assert.match(page, /Console link coming by email/);
-  assert.doesNotMatch(page, /Applications and accounts/, "no admin link for customers");
+  await send(env, post("/api/apply", goodGauss));
+  assert.match(await (await send(env, await as(access, "ops@example.test", "/app/"))).text(), /Your application from .* is with the Lightbound team/);
+  assert.match(await (await send(env, await as(access, "new@example.test", "/app/"))).text(), /no Gauss plan yet/);
+  await putAccount(env, { email: "member@example.test", community: "member" }, "test");
+  const member = await (await send(env, await as(access, "member@example.test", "/app/"))).text();
+  assert.match(member, /<p class="big">Member<\/p><p class="t">Free, by invitation\.<\/p>/);
+  assert.doesNotMatch(member, /Pay securely/, "Constellation never asks for payment");
 });
 
-test("admin: only ADMIN_EMAILS; approving a Gauss application creates the account with its plan", async () => {
+test("workspace: an approved quote shows Pay; checkout goes to Stripe with the quote, in pounds, for this account", async () => {
+  const { env, access } = await appEnv();
+  await putAccount(env, { email: "ops@example.test", org: "Example Space", tier: "pilot", quote: 2_800_000, billing: { status: "due" } }, "test");
+  const res = await send(env, await as(access, "ops@example.test", "/app/"));
+  assert.equal(res.headers.get("content-security-policy"), APP_CSP);
+  const page = await res.text();
+  assert.match(page, /<p class="big">£28,000 one-off<\/p><p class="t">Payment due<\/p>/);
+  assert.match(page, /<form method="post" action="\/app\/checkout" class="inline"><button class="btn">Pay securely with Stripe<\/button><\/form>/);
+  assert.doesNotMatch(page, /Open the Gauss console|Console link/, "locked until paid");
+  const stripe = stripeMock();
+  const go = await withFetch(stripe, async () => send(env, await formPost(access, "ops@example.test", "/app/checkout")));
+  assert.equal(go.status, 303);
+  assert.equal(go.headers.get("location"), "https://checkout.stripe.com/c/pay/cs_test_1");
+  const { url, body, auth } = stripe.calls[0];
+  assert.equal(url, "https://api.stripe.com/v1/checkout/sessions");
+  assert.equal(auth, "Bearer test-placeholder");
+  assert.deepEqual([body.get("mode"), body.get("line_items[0][price_data][currency]"), body.get("line_items[0][price_data][unit_amount]")], ["payment", "gbp", "2800000"]);
+  assert.deepEqual([body.get("client_reference_id"), body.get("metadata[email]"), body.get("metadata[plan]"), body.get("customer_creation")], ["ops@example.test", "ops@example.test", "pilot", "always"]);
+  assert.equal(body.get("success_url"), "https://lightbound.uk/app/?checkout=success");
+  assert.equal((await withFetch(stripe, async () => send(env, await formPost(access, "ops@example.test", "/app/checkout", {}, "https://evil.example")))).status, 403);
+  const down = await withFetch(stripeMock(true), async () => send(env, await formPost(access, "ops@example.test", "/app/checkout")));
+  assert.equal(down.status, 503);
+  assert.match(await down.text(), /Nothing was charged/);
+});
+
+test("checkout: Fleet Integration is a yearly subscription; no quote or already paid means no checkout", async () => {
+  const { env, access } = await appEnv();
+  await putAccount(env, { email: "fleet@example.test", tier: "fleet_integration", quote: 7_500_000, billing: { status: "due" } }, "test");
+  const stripe = stripeMock();
+  await withFetch(stripe, async () => send(env, await formPost(access, "fleet@example.test", "/app/checkout")));
+  const body = stripe.calls[0].body;
+  assert.deepEqual([body.get("mode"), body.get("line_items[0][price_data][recurring][interval]"), body.get("subscription_data[metadata][plan]")], ["subscription", "year", "fleet_integration"]);
+  await putAccount(env, { email: "paid@example.test", tier: "pilot", quote: 2_000_000, billing: { status: "paid" } }, "test");
+  await putAccount(env, { email: "noquote@example.test", tier: "pilot", billing: { status: "due" } }, "test");
+  for (const who of ["paid@example.test", "noquote@example.test", "nobody@example.test"]) {
+    const r = await withFetch(stripe, async () => send(env, await formPost(access, who, "/app/checkout")));
+    assert.equal(r.headers.get("location"), "/app/", who);
+  }
+  assert.equal(stripe.calls.length, 1, "Stripe only called for the payable account");
+});
+
+test("stripe: form encoding and webhook signatures (wrong secret, stale or tampered payloads rejected)", async () => {
+  assert.equal(formEncode({ a: { b: 1 }, c: [{ d: "x y" }], e: null }), "a%5Bb%5D=1&c%5B0%5D%5Bd%5D=x%20y");
+  const payload = '{"id":"evt_1"}';
+  const header = await signPayload("secret-a", payload);
+  assert.ok(await verifySignature("secret-a", payload, header));
+  assert.ok(!(await verifySignature("secret-b", payload, header)), "wrong secret");
+  assert.ok(!(await verifySignature("secret-a", '{"id":"evt_2"}', header)), "tampered payload");
+  const old = await signPayload("secret-a", payload, Math.floor(Date.now() / 1000) - 600);
+  assert.ok(!(await verifySignature("secret-a", payload, old)), "older than 5 minutes");
+  assert.ok(await verifySignature("secret-a", payload, `${header},v1=${"0".repeat(64)}`), "any matching v1 counts");
+  assert.ok(!(await verifySignature("", payload, header)) && !(await verifySignature("secret-a", payload, null)));
+});
+
+test("stripe webhook: verified events unlock, renew, fail and cancel plans; forged ones change nothing", async () => {
+  const { env, access } = await appEnv();
+  await putAccount(env, { email: "fleet@example.test", tier: "fleet_integration", quote: 7_500_000, billing: { status: "due" } }, "test");
+  const t0 = Math.floor(Date.now() / 1000);
+  const hook = async (type, object, created = t0, secret = env.STRIPE_WEBHOOK_SECRET) => {
+    const payload = JSON.stringify({ id: `evt_${type}_${created}`, type, created, data: { object } });
+    return send(env, new Request("https://lightbound.uk/api/stripe/webhook", { method: "POST", body: payload, headers: { "stripe-signature": await signPayload(secret, payload) } }));
+  };
+  const meta = { email: "fleet@example.test", plan: "fleet_integration" };
+  const status = async () => (await getAccount(env, "fleet@example.test")).billing.status;
+  assert.equal((await hook("checkout.session.completed", { mode: "subscription", customer: "cus_1", subscription: "sub_1", metadata: meta }, t0, "forged")).status, 400);
+  assert.equal(await status(), "due", "forged event ignored");
+  assert.equal((await hook("checkout.session.completed", { mode: "subscription", customer: "cus_1", subscription: "sub_1", client_reference_id: "fleet@example.test", metadata: meta })).status, 200);
+  assert.equal(await status(), "active");
+  const page = await (await send(env, await as(access, "fleet@example.test", "/app/"))).text();
+  assert.match(page, /Renews yearly/);
+  assert.match(page, /action="\/app\/billing"/);
+  assert.match(page, /Console link coming by email/, "unlocked once paid");
+  await hook("customer.subscription.updated", { id: "sub_1", status: "past_due", customer: "cus_1", metadata: meta }, t0 + 10);
+  assert.equal(await status(), "past_due");
+  await hook("customer.subscription.updated", { id: "sub_1", status: "active", customer: "cus_1", metadata: meta }, t0 + 5);
+  assert.equal(await status(), "past_due", "an older event never overwrites a newer one");
+  await hook("customer.subscription.deleted", { id: "sub_1", status: "canceled", customer: "cus_1", metadata: meta }, t0 + 20);
+  assert.equal(await status(), "canceled");
+  assert.equal(await applyEvent(env, { type: "checkout.session.completed", created: t0, data: { object: { metadata: { email: "fleet@example.test", plan: "pilot" } } } }), "ignored: plan has changed");
+  assert.equal(await applyEvent(env, { type: "checkout.session.completed", created: t0, data: { object: { metadata: { email: "stranger@example.test" } } } }), "ignored: unknown account");
+  const stripe = stripeMock();
+  const portal = await withFetch(stripe, async () => send(env, await formPost(access, "fleet@example.test", "/app/billing")));
+  assert.equal(portal.headers.get("location"), "https://billing.stripe.com/p/session/test_1");
+  assert.equal(stripe.calls[0].body.get("customer"), "cus_1");
+});
+
+test("admin: only ADMIN_EMAILS; approval needs a quote inside the published range", async () => {
   const { env, access } = await appEnv();
   await send(env, post("/api/apply", goodGauss));
   assert.equal((await send(env, await as(access, "ops@example.test", "/app/admin/"))).status, 403);
   const adminPage = await (await send(env, await as(access, "boss@example.test", "/app/admin/"))).text();
   assert.match(adminPage, /New \(1\)/);
-  assert.match(adminPage, /Two smallsats flying ONNX models/);
+  assert.match(adminPage, /Earth observation · Launched and operating · Yamcs \/ XTCE/);
   const [app] = await listApplications(env);
-  const decide = async (email, extra = {}) => send(env, await as(access, email, "/app/admin/decide", {
-    method: "POST", body: new URLSearchParams({ id: app.id, decision: "approve", tier: "active_mission_defense" }).toString(),
-    headers: { origin: "https://lightbound.uk", "content-type": "application/x-www-form-urlencoded", ...extra },
-  }));
-  assert.equal((await decide("ops@example.test")).status, 403, "customers cannot approve");
-  assert.equal((await decide("boss@example.test", { origin: "https://evil.example" })).status, 403, "cross-site");
-  assert.equal((await decide("boss@example.test")).status, 303);
+  const decide = async (email, quote, origin) => send(env, await formPost(access, email, "/app/admin/decide", { id: app.id, decision: "approve", tier: "fleet_integration", quote }, origin));
+  assert.equal((await decide("ops@example.test", "75000")).status, 403, "customers cannot approve");
+  assert.equal((await decide("boss@example.test", "75000", "https://evil.example")).status, 403, "cross-site");
+  assert.equal((await decide("boss@example.test", "15000")).headers.get("location"), "/app/admin/?error=quote", "below the £60k floor");
+  assert.equal(await getAccount(env, "ops@example.test"), null);
+  assert.equal((await decide("boss@example.test", "75000")).status, 303);
   const acct = await getAccount(env, "ops@example.test");
-  assert.deepEqual([acct.tier, acct.pilot, acct.org, acct.updatedBy], ["active_mission_defense", "Scoping", "Example Space", "boss@example.test"]);
+  assert.deepEqual([acct.tier, acct.quote, acct.billing.status, acct.updatedBy], ["fleet_integration", 7_500_000, "due", "boss@example.test"]);
   assert.equal((await listApplications(env))[0].status, "approved");
 });
 
-test("admin: accounts can be set and removed", async () => {
+test("admin: Constellation invitations are free memberships with a draft email, never sent automatically", async () => {
   const { env, access } = await appEnv();
-  const form = async (body) => send(env, await as(access, "boss@example.test", "/app/admin/account", {
-    method: "POST", body: new URLSearchParams(body).toString(), headers: { origin: "https://lightbound.uk", "content-type": "application/x-www-form-urlencoded" },
-  }));
-  assert.equal((await form({ email: "Lead@Example.test", tier: "sovereign_shield", pilot: "", community: "member", action: "save" })).status, 303);
-  assert.deepEqual([(await getAccount(env, "lead@example.test")).tier, (await getAccount(env, "lead@example.test")).community], ["sovereign_shield", "member"]);
+  const res = await send(env, await formPost(access, "boss@example.test", "/app/admin/invite", { email: "Grace@Example.test", name: "Grace" }));
+  assert.equal(res.headers.get("location"), "/app/admin/?invited=grace%40example.test");
+  const acct = await getAccount(env, "grace@example.test");
+  assert.deepEqual([acct.community, acct.tier ?? null, acct.quote ?? null], ["member", null, null]);
+  const page = await (await send(env, await as(access, "boss@example.test", "/app/admin/?invited=grace%40example.test"))).text();
+  assert.match(page, /href="mailto:grace%40example\.test\?subject=Your%20invitation%20to%20Constellation&amp;body=/);
+  assert.match(page, /nothing is sent automatically/);
+});
+
+test("admin: accounts can be set, re-quoted (back to payment due) and removed", async () => {
+  const { env, access } = await appEnv();
+  const form = async (body) => send(env, await formPost(access, "boss@example.test", "/app/admin/account", body));
+  await form({ email: "Lead@Example.test", tier: "pilot", quote: "30000", community: "member", action: "save" });
+  let a = await getAccount(env, "lead@example.test");
+  assert.deepEqual([a.tier, a.quote, a.billing.status, a.community], ["pilot", 3_000_000, "due", "member"]);
+  await putAccount(env, { ...a, billing: { status: "paid", customer: "cus_9" } }, "stripe");
+  await form({ email: "lead@example.test", tier: "fleet_integration", quote: "90000", action: "save" });
+  a = await getAccount(env, "lead@example.test");
+  assert.deepEqual([a.tier, a.billing.status, a.billing.customer], ["fleet_integration", "due", "cus_9"], "new plan: payment due, Stripe customer kept");
+  await form({ email: "lead@example.test", tier: "mission_integration", quote: "", action: "save" });
+  assert.equal((await getAccount(env, "lead@example.test")).billing.status, "invoiced");
   await form({ email: "lead@example.test", tier: "bogus", action: "save" });
   assert.equal((await getAccount(env, "lead@example.test")).tier, null, "unknown plans are dropped");
   await form({ email: "lead@example.test", action: "delete" });

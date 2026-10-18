@@ -1,8 +1,10 @@
 // Local preview of lightbound.uk with the real Worker code: node website/dev.mjs [--port 8788] [--offline]
 // Emulates what Cloudflare provides: static assets from public/ (with _headers, trailing-slash
 // handling, 404 page and byte ranges for the film), run_worker_first routing from wrangler.jsonc,
-// in-memory KV (LIVE and DATA), the 15-minute cron, and Cloudflare Access for /app/*: a local key
-// pair signs the same kind of JWT Access sends, so the Worker's real verification code runs.
+// in-memory KV (LIVE and DATA), the 15-minute cron, Cloudflare Access for /app/* (a local key pair
+// signs the same kind of JWT Access sends, so the Worker's real verification code runs), and a
+// local Stripe stand-in (/__stripe/: test checkout and billing portal that send signed webhooks).
+// No real keys are used locally; the values below are labelled placeholders.
 // --offline uses the recorded feed data instead of the live feeds. Demo accounts use example.test.
 import { createServer } from "node:http";
 import { readFileSync, statSync, existsSync } from "node:fs";
@@ -12,6 +14,9 @@ import { fileURLToPath } from "node:url";
 import worker from "./worker/index.js";
 import { refreshFeeds } from "./worker/feeds.js";
 import { putAccount, saveApplication } from "./worker/data.js";
+import { signPayload } from "./worker/stripe.js";
+import { esc } from "./worker/render.js";
+import { gbp } from "./worker/tiers.js";
 import { fixtureFetch } from "./test/fixtures/fetch.mjs";
 import { memoryKV } from "./test/fixtures/kv.mjs";
 import { makeAccess } from "./test/fixtures/access.mjs";
@@ -98,6 +103,9 @@ const env = {
   ASSETS, LIVE: memoryKV(), DATA: memoryKV(),
   ...config.vars,
   ...access.env,
+  STRIPE_API_BASE: `http://127.0.0.1:${port}/__stripe`,
+  STRIPE_SECRET_KEY: "dev-local-placeholder",
+  STRIPE_WEBHOOK_SECRET: "dev-local-webhook-placeholder",
 };
 const admin = String(env.ADMIN_EMAILS).split(",")[0].trim();
 const ctx = { waitUntil: (p) => Promise.resolve(p).catch((e) => console.error(e)), passThroughOnException() {} };
@@ -105,9 +113,11 @@ const fetchImpl = offline ? fixtureFetch : fetch;
 const refresh = async () => console.log(new Date().toISOString(), "refresh", JSON.stringify(await refreshFeeds(env, { fetchImpl })));
 
 // Demo data so the workspace and admin pages have something to show (dev only).
-await putAccount(env, { email: "pilot@example.test", name: "Pilot team", org: "Example Orbital", tier: "tactical_fleet", pilot: "Data received" }, "dev-seed");
+await putAccount(env, { email: "pilot@example.test", name: "Pilot team", org: "Example Orbital", tier: "pilot", quote: 2_800_000, billing: { status: "due" }, pilot: "Scoping" }, "dev-seed");
+await putAccount(env, { email: "fleet@example.test", name: "Fleet ops", org: "Example Constellation Ltd", tier: "fleet_integration", quote: 7_500_000, billing: { status: "active", customer: "cus_dev_seed", subscription: "sub_dev_seed" }, pilot: "Evidence report delivered" }, "dev-seed");
+await putAccount(env, { email: "member@example.test", name: "Grace Example", community: "member", invitedAt: new Date().toISOString() }, "dev-seed");
 await saveApplication(env, { kind: "constellation", name: "Ada Example", email: "ada@example.test", role: "Satellite operations engineer", link: "https://example.test/ada", message: "I run ground passes for a small LEO fleet and track debris conjunctions in my spare time.", consent: true });
-await saveApplication(env, { kind: "gauss", name: "Ops Example", email: "ops@example.test", org: "Example Space Ltd", role: "Head of mission operations", plan: "pilot", message: "We fly ONNX models on two smallsats and want to know which outputs to trust after the May storm.", consent: true });
+await saveApplication(env, { kind: "gauss", name: "Ops Example", email: "ops@example.test", org: "Example Space Ltd", role: "Head of mission operations", missionType: "Earth observation", stage: "Launched and operating", groundStack: "Yamcs / XTCE", dataAccess: "Historical packet archive", plan: "pilot", timeline: "This quarter", message: "We fly ONNX models on two smallsats and want to know which outputs to trust after the May storm.", consent: true });
 
 await refresh();
 setInterval(refresh, 15 * 60_000).unref();
@@ -117,8 +127,82 @@ const devLogin = (redirect) => `<!doctype html><meta charset="utf-8"><meta name=
 <main class="vault wrap"><div class="narrow"><p class="k">LOCAL_PREVIEW · CLOUDFLARE_ACCESS</p><h1>Sign in</h1>
 <p class="muted">On lightbound.uk, Cloudflare Access shows its own sign-in page and emails a one-time code. Locally, pick who to be:</p>
 <p class="actions"><a class="btn" href="/__dev/login?as=${encodeURIComponent(admin)}&amp;redirect=${encodeURIComponent(redirect)}">Admin (${admin})</a>
-<a class="btn ghost" href="/__dev/login?as=pilot%40example.test&amp;redirect=${encodeURIComponent(redirect)}">Pilot customer</a>
+<a class="btn ghost" href="/__dev/login?as=pilot%40example.test&amp;redirect=${encodeURIComponent(redirect)}">Approved, payment due</a>
+<a class="btn ghost" href="/__dev/login?as=fleet%40example.test&amp;redirect=${encodeURIComponent(redirect)}">Fleet Integration, active</a>
+<a class="btn ghost" href="/__dev/login?as=member%40example.test&amp;redirect=${encodeURIComponent(redirect)}">Constellation member</a>
 <a class="btn ghost" href="/__dev/login?as=visitor%40example.test&amp;redirect=${encodeURIComponent(redirect)}">Signed in, no plan</a></p></div></main>`;
+
+// ---- Stripe, emulated: just enough of Checkout, the billing portal and webhooks ----
+const sessions = new Map();
+const customers = new Map(); // customer -> { email, plan, subscription }
+let seq = 0;
+const readBody = async (req) => {
+  const chunks = [];
+  for await (const c of req) chunks.push(c);
+  return Buffer.concat(chunks).toString("utf8");
+};
+async function deliver(type, object) {
+  const payload = JSON.stringify({ id: `evt_dev_${++seq}`, type, created: Math.floor(Date.now() / 1000), data: { object } });
+  const res = await worker.fetch(new Request(`http://127.0.0.1:${port}/api/stripe/webhook`, {
+    method: "POST", body: payload, headers: { "content-type": "application/json", "stripe-signature": await signPayload(env.STRIPE_WEBHOOK_SECRET, payload) },
+  }), env, ctx);
+  console.log("stripe stand-in ->", type, res.status);
+}
+const standInPage = (title, body) => `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${title} (local Stripe stand-in)</title><link rel="stylesheet" href="/assets/site.css">
+<main class="vault wrap"><div class="narrow"><p class="k">LOCAL_PREVIEW · STRIPE_STAND_IN</p>${body}<p class="muted">On lightbound.uk this is Stripe's own page. Nothing here is charged.</p></div></main>`;
+
+async function stripeStandIn(req, url, send) {
+  const html = (body) => send(200, { "content-type": "text/html; charset=utf-8" }, body);
+  const json = (obj) => send(200, { "content-type": "application/json" }, JSON.stringify(obj));
+  const parts = url.pathname.split("/").filter(Boolean); // __stripe, ...
+  if (req.method === "POST" && url.pathname.startsWith("/__stripe/v1/")) {
+    if (req.headers.authorization !== `Bearer ${env.STRIPE_SECRET_KEY}`) return send(401, { "content-type": "application/json" }, '{"error":{"code":"auth"}}');
+    const form = new URLSearchParams(await readBody(req));
+    if (url.pathname === "/__stripe/v1/checkout/sessions") {
+      const id = `cs_dev_${++seq}`;
+      sessions.set(id, {
+        id, mode: form.get("mode"), amount: Number(form.get("line_items[0][price_data][unit_amount]")), name: form.get("line_items[0][price_data][product_data][name]"),
+        email: form.get("client_reference_id"), plan: form.get("metadata[plan]"), customer: form.get("customer") || `cus_dev_${seq}`,
+        yearly: form.get("line_items[0][price_data][recurring][interval]") === "year", success: form.get("success_url"), cancel: form.get("cancel_url"),
+      });
+      // Same origin as the site the visitor is on, so the page's CSP (form-action) allows the redirect.
+      return json({ id, url: `${new URL(form.get("success_url")).origin}/__stripe/checkout/${id}` });
+    }
+    if (url.pathname === "/__stripe/v1/billing_portal/sessions") return json({ url: `${new URL(form.get("return_url")).origin}/__stripe/portal/${encodeURIComponent(form.get("customer"))}?return=${encodeURIComponent(form.get("return_url"))}` });
+    return send(404, {}, "");
+  }
+  if (parts[1] === "checkout" && sessions.has(parts[2])) {
+    const cs = sessions.get(parts[2]);
+    if (req.method === "POST" && parts[3] === "pay") {
+      const meta = { email: cs.email, plan: cs.plan };
+      const subscription = cs.yearly ? `sub_dev_${++seq}` : null;
+      customers.set(cs.customer, { ...meta, subscription });
+      await deliver("checkout.session.completed", { id: cs.id, mode: cs.mode, payment_status: "paid", customer: cs.customer, subscription, client_reference_id: cs.email, metadata: meta });
+      if (subscription) await deliver("customer.subscription.created", { id: subscription, status: "active", customer: cs.customer, metadata: meta });
+      return send(303, { location: cs.success });
+    }
+    return html(standInPage("Checkout", `<h1>${esc(cs.name)}</h1><p class="lead">${esc(gbp(cs.amount))}${cs.yearly ? " a year" : ""} · ${esc(cs.email)}</p>
+<form method="post" action="/__stripe/checkout/${cs.id}/pay"><p class="actions"><button class="btn">Pay (test)</button> <a class="btn ghost" href="${esc(cs.cancel)}">Cancel</a></p></form>`));
+  }
+  if (parts[1] === "portal") {
+    const customer = decodeURIComponent(parts[2] ?? "");
+    const back = url.searchParams.get("return") ?? "/app/";
+    const c = customers.get(customer) ?? (customer === "cus_dev_seed" ? { email: "fleet@example.test", plan: "fleet_integration", subscription: "sub_dev_seed" } : null);
+    if (req.method === "POST" && c?.subscription) {
+      const action = parts[3];
+      if (action === "fail") await deliver("customer.subscription.updated", { id: c.subscription, status: "past_due", customer, metadata: { email: c.email, plan: c.plan } });
+      if (action === "fix") await deliver("customer.subscription.updated", { id: c.subscription, status: "active", customer, metadata: { email: c.email, plan: c.plan } });
+      if (action === "cancel") await deliver("customer.subscription.deleted", { id: c.subscription, status: "canceled", customer, metadata: { email: c.email, plan: c.plan } });
+      return send(303, { location: back });
+    }
+    const q = `?return=${encodeURIComponent(back)}`;
+    const buttons = c?.subscription
+      ? ["fail", "Simulate a failed renewal", "fix", "Update card (test)", "cancel", "Cancel subscription"].reduce((acc, v, i, a) => (i % 2 ? acc : acc + `<form method="post" action="/__stripe/portal/${encodeURIComponent(customer)}/${a[i]}${q}" class="inline"><button class="btn ghost">${a[i + 1]}</button></form> `), "")
+      : `<p class="muted">Invoices and receipts appear here.</p>`;
+    return html(standInPage("Billing portal", `<h1>Billing</h1><p class="lead">${esc(c?.email ?? customer)}</p><div class="actions">${buttons}</div><p class="actions"><a class="btn" href="${esc(back)}">Back to Lightbound</a></p>`));
+  }
+  return send(404, {}, "");
+}
 
 createServer(async (req, res) => {
   try {
@@ -127,6 +211,7 @@ createServer(async (req, res) => {
       res.writeHead(status, headers);
       res.end(body);
     };
+    if (url.pathname.startsWith("/__stripe/")) return stripeStandIn(req, url, send);
     if (url.pathname === "/__dev/login") {
       const as = url.searchParams.get("as");
       const to = url.searchParams.get("redirect")?.startsWith("/") ? url.searchParams.get("redirect") : "/app/";

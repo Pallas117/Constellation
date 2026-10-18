@@ -5,12 +5,14 @@
 //   /constellation/         launch schedule, space weather, and the Gauss door's readout
 //   /gauss/apply/, /constellation/apply/   application forms (plan preselected, "received" state)
 //   /app/*                  signed-in workspace and admin (Cloudflare Access in front; see app.js)
-//   /api/*                  launches.json, launches.ics, space-weather.json, health, POST apply
+//   /api/*                  launches.json, launches.ics, space-weather.json, health, POST apply,
+//                           POST stripe/webhook (signed by Stripe; unlocks paid plans)
 // and on the cron trigger, which refreshes the feeds into KV. Nothing here needs a secret.
 import { FEEDS, feedState, readFeed, refreshFeeds } from "./feeds.js";
 import { renderConstellationDoor, renderGaussDoor, renderIcs, renderLaunches, renderPlans, renderWeather } from "./render.js";
 import { handleApply, renderApplyForm, renderSent } from "./forms.js";
 import { handleApp } from "./app.js";
+import { handleWebhook } from "./stripe.js";
 import { withSecurity } from "./headers.js";
 
 const applyPage = (kind) => () => ({
@@ -67,6 +69,10 @@ function pageFiller(request, env) {
 }
 
 async function api(request, url, env, ctx) {
+  if (url.pathname === "/api/stripe/webhook") {
+    if (request.method !== "POST") return respond("Method not allowed\n", 405, "text/plain; charset=utf-8", { allow: "POST" });
+    return handleWebhook(request, env, respond);
+  }
   if (url.pathname === "/api/apply") {
     if (request.method !== "POST") return respond("Method not allowed\n", 405, "text/plain; charset=utf-8", { allow: "POST" });
     return handleApply(request, env, respond, pageFiller(request, env));

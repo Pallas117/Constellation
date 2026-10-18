@@ -1,38 +1,53 @@
-// Applications: "Apply to join" for Constellation and "Apply for a plan" for Gauss. Plain HTML forms
-// that post to /api/apply, so they work without JavaScript. The server validates everything,
-// drops bots (a hidden honeypot field plus a per-IP hourly limit) and uses post/redirect/get, so
-// a refresh never resubmits. No personal data ever goes into a URL.
+// Applications: "Request an invitation" for Constellation (free, invite-only) and the Gauss pilot
+// brief (the sales plan's onboarding: fit, readiness, pilot brief). Plain HTML forms that post to
+// /api/apply, so they work without JavaScript. The server validates everything, drops bots (a
+// hidden honeypot field plus a per-IP hourly limit) and uses post/redirect/get, so a refresh never
+// resubmits. No personal data ever goes into a URL.
 import { esc } from "./render.js";
-import { TIERS } from "./tiers.js";
+import { TIERS, priceLabel } from "./tiers.js";
 import { rateLimited, saveApplication, APPLICATION_DAYS } from "./data.js";
 
-const PLANS = [["pilot", "30-day replay pilot"], ...TIERS.map((t) => [t.id, `${t.name} (${t.stageName})`])];
+const PLANS = TIERS.map((t) => [t.id, `${t.name} (${priceLabel(t)})`]);
+const opts = (...xs) => xs.map((x) => [x, x]);
 
 const FIELD = {
   name: { label: "Name", type: "text", max: 100, auto: "name", required: true },
   email: { label: "Email", type: "email", max: 254, auto: "email", required: true },
-  org: { label: "Organisation", type: "text", max: 120, auto: "organization", required: true },
+  org: { label: "Company", type: "text", max: 120, auto: "organization", required: true },
   role: { label: "Role", type: "text", max: 120, auto: "organization-title", required: true },
+  referrer: { label: "Who invited or referred you (optional)", type: "text", max: 120, auto: "off", required: false },
   link: { label: "A link about your work (optional)", type: "url", max: 300, auto: "url", required: false },
-  plan: { label: "Plan", type: "select", required: true },
+  missionType: { label: "Mission type", type: "select", options: opts("Earth observation", "Communications", "Critical communications", "Navigation", "Science or cislunar", "Other"), required: true },
+  stage: { label: "Programme stage", type: "select", options: opts("Concept or design", "In development", "Launched and operating"), required: true },
+  groundStack: { label: "Ground stack", type: "select", options: opts("Yamcs / XTCE", "Other CCSDS ground stack", "Custom", "Not sure"), required: true },
+  dataAccess: { label: "Evidence you can share", type: "select", options: opts("Historical packet archive", "Live or near-live feed", "Agreed synthetic fixture", "Not yet"), required: true },
+  plan: { label: "Package", type: "select", options: PLANS, required: true },
+  timeline: { label: "Target start", type: "select", options: opts("This quarter", "Next quarter", "Later"), required: true },
   message: { label: "Message", type: "textarea", min: 20, max: 2000, required: true },
 };
 
+// Gauss follows the onboarding flow in the sales plan: fit, readiness, pilot brief.
 export const KINDS = Object.freeze({
-  constellation: {
-    fields: ["name", "email", "role", "link", "message"],
-    labels: { role: "What you work on", message: "Why do you want to join?" },
-    button: "Send application",
-  },
   gauss: {
-    fields: ["name", "email", "org", "role", "plan", "message"],
-    labels: { message: "Your mission, and the logs or data you have" },
-    button: "Apply",
+    steps: [
+      { legend: "Fit", label: "01_FIT", fields: ["name", "email", "org", "role"] },
+      { legend: "Readiness", label: "02_READINESS", fields: ["missionType", "stage", "groundStack", "dataAccess"] },
+      { legend: "Pilot brief", label: "03_PILOT_BRIEF", fields: ["plan", "timeline", "message"] },
+    ],
+    labels: { email: "Work email", message: "Your highest-value outcome, and how we'd know the pilot succeeded" },
+    button: "Send pilot brief",
+  },
+  constellation: {
+    steps: [{ fields: ["name", "email", "role", "referrer", "link", "message"] }],
+    labels: { role: "What you work on", message: "Why you'd like to join" },
+    button: "Request an invitation",
   },
 });
+const fieldsOf = (kind) => KINDS[kind].steps.flatMap((st) => st.fields);
 
 const label = (kind, f) => KINDS[kind].labels[f] ?? FIELD[f].label;
-const SHORT = { name: "name", email: "email", org: "organisation", role: "role", link: "link", plan: "plan", message: "message", consent: "privacy agreement" };
+const SHORT = { name: "name", email: "email", org: "company", role: "role", referrer: "referral", link: "link", missionType: "mission type", stage: "programme stage",
+  groundStack: "ground stack", dataAccess: "evidence", plan: "package", timeline: "target start", message: "message", consent: "privacy agreement" };
 
 function control(kind, f, value, error) {
   const d = FIELD[f];
@@ -41,10 +56,9 @@ function control(kind, f, value, error) {
   let input;
   if (d.type === "textarea") input = `<textarea ${common} rows="6" minlength="${d.min}" maxlength="${d.max}">${esc(value)}</textarea>`;
   else if (d.type === "select") {
-    const cur = PLANS.some(([v]) => v === value) ? value : "pilot"; // unknown plan in the link: default to the pilot
-    input = `<select ${common}>${PLANS.map(([v, l]) => `<option value="${v}"${v === cur ? " selected" : ""}>${esc(l)}</option>`).join("")}</select>`;
-  }
-  else input = `<input ${common} type="${d.type}" maxlength="${d.max}" autocomplete="${d.auto}" value="${esc(value)}">`;
+    const cur = d.options.some(([v]) => v === value) ? value : d.options[0][0]; // unknown value (e.g. in a link): first option
+    input = `<select ${common}>${d.options.map(([v, l]) => `<option value="${esc(v)}"${v === cur ? " selected" : ""}>${esc(l)}</option>`).join("")}</select>`;
+  } else input = `<input ${common} type="${d.type}" maxlength="${d.max}" autocomplete="${d.auto}" value="${esc(value)}">`;
   const err = error ? `<p class="err" id="${id}-err">${esc(error)}</p>` : "";
   return `<div class="field"><label for="${id}">${esc(label(kind, f))}</label>${input}${err}</div>`;
 }
@@ -55,23 +69,28 @@ export function renderApplyForm(kind, values = {}, errors = {}) {
   const summary = Object.keys(errors).length
     ? `<div class="form-errors" role="alert"><p>Please check: ${Object.keys(errors).map((f) => esc(SHORT[f])).join(", ")}.</p></div>`
     : "";
+  const steps = k.steps.map((st) => {
+    const inner = st.fields.map((f) => control(kind, f, values[f] ?? "", errors[f])).join("");
+    return st.legend ? `<fieldset class="step"><legend><span class="label">${esc(st.label)}</span> ${esc(st.legend)}</legend>${inner}</fieldset>` : inner;
+  }).join("");
   return (
     `<form class="form" method="post" action="/api/apply">${summary}` +
-    `<input type="hidden" name="kind" value="${kind}">` +
-    k.fields.map((f) => control(kind, f, values[f] ?? "", errors[f])).join("") +
+    `<input type="hidden" name="kind" value="${kind}">${steps}` +
     `<div class="hp" aria-hidden="true"><label for="f-website">Leave this empty</label><input id="f-website" name="website" tabindex="-1" autocomplete="off"></div>` +
-    `<label class="check"><input type="checkbox" name="consent" value="yes" required${values.consent ? " checked" : ""}> <span>Lightbound may keep this application for up to ${APPLICATION_DAYS} days to review it. <a href="/privacy/">Privacy</a></span></label>` +
+    `<label class="check"><input type="checkbox" name="consent" value="yes" required${values.consent ? " checked" : ""}> <span>Lightbound may keep this for up to ${APPLICATION_DAYS} days to review it. <a href="/privacy/">Privacy</a></span></label>` +
     (errors.consent ? `<p class="err">${esc(errors.consent)}</p>` : "") +
     `<p class="actions"><button class="btn" type="submit">${esc(k.button)}</button></p></form>`
   );
 }
 
 export function renderSent(kind) {
-  const next = kind === "gauss"
-    ? `<p class="actions"><a class="btn ghost" href="/gauss/">Back to Gauss</a></p>`
-    : `<p class="actions"><a class="btn ghost" href="/constellation/">Back to Constellation</a></p>`;
-  return `<div class="sent" role="status"><p class="k">RECEIVED</p><h2>Thank you. Your application is with the Lightbound team.</h2>` +
-    `<p class="lead">If it's a fit, we'll write to the email you gave. Nothing else happens with it.</p>${next}</div>`;
+  const [title, next] = kind === "gauss"
+    ? ["Thank you. Your pilot brief is with the Lightbound team.", `<a class="btn ghost" href="/gauss/">Back to Gauss</a>`]
+    : ["Thank you. Your request is with the Constellation team.", `<a class="btn ghost" href="/constellation/">Back to Constellation</a>`];
+  const lead = kind === "gauss"
+    ? "If it's a fit, we'll reply with a fixed quote. Once approved, you sign in to pay and start."
+    : "Membership is free and by invitation. If it's a fit, you'll receive an invitation by email.";
+  return `<div class="sent" role="status"><p class="k">RECEIVED</p><h2>${title}</h2><p class="lead">${lead}</p><p class="actions">${next}</p></div>`;
 }
 
 const clean = (v, max) => String(v ?? "").replace(/\s+/g, " ").trim().slice(0, max);
@@ -79,16 +98,16 @@ const clean = (v, max) => String(v ?? "").replace(/\s+/g, " ").trim().slice(0, m
 export function validate(kind, form) {
   const values = {};
   const errors = {};
-  for (const f of KINDS[kind].fields) {
+  for (const f of fieldsOf(kind)) {
     const d = FIELD[f];
-    const raw = f === "message" ? String(form.get(f) ?? "").replace(/\r\n/g, "\n").trim() : clean(form.get(f), (d.max ?? 40) + 1);
-    values[f] = raw.slice(0, d.max ?? 40);
+    const raw = f === "message" ? String(form.get(f) ?? "").replace(/\r\n/g, "\n").trim() : clean(form.get(f), (d.max ?? 80) + 1);
+    values[f] = raw.slice(0, d.max ?? 80);
     if (d.required && !raw) errors[f] = "Required.";
     else if (d.max && raw.length > d.max) errors[f] = `At most ${d.max} characters.`;
+    else if (d.type === "select" && !d.options.some(([v]) => v === raw)) errors[f] = "Please choose an option.";
     else if (f === "name" && raw.length < 2) errors[f] = "At least 2 characters.";
     else if (f === "email" && !/^[^@\s<>]+@[^@\s<>]+\.[^@\s<>]{2,}$/.test(raw)) errors[f] = "Please enter a valid email address.";
     else if (f === "link" && raw && !/^https?:\/\/[^\s<>"]+\.[^\s<>"]+$/i.test(raw)) errors[f] = "Please enter a full link starting with https://";
-    else if (f === "plan" && !PLANS.some(([v]) => v === raw)) errors[f] = "Please choose a plan.";
     else if (f === "message" && raw.length < d.min) errors[f] = `Please write at least ${d.min} characters.`;
   }
   if (form.get("consent") !== "yes") errors.consent = "Please agree, so we can keep your application to review it.";
