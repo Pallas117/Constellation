@@ -6,7 +6,9 @@ import { accessIdentity, isAdmin } from "./auth.js";
 import { deleteAccount, getAccount, getApplication, listAccounts, listApplications, putAccount, setApplicationStatus } from "./data.js";
 import { sameOrigin } from "./forms.js";
 import { readFeed } from "./feeds.js";
-import { esc, renderGaussDoor } from "./render.js";
+import { esc, renderEventIcs, renderGaussDoor } from "./render.js";
+import { deleteCall, getCall, listCalls, renderCalls, renderCallsAdmin, rsvp, saveCall } from "./calls.js";
+import { isZone, zonedToUtc } from "./timezones.js";
 import { APP_CSP } from "./headers.js";
 import { createCheckout, createPortal, payable } from "./stripe.js";
 import { BILLING, FEATURES, PILOT_STEPS, TIERS, gbp, priceLabel, quoteInRange, tierById, unlocked } from "./tiers.js";
@@ -171,8 +173,36 @@ export async function handleApp(request, env, url, { respond, fillPage, fetchImp
           503, "text/html; charset=utf-8", APP_HEADERS);
       }
     }
+    const isMember = admin || (await getAccount(env, id.email))?.community === "member";
+    if (url.pathname === "/app/prefs") {
+      const tz = new URLSearchParams(await request.text()).get("tz");
+      if (isZone(tz)) await putAccount(env, { ...((await getAccount(env, id.email)) ?? { email: id.email }), tz }, id.email);
+      return back("/app/#calls-h");
+    }
+    if (url.pathname === "/app/calls/rsvp") {
+      if (!isMember) return fail(403, "Forbidden");
+      const f = new URLSearchParams(await request.text());
+      const result = await rsvp(env, f.get("id") ?? "", id.email, f.get("want") === "yes");
+      return back(`/app/?call=${result}#calls-h`);
+    }
     if (!admin) return fail(403, "Forbidden");
     const form = new URLSearchParams(await request.text());
+    if (url.pathname === "/app/admin/calls") {
+      if (form.get("action") === "delete") {
+        if (await getCall(env, form.get("id") ?? "")) await deleteCall(env, form.get("id"));
+        return back("/app/admin/#calls");
+      }
+      const title = String(form.get("title") ?? "").replace(/\s+/g, " ").trim().slice(0, 80);
+      const start = zonedToUtc(form.get("start"), form.get("zone"));
+      const minutes = [30, 45, 60, 90].includes(Number(form.get("minutes"))) ? Number(form.get("minutes")) : 60;
+      const capacity = Math.min(200, Math.max(2, Number.parseInt(form.get("capacity") ?? "20", 10) || 20));
+      const link = String(form.get("link") ?? "").trim();
+      const notes = String(form.get("notes") ?? "").replace(/\s+/g, " ").trim().slice(0, 500);
+      if (!title || start === null || start < Date.now() || (link && !/^https:\/\/[^\s<>"]+\.[^\s<>"]+$/i.test(link)) || link.length > 300)
+        return back("/app/admin/?error=call#calls");
+      await saveCall(env, { title, start: new Date(start).toISOString(), minutes, capacity, link, notes });
+      return back("/app/admin/#calls");
+    }
     const tier = tierById(form.get("tier"));
     const pilot = PILOT_STEPS.includes(form.get("pilot")) ? form.get("pilot") : null;
     const community = form.get("community") === "member" ? "member" : null;
@@ -219,6 +249,18 @@ export async function handleApp(request, env, url, { respond, fillPage, fetchImp
     return fail(404, "Not found");
   }
 
+  const ics = /^\/app\/calls\/([a-z0-9-]{3,40})\.ics$/.exec(url.pathname);
+  if (ics) {
+    const account = await getAccount(env, id.email);
+    if (!admin && account?.community !== "member") return fail(403, "Forbidden");
+    const call = await getCall(env, ics[1]);
+    if (!call) return fail(404, "Not found");
+    const booked = admin || !!(await env.DATA.get(`rsvp:${call.id}:${id.email}`));
+    const body = renderEventIcs({ uid: `call-${call.id}`, start: call.start, minutes: call.minutes, summary: `Constellation: ${call.title}`,
+      description: [call.notes, booked && call.link ? `Join: ${call.link}` : "Book a seat at https://lightbound.uk/app/ to get the link."].filter(Boolean).join("\n"),
+      url: booked && call.link ? call.link : "" });
+    return respond(body, 200, "text/calendar; charset=utf-8", { ...APP_HEADERS, "content-disposition": 'attachment; filename="constellation-call.ics"' });
+  }
   if (url.pathname === "/app/admin/") {
     if (!admin) return fail(403, "Forbidden");
     const applications = await listApplications(env);
@@ -226,14 +268,20 @@ export async function handleApp(request, env, url, { respond, fillPage, fetchImp
     const accounts = await listAccounts(env);
     const invitedEmail = url.searchParams.get("invited");
     const invited = invitedEmail ? await getAccount(env, invitedEmail) : null;
-    const error = url.searchParams.get("error") === "quote" ? "quote" : null;
-    return fillPage("/app/admin/", { admin: () => renderAdmin({ applications, accounts, details, invited: invited?.community === "member" ? invited : null, error }) }, 200, APP_HEADERS);
+    const error = ["quote", "call"].includes(url.searchParams.get("error")) ? url.searchParams.get("error") : null;
+    const calls = await listCalls(env);
+    return fillPage("/app/admin/", { admin: () => renderAdmin({ applications, accounts, details, invited: invited?.community === "member" ? invited : null, error }) +
+      `<div id="calls">${error === "call" ? `<p class="banner warn" role="alert">Not scheduled: give a title, a future start time and an https link (or none).</p>` : ""}${renderCallsAdmin(calls)}</div>` }, 200, APP_HEADERS);
   }
   if (url.pathname === "/app/") {
     const [account, weather, applications] = await Promise.all([getAccount(env, id.email), readFeed(env, "weather"), listApplications(env)]);
     const mine = applications.filter((a) => a.email === id.email);
     const notice = ["success", "cancelled"].includes(url.searchParams.get("checkout")) ? url.searchParams.get("checkout") : "";
-    return fillPage("/app/", { workspace: () => renderWorkspace({ email: id.email, account, admin, weather, consoleUrl: env.GAUSS_APP_URL || "", applications: mine, notice }) }, 200, APP_HEADERS);
+    const member = admin || account?.community === "member";
+    const calls = member ? await listCalls(env) : [];
+    const callNotice = url.searchParams.get("call") ?? "";
+    return fillPage("/app/", { workspace: () => renderWorkspace({ email: id.email, account, admin, weather, consoleUrl: env.GAUSS_APP_URL || "", applications: mine, notice }) +
+      (member ? renderCalls({ calls, email: id.email, tz: isZone(account?.tz) ? account.tz : "UTC", notice: callNotice }) : "") }, 200, APP_HEADERS);
   }
   return fail(404, "Not found");
 }

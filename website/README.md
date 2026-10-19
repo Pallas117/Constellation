@@ -15,6 +15,7 @@ JavaScript, no third-party requests, and no secrets.
 | `/constellation/apply/` | Request an invitation. Constellation is free and invite-only; there is no payment anywhere on its side. |
 | `/app/` | Signed-in workspace: quote and Stripe payment, billing state, pilot progress, space weather, Constellation membership. |
 | `/app/admin/` | For `ADMIN_EMAILS`: approve with a quote, set plan, billing, pilot step; invite Constellation members (free). |
+| `/constellation/time/` | Public time-zone planner. Pick a date and up to 8 zones to see the local hour everywhere, with the hours that suit everyone outlined. A picked hour comes with a calendar file. No data is stored. |
 | `/privacy/` | What is kept, why, for how long, and how to have it deleted. |
 | `/pilot`, `/sales` | Redirects into the Gauss flow (the entry points named in the sales plan), via `public/_redirects`. |
 | `/api/launches`, `/api/launches.ics`, `/api/space-weather`, `/api/health` | JSON, a calendar feed and a health check. |
@@ -82,6 +83,14 @@ flow", Gauss Aurora repo `docs/SALES_FEATURE_LIST_AND_ONBOARDING.md`, 21 Aug 202
 Each customer pays a fixed quote that you set inside the range when you approve them. The site
 never offers a cheap self-serve trial: the sales plan sells a paid, bounded pilot. The Lovable tier
 claims (automated mitigation, a quantum surrogate, fixed warning times) stay out, and a test checks.
+
+**Constellation group calls** (members only, free):
+- You schedule a call in `/app/admin/` with a title, start time in any zone, length, seats, call link and notes.
+- Members see upcoming calls in `/app/` in their own time zone (set once) with UTC beside it. They book or cancel a seat and download a calendar file.
+- The call link is shown only to members who booked, and appears in the calendar file only for them.
+- Each booking is its own key in DATA, so two bookings never overwrite each other. KV is eventually consistent, so a busy call can go one or two over its seat limit.
+
+**Friends of Constellation:** the xOrbita, Pan Galactic Corporation and Aphelion Industries logos sit on the Constellation page. They're shown as supplied, link to each site, and show their names on hover or focus (always on touch screens). They're labelled neutrally, with no partnership claim.
 
 **Constellation** is free and invite-only. People can request an invitation, or you invite them
 from the admin page. Inviting creates the membership and gives you a draft email to send yourself;

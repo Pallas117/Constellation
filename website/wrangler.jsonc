@@ -9,7 +9,7 @@
     "html_handling": "auto-trailing-slash",
     "not_found_handling": "404-page",
     // Everything else is a static file: free, and never runs the Worker.
-    "run_worker_first": ["/", "/gauss/", "/constellation/", "/gauss/apply/", "/constellation/apply/", "/app", "/app/*", "/api/*"]
+    "run_worker_first": ["/", "/gauss/", "/constellation/", "/gauss/apply/", "/constellation/apply/", "/constellation/time/", "/app", "/app/*", "/api/*"]
   },
   // Refresh launches and space weather into KV. Free plan: 5 cron triggers per account.
   "triggers": { "crons": ["*/15 * * * *"] },

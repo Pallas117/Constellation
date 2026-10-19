@@ -4,12 +4,14 @@
 //   /gauss/                 plans (from tiers.js) and the Constellation door's next launch
 //   /constellation/         launch schedule, space weather, and the Gauss door's readout
 //   /gauss/apply/, /constellation/apply/   application forms (plan preselected, "received" state)
+//   /constellation/time/    public time-zone planner for group calls (no data stored)
 //   /app/*                  signed-in workspace and admin (Cloudflare Access in front; see app.js)
 //   /api/*                  launches.json, launches.ics, space-weather.json, health, POST apply,
 //                           POST stripe/webhook (signed by Stripe; unlocks paid plans)
 // and on the cron trigger, which refreshes the feeds into KV. Nothing here needs a secret.
 import { FEEDS, feedState, readFeed, refreshFeeds } from "./feeds.js";
-import { renderConstellationDoor, renderGaussDoor, renderIcs, renderLaunches, renderPlans, renderWeather } from "./render.js";
+import { renderConstellationDoor, renderEventIcs, renderGaussDoor, renderIcs, renderLaunches, renderPlans, renderWeather } from "./render.js";
+import { plannerParams, renderPlanner } from "./timezones.js";
 import { handleApply, renderApplyForm, renderSent } from "./forms.js";
 import { handleApp } from "./app.js";
 import { handleWebhook } from "./stripe.js";
@@ -26,6 +28,7 @@ const LIVE_PAGES = {
     weather: (f, t) => renderWeather(f.weather, t),
     "gauss-door": (f, t) => renderGaussDoor(f.weather, t),
   }),
+  "/constellation/time/": () => ({ planner: (f, t, url) => renderPlanner(plannerParams(url, t)) }),
   "/gauss/apply/": applyPage("gauss"),
   "/constellation/apply/": applyPage("constellation"),
 };
@@ -84,6 +87,14 @@ async function api(request, url, env, ctx) {
   switch (url.pathname) {
     case "/api/launches":
       return json({ ...envelope("launches"), items: feeds.launches?.data ?? [] });
+    case "/api/call.ics": {
+      // A picked time from the public planner. Fixed title; the only input is the start time.
+      const start = Date.parse(url.searchParams.get("start") ?? "");
+      if (!Number.isFinite(start) || Math.abs(start - now) > 400 * 86_400_000) return json({ error: "start must be an ISO time within 400 days" }, 400, "no-store");
+      return respond(renderEventIcs({ uid: `slot-${start}`, start: new Date(start).toISOString(), minutes: 60, summary: "Constellation group call",
+        description: "Time picked with the Constellation time-zone planner: https://lightbound.uk/constellation/time/" }, now), 200, "text/calendar; charset=utf-8",
+        { "cache-control": "public, max-age=86400", "content-disposition": 'attachment; filename="constellation-call.ics"' });
+    }
     case "/api/launches.ics":
       return respond(renderIcs(feeds.launches, now), 200, "text/calendar; charset=utf-8", {
         "cache-control": "public, max-age=900",

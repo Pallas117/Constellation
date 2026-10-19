@@ -160,6 +160,17 @@ function fold(line) {
   return out.join("\r\n ");
 }
 
+/** One calendar event (group calls, the planner's picked time). Calendar apps show it in local time. */
+export function renderEventIcs({ uid, start, minutes, summary, description = "", url = "" }, now = Date.now()) {
+  const s0 = new Date(start);
+  const lines = ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//Lightbound//Constellation calls//EN", "CALSCALE:GREGORIAN", "METHOD:PUBLISH",
+    "BEGIN:VEVENT", `UID:${uid}@lightbound.uk`, `DTSTAMP:${icsTime(new Date(now).toISOString())}`,
+    `DTSTART:${icsTime(s0.toISOString())}`, `DTEND:${icsTime(new Date(s0.getTime() + minutes * 60_000).toISOString())}`,
+    `SUMMARY:${icsEsc(summary)}`, ...(description ? [`DESCRIPTION:${icsEsc(description)}`] : []), ...(url ? [`URL:${url}`] : []),
+    "END:VEVENT", "END:VCALENDAR"];
+  return `${lines.map(fold).join("\r\n")}\r\n`;
+}
+
 export function renderIcs(rec, now = Date.now()) {
   const stamp = icsTime(new Date(rec?.fetchedAt ? Date.parse(rec.fetchedAt) : now).toISOString());
   const lines = ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//Lightbound//Constellation launches//EN", "CALSCALE:GREGORIAN", "METHOD:PUBLISH",

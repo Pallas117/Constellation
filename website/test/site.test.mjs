@@ -16,7 +16,8 @@ const size = (f) => statSync(join(pub, f)).size;
 const text = (s) => s.replace(/<!--[\s\S]*?-->/g, " ").replace(/<[^>]+>/g, " ").replace(/&#39;/g, "'").replace(/\s+/g, " ");
 const PAGES = { "/": "index.html", "/gauss/": "gauss/index.html", "/constellation/": "constellation/index.html", "/turnstone/": "turnstone/index.html", "/404": "404.html",
   "/gauss/apply/": "gauss/apply/index.html", "/constellation/apply/": "constellation/apply/index.html", "/privacy/": "privacy/index.html",
-  "/app/": "app/index.html", "/app/admin/": "app/admin/index.html", "/gauss/evidence/": "gauss/evidence/index.html" };
+  "/app/": "app/index.html", "/app/admin/": "app/admin/index.html", "/gauss/evidence/": "gauss/evidence/index.html",
+  "/constellation/time/": "constellation/time/index.html" };
 const html = Object.fromEntries(Object.entries(PAGES).map(([route, f]) => [route, read(f)]));
 const API_ROUTES = new Set(["/api/launches", "/api/launches.ics", "/api/space-weather", "/api/health", "/cdn-cgi/access/logout"]);
 
@@ -346,4 +347,17 @@ test("GAU-137: bit errors follow the proton (S) level, link gaps the geomagnetic
   assert.match(text(gauss), /Being built for the first pilots: ingest of your own logs, output flagging and the evidence export/);
   assert.match(text(gauss), /Yamcs \(pilot integration\)/);
   assert.match(text(gauss), /ONNX \(pilot integration\)/);
+});
+
+test("Constellation: friends' logos are local files shown as supplied, named, and link out safely; group calls are offered", () => {
+  const page = html["/constellation/"];
+  const friends = page.match(/<ul class="friends">[\s\S]*?<\/ul>/)[0];
+  const items = [...friends.matchAll(/<a class="friend" href="(https:\/\/[^"]+)" rel="noopener noreferrer"><img src="(\/assets\/partners\/[a-z]+\.png)" alt="([^"]+)"/g)];
+  assert.deepEqual(items.map((m) => m[3]), ["xOrbita", "Pan Galactic Corporation", "Aphelion Industries"]);
+  for (const [, , src] of items) assert.ok(statSync(join(pub, src)).size > 0, src);
+  assert.match(text(page), /Friends of Constellation\./);
+  assert.doesNotMatch(read("assets/site.css").match(/\.friend[^{]*\{[^}]*\}/g).join(""), /filter|grayscale/, "logos are not recoloured");
+  assert.match(page, /href="\/constellation\/time\/">Plan across time zones/);
+  assert.match(html["/constellation/time/"], /<body class="page brand-constellation">/);
+  assert.match(html["/constellation/time/"], /<!--live:planner-->/);
 });

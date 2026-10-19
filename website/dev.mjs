@@ -14,6 +14,7 @@ import { fileURLToPath } from "node:url";
 import worker from "./worker/index.js";
 import { refreshFeeds } from "./worker/feeds.js";
 import { putAccount, saveApplication } from "./worker/data.js";
+import { saveCall } from "./worker/calls.js";
 import { signPayload } from "./worker/stripe.js";
 import { esc } from "./worker/render.js";
 import { gbp } from "./worker/tiers.js";
@@ -120,7 +121,11 @@ const refresh = async () => console.log(new Date().toISOString(), "refresh", JSO
 // Demo data so the workspace and admin pages have something to show (dev only).
 await putAccount(env, { email: "pilot@example.test", name: "Pilot team", org: "Example Orbital", tier: "pilot", quote: 2_800_000, billing: { status: "due" }, pilot: "Scoping" }, "dev-seed");
 await putAccount(env, { email: "fleet@example.test", name: "Fleet ops", org: "Example Constellation Ltd", tier: "fleet_integration", quote: 7_500_000, billing: { status: "active", customer: "cus_dev_seed", subscription: "sub_dev_seed" }, pilot: "Evidence report delivered" }, "dev-seed");
-await putAccount(env, { email: "member@example.test", name: "Grace Example", community: "member", invitedAt: new Date().toISOString() }, "dev-seed");
+await putAccount(env, { email: "member@example.test", name: "Grace Example", community: "member", tz: "Asia/Kuala_Lumpur", invitedAt: new Date().toISOString() }, "dev-seed");
+{ // A members' call three days out at 13:00 UTC (dev only).
+  const d = new Date(Date.now() + 3 * 86_400_000); d.setUTCHours(13, 0, 0, 0);
+  await saveCall(env, { title: "Monthly members' call", start: d.toISOString(), minutes: 60, capacity: 12, link: "https://meet.example.test/constellation", notes: "Launch round-up and ASTRA VIGILIS planning." });
+}
 await saveApplication(env, { kind: "constellation", name: "Ada Example", email: "ada@example.test", role: "Satellite operations engineer", link: "https://example.test/ada", message: "I run ground passes for a small LEO fleet and track debris conjunctions in my spare time.", consent: true });
 await saveApplication(env, { kind: "gauss", name: "Ops Example", email: "ops@example.test", org: "Example Space Ltd", role: "Head of mission operations", missionType: "Earth observation", stage: "Launched and operating", groundStack: "Yamcs / XTCE", dataAccess: "Historical packet archive", plan: "pilot", timeline: "This quarter", message: "We fly ONNX models on two smallsats and want to know which outputs to trust after the May storm.", consent: true });
 

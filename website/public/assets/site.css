@@ -320,6 +320,48 @@ footer p{margin:0 0 6px}
 .motto{margin:6px 0 14px;color:var(--accent);font-weight:500;font-size:clamp(16px,1.6vw,19px)}
 .values{list-style:none;margin:24px 0 0;padding:0;display:flex;flex-wrap:wrap;gap:8px}
 .values li{border:1px solid var(--char);border-radius:999px;padding:8px 14px;font-size:14px;color:var(--warm)}
+/* Friends of Constellation: logos shown as supplied (no recolouring); names on hover, focus, or always on touch */
+.friends{list-style:none;margin:8px 0 0;padding:0;display:flex;flex-wrap:wrap;gap:16px}
+.friend{position:relative;display:grid;place-items:center;min-width:120px;height:96px;padding:0 24px;border:1px solid var(--char);border-radius:10px;text-decoration:none}
+.friend img{height:40px;width:auto}
+.friend-name{position:absolute;left:0;right:0;bottom:8px;text-align:center;font:700 10px/1.2 var(--mono);letter-spacing:.12em;text-transform:uppercase;color:var(--muted);opacity:0;transition:opacity .2s}
+.friend:hover,.friend:focus-visible{border-color:var(--accent2)}
+.friend:hover .friend-name,.friend:focus-visible .friend-name{opacity:1}
+@media (hover:none){.friend{height:112px;align-content:start;padding-top:22px}.friend-name{opacity:1}}
+/* Time-zone planner and group calls */
+.planner-form{display:grid;gap:16px;margin-top:24px}
+.planner-form .field{max-width:240px}
+.zones{border:1px solid var(--char);border-radius:10px;padding:14px 16px;margin:0;display:flex;flex-wrap:wrap;gap:8px 18px}
+.zones legend{padding:0 6px;font-weight:600}
+.zone{display:inline-flex;align-items:center;gap:8px;font-size:14px;color:var(--muted);min-height:36px}
+.zone input{width:24px;height:24px;margin:0;accent-color:var(--accent)}
+.planner-summary{margin-top:24px}
+.planner{border-collapse:separate;border-spacing:2px;font-size:13px;min-width:860px}
+.planner th,.planner td{text-align:center;padding:6px 0;min-width:30px;border-radius:4px}
+.planner th[scope=row]{text-align:left;padding-right:10px;white-space:nowrap;font-weight:600;color:var(--warm)}
+.planner thead th{font:700 11px var(--mono);color:var(--muted)}
+.planner thead a{display:block;color:inherit;text-decoration:none;padding:7px 0;min-width:28px}
+.planner td.work{background:rgba(176,144,111,.28);color:var(--warm)}
+.planner td.edge{background:rgba(243,240,232,.06);color:var(--muted)}
+.planner td.quiet{color:var(--muted)}
+.planner .best{outline:1px solid var(--accent)}
+.planner .picked{outline:2px solid var(--warm)}
+.slot{margin-top:24px;border:1px solid var(--char);border-radius:10px;background:var(--panel);padding:20px}
+.slot h2{margin:8px 0 12px;font-size:22px}
+.slot-list{list-style:none;margin:0;padding:0;display:grid;gap:6px;grid-template-columns:repeat(auto-fill,minmax(220px,1fr))}
+.slot-list li{display:grid;gap:2px}
+.slot-list b{font-weight:600}
+.calls{margin-top:40px}
+.call-list{list-style:none;margin:0;padding:0;display:grid;gap:12px}
+.call{display:grid;grid-template-columns:200px 1fr auto;gap:12px 24px;align-items:start;border:1px solid var(--char);border-radius:10px;background:var(--panel);padding:18px;min-width:0}
+.call-when b{display:block;font-size:18px}
+.call-when span{color:var(--muted);font-size:13px}
+.call-what h3{margin-bottom:4px}
+.call-what .m{color:var(--muted);font-size:15px;margin:0;overflow-wrap:anywhere}
+.call-act{display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:end}
+.call-act .btn{min-height:38px;padding:0 14px;font-size:14px}
+@media (max-width:760px){.call{grid-template-columns:1fr}.call-act{justify-content:start}}
+.call-form{max-width:760px}
 .brand-turnstone{--accent:#F0782A;--accent2:#318ADA;--muted:#A9ABA6}
 .brand-turnstone .k{color:var(--muted);letter-spacing:.14em}
 .brand-turnstone .k .dot{color:var(--accent)}

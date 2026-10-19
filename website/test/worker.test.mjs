@@ -16,6 +16,8 @@ import { accessIdentity, isAdmin } from "../worker/auth.js";
 import { getAccount, listApplications, putAccount, saveApplication } from "../worker/data.js";
 import { applyEvent, formEncode, signPayload, verifySignature } from "../worker/stripe.js";
 import { APP_CSP } from "../worker/headers.js";
+import { formatIn, renderPlanner, tzOffset, zonedToUtc } from "../worker/timezones.js";
+import { listCalls, saveCall } from "../worker/calls.js";
 
 const pub = join(dirname(fileURLToPath(import.meta.url)), "..", "public");
 const MIN = 60_000;
@@ -476,4 +478,83 @@ test("admin: accounts can be set, re-quoted (back to payment due) and removed", 
   await form({ email: "lead@example.test", action: "delete" });
   assert.equal(await getAccount(env, "lead@example.test"), null);
   assert.equal((await saveApplication(env, { kind: "constellation", name: "A", email: "a@example.test" })).status, "new");
+});
+
+// ---- Constellation group calls and the time-zone planner ----
+test("time zones: offsets follow daylight saving; wall-clock times convert to UTC in either direction", () => {
+  const H = 3_600_000;
+  assert.equal(tzOffset(Date.parse("2026-07-01T12:00:00Z"), "Europe/London"), H, "BST");
+  assert.equal(tzOffset(Date.parse("2026-12-01T12:00:00Z"), "Europe/London"), 0, "GMT");
+  assert.equal(tzOffset(Date.parse("2026-12-01T12:00:00Z"), "Asia/Kuala_Lumpur"), 8 * H);
+  assert.equal(new Date(zonedToUtc("2026-07-01T13:00", "Europe/London")).toISOString(), "2026-07-01T12:00:00.000Z");
+  assert.equal(new Date(zonedToUtc("2026-10-23T20:00", "Asia/Kuala_Lumpur")).toISOString(), "2026-10-23T12:00:00.000Z");
+  assert.equal(new Date(zonedToUtc("2026-11-02T09:00", "America/New_York")).toISOString(), "2026-11-02T14:00:00.000Z", "after US clocks change");
+  assert.equal(zonedToUtc("2026-07-01T13:00", "Mars/Olympus"), null, "unknown zone");
+  assert.equal(zonedToUtc("tomorrow", "Europe/London"), null);
+  assert.match(formatIn(Date.parse("2026-10-23T12:00:00Z"), "Asia/Kuala_Lumpur"), /23 Oct, 20:00$/);
+});
+
+test("planner: finds the hours that suit everyone, and a picked hour shows in every zone with a calendar file", () => {
+  const html = renderPlanner({ zones: ["Europe/London", "Asia/Kuala_Lumpur"], date: "2026-10-23", at: 9 });
+  assert.match(html, /Everyone is within 08:00–20:00 local time at 07:00, 08:00, 09:00, 10:00, 11:00 UTC\./);
+  assert.match(html, /<b>London<\/b> [A-Za-z]{3} 23 Oct, 10:00/);
+  assert.match(html, /<b>Kuala Lumpur<\/b> [A-Za-z]{3} 23 Oct, 17:00/);
+  assert.match(html, /href="\/api\/call\.ics\?start=2026-10-23T09%3A00%3A00\.000Z"/);
+  const none = renderPlanner({ zones: ["Pacific/Auckland", "Europe/London", "America/Los_Angeles"], date: "2026-10-23", at: null });
+  assert.match(none, /No hour suits everyone\. Best: 2 of 3 zones/);
+});
+
+test("planner routes: the page reads its query safely; the calendar endpoint takes only a start time", async () => {
+  const { env } = await appEnv();
+  const page = await (await send(env, new Request("https://lightbound.uk/constellation/time/?z=Europe/London&z=Asia/Kuala_Lumpur&z=%3Cscript%3E&date=2026-10-23&at=9"))).text();
+  assert.match(page, /Everyone is within/);
+  assert.doesNotMatch(page, /<script>/);
+  const ics = await send(env, new Request(`https://lightbound.uk/api/call.ics?start=${new Date(Date.now() + 86_400_000).toISOString()}`));
+  assert.equal(ics.status, 200);
+  assert.match(await ics.text(), /SUMMARY:Constellation group call/);
+  assert.equal((await send(env, new Request("https://lightbound.uk/api/call.ics?start=nonsense"))).status, 400);
+  assert.equal((await send(env, new Request("https://lightbound.uk/api/call.ics?start=2099-01-01T00:00:00Z"))).status, 400);
+});
+
+test("group calls: admins schedule; members book within capacity; the link shows only once booked", async () => {
+  const { env, access } = await appEnv();
+  for (const e of ["m1@example.test", "m2@example.test", "m3@example.test"]) await putAccount(env, { email: e, community: "member" }, "test");
+  await putAccount(env, { email: "customer@example.test", tier: "pilot" }, "test");
+  const day = new Date(Date.now() + 10 * 86_400_000).toISOString().slice(0, 10);
+  const made = await send(env, await formPost(access, "boss@example.test", "/app/admin/calls",
+    { action: "create", title: "Members' call", start: `${day}T13:00`, zone: "Asia/Kuala_Lumpur", minutes: "60", capacity: "2", link: "https://meet.example.test/c", notes: "Agenda" }));
+  assert.equal(made.status, 303);
+  const [call] = await listCalls(env);
+  assert.equal(call.start, new Date(zonedToUtc(`${day}T13:00`, "Asia/Kuala_Lumpur")).toISOString());
+  assert.equal((await send(env, await formPost(access, "m1@example.test", "/app/admin/calls", { action: "create", title: "x", start: `${day}T13:00`, zone: "UTC" }))).status, 403, "members cannot schedule");
+  assert.equal((await send(env, await formPost(access, "boss@example.test", "/app/admin/calls", { action: "create", title: "Past", start: "2020-01-01T10:00", zone: "UTC" }))).headers.get("location"), "/app/admin/?error=call#calls");
+
+  const before = await (await send(env, await as(access, "m1@example.test", "/app/"))).text();
+  assert.match(before, /Members&#39; call/);
+  assert.doesNotMatch(before, /meet\.example\.test/, "no link before booking");
+  const book = async (email, want = "yes") => (await send(env, await formPost(access, email, "/app/calls/rsvp", { id: call.id, want }))).headers.get("location");
+  assert.equal(await book("m1@example.test"), "/app/?call=booked#calls-h");
+  assert.equal(await book("m2@example.test"), "/app/?call=booked#calls-h");
+  assert.equal(await book("m3@example.test"), "/app/?call=full#calls-h", "capacity 2");
+  assert.equal((await send(env, await formPost(access, "customer@example.test", "/app/calls/rsvp", { id: call.id, want: "yes" }))).status, 403, "calls are for members");
+  const after = await (await send(env, await as(access, "m1@example.test", "/app/?call=booked"))).text();
+  assert.match(after, /Join: <a href="https:\/\/meet\.example\.test\/c"/);
+  assert.match(after, /You&#39;re booked/);
+  const icsBooked = await (await send(env, await as(access, "m1@example.test", `/app/calls/${call.id}.ics`))).text();
+  assert.match(icsBooked, /Join: https:\/\/meet\.example\.test\/c/);
+  const icsNot = await (await send(env, await as(access, "m3@example.test", `/app/calls/${call.id}.ics`))).text();
+  assert.doesNotMatch(icsNot, /meet\.example\.test/, "no link in the calendar file without a booking");
+  assert.equal(await book("m1@example.test", "no"), "/app/?call=cancelled#calls-h");
+  assert.equal(await book("m3@example.test"), "/app/?call=booked#calls-h", "a cancelled seat frees up");
+});
+
+test("group calls: each member sees times in their own zone", async () => {
+  const { env, access } = await appEnv();
+  await putAccount(env, { email: "kl@example.test", community: "member" }, "test");
+  await saveCall(env, { title: "Call", start: "2030-01-10T12:00:00.000Z", minutes: 60, capacity: 10, link: "", notes: "" });
+  assert.equal((await send(env, await formPost(access, "kl@example.test", "/app/prefs", { tz: "Asia/Kuala_Lumpur" }))).status, 303);
+  const page = await (await send(env, await as(access, "kl@example.test", "/app/"))).text();
+  assert.match(page, /<b>[A-Za-z]{3} 10 Jan, 20:00<\/b><span>Kuala Lumpur · [A-Za-z]{3} 10 Jan, 12:00 UTC · 60 min/);
+  await send(env, await formPost(access, "kl@example.test", "/app/prefs", { tz: "Not/AZone" }));
+  assert.equal((await getAccount(env, "kl@example.test")).tz, "Asia/Kuala_Lumpur", "unknown zones ignored");
 });
