@@ -13,7 +13,7 @@ JavaScript, no third-party requests, and no secrets.
 | `/turnstone/` | Mark and "Classified." only (secret project; `noindex`). |
 | `/gauss/apply/` | Pilot brief in the sales plan's three steps (fit, readiness, pilot brief). Plan links preselect the package. |
 | `/constellation/apply/` | Request an invitation. Constellation is free and invite-only; there is no payment anywhere on its side. |
-| `/argo/` | Argo, the self-healing connectivity agent, "built like a spacecraft": what it catches, how it works, its security rules, where it runs, the private relay (in development, not available) and plans (price TBC). |
+| `/argo/` | Gauss Argo, the self-healing connectivity agent, "built like a spacecraft": what it catches, how it works, its security rules, where it runs, the private relay (in development, not available) and the $10-a-month plan. Its buttons follow `ARGO_SALES`. |
 | `/argo/apply/` | The Argo list: early access, the private-relay waitlist, or both. Stored like other applications; "Mark contacted" in admin creates no account. |
 | `/app/` | Signed-in workspace: quote and payment (card, or an invoice where you allow it), billing state, pilot progress, space weather, Constellation membership. |
 | `/app/admin/` | For `ADMIN_EMAILS`: approve with a quote, set plan, billing, pilot step; invite Constellation members (free). |
@@ -113,13 +113,47 @@ invoice for the quote (Fleet Integration: 12 months) and Stripe emails it, with 
 
 **Friends of Constellation:** the xOrbita, Pan Galactic Corporation and Aphelion Industries logos sit on the Constellation page. They're shown as supplied, link to each site, and show their names on hover or focus (always on touch screens). They're labelled neutrally, with no partnership claim. Pallas confirmed permission to show all three (19 Oct 2026).
 
-**Argo** (early access). Every claim on `/argo/` comes from Argo's own README and code on main (`tools/argo`):
+**Gauss Argo** (early access). Every claim on `/argo/` comes from Argo's own README and code on main (`tools/argo`):
 the fault classes, the security rules, the Mac agent and the Linux container. The private relay is the two-hop
 design from the "Lightbound Private Connectivity" brief. It is described as in development and not available,
 and as launching only after an outside security review and legal checks (that brief's phase 2 and 3 gates).
 A test keeps out grade or anonymity claims ("space grade", "mission-grade", "untraceable", "certified",
 "VPN") and prices. The Argo glyph in `assets/marks/argo-glyph-provisional.svg` is provisional until the Brand
 Book adds Argo.
+
+**Selling Gauss Argo** (checked 2026-10-20):
+- **Price:** $10 a month per person (Josh, 2026-10-20), a Stripe subscription in USD from `worker/tiers.js` (`ARGO`).
+  It has its own billing record (`account.argo.billing`) and shares one Stripe customer with any Gauss plan, so
+  cancelling Argo never touches Fleet Integration.
+- **The switch:** `ARGO_SALES` in `wrangler.jsonc` vars.
+  - `off` (default): the list only; the page says "Planned: $10 a month".
+  - `invite`: people you invite from admin can start.
+  - `open`: anyone signed in can start.
+
+  The local preview runs `open`.
+- **Sales plan:** "The public website should sell a paid, bounded pilot. It should not present a generic low-price
+  SaaS trial" (Gauss Aurora `docs/SALES_FEATURE_LIST_AND_ONBOARDING.md`, Positioning). So Gauss Argo is sold on its
+  own page and never appears in the Gauss page, packages or pilot flow (a test checks). Proposed line for the sales
+  plan, for Josh to approve: *"Gauss Argo (device agent) is a separate self-serve subscription at $10 a month. It is
+  not a trial of Gauss Aurora and is not shown in the Gauss Aurora packages or pilot flow."*
+- **Before switching to `invite`:**
+  1. A customer build.
+     - A signed, notarised Mac app (needs an Apple Developer account, which costs money) and a published Linux image.
+     - Customer settings: today Argo is set up for Lightbound, with the MY/SG exit-node list, Claude Code checks and
+       tailnet-only Gauss enrolment.
+     - Install, update and uninstall steps.
+     - The install-link email the workspace promises after someone subscribes.
+  2. A terms-of-service URL in the Stripe Dashboard: Checkout asks every subscriber to accept the terms. Also a
+     refund policy and a privacy-notice section for device data.
+  3. Tax. EU consumers: a non-EU seller owes VAT from the first sale, through the non-Union One Stop Shop, with no
+     threshold (European Commission, vat-one-stop-shop.ec.europa.eu). UK: depends on Lightbound's VAT registration.
+     Decide on Stripe Tax or registration with the accountant (both cost money). The details are UNVERIFIED.
+  4. Cancellation. UK consumers have 14 days to cancel digital content, unless they expressly agree to start straight
+     away and acknowledge losing that right (Consumer Contracts Regulations 2013, legislation.gov.uk/uksi/2013/3134).
+     Counsel should word this.
+  5. One full run in Stripe test mode: subscribe, renew, fail, cancel.
+- **The private relay is separate.** Encryption plus anonymity needs export-control and sanctions advice before any
+  launch (see the Private Connectivity brief).
 
 **Support Constellation.** The Constellation page (Join section) and a member's workspace show a "Support
 Constellation" link once `SUPPORT_URL` in `wrangler.jsonc` vars holds a Stripe Payment Link. While it's empty,

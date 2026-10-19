@@ -10,8 +10,8 @@ import { esc, renderEventIcs, renderGaussDoor, supportLink } from "./render.js";
 import { deleteCall, getCall, listCalls, renderCalls, renderCallsAdmin, rsvp, saveCall } from "./calls.js";
 import { isZone, zonedToUtc } from "./timezones.js";
 import { APP_CSP } from "./headers.js";
-import { createCheckout, createInvoice, createPortal, invoiceable, payable } from "./stripe.js";
-import { BILLING, FEATURES, INVOICE_DAYS, PILOT_STEPS, TIERS, billingStatus, gbp, priceLabel, quoteInRange, tierById, unlocked } from "./tiers.js";
+import { createArgoCheckout, createCheckout, createInvoice, createPortal, customerOf, invoiceable, payable } from "./stripe.js";
+import { ARGO, BILLING, FEATURES, INVOICE_DAYS, PILOT_STEPS, TIERS, argoCanStart, argoPrice, billingStatus, gbp, priceLabel, quoteInRange, tierById, unlocked } from "./tiers.js";
 
 export const APP_HEADERS = { "cache-control": "private, no-store", "x-robots-tag": "noindex", "Content-Security-Policy": APP_CSP };
 const day = (iso) => (iso ? new Date(iso).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" }) : "");
@@ -30,7 +30,7 @@ function billingCard(account, tier) {
   const status = billingStatus(account);
   const b = account.billing ?? {};
   const quote = account.quote ? `${gbp(account.quote)} ${tier.billing === "subscription" ? "a year" : "one-off"}` : priceLabel(tier);
-  const portal = b.customer ? postButton("/app/billing", "Manage billing", "btn ghost") : "";
+  const portal = customerOf(account) ? postButton("/app/billing", "Manage billing", "btn ghost") : "";
   const invoice = linkable(b.invoiceUrl) ? `<p class="actions"><a class="btn" href="${esc(b.invoiceUrl)}" rel="noopener noreferrer">View invoice</a></p>` : "";
   let body;
   if (tier.billing === "invoice") body = `<p class="m">Billed by milestone, as agreed in your scope.</p>${portal}`;
@@ -49,6 +49,23 @@ function billingCard(account, tier) {
   return `<article class="tile billing"><h2 class="label">Billing</h2><p class="big">${esc(quote)}</p><p class="t">${esc(BILLING[status] ?? status)}</p>${body}</article>`;
 }
 
+/** Gauss Argo in the workspace: the list, a start button once ARGO_SALES allows it, then its own billing state. */
+export function argoCard(env, account) {
+  const a = account?.argo;
+  const can = argoCanStart(env, account);
+  if (!a && !can) return "";
+  const status = a?.billing?.status ?? "due";
+  const portal = customerOf(account) ? postButton("/app/billing", "Manage billing", "btn ghost") : "";
+  let body;
+  if (status === "active") body = `<p class="m">Renews monthly. We'll email your install link and setup steps.</p>${portal}`;
+  else if (status === "past_due") body = `<p class="m warn">Your last payment failed. Please update your payment details.</p>${portal}`;
+  else if (can) body = `<p class="m">${status === "canceled" ? "Cancelled. You can start again any time." : "Connectivity that heals itself, on your Mac or Linux machines."}</p>` +
+    `<div class="pay">${postButton("/app/argo/checkout", status === "canceled" ? "Restart Gauss Argo" : "Start Gauss Argo")}</div>`;
+  else body = `<p class="m">You're on the early-access list. We'll email you when it opens.</p>`;
+  const state = a?.billing ? BILLING[status] ?? status : can ? "Ready to start" : "Early access";
+  return `<article class="tile billing"><h2 class="label">${esc(ARGO.name)}</h2><p class="big">${esc(argoPrice)}</p><p class="t">${esc(state)}</p>${body}<p class="m"><a href="/argo/">About ${esc(ARGO.name)}</a></p></article>`;
+}
+
 function memberCard(supportUrl = "") {
   return `<article class="tile"><h2 class="label">Constellation</h2><p class="big">Member</p><p class="t">Free, by invitation.</p>` +
     `<p class="m">Community channels are shared with members directly. Launch calendar: <a href="/api/launches.ics">subscribe</a>.</p>` +
@@ -56,7 +73,7 @@ function memberCard(supportUrl = "") {
     `<p class="m"><a href="/constellation/">Constellation</a></p></article>`;
 }
 
-export function renderWorkspace({ email, account, admin, weather, consoleUrl, supportUrl = "", applications = [], notice = "" }) {
+export function renderWorkspace({ email, account, admin, weather, consoleUrl, supportUrl = "", argo = "", applications = [], notice = "" }) {
   const tier = tierById(account?.tier);
   const who = esc(account?.name || email);
   const adminLink = admin ? `<p class="actions"><a class="btn ghost" href="/app/admin/">Applications and accounts</a></p>` : "";
@@ -66,6 +83,7 @@ export function renderWorkspace({ email, account, admin, weather, consoleUrl, su
     success: confirmed ? "Payment received. Thank you." : "Thank you. We're confirming your payment; refresh this page in a minute.",
     cancelled: "Checkout cancelled. Nothing was charged.",
     invoice: `Invoice sent to ${email}.`,
+    argo: `Thank you. ${ARGO.name} is starting; refresh this page in a minute if it doesn't show as active.`,
   }[notice];
   const bannerHtml = banner ? `<p class="banner" role="status">${esc(banner)}</p>` : "";
   if (!tier) {
@@ -74,7 +92,7 @@ export function renderWorkspace({ email, account, admin, weather, consoleUrl, su
       ? `<p class="lead">Your application from ${esc(day(pending[0].at))} is with the Lightbound team. You'll hear from us by email.</p>`
       : `<p class="lead">You're signed in as ${esc(email)}.${member ? "" : " This account has no Gauss plan yet."}</p>`;
     return `<p class="k">00_WORKSPACE</p><h1 id="hero-h">Welcome, ${who}.</h1>${bannerHtml}${status}` +
-      (member ? `<div class="tiles">${memberCard(supportUrl)}</div>` : "") +
+      (member || argo ? `<div class="tiles">${member ? memberCard(supportUrl) : ""}${argo}</div>` : "") +
       `<p class="actions"><a class="btn${member ? " ghost" : ""}" href="/gauss/#plans">See the Gauss plans</a>${pending.length ? "" : ` <a class="btn ghost" href="/gauss/apply/">Apply</a>`}</p>${adminLink}`;
   }
   const open = unlocked(billingStatus(account));
@@ -90,10 +108,10 @@ export function renderWorkspace({ email, account, admin, weather, consoleUrl, su
     `<div class="tiles">${billingCard(account, tier)}` +
     (open ? `<article class="tile"><h2 class="label">Pilot</h2>${account.pilot ? pilotTrack(account.pilot) : `<p class="m">Not started. We'll set this up with you.</p>`}</article>` : "") +
     `<article class="tile"><h2 class="label">Space environment</h2>${renderGaussDoor(weather) || `<p class="m">Space-weather data is unavailable right now.</p>`}</article>` +
-    (member ? memberCard(supportUrl) : "") + `</div>` +
+    (member ? memberCard(supportUrl) : "") + argo + `</div>` +
     `<div class="two plan-lists"><div><h2 class="label">${open ? "Included" : "What you get"}: ${esc(tier.name)}</h2><ul class="ticks">${list(tier.features)}</ul></div>` +
     (next ? `<div><h2 class="label">Next: ${esc(next.name)}</h2><ul class="locked">${list(next.features.filter((f) => !tier.features.includes(f)))}</ul><p class="m">${esc(next.entry)} Planning range: ${esc(priceLabel(next))}.</p></div>` : "") +
-    `</div><p class="actions"><a class="btn ghost" href="mailto:jzwnathan@lightbound.uk?subject=${encodeURIComponent(`Gauss ${tier.name}`)}">Email your Lightbound contact</a></p>` +
+    `</div><p class="actions"><a class="btn ghost" href="mailto:jzwnathan@lightbound.uk?subject=${encodeURIComponent(`Gauss ${tier.name}`)}">Email Josh, the founder</a></p>` +
     `<p class="note">Gauss is advisory: it shows evidence and never commands a spacecraft.</p>${adminLink}`
   );
 }
@@ -124,7 +142,7 @@ export function renderAdmin({ applications, accounts, details, invited, error })
     const decide = a.status === "new"
       ? `<form method="post" action="/app/admin/decide" class="inline"><input type="hidden" name="id" value="${esc(a.id)}">` +
         (a.kind === "gauss" ? `${tierSelect(planId)} ${quoteInput(0)} ${invoiceCheck(false, `inv-${esc(a.id)}`)}` : a.kind === "constellation" ? `<input type="hidden" name="community" value="member">` : "") +
-        `<button class="btn" name="decision" value="approve">${{ gauss: "Approve with quote", constellation: "Invite", argo: "Mark contacted" }[a.kind] ?? "Approve"}</button> <button class="btn ghost" name="decision" value="decline">Decline</button></form>`
+        `<button class="btn" name="decision" value="approve">${{ gauss: "Approve with quote", constellation: "Invite", argo: "Invite to early access" }[a.kind] ?? "Approve"}</button> <button class="btn ghost" name="decision" value="decline">Decline</button></form>`
       : `<span class="tag${a.status === "approved" ? " go" : ""}">${esc(a.status)}</span>`;
     const kicker = { gauss: `GAUSS · ${tierById(a.plan)?.name ?? a.plan ?? ""}`, constellation: "CONSTELLATION · INVITATION REQUEST", argo: "ARGO · EARLY ACCESS AND RELAY WAITLIST" }[a.kind] ?? a.kind;
     return `<li class="app-card"><div class="app-head"><span class="label">${esc(kicker)}</span><time datetime="${esc(a.at)}">${esc(day(a.at))}</time></div>` +
@@ -136,7 +154,8 @@ export function renderAdmin({ applications, accounts, details, invited, error })
     return `<tr><td>${esc(u.email)}<br><span class="muted">${esc(u.org ?? "")}</span></td><td><form method="post" action="/app/admin/account" class="inline">` +
       `<input type="hidden" name="email" value="${esc(u.email)}">${tierSelect(u.tier)} ${quoteInput(u.quote)} ${billingSelect()} ${invoiceCheck(u.invoice, `acct-inv-${i}`)} ${pilotSelect(u.pilot)} ${communitySelect(u.community)} ` +
       `<button class="btn ghost" name="action" value="save">Save</button> <button class="btn ghost" name="action" value="delete">Remove</button></form>` +
-      `${status ? `<span class="tag${status === "overdue" || status === "past_due" ? " warn" : ""}">${esc(BILLING[status] ?? status)}</span>` : ""}</td></tr>`;
+      `${status ? `<span class="tag${status === "overdue" || status === "past_due" ? " warn" : ""}">${esc(BILLING[status] ?? status)}</span>` : ""}` +
+      `${u.argo ? ` <span class="tag">Argo: ${esc(u.argo === "invited" ? "invited" : BILLING[u.argo] ?? u.argo)}</span>` : ""}</td></tr>`;
   }).join("");
   const banner = error === "quote"
     ? `<p class="banner warn" role="alert">Not approved: enter a quote inside the plan's range.</p>`
@@ -177,6 +196,8 @@ export async function handleApp(request, env, url, { respond, fillPage, fetchImp
   const admin = isAdmin(env, id.email);
   const back = (to) => new Response(null, { status: 303, headers: { location: to, ...APP_HEADERS } });
   const fail = (status, text) => respond(`${text}\n`, status, "text/plain; charset=utf-8", APP_HEADERS);
+  const billingDown = () => respond(`<!doctype html><meta charset="utf-8"><title>Billing unavailable · Lightbound</title><link rel="stylesheet" href="/assets/site.css"><main class="vault wrap"><div><p class="k">503_BILLING</p><h1>Billing is unavailable right now.</h1><p class="muted">Nothing was charged. Please try again shortly, or email jzwnathan@lightbound.uk.</p><p class="actions"><a class="btn" href="/app/">Back to your workspace</a></p></div></main>`,
+    503, "text/html; charset=utf-8", APP_HEADERS);
 
   if (request.method === "POST") {
     if (!sameOrigin(request)) return fail(403, "Forbidden");
@@ -194,12 +215,23 @@ export async function handleApp(request, env, url, { respond, fillPage, fetchImp
         }
         const session = url.pathname === "/app/checkout"
           ? (canPay ? await createCheckout(env, account, url.origin, fetchImpl) : null)
-          : account?.billing?.customer ? await createPortal(env, account, url.origin, fetchImpl) : null;
+          : customerOf(account) ? await createPortal(env, account, url.origin, fetchImpl) : null;
         if (!session?.url) return back("/app/");
         return new Response(null, { status: 303, headers: { location: session.url, ...APP_HEADERS } });
       } catch {
-        return respond(`<!doctype html><meta charset="utf-8"><title>Billing unavailable · Lightbound</title><link rel="stylesheet" href="/assets/site.css"><main class="vault wrap"><div><p class="k">503_BILLING</p><h1>Billing is unavailable right now.</h1><p class="muted">Nothing was charged. Please try again shortly, or email jzwnathan@lightbound.uk.</p><p class="actions"><a class="btn" href="/app/">Back to your workspace</a></p></div></main>`,
-          503, "text/html; charset=utf-8", APP_HEADERS);
+        return billingDown();
+      }
+    }
+    if (url.pathname === "/app/argo/checkout") {
+      const account = (await getAccount(env, id.email)) ?? { email: id.email };
+      if (!argoCanStart(env, account) || ["active", "past_due"].includes(account.argo?.billing?.status)) return back("/app/");
+      try {
+        if (!account.updatedAt) await putAccount(env, account, id.email); // the webhook needs an account to update
+        const session = await createArgoCheckout(env, account, url.origin, fetchImpl);
+        if (!session?.url) return back("/app/");
+        return new Response(null, { status: 303, headers: { location: session.url, ...APP_HEADERS } });
+      } catch {
+        return billingDown();
       }
     }
     const isMember = admin || (await getAccount(env, id.email))?.community === "member";
@@ -241,7 +273,10 @@ export async function handleApp(request, env, url, { respond, fillPage, fetchImp
       const approve = form.get("decision") === "approve";
       if (approve && app.kind === "gauss" && (!tier || (tier.billing !== "invoice" && quoteFrom(form, tier) === null))) return back("/app/admin/?error=quote");
       await setApplicationStatus(env, app, approve ? "approved" : "declined", id.email);
-      if (approve && app.kind !== "argo") { // Argo: a list for now; "Mark contacted" changes no account
+      if (approve && app.kind === "argo") { // early access: they can start once ARGO_SALES is "invite" or "open"; no Gauss plan or membership
+        const prev = (await getAccount(env, app.email)) ?? { email: app.email };
+        await putAccount(env, { ...prev, name: prev.name ?? app.name, argo: { ...(prev.argo ?? {}), invitedAt: new Date().toISOString() } }, id.email);
+      } else if (approve) {
         const prev = (await getAccount(env, app.email)) ?? { email: app.email };
         const base = { ...prev, name: prev.name ?? app.name, org: prev.org ?? app.org ?? null };
         await putAccount(env, app.kind === "gauss"
@@ -306,11 +341,11 @@ export async function handleApp(request, env, url, { respond, fillPage, fetchImp
   if (url.pathname === "/app/") {
     const [account, weather, applications] = await Promise.all([getAccount(env, id.email), readFeed(env, "weather"), listApplications(env)]);
     const mine = applications.filter((a) => a.email === id.email);
-    const notice = url.searchParams.get("invoice") === "sent" ? "invoice" : ["success", "cancelled"].includes(url.searchParams.get("checkout")) ? url.searchParams.get("checkout") : "";
+    const notice = url.searchParams.get("argo") === "started" ? "argo" : url.searchParams.get("invoice") === "sent" ? "invoice" : ["success", "cancelled"].includes(url.searchParams.get("checkout")) ? url.searchParams.get("checkout") : "";
     const member = admin || account?.community === "member";
     const calls = member ? await listCalls(env) : [];
     const callNotice = url.searchParams.get("call") ?? "";
-    return fillPage("/app/", { workspace: () => renderWorkspace({ email: id.email, account, admin, weather, consoleUrl: env.GAUSS_APP_URL || "", supportUrl: env.SUPPORT_URL || "", applications: mine, notice }) +
+    return fillPage("/app/", { workspace: () => renderWorkspace({ email: id.email, account, admin, weather, consoleUrl: env.GAUSS_APP_URL || "", supportUrl: env.SUPPORT_URL || "", argo: argoCard(env, account ?? { email: id.email }), applications: mine, notice }) +
       (member ? renderCalls({ calls, email: id.email, tz: isZone(account?.tz) ? account.tz : "UTC", notice: callNotice }) : "") }, 200, APP_HEADERS);
   }
   return fail(404, "Not found");

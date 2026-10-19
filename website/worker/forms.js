@@ -97,7 +97,7 @@ export function renderApplyForm(kind, values = {}, errors = {}) {
 const SENT = {
   gauss: ["Thank you. Your pilot brief is with the Lightbound team.", "If it's a fit, we'll reply with a fixed quote. Once approved, you sign in to pay and start.", "/gauss/", "Back to Gauss"],
   constellation: ["Thank you. Your request is with the Constellation team.", "Membership is free and by invitation. If it's a fit, you'll receive an invitation by email.", "/constellation/", "Back to Constellation"],
-  argo: ["Thank you. You're on the Argo list.", "We'll email you when early access opens, with the price, before anything starts.", "/argo/", "Back to Argo"],
+  argo: ["Thank you. You're on the Gauss Argo list.", "We'll email you when early access opens, with the price, before anything starts.", "/argo/", "Back to Gauss Argo"],
 };
 
 export function renderSent(kind) {

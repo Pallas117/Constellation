@@ -3,7 +3,7 @@
 // and signed webhooks that unlock the workspace. Card details never touch lightbound.uk. The two keys live in Worker secrets
 // (STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET), never in config, URLs or logs.
 import { getAccount, putAccount } from "./data.js";
-import { CURRENCY, INVOICE_DAYS, tierById } from "./tiers.js";
+import { ARGO, CURRENCY, INVOICE_DAYS, tierById } from "./tiers.js";
 
 const api = (env) => env.STRIPE_API_BASE || "https://api.stripe.com"; // STRIPE_API_BASE: local stand-in only
 const enc = (s) => new TextEncoder().encode(s);
@@ -36,6 +36,9 @@ async function call(env, path, params, fetchImpl) {
   if (!res.ok) throw new Error(`Stripe ${path}: HTTP ${res.status}${body?.error?.code ? ` (${body.error.code})` : ""}`);
   return body;
 }
+
+/** One Stripe customer per person, whichever product they bought first. */
+export const customerOf = (account) => account?.billing?.customer ?? account?.argo?.customer ?? null;
 
 export const payable = (account) => {
   const tier = tierById(account?.tier);
@@ -72,8 +75,8 @@ export async function createCheckout(env, account, origin, fetchImpl = fetch) {
       price_data: { currency: CURRENCY, unit_amount: account.quote, product_data: { name: `Gauss: ${tier.name}` }, ...(yearly ? { recurring: { interval: "year" } } : {}) },
     }],
     client_reference_id: account.email,
-    ...(account.billing?.customer ? { customer: account.billing.customer } : { customer_email: account.email }),
-    ...(yearly || account.billing?.customer ? {} : { customer_creation: "always" }),
+    ...(customerOf(account) ? { customer: customerOf(account) } : { customer_email: account.email }),
+    ...(yearly || customerOf(account) ? {} : { customer_creation: "always" }),
     metadata: meta,
     ...(yearly ? { subscription_data: { metadata: meta } } : { payment_intent_data: { metadata: meta }, invoice_creation: { enabled: true } }),
     billing_address_collection: "required",
@@ -83,10 +86,28 @@ export async function createCheckout(env, account, origin, fetchImpl = fetch) {
   }, fetchImpl);
 }
 
+/** Gauss Argo: a monthly subscription at the fixed price. Requires agreeing to the terms (set the terms URL in Stripe first). */
+export async function createArgoCheckout(env, account, origin, fetchImpl = fetch) {
+  const meta = { email: account.email, product: ARGO.id };
+  const customer = customerOf(account);
+  return call(env, "checkout/sessions", {
+    mode: "subscription",
+    line_items: [{ quantity: 1, price_data: { currency: ARGO.currency, unit_amount: ARGO.amount, product_data: { name: ARGO.name }, recurring: { interval: ARGO.interval } } }],
+    client_reference_id: account.email,
+    ...(customer ? { customer } : { customer_email: account.email }),
+    metadata: meta,
+    subscription_data: { metadata: meta },
+    consent_collection: { terms_of_service: "required" },
+    tax_id_collection: { enabled: true },
+    success_url: `${origin}/app/?argo=started`,
+    cancel_url: `${origin}/app/?checkout=cancelled`,
+  }, fetchImpl);
+}
+
 /** Stripe's billing portal (cards, invoices, cancel). Returns { url }. */
 export async function createPortal(env, account, origin, fetchImpl = fetch) {
-  if (!account?.billing?.customer) throw new Error("No Stripe customer on this account");
-  return call(env, "billing_portal/sessions", { customer: account.billing.customer, return_url: `${origin}/app/` }, fetchImpl);
+  if (!customerOf(account)) throw new Error("No Stripe customer on this account");
+  return call(env, "billing_portal/sessions", { customer: customerOf(account), return_url: `${origin}/app/` }, fetchImpl);
 }
 
 function timingSafeEqual(a, b) {
@@ -129,6 +150,7 @@ export async function applyEvent(env, event) {
   if (!email) return "ignored: no account";
   const account = await getAccount(env, email);
   if (!account) return "ignored: unknown account";
+  if (obj.metadata?.product === ARGO.id) return applyArgoEvent(env, account, event, obj);
   if (obj.metadata?.plan && obj.metadata.plan !== account.tier) return "ignored: plan has changed";
   const prev = account.billing ?? {};
   if (prev.eventAt && event.created < prev.eventAt) return "ignored: older event";
@@ -162,6 +184,20 @@ export async function applyEvent(env, event) {
   }
   await putAccount(env, { ...account, billing: { ...prev, ...next, eventAt: event.created, updatedAt: new Date().toISOString() } }, "stripe");
   return `${event.type} -> ${next.status}`;
+}
+
+/** Gauss Argo has its own billing record (account.argo.billing), so it never touches a Gauss plan's. */
+async function applyArgoEvent(env, account, event, obj) {
+  const prev = account.argo?.billing ?? {};
+  if (prev.eventAt && event.created < prev.eventAt) return "ignored: older event";
+  let next;
+  if (event.type === "checkout.session.completed") next = { status: "active", customer: obj.customer ?? prev.customer, subscription: obj.subscription ?? prev.subscription };
+  else if (event.type.startsWith("customer.subscription."))
+    next = { status: event.type.endsWith(".deleted") ? "canceled" : (SUBSCRIPTION[obj.status] ?? prev.status ?? "due"), customer: obj.customer ?? prev.customer, subscription: obj.id };
+  else return `ignored: ${event.type}`;
+  const argo = { ...(account.argo ?? {}), customer: next.customer ?? account.argo?.customer ?? null, billing: { ...prev, ...next, eventAt: event.created, updatedAt: new Date().toISOString() } };
+  await putAccount(env, { ...account, argo }, "stripe");
+  return `argo ${event.type} -> ${next.status}`;
 }
 
 /** POST /api/stripe/webhook: no cookies or origin here; the signature is the only proof. */

@@ -102,6 +102,14 @@ export const BILLING = Object.freeze({
 // due date; cancellation or an overdue invoice locks the workspace.
 export const unlocked = (status) => ["paid", "active", "past_due", "invoice_open", "invoiced"].includes(status);
 
+// Gauss Argo: the self-serve device agent (tools/argo), at one fixed monthly price. It is sold on its own and never
+// shown with the Gauss packages above: the sales plan says the public site must not present Gauss as a low-price SaaS trial.
+export const ARGO = Object.freeze({ id: "argo", name: "Gauss Argo", amount: 1000, currency: "usd", interval: "month" });
+export const argoPrice = `$${ARGO.amount / 100} a month`;
+/** ARGO_SALES (wrangler.jsonc vars): "off" = the list only (default); "invite" = invited accounts can start; "open" = anyone signed in. */
+export const argoMode = (env) => (["off", "invite", "open"].includes(env?.ARGO_SALES) ? env.ARGO_SALES : "off");
+export const argoCanStart = (env, account) => argoMode(env) === "open" || (argoMode(env) === "invite" && !!account?.argo?.invitedAt);
+
 /** Days a customer has to pay an invoice they asked for. */
 export const INVOICE_DAYS = 30;
 

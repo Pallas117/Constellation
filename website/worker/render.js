@@ -1,7 +1,7 @@
 // Server-side HTML for the live sections, plus the launch calendar (.ics). Everything is escaped;
 // the pages stay script-free. Times are always UTC, and every view says how old its data is.
 import { feedState } from "./feeds.js";
-import { FEATURES, TIERS, priceLabel } from "./tiers.js";
+import { argoPrice, FEATURES, priceLabel, TIERS } from "./tiers.js";
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 const MINUS = "\u2212";
@@ -202,6 +202,16 @@ export function renderSupport(url) {
     ? `<div class="support"><p class="label">SUPPORT</p><h3>Help keep it free.</h3><p>Constellation is free and non-commercial. If you'd like to help keep it running, chip in whatever you like. ` +
       `It's optional and changes nothing about membership.</p><p class="actions"><a class="btn ghost" href="${esc(href)}" rel="noopener">Support Constellation</a></p></div>`
     : "";
+}
+
+// Gauss Argo's calls to action follow ARGO_SALES: the list while it's off, a sign-in to start once it's open.
+export function renderArgoActions(mode) {
+  if (mode === "open") return `<a class="btn" href="/app/?argo=start">Start for ${esc(argoPrice)}</a> <a class="btn ghost" href="#how">How it works</a>`;
+  return `<a class="btn" href="/argo/apply/">Request early access</a> ` + (mode === "invite" ? `<a class="btn ghost" href="/app/">Invited? Sign in to start</a>` : `<a class="btn ghost" href="#how">How it works</a>`);
+}
+export function renderArgoPlan(mode) {
+  return `<p class="lead">${mode === "off" ? "Planned: " : ""}<strong>${esc(argoPrice)}</strong> per person, cancel any time. For a team, talk to us about the fleet view in the Gauss console.</p>` +
+    `<p class="actions">${mode === "open" ? `<a class="btn" href="/app/?argo=start">Start for ${esc(argoPrice)}</a>` : `<a class="btn" href="/argo/apply/">Request early access</a>`}</p>`;
 }
 
 export function renderPlans() {

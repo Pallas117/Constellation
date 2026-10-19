@@ -5,12 +5,14 @@
 //   /constellation/         launch schedule, space weather, and the Gauss door's readout
 //   /gauss/apply/, /constellation/apply/, /argo/apply/   application forms (plan preselected, "received" state)
 //   /constellation/time/    public time-zone planner for group calls (no data stored)
+//   /argo/                  Gauss Argo; its buttons follow ARGO_SALES (the list, or start a subscription)
 //   /app/*                  signed-in workspace and admin (Cloudflare Access in front; see app.js)
 //   /api/*                  launches.json, launches.ics, space-weather.json, health, POST apply,
 //                           POST stripe/webhook (signed by Stripe; unlocks paid plans)
 // and on the cron trigger, which refreshes the feeds into KV. Nothing here needs a secret.
 import { FEEDS, feedState, readFeed, refreshFeeds } from "./feeds.js";
-import { renderConstellationDoor, renderEventIcs, renderGaussDoor, renderIcs, renderLaunches, renderPlans, renderSupport, renderWeather } from "./render.js";
+import { renderArgoActions, renderArgoPlan, renderConstellationDoor, renderEventIcs, renderGaussDoor, renderIcs, renderLaunches, renderPlans, renderSupport, renderWeather } from "./render.js";
+import { argoMode } from "./tiers.js";
 import { plannerParams, renderPlanner } from "./timezones.js";
 import { handleApply, renderApplyForm, renderSent } from "./forms.js";
 import { handleApp } from "./app.js";
@@ -33,6 +35,7 @@ const LIVE_PAGES = {
   "/gauss/apply/": applyPage("gauss"),
   "/constellation/apply/": applyPage("constellation"),
   "/argo/apply/": applyPage("argo"),
+  "/argo/": () => ({ "argo-actions": (f, t, url, env) => renderArgoActions(argoMode(env)), "argo-plan": (f, t, url, env) => renderArgoPlan(argoMode(env)) }),
 };
 const NEEDS_FEEDS = new Set(["/", "/gauss/", "/constellation/"]);
 const ATTRIBUTION = {

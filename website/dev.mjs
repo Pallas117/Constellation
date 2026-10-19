@@ -113,6 +113,7 @@ const env = {
   STRIPE_SECRET_KEY: "dev-local-placeholder",
   STRIPE_WEBHOOK_SECRET: "dev-local-webhook-placeholder",
   SUPPORT_URL: process.env.SUPPORT_URL ?? "", // e.g. SUPPORT_URL=https://buy.stripe.com/test_... npm run site:dev
+  ARGO_SALES: process.env.ARGO_SALES ?? "open", // the preview shows Gauss Argo on sale; production defaults to "off"
 };
 const admin = String(env.ADMIN_EMAILS).split(",")[0].trim();
 const ctx = { waitUntil: (p) => Promise.resolve(p).catch((e) => console.error(e)), passThroughOnException() {} };
@@ -175,7 +176,7 @@ async function stripeStandIn(req, url, send) {
       const id = `cs_dev_${++seq}`;
       sessions.set(id, {
         id, mode: form.get("mode"), amount: Number(form.get("line_items[0][price_data][unit_amount]")), name: form.get("line_items[0][price_data][product_data][name]"),
-        email: form.get("client_reference_id"), plan: form.get("metadata[plan]"), customer: form.get("customer") || `cus_dev_${seq}`,
+        email: form.get("client_reference_id"), plan: form.get("metadata[plan]"), product: form.get("metadata[product]"), customer: form.get("customer") || `cus_dev_${seq}`,
         yearly: form.get("line_items[0][price_data][recurring][interval]") === "year", success: form.get("success_url"), cancel: form.get("cancel_url"),
       });
       // Same origin as the site the visitor is on, so the page's CSP (form-action) allows the redirect.
@@ -212,14 +213,15 @@ async function stripeStandIn(req, url, send) {
   if (parts[1] === "checkout" && sessions.has(parts[2])) {
     const cs = sessions.get(parts[2]);
     if (req.method === "POST" && parts[3] === "pay") {
-      const meta = { email: cs.email, plan: cs.plan };
-      const subscription = cs.yearly ? `sub_dev_${++seq}` : null;
-      customers.set(cs.customer, { ...meta, subscription });
+      const meta = cs.product ? { email: cs.email, product: cs.product } : { email: cs.email, plan: cs.plan };
+      const subscription = cs.mode === "subscription" ? `sub_dev_${++seq}` : null;
+      customers.set(cs.customer, { ...meta, meta, subscription });
       await deliver("checkout.session.completed", { id: cs.id, mode: cs.mode, payment_status: "paid", customer: cs.customer, subscription, client_reference_id: cs.email, metadata: meta });
       if (subscription) await deliver("customer.subscription.created", { id: subscription, status: "active", customer: cs.customer, metadata: meta });
       return send(303, { location: cs.success });
     }
-    return html(standInPage("Checkout", `<h1>${esc(cs.name)}</h1><p class="lead">${esc(gbp(cs.amount))}${cs.yearly ? " a year" : ""} · ${esc(cs.email)}</p>
+    const price = cs.product ? `$${cs.amount / 100} a month` : `${gbp(cs.amount)}${cs.yearly ? " a year" : ""}`;
+    return html(standInPage("Checkout", `<h1>${esc(cs.name)}</h1><p class="lead">${esc(price)} · ${esc(cs.email)}</p>
 <form method="post" action="/__stripe/checkout/${cs.id}/pay"><p class="actions"><button class="btn">Pay (test)</button> <a class="btn ghost" href="${esc(cs.cancel)}">Cancel</a></p></form>`));
   }
   if (parts[1] === "invoice" && invoices.has(parts[2])) {
@@ -241,9 +243,10 @@ async function stripeStandIn(req, url, send) {
     const c = customers.get(customer) ?? (customer === "cus_dev_seed" ? { email: "fleet@example.test", plan: "fleet_integration", subscription: "sub_dev_seed" } : null);
     if (req.method === "POST" && c?.subscription) {
       const action = parts[3];
-      if (action === "fail") await deliver("customer.subscription.updated", { id: c.subscription, status: "past_due", customer, metadata: { email: c.email, plan: c.plan } });
-      if (action === "fix") await deliver("customer.subscription.updated", { id: c.subscription, status: "active", customer, metadata: { email: c.email, plan: c.plan } });
-      if (action === "cancel") await deliver("customer.subscription.deleted", { id: c.subscription, status: "canceled", customer, metadata: { email: c.email, plan: c.plan } });
+      const metadata = c.meta ?? { email: c.email, plan: c.plan };
+      if (action === "fail") await deliver("customer.subscription.updated", { id: c.subscription, status: "past_due", customer, metadata });
+      if (action === "fix") await deliver("customer.subscription.updated", { id: c.subscription, status: "active", customer, metadata });
+      if (action === "cancel") await deliver("customer.subscription.deleted", { id: c.subscription, status: "canceled", customer, metadata });
       return send(303, { location: back });
     }
     const q = `?return=${encodeURIComponent(back)}`;

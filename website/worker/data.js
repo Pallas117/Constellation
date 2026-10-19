@@ -55,7 +55,7 @@ export async function putAccount(env, account, by) {
   await env.DATA.put(accountKey(next.email), JSON.stringify(next), {
     metadata: {
       tier: next.tier ?? null, quote: next.quote ?? null, billing: next.billing?.status ?? null, dueAt: next.billing?.dueAt ?? null, paidUntil: next.billing?.paidUntil ?? null,
-      invoice: next.invoice === true, pilot: next.pilot ?? null, community: next.community ?? null, org: (next.org ?? "").slice(0, 80),
+      invoice: next.invoice === true, argo: next.argo ? (next.argo.billing?.status ?? "invited") : null, pilot: next.pilot ?? null, community: next.community ?? null, org: (next.org ?? "").slice(0, 80),
     },
   });
   return next;

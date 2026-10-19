@@ -55,12 +55,14 @@ p{margin:0 0 1em}
 
 /* Buttons */
 .actions{display:flex;flex-wrap:wrap;gap:12px;margin:28px 0 0}
-.btn{display:inline-flex;align-items:center;gap:8px;min-height:46px;padding:0 20px;border-radius:4px;background:var(--warm);color:var(--black);
-  font-weight:600;text-decoration:none;border:1px solid var(--warm)}
-.btn:hover{background:#fff;color:var(--black)}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:46px;padding:0 20px;border-radius:4px;background:var(--warm);color:var(--black);
+  background-image:linear-gradient(180deg,rgba(255,255,255,.45),rgba(255,255,255,0) 70%);
+  font-weight:600;line-height:1.1;text-decoration:none;border:1px solid var(--warm);transition:background-color .2s,border-color .2s,color .2s}
+.btn:hover{background-color:#fff;color:var(--black)}
 .btn:active{transform:translateY(1px)}
-.btn.ghost{background:transparent;color:var(--warm);border-color:rgba(243,240,232,.45)}
-.btn.ghost:hover{border-color:var(--warm);color:#fff}
+.btn.ghost{background-color:rgba(243,240,232,.03);background-image:linear-gradient(180deg,rgba(243,240,232,.08),rgba(243,240,232,0) 75%);color:var(--warm);
+  border-color:rgba(243,240,232,.32);-webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px)}
+.btn.ghost:hover{border-color:var(--accent);color:#fff}
 
 /* Hero film: the kit's ray-traced black hole. Poster image underneath, so no-JS, reduced motion and
    slow links all get the still frame. */
@@ -86,21 +88,27 @@ p{margin:0 0 1em}
 }
 
 /* Sections */
-section{padding-block:clamp(48px,6vw,80px);border-bottom:1px solid var(--char)}
+section{padding-block:clamp(48px,6vw,80px);border-bottom:1px solid var(--char);border-image:linear-gradient(90deg,transparent,var(--char) 16%,var(--char) 84%,transparent) 1}
 section.tight{padding-block:48px}
 .section-head{display:flex;flex-wrap:wrap;align-items:end;justify-content:space-between;gap:12px 24px;margin-bottom:28px}
 .section-head h2{margin-bottom:0}
 
 /* Doors */
 .doors{list-style:none;margin:20px 0 0;padding:0;display:grid;gap:16px;grid-template-columns:repeat(auto-fit,minmax(min(100%,240px),1fr))}
-.door{position:relative;display:grid;align-content:start;gap:10px;height:100%;padding:24px;border:1px solid var(--char);border-radius:var(--radius);
-  background:var(--panel);color:var(--warm);text-decoration:none;transition:border-color .2s,transform .2s}
-.door:hover{border-color:rgba(243,240,232,.5);color:var(--warm)}
+.door{position:relative;display:flex;flex-direction:column;gap:10px;height:100%;padding:24px;border:1px solid var(--char);border-radius:var(--radius);overflow:hidden;
+  background:linear-gradient(180deg,rgba(243,240,232,.04),rgba(243,240,232,0) 42%),var(--panel);color:var(--warm);text-decoration:none;transition:border-color .2s,transform .2s;--door-accent:var(--accent)}
+.door::before{content:"";position:absolute;inset:0 0 auto;height:1px;background:linear-gradient(90deg,transparent,rgba(243,240,232,.3),transparent);pointer-events:none}
+.door::after{content:"";position:absolute;left:24px;right:24px;bottom:0;height:2px;background:var(--door-accent);transform:scaleX(0);transform-origin:left;transition:transform .35s cubic-bezier(.2,.7,.2,1)}
+.door:hover::after,.door:focus-visible::after{transform:scaleX(1)}
+.door[href="/constellation/"]{--door-accent:#B0906F}
+.door[href="/turnstone/"]{--door-accent:#F0782A}
+.door:hover{border-color:rgba(243,240,232,.42);color:var(--warm)}
 @media (prefers-reduced-motion:no-preference){.door:hover{transform:translateY(-2px)}}
-.door .mark{height:72px;width:auto;margin-bottom:14px}
+.door .mark{align-self:flex-start;height:64px;width:auto;max-width:100%;margin-bottom:14px;transition:transform .35s cubic-bezier(.2,.7,.2,1)}
+@media (prefers-reduced-motion:no-preference){.door:hover .mark{transform:scale(1.04)}}
 .door h3{font-size:24px}
 .door p{color:var(--muted);margin:0}
-.door .go{margin-top:12px;font-weight:600}
+.door .go{margin-top:auto;padding-top:12px;font-weight:600} /* every card's call to action sits on one line */
 .door .go::after{content:"\2192";display:inline-block;margin-left:6px;transition:transform .2s}
 .door:hover .go::after,.door:focus-visible .go::after{transform:translateX(4px)}
 .door:active{transform:scale(.99)}
@@ -199,8 +207,8 @@ footer nav a{color:var(--muted);display:inline-block;padding:10px 0}
 footer p{margin:0 0 6px}
 
 /* Sign-in pill in the header */
-.top nav a.signin{border:1px solid rgba(243,240,232,.4);border-radius:999px;padding:6px 14px;color:var(--warm);white-space:nowrap}
-.top nav a.signin:hover{border-color:var(--warm)}
+.top nav a.signin{border:1px solid rgba(243,240,232,.4);border-radius:4px;padding:6px 14px;color:var(--warm);white-space:nowrap;background:rgba(243,240,232,.04)}
+.top nav a.signin:hover{border-color:var(--accent)}
 
 /* Forms: plain HTML, validated on the server */
 .narrow{max-width:760px}
@@ -392,11 +400,12 @@ footer p{margin:0 0 6px}
 
 @media (max-width:560px){
   .brand img{height:32px}
-  /* Compact doors: mark left, words right, so all three fit in about one screen. */
-  .door{gap:6px;padding:18px 18px 18px 94px}
-  .door .mark{position:absolute;left:18px;top:20px;width:60px;height:auto;margin:0}
+  /* Compact doors: every mark at one height above the words, so wide and round marks line up. */
+  .door{gap:6px;padding:18px}
+  .door .mark{height:40px;margin:0 0 8px}
+  .door::after{left:18px;right:18px}
   .door h3{font-size:21px}
-  .door .go{margin-top:6px}
+  .door .go{padding-top:6px}
   .door-big{font-size:22px}
   .top nav{font-size:14px;gap:14px}
   .top nav a.signin{padding:5px 10px}
@@ -463,3 +472,20 @@ footer p{margin:0 0 6px}
 @keyframes d-step{0%{opacity:0;visibility:hidden;transform:translateY(10px)}20%,80%{opacity:1;visibility:visible;transform:none}100%{opacity:0;visibility:hidden;transform:translateY(-10px)}}
 @keyframes d-step-first{0%,70%{opacity:1;visibility:visible}100%{opacity:0;visibility:hidden}}
 @keyframes d-step-last{from{opacity:0;visibility:hidden;transform:translateY(10px)}to{opacity:1;visibility:visible;transform:none}}
+
+/* Starfield (landing): two planes of faint stars behind the descent and the doors. They scroll with the page while the
+   descent's stage stays put, and the far plane drifts at a different rate, so the scene reads as deep space. */
+.starfield{position:relative;isolation:isolate}
+.starfield::before,.starfield::after{content:"";position:absolute;inset:0;z-index:-1;pointer-events:none}
+.starfield::before{opacity:.5;background-size:380px 380px;background-image:radial-gradient(1px 1px at 12% 18%,rgba(243,240,232,.85),transparent 70%),
+  radial-gradient(1px 1px at 68% 42%,rgba(243,240,232,.7),transparent 70%),radial-gradient(1.4px 1.4px at 38% 76%,rgba(243,240,232,.8),transparent 70%),
+  radial-gradient(1px 1px at 86% 12%,rgba(243,240,232,.6),transparent 70%),radial-gradient(1px 1px at 24% 58%,rgba(243,240,232,.5),transparent 70%),
+  radial-gradient(1px 1px at 54% 92%,rgba(243,240,232,.6),transparent 70%)}
+.starfield::after{opacity:.28;background-size:610px 610px;background-image:radial-gradient(1px 1px at 30% 30%,rgba(243,240,232,.9),transparent 70%),
+  radial-gradient(1px 1px at 78% 64%,rgba(243,240,232,.8),transparent 70%),radial-gradient(1px 1px at 8% 84%,rgba(243,240,232,.7),transparent 70%)}
+@supports (animation-timeline:scroll()){
+  @media (prefers-reduced-motion:no-preference){
+    .starfield::after{animation:far-drift linear both;animation-timeline:scroll(root)}
+  }
+}
+@keyframes far-drift{to{background-position:0 520px}}

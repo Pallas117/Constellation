@@ -152,6 +152,7 @@ test("live sections have their markers, with a working static fallback", () => {
 test("flow: no dead ends; each product page ends with the other doors, Turnstone leads home", () => {
   const doors = (p) => [...p.matchAll(/<a class="door" href="([^"]+)"/g)].map((m) => m[1]);
   assert.deepEqual(doors(html["/"]), ["/gauss/", "/constellation/", "/turnstone/", "/argo/"]);
+  assert.match(html["/"], /Email Josh, the founder/);
   assert.deepEqual(doors(html["/argo/"]), ["/gauss/", "/constellation/"]);
   assert.deepEqual(doors(html["/gauss/"]), ["/constellation/", "/turnstone/"]);
   assert.deepEqual(doors(html["/constellation/"]), ["/gauss/", "/turnstone/"]);
@@ -277,14 +278,17 @@ test("customer copy never says how payment is taken (the privacy notice still na
   assert.match(read("privacy/index.html"), /Stripe/, "processors stay disclosed");
 });
 
-test("Argo: says what runs today, calls the relay unavailable, and makes no grade claims", () => {
+test("Gauss Argo: says what runs today, calls the relay unavailable, one fixed price, no grade claims", () => {
   const argo = text(html["/argo/"]);
   assert.match(argo, /Built like a spacecraft/i);
   assert.match(html["/argo/"], /It isn&rsquo;t available yet\./, "the private relay is not built");
   assert.match(argo, /TLS verification is never disabled\./);
   assert.match(argo, /Windows/, "says what it doesn't run on yet");
-  for (const rx of [/space[- ]grade/i, /space[- ]qualified/i, /military[- ]grade/i, /mission[- ]grade/i, /untraceable/i, /unhackable/i, /certified/i, /compliant/i, /\bVPN\b/, /£|\$\d/])
+  for (const rx of [/space[- ]grade/i, /space[- ]qualified/i, /military[- ]grade/i, /mission[- ]grade/i, /untraceable/i, /unhackable/i, /certified/i, /compliant/i, /\bVPN\b/, /£/, /\bAI\b/])
     assert.doesNotMatch(argo + text(html["/argo/apply/"]), rx, `found ${rx}`);
+  assert.deepEqual([...argo.matchAll(/\$\d+/g)].map((m) => m[0]), ["$10"], "one price, the ARGO constant");
+  assert.match(html["/argo/"], /<!--live:argo-plan--><p class="lead">Planned: <strong>\$10 a month<\/strong>/, "the static fallback says planned");
+  assert.doesNotMatch(text(html["/gauss/"].match(/<main[\s\S]*<\/main>/)[0]), /Argo|\$10/, "never in the Gauss page itself (sales plan: no low-price Gauss SaaS); the footer link is fine");
   assert.match(html["/argo/apply/"], /<input type="hidden" name="kind" value="argo">/);
   assert.match(html["/argo/apply/"], /<button class="btn" type="submit">Join the list<\/button>/);
   assert.match(read("assets/marks/argo-glyph-provisional.svg"), /provisional glyph, not yet in the Brand Book/, "until the Brand Book adds Argo");
