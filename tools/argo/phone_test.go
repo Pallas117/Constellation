@@ -3,10 +3,33 @@ package main
 import (
 	"errors"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
 )
+
+func TestPhoneServiceChoosesSendOrder(t *testing.T) {
+	ptr := func(f func(string, string) error) uintptr { return reflect.ValueOf(f).Pointer() }
+	cases := []struct {
+		cfg  Config
+		want func(string, string) error
+	}{
+		{Config{PhoneTo: "+60123456789", PhoneService: "sms"}, smsFirst},
+		{Config{PhoneTo: "+60123456789", PhoneService: "SMS"}, smsFirst},
+		{Config{PhoneTo: "+60123456789"}, iMessage},                       // default stays iMessage first
+		{Config{PhoneTo: "me@icloud.com", PhoneService: "sms"}, iMessage}, // SMS needs a phone number
+	}
+	for _, c := range cases {
+		p := newPhoneFor(c.cfg)
+		if p == nil || ptr(p.send) != ptr(c.want) {
+			t.Errorf("%+v: wrong send order", c.cfg)
+		}
+	}
+	if newPhoneFor(Config{PhoneTo: "not a handle", PhoneService: "sms"}) != nil {
+		t.Error("invalid handle must not build a phone")
+	}
+}
 
 func TestPhoneHandleValidation(t *testing.T) {
 	for _, ok := range []string{"+60123456789", "me@icloud.com"} {

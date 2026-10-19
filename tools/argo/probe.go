@@ -43,9 +43,11 @@ type SystemProber struct {
 
 func (p SystemProber) Probe(ctx context.Context) Snapshot {
 	s := Snapshot{Time: time.Now().UTC()}
-	s.Gateway, s.Online = parseDefaultRoute(run(ctx, "route", "-n", "get", "default"))
+	route := run(ctx, "route", "-n", "get", "default")
+	s.Gateway, s.Online = parseDefaultRoute(route)
 	if s.Online {
 		s.GatewayMAC = parseARP(run(ctx, "arp", "-n", s.Gateway))
+		probeWiFi(ctx, &s, route)
 	}
 	s.WPAD, s.PAC = parseScutilAuto(run(ctx, "scutil", "--proxy"))
 	for _, pr := range parseScutilProxies(run(ctx, "scutil", "--proxy")) {

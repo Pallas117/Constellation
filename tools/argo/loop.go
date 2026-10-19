@@ -55,6 +55,13 @@ func Plan(c Class, s Snapshot, remembered string) []Action {
 			a = append(a, Action{ID: "exit-node", Say: "Route via the allow-listed exit node " + n + ":", Command: "tailscale set --exit-node=" + n + " --exit-node-allow-lan-access"})
 		}
 		a = append(a, Action{ID: "switch-network", Say: "Switch to a Malaysian SIM or local Wi-Fi (Hong Kong eSIMs exit in HK, which Anthropic does not serve)."})
+	case WiFiRisk:
+		if weakWiFi(s.WiFiSec) {
+			a = append(a, Action{ID: "avoid-weak-wifi", Say: "This Wi-Fi is not properly encrypted. Use your iPhone hotspot instead, or keep Tailscale on so traffic to the team stays encrypted."})
+		}
+		if len(s.Exposed) > 0 {
+			a = append(a, Action{ID: "sharing-off", Say: "Turn off what you don't need in System Settings > General > Sharing (" + strings.Join(s.Exposed, ", ") + "). Argo never changes these itself."})
+		}
 	case WPADRisk:
 		a = append(a, Action{ID: "wpad-off", Say: "Automatic proxy discovery is on. Turn it off:", Command: `sudo networksetup -setproxyautodiscovery "Wi-Fi" off; sudo networksetup -setautoproxystate "Wi-Fi" off`, Admin: true})
 	}
@@ -149,7 +156,9 @@ func (l Loop) Tick(ctx context.Context) State {
 		}
 		st.IncidentAt, st.Attempts, st.LastFix = now, 0, ""
 		_ = l.Store.Append(Incident{Time: now, Event: "open", Class: class, Fingerprint: fp, Detail: reason})
-		l.Fx.Notify("Argo: "+string(class), reason) // rate limit: only on class change
+		if class != Offline { // a Mac with no network can't send it; it would arrive stale
+			l.Fx.Notify("Argo: "+string(class), reason) // rate limit: only on class change
+		}
 	}
 	st.Class, st.Reason = class, reason
 
@@ -200,12 +209,19 @@ func (l Loop) Tick(ctx context.Context) State {
 	if st.Attempts >= maxAttempts {
 		st.BreakerUntil = now.Add(breakerCooldwn)
 		msg := fmt.Sprintf("%s persists after %d attempts. %s", class, st.Attempts, firstSay(plan))
-		l.Fx.Notify("Argo needs you", msg)
+		// One text when the breaker first opens, then at most every escalateEvery: the breaker
+		// reopens every 30 min, which sent 71 texts in one week. None for OFFLINE (see above).
+		remind := shouldNotify(l.Store, "escalated-"+string(class), escalateEvery, now)
+		if class != Offline && (st.Attempts == maxAttempts || remind) {
+			l.Fx.Notify("Argo needs you", msg)
+		}
 		_ = l.Store.Append(Incident{Time: now, Event: "escalated", Class: class, Fingerprint: fp, Detail: msg})
 	}
 	l.finish(st)
 	return st
 }
+
+const escalateEvery = 2 * time.Hour
 
 func (l Loop) resolve(st *State, c Class, now time.Time, fix string) {
 	if fix == "" {
