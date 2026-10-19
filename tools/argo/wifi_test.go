@@ -62,3 +62,11 @@ func TestWiFiRiskIsAWarningWithAdviceOnly(t *testing.T) {
 		}
 	}
 }
+
+func TestLoopInterval(t *testing.T) {
+	for in, want := range map[string]string{"": "1m0s", "2m": "2m0s", "5s": "15s", "junk": "1m0s", "-1m": "1m0s"} {
+		if got := loopInterval(in).String(); got != want {
+			t.Errorf("loopInterval(%q) = %s, want %s", in, got, want)
+		}
+	}
+}

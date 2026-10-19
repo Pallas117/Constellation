@@ -43,23 +43,13 @@ type SystemProber struct {
 
 func (p SystemProber) Probe(ctx context.Context) Snapshot {
 	s := Snapshot{Time: time.Now().UTC()}
-	route := run(ctx, "route", "-n", "get", "default")
-	s.Gateway, s.Online = parseDefaultRoute(route)
-	if s.Online {
-		s.GatewayMAC = parseARP(run(ctx, "arp", "-n", s.Gateway))
-		probeWiFi(ctx, &s, route)
-	}
-	s.WPAD, s.PAC = parseScutilAuto(run(ctx, "scutil", "--proxy"))
-	for _, pr := range parseScutilProxies(run(ctx, "scutil", "--proxy")) {
-		pr.Alive = dialAlive(pr.URL)
-		s.Proxies = append(s.Proxies, pr)
-	}
+	hostProbe(ctx, &s) // OS-specific: route, gateway MAC, Wi-Fi, system proxies (host_*.go)
 	for _, v := range proxyVars {
 		if u := os.Getenv(v); u != "" {
 			s.Proxies = append(s.Proxies, Proxy{Source: "env:" + v, URL: maskURL(u), Alive: dialAlive(u)})
 		}
 	}
-	s.StaleProcs = findStaleProcs(run(ctx, "ps", "-E", "-ww", "-x", "-o", "pid=,command="), dialAlive)
+	s.StaleProcs = staleProcs(ctx)
 	s.Tailscale = parseTailscale(run(ctx, tailscaleCLI(), "status", "--json"), p.ExitNodes)
 	s.Tailscale.MeshHealOpen = meshHealCircuitOpen(time.Now())
 	if !s.Online {

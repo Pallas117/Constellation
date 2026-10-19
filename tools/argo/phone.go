@@ -3,12 +3,10 @@ package main
 import (
 	"bufio"
 	"bytes"
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -46,6 +44,9 @@ func newPhone(to, device string) *Phone {
 
 // newPhoneFor builds the phone from config, choosing the send order.
 func newPhoneFor(cfg Config) *Phone {
+	if !phoneSupported { // phone alerts go through macOS Messages
+		return nil
+	}
 	p := newPhone(cfg.PhoneTo, cfg.Device)
 	if p != nil && strings.EqualFold(cfg.PhoneService, "sms") && strings.HasPrefix(p.To, "+") {
 		p.send = smsFirst
@@ -80,23 +81,6 @@ func iMessage(to, text string) error {
 // A send that macOS hasn't authorised (or Messages that hangs) times out
 // instead of holding the tick for the ~2 min AppleEvent default.
 const sendTimeout = 30 * time.Second
-
-func messagesSend(service, to, text string) error {
-	ctx, cancel := context.WithTimeout(context.Background(), sendTimeout)
-	defer cancel()
-	out, err := exec.CommandContext(ctx, "osascript",
-		"-e", "on run argv",
-		"-e", `tell application "Messages"`,
-		"-e", "set svc to 1st account whose service type = "+service, // constant, not user input
-		"-e", "send (item 2 of argv) to participant (item 1 of argv) of svc",
-		"-e", "end tell",
-		"-e", "end run",
-		to, text).CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("Messages (%s): %s", service, strings.TrimSpace(string(out)))
-	}
-	return nil
-}
 
 // Send delivers any queued alerts first, then this one; failures are queued.
 func (p *Phone) Send(title, msg string, at time.Time) {

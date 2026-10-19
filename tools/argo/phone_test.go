@@ -10,6 +10,9 @@ import (
 )
 
 func TestPhoneServiceChoosesSendOrder(t *testing.T) {
+	if !phoneSupported {
+		t.Skip("phone alerts go through macOS Messages; off on this OS")
+	}
 	ptr := func(f func(string, string) error) uintptr { return reflect.ValueOf(f).Pointer() }
 	cases := []struct {
 		cfg  Config

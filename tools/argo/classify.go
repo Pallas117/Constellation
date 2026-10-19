@@ -129,7 +129,7 @@ func Classify(s Snapshot) (Class, string) {
 		return WiFiRisk, "Wi-Fi security is " + s.WiFiSec + ": anyone nearby can read or alter unencrypted traffic"
 	}
 	if len(s.Exposed) > 0 {
-		return WiFiRisk, "this Mac accepts connections from everyone on this network: " + strings.Join(s.Exposed, ", ")
+		return WiFiRisk, "this " + hostNoun + " accepts connections from everyone on this network: " + strings.Join(s.Exposed, ", ")
 	}
 	return OK, fmt.Sprintf("api reachable (HTTP %d), loc=%s", s.API.Status, orUnknown(s.Loc))
 }

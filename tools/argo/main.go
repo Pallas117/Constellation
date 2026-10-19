@@ -15,6 +15,7 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -55,6 +56,18 @@ func saveConfig(c Config) error {
 	return os.WriteFile(filepath.Join(configDir(), "config.json"), b, 0o600)
 }
 
+// loopInterval parses ARGO_INTERVAL ("60s", "2m"); default 60s, never under 15s.
+func loopInterval(v string) time.Duration {
+	d, err := time.ParseDuration(strings.TrimSpace(v))
+	if err != nil || d <= 0 {
+		return time.Minute
+	}
+	if d < 15*time.Second {
+		return 15 * time.Second
+	}
+	return d
+}
+
 func configDir() string { return filepath.Join(home(), ".config/argo") }
 
 func loadConfig() Config {
@@ -84,6 +97,24 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
 
+	// One scheduled check: the peer watchdog every time (cheap file stats), the
+	// network probe only when skipTick says it is due.
+	tick := func(ctx context.Context) error {
+		if store.Disabled() {
+			return nil
+		}
+		_ = withLock(store, func() { watchPeers(cfg.peers(), store, realWatchFx(phone, store), time.Now()) })
+		if gw, mac := localGateway(ctx); skipTick(store.Load(), gw, mac, time.Now()) {
+			return nil
+		}
+		return withLock(store, func() {
+			flush()
+			loop.Tick(ctx)
+			watchDevices(ctx, cfg.Devices, store, phone, time.Now())
+			maybeSendWeekly(store, phone, time.Now())
+		})
+	}
+
 	var err error
 	switch cmd {
 	case "status":
@@ -94,20 +125,25 @@ func main() {
 		loop.Out = func(s string) { fmt.Println(s) }
 		err = withLock(store, func() { flush(); loop.Tick(ctx) })
 	case "tick": // LaunchAgent entry point
-		if store.Disabled() {
-			return
+		err = tick(ctx)
+	case "loop": // container entry point: a tick every ARGO_INTERVAL (default 60s) until stopped
+		every := loopInterval(os.Getenv("ARGO_INTERVAL"))
+		stop := make(chan os.Signal, 1)
+		signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
+		loop.Out = func(s string) { fmt.Println(time.Now().UTC().Format(time.RFC3339), s) }
+		fmt.Printf("argo %s: checking every %s\n", version, every)
+		for {
+			c, done := context.WithTimeout(context.Background(), 90*time.Second)
+			if e := tick(c); e != nil {
+				fmt.Fprintln(os.Stderr, "argo:", e)
+			}
+			done()
+			select {
+			case <-stop:
+				return
+			case <-time.After(every):
+			}
 		}
-		// Every minute, even when the network probe is skipped: cheap (file stats).
-		_ = withLock(store, func() { watchPeers(cfg.peers(), store, realWatchFx(phone, store), time.Now()) })
-		if gw, mac := localGateway(ctx); skipTick(store.Load(), gw, mac, time.Now()) {
-			return
-		}
-		err = withLock(store, func() {
-			flush()
-			loop.Tick(ctx)
-			watchDevices(ctx, cfg.Devices, store, phone, time.Now())
-			maybeSendWeekly(store, phone, time.Now())
-		})
 	case "summary": // what Argo caught, fixed and learned in the last 7 days
 		now := time.Now()
 		st := store.Load()
@@ -191,13 +227,6 @@ func skipTick(st State, gw, mac string, now time.Time) bool {
 }
 
 // localGateway is the cheap, local-only part of a probe (no network traffic).
-func localGateway(ctx context.Context) (string, string) {
-	gw, ok := parseDefaultRoute(run(ctx, "route", "-n", "get", "default"))
-	if !ok {
-		return "", ""
-	}
-	return gw, parseARP(run(ctx, "arp", "-n", gw))
-}
 
 func withLock(s Store, f func()) error {
 	unlock, err := s.Lock()

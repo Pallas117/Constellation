@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"os/exec"
 	"strings"
 	"time"
 )
@@ -60,7 +59,7 @@ func Plan(c Class, s Snapshot, remembered string) []Action {
 			a = append(a, Action{ID: "avoid-weak-wifi", Say: "This Wi-Fi is not properly encrypted. Use your iPhone hotspot instead, or keep Tailscale on so traffic to the team stays encrypted."})
 		}
 		if len(s.Exposed) > 0 {
-			a = append(a, Action{ID: "sharing-off", Say: "Turn off what you don't need in System Settings > General > Sharing (" + strings.Join(s.Exposed, ", ") + "). Argo never changes these itself."})
+			a = append(a, Action{ID: "sharing-off", Say: sharingAdvice + " (" + strings.Join(s.Exposed, ", ") + "). Argo never changes these itself."})
 		}
 	case WPADRisk:
 		a = append(a, Action{ID: "wpad-off", Say: "Automatic proxy discovery is on. Turn it off:", Command: `sudo networksetup -setproxyautodiscovery "Wi-Fi" off; sudo networksetup -setautoproxystate "Wi-Fi" off`, Admin: true})
@@ -88,15 +87,12 @@ type Effects interface {
 type realEffects struct{ phone *Phone }
 
 func (f realEffects) Notify(title, msg string) {
-	// Message is passed as an argv item, never interpolated into AppleScript.
-	_ = exec.Command("osascript",
-		"-e", "on run argv", "-e", "display notification (item 2 of argv) with title (item 1 of argv)", "-e", "end run",
-		title, msg).Run()
+	desktopNotify(title, msg)
 	if f.phone != nil {
 		f.phone.Send(title, msg, time.Now())
 	}
 }
-func (realEffects) Open(u string) error   { return exec.Command("open", u).Run() }
+func (realEffects) Open(u string) error   { return openURL(u) }
 func (realEffects) Sleep(d time.Duration) { time.Sleep(d) }
 func (realEffects) Now() time.Time        { return time.Now() }
 
