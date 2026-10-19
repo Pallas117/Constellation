@@ -363,9 +363,16 @@ item() { if [ "$1" = ok ]; then printf '  \033[32m✓\033[0m %s\n' "$2"; else pr
 
 network_item() {
   local argo ok; argo=$("$ARGO" status 2>/dev/null || echo "argo missing")
-  case "$argo" in "● OK MY"*|"● OK SG"*|"● WPAD_RISK MY"*|"● WPAD_RISK SG"*) ok=ok ;; *) ok=no ;; esac
+  # WPAD_RISK and WIFI_RISK are Argo's warnings: the network works, so they don't fail the check,
+  # but the line says what to look at.
+  local note=""
+  case "$argo" in
+    "● OK MY"*|"● OK SG"*) ok=ok ;;
+    "● WPAD_RISK MY"*|"● WPAD_RISK SG"*|"● WIFI_RISK MY"*|"● WIFI_RISK SG"*) ok=ok; note=" (warning: \`argo doctor\` says what to change)" ;;
+    *) ok=no ;;
+  esac
   [[ "$argo" == *stale* ]] && ok=no
-  item $ok "network: $argo"
+  item $ok "network: $argo$note"
 }
 
 resilience() { # can background work survive the lid closed, the battery, memory and the network?

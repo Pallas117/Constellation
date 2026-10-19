@@ -28,7 +28,7 @@ stub sudo 'exit 1'
 stub argo 'case "$1" in
   notify) [ $# -gt 1 ] || { [ -n "${OLD_ARGO:-}" ] && echo "usage: argo [status|doctor]" >&2 || echo "usage: argo notify [-key K -every 30m] TITLE MESSAGE" >&2; exit 1; }
           shift; echo "$*" >>"$LOG" ;;
-  status) echo "● OK MY ts:on" ;;
+  status) echo "${ARGOSTATUS:-● OK MY ts:on}" ;;
 esac'
 
 # balance stubs: the local model server is "running" when MLX=1; actions land in $ACTIONS
@@ -45,7 +45,7 @@ run() { # run <args...>: gauss-services.sh with the stubs; alerts land in $LOG
     GAUSS_SUDOERS="$T/sudoers" MLX="${MLX:-0}" MLXPORT="${MLXPORT:-8089}" ACTIONS="$T/actions" GAUSS_BALANCE="${GAUSS_BALANCE:-1}" \
     LOADED="${LOADED:-}" HEALTH="${HEALTH:-200}" DISKGB="${DISKGB:-50}" \
     SRC="${SRC:-AC Power}" BATT="${BATT:-80%; charging; present: true}" SD="${SD:-0}" \
-    LEVEL="${LEVEL:-1}" FREE="${FREE:-50}" SWAPUSED="${SWAPUSED:-1000}" OLD_ARGO="${OLD_ARGO:-}" bash "$SCRIPT" "$@"
+    ARGOSTATUS="${ARGOSTATUS:-}" LEVEL="${LEVEL:-1}" FREE="${FREE:-50}" SWAPUSED="${SWAPUSED:-1000}" OLD_ARGO="${OLD_ARGO:-}" bash "$SCRIPT" "$@"
 }
 expect() { # expect <name> <condition-exit-code>
   if [ "$2" = 0 ]; then pass=$((pass + 1)); else failed=$((failed + 1)); echo "FAIL: $1"; sed 's/^/    alerts: /' "$T/log"; fi
@@ -180,5 +180,9 @@ expect "resilience fails on an old argo, low memory and a weak charger" $?
 out=$(SRC="AC Power" BATT="7%; charging; 2:00 remaining present: true" run resilience | plain)
 [[ "$out" == *"✗ battery 7% on AC, charging but too low to unplug yet"* ]]; expect "resilience: low battery still fails while charging" $?
 
+out=$(ARGOSTATUS="● WIFI_RISK MY ts:on" run resilience | plain)
+[[ "$out" == *"✓ network: ● WIFI_RISK MY ts:on (warning:"* ]]; expect "WIFI_RISK is a warning, not a failure" $?
+out=$(ARGOSTATUS="● REGION HK ts:on" run resilience | plain)
+[[ "$out" == *"✗ network: ● REGION HK"* ]]; expect "REGION still fails the network item" $?
 echo "gauss-services: $pass passed, $failed failed"
 [ "$failed" = 0 ]
