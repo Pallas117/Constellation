@@ -5,7 +5,7 @@
  * Note: Client-side hook
  */
 
-import { useState, useCallback, useMemo, useEffect } from 'react';
+import { useState, useCallback, useMemo } from 'react';
 import { queryOptions, useQuery, useQueryClient, useQueries } from '@tanstack/react-query';
 import type {
   RadiationMeasurement,
@@ -80,19 +80,20 @@ export function useRadiationDataOptimized(
 
   const queryClient = useQueryClient();
   const [filter, setFilterState] = useState<RadiationDataFilter>(initialFilter);
-  const [lastUpdate, setLastUpdate] = useState<Date | null>(null);
+  // Without an explicit range the window is the 7 days before the hook mounted.
+  const [mountedAt] = useState(() => Date.now());
 
   // Calculate date range
   const startDate = useMemo(
     () =>
       filter.startTime
         ? new Date(filter.startTime)
-        : new Date(Date.now() - 7 * 24 * 60 * 60 * 1000),
-    [filter.startTime]
+        : new Date(mountedAt - 7 * 24 * 60 * 60 * 1000),
+    [filter.startTime, mountedAt]
   );
   const endDate = useMemo(
-    () => (filter.endTime ? new Date(filter.endTime) : new Date()),
-    [filter.endTime]
+    () => (filter.endTime ? new Date(filter.endTime) : new Date(mountedAt)),
+    [filter.endTime, mountedAt]
   );
 
   // Create queries for each source using service clients
@@ -146,13 +147,9 @@ export function useRadiationDataOptimized(
     return combined;
   }, [queries]);
 
-  // Update last update time (side effect should be in useEffect, not useMemo)
-  useEffect(() => {
-    const hasData = queries.some((q) => q.data);
-    if (hasData) {
-      setLastUpdate(new Date());
-    }
-  }, [queries]);
+  // When the newest data arrived, from the queries themselves.
+  const dataUpdatedAt = Math.max(0, ...queries.map((q) => q.dataUpdatedAt));
+  const lastUpdate = useMemo(() => (dataUpdatedAt > 0 ? new Date(dataUpdatedAt) : null), [dataUpdatedAt]);
 
   // Filter measurements based on current filter
   const filteredMeasurements = useMemo(() => {
@@ -193,8 +190,9 @@ export function useRadiationDataOptimized(
 
     const recentMeasurements = filteredMeasurements
       .filter((m) => {
+        // Relative to the fetch that delivered the data, so the snapshot is a pure function of it.
         const measurementTime = new Date(m.timestamp).getTime();
-        const fiveMinutesAgo = Date.now() - 5 * 60 * 1000;
+        const fiveMinutesAgo = dataUpdatedAt - 5 * 60 * 1000;
         return measurementTime >= fiveMinutesAgo;
       })
       .slice(-100);
@@ -213,7 +211,7 @@ export function useRadiationDataOptimized(
     const alertLevel = getAlertLevelFromMeasurements(recentMeasurements);
 
     return {
-      timestamp: new Date().toISOString(),
+      timestamp: new Date(dataUpdatedAt).toISOString(),
       measurements: recentMeasurements,
       summary: {
         averageFlux,
@@ -223,7 +221,7 @@ export function useRadiationDataOptimized(
         alertLevel,
       },
     };
-  }, [realTime, filteredMeasurements]);
+  }, [realTime, filteredMeasurements, dataUpdatedAt]);
 
   // Update filter function
   const setFilter = useCallback((newFilter: Partial<RadiationDataFilter>) => {

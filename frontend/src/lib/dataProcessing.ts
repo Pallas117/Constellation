@@ -269,24 +269,27 @@ export function validateSpaceWeatherResponse(data: unknown): SpaceWeatherRespons
 
 const isFiniteNumber = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
 
+const asRecord = (v: unknown): Record<string, unknown> | null =>
+  v !== null && typeof v === 'object' ? (v as Record<string, unknown>) : null;
+
 /**
  * True when `data` carries what every consumer of a canonical point reads: a valid
  * timestamp, the quality block, solar wind, Bz and Kp. Anything else is treated as
  * no data, so one malformed response can't take a page down.
  */
 export function isCanonicalPoint(data: unknown): data is CanonicalSpaceWeatherPoint {
-  if (!data || typeof data !== 'object') return false;
-  const d = data as Record<string, any>;
+  const d = asRecord(data);
+  if (!d) return false;
+  const solarWind = asRecord(d.solarWind);
   return (
     typeof d.timestamp === 'string' &&
     !Number.isNaN(Date.parse(d.timestamp)) &&
-    typeof d.quality === 'object' &&
-    d.quality !== null &&
-    isFiniteNumber(d.solarWind?.speed) &&
-    isFiniteNumber(d.solarWind?.density) &&
-    isFiniteNumber(d.solarWind?.dynamicPressure) &&
-    isFiniteNumber(d.magneticField?.z) &&
-    isFiniteNumber(d.indices?.kp)
+    asRecord(d.quality) !== null &&
+    isFiniteNumber(solarWind?.speed) &&
+    isFiniteNumber(solarWind?.density) &&
+    isFiniteNumber(solarWind?.dynamicPressure) &&
+    isFiniteNumber(asRecord(d.magneticField)?.z) &&
+    isFiniteNumber(asRecord(d.indices)?.kp)
   );
 }
 
@@ -296,7 +299,7 @@ export function isCanonicalPoint(data: unknown): data is CanonicalSpaceWeatherPo
  */
 export function canonicalToInterpolated(data: unknown): InterpolatedData | null {
   if (!isCanonicalPoint(data)) return null;
-  const d = data as Record<string, any>;
+  const d = data;
   const ts = new Date(d.timestamp);
   const sw = d.solarWind;
   const b = d.magneticField;

@@ -5,15 +5,12 @@ import { useEffect, useState, type RefObject } from "react";
  * Used to load below-the-fold sections only when someone scrolls toward them.
  */
 export function useNearViewport(ref: RefObject<Element>, rootMargin = "300px"): boolean {
-  const [near, setNear] = useState(false);
+  // Without IntersectionObserver there is no way to wait, so load at once.
+  const [near, setNear] = useState(() => typeof IntersectionObserver === "undefined");
   useEffect(() => {
     if (near) return;
     const el = ref.current;
     if (!el) return;
-    if (typeof IntersectionObserver === "undefined") {
-      setNear(true);
-      return;
-    }
     const io = new IntersectionObserver(
       (entries) => {
         if (entries.some((e) => e.isIntersecting)) {
