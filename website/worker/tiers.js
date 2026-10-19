@@ -1,5 +1,5 @@
 // Gauss plans: this one table drives the plans on /gauss/, the plan choice on the application form,
-// what an approved account pays (Stripe) and what its workspace shows.
+// what an approved account pays (Stripe Checkout, or a Stripe invoice where allowed) and what its workspace shows.
 //
 // Packages and planning prices come from the sales plan, "Gauss Aurora sales feature list and
 // onboarding flow" (Gauss Aurora repo, docs/SALES_FEATURE_LIST_AND_ONBOARDING.md, 21 Aug 2026).
@@ -86,7 +86,7 @@ export const quoteInRange = (t, pounds) => Number.isFinite(pounds) && pounds >= 
 /** Where a pilot is up to; shown to the customer, set by an admin. */
 export const PILOT_STEPS = Object.freeze(["Scoping", "Data-sharing agreement", "Data received", "Replay running", "Evidence report delivered"]);
 
-/** Billing states. Stripe webhooks move paid plans between them; invoiced plans are set by an admin. */
+/** Billing states. Stripe webhooks move paid plans between them; milestone-billed plans are set by an admin. */
 export const BILLING = Object.freeze({
   due: "Payment due",
   processing: "Payment processing",
@@ -94,7 +94,22 @@ export const BILLING = Object.freeze({
   active: "Active",
   past_due: "Payment failed",
   canceled: "Cancelled",
+  invoice_open: "Invoice sent",
+  overdue: "Invoice overdue",
   invoiced: "Invoiced by milestone",
 });
-// A failed renewal keeps access while Stripe retries the payment; only cancellation locks the workspace.
-export const unlocked = (status) => ["paid", "active", "past_due", "invoiced"].includes(status);
+// A failed renewal keeps access while Stripe retries the payment, and an invoice keeps it open until its
+// due date; cancellation or an overdue invoice locks the workspace.
+export const unlocked = (status) => ["paid", "active", "past_due", "invoice_open", "invoiced"].includes(status);
+
+/** Days a customer has to pay an invoice they asked for. */
+export const INVOICE_DAYS = 30;
+
+/** The account's billing status now: an unpaid invoice past its due date is overdue, and a year paid by invoice runs out. */
+export function billingStatus(account, now = Date.now()) {
+  const b = account?.billing ?? {};
+  const status = b.status ?? (tierById(account?.tier)?.billing === "invoice" ? "invoiced" : "due");
+  if (status === "invoice_open" && b.dueAt && Date.parse(b.dueAt) < now) return "overdue";
+  if (status === "paid" && b.paidUntil && Date.parse(b.paidUntil) < now) return "due";
+  return status;
+}

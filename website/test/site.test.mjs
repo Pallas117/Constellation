@@ -251,6 +251,13 @@ test("no page claims what the requirements rule out", () => {
     assert.doesNotMatch(pages, rx, `found ${rx}`);
 });
 
+test("customer copy never says how payment is taken (the privacy notice still names the processor)", () => {
+  const pages = Object.entries(html).filter(([route]) => route !== "/privacy/").map(([, h]) => h);
+  for (const page of [...pages, renderPlans(), renderApplyForm("gauss")].map(text))
+    assert.doesNotMatch(page, /stripe|securely|card details|bank transfer/i);
+  assert.match(read("privacy/index.html"), /Stripe/, "processors stay disclosed");
+});
+
 test("Constellation is free and invite-only: no prices, no payment, invitation wording", () => {
   for (const route of ["/constellation/", "/constellation/apply/"]) {
     assert.doesNotMatch(text(html[route]), /£|\$\d|stripe|price|pay /i, `${route}: no pricing`);

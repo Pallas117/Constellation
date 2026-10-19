@@ -83,14 +83,34 @@ export function renderCalls({ calls, email, tz, notice = "" }) {
   return `<section class="calls" aria-labelledby="calls-h"><div class="section-head"><div><p class="label">GROUP_CALLS</p><h2 id="calls-h">Constellation group calls</h2></div>` +
     `<form method="post" action="/app/prefs" class="inline">${zoneSelect(tz)} <button class="btn ghost">Show my time</button></form></div>` +
     (note ? `<p class="banner" role="status">${esc(note)}</p>` : "") +
-    (items ? `<ol class="call-list">${items}</ol>` : `<p class="muted">No calls scheduled yet. Members hear about new ones by email.</p>`) +
+    (items ? `<ol class="call-list">${items}</ol>` : `<p class="muted">No calls scheduled yet. New calls appear here.</p>`) +
     `<p class="note">Free for members. Times show in your zone; calendar files show in each person's own zone.</p></section>`;
 }
 
-/** The admin's view: schedule a call; list calls with bookings. */
-export function renderCallsAdmin(calls) {
+// Announcements are drafts the admin sends: an email to all members (Bcc) or a message for the members'
+// WhatsApp group. Nothing is sent from here and no messaging service or token is involved.
+export function announcement(call, origin) {
+  const t = Date.parse(call.start);
+  const planner = `${origin}/constellation/time/?${new URLSearchParams([["date", call.start.slice(0, 10)], ...DEFAULT_ZONES.map((z) => ["z", z]), ["at", String(new Date(t).getUTCHours())]])}#slot`;
+  return `Constellation group call: ${call.title}\n${formatIn(t, "UTC")} UTC, ${call.minutes} min\nIn your time zone: ${planner}\nBook a seat (members): ${origin}/app/`;
+}
+const MAILTO_MAX = 1800; // longer mailto links are cut off by some mail apps
+function announceLinks(call, members, origin) {
+  const text = announcement(call, origin);
+  const subject = `Constellation call: ${call.title}`;
+  const bcc = members.map(encodeURIComponent).join(",");
+  const tail = `subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(text)}`;
+  const withBcc = `mailto:?bcc=${bcc}&${tail}`;
+  const mail = members.length && withBcc.length <= MAILTO_MAX ? withBcc : `mailto:?${tail}`;
+  return `<p class="m announce">Announce: <a href="${esc(mail)}">Draft an email to ${members.length} member${members.length === 1 ? "" : "s"}</a>` +
+    `${mail === withBcc || !members.length ? "" : " (add the addresses yourself: too many for one link)"} · ` +
+    `<a href="${esc(`https://wa.me/?text=${encodeURIComponent(text)}`)}" rel="noopener noreferrer">Draft a WhatsApp message</a> (you choose the group and press send)</p>`;
+}
+
+/** The admin's view: schedule a call; list calls with bookings and announcement drafts. */
+export function renderCallsAdmin(calls, members = [], origin = "https://lightbound.uk") {
   const rows = calls.map((c) => `<li class="app-card"><div class="app-head"><span class="label">${esc(formatIn(Date.parse(c.start), "UTC"))} UTC · ${c.minutes} min</span><span>${c.rsvps.length} of ${c.capacity} booked</span></div>` +
-    `<h3>${esc(c.title)}</h3>${c.rsvps.length ? `<p class="m">${c.rsvps.map(esc).join(", ")}</p>` : ""}` +
+    `<h3>${esc(c.title)}</h3>${c.rsvps.length ? `<p class="m">${c.rsvps.map(esc).join(", ")}</p>` : ""}${announceLinks(c, members, origin)}` +
     postForm("/app/admin/calls", { action: "delete", id: c.id }, "Remove call", "btn ghost") + `</li>`).join("");
   return `<h2>Group calls (${calls.length})</h2>` +
     `<form method="post" action="/app/admin/calls" class="form call-form"><input type="hidden" name="action" value="create">` +

@@ -202,7 +202,7 @@ export function renderPlans() {
       `<p class="actions"><a class="btn${first ? "" : " ghost"}" href="/gauss/apply/?plan=${esc(t.id)}">${esc(cta)}</a></p></li>`;
   }).join("");
   return `<ol class="plans">${cards}</ol>` +
-    `<p class="note">Your price is a fixed quote inside the range, agreed from your scope before you pay. Pilots and Fleet Integration are paid securely through Stripe; ` +
-    `project work is invoiced by milestone. Every plan is advisory: Gauss shows evidence and never commands a spacecraft. Already a customer? <a href="/app/">Sign in</a>.</p>` +
+    `<p class="note">Your price is a fixed quote inside the range, agreed from your scope before you pay. Project work is billed by milestone. ` +
+    `Every plan is advisory: Gauss shows evidence and never commands a spacecraft. Already a customer? <a href="/app/">Sign in</a>.</p>` +
     `<p class="note"><strong>Later, a strategic option:</strong> Federated Bridge Node, a hosted-payload or in-orbit demonstration, considered only after the stages before it. Future work, not on sale.</p>`;
 }

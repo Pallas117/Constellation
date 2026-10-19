@@ -224,6 +224,8 @@ footer p{margin:0 0 6px}
 .money{display:inline-flex;align-items:center;gap:4px;color:var(--muted)}
 .money input{width:9em}
 .billing .inline{margin-top:6px}
+.billing .pay{display:flex;flex-wrap:wrap;gap:8px;margin-top:6px}
+.billing .pay .inline{margin-top:0}
 
 /* On-page menu (long pages) */
 .subnav{display:flex;flex-wrap:wrap;gap:8px;margin-top:28px}
@@ -303,6 +305,7 @@ footer p{margin:0 0 6px}
 .app-card .inline select{flex:1 1 220px;min-width:0}
 .inline select,.inline input{max-width:100%;font:inherit;font-size:14px;color:var(--warm);background:var(--black);border:1px solid var(--char);border-radius:4px;padding:8px 10px}
 .inline .btn{min-height:38px;padding:0 14px;font-size:14px}
+.inline .check{align-items:center;font-size:14px}
 .table{width:100%;border-collapse:collapse;font-size:14px}
 .table td{overflow-wrap:anywhere}
 .table th,.table td{text-align:left;padding:12px 8px;border-bottom:1px solid var(--char);vertical-align:top}

@@ -1,9 +1,9 @@
 // Stripe: hosted Checkout for the pilot (one payment) and Fleet Integration (yearly subscription),
-// Stripe's hosted billing portal for cards and invoices, and signed webhooks that unlock the
-// workspace. Card details never touch lightbound.uk. The two keys live in Worker secrets
+// invoices with 30 days to pay for accounts an admin allows them on, Stripe's hosted billing portal,
+// and signed webhooks that unlock the workspace. Card details never touch lightbound.uk. The two keys live in Worker secrets
 // (STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET), never in config, URLs or logs.
 import { getAccount, putAccount } from "./data.js";
-import { CURRENCY, tierById } from "./tiers.js";
+import { CURRENCY, INVOICE_DAYS, tierById } from "./tiers.js";
 
 const api = (env) => env.STRIPE_API_BASE || "https://api.stripe.com"; // STRIPE_API_BASE: local stand-in only
 const enc = (s) => new TextEncoder().encode(s);
@@ -41,6 +41,23 @@ export const payable = (account) => {
   const tier = tierById(account?.tier);
   return !!tier && ["payment", "subscription"].includes(tier.billing) && Number.isInteger(account.quote) && account.quote > 0;
 };
+
+/** An admin has allowed this account to pay its quote by invoice. */
+export const invoiceable = (account) => payable(account) && account.invoice === true;
+
+/** An invoice for the account's quote (one year, for Fleet Integration), which Stripe emails to the customer. Returns the sent invoice. */
+export async function createInvoice(env, account, fetchImpl = fetch) {
+  if (!invoiceable(account)) throw new Error("Invoicing is not allowed on this account");
+  const tier = tierById(account.tier);
+  const meta = { email: account.email, plan: tier.id };
+  const description = `Gauss: ${tier.name}${tier.billing === "subscription" ? ", 12 months" : ""}`;
+  const customer = account.billing?.customer ??
+    (await call(env, "customers", { email: account.email, name: account.org || account.name || undefined, metadata: meta }, fetchImpl)).id;
+  const draft = await call(env, "invoices", { customer, collection_method: "send_invoice", days_until_due: INVOICE_DAYS, pending_invoice_items_behavior: "exclude", description, metadata: meta }, fetchImpl);
+  await call(env, "invoiceitems", { customer, invoice: draft.id, amount: account.quote, currency: CURRENCY, description, metadata: meta }, fetchImpl);
+  await call(env, `invoices/${draft.id}/finalize`, {}, fetchImpl);
+  return call(env, `invoices/${draft.id}/send`, {}, fetchImpl);
+}
 
 /** A Checkout Session for the account's approved plan and quote. Returns { id, url }. */
 export async function createCheckout(env, account, origin, fetchImpl = fetch) {
@@ -102,6 +119,7 @@ export async function signPayload(secret, payload, t = Math.floor(Date.now() / 1
   return `t=${t},v1=${hex(await crypto.subtle.sign("HMAC", key, enc(`${t}.${payload}`)))}`;
 }
 
+const YEAR_MS = 365 * 86_400_000;
 const SUBSCRIPTION = { active: "active", trialing: "active", past_due: "past_due", unpaid: "past_due", paused: "past_due", canceled: "canceled", incomplete: "due", incomplete_expired: "canceled" };
 
 /** Apply one verified event to the account it names. Safe to repeat; older events never overwrite newer ones. */
@@ -129,6 +147,15 @@ export async function applyEvent(env, event) {
     case "customer.subscription.updated":
     case "customer.subscription.deleted":
       next = { status: event.type.endsWith(".deleted") ? "canceled" : (SUBSCRIPTION[obj.status] ?? prev.status ?? "due"), customer: obj.customer ?? prev.customer, subscription: obj.id };
+      break;
+    case "invoice.paid":
+    case "invoice.voided":
+    case "invoice.marked_uncollectible":
+      // Only the invoice this account asked for; Checkout's own receipts and renewals are handled above.
+      if (!obj.id || obj.id !== prev.invoice) return "ignored: not this account's invoice";
+      next = event.type === "invoice.paid"
+        ? { status: "paid", ...(tierById(account.tier)?.billing === "subscription" ? { paidUntil: new Date((obj.created ?? event.created) * 1000 + YEAR_MS).toISOString() } : {}) }
+        : { status: "due", invoice: null, invoiceUrl: null, dueAt: null };
       break;
     default:
       return `ignored: ${event.type}`;

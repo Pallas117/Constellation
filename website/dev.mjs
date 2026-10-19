@@ -3,7 +3,7 @@
 // handling, 404 page and byte ranges for the film), run_worker_first routing from wrangler.jsonc,
 // in-memory KV (LIVE and DATA), the 15-minute cron, Cloudflare Access for /app/* (a local key pair
 // signs the same kind of JWT Access sends, so the Worker's real verification code runs), and a
-// local Stripe stand-in (/__stripe/: test checkout and billing portal that send signed webhooks).
+// local Stripe stand-in (/__stripe/: test checkout, invoices and billing portal that send signed webhooks).
 // No real keys are used locally; the values below are labelled placeholders.
 // --offline uses the recorded feed data instead of the live feeds. Demo accounts use example.test.
 import { createServer } from "node:http";
@@ -119,7 +119,7 @@ const fetchImpl = offline ? fixtureFetch : fetch;
 const refresh = async () => console.log(new Date().toISOString(), "refresh", JSON.stringify(await refreshFeeds(env, { fetchImpl })));
 
 // Demo data so the workspace and admin pages have something to show (dev only).
-await putAccount(env, { email: "pilot@example.test", name: "Pilot team", org: "Example Orbital", tier: "pilot", quote: 2_800_000, billing: { status: "due" }, pilot: "Scoping" }, "dev-seed");
+await putAccount(env, { email: "pilot@example.test", name: "Pilot team", org: "Example Orbital", tier: "pilot", quote: 2_800_000, invoice: true, billing: { status: "due" }, pilot: "Scoping" }, "dev-seed");
 await putAccount(env, { email: "fleet@example.test", name: "Fleet ops", org: "Example Constellation Ltd", tier: "fleet_integration", quote: 7_500_000, billing: { status: "active", customer: "cus_dev_seed", subscription: "sub_dev_seed" }, pilot: "Evidence report delivered" }, "dev-seed");
 await putAccount(env, { email: "member@example.test", name: "Grace Example", community: "member", tz: "Asia/Kuala_Lumpur", invitedAt: new Date().toISOString() }, "dev-seed");
 { // A members' call three days out at 13:00 UTC (dev only).
@@ -137,13 +137,14 @@ const devLogin = (redirect) => `<!doctype html><meta charset="utf-8"><meta name=
 <main class="vault wrap"><div class="narrow"><p class="k">LOCAL_PREVIEW · CLOUDFLARE_ACCESS</p><h1>Sign in</h1>
 <p class="muted">On lightbound.uk, Cloudflare Access shows its own sign-in page and emails a one-time code. Locally, pick who to be:</p>
 <p class="actions"><a class="btn" href="/__dev/login?as=${encodeURIComponent(admin)}&amp;redirect=${encodeURIComponent(redirect)}">Admin (${admin})</a>
-<a class="btn ghost" href="/__dev/login?as=pilot%40example.test&amp;redirect=${encodeURIComponent(redirect)}">Approved, payment due</a>
+<a class="btn ghost" href="/__dev/login?as=pilot%40example.test&amp;redirect=${encodeURIComponent(redirect)}">Approved, payment due (invoice allowed)</a>
 <a class="btn ghost" href="/__dev/login?as=fleet%40example.test&amp;redirect=${encodeURIComponent(redirect)}">Fleet Integration, active</a>
 <a class="btn ghost" href="/__dev/login?as=member%40example.test&amp;redirect=${encodeURIComponent(redirect)}">Constellation member</a>
 <a class="btn ghost" href="/__dev/login?as=visitor%40example.test&amp;redirect=${encodeURIComponent(redirect)}">Signed in, no plan</a></p></div></main>`;
 
 // ---- Stripe, emulated: just enough of Checkout, the billing portal and webhooks ----
 const sessions = new Map();
+const invoices = new Map(); // in_dev_N -> { id, customer, metadata, description, amount, created, due_date, status }
 const customers = new Map(); // customer -> { email, plan, subscription }
 let seq = 0;
 const readBody = async (req) => {
@@ -178,6 +179,31 @@ async function stripeStandIn(req, url, send) {
       // Same origin as the site the visitor is on, so the page's CSP (form-action) allows the redirect.
       return json({ id, url: `${new URL(form.get("success_url")).origin}/__stripe/checkout/${id}` });
     }
+    if (url.pathname === "/__stripe/v1/customers") {
+      const id = `cus_dev_${++seq}`;
+      customers.set(id, { email: form.get("email"), plan: form.get("metadata[plan]") });
+      return json({ id });
+    }
+    if (url.pathname === "/__stripe/v1/invoices") {
+      const inv = { id: `in_dev_${++seq}`, customer: form.get("customer"), description: form.get("description"), days: Number(form.get("days_until_due")),
+        metadata: { email: form.get("metadata[email]"), plan: form.get("metadata[plan]") }, amount: 0, created: Math.floor(Date.now() / 1000), status: "draft" };
+      invoices.set(inv.id, inv);
+      return json(inv);
+    }
+    if (url.pathname === "/__stripe/v1/invoiceitems") {
+      const inv = invoices.get(form.get("invoice"));
+      if (!inv) return send(404, { "content-type": "application/json" }, '{"error":{"code":"resource_missing"}}');
+      inv.amount += Number(form.get("amount"));
+      return json({ id: `ii_dev_${++seq}`, invoice: inv.id });
+    }
+    const invAction = /^\/__stripe\/v1\/invoices\/([^/]+)\/(finalize|send)$/.exec(url.pathname);
+    if (invAction && invoices.has(invAction[1])) {
+      const inv = invoices.get(invAction[1]);
+      if (inv.status === "draft") Object.assign(inv, { status: "open", due_date: inv.created + inv.days * 86_400 });
+      if (invAction[2] === "send") console.log("stripe stand-in: invoice", inv.id, "would be emailed to", inv.metadata.email);
+      // A same-origin path, so the link works whichever host name the preview is opened on.
+      return json({ ...inv, hosted_invoice_url: `/__stripe/invoice/${inv.id}` });
+    }
     if (url.pathname === "/__stripe/v1/billing_portal/sessions") return json({ url: `${new URL(form.get("return_url")).origin}/__stripe/portal/${encodeURIComponent(form.get("customer"))}?return=${encodeURIComponent(form.get("return_url"))}` });
     return send(404, {}, "");
   }
@@ -193,6 +219,19 @@ async function stripeStandIn(req, url, send) {
     }
     return html(standInPage("Checkout", `<h1>${esc(cs.name)}</h1><p class="lead">${esc(gbp(cs.amount))}${cs.yearly ? " a year" : ""} · ${esc(cs.email)}</p>
 <form method="post" action="/__stripe/checkout/${cs.id}/pay"><p class="actions"><button class="btn">Pay (test)</button> <a class="btn ghost" href="${esc(cs.cancel)}">Cancel</a></p></form>`));
+  }
+  if (parts[1] === "invoice" && invoices.has(parts[2])) {
+    const inv = invoices.get(parts[2]);
+    if (req.method === "POST" && inv.status === "open" && ["pay", "void"].includes(parts[3])) {
+      inv.status = parts[3] === "pay" ? "paid" : "void";
+      await deliver(parts[3] === "pay" ? "invoice.paid" : "invoice.voided", { id: inv.id, customer: inv.customer, created: inv.created, status: inv.status, metadata: inv.metadata });
+      return send(303, { location: "/app/" });
+    }
+    const due = inv.due_date ? new Date(inv.due_date * 1000).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }) : "";
+    return html(standInPage("Invoice", `<h1>${esc(inv.description)}</h1><p class="lead">${esc(gbp(inv.amount))} · ${esc(inv.metadata.email)}${due ? ` · due ${esc(due)}` : ""} · ${esc(inv.status)}</p>` +
+      (inv.status === "open" ? `<div class="actions"><form method="post" action="/__stripe/invoice/${inv.id}/pay" class="inline"><button class="btn">Pay invoice (test)</button></form>` +
+        `<form method="post" action="/__stripe/invoice/${inv.id}/void" class="inline"><button class="btn ghost">Void (test)</button></form></div>` : "") +
+      `<p class="actions"><a class="btn ghost" href="/app/">Back to Lightbound</a></p>`));
   }
   if (parts[1] === "portal") {
     const customer = decodeURIComponent(parts[2] ?? "");

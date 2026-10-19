@@ -13,7 +13,7 @@ JavaScript, no third-party requests, and no secrets.
 | `/turnstone/` | Mark and "Classified." only (secret project; `noindex`). |
 | `/gauss/apply/` | Pilot brief in the sales plan's three steps (fit, readiness, pilot brief). Plan links preselect the package. |
 | `/constellation/apply/` | Request an invitation. Constellation is free and invite-only; there is no payment anywhere on its side. |
-| `/app/` | Signed-in workspace: quote and Stripe payment, billing state, pilot progress, space weather, Constellation membership. |
+| `/app/` | Signed-in workspace: quote and payment (card, or an invoice where you allow it), billing state, pilot progress, space weather, Constellation membership. |
 | `/app/admin/` | For `ADMIN_EMAILS`: approve with a quote, set plan, billing, pilot step; invite Constellation members (free). |
 | `/constellation/time/` | Public time-zone planner. Pick a date and up to 8 zones to see the local hour everywhere, with the hours that suit everyone outlined. A picked hour comes with a calendar file. No data is stored. |
 | `/privacy/` | What is kept, why, for how long, and how to have it deleted. |
@@ -63,7 +63,9 @@ visitor ──► Cloudflare ─┬─ static file (free, no Worker run) ──�
                                    │
 /app/admin/ ── Approve with quote (inside the published range) ──► acct:<email> { plan, quote, billing: due }
                                                                        │
-customer ── /app/ (Cloudflare Access one-time code) ── Pay securely with Stripe ──► Stripe Checkout (Stripe's page)
+customer ── /app/ (Cloudflare Access one-time code) ─┬─ Pay now ──► Stripe Checkout (Stripe's page)
+                                                     └─ Request an invoice (only if you ticked "Allow invoice")
+                                                          ──► Stripe emails an invoice, 30 days to pay; billing: invoice_open
                                                                        │
 Stripe ── signed webhook /api/stripe/webhook ──► billing: paid | active | past_due | canceled ──► workspace unlocks
 customer ── Manage billing ──► Stripe billing portal (cards, invoices, cancel)
@@ -75,22 +77,39 @@ flow", Gauss Aurora repo `docs/SALES_FEATURE_LIST_AND_ONBOARDING.md`, 21 Aug 202
 
 | Package | Range | Paid how |
 |---|---|---|
-| Design-partner pilot | £20k–£40k per pilot | One Stripe payment |
-| Fleet Integration | £60k–£125k a year | Yearly Stripe subscription |
+| Design-partner pilot | £20k–£40k per pilot | One Stripe payment, or one invoice if allowed |
+| Fleet Integration | £60k–£125k a year | Yearly Stripe subscription, or a yearly invoice if allowed |
 | Mission integration | £120k–£300k one-off | Invoiced by milestone |
 | Flight Candidate Adapter (gated) | £750k–£2.5m one-off | Invoiced by milestone |
 
-Each customer pays a fixed quote that you set inside the range when you approve them. The site
-never offers a cheap self-serve trial: the sales plan sells a paid, bounded pilot. The Lovable tier
+Each customer pays a fixed quote that you set inside the range when you approve them. The public
+pages and the workspace don't say how payment is taken (a test checks); the privacy notice still
+names Stripe as a processor. The site never offers a cheap self-serve trial: the sales plan sells a paid, bounded pilot. The Lovable tier
 claims (automated mitigation, a quantum surrogate, fixed warning times) stay out, and a test checks.
+
+**Invoices, where you allow them.** Tick "Allow invoice" when you approve a customer or on their
+account row. They then see "Request an invoice" next to "Pay now". The Worker creates a Stripe
+invoice for the quote (Fleet Integration: 12 months) and Stripe emails it, with 30 days to pay.
+- Their workspace opens straight away ("Invoice sent").
+- After the due date it locks ("Invoice overdue") until the invoice is paid.
+- `invoice.paid` for that invoice marks it Paid. For Fleet Integration the paid year then runs 365 days
+  from the invoice date, after which the customer sees "Renew now" (or another invoice).
+- `invoice.voided` or `invoice.marked_uncollectible` puts it back to Payment due.
+- Changing a customer's plan or quote drops any earlier invoice and paid year, and invoicing stays off
+  unless the box is ticked.
 
 **Constellation group calls** (members only, free):
 - You schedule a call in `/app/admin/` with a title, start time in any zone, length, seats, call link and notes.
 - Members see upcoming calls in `/app/` in their own time zone (set once) with UTC beside it. They book or cancel a seat and download a calendar file.
 - The call link is shown only to members who booked, and appears in the calendar file only for them.
 - Each booking is its own key in DATA, so two bookings never overwrite each other. KV is eventually consistent, so a busy call can go one or two over its seat limit.
+- **Announcing a call** (comms are still being decided): each call in `/app/admin/` has two drafts.
+  - "Draft an email" opens your mail app with every member in Bcc. Past about 1,800 characters the link leaves the addresses out for you to add.
+  - "Draft a WhatsApp message" opens WhatsApp with the text; you pick the group and press send.
 
-**Friends of Constellation:** the xOrbita, Pan Galactic Corporation and Aphelion Industries logos sit on the Constellation page. They're shown as supplied, link to each site, and show their names on hover or focus (always on touch screens). They're labelled neutrally, with no partnership claim.
+  Nothing is sent by the site, and no messaging service or token is involved. The text never includes the call link, which goes only to members who book.
+
+**Friends of Constellation:** the xOrbita, Pan Galactic Corporation and Aphelion Industries logos sit on the Constellation page. They're shown as supplied, link to each site, and show their names on hover or focus (always on touch screens). They're labelled neutrally, with no partnership claim. Pallas confirmed permission to show all three (19 Oct 2026).
 
 **Constellation** is free and invite-only. People can request an invitation, or you invite them
 from the admin page. Inviting creates the membership and gives you a draft email to send yourself;
@@ -99,16 +118,19 @@ nothing is sent automatically.
 **Security:**
 - No passwords. Cloudflare Access emails a one-time code, and the Worker verifies Access's signed
   token (key, audience, issuer, expiry).
-- No card data. Payment happens on Stripe's pages. The site only creates the Checkout session and
-  reads Stripe's webhook.
+- No card data. Payment happens on Stripe's pages (Checkout, or Stripe's hosted invoice page). The site
+  only creates the Checkout session or invoice and reads Stripe's webhook.
+- An invoice webhook counts only for the invoice id stored on that account, so Checkout's own
+  receipts and renewal invoices never change an invoiced account.
 - Webhooks are trusted only with a valid Stripe signature from the last 5 minutes. An older event
   never overwrites a newer state, and an event for a different plan is ignored.
 - Only the signed-in pages may redirect a form to `checkout.stripe.com` and `billing.stripe.com`,
   via a CSP `form-action` exception. Public pages post only to the site itself.
 - Stripe keys are Worker secrets, never in config, URLs, logs or git.
 
-**Locally:** `npm run site:dev`, then go to `/app/`. Pick "Approved, payment due" and press Pay. A
-local Stripe stand-in shows a test checkout and sends a signed webhook to the real Worker code. The
+**Locally:** `npm run site:dev`, then go to `/app/`. Pick "Approved, payment due (invoice allowed)"
+and press "Pay now", or "Request an invoice" then "View invoice". A local Stripe stand-in shows a
+test checkout or invoice (pay or void it) and sends a signed webhook to the real Worker code. The
 "Fleet Integration, active" account can try the billing portal, including a simulated failed
 renewal and cancellation. No real keys are used.
 
@@ -181,10 +203,11 @@ Stripe, once (do it in test mode first, then repeat with live keys):
    - `checkout.session.completed`, `checkout.session.async_payment_succeeded` and
      `checkout.session.async_payment_failed`
    - `customer.subscription.created`, `.updated` and `.deleted`
+   - `invoice.paid`, `invoice.voided` and `invoice.marked_uncollectible`
 4. Store the two secrets in the Worker (each prompts for the value, so nothing lands in your shell
    history):
    ```bash
-   npx wrangler@4 secret put STRIPE_SECRET_KEY       # a restricted key: Checkout Sessions + Billing Portal write
+   npx wrangler@4 secret put STRIPE_SECRET_KEY       # a restricted key: Checkout Sessions, Billing Portal, Customers, Invoices + Invoice Items write
    npx wrangler@4 secret put STRIPE_WEBHOOK_SECRET   # the endpoint's signing secret
    ```
 
@@ -209,6 +232,10 @@ After that, every change is `npm run test:website`, then `npx wrangler@4 deploy`
 - Payment-method limits for large amounts (card and Bacs limits vary). Check them in the Stripe
   Dashboard for your account.
 - Stripe API version: the site uses your account's default (set `STRIPE_API_VERSION` to pin one).
+- **The invoice calls have only been run against the local stand-in**, not Stripe itself. These are:
+  customers, invoices (`collection_method=send_invoice`, `days_until_due=30`), invoiceitems (`amount`,
+  `currency`, `invoice`), finalize and send. Request one invoice in test mode before going live and
+  check that the email arrives and that `invoice.paid` reaches the webhook.
 
 - That an Access policy of "Include: Everyone" sends one-time codes to any address. The OTP page says
   codes go only to emails a policy allows. Test it with a non-customer address. If it doesn't, add

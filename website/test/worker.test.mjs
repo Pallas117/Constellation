@@ -15,6 +15,7 @@ import { makeAccess } from "./fixtures/access.mjs";
 import { accessIdentity, isAdmin } from "../worker/auth.js";
 import { getAccount, listApplications, putAccount, saveApplication } from "../worker/data.js";
 import { applyEvent, formEncode, signPayload, verifySignature } from "../worker/stripe.js";
+import { billingStatus } from "../worker/tiers.js";
 import { APP_CSP } from "../worker/headers.js";
 import { formatIn, renderPlanner, tzOffset, zonedToUtc } from "../worker/timezones.js";
 import { listCalls, saveCall } from "../worker/calls.js";
@@ -316,7 +317,13 @@ function stripeMock(fail = false) {
     calls.push({ url: String(url), body: new URLSearchParams(init.body), auth: init.headers.authorization });
     if (fail) return new Response('{"error":{"code":"api_error"}}', { status: 500 });
     const path = new URL(url).pathname;
-    return Response.json(path.endsWith("/checkout/sessions") ? { id: "cs_test_1", url: "https://checkout.stripe.com/c/pay/cs_test_1" } : { url: "https://billing.stripe.com/p/session/test_1" });
+    if (path.endsWith("/checkout/sessions")) return Response.json({ id: "cs_test_1", url: "https://checkout.stripe.com/c/pay/cs_test_1" });
+    if (path.endsWith("/billing_portal/sessions")) return Response.json({ url: "https://billing.stripe.com/p/session/test_1" });
+    if (path.endsWith("/customers")) return Response.json({ id: "cus_new" });
+    if (path.endsWith("/invoiceitems")) return Response.json({ id: "ii_1" });
+    const inv = { id: "in_1", customer: new URLSearchParams(init.body).get("customer") ?? "cus_new", status: "draft" };
+    if (path.endsWith("/send")) return Response.json({ ...inv, status: "open", hosted_invoice_url: "https://invoice.stripe.com/i/test_1", due_date: Math.floor(Date.now() / 1000) + 30 * 86_400 });
+    return Response.json(inv);
   };
   f.calls = calls;
   return f;
@@ -342,7 +349,7 @@ test("workspace: signed out gets 401; pending applicants see their status; membe
   await putAccount(env, { email: "member@example.test", community: "member" }, "test");
   const member = await (await send(env, await as(access, "member@example.test", "/app/"))).text();
   assert.match(member, /<p class="big">Member<\/p><p class="t">Free, by invitation\.<\/p>/);
-  assert.doesNotMatch(member, /Pay securely/, "Constellation never asks for payment");
+  assert.doesNotMatch(member, /Pay now|Request an invoice|Billing/, "Constellation never asks for payment");
 });
 
 test("workspace: an approved quote shows Pay; checkout goes to Stripe with the quote, in pounds, for this account", async () => {
@@ -352,7 +359,8 @@ test("workspace: an approved quote shows Pay; checkout goes to Stripe with the q
   assert.equal(res.headers.get("content-security-policy"), APP_CSP);
   const page = await res.text();
   assert.match(page, /<p class="big">£28,000 one-off<\/p><p class="t">Payment due<\/p>/);
-  assert.match(page, /<form method="post" action="\/app\/checkout" class="inline"><button class="btn">Pay securely with Stripe<\/button><\/form>/);
+  assert.match(page, /<form method="post" action="\/app\/checkout" class="inline"><button class="btn">Pay now<\/button><\/form>/);
+  assert.doesNotMatch(page, /Stripe|securely|card details|Request an invoice/, "no payment-method talk; invoices only where allowed");
   assert.doesNotMatch(page, /Open the Gauss console|Console link/, "locked until paid");
   const stripe = stripeMock();
   const go = await withFetch(stripe, async () => send(env, await formPost(access, "ops@example.test", "/app/checkout")));
@@ -384,6 +392,52 @@ test("checkout: Fleet Integration is a yearly subscription; no quote or already 
     assert.equal(r.headers.get("location"), "/app/", who);
   }
   assert.equal(stripe.calls.length, 1, "Stripe only called for the payable account");
+});
+
+test("invoices: only where an admin allows them; Stripe emails one invoice; paid unlocks, overdue locks", async () => {
+  const { env, access } = await appEnv();
+  await putAccount(env, { email: "fleet@example.test", org: "Example Ltd", tier: "fleet_integration", quote: 7_500_000, invoice: true, billing: { status: "due" } }, "test");
+  await putAccount(env, { email: "card@example.test", tier: "pilot", quote: 2_000_000, billing: { status: "due" } }, "test");
+  const page = await (await send(env, await as(access, "fleet@example.test", "/app/"))).text();
+  assert.match(page, /action="\/app\/invoice" class="inline"><button class="btn ghost">Request an invoice</);
+  const stripe = stripeMock();
+  const no = await withFetch(stripe, async () => send(env, await formPost(access, "card@example.test", "/app/invoice")));
+  assert.equal(no.headers.get("location"), "/app/");
+  assert.equal(stripe.calls.length, 0, "no invoice unless allowed");
+  assert.equal((await withFetch(stripe, async () => send(env, await formPost(access, "fleet@example.test", "/app/invoice", {}, "https://evil.example")))).status, 403);
+  const res = await withFetch(stripe, async () => send(env, await formPost(access, "fleet@example.test", "/app/invoice")));
+  assert.equal(res.headers.get("location"), "/app/?invoice=sent");
+  assert.deepEqual(stripe.calls.map((c) => new URL(c.url).pathname), ["/v1/customers", "/v1/invoices", "/v1/invoiceitems", "/v1/invoices/in_1/finalize", "/v1/invoices/in_1/send"]);
+  const [cust, inv, item] = stripe.calls.map((c) => c.body);
+  assert.deepEqual([cust.get("email"), cust.get("name")], ["fleet@example.test", "Example Ltd"]);
+  assert.deepEqual([inv.get("customer"), inv.get("collection_method"), inv.get("days_until_due"), inv.get("metadata[plan]")], ["cus_new", "send_invoice", "30", "fleet_integration"]);
+  assert.deepEqual([item.get("invoice"), item.get("amount"), item.get("currency"), item.get("description")], ["in_1", "7500000", "gbp", "Gauss: Fleet Integration, 12 months"]);
+  let acct = await getAccount(env, "fleet@example.test");
+  assert.deepEqual([acct.billing.status, acct.billing.customer, acct.billing.invoice], ["invoice_open", "cus_new", "in_1"]);
+  const sent = await (await send(env, await as(access, "fleet@example.test", "/app/?invoice=sent"))).text();
+  assert.match(sent, /Invoice sent to fleet@example\.test\./);
+  assert.match(sent, /href="https:\/\/invoice\.stripe\.com\/i\/test_1"/);
+  assert.match(sent, /Console link coming by email/, "open while the invoice is within its terms");
+  assert.equal((await withFetch(stripe, async () => send(env, await formPost(access, "fleet@example.test", "/app/invoice")))).headers.get("location"), "/app/");
+  assert.equal(stripe.calls.length, 5, "one invoice at a time");
+  // Overdue: locked until paid.
+  assert.equal(billingStatus(acct, Date.parse(acct.billing.dueAt) + 1000), "overdue");
+  await putAccount(env, { ...acct, billing: { ...acct.billing, dueAt: new Date(Date.now() - 1000).toISOString() } }, "test");
+  const late = await (await send(env, await as(access, "fleet@example.test", "/app/"))).text();
+  assert.match(late, /Invoice overdue/);
+  assert.doesNotMatch(late, /Console link/);
+  // Webhooks: only this account's invoice counts; a paid year runs out.
+  const t0 = Math.floor(Date.now() / 1000);
+  const ev = (type, id) => ({ type, created: t0, data: { object: { id, created: t0, metadata: { email: "fleet@example.test", plan: "fleet_integration" } } } });
+  assert.equal(await applyEvent(env, ev("invoice.paid", "in_other")), "ignored: not this account's invoice");
+  assert.equal(await applyEvent(env, ev("invoice.paid", "in_1")), "invoice.paid -> paid");
+  acct = await getAccount(env, "fleet@example.test");
+  assert.equal(Date.parse(acct.billing.paidUntil), (t0 * 1000) + 365 * 86_400_000);
+  assert.equal(billingStatus(acct), "paid");
+  assert.equal(billingStatus(acct, Date.parse(acct.billing.paidUntil) + 1000), "due", "renew after a year");
+  await putAccount(env, { ...acct, billing: { ...acct.billing, status: "invoice_open" } }, "test");
+  assert.equal(await applyEvent(env, ev("invoice.voided", "in_1")), "invoice.voided -> due");
+  assert.equal((await getAccount(env, "fleet@example.test")).billing.invoice, null);
 });
 
 test("stripe: form encoding and webhook signatures (wrong secret, stale or tampered payloads rejected)", async () => {
@@ -464,13 +518,15 @@ test("admin: Constellation invitations are free memberships with a draft email, 
 test("admin: accounts can be set, re-quoted (back to payment due) and removed", async () => {
   const { env, access } = await appEnv();
   const form = async (body) => send(env, await formPost(access, "boss@example.test", "/app/admin/account", body));
-  await form({ email: "Lead@Example.test", tier: "pilot", quote: "30000", community: "member", action: "save" });
+  await form({ email: "Lead@Example.test", tier: "pilot", quote: "30000", community: "member", invoice: "yes", action: "save" });
   let a = await getAccount(env, "lead@example.test");
-  assert.deepEqual([a.tier, a.quote, a.billing.status, a.community], ["pilot", 3_000_000, "due", "member"]);
-  await putAccount(env, { ...a, billing: { status: "paid", customer: "cus_9" } }, "stripe");
+  assert.deepEqual([a.tier, a.quote, a.billing.status, a.community, a.invoice], ["pilot", 3_000_000, "due", "member", true]);
+  assert.match(await (await send(env, await as(access, "boss@example.test", "/app/admin/"))).text(), /name="invoice" value="yes" checked> Allow invoice/);
+  await putAccount(env, { ...a, billing: { status: "paid", customer: "cus_9", invoice: "in_9", paidUntil: "2027-01-01T00:00:00.000Z" } }, "stripe");
   await form({ email: "lead@example.test", tier: "fleet_integration", quote: "90000", action: "save" });
   a = await getAccount(env, "lead@example.test");
   assert.deepEqual([a.tier, a.billing.status, a.billing.customer], ["fleet_integration", "due", "cus_9"], "new plan: payment due, Stripe customer kept");
+  assert.deepEqual([a.billing.invoice, a.billing.paidUntil, a.invoice], [null, null, false], "earlier invoice and paid year dropped; invoicing off unless ticked");
   await form({ email: "lead@example.test", tier: "mission_integration", quote: "", action: "save" });
   assert.equal((await getAccount(env, "lead@example.test")).billing.status, "invoiced");
   await form({ email: "lead@example.test", tier: "bogus", action: "save" });
@@ -546,6 +602,11 @@ test("group calls: admins schedule; members book within capacity; the link shows
   assert.doesNotMatch(icsNot, /meet\.example\.test/, "no link in the calendar file without a booking");
   assert.equal(await book("m1@example.test", "no"), "/app/?call=cancelled#calls-h");
   assert.equal(await book("m3@example.test"), "/app/?call=booked#calls-h", "a cancelled seat frees up");
+  const admin = await (await send(env, await as(access, "boss@example.test", "/app/admin/"))).text();
+  assert.match(admin, /href="mailto:\?bcc=m1%40example\.test,m2%40example\.test,m3%40example\.test&amp;subject=Constellation%20call%3A%20Members&#39;%20call&amp;body=/, "a draft to all members, Bcc");
+  assert.match(admin, /Draft an email to 3 members/);
+  assert.match(admin, /href="https:\/\/wa\.me\/\?text=Constellation%20group%20call/);
+  assert.doesNotMatch(decodeURIComponent(admin.match(/wa\.me\/\?text=([^"]+)/)[1]), /meet\.example\.test|customer@/, "announcements never carry the call link or non-members");
 });
 
 test("group calls: each member sees times in their own zone", async () => {
