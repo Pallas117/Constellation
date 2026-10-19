@@ -32,7 +32,8 @@ stub argo 'case "$1" in
 esac'
 
 # balance stubs: the local model server is "running" when MLX=1; actions land in $ACTIONS
-stub pgrep '[ "${MLX:-0}" = 1 ] && [[ "$*" == *mlx_lm.server* ]]'
+stub pgrep '[ "${MLX:-0}" = 1 ] && [[ "$*" == *mlx_lm.server* && "$*" == *"--port ${MLXPORT:-8089}"* ]]'
+stub pkill 'echo "pkill $*" >>"$ACTIONS"'
 mkdir -p "$T/home/.local/bin"
 printf '#!/bin/bash\necho "local-coder $*" >>"$ACTIONS"\n' >"$T/home/.local/bin/local-coder"
 printf '#!/bin/bash\necho "disk-cleanup $*" >>"$ACTIONS"\n' >"$T/home/.local/bin/disk-cleanup"
@@ -41,7 +42,7 @@ chmod +x "$T/home/.local/bin/local-coder" "$T/home/.local/bin/disk-cleanup"
 run() { # run <args...>: gauss-services.sh with the stubs; alerts land in $LOG
   : >"$T/log"; : >"$T/kicks"; : >"$T/actions"
   env -i PATH="$T/bin:/usr/bin:/bin" HOME="$T/home" ARGO="$T/bin/argo" LOG="$T/log" KICKS="$T/kicks" GAUSS_PUBLIC_URL=http://127.0.0.1:8080 \
-    MLX="${MLX:-0}" ACTIONS="$T/actions" GAUSS_BALANCE="${GAUSS_BALANCE:-1}" \
+    MLX="${MLX:-0}" MLXPORT="${MLXPORT:-8089}" ACTIONS="$T/actions" GAUSS_BALANCE="${GAUSS_BALANCE:-1}" \
     LOADED="${LOADED:-}" HEALTH="${HEALTH:-200}" DISKGB="${DISKGB:-50}" \
     SRC="${SRC:-AC Power}" BATT="${BATT:-80%; charging; present: true}" SD="${SD:-0}" \
     LEVEL="${LEVEL:-1}" FREE="${FREE:-50}" SWAPUSED="${SWAPUSED:-1000}" OLD_ARGO="${OLD_ARGO:-}" bash "$SCRIPT" "$@"
@@ -86,7 +87,7 @@ LEVEL=1 SWAPUSED=3000 run awake guard
 
 # Disk (seen on the dev Mac: 5 GB free with 5 GB of swap)
 DISKGB=5 run awake guard
-[ "$(alerts)" = "disk-low balance" ]; expect "5 GB free disk: alert, and balance runs the cleanup" $?
+[ "$(alerts)" = "disk-low" ]; expect "5 GB free disk: alert; a cleanup that frees nothing is not claimed" $?
 DISKGB=20 run awake guard
 [ -z "$(alerts)" ]; expect "20 GB free disk: no alert" $?
 
@@ -133,11 +134,13 @@ HEALTH=000 LOADED="uk.lightbound.gauss-backend" run awake guard
 acts() { tr '\n' ';' <"$T/actions" | sed 's/;$//'; }
 PAUSED="$T/home/Library/Application Support/Gauss/learning-paused"
 MLX=1 LEVEL=4 run awake guard
-[ "$(acts)" = "local-coder stop" ] && [ "$(alerts)" = "memory-low balance" ]; expect "critical pressure with the local model running: stopped, one balance alert" $?
+[ "$(acts)" = "pkill -f mlx_lm.server.*--port 8089" ] && [ "$(alerts)" = "memory-low balance" ]; expect "critical pressure with the local model running: stopped, one balance alert" $?
 MLX=1 LEVEL=2 run awake guard
-[ "$(acts)" = "local-coder stop" ] && [ "$(alerts)" = "balance" ]; expect "warn pressure: the local model is shed before it gets critical" $?
+[ "$(acts)" = "pkill -f mlx_lm.server.*--port 8089" ] && [ "$(alerts)" = "balance" ]; expect "warn pressure: the local model is shed before it gets critical" $?
 MLX=1 SWAPUSED=4200 run awake guard
-[ "$(acts)" = "local-coder stop" ]; expect "4.1 GB swap: the local model is shed" $?
+[ "$(acts)" = "pkill -f mlx_lm.server.*--port 8089" ]; expect "4.1 GB swap: the local model is shed" $?
+MLX=1 MLXPORT=3032 LEVEL=4 run awake guard
+[ -z "$(acts)" ]; expect "Gauss's memory answer model (:3032) is never shed" $?
 MLX=1 FREE=10 run awake guard
 [ -z "$(acts)" ]; expect "10% 'free' at normal pressure: nothing shed" $?
 LEVEL=4 run awake guard
@@ -150,11 +153,14 @@ SRC="Battery Power" BATT="25%; discharging; present: true" run awake guard
 SRC="AC Power" BATT="26%; charging; present: true" run awake guard
 [ ! -f "$PAUSED" ]; expect "back on AC: learning resumed" $?
 DISKGB=5 run awake guard
-[ "$(acts)" = "disk-cleanup --apply --if-below 8" ] && [ "$(alerts)" = "disk-low balance" ]; expect "disk 5 GB: allowlisted cleanup runs" $?
+[ -z "$(acts)" ] && [ "$(alerts)" = "disk-low" ]; expect "disk 5 GB again within the hour: no second cleanup" $?
+rm -f "$T/home/Library/Application Support/Gauss/balance-cleanup"
+DISKGB=5 run awake guard
+[ "$(acts)" = "disk-cleanup --apply --if-below 8" ]; expect "disk 5 GB, an hour later: allowlisted cleanup runs" $?
 MLX=1 LEVEL=4 GAUSS_BALANCE=0 run awake guard
 [ -z "$(acts)" ]; expect "GAUSS_BALANCE=0: balance does nothing" $?
 out=$(MLX=1 LEVEL=4 run balance --dry-run)
-[ -z "$(acts)" ] && [[ "$out" == *"would: $T/home/.local/bin/local-coder stop"* ]]; expect "balance --dry-run only reports" $?
+[ -z "$(acts)" ] && [[ "$out" == *"would: pkill -f mlx_lm.server.*--port 8089"* ]]; expect "balance --dry-run only reports" $?
 out=$(run balance --dry-run)
 [[ "$out" == "balanced: nothing to do"* ]]; expect "healthy machine: nothing to do" $?
 

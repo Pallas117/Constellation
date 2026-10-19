@@ -55,6 +55,8 @@ WATCH_MAX_KICKS=3
 # balance: safe, reversible load shedding (GAU-126). GAUSS_BALANCE=0 turns it off.
 BALANCE="${GAUSS_BALANCE:-1}"
 LOCAL_CODER="${GAUSS_LOCAL_CODER:-$HOME/.local/bin/local-coder}"   # optional on-device model server
+LOCAL_CODER_PORT="${LOCAL_CODER_PORT:-8089}"   # local-coder's server; Gauss's memory answer model (:3032) is not optional load
+CLEANUP_STAMP="$WATCH_DIR/balance-cleanup"     # balance runs disk-cleanup at most hourly
 DISK_CLEANUP="${GAUSS_DISK_CLEANUP:-$HOME/.local/bin/disk-cleanup}" # allowlisted cache cleanup
 LEARNING_PAUSED="$WATCH_DIR/learning-paused"      # ml/train/nightly.py skips while this exists
 LOWPOWER_BY_BALANCE="$WATCH_DIR/lowpower-by-balance" # only undo Low Power Mode that balance set
@@ -272,6 +274,8 @@ lowpower_on() { pmset -g 2>/dev/null | awk '$1=="lowpowermode"{v=$2} END{print v
 #   battery low on battery power  -> pause nightly learning; Low Power Mode if `awake setup` allowed it
 #   back on AC (or battery > warn+10%) -> resume learning; undo Low Power Mode that balance set
 #   disk below DISK_MIN_GB        -> allowlisted disk-cleanup (rebuildable caches only)
+cleanup_due() { [ ! -f "$CLEANUP_STAMP" ] || [ -n "$(find "$CLEANUP_STAMP" -mmin +59 2>/dev/null)" ]; }
+
 balance() { # balance [--dry-run]
   local dry=0; [ "${1:-}" = --dry-run ] && dry=1
   if [ "$BALANCE" = 0 ]; then [ $dry = 1 ] && echo "balance is off (GAUSS_BALANCE=0)"; return 0; fi
@@ -285,9 +289,12 @@ balance() { # balance [--dry-run]
   local notify=() quiet=()
   act() { if [ $dry = 1 ]; then echo "would: $*"; else "$@" >/dev/null 2>&1 || true; fi; }
 
-  if { [ $mem_short = 1 ] || [ $batt_low = 1 ]; } && pgrep -f mlx_lm.server >/dev/null 2>&1; then
-    if [ -x "$LOCAL_CODER" ]; then act "$LOCAL_CODER" stop; else act pkill -f mlx_lm.server; fi
-    notify+=("stopped the local model server")
+  # Only local-coder's own server, by its port. Gauss's memory answer model is also an
+  # mlx_lm.server (same model, :3032, kept alive by launchd); matching it by name restarted it
+  # every minute on 2026-10-19.
+  local coder="mlx_lm.server.*--port $LOCAL_CODER_PORT"
+  if { [ $mem_short = 1 ] || [ $batt_low = 1 ]; } && pgrep -f "$coder" >/dev/null 2>&1; then
+    act pkill -f "$coder"; notify+=("stopped the local model server")
   fi
   if [ $batt_low = 1 ]; then
     if [ ! -f "$LEARNING_PAUSED" ]; then act mkdir -p "$WATCH_DIR"; act touch "$LEARNING_PAUSED"; quiet+=("paused nightly learning"); fi
@@ -300,8 +307,15 @@ balance() { # balance [--dry-run]
       act sudo -n /usr/bin/pmset -a lowpowermode 0; act rm -f "$LOWPOWER_BY_BALANCE"; notify+=("Low Power Mode off")
     fi
   fi
-  if [ "$disk" -lt "$DISK_MIN_GB" ] && [ -x "$DISK_CLEANUP" ]; then
-    act "$DISK_CLEANUP" --apply --if-below "$DISK_MIN_GB"; notify+=("cleared rebuildable caches")
+  # At most hourly, and claimed only when it freed space: with nothing left to clear it ran,
+  # and reported "cleared", every minute.
+  if [ "$disk" -lt "$DISK_MIN_GB" ] && [ -x "$DISK_CLEANUP" ] && cleanup_due; then
+    act mkdir -p "$WATCH_DIR"; act touch "$CLEANUP_STAMP"
+    act "$DISK_CLEANUP" --apply --if-below "$DISK_MIN_GB"
+    if [ $dry = 0 ]; then
+      local after; after=$(disk_free_gb)
+      [ "${after:-0}" -gt "$disk" ] && notify+=("cleared rebuildable caches (${disk} to ${after} GB free)")
+    fi
   fi
 
   # ${a[@]+"${a[@]}"}: empty arrays are "unbound" under set -u in macOS's bash 3.2
