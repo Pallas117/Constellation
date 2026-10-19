@@ -101,7 +101,7 @@ test("SSA panel still shows a real detection alert (GAU-81)", () => {
     ],
   };
   const html = renderToStaticMarkup(createElement(UndetectedObjectsAlert, { alert }));
-  assert.match(html, /UNTRACKED OBJECT ALERT/);
+  assert.match(html, /untracked object alert/i); // the brand heading is sentence case
   assert.match(html, /Two uncatalogued returns/);
   assert.doesNotMatch(html, /SSA_UNKNOWN/);
   assert.deepEqual(ssaStatus(alert), {

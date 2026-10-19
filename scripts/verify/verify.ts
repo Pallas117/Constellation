@@ -31,9 +31,9 @@ const outDir = path.join(root, "test-results", "verification");
 const junitPath = path.join(outDir, "junit.xml");
 const skipBuild = process.argv.includes("--no-build");
 
-function step(name: string, cmd: string, args: string[]): boolean {
+function step(name: string, cmd: string, args: string[], extraEnv: Record<string, string> = {}): boolean {
   console.log(`\n▶ ${name}`);
-  const r = spawnSync(cmd, args, { cwd: root, stdio: "inherit", env: process.env });
+  const r = spawnSync(cmd, args, { cwd: root, stdio: "inherit", env: { ...process.env, ...extraEnv } });
   const ok = r.status === 0;
   console.log(ok ? `✔ ${name}` : `✖ ${name} (exit ${r.status})`);
   return ok;
@@ -48,13 +48,22 @@ console.log(`\n▶ Requirements baseline ${baseline.version} (${baseline.require
 baselineProblems.forEach((p) => console.log(`  ✗ ${p}`));
 results.baseline = baselineProblems.length === 0;
 
+// Same environment as `npm test`: its script may set variables before `node` (e.g.
+// TSX_TSCONFIG_PATH so frontend JSX compiles with the app's settings). Read them from
+// package.json rather than copying them, so the gate can't drift from `npm test`. GAU-127.
+const testScript: string = JSON.parse(readFileSync(path.join(root, "package.json"), "utf8")).scripts?.test ?? "";
+const testEnv = Object.fromEntries(
+  [...(testScript.match(/^(?:\s*[A-Z_][A-Z0-9_]*=\S+)+/)?.[0] ?? "").matchAll(/([A-Z_][A-Z0-9_]*)=(\S+)/g)].map((m) => [m[1], m[2]]),
+);
+if (Object.keys(testEnv).length) console.log(`  using npm test environment: ${Object.entries(testEnv).map(([k, v]) => `${k}=${v}`).join(" ")}`);
+
 // Same globs as `npm test`, plus a JUnit report for the matrix.
 results.tests = step("Test suite", process.execPath, [
   "--import", "tsx", "--import", "./backend/test-setup.ts", "--test",
   "--test-reporter=spec", "--test-reporter-destination=stdout",
   "--test-reporter=junit", `--test-reporter-destination=${junitPath}`,
   "backend/**/*.test.ts", "frontend/src/lib/**/*.test.ts",
-]);
+], testEnv);
 
 results.build = skipBuild ? true : step("Production build", "npm", ["run", "build", "--silent"]);
 

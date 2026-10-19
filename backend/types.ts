@@ -77,8 +77,42 @@ export interface UncertaintyEnvelope {
   sigma: number;
 }
 
+/** The solar wind reaching Earth now: L1 values one ballistic travel time ago, 5-min mean, GSM. */
+export interface ArrivingSolarWind {
+  /** Last L1 measurement in the mean. */
+  observedAt: string;
+  /** When it reached Earth. */
+  arrivedAt: string;
+  travelSeconds: number;
+  spacecraft: string;
+  samples: number;
+  bz: number;
+  by: number;
+  density: number;
+  speed: number;
+  dynamicPressure: number;
+}
+
+/** The operational spacecraft's density disagrees with another L1 spacecraft by more than 2x. */
+export interface DensityDisagreement {
+  spacecraft: string;
+  density: number;
+  reference: string;
+  referenceDensity: number;
+  ratio: number;
+  minutes: number;
+}
+
 export interface CanonicalSpaceWeatherPoint {
+  /** When the point was issued (5 s ingest tick). */
   timestamp: string;
+  /** When its L1 values were measured; freshness is judged from this. */
+  observedAt?: string | null;
+  /** L1 spacecraft the values came from. */
+  spacecraft?: string;
+  /** Null until 3 h of L1 history covers one travel time, or when the feed is lost. */
+  arriving?: ArrivingSolarWind | null;
+  densityCheck?: DensityDisagreement | null;
   source: DataSource | "fusion";
   rho: number;
   velocity: {
@@ -111,7 +145,14 @@ export interface CanonicalSpaceWeatherPoint {
     dstMethod: string;
     /** Canonical fields dst was derived from; empty when measured. */
     dstDerivedFrom: string[];
+    /** "estimated-1m" (current) or "planetary-3h" (lags up to 3 h). */
+    kpKind?: "estimated-1m" | "planetary-3h";
+    kpObservedAt?: string | null;
+    /** Hour of the measured Kyoto Dst; absent when dst is modelled. */
+    dstObservedAt?: string | null;
   };
+  /** Values not measured as published, with the method and inputs (GAU-63). Empty when all were measured. */
+  derived?: DerivedField[];
   coupling: {
     newell: number;
     epsilon: number;
@@ -121,9 +162,22 @@ export interface CanonicalSpaceWeatherPoint {
     etaEarthArrival: string;
   };
   alerts: {
+    /** Bz-driven geomagnetic nowcast (mhd-nowcast stormTier). */
     stormTier: "quiet" | "watch" | "warning" | "severe";
     reason: string;
+    /** NOAA S-scale from GOES ≥10 MeV protons: the radiation stream (bit errors, detector hits). */
+    radiation?: ScaleReading;
+    /** NOAA G-scale from planetary Kp: the geomagnetic stream (induced currents, drag, GNSS/HF). */
+    geomagnetic?: ScaleReading;
+    /** NOAA R-scale from GOES 0.1–0.8 nm X-rays: radio blackouts (dayside HF, GNSS). GAU-136. */
+    radioBlackout?: ScaleReading;
   };
+  /** Measured GOES long-band X-ray flux; null when missing or older than 15 min. GAU-136. */
+  xray?: XrayReading | null;
+  /** Input sense-checks for this point; a flagged input carries its reason. GAU-136. */
+  senseChecks?: SenseCheck[];
+  /** NOAA's own alerts, watches and warnings from the last 24 h, newest first; null when unreadable. GAU-136. */
+  noaaAlerts?: NoaaAlert[] | null;
   quality: QualityFlags;
   /** Measured GOES particle flux; null per channel when missing or older than 30 min. */
   particles?: {
@@ -185,6 +239,60 @@ export interface SphericalHarmonicCoefficients {
   lMax: number;
   coefficients: Array<{ l: number; m: number; re: number; im: number }>;
   powerSpectrum: Array<{ l: number; cL: number }>;
+}
+
+/** A level on a NOAA space-weather scale (physics/noaa-scales.ts). */
+export interface ScaleReading {
+  /** 0 = below the scale; null = unknown (input missing or stale), never "no storm". */
+  level: 0 | 1 | 2 | 3 | 4 | 5 | null;
+  /** "S2", "G0", or "S?" / "G?" when unknown. */
+  label: string;
+  /** What the level was read from, in words, e.g. "GOES >=10 MeV protons 152 pfu". */
+  basis: string;
+  /** When the input was measured (UTC); null when there was none. */
+  observedAt: string | null;
+}
+
+/**
+ * One sense-check on the inputs behind a point (GAU-136). A failed check is reported with
+ * its reason and the sample stays visible; nothing is dropped silently.
+ */
+export interface DerivedField {
+  /** Canonical field, e.g. "velocity". */
+  field: string;
+  method: string;
+  /** Published inputs it was obtained from. */
+  derivedFrom: string[];
+}
+
+export interface SenseCheck {
+  id: "l1-field-magnitude" | "goes-proton-spectrum" | "goes-proton-channels" | "goes-xray" | "noaa-scales";
+  /** "unknown" when there was nothing current to check, never "pass". */
+  status: "pass" | "flag" | "unknown";
+  reason: string;
+  /** Newest sample the check covered (UTC); null when there was none. */
+  observedAt: string | null;
+  /** Samples checked and flagged, for checks over a window. */
+  checked?: number;
+  flagged?: number;
+}
+
+export interface XrayReading {
+  /** GOES 0.1–0.8 nm (1–8 Å) irradiance, W m^-2. */
+  value: number;
+  band: string;
+  /** Flare class of the current flux, e.g. "B5.7", "M1.2", "X23". */
+  flareClass: string;
+  satellite: string | null;
+  /** Measurement time (UTC). */
+  timestamp: string;
+}
+
+export interface NoaaAlert {
+  productId: string;
+  issuedAt: string;
+  /** The ALERT/WARNING/WATCH/SUMMARY line as NOAA wrote it. */
+  headline: string;
 }
 
 export interface ParticleReading {

@@ -3,7 +3,7 @@
  * Supports multiple data sources: NASA OMNI, SPENVIS, ERG/Arase, CSES
  */
 
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useCallback, useMemo } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import type {
   RadiationMeasurement,
@@ -20,8 +20,10 @@ import {
   filterRadiationData,
   createTimeSeries,
   calculateStatistics,
-  getAlertLevel,
+  getAlertLevelFromMeasurements,
 } from '@/lib/utils/radiation';
+
+const NO_MEASUREMENTS: RadiationMeasurement[] = [];
 
 export interface UseRadiationDataOptions {
   /** Enable real-time updates */
@@ -83,8 +85,6 @@ export function useRadiationData(
 
   const queryClient = useQueryClient();
   const [filter, setFilterState] = useState<RadiationDataFilter>(initialFilter);
-  const [allMeasurements, setAllMeasurements] = useState<RadiationMeasurement[]>([]);
-  const [lastUpdate, setLastUpdate] = useState<Date | null>(null);
 
   // Query key for React Query
   const queryKey = ['radiation-data', sources, csvSources];
@@ -157,6 +157,7 @@ export function useRadiationData(
   // React Query for data fetching
   const {
     data: queryData,
+    dataUpdatedAt,
     isLoading,
     error,
     refetch,
@@ -169,13 +170,8 @@ export function useRadiationData(
     refetchInterval: realTime ? updateInterval : false,
   });
 
-  // Update measurements when query data changes
-  useEffect(() => {
-    if (queryData) {
-      setAllMeasurements(queryData);
-      setLastUpdate(new Date());
-    }
-  }, [queryData]);
+  const allMeasurements = queryData ?? NO_MEASUREMENTS;
+  const lastUpdate = useMemo(() => (dataUpdatedAt > 0 ? new Date(dataUpdatedAt) : null), [dataUpdatedAt]);
 
   // Filter measurements based on current filter
   const filteredMeasurements = useMemo(() => {
@@ -217,8 +213,9 @@ export function useRadiationData(
 
     const recentMeasurements = filteredMeasurements
       .filter((m) => {
+        // Relative to the fetch that delivered the data, so the snapshot is a pure function of it.
         const measurementTime = new Date(m.timestamp).getTime();
-        const fiveMinutesAgo = Date.now() - 5 * 60 * 1000;
+        const fiveMinutesAgo = dataUpdatedAt - 5 * 60 * 1000;
         return measurementTime >= fiveMinutesAgo;
       })
       .slice(-100); // Last 100 measurements
@@ -234,11 +231,10 @@ export function useRadiationData(
       new Set(recentMeasurements.map((m) => m.orbitType))
     ) as OrbitType[];
 
-    const dominantParticleType = recentMeasurements[0]?.particleType || 'electron';
-    const alertLevel = getAlertLevel(averageFlux, dominantParticleType);
+    const alertLevel = getAlertLevelFromMeasurements(recentMeasurements);
 
     return {
-      timestamp: new Date().toISOString(),
+      timestamp: new Date(dataUpdatedAt).toISOString(),
       measurements: recentMeasurements,
       summary: {
         averageFlux,
@@ -248,7 +244,7 @@ export function useRadiationData(
         alertLevel,
       },
     };
-  }, [realTime, filteredMeasurements]);
+  }, [realTime, filteredMeasurements, dataUpdatedAt]);
 
   // Update filter function
   const setFilter = useCallback((newFilter: Partial<RadiationDataFilter>) => {

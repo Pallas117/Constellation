@@ -52,7 +52,7 @@ const { metrics, warning, error } = usePerformanceMonitor({
 
 Displays comprehensive measurement values:
 - **Particle Flux**: particles/(cm²·s·sr·MeV)
-- **Dose Rate**: Calculated from flux and energy (mSv/h or µSv/h)
+- **Absorbed Dose Rate (Si)**: Gy(Si)/h from flux and NIST stopping power (N/A for alpha and heavy ions)
 - **L-shell**: McIlwain L parameter
 - **Magnetic Field (B)**: Estimated from L-shell and altitude (nT)
 - **Altitude**: km
@@ -168,18 +168,22 @@ Click detection uses raycasting to find the nearest data point within a threshol
 
 ## Calculations
 
-### Dose Rate
+### Absorbed Dose Rate (Si)
 
-Calculated from particle flux, energy range, and particle type:
+`calculateDoseRate(flux, energyRange, particleType)` in `lib/utils/radiation-calculations.ts`
+returns the absorbed dose rate in a thin, unshielded silicon layer (Gy(Si)/s), or `null`:
 ```tsx
-doseRate = flux × avgEnergy × conversionFactor × 3600 // mSv/h
+Φ    = 4π × j × (Emax − Emin)          // cm⁻²·s⁻¹, isotropic; j in cm⁻²·s⁻¹·sr⁻¹·MeV⁻¹
+S̄    = (1/ΔE) ∫ S(E) dE                 // MeV·cm²/g, NIST PSTAR/ESTAR (Si, electronic)
+Ḋ    = 1.602e-10 × Φ × S̄                // Gy(Si)/s
 ```
 
-Conversion factors vary by particle type:
-- Protons: ~1.0e-6
-- Electrons: ~5.0e-7
-- Alpha particles: ~2.0e-6
-- Heavy ions: ~3.0e-6
+- Stopping powers come from `lib/physics/stopping-power.ts` (NIST SRD 124, silicon).
+- The bin uses the bin-averaged S̄ because j is taken as flat across the bin.
+- Gy(Si) is the total-ionising-dose unit for electronics. It is not a tissue dose, and it is
+  not in Sv: Sv needs tissue and a LET-dependent quality factor.
+- Alpha particles and heavy ions return `null` (no stopping-power table here), as do empty
+  bins and bins outside the table.
 
 ### Magnetic Field
 

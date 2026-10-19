@@ -2,7 +2,7 @@
  * Hook to monitor FPS and dataset size for performance warnings
  */
 
-import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 
 export interface PerformanceMetrics {
   fps: number;
@@ -52,57 +52,50 @@ export function usePerformanceMonitor(
     isLargeDataset: false,
   });
 
-  const frameTimesRef = useRef<number[]>([]);
-  const lastTimeRef = useRef(performance.now());
-  const frameCountRef = useRef(0);
-  const animationFrameRef = useRef<number>();
-
-  const measurePerformance = useCallback(() => {
-    const now = performance.now();
-    const delta = now - lastTimeRef.current;
-    lastTimeRef.current = now;
-
-    frameTimesRef.current.push(delta);
-    if (frameTimesRef.current.length > 60) {
-      frameTimesRef.current.shift();
-    }
-
-    frameCountRef.current++;
-
-    // Update stats every 10 frames for stability
-    if (frameCountRef.current % 10 === 0) {
-      const avgFrameTime = frameTimesRef.current.reduce((a, b) => a + b, 0) / frameTimesRef.current.length;
-      const fps = 1000 / avgFrameTime;
-
-      const isLowFPS = fps < fpsThreshold;
-      const isLargeDataset = datasetSize > datasetThreshold;
-
-      setMetrics({
-        fps: Math.round(fps),
-        frameTime: Math.round(delta * 100) / 100,
-        avgFrameTime: Math.round(avgFrameTime * 100) / 100,
-        datasetSize,
-        isLowFPS,
-        isLargeDataset,
-      });
-    }
-
-    if (enabled) {
-      animationFrameRef.current = requestAnimationFrame(measurePerformance);
-    }
-  }, [enabled, fpsThreshold, datasetThreshold, datasetSize]);
-
   useEffect(() => {
-    if (enabled) {
-      animationFrameRef.current = requestAnimationFrame(measurePerformance);
-    }
+    if (!enabled) return;
 
-    return () => {
-      if (animationFrameRef.current) {
-        cancelAnimationFrame(animationFrameRef.current);
+    const frameTimes: number[] = [];
+    let lastTime = performance.now();
+    let frameCount = 0;
+    let animationFrame = 0;
+
+    const measurePerformance = () => {
+      const now = performance.now();
+      const delta = now - lastTime;
+      lastTime = now;
+
+      frameTimes.push(delta);
+      if (frameTimes.length > 60) {
+        frameTimes.shift();
       }
+
+      frameCount++;
+
+      // Update stats every 10 frames for stability
+      if (frameCount % 10 === 0) {
+        const avgFrameTime = frameTimes.reduce((a, b) => a + b, 0) / frameTimes.length;
+        const fps = 1000 / avgFrameTime;
+
+        const isLowFPS = fps < fpsThreshold;
+        const isLargeDataset = datasetSize > datasetThreshold;
+
+        setMetrics({
+          fps: Math.round(fps),
+          frameTime: Math.round(delta * 100) / 100,
+          avgFrameTime: Math.round(avgFrameTime * 100) / 100,
+          datasetSize,
+          isLowFPS,
+          isLargeDataset,
+        });
+      }
+
+      animationFrame = requestAnimationFrame(measurePerformance);
     };
-  }, [enabled, measurePerformance]);
+
+    animationFrame = requestAnimationFrame(measurePerformance);
+    return () => cancelAnimationFrame(animationFrame);
+  }, [enabled, fpsThreshold, datasetThreshold, datasetSize]);
 
   // Generate warnings and errors
   const warning = useMemo(() => {

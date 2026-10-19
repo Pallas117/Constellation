@@ -9,7 +9,7 @@
 'use client'; // Mark as client component (for Next.js compatibility, if migrated)
 
 import { useMemo, useRef } from 'react';
-import { useFrame, useThree } from '@react-three/fiber';
+import { useFrame, useThree, type ThreeEvent } from '@react-three/fiber';
 import * as THREE from 'three';
 import type { RadiationDataPoint } from '@/lib/types/radiation';
 
@@ -104,7 +104,6 @@ const createGlowMaterial = () => {
     },
     vertexShader: `
       attribute float size;
-      attribute vec3 color;
       varying vec3 vColor;
       varying float vSize;
       
@@ -158,7 +157,6 @@ export const RadiationDataOverlay = ({
   const materialRef = useRef<THREE.ShaderMaterial>(null);
   const pointsRef = useRef<THREE.Points>(null);
   const { camera } = useThree();
-  const filteredDataRef = useRef<RadiationDataPoint[]>([]);
   const raycasterRef = useRef(new THREE.Raycaster());
 
   // Filter and process data
@@ -168,9 +166,6 @@ export const RadiationDataOverlay = ({
     // Filter by orbit type
     const filtered = data.filter((d) => orbitFilter.includes(d.orbitType));
     if (filtered.length === 0) return null;
-
-    // Store filtered data for click detection
-    filteredDataRef.current = filtered;
 
     // Calculate min/max flux for color normalization
     const fluxes = filtered.map((d) => d.flux);
@@ -228,7 +223,8 @@ export const RadiationDataOverlay = ({
       }
     });
 
-    return { positions, colors, sizes, count: filtered.length };
+    // `filtered` maps a clicked point index back to its data point.
+    return { positions, colors, sizes, count: filtered.length, filtered };
   }, [data, orbitFilter, encodingMode]);
 
   // Create geometry
@@ -254,13 +250,15 @@ export const RadiationDataOverlay = ({
   });
 
   // Handle pointer events for click detection
-  const handlePointerDown = (event: any) => {
+  const handlePointerDown = (event: ThreeEvent<PointerEvent>) => {
     if (!onPointClick || !pointsRef.current || !geometry) return;
 
     event.stopPropagation();
     
     // Get normalized device coordinates
-    const rect = event.target.getBoundingClientRect();
+    const el = event.nativeEvent.target;
+    if (!(el instanceof Element)) return;
+    const rect = el.getBoundingClientRect();
     const mouse = new THREE.Vector2();
     mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
     mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
@@ -295,8 +293,8 @@ export const RadiationDataOverlay = ({
           }
         }
         
-        if (closestIndex >= 0 && closestIndex < filteredDataRef.current.length) {
-          onPointClick(filteredDataRef.current[closestIndex], closestIndex);
+        if (processedData && closestIndex >= 0 && closestIndex < processedData.filtered.length) {
+          onPointClick(processedData.filtered[closestIndex], closestIndex);
         }
       }
     }
@@ -381,12 +379,11 @@ export const RadiationDataContours = ({
       {meshes.map((mesh, i) => (
         <mesh key={i} position={[mesh.position.x, mesh.position.y, mesh.position.z]}>
           <sphereGeometry args={[mesh.size, 8, 8]} />
+          {/* Unlit on purpose: the colour encodes flux, so scene lighting must not shade it. */}
           <meshBasicMaterial
             color={mesh.color}
             transparent
             opacity={0.8}
-            emissive={mesh.color}
-            emissiveIntensity={0.5}
           />
         </mesh>
       ))}

@@ -1,89 +1,66 @@
 /**
- * Nav — Title branding, HUD data overlay, performance monitor, and left-rail controls.
+ * Operator console chrome: the header bar and the left control rail.
  *
- * Owns the UI chrome that surrounds the 3D globe — everything except the
- * scene viewport itself and the bottom RAG panel.
+ * Each sits in its own grid cell in SpaceWeatherVisualization, so nothing
+ * overlaps at any width. The scene viewport, telemetry column and assistant
+ * live alongside.
  */
 
-import { type RefObject, type ReactNode } from 'react';
-import { HUD } from './ui/HUD';
+import { type ReactNode, type RefObject } from 'react';
 import { LayerToggles } from './ui/LayerToggles';
 import { ScreenshotButton } from './ui/ScreenshotButton';
 import { PerformanceMonitor } from './ui/PerformanceMonitor';
-import { ThemeSwitcher } from './ui/ThemeSwitcher';
+import { StatusBadge } from './brand/StatusBadge';
+import { FEED_LABEL, type FeedState } from '@/lib/readout-status';
 import type { LayerVisibility } from './types';
-import type { InterpolatedData } from '@/hooks/useSpaceWeather';
 
-// ---------------------------------------------------------------------------
-// Props
-// ---------------------------------------------------------------------------
-
-export interface NavProps {
-    data: InterpolatedData;
-    layers: LayerVisibility;
-    onToggle: (layer: keyof LayerVisibility) => void;
-    canvasRef: RefObject<HTMLCanvasElement | null>;
-    spaceObjectSummary?: string;
-    /** Slot for extra controls rendered after LayerToggles (e.g. encoding panel) */
-    children?: ReactNode;
+export function ConsoleHeader({
+    feed,
+    summary,
+    actions,
+}: {
+    feed: FeedState;
+    /** One line under the title, e.g. tracked-object count. */
+    summary?: string;
+    /** Page-specific links and status pills. */
+    actions?: ReactNode;
+}) {
+    return (
+        <header className="pointer-events-auto flex flex-wrap items-center justify-between gap-x-4 gap-y-2 rounded-lg border border-charcoal bg-panel/95 px-4 py-3 animate-fade-in-up">
+            <div className="min-w-0">
+                <p className="brand-label">01_OPERATOR_CONSOLE</p>
+                <h1 className="text-xl font-semibold leading-tight">Gauss Aurora</h1>
+                {summary && <p className="mt-0.5 text-xs text-muted-foreground">{summary}</p>}
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+                {actions}
+                <PerformanceMonitor />
+                {/* The one lime element in the console: is the feed live? */}
+                <StatusBadge tone={feed === 'live' ? 'signal' : 'caution'} pulse={feed === 'live'}>
+                    {FEED_LABEL[feed]}
+                </StatusBadge>
+            </div>
+        </header>
+    );
 }
 
-// ---------------------------------------------------------------------------
-// Component
-// ---------------------------------------------------------------------------
-
-export function Nav({
-    data,
+export function ControlRail({
     layers,
     onToggle,
     canvasRef,
-    spaceObjectSummary,
     children,
-}: NavProps) {
+}: {
+    layers: LayerVisibility;
+    onToggle: (layer: keyof LayerVisibility) => void;
+    canvasRef: RefObject<HTMLCanvasElement | null>;
+    /** Extra controls after the layer switches (encoding, fidelity). */
+    children?: ReactNode;
+}) {
     return (
-        <>
-            {/* Top left — Title & System State */}
-            <div className="absolute top-6 left-6 p-3 bg-black/60 border-l border-primary/40 backdrop-blur-sm animate-fade-in-up">
-                <h1 className="text-xl font-bold tracking-tighter text-foreground phosphor-text">
-                    GAUSS // <span className="text-primary opacity-80">AURORA</span>
-                </h1>
-                <div className="mt-1 flex flex-col gap-0.5">
-                    {/* SSA state comes from the detector (unknown when none is connected), never a hardcoded "NOMINAL" (GAU-81). */}
-                    {spaceObjectSummary ? (
-                      <p className="text-[8px] text-primary/60 uppercase tracking-[0.25em] font-bold">
-                        {spaceObjectSummary}
-                      </p>
-                    ) : null}
-                    <div className="flex items-center gap-1.5 mt-0.5 opacity-30">
-                        <div className="h-[1px] w-12 bg-primary" />
-                        <span className="text-[7px] text-primary uppercase tracking-[0.3em]">SKUNKWORKS_RE_09E0</span>
-                    </div>
-                </div>
-            </div>
-
-            {/* Top right — Data feed HUD */}
-            <div className="absolute top-6 right-6 pointer-events-auto flex flex-col gap-1 items-end animate-fade-in-up">
-                <HUD data={data} />
-            </div>
-
-            {/* Performance Monitor */}
-            <div className="pointer-events-auto opacity-40 hover:opacity-100 transition-opacity">
-                <PerformanceMonitor visible={true} />
-            </div>
-
-            {/* Left rail — Controls and actions */}
-            <div className="absolute left-6 top-1/2 -translate-y-1/2 pointer-events-auto flex flex-col gap-2 items-start">
-                <div className="p-1 bg-black/40 border border-primary/10 hover:border-primary/40 transition-colors">
-                    <ThemeSwitcher />
-                </div>
-                <div className="p-1 bg-black/40 border border-primary/10 hover:border-primary/40 transition-colors">
-                    <LayerToggles layers={layers} onToggle={onToggle} />
-                </div>
-                {children}
-                <div className="p-1 bg-black/40 border border-primary/10 hover:border-primary/40 transition-colors">
-                    <ScreenshotButton canvasRef={canvasRef} />
-                </div>
-            </div>
-        </>
+        <nav aria-label="Scene controls" className="pointer-events-auto flex flex-col gap-2 animate-fade-in-up">
+            <LayerToggles layers={layers} onToggle={onToggle} label="02_LAYERS" />
+            {children}
+            <ScreenshotButton canvasRef={canvasRef} />
+        </nav>
     );
 }
