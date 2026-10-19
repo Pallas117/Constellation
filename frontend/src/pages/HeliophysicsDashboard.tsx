@@ -19,6 +19,7 @@ import mockSolarStormData from "@/data/mock_solar_storm.json";
 import { beltVisuals, liveDrivers, standoffIfReference } from "@/lib/physics/live-drivers";
 import { useNow } from "@/hooks/useNow";
 import { useDocumentTitle } from "@/hooks/useDocumentTitle";
+import { hudTone, scaleStatus } from "@/lib/readout-status";
 
 const VIEW_KEYS = Object.keys(SCENE_VIEWS) as SceneView[];
 // Below the fold: its own chunk (with the charting library), loaded when scrolled to.
@@ -110,6 +111,9 @@ const HeliophysicsDashboard = () => {
       : "—";
   const etaUtc = next?.etaEarth ? utc(next.etaEarth) : null;
   const stormTier = !simulateStorm ? latest?.alerts.stormTier : undefined;
+  // The two NOAA storm streams, kept apart: radiation (S) and geomagnetic (G) (GAU-135).
+  const radiation = !simulateStorm ? latest?.alerts.radiation : undefined;
+  const geomagnetic = !simulateStorm ? latest?.alerts.geomagnetic : undefined;
   const driversLine = simulateStorm
     ? "Simulated drivers"
     : arriving
@@ -326,6 +330,25 @@ const HeliophysicsDashboard = () => {
                   />
                 </dl>
 
+                <p className="brand-label mt-6">Storm levels · NOAA</p>
+                <dl className="mt-2">
+                  <Readout
+                    label="Radiation (S)"
+                    value={radiation?.level != null ? radiation.label : "—"}
+                    tone={radiation ? hudTone(scaleStatus(radiation).tone) : "default"}
+                    hint={radiation?.basis ?? "No current GOES proton reading"}
+                  />
+                  <Readout
+                    label="Geomagnetic (G)"
+                    value={geomagnetic?.level != null ? geomagnetic.label : "—"}
+                    tone={geomagnetic ? hudTone(scaleStatus(geomagnetic).tone) : "default"}
+                    hint={geomagnetic?.basis ?? "No current NOAA Kp reading"}
+                  />
+                </dl>
+                <p className="mt-2 text-xs text-muted-foreground">
+                  Radiation storms (particles) and geomagnetic storms (field) are separate hazards with different effects, and either can happen without the other.
+                </p>
+
                 <p className="brand-label mt-6">Next from L1{stormTier ? ` · ${stormTier}` : ""}</p>
                 <dl className="mt-2">
                   <Readout label="IMF Bz (GSM)" value={signed(next?.bz)} unit="nT" tone={bzTone(next?.bz)} />
@@ -456,11 +479,12 @@ const HeliophysicsDashboard = () => {
                 detail={`Planetary geomagnetic activity, 0–9. 5 and above is a storm (G1+). ${kpNote}`}
               />
               <HudStat
-                className="hidden sm:block"
-                label="By"
-                value={signed(next?.by)}
-                unit="nT"
-                detail="Dawn–dusk IMF (GSM). Twists the open field lines and shifts the cusps."
+                label="Radiation"
+                value={radiation?.level != null ? radiation.label : "—"}
+                tone={radiation ? hudTone(scaleStatus(radiation).tone) : "default"}
+                detail={`NOAA radiation-storm level (S-scale) from GOES ≥10 MeV protons. Particle radiation drives bit errors and detector hits; it is a separate hazard from the geomagnetic storm above and can happen without one. ${
+                  simulateStorm ? "The simulation covers the geomagnetic stream only." : radiation?.basis ?? "No current proton reading."
+                }`}
               />
               <HudStat
                 className="hidden sm:block"

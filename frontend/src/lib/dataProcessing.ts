@@ -2,7 +2,7 @@
 // DATA PROCESSING & INTERPOLATION ENGINE
 // ============================================================================
 
-import type { CanonicalSpaceWeatherPoint } from './types/space-weather';
+import type { CanonicalSpaceWeatherPoint, ScaleReading } from './types/space-weather';
 
 export interface SpaceWeatherResponse {
   timestamp: string;
@@ -42,6 +42,8 @@ export interface InterpolatedData {
   /** null = not measured by any connected source; never substitute a value. */
   protonFlux: number | null;
   electronFlux: number | null;
+  /** NOAA radiation-storm (S) level from the backend; null when the feed doesn't carry one. */
+  radiation: ScaleReading | null;
   timestamp: Date;
   isStale: boolean;
   source: string;
@@ -89,6 +91,7 @@ export class EMAInterpolator {
       kpIndex: Math.round(lerp(this.current.kpIndex, this.target.kpIndex, t)),
       protonFlux: lerpNullable(this.current.protonFlux, this.target.protonFlux, t),
       electronFlux: lerpNullable(this.current.electronFlux, this.target.electronFlux, t),
+      radiation: this.target.radiation,
       timestamp: this.target.timestamp,
       isStale: this.target.isStale,
       source: this.target.source,
@@ -133,6 +136,7 @@ export function unavailableData(): InterpolatedData {
     kpIndex: 0,
     protonFlux: null,
     electronFlux: null,
+    radiation: null,
     timestamp: new Date(),
     isStale: true,
     source: 'unavailable',
@@ -216,6 +220,7 @@ export function transformApiResponse(response: SpaceWeatherResponse): Interpolat
     kpIndex: response.indices.kp,
     protonFlux: response.particles.protonFlux,
     electronFlux: response.particles.electronFlux,
+    radiation: null,
     timestamp: new Date(response.timestamp),
     isStale: response.flags.stale,
     source: response.flags.source,
@@ -308,6 +313,7 @@ export function canonicalToInterpolated(data: unknown): InterpolatedData | null 
     // Measured GOES flux when the backend has a current reading; otherwise unknown (null), never 0.
     protonFlux: isFiniteNumber(d.particles?.protons?.value) ? d.particles.protons.value : null,
     electronFlux: isFiniteNumber(d.particles?.electrons?.value) ? d.particles.electrons.value : null,
+    radiation: d.alerts?.radiation ?? null,
     timestamp: ts,
     isStale: q.stale === true || tier === 3,
     source: typeof d.source === 'string' ? d.source : 'unknown',
