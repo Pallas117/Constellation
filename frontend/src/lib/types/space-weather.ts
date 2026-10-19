@@ -38,6 +38,17 @@ export interface DensityDisagreement {
   minutes: number;
 }
 
+/** A level on a NOAA space-weather scale, from the backend (physics/noaa-scales.ts). */
+export interface ScaleReading {
+  /** 0 = below the scale; null = unknown (input missing or stale), never "no storm". */
+  level: 0 | 1 | 2 | 3 | 4 | 5 | null;
+  /** "S2", "G0", or "S?" / "G?" when unknown. */
+  label: string;
+  /** What the level was read from, e.g. "GOES >=10 MeV protons 152 pfu". */
+  basis: string;
+  observedAt: string | null;
+}
+
 export interface CanonicalSpaceWeatherPoint {
   /** When the point was issued (5 s ingest tick). */
   timestamp: string;
@@ -86,8 +97,13 @@ export interface CanonicalSpaceWeatherPoint {
     etaEarthArrival: string;
   };
   alerts: {
+    /** Bz-driven geomagnetic nowcast. */
     stormTier: "quiet" | "watch" | "warning" | "severe";
     reason: string;
+    /** NOAA S-scale from GOES ≥10 MeV protons: the radiation stream (bit errors, detector hits). */
+    radiation?: ScaleReading;
+    /** NOAA G-scale from planetary Kp: the geomagnetic stream. */
+    geomagnetic?: ScaleReading;
   };
   /** Measured GOES particle flux; null per channel when missing or older than 30 min. */
   particles?: {

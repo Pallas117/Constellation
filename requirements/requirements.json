@@ -1,6 +1,6 @@
 {
   "$comment": "Constellation requirements baseline (GAU-120). NASA SP-2016-6105 Rev 2 §6.2/§5.3. Methods: T test, A analysis, I inspection, D demonstration. T evidence = exact test names; A/I/D evidence = repo paths. Verified by `npm run verify`.",
-  "version": "1.4.0",
+  "version": "1.4.1",
   "requirements": [
     {
       "id": "REQ-ING-001",
@@ -81,8 +81,9 @@
         "a feed response that omits its tier is not shown as live (GAU-114)",
         "HUD never shows stale or missing data as fresh",
         "unavailable placeholder is deterministic and never claims to be live",
-        "offline fallback is an explicit unknown, never a canned assessment (GAU-44)",
-        "JAXA: catalog reachability is not reported as a healthy data feed (GAU-55)"
+        "an unconfigured memory service is reported, not faked",
+        "JAXA: catalog reachability is not reported as a healthy data feed (GAU-55)",
+        "a missing, stale or wrong-channel proton reading is unknown, not S0"
       ]
     },
     {

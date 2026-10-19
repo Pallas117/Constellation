@@ -158,8 +158,13 @@ export interface CanonicalSpaceWeatherPoint {
     etaEarthArrival: string;
   };
   alerts: {
+    /** Bz-driven geomagnetic nowcast (mhd-nowcast stormTier). */
     stormTier: "quiet" | "watch" | "warning" | "severe";
     reason: string;
+    /** NOAA S-scale from GOES ≥10 MeV protons: the radiation stream (bit errors, detector hits). */
+    radiation?: ScaleReading;
+    /** NOAA G-scale from planetary Kp: the geomagnetic stream (induced currents, drag, GNSS/HF). */
+    geomagnetic?: ScaleReading;
   };
   quality: QualityFlags;
   /** Measured GOES particle flux; null per channel when missing or older than 30 min. */
@@ -222,6 +227,18 @@ export interface SphericalHarmonicCoefficients {
   lMax: number;
   coefficients: Array<{ l: number; m: number; re: number; im: number }>;
   powerSpectrum: Array<{ l: number; cL: number }>;
+}
+
+/** A level on a NOAA space-weather scale (physics/noaa-scales.ts). */
+export interface ScaleReading {
+  /** 0 = below the scale; null = unknown (input missing or stale), never "no storm". */
+  level: 0 | 1 | 2 | 3 | 4 | 5 | null;
+  /** "S2", "G0", or "S?" / "G?" when unknown. */
+  label: string;
+  /** What the level was read from, in words, e.g. "GOES >=10 MeV protons 152 pfu". */
+  basis: string;
+  /** When the input was measured (UTC); null when there was none. */
+  observedAt: string | null;
 }
 
 export interface ParticleReading {
