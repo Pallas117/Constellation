@@ -331,3 +331,19 @@ test("brand: shared status colours and no shadows outside marks and photos", () 
   assert.doesNotMatch(css, /text-shadow|drop-shadow|box-shadow:(?!inset 0 -1px)/, "no drop shadows or glows");
   assert.match(css, /\.btn\{[^}]*border-radius:4px/, "4 px controls");
 });
+// ---- GAU-137 accuracy (review of addfbe1 against Constellation main and the 17 Oct radiation study) ----
+test("GAU-137: bit errors follow the proton (S) level, link gaps the geomagnetic (G) level; built vs planned is explicit", () => {
+  const replay = gauss.match(/<section id="replay"[\s\S]*?<\/section>/)[0];
+  for (const li of replay.match(/<li>[\s\S]*?<\/li>/g)) {
+    if (/bit errors/i.test(li)) assert.match(li, /S[1-5]/, "a bit-error step names the S level");
+    if (/link gap/i.test(li)) assert.match(li, /Geomagnetic/i);
+  }
+  const evidence = read("gauss/evidence/index.html");
+  assert.doesNotMatch(text(evidence), /bit-error[^.]*\bG[1-5]\b/i, "bit errors never pinned on a G level");
+  assert.match(text(evidence), /public NOAA space-weather data/);
+  assert.doesNotMatch(text(evidence), /space-weather scales/);
+  assert.match(text(gauss), /elevated space-weather conditions \(proton, electron and geomagnetic levels\)/);
+  assert.match(text(gauss), /Being built for the first pilots: ingest of your own logs, output flagging and the evidence export/);
+  assert.match(text(gauss), /Yamcs \(pilot integration\)/);
+  assert.match(text(gauss), /ONNX \(pilot integration\)/);
+});

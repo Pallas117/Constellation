@@ -35,8 +35,8 @@
     <p class="lead">The shape of what a pilot delivers, filled with synthetic data. It is not a mission record. Your report covers your own telemetry and inference logs.</p>
     <dl class="report-head">
       <div><dt>Scope</dt><dd>One asset group, one historical replay, one near-live feed</dd></div>
-      <div><dt>Window</dt><dd>Six hours around a G3 geomagnetic storm (synthetic)</dd></div>
-      <div><dt>Inputs</dt><dd>CCSDS packets with an XTCE dictionary, an onboard-AI inference log, public NOAA space-weather scales</dd></div>
+      <div><dt>Window</dt><dd>Six hours around a G3 geomagnetic storm with an S2 proton event (synthetic)</dd></div>
+      <div><dt>Inputs</dt><dd>CCSDS packets with an XTCE dictionary, an onboard-AI inference log, public NOAA space-weather data</dd></div>
       <div><dt>Acceptance outcome</dt><dd>Every inference produced from stale or corrupted inputs is flagged before anyone acts on it</dd></div>
     </dl>
   </div>
@@ -50,7 +50,7 @@
       <thead><tr><th>State</th><th>Records</th><th>Meaning</th></tr></thead>
       <tbody>
         <tr><td><span class="st nominal">Nominal</span></td><td>1,240</td><td>Fresh inputs, provenance complete, inside expected bounds</td></tr>
-        <tr><td><span class="st degraded">Degraded</span></td><td>96</td><td>Usable with lowered confidence; produced under elevated stress</td></tr>
+        <tr><td><span class="st degraded">Degraded</span></td><td>96</td><td>Usable with lowered confidence; produced under elevated proton levels</td></tr>
         <tr><td><span class="st abstain">Abstain</span></td><td>18</td><td>No output given: the inputs could not be trusted</td></tr>
         <tr><td><span class="st unknown">Unknown</span></td><td>41</td><td>Input missing or older than the freshness limit; never shown as nominal</td></tr>
         <tr><td><span class="st blocked">Blocked</span></td><td>7</td><td>Packet integrity check failed; record excluded</td></tr>
@@ -66,9 +66,9 @@
       <p class="label">02_DECISIONS</p>
       <h2 id="decisions-h">What Gauss did.</h2>
       <ul class="ticks">
-        <li>Flagged 96 inferences made during the storm window, with the conditions at the time attached</li>
+        <li>Flagged 96 inferences made during the proton event, with the conditions at the time attached</li>
         <li>Withheld 18 outputs and used the deterministic fallback, marked as such</li>
-        <li>Kept 41 records unknown through a 12-minute link gap</li>
+        <li>Kept 41 records unknown through a 12-minute link gap during the geomagnetic disturbance</li>
         <li>Excluded 7 records that failed packet integrity checks</li>
       </ul>
     </div>
@@ -92,7 +92,7 @@
     <p class="lead">Each exported decision carries its source, time, freshness and uncertainty. A sample row:</p>
     <div class="tw"><table class="table mono">
       <thead><tr><th>record</th><th>source</th><th>received</th><th>age</th><th>state</th><th>policy</th><th>reason</th></tr></thead>
-      <tbody><tr><td>pkt-0412</td><td>CCSDS APID 0x2A1</td><td>03:14:07Z</td><td>2 s</td><td>degraded</td><td>degrade</td><td>bit-error rate above window limit during G3</td></tr></tbody>
+      <tbody><tr><td>pkt-0412</td><td>CCSDS APID 0x2A1</td><td>03:14:07Z</td><td>2 s</td><td>degraded</td><td>degrade</td><td>bit-error rate above window limit during the S2 proton event</td></tr></tbody>
     </table></div>
     <p class="actions"><a class="btn" href="/gauss/apply/?plan=pilot">Get this for your mission</a> <a class="btn ghost" href="/gauss/#replay">Back to the replay</a></p>
   </div>
