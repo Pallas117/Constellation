@@ -413,8 +413,13 @@ func pushToGauss(cfg Config, st State) {
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(string(tok)))
 	c := &http.Client{Timeout: 5 * time.Second, Transport: &http.Transport{Proxy: nil}}
-	if resp, err := c.Do(req); err == nil {
-		resp.Body.Close()
+	resp, err := c.Do(req)
+	if err != nil {
+		return // offline or Gauss down: the next tick reports again
+	}
+	resp.Body.Close()
+	if resp.StatusCode >= 300 { // e.g. a class Gauss doesn't know yet: say so instead of failing silently
+		fmt.Fprintf(os.Stderr, "%s argo: Gauss rejected the report for class %s: HTTP %d\n", time.Now().UTC().Format(time.RFC3339), st.Class, resp.StatusCode)
 	}
 }
 
