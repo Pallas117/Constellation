@@ -50,7 +50,7 @@ test("NOAA: Kp reading combines the 1-minute running estimate with the 3-hourly 
     if (url.includes("noaa-planetary-k-index")) return [{ time_tag: "2026-10-12T03:00:00", Kp: 2.33 }];
     if (url.includes("ovation")) return {};
     return undefined;
-  }, fetchNoaaReadout);
+  }, () => fetchNoaaReadout(t)); // Kp recency is judged at the clock, not at the newest L1 sample (GAU-63)
   assert.ok(readout);
   assert.equal(readout.kp, 2.33, "03-06 UT completed at 2.33; the 06-09 running estimate is still 2.0");
   assert.deepEqual(readout.kpReading, { value: 2.33, observedAt: "2026-10-12T03:00:00.000Z", kind: "planetary-3h" });
@@ -197,5 +197,17 @@ test("ingest: an L1 data gap leaves the geomagnetic level known while NOAA Kp is
     assert.equal(gap.quality.stale, true, "the L1 values are unknown");
     assert.equal(gap.alerts.geomagnetic?.label, "G0", "but Kp, from ground magnetometers, is not");
     assert.equal(gap.indices.kp, 1.67);
+  });
+});
+
+test("ingest: a velocity assumed from the speed, or a locally rotated field, is labelled as derived (GAU-63)", async () => {
+  const worker = quietWorker();
+  await withFetch(() => undefined, async () => {
+    worker.noaa = { ...readout(60_000, -3), velocityAssumed: true, magneticFieldGsm: null };
+    const p = (await worker.tick()).canonicalPoint;
+    assert.deepEqual(p.derived?.map((d) => d.field), ["velocity", "magneticField"]);
+    assert.deepEqual(p.derived?.[0].derivedFrom, ["proton_speed"]);
+    worker.noaa = readout(60_000, -3);
+    assert.deepEqual((await worker.tick()).canonicalPoint.derived, [], "measured as published: nothing derived");
   });
 });

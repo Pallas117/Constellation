@@ -38,6 +38,7 @@ import { bedrock } from "../lib/local-db.js";
 import { inferAnomalyForecast } from "../ml-client/client.js";
 import type {
   CanonicalSpaceWeatherPoint,
+  DerivedField,
   IngestionTickResult,
   MMSReconVectorPoint,
   SenseCheck,
@@ -295,6 +296,23 @@ export class IngestionWorker {
   }
 
   /**
+   * Values on the point that were not measured as published, with how they were obtained (GAU-63).
+   * A carried-forward point (no current readout) is described by its quality flags instead.
+   */
+  private derivedFields(): DerivedField[] {
+    const noaa = this.noaa;
+    if (!noaa) return [];
+    const out: DerivedField[] = [];
+    if (noaa.velocityAssumed) {
+      out.push({ field: "velocity", method: "bulk flow assumed anti-sunward along X: no velocity vector was published", derivedFrom: ["proton_speed"] });
+    }
+    if (!noaa.magneticFieldGsm) {
+      out.push({ field: "magneticField", method: "rotated GSE to GSM locally (Hapgood 1992)", derivedFrom: ["bx_gse", "by_gse", "bz_gse"] });
+    }
+    return out;
+  }
+
+  /**
    * Field consistency over the L1 history, the GOES checks from the last fetch (unknown once
    * that fetch is older than the particle limit), and NOAA's scales against this point's.
    * An inconsistent newest field sample lowers the point's confidence; the rest only report.
@@ -461,7 +479,7 @@ export class IngestionWorker {
       if (!officialOnly) {
         if (this.wants("esa") && this.shouldFetch("esa", ESA_MS)) {
           fetches.push(
-            this.timedFetch("esa", fetchEsaReadout).then((result) => {
+            this.timedFetch("esa", () => fetchEsaReadout(nowMs)).then((result) => {
               if (result) this.esa = result;
             }),
           );
@@ -472,7 +490,7 @@ export class IngestionWorker {
       }
       if (this.wants("mms") && this.shouldFetch("mms", MMS_MS)) {
         fetches.push(
-          this.timedFetch("mms", fetchMmsCdawebSamples).then((samples) => {
+          this.timedFetch("mms", () => fetchMmsCdawebSamples(nowMs)).then((samples) => {
             const mmsSamples: MMSSpacecraftSample[] = samples ?? [];
             if (mmsSamples.length >= 4 && withinSkewWindow(mmsSamples, 1.5)) {
               mmsVector = computeMMSReconnectionVector(mmsSamples);
@@ -537,6 +555,8 @@ export class IngestionWorker {
       point.indices.kpKind = this.kpReading.kind;
       point.indices.kpObservedAt = this.kpReading.observedAt;
     }
+    if (point.indices.dstMethod === "measured" && this.kyotoDst) point.indices.dstObservedAt = this.kyotoDst.timestamp;
+    point.derived = this.derivedFields();
 
     const densityCheck = this.noaa?.densityCheck ?? null;
     point.densityCheck = densityCheck;
