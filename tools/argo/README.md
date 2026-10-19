@@ -76,6 +76,8 @@ Then remove the `statusLine` and `claude()` lines above if you added them, and r
 
 ## How it works
 
+Wi-Fi security is checked on every probe: WIFI_RISK (a warning, like WPAD_RISK) when the network is open, WEP or WPA1, or when this Mac answers sharing services (Remote Login, File Sharing, Screen Sharing, Remote Management, AirPlay Receiver) on its LAN address. Argo only advises; it never changes System Settings.
+
 Alerts stay quiet on purpose: an unresolved problem texts once when it escalates, then at most every 2 h, and OFFLINE never texts (a Mac with no network cannot send, and queued texts would arrive stale).
 
 

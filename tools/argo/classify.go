@@ -20,6 +20,7 @@ const (
 	PortBlock    Class = "PORT_BLOCK"
 	Region       Class = "REGION"
 	WPADRisk     Class = "WPAD_RISK"
+	WiFiRisk     Class = "WIFI_RISK"
 )
 
 // Error kinds recorded by probes. Kept as strings so fixtures stay readable.
@@ -79,6 +80,8 @@ type Snapshot struct {
 	Web        Result      `json:"web"` // legacy fixtures only; claude.ai 403s non-browsers so it is not probed
 	Captive    Result      `json:"captive"`
 	WPAD       bool        `json:"wpad"`
+	WiFiSec    string      `json:"wifi_security,omitempty"` // ipconfig's Security, e.g. WPA2_PSK; "" when not on Wi-Fi
+	Exposed    []string    `json:"exposed,omitempty"`       // sharing services this Mac answers on its LAN address
 	PAC        bool        `json:"pac"`
 	Proxies    []Proxy     `json:"proxies,omitempty"`
 	StaleProcs []StaleProc `json:"stale_procs,omitempty"`
@@ -122,12 +125,24 @@ func Classify(s Snapshot) (Class, string) {
 	if s.WPAD || s.PAC {
 		return WPADRisk, "automatic proxy discovery/PAC is on; a hostile network can redirect traffic"
 	}
+	if weakWiFi(s.WiFiSec) {
+		return WiFiRisk, "Wi-Fi security is " + s.WiFiSec + ": anyone nearby can read or alter unencrypted traffic"
+	}
+	if len(s.Exposed) > 0 {
+		return WiFiRisk, "this Mac accepts connections from everyone on this network: " + strings.Join(s.Exposed, ", ")
+	}
 	return OK, fmt.Sprintf("api reachable (HTTP %d), loc=%s", s.API.Status, orUnknown(s.Loc))
 }
 
-// Blocking reports whether Claude cannot work. WPAD_RISK is a warning only,
+// weakWiFi: open, WEP and WPA1 networks. WPA2, WPA3 and OWE are fine; "" is not Wi-Fi.
+func weakWiFi(sec string) bool {
+	u := strings.ToUpper(strings.TrimSpace(sec))
+	return u == "NONE" || u == "OPEN" || strings.Contains(u, "WEP") || strings.HasPrefix(u, "WPA_") || u == "WPA"
+}
+
+// Blocking reports whether Claude cannot work. WPAD_RISK and WIFI_RISK are warnings only,
 // and "" (no previous check) is not a failure.
-func (c Class) Blocking() bool { return c != "" && c != OK && c != WPADRisk }
+func (c Class) Blocking() bool { return c != "" && c != OK && c != WPADRisk && c != WiFiRisk }
 
 func firstNonEmpty(v ...string) string {
 	for _, s := range v {

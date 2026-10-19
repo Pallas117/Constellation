@@ -55,6 +55,13 @@ func Plan(c Class, s Snapshot, remembered string) []Action {
 			a = append(a, Action{ID: "exit-node", Say: "Route via the allow-listed exit node " + n + ":", Command: "tailscale set --exit-node=" + n + " --exit-node-allow-lan-access"})
 		}
 		a = append(a, Action{ID: "switch-network", Say: "Switch to a Malaysian SIM or local Wi-Fi (Hong Kong eSIMs exit in HK, which Anthropic does not serve)."})
+	case WiFiRisk:
+		if weakWiFi(s.WiFiSec) {
+			a = append(a, Action{ID: "avoid-weak-wifi", Say: "This Wi-Fi is not properly encrypted. Use your iPhone hotspot instead, or keep Tailscale on so traffic to the team stays encrypted."})
+		}
+		if len(s.Exposed) > 0 {
+			a = append(a, Action{ID: "sharing-off", Say: "Turn off what you don't need in System Settings > General > Sharing (" + strings.Join(s.Exposed, ", ") + "). Argo never changes these itself."})
+		}
 	case WPADRisk:
 		a = append(a, Action{ID: "wpad-off", Say: "Automatic proxy discovery is on. Turn it off:", Command: `sudo networksetup -setproxyautodiscovery "Wi-Fi" off; sudo networksetup -setautoproxystate "Wi-Fi" off`, Admin: true})
 	}
