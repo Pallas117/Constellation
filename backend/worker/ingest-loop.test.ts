@@ -138,7 +138,7 @@ test("interval never stacks a tick on one still running", async () => {
 test("tick attaches only current GOES particle readings to the canonical point (GAU-112)", async () => {
   const worker = new IngestionWorker() as unknown as TimedWorker & { goes: unknown };
   const now = Date.now();
-  for (const key of ["noaa", "esa", "jaxa", "mms", "lasp", "goes", "kyoto-dst", "ml-forecast"]) worker.lastFetch.set(key, now);
+  for (const key of ["noaa", "esa", "jaxa", "mms", "lasp", "goes", "kyoto-dst", "swpc-products", "ml-forecast"]) worker.lastFetch.set(key, now);
   const fresh = { value: 0.25, energy: ">=10 MeV", satellite: "GOES-18", timestamp: new Date(now - 5 * 60_000).toISOString() };
   const old = { value: 150, energy: ">=2 MeV", satellite: "GOES-19", timestamp: new Date(now - 45 * 60_000).toISOString() };
   worker.goes = { protons: fresh, electrons: old };
@@ -177,7 +177,7 @@ test("the worker exposes its last forecast for the API to serve (GAU-115)", () =
 test("tick uses measured Kyoto Dst while fresh, and the model once it is stale (GAU-116)", async () => {
   const worker = new IngestionWorker() as unknown as TimedWorker & { kyotoDst: unknown };
   const now = Date.now();
-  for (const key of ["noaa", "esa", "jaxa", "mms", "lasp", "goes", "kyoto-dst", "ml-forecast"]) worker.lastFetch.set(key, now);
+  for (const key of ["noaa", "esa", "jaxa", "mms", "lasp", "goes", "kyoto-dst", "swpc-products", "ml-forecast"]) worker.lastFetch.set(key, now);
   worker.kyotoDst = { dst: -123, timestamp: new Date(now - 30 * 60_000).toISOString() };
   const measured = (await tickPoint(worker)).indices;
   assert.equal(measured.dst, -123);
@@ -198,7 +198,7 @@ test("FMEA: a failed telemetry write is counted and reported, and the tick still
   await fs.mkdir(file); // a directory where the file should be: every append fails with EISDIR
   const worker = new IngestionWorker() as unknown as TimedWorker;
   const now = Date.now();
-  for (const key of ["noaa", "esa", "jaxa", "mms", "lasp", "goes", "kyoto-dst", "ml-forecast"]) worker.lastFetch.set(key, now);
+  for (const key of ["noaa", "esa", "jaxa", "mms", "lasp", "goes", "kyoto-dst", "swpc-products", "ml-forecast"]) worker.lastFetch.set(key, now);
   const before = bedrock.failedWrites;
   try {
     const result = await worker.tick();
