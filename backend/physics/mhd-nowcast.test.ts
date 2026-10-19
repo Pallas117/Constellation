@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createRequire } from "node:module";
 import test from "node:test";
 import { vec } from "./coordinates.js";
 import { computeCanonicalPoint, DST_MODEL_METHOD, estimateDst, type MhdInput } from "./mhd-nowcast.js";
@@ -69,3 +70,35 @@ test("modelled Dst is labelled with its method and inputs; a measured Dst says s
   assert.equal(indices.dstMethod, DST_MODEL_METHOD);
   assert.deepEqual(indices.dstDerivedFrom, modelled.dstDerivedFrom);
 });
+
+// GAU-133: when the native kernel is built it must agree with the TypeScript formulas.
+// It used to compute in float32 and diverged after about 7 significant digits.
+type NativeMhd = {
+  dynamicPressureNpa(densityCm3: number, speedKmS: number): number;
+  newellCoupling(speedKmS: number, btNt: number, byNt: number, bzNt: number): number;
+};
+let nativeKernel: NativeMhd | null = null;
+try {
+  nativeKernel = createRequire(import.meta.url)("../../build/Release/mhd_native.node") as NativeMhd;
+} catch {
+  nativeKernel = null;
+}
+
+test(
+  "GAU-133: native MHD kernel matches the TypeScript formulas to double precision",
+  { skip: nativeKernel ? false : "native kernel not built" },
+  () => {
+    const kernel = nativeKernel;
+    assert.ok(kernel);
+    const close = (a: number, b: number) => Math.abs(a - b) <= 1e-12 * Math.max(1, Math.abs(b));
+    for (const [n, v] of [[5, 450], [7.6, 408], [0.3, 812.4], [42.1, 301.7]]) {
+      const expected = 1.6726e-6 * n * v * v;
+      assert.ok(close(kernel.dynamicPressureNpa(n, v), expected), `dynamic pressure n=${n} v=${v}`);
+    }
+    for (const [v, bt, by, bz] of [[450, 6.2, -3.0, -5.4], [612.3, 11.7, 4.1, -10.9], [380, 2.1, 1.2, 1.7]]) {
+      const theta = Math.atan2(by, bz);
+      const expected = Math.pow(v, 4 / 3) * Math.pow(bt, 2 / 3) * Math.pow(Math.max(Math.sin(theta / 2), 0), 8 / 3);
+      assert.ok(close(kernel.newellCoupling(v, bt, by, bz), expected), `Newell coupling v=${v} bt=${bt}`);
+    }
+  },
+);

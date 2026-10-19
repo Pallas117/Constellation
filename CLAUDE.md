@@ -13,6 +13,7 @@
 - Always-on local services: `scripts/ops/gauss-services.sh install|status|restart|uninstall` runs the backend (:3001) and built frontend (:8080) as LaunchAgents from a dedicated checkout (`Gauss Aurora.worktrees/live`), logs in `~/Library/Logs/gauss/`. To deploy new code there: check out the commit in that worktree, `npm ci`, then `install` again.
 
 ## Working rules
-- Branch from `main`; for Linear issues use the issue's branch name (e.g. `jzwnathan/gau-6-…`) so the PR links to it.
+- Branch from `origin/main` in your own worktree: `npm run wt:create -- <branch>`. For Linear issues use the issue's branch name (e.g. `jzwnathan/gau-6-…`) so the PR links to it; otherwise `<type>/<name>`. See `docs/WORKTREE_ARCHITECTURE.md`.
+- Push early as a draft PR (nothing only on one machine); `git pull --ff-only` before committing in a shared folder; keep about 8 PRs open at most and merge stacks bottom-up.
 - PR descriptions follow `.github/pull_request_template.md`, including the `### Developer Score` section CI validates.
 - Never commit `.env*`, `.auth.db` or `data/mesh/`; never weaken TLS or put tokens in URLs.

@@ -17,20 +17,9 @@ type RagQueryResponse = {
   error?: string;
 };
 
-const RAG_BASE =
-  import.meta.env.VITE_GAUSS_RAG_URL || apiBase();
-
-async function loadRagStatus(): Promise<RagStatus> {
-  try {
-    const res = await fetch(`${RAG_BASE}/api/rag/status`);
-    return (await res.json()) as RagStatus;
-  } catch {
-    return { ok: false, error: 'Gauss RAG server not reachable' };
-  }
-}
-
-const DEFAULT_INDEX_DIR =
-  import.meta.env.VITE_GAUSS_RAG_INDEX_DIR || '';
+// Always through this backend: it applies the role policy and is the only way to the
+// memory service, which listens on loopback without auth of its own.
+const RAG_BASE = apiBase();
 
 const MOCK_AI_TEXT = `[URGENT] SYSTEM ANOMALY DETECTED
 
@@ -51,7 +40,6 @@ Tactical Recommendation:
 
 export function GaussRagPanel() {
   const [status, setStatus] = useState<RagStatus | null>(null);
-  const [indexing, setIndexing] = useState(false);
   const [question, setQuestion] = useState('');
   const [answer, setAnswer] = useState<string | null>(null);
   const [sources, setSources] = useState<{ filePath: string; score: number }[]>([]);
@@ -99,7 +87,7 @@ export function GaussRagPanel() {
     };
 
     const handleStorm = (e: Event) => {
-      if (e instanceof CustomEvent && e.detail) {
+      if ((e as CustomEvent<boolean>).detail) {
         setSimulated(true);
         setAnswer("");
         setSources([]);
@@ -131,40 +119,17 @@ export function GaussRagPanel() {
     };
   }, []);
 
-  async function fetchStatus() {
-    setStatus(await loadRagStatus());
-  }
-
   useEffect(() => {
-    let cancelled = false;
-    void loadRagStatus().then((next) => {
-      if (!cancelled) setStatus(next);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  async function handleIndex() {
-    setIndexing(true);
-    setError(null);
-    try {
-      const res = await fetch(`${RAG_BASE}/api/rag/index`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ dir: DEFAULT_INDEX_DIR }),
-      });
-      const json = await res.json();
-      if (!json.ok) {
-        setError(json.error || 'Indexing failed');
+    // Indexing is an operator task on the memory host, not something this page can trigger.
+    void (async () => {
+      try {
+        const res = await fetch(`${RAG_BASE}/api/rag/status`);
+        setStatus((await res.json()) as RagStatus);
+      } catch {
+        setStatus({ ok: false, error: 'Knowledge base not reachable' });
       }
-      await fetchStatus();
-    } catch (e) {
-      setError('Could not reach Gauss RAG server');
-    } finally {
-      setIndexing(false);
-    }
-  }
+    })();
+  }, []);
 
   async function handleAsk() {
     if (!question.trim()) return;
@@ -184,7 +149,9 @@ export function GaussRagPanel() {
         setError(json.error || 'Query failed');
       } else {
         setAnswer(json.answer || '');
-        setSources(json.sources || []);
+        // Evidence comes back per chunk; list each source file once.
+        const seen = new Set<string>();
+        setSources((json.sources || []).filter((s) => !seen.has(s.filePath) && seen.add(s.filePath)));
       }
     } catch (e) {
       setError('Could not reach Gauss RAG server');
@@ -193,21 +160,18 @@ export function GaussRagPanel() {
     }
   }
 
-  const chunkLabel =
-    status?.ok && typeof status.chunkCount === 'number'
-      ? `${status.chunkCount} knowledge chunks`
-      : 'No index yet';
+  const chunkLabel = !status
+    ? 'Checking knowledge base…'
+    : !status.ok
+      ? 'Knowledge base offline'
+      : status.chunkCount
+        ? `${status.chunkCount} knowledge chunks`
+        : 'No documents indexed';
   return (
     <section aria-labelledby="rag-title" className="hud-panel w-full space-y-3 p-4">
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <h2 id="rag-title" className="brand-label">06_LOGIC_ENGINE</h2>
-          <p className="mt-0.5 font-mono text-[11px] text-muted-foreground">{chunkLabel}</p>
-        </div>
-        <Button type="button" variant="outline" size="sm" onClick={handleIndex} disabled={indexing}>
-          <Database aria-hidden="true" />
-          {indexing ? 'Indexing…' : 'Rebuild index'}
-        </Button>
+      <div className="min-w-0">
+        <h2 id="rag-title" className="brand-label">06_LOGIC_ENGINE</h2>
+        <p className="mt-0.5 font-mono text-[11px] text-muted-foreground">{chunkLabel}</p>
       </div>
 
       <form

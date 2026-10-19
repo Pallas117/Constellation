@@ -32,10 +32,8 @@ import type {
 } from "./types.js";
 import { withFreshness } from "./lib/freshness.js";
 import { IngestionWorker } from "./worker/ingest-loop.js";
+import { MAX_QUERY_CHARS, memoryQuery, memoryStatus } from "./memory/client.js";
 import { worldStateFromFeed } from "./world/build.js";
-import { NotebookLMClient } from "./services/notebooklm-client.js";
-import { GraphDBClient } from "./services/graphdb-client.js";
-import { AgenticReasoningEngine } from "./services/agentic-reasoning.js";
 import { createSwapPlan, rebalanceDeviceNetwork } from "./services/device-swap-manager.js";
 import { encodeCanonicalPoint } from "./lib/proto.js";
 import { linkGuardian } from "./lib/connectivity.js";
@@ -59,18 +57,6 @@ const selfHealer = new SelfHealerAgent({ proxyPort: Number(process.env.PROXY_POR
 selfHealer.on("heal-event", (evt) => {
   console.log(`[SelfHealer→CyberTiger] ${evt.layer}: ${evt.diagnosis}`);
 });
-
-// RAG Services Initialization
-const notebookApi = new NotebookLMClient(
-  process.env.NOTEBOOK_LM_ID || "notebook_alpha_gauss",
-  process.env.NOTEBOOK_LM_API_KEY || "gauss_key_mock"
-);
-const graphDb = new GraphDBClient(
-  process.env.NEO4J_URI || "bolt://localhost:7687",
-  process.env.NEO4J_USER || "neo4j",
-  process.env.NEO4J_PASS || "password"
-);
-const reasoningEngine = new AgenticReasoningEngine(notebookApi, graphDb);
 
 type CyberTigerRequest = AuthenticatedRequest & {
   security?: {
@@ -301,45 +287,34 @@ app.post("/api/pilot-requests", createPilotRequestHandler(commerce));
 app.use("/api/mesh", mesh.ui);
 
 // RAG endpoints: status for any signed-in user, index/query for operators.
-app.get("/api/rag/status", (_req, res) => {
-  res.json({
-    ok: true,
-    chunkCount: 42, // Mocked for now
-  });
-});
-
-app.post("/api/rag/index", (req, res) => {
-  const { dir } = req.body as { dir?: string };
-  console.log(`[backend] Indexing directory: ${dir || "default"}`);
-  // Mock indexing process
-  setTimeout(() => {
-    res.json({ ok: true, message: "Indexing complete" });
-  }, 1000);
+// Knowledge memory: the Cosmic Brain sidecar (backend/memory/client.ts, docs/memory-sidecar.md).
+// Nothing here is mocked: when the service is down the reply says so, never a canned count or
+// answer. Indexing is an operator task on the memory host and has no route here.
+app.get("/api/rag/status", async (_req, res) => {
+  const status = await memoryStatus();
+  if (!status.available) {
+    res.status(503).json({ ok: false, error: status.reason });
+    return;
+  }
+  res.json({ ok: true, chunkCount: status.chunks, ...status });
 });
 
 app.post("/api/rag/query", async (req: express.Request, res: express.Response) => {
-  try {
-    const { query } = req.body as { query: string };
-    if (!query) {
-      res.status(400).json({ ok: false, error: "Missing query" });
-      return;
-    }
-
-    console.log(`[backend] Processing agentic RAG query (${query.length} chars)`);
-    const result = await reasoningEngine.generateVerifiedTacticalResponse(query);
-
-    res.json({
-      ok: true,
-      answer: result.answer,
-      sources: result.traces.map(t => ({ filePath: t, score: 0.99 }))
-    });
-  } catch (error) {
-    console.error("[backend] RAG query failed", error);
-    res.status(500).json({ 
-      ok: false, 
-      error: error instanceof Error ? error.message : "Agentic Reasoning failed" 
-    });
+  const { query, topK } = (req.body ?? {}) as { query?: unknown; topK?: unknown };
+  if (typeof query !== "string" || !query.trim()) {
+    res.status(400).json({ ok: false, error: "Missing query" });
+    return;
   }
+  if (query.length > MAX_QUERY_CHARS) {
+    res.status(400).json({ ok: false, error: `Query longer than ${MAX_QUERY_CHARS} characters` });
+    return;
+  }
+  const result = await memoryQuery(query, typeof topK === "number" ? topK : 8);
+  if (!result.available) {
+    res.status(503).json({ ok: false, error: result.reason });
+    return;
+  }
+  res.json({ ok: true, answer: result.answer, sources: result.sources });
 });
 
 // Device lifecycle endpoints (requires operator session)

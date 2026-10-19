@@ -8,9 +8,9 @@ Napi::Value NativeDynamicPressure(const Napi::CallbackInfo& info) {
         return env.Null();
     }
 
-    float density = info[0].As<Napi::Number>().FloatValue();
-    float speed = info[1].As<Napi::Number>().FloatValue();
-    float result = dynamicPressureNpa(density, speed);
+    double density = info[0].As<Napi::Number>().DoubleValue();
+    double speed = info[1].As<Napi::Number>().DoubleValue();
+    double result = dynamicPressureNpa(density, speed);
 
     return Napi::Number::New(env, result);
 }
@@ -22,12 +22,12 @@ Napi::Value NativeNewellCoupling(const Napi::CallbackInfo& info) {
         return env.Null();
     }
 
-    float speed = info[0].As<Napi::Number>().FloatValue();
-    float bt = info[1].As<Napi::Number>().FloatValue();
-    float by = info[2].As<Napi::Number>().FloatValue();
-    float bz = info[3].As<Napi::Number>().FloatValue();
+    double speed = info[0].As<Napi::Number>().DoubleValue();
+    double bt = info[1].As<Napi::Number>().DoubleValue();
+    double by = info[2].As<Napi::Number>().DoubleValue();
+    double bz = info[3].As<Napi::Number>().DoubleValue();
 
-    float result = newellCoupling(speed, bt, by, bz);
+    double result = newellCoupling(speed, bt, by, bz);
     return Napi::Number::New(env, result);
 }
 
