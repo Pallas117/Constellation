@@ -1,6 +1,15 @@
 import { fetchEsaReadout, getEsaStatus, type ESAReadout } from "../adapters/esa-hapi.js";
-import { freshReading, fetchGoesParticles, getGoesStatus, type GoesParticleReadout } from "../adapters/goes-particles.js";
-import { geomagneticStorm, radiationStorm } from "../physics/noaa-scales.js";
+import {
+  freshReading,
+  freshXray,
+  fetchGoesParticles,
+  getGoesStatus,
+  PARTICLE_MAX_AGE_MS,
+  type GoesParticleReadout,
+} from "../adapters/goes-particles.js";
+import { fetchSwpcProducts, type SwpcProducts } from "../adapters/swpc-products.js";
+import { checkFieldMagnitude, compareScales, expireCheck, fieldSampleProblem } from "../lib/sense-checks.js";
+import { geomagneticStorm, radiationStorm, radioBlackout } from "../physics/noaa-scales.js";
 import { getJaxaStatus, probeJaxaCatalog } from "../adapters/jaxa-erg.js";
 import { fetchKyotoDst, freshDst, getKyotoDstStatus, type DstReading } from "../adapters/kyoto-dst.js";
 import { fetchMmsCdawebSamples, getMmsCdawebStatus } from "../adapters/mms-cdaweb.js";
@@ -31,6 +40,7 @@ import type {
   CanonicalSpaceWeatherPoint,
   IngestionTickResult,
   MMSReconVectorPoint,
+  SenseCheck,
   SourceStatus,
   ResilienceTier,
   AnomalyForecastResponse,
@@ -45,6 +55,7 @@ const MMS_MS = 10 * 60 * 1000; // archival L2 product; polling faster gains noth
 const LASP_MS = 60000;
 const GOES_MS = 60000; // GOES publishes every 5 min; a 60 s poll keeps worst-case lag under 6 min
 const KYOTO_DST_MS = 10 * 60 * 1000; // hourly product
+const SWPC_PRODUCTS_MS = 2 * 60 * 1000; // NOAA scales and alerts: a cross-check, updated every few minutes
 
 // Freshness is judged by the age of the measurement itself, not by whether a fetch ran
 // this tick. Beyond NOAA_MAX_AGE_MS a readout is discarded rather than carried forward.
@@ -102,6 +113,7 @@ export class IngestionWorker {
   private l1Series: L1Sample[] = [];
   private esa: ESAReadout | null = null;
   private goes: GoesParticleReadout | null = null;
+  private swpcProducts: SwpcProducts | null = null;
   private kyotoDst: DstReading | null = null;
   private latestCanonical: CanonicalSpaceWeatherPoint | null = null;
   private latestMms: MMSReconVectorPoint | null = null;
@@ -242,6 +254,32 @@ export class IngestionWorker {
     };
   }
 
+  /**
+   * Field consistency over the L1 history, the GOES checks from the last fetch (unknown once
+   * that fetch is older than the particle limit), and NOAA's scales against this point's.
+   * An inconsistent newest field sample lowers the point's confidence; the rest only report.
+   */
+  private senseChecks(point: CanonicalSpaceWeatherPoint, nowMs: number): SenseCheck[] {
+    const series = this.noaa ? this.l1Series : [];
+    const field = checkFieldMagnitude(series, this.noaa?.spacecraft, this.noaa ? Date.parse(this.noaa.timestamp) : nowMs);
+    const newest = series.at(-1);
+    if (newest && fieldSampleProblem(newest)) point.quality.lowConfidence = true;
+
+    const goes: SenseCheck[] = (["goes-proton-spectrum", "goes-proton-channels", "goes-xray"] as const).map((id) => {
+      const check = this.goes?.checks?.find((c) => c.id === id);
+      return check
+        ? expireCheck(check, nowMs, PARTICLE_MAX_AGE_MS, "GOES data")
+        : { id, status: "unknown", reason: "GOES data not fetched", observedAt: null };
+    });
+
+    const scales = compareScales(
+      this.swpcProducts?.scales ?? null,
+      { R: point.alerts.radioBlackout, S: point.alerts.radiation, G: point.alerts.geomagnetic },
+      nowMs,
+    );
+    return [field, ...goes, scales];
+  }
+
   private trimCouplingWindow(): void {
     const maxLen = 180;
     if (this.couplingWindow.length > maxLen) {
@@ -333,6 +371,13 @@ export class IngestionWorker {
         fetches.push(
           this.timedFetch("goes", () => fetchGoesParticles()).then((result) => {
             if (result) this.goes = result;
+          }),
+        );
+      }
+      if (this.shouldFetch("swpc-products", SWPC_PRODUCTS_MS)) {
+        fetches.push(
+          this.timedFetch("swpc-products", () => fetchSwpcProducts()).then((result) => {
+            if (result) this.swpcProducts = result;
           }),
         );
       }
@@ -443,6 +488,11 @@ export class IngestionWorker {
     // Two storm streams, kept apart: radiation (S) from protons, geomagnetic (G) from Kp (GAU-135).
     point.alerts.radiation = radiationStorm(point.particles.protons);
     point.alerts.geomagnetic = geomagneticStorm(point.indices, nowMs);
+    // Radio blackouts (R) from GOES X-rays, and the input sense-checks (GAU-136).
+    point.xray = freshXray(this.goes?.xray ?? null, nowMs);
+    point.alerts.radioBlackout = radioBlackout(point.xray);
+    point.senseChecks = this.senseChecks(point, nowMs);
+    point.noaaAlerts = this.swpcProducts?.alerts ?? null;
 
     this.previousDst = point.indices.dst;
     this.couplingWindow.push(point.coupling.newell);

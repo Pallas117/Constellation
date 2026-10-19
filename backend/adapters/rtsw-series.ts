@@ -27,6 +27,8 @@ export interface L1Sample {
   magneticFieldGse: Vector3;
   /** Published GSM field when present; null to convert locally. */
   magneticFieldGsm: Vector3 | null;
+  /** Published Bt (mean of the 1-s magnitudes), nT; null when absent. Sense-checked, GAU-136. */
+  bt?: number | null;
 }
 
 /**
@@ -88,6 +90,7 @@ interface MagRec {
   active: boolean;
   gse: Vector3;
   gsm: Vector3 | null;
+  bt: number | null;
 }
 
 export function parseWind(data: unknown): WindRec[] {
@@ -126,7 +129,14 @@ export function parseMag(data: unknown): MagRec[] {
     const gse = triple(rec, "b", "gse");
     if (t === null || !gse) continue;
     if (Math.hypot(gse.x, gse.y, gse.z) > PLAUSIBLE.fieldMaxNt) continue;
-    out.push({ t, source: String(rec.source ?? "unknown"), active: rec.active === true, gse, gsm: triple(rec, "b", "gsm") });
+    out.push({
+      t,
+      source: String(rec.source ?? "unknown"),
+      active: rec.active === true,
+      gse,
+      gsm: triple(rec, "b", "gsm"),
+      bt: finite(rec.bt),
+    });
   }
   return out.sort((a, b) => a.t - b.t);
 }
@@ -183,6 +193,7 @@ export function buildL1Series(windData: unknown, magData: unknown): L1Sample[] {
       velocityGsm: w.velocityGsm,
       magneticFieldGse: m.gse,
       magneticFieldGsm: m.gsm,
+      bt: m.bt,
     });
   }
   return series;

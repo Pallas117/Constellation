@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { bzStatus, feedState, hudTone, kpStatus, scaleStatus, speedStatus } from './readout-status';
+import { bzStatus, checkStatus, feedState, hudTone, kpStatus, scaleStatus, speedStatus } from './readout-status';
 
 test('speed: normal below 450, elevated from 450, high from 600 km/s', () => {
   assert.deepEqual(speedStatus(420), { tone: 'nominal', word: 'Normal' });
@@ -43,4 +43,19 @@ test('NOAA scale levels: unknown is said, S0/G0 is none, level 3+ is risk (GAU-1
   assert.deepEqual(scaleStatus(reading(4, 'G4')), { tone: 'risk', word: 'G4 storm' });
   assert.equal(hudTone('nominal'), 'default');
   assert.equal(hudTone('risk'), 'risk');
+});
+
+test('R-scale events read as radio blackouts, not storms (GAU-136)', () => {
+  const reading = (level: 0 | 1 | 2 | 3 | 4 | 5 | null, label: string) => ({ level, label, basis: 'test', observedAt: null });
+  assert.deepEqual(scaleStatus(reading(1, 'R1')), { tone: 'caution', word: 'R1 blackout' });
+  assert.deepEqual(scaleStatus(reading(3, 'R3')), { tone: 'risk', word: 'R3 blackout' });
+  assert.deepEqual(scaleStatus(reading(null, 'R?')), { tone: 'caution', word: 'Unknown' });
+});
+
+test('sense-checks: a flagged input reads Flagged and nothing to check reads Unknown, never OK (GAU-136)', () => {
+  const check = (status: 'pass' | 'flag' | 'unknown') => ({ id: 'goes-xray' as const, status, reason: 'r', observedAt: null });
+  assert.deepEqual(checkStatus(check('pass')), { tone: 'nominal', word: 'OK' });
+  assert.deepEqual(checkStatus(check('flag')), { tone: 'caution', word: 'Flagged' });
+  assert.deepEqual(checkStatus(check('unknown')), { tone: 'caution', word: 'Unknown' });
+  assert.deepEqual(checkStatus(undefined), { tone: 'caution', word: 'Unknown' });
 });

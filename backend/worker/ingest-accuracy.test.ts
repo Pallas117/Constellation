@@ -68,7 +68,7 @@ type Tickable = {
 function quietWorker(): Tickable {
   const worker = new IngestionWorker() as unknown as Tickable;
   const now = Date.now();
-  for (const key of ["noaa", "esa", "jaxa", "mms", "lasp", "ml-forecast"]) worker.lastFetch.set(key, now);
+  for (const key of ["noaa", "esa", "jaxa", "mms", "lasp", "swpc-products", "ml-forecast"]) worker.lastFetch.set(key, now);
   return worker;
 }
 
@@ -138,5 +138,48 @@ test("ingest: solar wind in transit keeps arriving at Earth after the L1 feed is
     assert.ok(p.arriving, "but the wind measured 50 min ago is reaching Earth now");
     assert.equal(p.arriving.bz, -8);
     assert.ok(Math.abs(Date.parse(p.arriving.observedAt) - (now - 50 * 60_000)) <= 60_000);
+  });
+});
+
+test("ingest: every point carries its sense-checks; an inconsistent newest field sample lowers confidence (GAU-136)", async () => {
+  const worker = quietWorker();
+  const now = Date.now();
+  const sample = (m: number, bt: number): L1Sample => ({
+    t: now - m * 60_000,
+    spacecraft: "SOLAR1",
+    density: 6,
+    speed: 450,
+    velocityGse: vec(-450, 0, 0),
+    velocityGsm: vec(-450, 0, 0),
+    magneticFieldGse: vec(3, 4, 0),
+    magneticFieldGsm: vec(3, 0, 4),
+    bt,
+  });
+  await withFetch(() => undefined, async () => {
+    worker.noaa = readout(60_000, 0);
+    worker.l1Series = [sample(3, 5.2), sample(2, 5.1), sample(1, 5.0)];
+    const ok = (await worker.tick()).canonicalPoint;
+    assert.deepEqual(
+      ok.senseChecks?.map((c) => [c.id, c.status]),
+      [
+        ["l1-field-magnitude", "pass"],
+        ["goes-proton-spectrum", "unknown"],
+        ["goes-proton-channels", "unknown"],
+        ["goes-xray", "unknown"],
+        ["noaa-scales", "unknown"],
+      ],
+      "GOES and NOAA weren't fetched: unknown, never pass",
+    );
+    assert.equal(ok.alerts.radioBlackout?.label, "R?");
+    assert.equal(ok.noaaAlerts, null, "alerts not read: unknown, not an empty list");
+    assert.equal(ok.quality.lowConfidence, false);
+
+    worker.l1Series = [sample(3, 5.2), sample(2, 5.1), sample(1, 2.0)];
+    const bad = (await worker.tick()).canonicalPoint;
+    const field = bad.senseChecks?.[0];
+    assert.equal(field?.status, "flag");
+    assert.equal(field?.flagged, 1);
+    assert.match(field?.reason ?? "", /Bt 2\.00 nT is below \|B\| 5\.00 nT/);
+    assert.equal(bad.quality.lowConfidence, true);
   });
 });

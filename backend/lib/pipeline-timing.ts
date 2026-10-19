@@ -6,6 +6,7 @@ export const STAGE_BUDGET_MS: Record<string, number> = {
   noaa: 8_000,
   esa: 8_000,
   goes: 8_000,
+  "swpc-products": 8_000,
   "kyoto-dst": 8_000,
   jaxa: 8_000,
   mms: 9_000,
