@@ -55,6 +55,8 @@
     "quality:full": "npm run quality:types && npm run quality:lint",
     "test:all": "npm test && npm run test:ui",
     "verify": "node --import tsx scripts/verify/verify.ts",
+    "replay": "node --import tsx scripts/replay/run.ts",
+    "replay:fetch": "node --import tsx scripts/replay/fetch-event.ts",
     "tpm": "node --import tsx scripts/ops/tpm-check.ts",
     "deploy": "node --import tsx scripts/release/deploy.ts",
     "rollback": "node --import tsx scripts/release/deploy.ts --rollback",
