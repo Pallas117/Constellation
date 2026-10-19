@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
 import type { AddressInfo } from "node:net";
 import test from "node:test";
+import { readFileSync } from "node:fs";
 import express from "express";
 import type { AuthenticatedRequest, AuthRole } from "../auth.js";
 import { createMeshRouters, exitNodesFromEnv, onboardingSteps } from "./router.js";
-import { MeshStore, parseReport } from "./store.js";
+import { MESH_CLASSES, MeshStore, parseReport } from "./store.js";
 
 async function withApp(fn: (base: string, store: MeshStore) => Promise<void>) {
   const store = new MeshStore(null);
@@ -145,4 +146,13 @@ test("onboarding is for staff and above, and tells the page whether team status 
     assert.equal(operator.canSeeTeam, true);
     assert.ok(staff.steps.length > 0);
   });
+});
+
+// Argo is Go, Gauss is TypeScript: a class Argo can report that Gauss doesn't accept makes every
+// report a 400, silently. On 2026-10-19 Argo gained WIFI_RISK and stopped reporting for hours.
+test("Gauss accepts every class Argo can report", () => {
+  const go = readFileSync(new URL("../../tools/argo/classify.go", import.meta.url), "utf8");
+  const argoClasses = [...go.matchAll(/^\s*\w+\s+Class\s*=\s*"([A-Z_]+)"/gm)].map((m) => m[1]);
+  assert.ok(argoClasses.includes("OK") && argoClasses.includes("WIFI_RISK"), `parsed ${argoClasses.join(",")}`);
+  for (const c of argoClasses) assert.ok((MESH_CLASSES as readonly string[]).includes(c), `Gauss rejects Argo class ${c}`);
 });

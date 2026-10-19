@@ -35,7 +35,7 @@ UID_DOMAIN="gui/$(id -u)"
 NODE="${NODE:-$(command -v node || true)}" # only install needs it; the guard must run without it
 LABELS=(uk.lightbound.gauss-backend uk.lightbound.gauss-frontend uk.lightbound.gauss-learning uk.lightbound.gauss-awake)
 SERVICES=(uk.lightbound.gauss-backend uk.lightbound.gauss-frontend)
-SUDOERS=/etc/sudoers.d/gauss-awake
+SUDOERS="${GAUSS_SUDOERS:-/etc/sudoers.d/gauss-awake}" # override only in tests
 AWAKE_OFF="$HOME/Library/Application Support/Gauss/awake-off"
 # Same floor the mesh uses for its own devices: below 10% a device is flagged
 # (backend/services/device-registry.ts) and swapped out (device-swap-manager.ts).

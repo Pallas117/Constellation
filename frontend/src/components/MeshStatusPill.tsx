@@ -1,5 +1,5 @@
 import { Link } from "react-router-dom";
-import { useMesh } from "@/hooks/useMesh";
+import { useMesh, WARNING_CLASSES } from "@/hooks/useMesh";
 import { useNow } from "@/hooks/useNow";
 
 const STALE_MS = 15 * 60 * 1000;
@@ -11,7 +11,7 @@ export function MeshStatusPill() {
   if (!canSeeTeam || !devices) return null;
 
   const healthy = devices.filter(
-    (d) => d.last && now - Date.parse(d.last.receivedAt) <= STALE_MS && (d.last.class === "OK" || d.last.class === "WPAD_RISK"),
+    (d) => d.last && now - Date.parse(d.last.receivedAt) <= STALE_MS && (d.last.class === "OK" || WARNING_CLASSES.has(d.last.class)),
   ).length;
   const attention = devices.length - healthy;
   const label =
