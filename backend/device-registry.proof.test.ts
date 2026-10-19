@@ -3,6 +3,7 @@ import crypto from "node:crypto";
 import type { AddressInfo } from "node:net";
 import test, { after } from "node:test";
 import express from "express";
+import type { AuthenticatedRequest } from "./auth.js";
 import router from "./device-registry.js";
 import { computeProof, deriveDeviceSecret } from "./services/device-auth.js";
 import type { DeviceRecord } from "./types.js";
@@ -12,7 +13,7 @@ type DeviceBody = { ok: boolean; device: DeviceRecord };
 const app = express();
 app.use(express.json());
 app.use((req, _res, next) => {
-  (req as any).auth = {
+  (req as AuthenticatedRequest).auth = {
     userId: "proof-user",
     email: "proof@example.com",
     role: "operator",
