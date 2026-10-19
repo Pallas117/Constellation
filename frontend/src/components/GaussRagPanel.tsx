@@ -86,8 +86,8 @@ export function GaussRagPanel() {
       }
     };
 
-    const handleStorm = (e: any) => {
-      if (e.detail) {
+    const handleStorm = (e: Event) => {
+      if ((e as CustomEvent<boolean>).detail) {
         setSimulated(true);
         setAnswer("");
         setSources([]);

@@ -66,8 +66,9 @@ test("modelled Dst is labelled with its method and inputs; a measured Dst says s
   const { encodeCanonicalPoint, decodeCanonicalPoint } = await import("../lib/proto.js");
   const point = computeCanonicalPoint(input, [], null).point;
   const decoded = await decodeCanonicalPoint(await encodeCanonicalPoint(point));
-  assert.equal(decoded.indices.dstMethod, DST_MODEL_METHOD);
-  assert.deepEqual([...decoded.indices.dstDerivedFrom], modelled.dstDerivedFrom);
+  const indices = decoded.indices as { dstMethod?: unknown; dstDerivedFrom?: unknown };
+  assert.equal(indices.dstMethod, DST_MODEL_METHOD);
+  assert.deepEqual(indices.dstDerivedFrom, modelled.dstDerivedFrom);
 });
 
 // GAU-133: when the native kernel is built it must agree with the TypeScript formulas.

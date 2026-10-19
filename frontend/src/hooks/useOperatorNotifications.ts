@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
-import { toast } from "@/components/ui/sonner";
+import { toast } from "sonner";
 import { useSolarWind5s } from "@/hooks/useSolarWind5s";
 import { measuredDrivers } from "@/lib/measured";
 

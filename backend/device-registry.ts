@@ -14,6 +14,9 @@ import { createSwapPlan, rebalanceDeviceNetwork } from "./services/device-swap-m
 
 const router = express.Router();
 
+/** A request to a "/:id…" route; Express 4 always gives route params as strings. */
+type DeviceRequest = AuthenticatedRequest<{ id: string }>;
+
 function isAdmin(req: AuthenticatedRequest): boolean {
   return req.auth ? roleSatisfies(req.auth.role, "admin") : false;
 }
@@ -22,13 +25,13 @@ function isAdmin(req: AuthenticatedRequest): boolean {
  * Only the device's owner (or an admin) may touch it. Responds 404 rather than
  * 403 for other users' devices so device ids can't be probed.
  */
-function requireOwnedDevice(req: AuthenticatedRequest, res: express.Response): boolean {
+function requireOwnedDevice(req: DeviceRequest, res: express.Response): boolean {
   const userId = req.auth?.userId;
   if (!userId) {
     res.status(401).json({ ok: false, error: "Authentication required" });
     return false;
   }
-  const device = getDevice(String(req.params.id));
+  const device = getDevice(req.params.id);
   if (!device || (device.userId !== userId && !isAdmin(req))) {
     res.status(404).json({ ok: false, error: "Device not found" });
     return false;
@@ -63,7 +66,7 @@ router.post("/register", (req: AuthenticatedRequest, res) => {
   res.status(201).json({ ok: true, device });
 });
 
-router.post("/:id/heartbeat", (req: AuthenticatedRequest, res) => {
+router.post("/:id/heartbeat", (req: DeviceRequest, res) => {
   if (!requireOwnedDevice(req, res)) return;
   const device = heartbeatDevice(req.params.id);
   if (!device) {
@@ -73,7 +76,7 @@ router.post("/:id/heartbeat", (req: AuthenticatedRequest, res) => {
   res.json({ ok: true, device });
 });
 
-router.post("/:id/status", (req: AuthenticatedRequest, res) => {
+router.post("/:id/status", (req: DeviceRequest, res) => {
   if (!requireOwnedDevice(req, res)) return;
   const { status, fingerprintHash, fingerprintSignals } = req.body ?? {};
   const device = updateDeviceStatus(req.params.id, { status, fingerprintHash, fingerprintSignals });
@@ -84,7 +87,7 @@ router.post("/:id/status", (req: AuthenticatedRequest, res) => {
   res.json({ ok: true, device });
 });
 
-router.post("/:id/telemetry", (req: AuthenticatedRequest, res) => {
+router.post("/:id/telemetry", (req: DeviceRequest, res) => {
   if (!requireOwnedDevice(req, res)) return;
   const { temperatureC, batteryPercent, powerWatts, computeLoadPercent, networkLatencyMs, signalStrength } = req.body ?? {};
   if (
@@ -127,7 +130,7 @@ router.post("/swap/rebalance", (req, res) => {
   res.json({ ok: true, ...response });
 });
 
-router.post("/:id/quality", (req: AuthenticatedRequest, res) => {
+router.post("/:id/quality", (req: DeviceRequest, res) => {
   const { score, sampleCount, networkStabilityMs } = req.body ?? {};
   if (typeof score !== "number" || typeof networkStabilityMs !== "number") {
     res.status(400).json({ ok: false, error: "Invalid payload" });
@@ -141,7 +144,7 @@ router.post("/:id/quality", (req: AuthenticatedRequest, res) => {
   res.json({ ok: true, device });
 });
 
-router.post("/:id/proof", (req: AuthenticatedRequest, res) => {
+router.post("/:id/proof", (req: DeviceRequest, res) => {
   // Otherwise anyone could send bad proofs to mark another user's device untrusted.
   if (!requireOwnedDevice(req, res)) return;
   const { sig, timestamp, nonce } = req.body ?? {};
@@ -167,7 +170,7 @@ router.post("/:id/proof", (req: AuthenticatedRequest, res) => {
   res.json({ ok: true, device });
 });
 
-router.get("/:id", (req: AuthenticatedRequest, res) => {
+router.get("/:id", (req: DeviceRequest, res) => {
   if (!requireOwnedDevice(req, res)) return;
   const device = getDevice(req.params.id);
   if (!device) {

@@ -9,8 +9,9 @@
 'use client'; // Mark as client component (for Next.js compatibility, if migrated)
 
 import { useMemo, useRef, useState, useEffect } from 'react';
-import { useFrame, useThree } from '@react-three/fiber';
+import { useFrame, useThree, type ThreeEvent } from '@react-three/fiber';
 import * as THREE from 'three';
+import { createGlowMaterial } from './point-materials';
 import type { RadiationDataPoint } from '@/lib/types/radiation';
 
 interface RadiationDataOverlayLODProps {
@@ -114,59 +115,6 @@ function downsampleData(
   return sampled;
 }
 
-/**
- * Glowing dot shader material with LOD support. Exported so the scene can compile
- * it before the first storm toggle (see ShaderWarmup).
- */
-export const createGlowMaterial = (pointSize: number) => {
-  return new THREE.ShaderMaterial({
-    uniforms: {
-      time: { value: 0 },
-      glowIntensity: { value: 1.0 },
-      pointSize: { value: pointSize },
-    },
-    // `color` is declared by three for vertexColors; declaring it again fails to compile.
-    vertexShader: `
-      attribute float size;
-      varying vec3 vColor;
-      varying float vSize;
-      
-      void main() {
-        vColor = color;
-        vSize = size;
-        vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
-        gl_PointSize = size * (300.0 / -mvPosition.z);
-        gl_Position = projectionMatrix * mvPosition;
-      }
-    `,
-    fragmentShader: `
-      uniform float time;
-      uniform float glowIntensity;
-      varying vec3 vColor;
-      varying float vSize;
-      
-      void main() {
-        vec2 center = gl_PointCoord - vec2(0.5);
-        float dist = length(center);
-        
-        float alpha = 1.0 - smoothstep(0.0, 0.5, dist);
-        alpha *= glowIntensity;
-        
-        float pulse = sin(time * 2.0) * 0.1 + 0.9;
-        alpha *= pulse;
-        
-        float outerGlow = 1.0 - smoothstep(0.3, 0.7, dist);
-        alpha += outerGlow * 0.3 * glowIntensity;
-        
-        gl_FragColor = vec4(vColor, alpha);
-      }
-    `,
-    transparent: true,
-    blending: THREE.AdditiveBlending,
-    depthWrite: false,
-    vertexColors: true,
-  });
-};
 
 export const RadiationDataOverlayLOD = ({
   data,
@@ -181,7 +129,6 @@ export const RadiationDataOverlayLOD = ({
   const materialRef = useRef<THREE.ShaderMaterial>(null);
   const pointsRef = useRef<THREE.Points>(null);
   const { camera } = useThree();
-  const filteredDataRef = useRef<RadiationDataPoint[]>([]);
   const raycasterRef = useRef(new THREE.Raycaster());
   const [currentLOD, setCurrentLOD] = useState(lodLevel);
 
@@ -228,7 +175,6 @@ export const RadiationDataOverlayLOD = ({
 
     // Apply LOD downsampling
     filtered = downsampleData(filtered, effectiveMaxPoints);
-    filteredDataRef.current = filtered;
 
     // Calculate min/max flux for color normalization
     const minFlux = filtered.reduce((min, d) => Math.min(min, d.flux), Infinity);
@@ -284,7 +230,8 @@ export const RadiationDataOverlayLOD = ({
       }
     });
 
-    return { positions, colors, sizes, count: filtered.length };
+    // `filtered` maps a clicked point index back to its data point.
+    return { positions, colors, sizes, count: filtered.length, filtered };
   }, [data, orbitFilter, effectiveMaxPoints, lodConfig.pointSize, encodingMode]);
 
   // Create geometry
@@ -310,12 +257,14 @@ export const RadiationDataOverlayLOD = ({
   });
 
   // Handle pointer events for click detection
-  const handlePointerDown = (event: any) => {
+  const handlePointerDown = (event: ThreeEvent<PointerEvent>) => {
     if (!onPointClick || !pointsRef.current || !geometry) return;
 
     event.stopPropagation();
     
-    const rect = event.target.getBoundingClientRect();
+    const el = event.nativeEvent.target;
+    if (!(el instanceof Element)) return;
+    const rect = el.getBoundingClientRect();
     const mouse = new THREE.Vector2();
     mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
     mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
@@ -339,8 +288,8 @@ export const RadiationDataOverlayLOD = ({
         }
       }
       
-      if (closestIndex >= 0 && closestIndex < filteredDataRef.current.length) {
-        onPointClick(filteredDataRef.current[closestIndex], closestIndex);
+      if (processedData && closestIndex >= 0 && closestIndex < processedData.filtered.length) {
+        onPointClick(processedData.filtered[closestIndex], closestIndex);
       }
     }
   };
