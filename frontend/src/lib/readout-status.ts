@@ -6,7 +6,7 @@
  * is amber, risk is Sun. Words always accompany the tone (never colour alone).
  */
 
-import type { ScaleReading } from './types/space-weather';
+import type { ScaleReading, SenseCheck } from './types/space-weather';
 
 export type Tone = 'nominal' | 'caution' | 'risk';
 
@@ -49,7 +49,25 @@ export function kpStatus(kp: number): ReadoutStatus {
 export function scaleStatus(reading: ScaleReading | null | undefined): ReadoutStatus {
   if (!reading || reading.level == null) return { tone: 'caution', word: 'Unknown' };
   if (reading.level === 0) return { tone: 'nominal', word: 'None' };
-  return { tone: reading.level >= 3 ? 'risk' : 'caution', word: `${reading.label} storm` };
+  // NOAA names R-scale events radio blackouts; S and G are storms.
+  const kind = reading.label.startsWith('R') ? 'blackout' : 'storm';
+  return { tone: reading.level >= 3 ? 'risk' : 'caution', word: `${reading.label} ${kind}` };
+}
+
+/** What each input sense-check (GAU-136) looks at, for its readout label. */
+export const CHECK_LABEL: Record<SenseCheck['id'], string> = {
+  'l1-field-magnitude': 'L1 field magnitude',
+  'goes-proton-spectrum': 'Proton spectrum',
+  'goes-proton-channels': 'Proton channels',
+  'goes-xray': 'X-ray channel',
+  'noaa-scales': 'NOAA scales',
+};
+
+/** A sense-check as a readout: nothing to check reads Unknown, never OK. */
+export function checkStatus(check: SenseCheck | null | undefined): ReadoutStatus {
+  if (!check || check.status === 'unknown') return { tone: 'caution', word: 'Unknown' };
+  if (check.status === 'pass') return { tone: 'nominal', word: 'OK' };
+  return { tone: 'caution', word: 'Flagged' };
 }
 
 /** The HUD components' tone for a readout status ("nominal" draws as the default). */

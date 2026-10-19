@@ -17,7 +17,7 @@ import mockSolarStormData from "@/data/mock_solar_storm.json";
 import { beltVisuals, liveDrivers, standoffIfReference } from "@/lib/physics/live-drivers";
 import { useNow } from "@/hooks/useNow";
 import { useDocumentTitle } from "@/hooks/useDocumentTitle";
-import { hudTone, scaleStatus } from "@/lib/readout-status";
+import { CHECK_LABEL, checkStatus, hudTone, scaleStatus } from "@/lib/readout-status";
 
 const VIEW_KEYS = Object.keys(SCENE_VIEWS) as SceneView[];
 // Below the fold: its own chunk (with the charting library), loaded when scrolled to.
@@ -33,6 +33,8 @@ const pdynTone = (p: number | undefined): Tone =>
 const kpTone = (kp: number | undefined): Tone =>
   kp === undefined ? "default" : kp >= 7 ? "risk" : kp >= 5 ? "caution" : "default";
 const utc = (t: string | number) => new Date(t).toISOString().slice(11, 16);
+/** "18 Oct 17:24" (UTC): alerts span a day, so the time alone is ambiguous. */
+const dayUtc = (t: string) => `${new Date(t).toLocaleDateString("en-GB", { day: "numeric", month: "short", timeZone: "UTC" })} ${utc(t)}`;
 
 /* ------------------------------------------------------------------------- */
 /* Details drawer: the full readouts and method, for touch and deep reading  */
@@ -112,6 +114,10 @@ const HeliophysicsDashboard = () => {
   // The two NOAA storm streams, kept apart: radiation (S) and geomagnetic (G) (GAU-135).
   const radiation = !simulateStorm ? latest?.alerts.radiation : undefined;
   const geomagnetic = !simulateStorm ? latest?.alerts.geomagnetic : undefined;
+  // Radio blackouts (R) and the input sense-checks, with NOAA's own alerts as a cross-check (GAU-136).
+  const radioBlackout = !simulateStorm ? latest?.alerts.radioBlackout : undefined;
+  const senseChecks = !simulateStorm ? (latest?.senseChecks ?? []) : [];
+  const noaaAlerts = !simulateStorm ? latest?.noaaAlerts : undefined;
   const driversLine = simulateStorm
     ? "Simulated drivers"
     : arriving
@@ -342,10 +348,57 @@ const HeliophysicsDashboard = () => {
                     tone={geomagnetic ? hudTone(scaleStatus(geomagnetic).tone) : "default"}
                     hint={geomagnetic?.basis ?? "No current NOAA Kp reading"}
                   />
+                  <Readout
+                    label="Radio blackout (R)"
+                    value={radioBlackout?.level != null ? radioBlackout.label : "—"}
+                    tone={radioBlackout ? hudTone(scaleStatus(radioBlackout).tone) : "default"}
+                    hint={radioBlackout?.basis ?? "No current GOES X-ray reading"}
+                  />
                 </dl>
                 <p className="mt-2 text-xs text-muted-foreground">
-                  Radiation storms (particles) and geomagnetic storms (field) are separate hazards with different effects, and either can happen without the other.
+                  Radiation storms (particles), geomagnetic storms (field) and radio blackouts (X-rays) are separate hazards with different effects, and any one can happen without the others.
                 </p>
+
+                {!simulateStorm && (
+                  <>
+                    <p className="brand-label mt-6">Data checks</p>
+                    <dl className="mt-2">
+                      {senseChecks.length === 0 ? (
+                        <Readout label="Input checks" value="Unknown" tone="caution" hint="No checks on this reading" />
+                      ) : (
+                        senseChecks.map((check) => {
+                          const status = checkStatus(check);
+                          return (
+                            <Readout
+                              key={check.id}
+                              label={CHECK_LABEL[check.id] ?? check.id}
+                              value={status.word}
+                              tone={hudTone(status.tone)}
+                              hint={check.reason}
+                            />
+                          );
+                        })
+                      )}
+                    </dl>
+                    <p className="brand-label mt-4">NOAA alerts · 24 h</p>
+                    {noaaAlerts == null ? (
+                      <p className="mt-2 text-xs text-caution">Unknown: NOAA alerts could not be read.</p>
+                    ) : noaaAlerts.length === 0 ? (
+                      <p className="mt-2 text-xs text-muted-foreground">No NOAA alerts, watches or warnings in the last 24 h.</p>
+                    ) : (
+                      <ul className="mt-2 space-y-1.5">
+                        {noaaAlerts.map((a) => (
+                          <li key={a.productId} className="text-xs text-muted-foreground">
+                            <span className="font-mono text-foreground">{dayUtc(a.issuedAt)} UTC</span> {a.headline}
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                    <p className="mt-2 text-xs text-muted-foreground">
+                      NOAA&apos;s own scales and alerts are a cross-check on the levels above, not their source.
+                    </p>
+                  </>
+                )}
 
                 <p className="brand-label mt-6">Next from L1{stormTier ? ` · ${stormTier}` : ""}</p>
                 <dl className="mt-2">
