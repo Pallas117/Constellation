@@ -1,0 +1,29 @@
+{
+  "funder": "ESA BASS Kick-start (AO 6-60021)",
+  "sources": [
+    "https://business.esa.int/funding/open-call-for-proposals-kick-starts (read 11 Oct 2026): 75% funding, up to EUR 75,000; max total cost EUR 100,000; six months; at least one space asset",
+    "Page/word limits and required documents are only on esa-star (login): copy them here verbatim before running"
+  ],
+  "documents": {
+    "P": {
+      "label": "Kick-start proposal",
+      "max_pages": null
+    }
+  },
+  "forbidden": [
+    {"pattern": "\\bcomplaint\\b", "why": "\"Complaint\" (likely a typo for \"Compliant\")"},
+    {"pattern": "which you should have known|\\bnote to (self|team)\\b|\\b(TODO|TBD|XXX|FIXME)\\b|lorem ipsum", "why": "internal note or placeholder"},
+    {"pattern": "\\[(insert|add|enter|describe|your|company|name|date|tbc)[^\\]]{0,80}\\]", "why": "unfilled template placeholder"}
+  ],
+  "review": [
+    {"pattern": "\\bmou\\b|memorand(um|a) of understanding|letter of intent", "why": "MoU/LoI mentioned: claim only what is signed"},
+    {"pattern": "\\bpartner(s|ship|ed)?\\b", "why": "'partner' wording: check against the answer bank's do-not-claim list"},
+    {"pattern": "\\bcustomers?\\b", "why": "'customer' wording: pre-revenue; only named customers who agreed"}
+  ],
+  "checks": [
+    "esa-star publication: the UK is a participating Member State for AO 6-60021.",
+    "The proposal names at least one space asset (satellite communications, Earth observation data or navigation) and how it is used.",
+    "Budget: total cost <= EUR 100,000; ESA share 75%, at most EUR 75,000; duration six months.",
+    "Page/word limits and required annexes copied from esa-star into this file (then re-run: unknown limits stay CHECKs)."
+  ]
+}
