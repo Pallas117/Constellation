@@ -123,7 +123,7 @@ export function currentKp(estimate: KpReading | null, completed: KpReading | nul
   return estimate.value > recent.value ? estimate : recent;
 }
 
-export async function fetchNoaaReadout(): Promise<NOAAReadout | null> {
+export async function fetchNoaaReadout(nowMs = Date.now()): Promise<NOAAReadout | null> {
   try {
     const [windData, magData, kp1mData, kpData, ovation] = await Promise.all([
       fetchJson(RTSW_WIND_URL),
@@ -135,7 +135,7 @@ export async function fetchNoaaReadout(): Promise<NOAAReadout | null> {
 
     const all = buildL1Series(windData, magData);
     const latest = all.at(-1);
-    const kp = currentKp(latestKp1m(kp1mData), latestKp(kpData), all.at(-1)?.t ?? Date.now());
+    const kp = currentKp(latestKp1m(kp1mData), latestKp(kpData), all.at(-1)?.t ?? nowMs);
     if (!latest) throw new Error("NOAA RTSW: no complete, plausible wind+mag record");
     if (!kp) throw new Error("NOAA Kp: no valid value");
 
@@ -145,7 +145,7 @@ export async function fetchNoaaReadout(): Promise<NOAAReadout | null> {
     latestStatus = {
       source: SOURCE,
       lastSeen: timestamp,
-      latencySeconds: Math.max(0, (Date.now() - latest.t) / 1000),
+      latencySeconds: Math.max(0, (nowMs - latest.t) / 1000),
       healthy: true,
       message: densityCheck
         ? `NOAA SWPC RTSW OK (${latest.spacecraft}); density disagrees with ${densityCheck.reference} ` +
@@ -175,7 +175,7 @@ export async function fetchNoaaReadout(): Promise<NOAAReadout | null> {
       source: SOURCE,
       lastSeen: latestStatus.lastSeen,
       latencySeconds: latestStatus.lastSeen
-        ? Math.max(0, (Date.now() - Date.parse(latestStatus.lastSeen)) / 1000)
+        ? Math.max(0, (nowMs - Date.parse(latestStatus.lastSeen)) / 1000)
         : null,
       healthy: false,
       message: error instanceof Error ? error.message : "NOAA fetch failed",

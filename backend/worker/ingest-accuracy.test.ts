@@ -183,3 +183,19 @@ test("ingest: every point carries its sense-checks; an inconsistent newest field
     assert.equal(bad.quality.lowConfidence, true);
   });
 });
+
+test("ingest: an L1 data gap leaves the geomagnetic level known while NOAA Kp is current (GAU-138)", async () => {
+  const worker = quietWorker();
+  const kpReading = { value: 1.67, observedAt: new Date(Date.now() - 2 * 3_600_000).toISOString(), kind: "planetary-3h" as const };
+  await withFetch(() => undefined, async () => {
+    worker.noaa = { ...readout(60_000, -2), kpReading };
+    assert.equal((await worker.tick()).canonicalPoint.alerts.geomagnetic?.label, "G0");
+    // The RTSW files hold only fills for the last 20 min, so the readout's newest L1 sample is old;
+    // the Kp product in the same fetch is still current.
+    worker.noaa = { ...readout(NOAA_MAX_AGE_MS + 5 * 60_000, -2), kpReading };
+    const gap = (await worker.tick()).canonicalPoint;
+    assert.equal(gap.quality.stale, true, "the L1 values are unknown");
+    assert.equal(gap.alerts.geomagnetic?.label, "G0", "but Kp, from ground magnetometers, is not");
+    assert.equal(gap.indices.kp, 1.67);
+  });
+});

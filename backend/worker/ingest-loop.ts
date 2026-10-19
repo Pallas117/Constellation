@@ -14,7 +14,7 @@ import { getJaxaStatus, probeJaxaCatalog } from "../adapters/jaxa-erg.js";
 import { fetchKyotoDst, freshDst, getKyotoDstStatus, type DstReading } from "../adapters/kyoto-dst.js";
 import { fetchMmsCdawebSamples, getMmsCdawebStatus } from "../adapters/mms-cdaweb.js";
 import { fetchMmsBurstWindows, getMmsLaspStatus } from "../adapters/mms-lasp.js";
-import { fetchNoaaReadout, getNoaaStatus, type NOAAReadout } from "../adapters/noaa-swpc.js";
+import { fetchNoaaReadout, getNoaaStatus, type KpReading, type NOAAReadout } from "../adapters/noaa-swpc.js";
 import { arrivingNow, type L1Sample } from "../adapters/rtsw-series.js";
 import { gseToGsm } from "../physics/coordinates.js";
 import { buildAuroraGrid } from "../physics/healpix.js";
@@ -98,6 +98,28 @@ export function forecastWindow(
   return out;
 }
 
+/** The sources a worker can fetch. */
+export type IngestSource = "noaa" | "kyoto-dst" | "goes" | "swpc-products" | "esa" | "jaxa" | "mms" | "lasp";
+
+/**
+ * How a worker runs. The defaults are the live service. A historical replay (GAU-138) runs the
+ * same tick with a stepped clock, its own sources, and nothing published or persisted.
+ */
+export interface IngestionOptions {
+  /** Clock, ms since the epoch. Default Date.now. */
+  now?: () => number;
+  /** Sources to fetch; default all. */
+  sources?: readonly IngestSource[];
+  /** Run the Kp forecaster every 5 min (default true). */
+  forecast?: boolean;
+  /** Build the aurora grid every tick (default true). */
+  auroraGrid?: boolean;
+  /** Push each point to the shared feed and persist it to bedrock (default true). A replay must not. */
+  publish?: boolean;
+  /** Skip fetches while the link guardian reports AIRGAP (default true). A replay reads an archive. */
+  respectLink?: boolean;
+}
+
 export class IngestionWorker {
   private timer: NodeJS.Timeout | null = null;
   private running = false;
@@ -111,6 +133,12 @@ export class IngestionWorker {
    * keeps arriving at Earth for one travel time (~45 min) after an L1 outage.
    */
   private l1Series: L1Sample[] = [];
+  /**
+   * NOAA Kp, kept apart from the L1 readout: Kp comes from ground magnetometers, so an L1 data gap
+   * must not make the geomagnetic level unknown. Its own 6 h age limit still applies (noaa-scales).
+   * Found by the Jan 2026 replay: 30 min of L1 fills turned G0 into "G?" (GAU-138).
+   */
+  private kpReading: KpReading | null = null;
   private esa: ESAReadout | null = null;
   private goes: GoesParticleReadout | null = null;
   private swpcProducts: SwpcProducts | null = null;
@@ -126,7 +154,19 @@ export class IngestionWorker {
   readonly forecastSkill = new ForecastSkillTracker();
   readonly timing = new PipelineTimer();
 
-  constructor(private onTick?: (result: IngestionTickResult) => void) {}
+  private readonly now: () => number;
+
+  constructor(
+    private onTick?: (result: IngestionTickResult) => void,
+    private readonly options: IngestionOptions = {},
+  ) {
+    // Read Date.now on every call, so anything that substitutes it (tests, fake timers) is honoured.
+    this.now = options.now ?? (() => Date.now());
+  }
+
+  private wants(source: IngestSource): boolean {
+    return !this.options.sources || this.options.sources.includes(source);
+  }
 
   private async tickWithRetry(attempt = 0): Promise<void> {
     try {
@@ -205,7 +245,7 @@ export class IngestionWorker {
   }
 
   private shouldFetch(key: string, cadenceMs: number): boolean {
-    const now = Date.now();
+    const now = this.now();
     const last = this.lastFetch.get(key) ?? 0;
     if (now - last >= cadenceMs) {
       this.lastFetch.set(key, now);
@@ -249,7 +289,7 @@ export class IngestionWorker {
       magneticFieldGse: b,
       velocityGsm: v,
       magneticFieldGsm: b,
-      kp: prev?.indices.kp ?? 2,
+      kp: this.kpReading?.value ?? prev?.indices.kp ?? 2,
       dst: freshDst(this.kyotoDst, Date.parse(timestamp)),
     };
   }
@@ -278,6 +318,41 @@ export class IngestionWorker {
       nowMs,
     );
     return [field, ...goes, scales];
+  }
+
+  /** Hand the point to the shared feed and persist it locally. Never called by a replay. */
+  private async publish(
+    point: CanonicalSpaceWeatherPoint,
+    auroraMap: IngestionTickResult["auroraMap"],
+    mmsVector: MMSReconVectorPoint | null,
+    status: SourceStatus[],
+    linkMode: string,
+  ): Promise<void> {
+    pushCanonical(point);
+    if (auroraMap) setAuroraMap(auroraMap);
+    if (mmsVector) pushMms(mmsVector);
+    setSourceStatus(status);
+
+    // LEVEL 3 REDUNDANCY: Dual-Mode Persistence (Bedrock + Cloud Sync)
+    try {
+      // Local Buffer is always the priority (Air-Gap ready)
+      await this.timing.time("persist", async () => {
+        await bedrock.appendTelemetryStrict({ type: "canonical", data: point, timestamp: point.timestamp });
+        if (mmsVector) {
+          await bedrock.appendTelemetryStrict({ type: "mms", data: mmsVector, timestamp: mmsVector.timestamp });
+        }
+      });
+
+      // Cloud Sync only if link is CLOUD or SAT
+      if (linkMode !== "AIRGAP" && !this.loggedCloudDisabled) {
+        this.loggedCloudDisabled = true; // once, not every 5 s tick
+        console.log("[IngestionWorker] Cloud persistence disabled; local bedrock buffering remains active.");
+      }
+    } catch (error) {
+      // The local write itself failed (disk full, permissions): the point is served from memory but
+      // NOT persisted. The persist stage counts the error in /api/system/pipeline. GAU-121.
+      console.error(`[IngestionWorker] Bedrock write failed; point not persisted (${bedrock.failedWrites} failed writes).`, error);
+    }
   }
 
   private trimCouplingWindow(): void {
@@ -338,7 +413,8 @@ export class IngestionWorker {
   }
 
   private async runTick(): Promise<IngestionTickResult> {
-    const nowIso = new Date().toISOString();
+    const nowMs = this.now();
+    const nowIso = new Date(nowMs).toISOString();
     const officialOnly = String(process.env.OFFICIAL_SOURCES_ONLY ?? "false").toLowerCase() === "true";
 
     const link = linkGuardian.getStatus();
@@ -348,53 +424,53 @@ export class IngestionWorker {
     // AIRGAP MODE: Skip all external API fetches.
     // Sources are fetched in parallel, each within its own budget, so the slowest source
     // bounds the tick instead of the sum of all of them.
-    if (link.mode !== "AIRGAP") {
+    if (this.options.respectLink === false || link.mode !== "AIRGAP") {
       const fetches: Promise<unknown>[] = [];
       // Always attempt NOAA as a primary official source
-      if (this.shouldFetch("noaa", NOAA_MS)) {
+      if (this.wants("noaa") && this.shouldFetch("noaa", NOAA_MS)) {
         fetches.push(
-          this.timedFetch("noaa", fetchNoaaReadout).then((result) => {
+          this.timedFetch("noaa", () => fetchNoaaReadout(nowMs)).then((result) => {
             if (!result) return;
             this.noaa = result;
             if (result.series?.length) this.l1Series = result.series;
           }),
         );
       }
-      if (this.shouldFetch("kyoto-dst", KYOTO_DST_MS)) {
+      if (this.wants("kyoto-dst") && this.shouldFetch("kyoto-dst", KYOTO_DST_MS)) {
         fetches.push(
-          this.timedFetch("kyoto-dst", () => fetchKyotoDst()).then((result) => {
+          this.timedFetch("kyoto-dst", () => fetchKyotoDst(nowMs)).then((result) => {
             if (result) this.kyotoDst = result;
           }),
         );
       }
-      if (this.shouldFetch("goes", GOES_MS)) {
+      if (this.wants("goes") && this.shouldFetch("goes", GOES_MS)) {
         fetches.push(
-          this.timedFetch("goes", () => fetchGoesParticles()).then((result) => {
+          this.timedFetch("goes", () => fetchGoesParticles(nowMs)).then((result) => {
             if (result) this.goes = result;
           }),
         );
       }
-      if (this.shouldFetch("swpc-products", SWPC_PRODUCTS_MS)) {
+      if (this.wants("swpc-products") && this.shouldFetch("swpc-products", SWPC_PRODUCTS_MS)) {
         fetches.push(
-          this.timedFetch("swpc-products", () => fetchSwpcProducts()).then((result) => {
+          this.timedFetch("swpc-products", () => fetchSwpcProducts(nowMs)).then((result) => {
             if (result) this.swpcProducts = result;
           }),
         );
       }
       // If not restricted to official-only, also fetch ESA/JAXA auxiliary sources
       if (!officialOnly) {
-        if (this.shouldFetch("esa", ESA_MS)) {
+        if (this.wants("esa") && this.shouldFetch("esa", ESA_MS)) {
           fetches.push(
             this.timedFetch("esa", fetchEsaReadout).then((result) => {
               if (result) this.esa = result;
             }),
           );
         }
-        if (this.shouldFetch("jaxa", JAXA_MS)) {
+        if (this.wants("jaxa") && this.shouldFetch("jaxa", JAXA_MS)) {
           fetches.push(this.timedFetch("jaxa", probeJaxaCatalog));
         }
       }
-      if (this.shouldFetch("mms", MMS_MS)) {
+      if (this.wants("mms") && this.shouldFetch("mms", MMS_MS)) {
         fetches.push(
           this.timedFetch("mms", fetchMmsCdawebSamples).then((samples) => {
             const mmsSamples: MMSSpacecraftSample[] = samples ?? [];
@@ -404,7 +480,7 @@ export class IngestionWorker {
           }),
         );
       }
-      if (this.shouldFetch("lasp", LASP_MS)) {
+      if (this.wants("lasp") && this.shouldFetch("lasp", LASP_MS)) {
         fetches.push(this.timedFetch("lasp", fetchMmsBurstWindows));
       }
       await Promise.all(fetches);
@@ -413,7 +489,7 @@ export class IngestionWorker {
     }
     if (this.noaa?.timestamp) this.lastMeasurementAt = this.noaa.timestamp;
 
-    if (this.shouldFetch("ml-forecast", 300000)) {
+    if (this.options.forecast !== false && this.shouldFetch("ml-forecast", 300000)) {
       try {
         this.latestForecast = await this.timing.time(
           "ml-forecast",
@@ -431,6 +507,7 @@ export class IngestionWorker {
       }
     }
 
+    if (this.noaa?.kpReading) this.kpReading = this.noaa.kpReading;
     // Never invent variation: tiers describe the age of the real measurement.
     const tier = freshnessTier(this.noaa?.timestamp ?? null, Date.parse(nowIso));
     if (tier === 3) {
@@ -456,9 +533,9 @@ export class IngestionWorker {
     );
     point.spacecraft = this.noaa?.spacecraft ?? this.latestCanonical?.spacecraft;
     point.arriving = arriving;
-    if (this.noaa?.kpReading) {
-      point.indices.kpKind = this.noaa.kpReading.kind;
-      point.indices.kpObservedAt = this.noaa.kpReading.observedAt;
+    if (this.kpReading) {
+      point.indices.kpKind = this.kpReading.kind;
+      point.indices.kpObservedAt = this.kpReading.observedAt;
     }
 
     const densityCheck = this.noaa?.densityCheck ?? null;
@@ -480,7 +557,6 @@ export class IngestionWorker {
     }
 
     // Measured particle flux rides along unchanged; anything older than 30 min is unknown (null).
-    const nowMs = Date.parse(nowIso);
     point.particles = {
       protons: freshReading(this.goes?.protons ?? null, nowMs),
       electrons: freshReading(this.goes?.electrons ?? null, nowMs),
@@ -498,46 +574,20 @@ export class IngestionWorker {
     this.couplingWindow.push(point.coupling.newell);
     this.trimCouplingWindow();
 
-    const { grid, harmonics } = await this.timing.time("aurora-grid", () => buildAuroraGrid(point, 64));
-    const auroraMap = {
-      timestamp: point.timestamp,
-      nside: 64,
-      grid,
-      harmonics,
-    };
+    const auroraMap =
+      this.options.auroraGrid === false
+        ? null
+        : await this.timing.time("aurora-grid", () => buildAuroraGrid(point, 64)).then(({ grid, harmonics }) => ({
+            timestamp: point.timestamp,
+            nside: 64,
+            grid,
+            harmonics,
+          }));
 
-    pushCanonical(point);
-    setAuroraMap(auroraMap);
-    if (mmsVector) {
-      pushMms(mmsVector);
-      this.latestMms = mmsVector;
-    }
+    if (mmsVector) this.latestMms = mmsVector;
     this.latestCanonical = point;
-
     const status = this.sourceStatus();
-    setSourceStatus(status);
-
-    // LEVEL 3 REDUNDANCY: Dual-Mode Persistence (Bedrock + Cloud Sync)
-    
-    try {
-      // Local Buffer is always the priority (Air-Gap ready)
-      await this.timing.time("persist", async () => {
-        await bedrock.appendTelemetryStrict({ type: "canonical", data: point, timestamp: point.timestamp });
-        if (mmsVector) {
-          await bedrock.appendTelemetryStrict({ type: "mms", data: mmsVector, timestamp: mmsVector.timestamp });
-        }
-      });
-
-      // Cloud Sync only if link is CLOUD or SAT
-      if (link.mode !== "AIRGAP" && !this.loggedCloudDisabled) {
-        this.loggedCloudDisabled = true; // once, not every 5 s tick
-        console.log("[IngestionWorker] Cloud persistence disabled; local bedrock buffering remains active.");
-      }
-    } catch (error) {
-      // The local write itself failed (disk full, permissions): the point is served from memory but
-      // NOT persisted. The persist stage counts the error in /api/system/pipeline. GAU-121.
-      console.error(`[IngestionWorker] Bedrock write failed; point not persisted (${bedrock.failedWrites} failed writes).`, error);
-    }
+    if (this.options.publish !== false) await this.publish(point, auroraMap, mmsVector, status, link.mode);
 
     const result: IngestionTickResult = {
       canonicalPoint: point,
