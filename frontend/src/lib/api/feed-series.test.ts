@@ -60,6 +60,15 @@ describe("mergeSeries", () => {
     const merged = mergeSeries(null, [{ timestamp: "nope", v: 1 }, at(0)]);
     assert.deepEqual(merged.map((p) => p.v), [0]);
   });
+
+  // GAU-150: the history panel merges (backfill still loading, no live point yet) on mount.
+  it("returns an empty series when nothing is held and nothing arrives", () => {
+    assert.deepEqual(mergeSeries(null, []), []);
+  });
+
+  it("returns an empty series when nothing is held and nothing valid arrives", () => {
+    assert.deepEqual(mergeSeries(null, [{ timestamp: "nope", v: 1 }]), []);
+  });
 });
 
 describe("bucketMeans", () => {
