@@ -174,7 +174,7 @@ section.tight{padding-block:48px}
 /* Product page hero */
 .page-hero{padding-block:clamp(32px,5vw,64px) clamp(40px,6vw,64px)}
 /* Lockups sized by width (an SVG img with auto sizes falls back to its own 56 px height). */
-.page-hero .lockup{display:block;height:auto;width:min(100%,405px);margin:0 0 28px -8px}
+.page-hero .lockup{display:block;height:auto;width:min(100%,480px);margin:0 0 28px -8px}
 .page-hero .lockup.lockup-constellation{width:min(100%,520px)}
 .page-hero h1{max-width:20ch;margin:14px 0 18px}
 .page-hero .who{color:var(--muted);max-width:72ch}

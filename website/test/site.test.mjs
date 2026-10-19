@@ -282,7 +282,12 @@ test("production config: no Stripe secrets, no local stand-in, no test keys anyw
 
 // ---- Brand Book (15-18 Oct 2026): Turnstone v6, Constellation navy and gold, shared status colours ----
 const symbol = (f) => readFileSync(join(pub, "..", "tools", "symbols", f), "utf8");
-test("brand: Turnstone v6 and Constellation marks are the refined Design System symbols, unchanged", () => {
+test("brand: all four marks are the refined Design System symbols, unchanged, with no blur filters", () => {
+  assert.equal(read("assets/marks/lightbound-mark-colour-dark.svg"), symbol("lightbound-symbol-colour-dark.svg"));
+  assert.equal(read("assets/marks/gauss-aurora-mark-colour-dark.svg"), symbol("gauss-aurora-symbol-colour-dark.svg"));
+  for (const f of readdirSync(join(pub, "assets", "marks"))) assert.doesNotMatch(read(`assets/marks/${f}`), /<filter|feGaussianBlur/, `${f}: flat marks only`);
+  assert.match(read("assets/marks/gauss-aurora-horizontal-colour-dark.svg"), /aria-label="Gauss Aurora"/);
+  assert.match(read("assets/marks/lightbound-horizontal-colour-dark.svg"), /aria-label="Lightbound"/);
   assert.equal(read("assets/marks/turnstone-mark-colour-dark.svg"), symbol("turnstone-symbol-colour-dark.svg"));
   assert.equal(read("assets/marks/turnstone-badge-colour-dark.svg"), symbol("turnstone-badge-symbol-colour-dark.svg"));
   assert.equal(read("assets/marks/constellation-mark-colour-dark.svg"), symbol("constellation-symbol-colour-dark.svg"));

@@ -5,9 +5,8 @@ Run it again whenever the kit changes; the outputs are committed, so deploying n
 usage: <python with fonttools+brotli> website/tools/build_assets.py <Lightbound Brand Kit dir>
 Then run make_lockups.py for the Turnstone and Constellation lockups.
 
-- Marks: Lightbound and Gauss from the kit, unchanged except that the embedded C2PA manifest (<metadata>) is
-  removed (8-40 KB of base64 per file; browsers ignore it). Turnstone v6 and Constellation are the refined flat
-  symbols in tools/symbols/ (Design System, 16-18 Oct), copied unchanged. Geometry and colours untouched (kit rule).
+- Marks: the refined flat symbols for all four brands in tools/symbols/ (Design System, 16-18 Oct 2026),
+  copied unchanged; they supersede the kit's glow marks for web. Lockups come from make_lockups.py.
 - Fonts: IBM Plex Sans 400/500/600 (500 = Constellation display) and JetBrains Mono 700, subset to Latin + the punctuation the site
   uses, as woff2. SIL OFL, so self-hosting is allowed.
 - Film: the kit's 720p web loop as is; the poster is re-encoded as JPEG (macOS sips), 532 KB down to about 45 KB.
@@ -24,14 +23,11 @@ from fontTools import subset
 
 OUT = Path(__file__).resolve().parent.parent / "public" / "assets"
 
-KIT_MARKS = [
-    "marks/lightbound-mark-colour-dark.svg",
-    "lockups/lightbound-horizontal-colour-dark.svg",
-    "marks/gauss-aurora-mark-colour-dark.svg",
-    "lockups/gauss-aurora-horizontal-colour-dark.svg",
-]
+KIT_MARKS: list[str] = []  # all marks now come from tools/symbols (the kit keeps fonts, film and favicons)
 # Refined symbols (tools/symbols) -> published names.
 SYMBOLS = {
+    "lightbound-symbol-colour-dark.svg": "lightbound-mark-colour-dark.svg",
+    "gauss-aurora-symbol-colour-dark.svg": "gauss-aurora-mark-colour-dark.svg",
     "turnstone-symbol-colour-dark.svg": "turnstone-mark-colour-dark.svg",
     "turnstone-badge-symbol-colour-dark.svg": "turnstone-badge-colour-dark.svg",
     "constellation-symbol-colour-dark.svg": "constellation-mark-colour-dark.svg",
@@ -76,7 +72,7 @@ def main(kit: Path) -> None:
                    check=True, capture_output=True)
     app = kit / "2026 marks" / "app"
     shutil.copyfile(app / "lightbound-favicon.ico", OUT.parent / "favicon.ico")
-    shutil.copyfile(app / "lightbound-favicon-32.png", OUT / "lightbound-favicon-32.png")
+    # PNG/ICO favicons stay for old browsers; modern ones use the flat SVG symbols.
     shutil.copyfile(app / "lightbound-favicon-180.png", OUT / "apple-touch-icon.png")
     for f in sorted(p for p in OUT.parent.rglob("*") if p.is_file() and p.suffix in {".svg", ".woff2", ".mp4", ".jpg", ".png", ".ico"}):
         print(f"{f.stat().st_size:>8}  {f.relative_to(OUT.parent)}")

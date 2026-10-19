@@ -110,7 +110,8 @@ The Lightbound Brand Book (15 Oct 2026, with 16 and 18 Oct updates) and the Desi
 - **Shared:** black ground, warm white, IBM Plex Sans and JetBrains Mono. Status colours always come with their
   word: LIVE green #4E972F, STALE amber, SIMULATED blue #318ADA (the replay's "synthetic" chips), danger #D4673B.
   Controls have 4 px corners, cards 10 px. There are no shadows or glows outside the marks and photos.
-- **Lightbound and Gauss:** lime is the accent.
+- **Lightbound and Gauss:** lime is the accent. Both use the refined flat symbols (no blur), and Gauss keeps the two-tone "GAUSS AURORA" lockup.
+- **All four marks** are the Design System's refined symbols, copied unchanged into `tools/symbols/`. Lockups follow the Brand Book rule (symbol 56, 20 gap, Plex Medium caps; tracking Lightbound 24 %, Gauss 16 %, Turnstone 32 %, Constellation 20 %). The flat SVG symbols double as favicons.
 - **Constellation** (`body.brand-constellation`):
   - Two colours, navy #081C4D for raised surfaces and gold #B0906F as the accent, with Plex Medium display and
     wide-caps labels.
