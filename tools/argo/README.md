@@ -140,6 +140,20 @@ will fail and its breaker will open.
 - **State files are `0600` under `~/.local/state/argo`.** The Gauss token lives in `~/.config/argo/token`
   (`0600`), is read from stdin and never put on the command line.
 
+## Linux and containers
+
+Argo also builds for Linux hosts (ground stations, GalacticOS, other edge Linux) as a 9.5 MB container: no shell, non-root, read-only.
+
+```
+podman build -t argo:dev -f Containerfile .        # runs go vet and the Linux tests first
+podman run -d --name argo --network host --read-only --cap-drop ALL \
+  --security-opt no-new-privileges -v argo-state:/home/nonroot/.local/state/argo \
+  -v ./config.json:/home/nonroot/.config/argo/config.json:ro argo:dev
+podman run --rm --network host argo:dev doctor     # one-off diagnosis
+```
+
+`argo loop` (the image's default) checks every `ARGO_INTERVAL` (default 60s; the full probe still runs at most every ~5 min on a stable network). On Linux, route and gateway come from `/proc`, proxies from the environment, alerts are log lines on stdout (no Messages app, so phone texts are off), and Claude Code stale-daemon checks are skipped. `--network host` is what lets it see the host's real network.
+
 ## Tests
 
 ```bash
