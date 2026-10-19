@@ -29,11 +29,27 @@ test("separable harmonics match the generic per-pixel sum", () => {
 });
 
 test("aurora grid at nside 64 builds within its 1 s pipeline budget", () => {
-  buildAuroraGrid(point, 64); // warm up
-  const start = performance.now();
+  const budgetMs = 1000;
+  // The warm-up run doubles as the shape check.
   const { grid, harmonics } = buildAuroraGrid(point, 64);
-  const ms = performance.now() - start;
   assert.equal(grid.length, 12 * 64 * 64);
   assert.equal(harmonics.coefficients.length, 81);
-  assert.ok(ms < 1000, `took ${ms.toFixed(0)}ms`);
+
+  // Wall clock alone measures the machine: a ~25 ms build took 1.5 s during a
+  // loaded `npm test`. Each run scores min(wall, process CPU). Neither can be
+  // lower than the main thread's own work, so a real regression past the
+  // budget still fails. Scheduler waits (wall only) and parallel GC threads
+  // (CPU only) cannot fail it on their own. Best of 3 absorbs one-off spikes.
+  const runs: string[] = [];
+  for (let run = 0; run < 3; run += 1) {
+    const cpuStart = process.cpuUsage();
+    const start = performance.now();
+    buildAuroraGrid(point, 64);
+    const wallMs = performance.now() - start;
+    const cpu = process.cpuUsage(cpuStart);
+    const cpuMs = (cpu.user + cpu.system) / 1000;
+    if (Math.min(wallMs, cpuMs) < budgetMs) return;
+    runs.push(`wall ${wallMs.toFixed(0)}ms / cpu ${cpuMs.toFixed(0)}ms`);
+  }
+  assert.fail(`every run exceeded ${budgetMs}ms: ${runs.join(", ")}`);
 });

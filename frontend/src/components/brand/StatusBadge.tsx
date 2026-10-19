@@ -1,3 +1,6 @@
+/** @jsxRuntime automatic */
+// Bare `node --import tsx --test` runs miss tsconfig.app.json's react-jsx; this keeps them working.
+
 import type { ReactNode } from 'react';
 import { cn } from '@/lib/utils';
 
