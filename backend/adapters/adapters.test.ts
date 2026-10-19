@@ -169,6 +169,9 @@ test("ingest: Swarm main-field values never leak into the IMF blend", () => {
   assert.equal(input.dst, undefined);
 });
 
+// A fixed clock: the fixtures are August data, and MMS health depends on its age (GAU-63).
+const MMS_NOW = Date.parse("2026-08-20T00:00:00Z");
+
 // Shapes follow the live CDAWeb HAPI: FGM survey @0 (B, 4 components incl. |B|) and
 // MEC ephemeris at 30 s cadence.
 function mmsRoute(opts: { failing?: Set<string>; empty?: boolean; fill?: boolean } = {}): Route {
@@ -192,7 +195,7 @@ function mmsRoute(opts: { failing?: Set<string>; empty?: boolean; fill?: boolean
 }
 
 test("MMS: one spacecraft HTTP error keeps the other three (GAU-53)", async () => {
-  const samples = await withFetch(mmsRoute({ failing: new Set(["mms2"]) }), fetchMmsCdawebSamples);
+  const samples = await withFetch(mmsRoute({ failing: new Set(["mms2"]) }), () => fetchMmsCdawebSamples(MMS_NOW));
   assert.deepEqual(
     samples.map((s) => s.id),
     ["mms1", "mms3", "mms4"],
@@ -203,7 +206,7 @@ test("MMS: one spacecraft HTTP error keeps the other three (GAU-53)", async () =
 });
 
 test("MMS: native GSM B, MEC position interpolated to the B sample time", async () => {
-  const [s] = await withFetch(mmsRoute(), fetchMmsCdawebSamples);
+  const [s] = await withFetch(mmsRoute(), () => fetchMmsCdawebSamples(MMS_NOW));
   assert.deepEqual({ ...s.magneticFieldNt }, { x: 5, y: -3, z: 10 }, "|B| component is dropped");
   const f = 28.959 / 30;
   close(s.positionGsmRe.x * 6371.2, -47300 + (-100) * f, 1e-6);
@@ -211,7 +214,7 @@ test("MMS: native GSM B, MEC position interpolated to the B sample time", async 
 
 test("MMS: zero samples does not advance lastSeen to now (GAU-54)", async () => {
   const before = getMmsCdawebStatus().lastSeen;
-  const samples = await withFetch(mmsRoute({ empty: true }), fetchMmsCdawebSamples);
+  const samples = await withFetch(mmsRoute({ empty: true }), () => fetchMmsCdawebSamples(MMS_NOW));
   assert.equal(samples.length, 0);
   const status = getMmsCdawebStatus();
   assert.equal(status.lastSeen, before);
@@ -219,7 +222,7 @@ test("MMS: zero samples does not advance lastSeen to now (GAU-54)", async () => 
 });
 
 test("MMS: fill-valued components are rejected rather than zeroed", async () => {
-  const samples = await withFetch(mmsRoute({ fill: true }), fetchMmsCdawebSamples);
+  const samples = await withFetch(mmsRoute({ fill: true }), () => fetchMmsCdawebSamples(MMS_NOW));
   assert.equal(samples.length, 0);
 });
 

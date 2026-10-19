@@ -121,12 +121,15 @@ export function parseNecRow(row: unknown): { timestamp: string; n: number; e: nu
   return { timestamp: row[0], n, e, c };
 }
 
-export async function fetchEsaReadout(): Promise<ESAReadout | null> {
+/** Swarm FAST runs hours behind; a newest sample older than this is not current (GAU-63). */
+export const ESA_MAX_AGE_MS = 24 * 3_600_000;
+
+export async function fetchEsaReadout(nowMs = Date.now()): Promise<ESAReadout | null> {
   try {
     // FAST is Swarm's lowest-latency L1b product (hours behind, vs days for OPER). Query
     // the last 15 minutes the dataset actually covers.
     const stopDate = await fetchStopDate(DATASET);
-    const stop = new Date(Math.min(Date.now(), stopDate.getTime()));
+    const stop = new Date(Math.min(nowMs, stopDate.getTime()));
     const start = new Date(stop.getTime() - 15 * 60 * 1000);
     const data = (await fetchHapiDataset(DATASET, "Latitude,Longitude,Radius,B_NEC", toIso(start), toIso(stop))) as { data?: unknown[] };
 
@@ -144,12 +147,16 @@ export async function fetchEsaReadout(): Promise<ESAReadout | null> {
     }
     const { timestamp, n, e, c } = parsed;
 
+    const ageMs = nowMs - Date.parse(timestamp);
+    const current = ageMs <= ESA_MAX_AGE_MS;
     latestStatus = {
       source: SOURCE,
       lastSeen: timestamp,
-      latencySeconds: Math.max(0, (Date.now() - Date.parse(timestamp)) / 1000),
-      healthy: true,
-      message: `ESA HAPI OK (Swarm A FAST, ${((Date.now() - Date.parse(timestamp)) / 3600000).toFixed(1)} h behind)`,
+      latencySeconds: Math.max(0, ageMs / 1000),
+      healthy: current,
+      message: current
+        ? `ESA HAPI OK (Swarm A FAST, ${(ageMs / 3_600_000).toFixed(1)} h behind)`
+        : `ESA HAPI: newest Swarm A FAST sample is ${(ageMs / 3_600_000).toFixed(0)} h old (limit ${ESA_MAX_AGE_MS / 3_600_000} h)`,
     };
 
     return {
@@ -168,7 +175,7 @@ export async function fetchEsaReadout(): Promise<ESAReadout | null> {
       source: SOURCE,
       lastSeen: latestStatus.lastSeen,
       latencySeconds: latestStatus.lastSeen
-        ? Math.max(0, (Date.now() - Date.parse(latestStatus.lastSeen)) / 1000)
+        ? Math.max(0, (nowMs - Date.parse(latestStatus.lastSeen)) / 1000)
         : null,
       healthy: false,
       message: error instanceof Error ? error.message : "ESA HAPI fetch failed",

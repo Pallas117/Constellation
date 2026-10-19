@@ -29,6 +29,8 @@ export interface L1Sample {
   magneticFieldGsm: Vector3 | null;
   /** Published Bt (mean of the 1-s magnitudes), nT; null when absent. Sense-checked, GAU-136. */
   bt?: number | null;
+  /** True when no velocity vector was published and velocityGse was assumed anti-sunward (GAU-63). */
+  velocityAssumed?: boolean;
 }
 
 /**
@@ -82,6 +84,7 @@ interface WindRec {
   speed: number;
   velocityGse: Vector3;
   velocityGsm: Vector3 | null;
+  velocityAssumed: boolean;
 }
 
 interface MagRec {
@@ -105,15 +108,17 @@ export function parseWind(data: unknown): WindRec[] {
     if (t === null || density === null || speed === null) continue;
     if (density < PLAUSIBLE.densityMin || density > PLAUSIBLE.densityMax) continue;
     if (speed < PLAUSIBLE.speedMin || speed > PLAUSIBLE.speedMax) continue;
+    const published = triple(rec, "proton_v", "gse");
     out.push({
       t,
       source: String(rec.source ?? "unknown"),
       active: rec.active === true,
       density,
       speed,
-      // Without a published vector the bulk flow is taken as anti-sunward along X.
-      velocityGse: triple(rec, "proton_v", "gse") ?? vec(-speed, 0, 0),
+      // Without a published vector the bulk flow is taken as anti-sunward along X, and labelled so.
+      velocityGse: published ?? vec(-speed, 0, 0),
       velocityGsm: triple(rec, "proton_v", "gsm"),
+      velocityAssumed: published === null,
     });
   }
   return out.sort((a, b) => a.t - b.t);
@@ -194,6 +199,7 @@ export function buildL1Series(windData: unknown, magData: unknown): L1Sample[] {
       magneticFieldGse: m.gse,
       magneticFieldGsm: m.gsm,
       bt: m.bt,
+      velocityAssumed: w.velocityAssumed,
     });
   }
   return series;

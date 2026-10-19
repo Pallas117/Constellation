@@ -38,8 +38,8 @@ test("NOAA alerts: headline line, newest issue per product, last 24 h only", () 
     { productId: "K04A", issuedAt: "2026-10-19T07:39:45.267Z", headline: "ALERT: Geomagnetic K-index of 4" },
     { productId: "A20F", issuedAt: "2026-10-18T17:24:58.920Z", headline: "WATCH: Geomagnetic Storm Category G1 Predicted" },
   ]);
-  assert.equal(parseNoaaAlerts(data, NOW, 24 * 3_600_000, 1).length, 1);
-  assert.deepEqual(parseNoaaAlerts({ not: "a list" }, NOW), []);
+  assert.equal(parseNoaaAlerts(data, NOW, 24 * 3_600_000, 1)?.length, 1);
+  assert.equal(parseNoaaAlerts({ not: "a list" }, NOW), null, "not the alerts format: unknown, not 'no alerts'");
 });
 
 test("SWPC feeds: only HTTPS JSON on services.swpc.noaa.gov is fetched", async () => {
