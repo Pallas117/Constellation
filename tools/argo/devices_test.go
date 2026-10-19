@@ -11,7 +11,7 @@ import (
 const statusJSON = `{
   "Self": {"HostName": "judith", "OS": "macOS", "Online": true, "UserID": 7},
   "Peer": {
-    "a": {"HostName": "iphone-13", "OS": "iOS", "Online": false, "LastSeen": "2026-10-12T10:00:00Z", "UserID": 7},
+    "a": {"HostName": "localhost", "DNSName": "iphone-13.tail4f9ebe.ts.net.", "OS": "iOS", "Online": false, "LastSeen": "2026-10-12T10:00:00Z", "UserID": 7},
     "b": {"HostName": "pixel", "OS": "android", "Online": false, "LastSeen": "2026-10-18T09:50:00Z", "UserID": 7},
     "c": {"HostName": "merve-iphone", "OS": "iOS", "Online": false, "LastSeen": "2026-10-10T00:00:00Z", "UserID": 9},
     "d": {"HostName": "talos", "OS": "linux", "Online": false, "LastSeen": "2026-10-01T00:00:00Z", "UserID": 7},

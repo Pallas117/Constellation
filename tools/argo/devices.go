@@ -25,6 +25,7 @@ const (
 
 type tailnetDevice struct {
 	HostName string    `json:"HostName"`
+	DNSName  string    `json:"DNSName"` // "iphone-13.tailnet.ts.net."; iOS reports HostName "localhost"
 	OS       string    `json:"OS"`
 	Online   bool      `json:"Online"`
 	LastSeen time.Time `json:"LastSeen"`
@@ -56,7 +57,8 @@ func offlineDevices(raw []byte, names []string, now time.Time) []deviceAlert {
 	}
 	var out []deviceAlert
 	for _, p := range st.Peer {
-		host := strings.ToLower(p.HostName)
+		name := deviceName(p)
+		host := strings.ToLower(name)
 		phone := p.UserID == st.Self.UserID && (strings.EqualFold(p.OS, "iOS") || strings.EqualFold(p.OS, "android"))
 		if (len(want) > 0 && !want[host]) || (len(want) == 0 && !phone) || p.Online {
 			continue
@@ -68,10 +70,19 @@ func offlineDevices(raw []byte, names []string, now time.Time) []deviceAlert {
 				continue
 			}
 		}
-		out = append(out, deviceAlert{Host: p.HostName, Offline: off})
+		out = append(out, deviceAlert{Host: name, Offline: off})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Host < out[j].Host })
 	return out
+}
+
+// deviceName is the tailnet name (first label of DNSName), which is what the
+// admin console and `tailscale status` show; HostName is "localhost" on iOS.
+func deviceName(p tailnetDevice) string {
+	if n, _, _ := strings.Cut(p.DNSName, "."); n != "" {
+		return n
+	}
+	return p.HostName
 }
 
 func roughly(d time.Duration) string {
