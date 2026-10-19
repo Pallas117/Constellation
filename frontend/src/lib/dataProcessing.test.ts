@@ -6,6 +6,7 @@ import {
   canonicalToInterpolated,
   DATA_EXPIRY_MS,
   EMAInterpolator,
+  isCanonicalPoint,
   unavailableData,
 } from "./dataProcessing.ts";
 
@@ -67,4 +68,28 @@ test("unknown flux is handled by interpolation and visuals without NaN", () => {
   assert.equal(out.protonFlux, null);
   const params = calculateVisualizationParams(out);
   for (const v of Object.values(params)) assert.ok(Number.isFinite(v));
+});
+
+test("maps measured GOES particle flux, and keeps a missing channel unknown (GAU-112)", () => {
+  const reading = { value: 0.25, energy: ">=10 MeV", satellite: "GOES-18", timestamp: "2026-10-10T11:55:00.000Z" };
+  const d = canonicalToInterpolated({ ...canonical, particles: { protons: reading, electrons: null } });
+  assert.ok(d);
+  assert.equal(d.protonFlux, 0.25);
+  assert.equal(d.electronFlux, null, "missing electrons stay unknown, never 0");
+});
+
+test("only a complete canonical point counts as data; legacy or partial payloads are rejected", () => {
+  assert.equal(isCanonicalPoint(canonical), true);
+  const { quality: _quality, ...noQuality } = canonical;
+  assert.equal(isCanonicalPoint(noQuality), false, "no quality block: the landing would crash reading it");
+  const legacy = {
+    timestamp: canonical.timestamp,
+    solarWind: { speed: 425, density: 5.5, pressure: 2.4 },
+    imf: { bz: -6.2, bt: 7.4 },
+    indices: { kp: 4, dst: -40 },
+    flags: { stale: false, source: "live" },
+  };
+  assert.equal(isCanonicalPoint(legacy), false);
+  assert.equal(isCanonicalPoint(null), false);
+  assert.equal(isCanonicalPoint({ ...canonical, indices: {} }), false);
 });

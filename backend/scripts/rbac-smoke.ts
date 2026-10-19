@@ -81,7 +81,7 @@ async function requestJson(url: string, init?: RequestInit, context = "http"): P
       signal: init?.signal ?? AbortSignal.timeout(12_000),
     });
   } catch (error) {
-    throw new Error(`[${context}] fetch failed for ${url}: ${formatNetworkError(error)}`);
+    throw new Error(`[${context}] fetch failed for ${url}: ${formatNetworkError(error)}`, { cause: error });
   }
   const raw = await response.text();
   let body: unknown = null;
@@ -138,7 +138,7 @@ function buildInferencePayload() {
         magneticField: { x: 2, y: -1, z: -4, bt: 4.58 },
         electricField: { x: 0.1, y: 1.5, z: 0.2, ey: 1.5 },
         solarWind: { speed: 400, density: 5, dynamicPressure: 2.1 },
-        indices: { kp: 3, dst: -20 },
+        indices: { kp: 3, dst: -20, dstMethod: "measured", dstDerivedFrom: [] },
         coupling: { newell: 1500, epsilon: 120000000000 },
         propagation: { l1DelaySeconds: 3600, etaEarthArrival: now },
         alerts: { stormTier: "watch", reason: "RBAC smoke test sample" },

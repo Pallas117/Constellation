@@ -62,6 +62,9 @@ message CanonicalPoint {
   message Indices {
     float kp = 1;
     float dst = 2;
+    // "measured", or the model that derived dst.
+    string dst_method = 3;
+    repeated string dst_derived_from = 4;
   }
   Indices indices = 8;
 

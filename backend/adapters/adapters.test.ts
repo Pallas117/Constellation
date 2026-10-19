@@ -5,6 +5,7 @@ import { freshnessTier, IngestionWorker, NOAA_FRESH_MS, NOAA_MAX_AGE_MS } from "
 import { fetchEsaReadout, parseNecRow } from "./esa-hapi.js";
 import { getJaxaStatus, probeJaxaCatalog } from "./jaxa-erg.js";
 import { fetchMmsCdawebSamples, getMmsCdawebStatus } from "./mms-cdaweb.js";
+import { fetchMmsBurstWindows, getMmsLaspStatus } from "./mms-lasp.js";
 import { fetchNoaaReadout, swpcTimeToIso } from "./noaa-swpc.js";
 
 type Route = (url: string) => { status: number; body: unknown } | undefined;
@@ -129,7 +130,8 @@ test("ESA: queries within dataset coverage, survives bare NaN, takes last comple
       dataUrl = url;
       return {
         status: 200,
-        body: '{"data":[["2026-10-09T21:33:18.000Z", [18085.1, 2155.0, 37300.4]], ["2026-10-09T21:33:19.000Z", [18085.1283, 2154.9995, 37300.3859]], ["2026-10-09T21:41:18.000Z", [NaN, NaN, NaN]]]}',
+        // Live layout for parameters=Latitude,Longitude,Radius,B_NEC (GAU-85).
+        body: '{"data":[["2026-10-09T21:33:18.000Z", 51.2, -3.1, 6821000.0, [18085.1, 2155.0, 37300.4]], ["2026-10-09T21:33:19.000Z", 51.26, -3.08, 6821001.5, [18085.1283, 2154.9995, 37300.3859]], ["2026-10-09T21:41:18.000Z", 84.1, 85.7, 6781642.4, [NaN, NaN, NaN]]]}',
       };
     }
     return undefined;
@@ -138,7 +140,10 @@ test("ESA: queries within dataset coverage, survives bare NaN, takes last comple
   assert.equal(readout.timestamp, "2026-10-09T21:33:19.000Z");
   assert.equal(readout.magneticFieldNec.z, 37300.3859);
   assert.equal("magneticFieldGse" in readout, false);
+  assert.deepEqual(readout.position, { latitudeDeg: 51.26, longitudeDeg: -3.08, radiusKm: 6821.0015, altitudeKm: 6821.0015 - 6371.2 });
+  assert.ok(readout.fieldMagnitudeNt > 40_000, "LEO |B| is the main field, ~10^4 nT, not the ~5 nT IMF");
   const q = new URL(dataUrl).searchParams;
+  assert.equal(q.get("parameters"), "Latitude,Longitude,Radius,B_NEC");
   assert.equal(q.get("dataset"), "SW_FAST_MAGA_LR_1B");
   assert.equal(q.get("stop"), "2026-10-09T21:41:19Z", "never asks beyond stopDate (HAPI 1405)");
 });
@@ -266,7 +271,7 @@ test("ingest tick: no jitter between fetches, and an over-age readout is dropped
   };
   // Pretend every source was just fetched so the tick makes no network calls.
   const now = Date.now();
-  for (const key of ["noaa", "esa", "jaxa", "mms", "lasp", "ml-forecast"]) worker.lastFetch.set(key, now);
+  for (const key of ["noaa", "esa", "jaxa", "mms", "lasp", "kyoto-dst", "ml-forecast"]) worker.lastFetch.set(key, now);
 
   await withFetch(() => undefined, async () => {
     worker.noaa = fresh;
@@ -297,4 +302,40 @@ test("latest feed: points older than 15 min are served flagged stale (GAU-15)", 
   assert.equal(old.quality.stale, true);
   assert.equal(old.quality.tier, 3);
   assert.equal(point.quality.stale, false, "input not mutated");
+});
+
+test("LASP: valid file_info query, timetag parsed, freshness from the newest file (GAU-89)", async () => {
+  const now = Date.parse("2026-10-12T06:00:00Z");
+  let query: URLSearchParams | null = null;
+  const windows = await withFetch(
+    (url) => {
+      query = new URL(url).searchParams;
+      return {
+        status: 200,
+        body: {
+          files: [
+            { file_name: "mms1_fgm_brst_l2_20261011120000_v5.0.0.cdf", timetag: "2026-10-11T12:00:00" },
+            { file_name: "mms1_fgm_brst_l2_20261011180000_v5.0.0.cdf", timetag: "2026-10-11T18:00:00" },
+            { file_name: "bad", timetag: "not a time" },
+          ],
+        },
+      };
+    },
+    () => fetchMmsBurstWindows(now),
+  );
+  const q = query as unknown as URLSearchParams;
+  assert.equal(q.get("data_level"), "l2", "the API rejects `level` with HTTP 400");
+  assert.equal(q.has("level"), false);
+  assert.ok(q.get("end_date")! > q.get("start_date")!, "end_date is exclusive");
+  assert.equal(q.get("end_date"), "2026-10-13");
+  assert.deepEqual(windows.map((w) => w.start), ["2026-10-11T12:00:00.000Z", "2026-10-11T18:00:00.000Z"]);
+  assert.ok(windows.every((w) => w.end === null), "no invented end times");
+  const status = getMmsLaspStatus();
+  assert.equal(status.lastSeen, "2026-10-11T18:00:00.000Z", "lastSeen is the newest file, not now");
+  assert.equal(status.latencySeconds, 12 * 3600);
+  assert.equal(status.healthy, true);
+
+  await withFetch(() => ({ status: 200, body: { files: [] } }), () => fetchMmsBurstWindows(now));
+  assert.equal(getMmsLaspStatus().healthy, false);
+  assert.equal(getMmsLaspStatus().lastSeen, "2026-10-11T18:00:00.000Z", "an empty answer keeps the last real lastSeen");
 });

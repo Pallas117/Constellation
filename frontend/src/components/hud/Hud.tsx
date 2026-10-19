@@ -8,11 +8,6 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import type { FeedMode } from "@/lib/physics/live-drivers";
 import { cn } from "@/lib/utils";
 
-export const fmt = (v: number | null | undefined, digits = 1) =>
-  typeof v === "number" && Number.isFinite(v) ? v.toFixed(digits) : "—";
-export const signed = (v: number | null | undefined, digits = 1) =>
-  typeof v === "number" && Number.isFinite(v) ? `${v > 0 ? "+" : ""}${v.toFixed(digits)}` : "—";
-
 export type Tone = "default" | "caution" | "risk" | "signal";
 const TONE: Record<Tone, string> = {
   default: "text-foreground",
@@ -200,7 +195,7 @@ export function FeedStatus({ mode, ageMin, className }: { mode: FeedMode; ageMin
 }
 
 /** Colour key for the scene, shown in a popover. */
-export const SCENE_KEY: { label: string; swatch: string }[] = [
+const SCENE_KEY: { label: string; swatch: string }[] = [
   { label: "Closed field line", swatch: "bg-gradient-to-r from-foreground to-earth" },
   { label: "Open to solar wind", swatch: "bg-gradient-to-r from-caution to-sun" },
   { label: "Magnetopause", swatch: "bg-earth" },
