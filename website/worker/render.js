@@ -192,6 +192,18 @@ export function renderIcs(rec, now = Date.now()) {
 }
 
 // ---- Gauss plans (from tiers.js, priced from the sales plan) ----
+// Support Constellation: a Stripe Payment Link (SUPPORT_URL in wrangler.jsonc vars; not a secret). The block
+// stays hidden until a well-formed link is set. Contributions go to Lightbound Limited: not a charity donation.
+const SUPPORT = /^https:\/\/(buy|donate)\.stripe\.com\/[A-Za-z0-9_-]{6,}$/;
+export const supportLink = (url) => (SUPPORT.test(url ?? "") ? url : "");
+export function renderSupport(url) {
+  const href = supportLink(url);
+  return href
+    ? `<div class="support"><p class="label">SUPPORT</p><h3>Help keep it free.</h3><p>Constellation is free and non-commercial. If you'd like to help keep it running, chip in whatever you like. ` +
+      `It's optional and changes nothing about membership.</p><p class="actions"><a class="btn ghost" href="${esc(href)}" rel="noopener">Support Constellation</a></p></div>`
+    : "";
+}
+
 export function renderPlans() {
   const cards = TIERS.map((t) => {
     const first = t.id === "pilot";

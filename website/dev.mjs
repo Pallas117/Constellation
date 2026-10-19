@@ -112,6 +112,7 @@ const env = {
   STRIPE_API_BASE: `http://127.0.0.1:${port}/__stripe`,
   STRIPE_SECRET_KEY: "dev-local-placeholder",
   STRIPE_WEBHOOK_SECRET: "dev-local-webhook-placeholder",
+  SUPPORT_URL: process.env.SUPPORT_URL ?? "", // e.g. SUPPORT_URL=https://buy.stripe.com/test_... npm run site:dev
 };
 const admin = String(env.ADMIN_EMAILS).split(",")[0].trim();
 const ctx = { waitUntil: (p) => Promise.resolve(p).catch((e) => console.error(e)), passThroughOnException() {} };
@@ -126,6 +127,7 @@ await putAccount(env, { email: "member@example.test", name: "Grace Example", com
   const d = new Date(Date.now() + 3 * 86_400_000); d.setUTCHours(13, 0, 0, 0);
   await saveCall(env, { title: "Monthly members' call", start: d.toISOString(), minutes: 60, capacity: 12, link: "https://meet.example.test/constellation", notes: "Launch round-up and ASTRA VIGILIS planning." });
 }
+await saveApplication(env, { kind: "argo", name: "Kai Example", email: "kai@example.test", interest: "Both", platform: "macOS", devices: "2–5", note: "Hotel and airport Wi-Fi keep breaking our calls.", consent: true });
 await saveApplication(env, { kind: "constellation", name: "Ada Example", email: "ada@example.test", role: "Satellite operations engineer", link: "https://example.test/ada", message: "I run ground passes for a small LEO fleet and track debris conjunctions in my spare time.", consent: true });
 await saveApplication(env, { kind: "gauss", name: "Ops Example", email: "ops@example.test", org: "Example Space Ltd", role: "Head of mission operations", missionType: "Earth observation", stage: "Launched and operating", groundStack: "Yamcs / XTCE", dataAccess: "Historical packet archive", plan: "pilot", timeline: "This quarter", message: "We fly ONNX models on two smallsats and want to know which outputs to trust after the May storm.", consent: true });
 

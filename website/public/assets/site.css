@@ -92,7 +92,7 @@ section.tight{padding-block:48px}
 .section-head h2{margin-bottom:0}
 
 /* Doors */
-.doors{list-style:none;margin:20px 0 0;padding:0;display:grid;gap:16px;grid-template-columns:repeat(auto-fit,minmax(min(100%,300px),1fr))}
+.doors{list-style:none;margin:20px 0 0;padding:0;display:grid;gap:16px;grid-template-columns:repeat(auto-fit,minmax(min(100%,240px),1fr))}
 .door{position:relative;display:grid;align-content:start;gap:10px;height:100%;padding:24px;border:1px solid var(--char);border-radius:var(--radius);
   background:var(--panel);color:var(--warm);text-decoration:none;transition:border-color .2s,transform .2s}
 .door:hover{border-color:rgba(243,240,232,.5);color:var(--warm)}
@@ -179,6 +179,11 @@ section.tight{padding-block:48px}
 .page-hero h1{max-width:20ch;margin:14px 0 18px}
 .page-hero .who{color:var(--muted);max-width:72ch}
 .page-hero .who strong{color:var(--warm)}
+.page-hero .mark-lg{display:block;width:72px;height:72px;margin:0 0 22px}
+.support{margin-top:28px;padding:22px;border:1px solid var(--char);border-radius:var(--radius);background:var(--panel);max-width:64ch}
+.support h3{margin:8px 0 6px}
+.support p:not(.label){color:var(--muted);margin:0}
+.support .actions{margin-top:16px}
 
 /* Turnstone: nothing to see here */
 .vault{min-height:calc(100svh - 74px);display:grid;place-items:center;text-align:center;padding-block:64px}
@@ -383,6 +388,7 @@ footer p{margin:0 0 6px}
 .vt-gauss{view-transition-name:mark-gauss}
 .vt-constellation{view-transition-name:mark-constellation}
 .vt-turnstone{view-transition-name:mark-turnstone}
+.vt-argo{view-transition-name:mark-argo}
 
 @media (max-width:560px){
   .brand img{height:32px}

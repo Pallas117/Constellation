@@ -504,6 +504,38 @@ test("admin: only ADMIN_EMAILS; approval needs a quote inside the published rang
   assert.equal((await listApplications(env))[0].status, "approved");
 });
 
+test("argo: the early-access list is stored like other applications; marking it contacted creates no account", async () => {
+  const { env, access } = await appEnv();
+  const res = await send(env, post("/api/apply", { kind: "argo", name: "Ops Example", email: "ops@example.test", interest: "Both", platform: "Linux", devices: "6–25", note: "Hotel Wi-Fi blocks our ground-station VPN.", consent: "yes" }));
+  assert.equal(res.headers.get("location"), "/argo/apply/?sent=1");
+  const page = await (await send(env, new Request("https://lightbound.uk/argo/apply/?sent=1"))).text();
+  assert.match(page, /You're on the Argo list\./);
+  const bad = await send(env, post("/api/apply", { kind: "argo", name: "Ops", email: "ops@example.test", interest: "Free VPN", platform: "macOS", devices: "1", consent: "yes" }, { "cf-connecting-ip": "203.0.113.10" }));
+  assert.equal(bad.status, 422, "only the listed options");
+  const admin = await (await send(env, await as(access, "boss@example.test", "/app/admin/"))).text();
+  assert.match(admin, /ARGO · EARLY ACCESS AND RELAY WAITLIST/);
+  assert.match(admin, /Both · Linux · 6–25 devices/);
+  assert.match(admin, /Hotel Wi-Fi blocks/);
+  const [app] = await listApplications(env);
+  await send(env, await formPost(access, "boss@example.test", "/app/admin/decide", { id: app.id, decision: "approve" }));
+  assert.equal((await listApplications(env))[0].status, "approved");
+  assert.equal(await getAccount(env, "ops@example.test"), null, "no account or membership from the Argo list");
+});
+
+test("support: Constellation shows a Support link only once a Stripe Payment Link is set", async () => {
+  const { env, access } = await appEnv();
+  const page = async (e) => (await send(e, new Request("https://lightbound.uk/constellation/"))).text();
+  assert.doesNotMatch(await page(env), /Support Constellation/, "hidden while unset");
+  assert.doesNotMatch(await page({ ...env, SUPPORT_URL: "https://evil.example/pay" }), /Support Constellation/, "only Stripe Payment Links");
+  const set = { ...env, SUPPORT_URL: "https://buy.stripe.com/test_00abc123" };
+  const html = await page(set);
+  assert.match(html, /<a class="btn ghost" href="https:\/\/buy\.stripe\.com\/test_00abc123" rel="noopener">Support Constellation<\/a>/);
+  assert.match(html, /optional and changes nothing about membership/);
+  assert.doesNotMatch(html, /donat/i, "a contribution to a company, not a charity donation");
+  await putAccount(set, { email: "member@example.test", community: "member" }, "test");
+  assert.match(await (await send(set, await as(access, "member@example.test", "/app/"))).text(), /Support Constellation<\/a> \(optional\)/);
+});
+
 test("admin: Constellation invitations are free memberships with a draft email, never sent automatically", async () => {
   const { env, access } = await appEnv();
   const res = await send(env, await formPost(access, "boss@example.test", "/app/admin/invite", { email: "Grace@Example.test", name: "Grace" }));

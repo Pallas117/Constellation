@@ -17,7 +17,7 @@ const text = (s) => s.replace(/<!--[\s\S]*?-->/g, " ").replace(/<[^>]+>/g, " ").
 const PAGES = { "/": "index.html", "/gauss/": "gauss/index.html", "/constellation/": "constellation/index.html", "/turnstone/": "turnstone/index.html", "/404": "404.html",
   "/gauss/apply/": "gauss/apply/index.html", "/constellation/apply/": "constellation/apply/index.html", "/privacy/": "privacy/index.html",
   "/app/": "app/index.html", "/app/admin/": "app/admin/index.html", "/gauss/evidence/": "gauss/evidence/index.html",
-  "/constellation/time/": "constellation/time/index.html" };
+  "/constellation/time/": "constellation/time/index.html", "/argo/": "argo/index.html", "/argo/apply/": "argo/apply/index.html" };
 const html = Object.fromEntries(Object.entries(PAGES).map(([route, f]) => [route, read(f)]));
 const API_ROUTES = new Set(["/api/launches", "/api/launches.ics", "/api/space-weather", "/api/health", "/cdn-cgi/access/logout"]);
 
@@ -151,7 +151,8 @@ test("live sections have their markers, with a working static fallback", () => {
 // ---- Flow ----
 test("flow: no dead ends; each product page ends with the other doors, Turnstone leads home", () => {
   const doors = (p) => [...p.matchAll(/<a class="door" href="([^"]+)"/g)].map((m) => m[1]);
-  assert.deepEqual(doors(html["/"]), ["/gauss/", "/constellation/", "/turnstone/"]);
+  assert.deepEqual(doors(html["/"]), ["/gauss/", "/constellation/", "/turnstone/", "/argo/"]);
+  assert.deepEqual(doors(html["/argo/"]), ["/gauss/", "/constellation/"]);
   assert.deepEqual(doors(html["/gauss/"]), ["/constellation/", "/turnstone/"]);
   assert.deepEqual(doors(html["/constellation/"]), ["/gauss/", "/turnstone/"]);
   assert.match(html["/turnstone/"], /<a class="btn ghost" href="\/">Back to Lightbound<\/a>/);
@@ -274,6 +275,20 @@ test("customer copy never says how payment is taken (the privacy notice still na
   for (const page of [...pages, renderPlans(), renderApplyForm("gauss")].map(text))
     assert.doesNotMatch(page, /stripe|securely|card details|bank transfer/i);
   assert.match(read("privacy/index.html"), /Stripe/, "processors stay disclosed");
+});
+
+test("Argo: says what runs today, calls the relay unavailable, and makes no grade claims", () => {
+  const argo = text(html["/argo/"]);
+  assert.match(argo, /Built like a spacecraft/i);
+  assert.match(html["/argo/"], /It isn&rsquo;t available yet\./, "the private relay is not built");
+  assert.match(argo, /TLS verification is never disabled\./);
+  assert.match(argo, /Windows/, "says what it doesn't run on yet");
+  for (const rx of [/space[- ]grade/i, /space[- ]qualified/i, /military[- ]grade/i, /mission[- ]grade/i, /untraceable/i, /unhackable/i, /certified/i, /compliant/i, /\bVPN\b/, /£|\$\d/])
+    assert.doesNotMatch(argo + text(html["/argo/apply/"]), rx, `found ${rx}`);
+  assert.match(html["/argo/apply/"], /<input type="hidden" name="kind" value="argo">/);
+  assert.match(html["/argo/apply/"], /<button class="btn" type="submit">Join the list<\/button>/);
+  assert.match(read("assets/marks/argo-glyph-provisional.svg"), /provisional glyph, not yet in the Brand Book/, "until the Brand Book adds Argo");
+  assert.match(html["/privacy/"], /join the Argo list/);
 });
 
 test("Constellation is free and invite-only: no prices, no payment, invitation wording", () => {

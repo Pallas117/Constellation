@@ -6,13 +6,15 @@ JavaScript, no third-party requests, and no secrets.
 
 | Page | What it is |
 |---|---|
-| `/` | Hero: the brand kit's ray-traced black-hole film. Doors show live data: Gauss shows space weather now, Constellation shows the next launch, Turnstone is classified. |
+| `/` | Hero: the brand kit's ray-traced black-hole film, then the descent (below). Doors show live data: Gauss shows space weather now, Constellation shows the next launch, Turnstone is classified, Argo leads to early access. |
 | `/gauss/` | The GAU-12 evidence-first Gauss page. It leads with Fleet Integration and has an on-page menu. A script-free **replay demo** walks one synthetic storm through the nominal, degraded, abstain, unknown and blocked states, labelled as screening evidence. Also: claims and boundaries, plans and prices, CCSDS/XTCE/Yamcs/ONNX fit, team. Ends with the other doors. |
 | `/gauss/evidence/` | A synthetic **sample evidence report**: record states, decisions, unknowns and limits, provenance. Clearly labelled; not a mission record. |
 | `/constellation/` | The community: next 10 launches worldwide, space weather now, a calendar feed, intel rules, and how to join. Ends with the other doors. |
 | `/turnstone/` | Mark and "Classified." only (secret project; `noindex`). |
 | `/gauss/apply/` | Pilot brief in the sales plan's three steps (fit, readiness, pilot brief). Plan links preselect the package. |
 | `/constellation/apply/` | Request an invitation. Constellation is free and invite-only; there is no payment anywhere on its side. |
+| `/argo/` | Argo, the self-healing connectivity agent, "built like a spacecraft": what it catches, how it works, its security rules, where it runs, the private relay (in development, not available) and plans (price TBC). |
+| `/argo/apply/` | The Argo list: early access, the private-relay waitlist, or both. Stored like other applications; "Mark contacted" in admin creates no account. |
 | `/app/` | Signed-in workspace: quote and payment (card, or an invoice where you allow it), billing state, pilot progress, space weather, Constellation membership. |
 | `/app/admin/` | For `ADMIN_EMAILS`: approve with a quote, set plan, billing, pilot step; invite Constellation members (free). |
 | `/constellation/time/` | Public time-zone planner. Pick a date and up to 8 zones to see the local hour everywhere, with the hours that suit everyone outlined. A picked hour comes with a calendar file. No data is stored. |
@@ -110,6 +112,26 @@ invoice for the quote (Fleet Integration: 12 months) and Stripe emails it, with 
   Nothing is sent by the site, and no messaging service or token is involved. The text never includes the call link, which goes only to members who book.
 
 **Friends of Constellation:** the xOrbita, Pan Galactic Corporation and Aphelion Industries logos sit on the Constellation page. They're shown as supplied, link to each site, and show their names on hover or focus (always on touch screens). They're labelled neutrally, with no partnership claim. Pallas confirmed permission to show all three (19 Oct 2026).
+
+**Argo** (early access). Every claim on `/argo/` comes from Argo's own README and code on main (`tools/argo`):
+the fault classes, the security rules, the Mac agent and the Linux container. The private relay is the two-hop
+design from the "Lightbound Private Connectivity" brief. It is described as in development and not available,
+and as launching only after an outside security review and legal checks (that brief's phase 2 and 3 gates).
+A test keeps out grade or anonymity claims ("space grade", "mission-grade", "untraceable", "certified",
+"VPN") and prices. The Argo glyph in `assets/marks/argo-glyph-provisional.svg` is provisional until the Brand
+Book adds Argo.
+
+**Support Constellation.** The Constellation page (Join section) and a member's workspace show a "Support
+Constellation" link once `SUPPORT_URL` in `wrangler.jsonc` vars holds a Stripe Payment Link. While it's empty,
+nothing shows. Only `https://buy.stripe.com/…` or `https://donate.stripe.com/…` links are accepted. To set it up:
+1. In the Stripe Dashboard, create a Payment Link for a product such as "Support Constellation", with
+   "Let customers choose what to pay".
+2. Paste the link into `SUPPORT_URL`; it isn't a secret.
+3. Deploy.
+
+The money is income to Lightbound Limited, not a charitable donation (no Gift Aid), so the page never says
+"donate". The VAT treatment of voluntary contributions is UNVERIFIED: ask the accountant. Locally, run
+`SUPPORT_URL=https://buy.stripe.com/test_… npm run site:dev`.
 
 **Constellation** is free and invite-only. People can request an invitation, or you invite them
 from the admin page. Inviting creates the membership and gives you a draft email to send yourself;

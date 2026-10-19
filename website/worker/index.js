@@ -3,14 +3,14 @@
 //   /                       landing: the Gauss door shows space weather now, Constellation the next launch
 //   /gauss/                 plans (from tiers.js) and the Constellation door's next launch
 //   /constellation/         launch schedule, space weather, and the Gauss door's readout
-//   /gauss/apply/, /constellation/apply/   application forms (plan preselected, "received" state)
+//   /gauss/apply/, /constellation/apply/, /argo/apply/   application forms (plan preselected, "received" state)
 //   /constellation/time/    public time-zone planner for group calls (no data stored)
 //   /app/*                  signed-in workspace and admin (Cloudflare Access in front; see app.js)
 //   /api/*                  launches.json, launches.ics, space-weather.json, health, POST apply,
 //                           POST stripe/webhook (signed by Stripe; unlocks paid plans)
 // and on the cron trigger, which refreshes the feeds into KV. Nothing here needs a secret.
 import { FEEDS, feedState, readFeed, refreshFeeds } from "./feeds.js";
-import { renderConstellationDoor, renderEventIcs, renderGaussDoor, renderIcs, renderLaunches, renderPlans, renderWeather } from "./render.js";
+import { renderConstellationDoor, renderEventIcs, renderGaussDoor, renderIcs, renderLaunches, renderPlans, renderSupport, renderWeather } from "./render.js";
 import { plannerParams, renderPlanner } from "./timezones.js";
 import { handleApply, renderApplyForm, renderSent } from "./forms.js";
 import { handleApp } from "./app.js";
@@ -27,10 +27,12 @@ const LIVE_PAGES = {
     launches: (f, t) => renderLaunches(f.launches, t),
     weather: (f, t) => renderWeather(f.weather, t),
     "gauss-door": (f, t) => renderGaussDoor(f.weather, t),
+    support: (f, t, url, env) => renderSupport(env.SUPPORT_URL),
   }),
   "/constellation/time/": () => ({ planner: (f, t, url) => renderPlanner(plannerParams(url, t)) }),
   "/gauss/apply/": applyPage("gauss"),
   "/constellation/apply/": applyPage("constellation"),
+  "/argo/apply/": applyPage("argo"),
 };
 const NEEDS_FEEDS = new Set(["/", "/gauss/", "/constellation/"]);
 const ATTRIBUTION = {
@@ -132,7 +134,7 @@ export default {
     if (Object.hasOwn(LIVE_PAGES, pathname)) {
       const feeds = NEEDS_FEEDS.has(pathname) ? await readAll(env, ctx) : {};
       const now = Date.now();
-      const renders = Object.fromEntries(Object.entries(LIVE_PAGES[pathname]()).map(([k, r]) => [k, () => r(feeds, now, url)]));
+      const renders = Object.fromEntries(Object.entries(LIVE_PAGES[pathname]()).map(([k, r]) => [k, () => r(feeds, now, url, env)]));
       const extra = pathname.endsWith("/apply/") ? { "cache-control": "no-store" } : undefined;
       return pageFiller(request, env)(pathname, renders, 200, extra);
     }

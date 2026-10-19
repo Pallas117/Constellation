@@ -1,5 +1,6 @@
-// Applications: "Request an invitation" for Constellation (free, invite-only) and the Gauss pilot
-// brief (the sales plan's onboarding: fit, readiness, pilot brief). Plain HTML forms that post to
+// Applications: "Request an invitation" for Constellation (free, invite-only), the Gauss pilot
+// brief (the sales plan's onboarding: fit, readiness, pilot brief) and Argo early access (with the
+// private-relay waitlist). Plain HTML forms that post to
 // /api/apply, so they work without JavaScript. The server validates everything, drops bots (a
 // hidden honeypot field plus a per-IP hourly limit) and uses post/redirect/get, so a refresh never
 // resubmits. No personal data ever goes into a URL.
@@ -24,6 +25,10 @@ const FIELD = {
   plan: { label: "Package", type: "select", options: PLANS, required: true },
   timeline: { label: "Target start", type: "select", options: opts("This quarter", "Next quarter", "Later"), required: true },
   message: { label: "Message", type: "textarea", min: 20, max: 2000, required: true },
+  interest: { label: "What you'd like", type: "select", options: opts("Argo: early access", "Private relay: waitlist", "Both"), required: true },
+  platform: { label: "Main platform", type: "select", options: opts("macOS", "Linux", "Windows", "iPhone", "Android"), required: true },
+  devices: { label: "How many devices", type: "select", options: opts("1", "2–5", "6–25", "More than 25"), required: true },
+  note: { label: "What breaks your connection today? (optional)", type: "textarea", max: 500, required: false },
 };
 
 // Gauss follows the onboarding flow in the sales plan: fit, readiness, pilot brief.
@@ -42,19 +47,25 @@ export const KINDS = Object.freeze({
     labels: { role: "What you work on", message: "Why you'd like to join" },
     button: "Request an invitation",
   },
+  argo: {
+    steps: [{ fields: ["name", "email", "interest", "platform", "devices", "note"] }],
+    labels: {},
+    button: "Join the list",
+  },
 });
 const fieldsOf = (kind) => KINDS[kind].steps.flatMap((st) => st.fields);
 
 const label = (kind, f) => KINDS[kind].labels[f] ?? FIELD[f].label;
 const SHORT = { name: "name", email: "email", org: "company", role: "role", referrer: "referral", link: "link", missionType: "mission type", stage: "programme stage",
-  groundStack: "ground stack", dataAccess: "evidence", plan: "package", timeline: "target start", message: "message", consent: "privacy agreement" };
+  groundStack: "ground stack", dataAccess: "evidence", plan: "package", timeline: "target start", message: "message", consent: "privacy agreement",
+  interest: "what you'd like", platform: "platform", devices: "devices", note: "note" };
 
 function control(kind, f, value, error) {
   const d = FIELD[f];
   const id = `f-${f}`;
   const common = `id="${id}" name="${f}"${d.required ? " required" : ""}${error ? ` aria-invalid="true" aria-describedby="${id}-err"` : ""}`;
   let input;
-  if (d.type === "textarea") input = `<textarea ${common} rows="6" minlength="${d.min}" maxlength="${d.max}">${esc(value)}</textarea>`;
+  if (d.type === "textarea") input = `<textarea ${common} rows="${d.min ? 6 : 3}"${d.min ? ` minlength="${d.min}"` : ""} maxlength="${d.max}">${esc(value)}</textarea>`;
   else if (d.type === "select") {
     const cur = d.options.some(([v]) => v === value) ? value : d.options[0][0]; // unknown value (e.g. in a link): first option
     input = `<select ${common}>${d.options.map(([v, l]) => `<option value="${esc(v)}"${v === cur ? " selected" : ""}>${esc(l)}</option>`).join("")}</select>`;
@@ -83,13 +94,15 @@ export function renderApplyForm(kind, values = {}, errors = {}) {
   );
 }
 
+const SENT = {
+  gauss: ["Thank you. Your pilot brief is with the Lightbound team.", "If it's a fit, we'll reply with a fixed quote. Once approved, you sign in to pay and start.", "/gauss/", "Back to Gauss"],
+  constellation: ["Thank you. Your request is with the Constellation team.", "Membership is free and by invitation. If it's a fit, you'll receive an invitation by email.", "/constellation/", "Back to Constellation"],
+  argo: ["Thank you. You're on the Argo list.", "We'll email you when early access opens, with the price, before anything starts.", "/argo/", "Back to Argo"],
+};
+
 export function renderSent(kind) {
-  const [title, next] = kind === "gauss"
-    ? ["Thank you. Your pilot brief is with the Lightbound team.", `<a class="btn ghost" href="/gauss/">Back to Gauss</a>`]
-    : ["Thank you. Your request is with the Constellation team.", `<a class="btn ghost" href="/constellation/">Back to Constellation</a>`];
-  const lead = kind === "gauss"
-    ? "If it's a fit, we'll reply with a fixed quote. Once approved, you sign in to pay and start."
-    : "Membership is free and by invitation. If it's a fit, you'll receive an invitation by email.";
+  const [title, lead, href, back] = SENT[kind];
+  const next = `<a class="btn ghost" href="${href}">${back}</a>`;
   return `<div class="sent" role="status"><p class="k">RECEIVED</p><h2>${title}</h2><p class="lead">${lead}</p><p class="actions">${next}</p></div>`;
 }
 

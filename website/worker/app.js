@@ -6,7 +6,7 @@ import { accessIdentity, isAdmin } from "./auth.js";
 import { deleteAccount, getAccount, getApplication, listAccounts, listApplications, putAccount, setApplicationStatus } from "./data.js";
 import { sameOrigin } from "./forms.js";
 import { readFeed } from "./feeds.js";
-import { esc, renderEventIcs, renderGaussDoor } from "./render.js";
+import { esc, renderEventIcs, renderGaussDoor, supportLink } from "./render.js";
 import { deleteCall, getCall, listCalls, renderCalls, renderCallsAdmin, rsvp, saveCall } from "./calls.js";
 import { isZone, zonedToUtc } from "./timezones.js";
 import { APP_CSP } from "./headers.js";
@@ -49,13 +49,14 @@ function billingCard(account, tier) {
   return `<article class="tile billing"><h2 class="label">Billing</h2><p class="big">${esc(quote)}</p><p class="t">${esc(BILLING[status] ?? status)}</p>${body}</article>`;
 }
 
-function memberCard() {
+function memberCard(supportUrl = "") {
   return `<article class="tile"><h2 class="label">Constellation</h2><p class="big">Member</p><p class="t">Free, by invitation.</p>` +
     `<p class="m">Community channels are shared with members directly. Launch calendar: <a href="/api/launches.ics">subscribe</a>.</p>` +
+    (supportLink(supportUrl) ? `<p class="m"><a href="${esc(supportUrl)}" rel="noopener">Support Constellation</a> (optional)</p>` : "") +
     `<p class="m"><a href="/constellation/">Constellation</a></p></article>`;
 }
 
-export function renderWorkspace({ email, account, admin, weather, consoleUrl, applications = [], notice = "" }) {
+export function renderWorkspace({ email, account, admin, weather, consoleUrl, supportUrl = "", applications = [], notice = "" }) {
   const tier = tierById(account?.tier);
   const who = esc(account?.name || email);
   const adminLink = admin ? `<p class="actions"><a class="btn ghost" href="/app/admin/">Applications and accounts</a></p>` : "";
@@ -73,7 +74,7 @@ export function renderWorkspace({ email, account, admin, weather, consoleUrl, ap
       ? `<p class="lead">Your application from ${esc(day(pending[0].at))} is with the Lightbound team. You'll hear from us by email.</p>`
       : `<p class="lead">You're signed in as ${esc(email)}.${member ? "" : " This account has no Gauss plan yet."}</p>`;
     return `<p class="k">00_WORKSPACE</p><h1 id="hero-h">Welcome, ${who}.</h1>${bannerHtml}${status}` +
-      (member ? `<div class="tiles">${memberCard()}</div>` : "") +
+      (member ? `<div class="tiles">${memberCard(supportUrl)}</div>` : "") +
       `<p class="actions"><a class="btn${member ? " ghost" : ""}" href="/gauss/#plans">See the Gauss plans</a>${pending.length ? "" : ` <a class="btn ghost" href="/gauss/apply/">Apply</a>`}</p>${adminLink}`;
   }
   const open = unlocked(billingStatus(account));
@@ -89,7 +90,7 @@ export function renderWorkspace({ email, account, admin, weather, consoleUrl, ap
     `<div class="tiles">${billingCard(account, tier)}` +
     (open ? `<article class="tile"><h2 class="label">Pilot</h2>${account.pilot ? pilotTrack(account.pilot) : `<p class="m">Not started. We'll set this up with you.</p>`}</article>` : "") +
     `<article class="tile"><h2 class="label">Space environment</h2>${renderGaussDoor(weather) || `<p class="m">Space-weather data is unavailable right now.</p>`}</article>` +
-    (member ? memberCard() : "") + `</div>` +
+    (member ? memberCard(supportUrl) : "") + `</div>` +
     `<div class="two plan-lists"><div><h2 class="label">${open ? "Included" : "What you get"}: ${esc(tier.name)}</h2><ul class="ticks">${list(tier.features)}</ul></div>` +
     (next ? `<div><h2 class="label">Next: ${esc(next.name)}</h2><ul class="locked">${list(next.features.filter((f) => !tier.features.includes(f)))}</ul><p class="m">${esc(next.entry)} Planning range: ${esc(priceLabel(next))}.</p></div>` : "") +
     `</div><p class="actions"><a class="btn ghost" href="mailto:jzwnathan@lightbound.uk?subject=${encodeURIComponent(`Gauss ${tier.name}`)}">Email your Lightbound contact</a></p>` +
@@ -118,15 +119,17 @@ export function renderAdmin({ applications, accounts, details, invited, error })
   const card = (a) => {
     const d = details[a.id] ?? {};
     const planId = tierById(a.plan) ? a.plan : "pilot";
-    const facts = [d.org, d.role, d.missionType, d.stage, d.groundStack, d.dataAccess, d.timeline, d.referrer ? `referred by ${d.referrer}` : "", d.link].filter(Boolean).join(" · ");
+    const facts = [d.org, d.role, d.missionType, d.stage, d.groundStack, d.dataAccess, d.timeline, d.interest, d.platform, d.devices ? `${d.devices} devices` : "",
+      d.referrer ? `referred by ${d.referrer}` : "", d.link].filter(Boolean).join(" · ");
     const decide = a.status === "new"
       ? `<form method="post" action="/app/admin/decide" class="inline"><input type="hidden" name="id" value="${esc(a.id)}">` +
-        (a.kind === "gauss" ? `${tierSelect(planId)} ${quoteInput(0)} ${invoiceCheck(false, `inv-${esc(a.id)}`)}` : `<input type="hidden" name="community" value="member">`) +
-        `<button class="btn" name="decision" value="approve">${a.kind === "gauss" ? "Approve with quote" : "Invite"}</button> <button class="btn ghost" name="decision" value="decline">Decline</button></form>`
+        (a.kind === "gauss" ? `${tierSelect(planId)} ${quoteInput(0)} ${invoiceCheck(false, `inv-${esc(a.id)}`)}` : a.kind === "constellation" ? `<input type="hidden" name="community" value="member">` : "") +
+        `<button class="btn" name="decision" value="approve">${{ gauss: "Approve with quote", constellation: "Invite", argo: "Mark contacted" }[a.kind] ?? "Approve"}</button> <button class="btn ghost" name="decision" value="decline">Decline</button></form>`
       : `<span class="tag${a.status === "approved" ? " go" : ""}">${esc(a.status)}</span>`;
-    return `<li class="app-card"><div class="app-head"><span class="label">${esc(a.kind === "gauss" ? `GAUSS · ${tierById(a.plan)?.name ?? a.plan ?? ""}` : "CONSTELLATION · INVITATION REQUEST")}</span><time datetime="${esc(a.at)}">${esc(day(a.at))}</time></div>` +
+    const kicker = { gauss: `GAUSS · ${tierById(a.plan)?.name ?? a.plan ?? ""}`, constellation: "CONSTELLATION · INVITATION REQUEST", argo: "ARGO · EARLY ACCESS AND RELAY WAITLIST" }[a.kind] ?? a.kind;
+    return `<li class="app-card"><div class="app-head"><span class="label">${esc(kicker)}</span><time datetime="${esc(a.at)}">${esc(day(a.at))}</time></div>` +
       `<h3>${esc(a.name)} <span class="muted">${esc(a.email)}</span></h3>${facts ? `<p class="m">${esc(facts)}</p>` : ""}` +
-      (d.message ? `<p class="msg">${esc(d.message)}</p>` : "") + decide + `</li>`;
+      (d.message || d.note ? `<p class="msg">${esc(d.message || d.note)}</p>` : "") + decide + `</li>`;
   };
   const rows = accounts.map((u, i) => {
     const status = u.billing ? billingStatus({ tier: u.tier, billing: { status: u.billing, dueAt: u.dueAt, paidUntil: u.paidUntil } }) : null;
@@ -238,7 +241,7 @@ export async function handleApp(request, env, url, { respond, fillPage, fetchImp
       const approve = form.get("decision") === "approve";
       if (approve && app.kind === "gauss" && (!tier || (tier.billing !== "invoice" && quoteFrom(form, tier) === null))) return back("/app/admin/?error=quote");
       await setApplicationStatus(env, app, approve ? "approved" : "declined", id.email);
-      if (approve) {
+      if (approve && app.kind !== "argo") { // Argo: a list for now; "Mark contacted" changes no account
         const prev = (await getAccount(env, app.email)) ?? { email: app.email };
         const base = { ...prev, name: prev.name ?? app.name, org: prev.org ?? app.org ?? null };
         await putAccount(env, app.kind === "gauss"
@@ -307,7 +310,7 @@ export async function handleApp(request, env, url, { respond, fillPage, fetchImp
     const member = admin || account?.community === "member";
     const calls = member ? await listCalls(env) : [];
     const callNotice = url.searchParams.get("call") ?? "";
-    return fillPage("/app/", { workspace: () => renderWorkspace({ email: id.email, account, admin, weather, consoleUrl: env.GAUSS_APP_URL || "", applications: mine, notice }) +
+    return fillPage("/app/", { workspace: () => renderWorkspace({ email: id.email, account, admin, weather, consoleUrl: env.GAUSS_APP_URL || "", supportUrl: env.SUPPORT_URL || "", applications: mine, notice }) +
       (member ? renderCalls({ calls, email: id.email, tz: isZone(account?.tz) ? account.tz : "UTC", notice: callNotice }) : "") }, 200, APP_HEADERS);
   }
   return fail(404, "Not found");

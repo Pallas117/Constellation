@@ -9,7 +9,7 @@
     "html_handling": "auto-trailing-slash",
     "not_found_handling": "404-page",
     // Everything else is a static file: free, and never runs the Worker.
-    "run_worker_first": ["/", "/gauss/", "/constellation/", "/gauss/apply/", "/constellation/apply/", "/constellation/time/", "/app", "/app/*", "/api/*"]
+    "run_worker_first": ["/", "/gauss/", "/constellation/", "/gauss/apply/", "/constellation/apply/", "/argo/apply/", "/constellation/time/", "/app", "/app/*", "/api/*"]
   },
   // Refresh launches and space weather into KV. Free plan: 5 cron triggers per account.
   "triggers": { "crons": ["*/15 * * * *"] },
@@ -25,7 +25,9 @@
     "ACCESS_TEAM_DOMAIN": "REPLACE_TEAM.cloudflareaccess.com",
     "ACCESS_AUD": "REPLACE_WITH_ACCESS_APPLICATION_AUD",
     "ADMIN_EMAILS": "jzwnathan@lightbound.uk",
-    "GAUSS_APP_URL": ""
+    "GAUSS_APP_URL": "",
+    // A Stripe Payment Link (https://buy.stripe.com/...) for "Support Constellation"; the block stays hidden while empty.
+    "SUPPORT_URL": ""
   },
   // Secrets, never in this file: STRIPE_SECRET_KEY and STRIPE_WEBHOOK_SECRET (npx wrangler@4 secret put ...).
   "observability": { "enabled": true }

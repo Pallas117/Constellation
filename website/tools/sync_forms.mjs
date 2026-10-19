@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import { renderApplyForm } from "../worker/forms.js";
 
 const pub = join(dirname(fileURLToPath(import.meta.url)), "..", "public");
-for (const kind of ["gauss", "constellation"]) {
+for (const kind of ["gauss", "constellation", "argo"]) {
   const file = join(pub, kind, "apply", "index.html");
   const html = readFileSync(file, "utf8").replace(/<!--live:apply-->[\s\S]*?<!--\/live:apply-->/, () => `<!--live:apply-->${renderApplyForm(kind)}<!--/live:apply-->`);
   writeFileSync(file, html);
