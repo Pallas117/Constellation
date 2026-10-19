@@ -155,11 +155,20 @@ The Lightbound Brand Book (15 Oct 2026, with 16 and 18 Oct updates) and the Desi
     "Turning tides" as the kicker.
   - The page still says nothing about what Turnstone does (tests enforce it).
 
+**The descent** (landing, between the hero and the doors): as you scroll, the hero's black hole shrinks
+into the aurora above Earth's pole, then the dipole field lines and the two Van Allen belts draw in,
+over five captions. It's scroll-driven CSS (`animation-timeline: view()`) on an inline SVG; there's no
+script, and it reuses the hero poster, so nothing new downloads. Browsers without scroll-driven
+animations, and anyone with reduced motion, get the final frame beside all five captions. The page
+calls it a sketch, not a model. Belt facts follow NASA Earth Observatory ("Probing the Electric Space
+Around Earth", image 78985).
+
 ## Change things
 
 | To change | Edit |
 |---|---|
 | Hero line, door text | `public/index.html` |
+| The landing's descent (black hole → aurora → Van Allen belts) | geometry: `tools/make_descent.py` (dipole field lines, then rewrites the SVG in `public/index.html`); timing: "Descent" in `public/assets/site.css` |
 | Gauss copy (keep the claim rules; the tests enforce them) | `public/gauss/index.html` |
 | Constellation copy, intel rules, join route | `public/constellation/index.html` |
 | Colours, type, layout | `public/assets/site.css` (Brand Room tokens; the tests reject off-palette colours) |

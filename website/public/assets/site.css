@@ -399,3 +399,61 @@ footer p{margin:0 0 6px}
   .btn{flex:1 1 auto;justify-content:center}
 }
 @media (max-width:400px){.top nav .opt{display:none}}
+
+/* Descent (landing): the black hole's ring shrinks into Earth's aurora, then the field and the Van Allen
+   belts draw in, driven by scrolling (art: tools/make_descent.py). Without scroll-driven animations, or
+   with reduced motion, the final frame shows beside all five captions. No script. */
+.descent-stage{max-width:1120px;margin:0 auto;padding-inline:clamp(16px,4vw,40px);display:grid;gap:clamp(20px,4vw,56px);align-items:center}
+@media (min-width:900px){.descent-stage{grid-template-columns:minmax(0,1.35fr) minmax(0,1fr)}.descent-note{grid-column:1/-1}}
+.descent-art{display:block;width:100%;height:auto;max-height:72svh}
+.descent-steps{list-style:none;margin:0;padding:0;display:grid;gap:22px}
+.descent-steps h2,.descent-steps h3{font-size:clamp(21px,2.6vw,28px);line-height:1.22;margin:.4em 0 0;max-width:24ch}
+.descent-steps p:not(.label){margin:.5em 0 0;color:var(--muted);font-size:17px}
+.descent-steps a{color:var(--warm)}
+.descent-note{margin:0}
+.d-belt.in{fill:rgba(243,240,232,.16)}
+.d-belt.out{fill:rgba(243,240,232,.08)}
+.d-lines path{fill:none;stroke:var(--warm);stroke-opacity:.32;stroke-width:1.1}
+.d-earth circle{fill:var(--panel);stroke:var(--muted);stroke-width:1.2}
+.d-axis{stroke:var(--muted);stroke-width:1;stroke-dasharray:2 4}
+.d-aurora path,.d-halo{fill:none;stroke:var(--lime);stroke-width:2.6;stroke-linecap:round}
+.d-p{fill:var(--warm)}
+.d-p.e{fill:var(--lime)}
+.d-tags text{fill:var(--muted);font:700 9px var(--mono);letter-spacing:.12em}
+.d-bh{display:none}
+.d-ring{fill:none;stroke:var(--warm);stroke-width:1.6;vector-effect:non-scaling-stroke}
+@media (prefers-reduced-motion:reduce){.d-particles{display:none}}
+@supports (animation-timeline:view()){
+  @media (prefers-reduced-motion:no-preference){
+    .descent{height:320svh;padding:0;view-timeline:--descent block}
+    .descent-stage{position:sticky;top:0;height:100svh;max-width:none;overflow:clip;grid-template-columns:minmax(0,1fr);grid-template-rows:minmax(0,1fr) auto auto;gap:10px;padding-block:76px 20px}
+    .descent-art{height:100%;max-height:none;overflow:visible}
+    .descent-steps{max-width:660px;width:100%;margin:0 auto;min-height:7.6em;gap:0}
+    .descent-steps li{grid-area:1/1;animation:d-step linear both;animation-timeline:--descent}
+    .descent-steps li:nth-child(1){animation-name:d-step-first;animation-range:contain 0% contain 18%}
+    .descent-steps li:nth-child(2){animation-range:contain 16% contain 40%}
+    .descent-steps li:nth-child(3){animation-range:contain 38% contain 60%}
+    .descent-steps li:nth-child(4){animation-range:contain 58% contain 80%}
+    .descent-steps li:nth-child(5){animation-name:d-step-last;animation-range:contain 78% contain 90%}
+    .descent-steps li:focus-within{opacity:1!important;visibility:visible!important;transform:none!important}
+    .descent-note{text-align:center}
+    @media (max-width:560px){.descent-art{transform:scale(1.4)}}
+    .d-bh{display:inline;transform-origin:0 0;animation:d-shrink linear both;animation-timeline:--descent;animation-range:contain 0% contain 30%}
+    .d-bh image{animation:d-out linear both;animation-timeline:--descent;animation-range:contain 2% contain 20%}
+    .d-earth{animation:d-in linear both;animation-timeline:--descent;animation-range:contain 14% contain 26%}
+    .d-halo{animation:d-in linear both;animation-timeline:--descent;animation-range:contain 24% contain 30%}
+    .d-lines path{stroke-dasharray:1;animation:d-draw linear both;animation-timeline:--descent;animation-range:contain 22% contain 46%}
+    .d-particles{animation:d-in linear both;animation-timeline:--descent;animation-range:contain 46% contain 56%}
+    .d-belts{animation:d-in linear both;animation-timeline:--descent;animation-range:contain 40% contain 58%}
+    .d-tags text{animation:d-in linear both;animation-timeline:--descent;animation-range:contain 50% contain 60%}
+    .d-tags text:last-child,.d-aurora path{animation:d-in linear both;animation-timeline:--descent;animation-range:contain 60% contain 72%}
+  }
+}
+/* The ring ends exactly on the north-pole halo (numbers printed by tools/make_descent.py). */
+@keyframes d-shrink{0%{transform:none;opacity:1}85%{opacity:1}100%{transform:translate(0px,-37px) scale(.1014,.0304);opacity:0}}
+@keyframes d-out{to{opacity:0}}
+@keyframes d-in{from{opacity:0}}
+@keyframes d-draw{from{stroke-dashoffset:1}to{stroke-dashoffset:0}}
+@keyframes d-step{0%{opacity:0;visibility:hidden;transform:translateY(10px)}20%,80%{opacity:1;visibility:visible;transform:none}100%{opacity:0;visibility:hidden;transform:translateY(-10px)}}
+@keyframes d-step-first{0%,70%{opacity:1;visibility:visible}100%{opacity:0;visibility:hidden}}
+@keyframes d-step-last{from{opacity:0;visibility:hidden;transform:translateY(10px)}to{opacity:1;visibility:visible;transform:none}}
