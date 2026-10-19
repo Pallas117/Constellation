@@ -1,5 +1,6 @@
 import { fetchEsaReadout, getEsaStatus, type ESAReadout } from "../adapters/esa-hapi.js";
 import { freshReading, fetchGoesParticles, getGoesStatus, type GoesParticleReadout } from "../adapters/goes-particles.js";
+import { geomagneticStorm, radiationStorm } from "../physics/noaa-scales.js";
 import { getJaxaStatus, probeJaxaCatalog } from "../adapters/jaxa-erg.js";
 import { fetchKyotoDst, freshDst, getKyotoDstStatus, type DstReading } from "../adapters/kyoto-dst.js";
 import { fetchMmsCdawebSamples, getMmsCdawebStatus } from "../adapters/mms-cdaweb.js";
@@ -439,6 +440,9 @@ export class IngestionWorker {
       protons: freshReading(this.goes?.protons ?? null, nowMs),
       electrons: freshReading(this.goes?.electrons ?? null, nowMs),
     };
+    // Two storm streams, kept apart: radiation (S) from protons, geomagnetic (G) from Kp (GAU-135).
+    point.alerts.radiation = radiationStorm(point.particles.protons);
+    point.alerts.geomagnetic = geomagneticStorm(point.indices, nowMs);
 
     this.previousDst = point.indices.dst;
     this.couplingWindow.push(point.coupling.newell);

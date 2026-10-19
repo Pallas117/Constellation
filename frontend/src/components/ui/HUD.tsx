@@ -1,6 +1,6 @@
 import type { InterpolatedData } from '@/hooks/useSpaceWeather';
 import { StatusBadge } from '@/components/brand/StatusBadge';
-import { bzStatus, feedState, FEED_LABEL, kpStatus, speedStatus, type ReadoutStatus } from '@/lib/readout-status';
+import { bzStatus, feedState, FEED_LABEL, kpStatus, scaleStatus, speedStatus, type ReadoutStatus } from '@/lib/readout-status';
 
 interface HUDProps {
   data: InterpolatedData;
@@ -52,6 +52,8 @@ export const HUD = ({ data }: HUDProps) => {
           label="Proton flux"
           value={measured && data.protonFlux != null ? data.protonFlux.toFixed(1) : '—'}
           unit="pfu"
+          // The radiation stream (NOAA S-scale), separate from the geomagnetic Kp above.
+          status={measured && data.radiation ? scaleStatus(data.radiation) : null}
         />
       </dl>
       <p className="mt-2 font-mono text-[11px] text-muted-foreground">

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { bzStatus, feedState, kpStatus, speedStatus } from './readout-status';
+import { bzStatus, feedState, hudTone, kpStatus, scaleStatus, speedStatus } from './readout-status';
 
 test('speed: normal below 450, elevated from 450, high from 600 km/s', () => {
   assert.deepEqual(speedStatus(420), { tone: 'nominal', word: 'Normal' });
@@ -32,4 +32,15 @@ test('feed: unavailable wins, then simulated, then stale', () => {
   assert.equal(feedState({ source: 'model', isStale: false, tier: 2 }), 'simulated');
   assert.equal(feedState({ source: 'noaa', isStale: true, tier: 3 }), 'stale');
   assert.equal(feedState({ source: 'noaa', isStale: false, tier: 0 }), 'live');
+});
+
+test('NOAA scale levels: unknown is said, S0/G0 is none, level 3+ is risk (GAU-135)', () => {
+  const reading = (level: 0 | 1 | 2 | 3 | 4 | 5 | null, label: string) => ({ level, label, basis: 'test', observedAt: null });
+  assert.deepEqual(scaleStatus(undefined), { tone: 'caution', word: 'Unknown' });
+  assert.deepEqual(scaleStatus(reading(null, 'S?')), { tone: 'caution', word: 'Unknown' });
+  assert.deepEqual(scaleStatus(reading(0, 'S0')), { tone: 'nominal', word: 'None' });
+  assert.deepEqual(scaleStatus(reading(2, 'S2')), { tone: 'caution', word: 'S2 storm' });
+  assert.deepEqual(scaleStatus(reading(4, 'G4')), { tone: 'risk', word: 'G4 storm' });
+  assert.equal(hudTone('nominal'), 'default');
+  assert.equal(hudTone('risk'), 'risk');
 });

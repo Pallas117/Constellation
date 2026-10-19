@@ -6,6 +6,8 @@
  * is amber, risk is Sun. Words always accompany the tone (never colour alone).
  */
 
+import type { ScaleReading } from './types/space-weather';
+
 export type Tone = 'nominal' | 'caution' | 'risk';
 
 export interface ReadoutStatus {
@@ -38,6 +40,21 @@ export function kpStatus(kp: number): ReadoutStatus {
   if (level >= 5) return { tone: 'caution', word: `G${level - 4} storm` };
   if (level >= 4) return { tone: 'caution', word: 'Active' };
   return { tone: 'nominal', word: 'Quiet' };
+}
+
+/**
+ * A NOAA storm-scale level (S for radiation, G for geomagnetic). Unknown is said
+ * as unknown, never "none"; level 3 and above is risk (GAU-135).
+ */
+export function scaleStatus(reading: ScaleReading | null | undefined): ReadoutStatus {
+  if (!reading || reading.level == null) return { tone: 'caution', word: 'Unknown' };
+  if (reading.level === 0) return { tone: 'nominal', word: 'None' };
+  return { tone: reading.level >= 3 ? 'risk' : 'caution', word: `${reading.label} storm` };
+}
+
+/** The HUD components' tone for a readout status ("nominal" draws as the default). */
+export function hudTone(tone: Tone): 'default' | 'caution' | 'risk' {
+  return tone === 'nominal' ? 'default' : tone;
 }
 
 export type FeedState = 'live' | 'stale' | 'simulated' | 'unavailable';
