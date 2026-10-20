@@ -155,8 +155,8 @@ test("trust record: L-shell from the supplied ephemeris; SAA and upset risk say 
   assert.equal(r.orbit.saa.value, null);
   assert.match(r.orbit.saa.limitations[0], /GAU-141/);
   assert.match(r.upsetRisk.limitations[0], /No cited radiation profile for processor "jetson-orin-nx-16"/);
-  const tleOnly = build([point(T - 30_000)], { tle: ["1 x", "2 x"] });
-  assert.match(tleOnly.orbit.lShell.limitations[0], /TLE propagation is not supported yet/);
+  const badTle = build([point(T - 30_000)], { tle: ["1 x", "2 x"] });
+  assert.match(badTle.orbit.lShell.limitations[0], /^TLE not usable: line 1 must be 69 characters/);
   const strict = buildTrustRecord(req(), new EnvironmentHistory([point(T - 30_000)], "h"), { nowMs: T, policy: { ...DEFAULT_POLICY, requireOrbitContext: true } });
   assert.equal(strict.verdict.value, "unknown", "a policy that requires orbit context gets unknown until it exists");
 });
