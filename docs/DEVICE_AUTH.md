@@ -17,7 +17,7 @@ This document describes the repository-native device registration and proofing f
     string (e.g. `"1791705662572"`); `sig` is the hex HMAC-SHA256 of `` `${timestamp}:${nonce}` ``
     under the device secret. Other timestamp formats, including ISO 8601, are rejected.
   - Verifies HMAC proof against a derived device secret: `200` marks the device `trusted`,
-    `401` marks it `untrusted` (including malformed signatures), and `503` means proofs are
+    `401` marks it `untrusted` (including malformed signatures and replays), and `503` means proofs are
     disabled because `DEVICE_AUTH_SECRET` is not configured (status unchanged).
 
 - `POST /api/device/:id/heartbeat`
@@ -57,6 +57,12 @@ This document describes the repository-native device registration and proofing f
 - A proof is valid only while its `timestamp` is within `DEVICE_PROOF_TTL_MS` milliseconds of the
   server clock, either way (default 60 seconds). A missing, non-numeric or non-positive value uses
   the default; it never turns the check off.
-- Nonces are signed but not tracked, so a captured proof can be replayed until it expires. The TTL
-  bounds that window; it does not prevent replay within it.
+- Each proof is accepted once. The server remembers accepted proofs per device (by signature,
+  case-insensitively) until they expire, and rejects a repeat with `401`, which marks the device
+  `untrusted` like any failed proof. Use a fresh random `nonce` for every proof; two proofs with the
+  same timestamp and nonce are the same proof.
+- A device can have at most 100 unexpired accepted proofs; beyond that its proofs are refused until
+  older ones expire. Only proofs that verify are remembered, so forged attempts don't count.
+- The record is in memory and per process, like the device registry. A restart clears it, and
+  multiple backend instances would need a shared store.
 - Device records are stored in the backend in-memory registry and appended to `bedrock` telemetry for persistence.
