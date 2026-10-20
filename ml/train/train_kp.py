@@ -3,6 +3,9 @@
 
   python3 ml/train/train_kp.py              train + evaluate -> candidate in ml/models/
   python3 ml/train/train_kp.py --promote F  promote candidate file F, only if it passed the gate
+  python3 ml/train/train_kp.py --skip-if-unchanged
+                                            report the existing candidate instead of retraining when
+                                            the data, training code and libraries are unchanged
 
 Time-ordered splits (no shuffling across time): train 2010-2019, validate 2020-2021,
 test 2022-2024. Training never promotes a model by itself (GAU-38 guardrail); promotion is
@@ -174,13 +177,65 @@ def git_sha() -> str:
     return "unknown"
 
 
+# Training is deterministic (fixed seeds, fixed OMNI files), so the same inputs give the same
+# candidate. The version only hashes the data; the fingerprint also covers the code and
+# libraries, so a code or library change still retrains (GAU-156).
+CODE_PATHS = ("ml/train", "ml/kp_model.py")
+
+
+def code_identity() -> str:
+  """Committed tree hashes of the training code, or "" (never skip) if unknown or edited."""
+  try:
+    top = subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output=True, text=True,
+                         cwd=ML_DIR, check=True).stdout.strip()
+    # Tracked edits only: Python's own __pycache__ files appear as untracked and must not count.
+    dirty = subprocess.run(["git", "status", "--porcelain", "--untracked-files=no", "--", *CODE_PATHS], capture_output=True,
+                           text=True, cwd=top, check=True).stdout.strip()
+    if dirty:
+      return ""
+    trees = subprocess.run(["git", "rev-parse", *[f"HEAD:{p}" for p in CODE_PATHS]], capture_output=True,
+                           text=True, cwd=top, check=True).stdout.split()
+    return ",".join(trees)
+  except Exception:  # noqa: BLE001
+    return ""
+
+
+def training_fingerprint(checksums: Dict[str, str], code: str) -> str:
+  """Data checksums + training code + library versions; "" when the code identity is unknown."""
+  if not code:
+    return ""
+  import hashlib
+  import torch
+  parts = ["".join(checksums[k] for k in sorted(checksums)), code, torch.__version__, np.__version__]
+  return hashlib.sha256("|".join(parts).encode()).hexdigest()
+
+
+def already_trained(registry: Dict, version: str, fingerprint: str):
+  """The registry entry for this exact training, if its model file is still there."""
+  if not fingerprint:
+    return None
+  for m in registry.get("models", []):
+    if m.get("version") == version and m.get("fingerprint") == fingerprint and (MODELS_DIR / m.get("file", "")).is_file():
+      return m
+  return None
+
+
 def load_registry() -> Dict:
   return json.loads(REGISTRY.read_text()) if REGISTRY.exists() else {"models": []}
 
 
-def train() -> Path:
+def train(skip_if_unchanged: bool = False) -> None:
   years = [y for r in SPLITS.values() for y in r]
   checksums = {str(y): sha256(ensure_year(y)) for y in years}
+  digest = __import__("hashlib").sha256("".join(checksums.values()).encode()).hexdigest()[:8]
+  version = f"kp3h-mlp-v1-{digest}"
+  fingerprint = training_fingerprint(checksums, code_identity())
+  if skip_if_unchanged:
+    done = already_trained(load_registry(), version, fingerprint)
+    if done:
+      print(json.dumps({"version": version, "unchanged": True, "gate": done["gate"],
+                        "test": done["metrics"]["test"]}, indent=2))
+      return
   data = {name: build_split(r) for name, r in SPLITS.items()}
   x_tr, y_tr, _ = data["train"]
   x_va, y_va, kp_va = data["val"]
@@ -192,8 +247,6 @@ def train() -> Path:
   norm = lambda x: (x - mean) / std  # noqa: E731
   members = [train_member(s, norm(x_tr), y_tr, norm(x_va), y_va) for s in SEEDS]
 
-  digest = __import__("hashlib").sha256("".join(checksums.values()).encode()).hexdigest()[:8]
-  version = f"kp3h-mlp-v1-{digest}"
   spec = {
     "version": version,
     "task": f"Kp {HORIZON_HOURS} h ahead and P(Kp >= {STORM_KP}) from {WINDOW_HOURS} h of L1 solar wind",
@@ -255,6 +308,7 @@ def train() -> Path:
     "file": out.name,
     "trained_at": spec["training"]["trained_at"],
     "status": "candidate",
+    "fingerprint": fingerprint,
     "gate": gate,
     "metrics": {"test": t, "validation": metrics["validation"]},
   }]
@@ -288,8 +342,10 @@ def promote(file_name: str) -> None:
 if __name__ == "__main__":
   parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
   parser.add_argument("--promote", metavar="FILE", help="promote a gate-passing candidate in ml/models/")
+  parser.add_argument("--skip-if-unchanged", action="store_true",
+                      help="don't retrain when this exact data, code and library set is already registered")
   args = parser.parse_args()
   if args.promote:
     promote(args.promote)
   else:
-    train()
+    train(skip_if_unchanged=args.skip_if_unchanged)
