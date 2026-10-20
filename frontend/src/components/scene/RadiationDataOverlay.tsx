@@ -1,6 +1,6 @@
 /**
  * WebGL-based radiation data overlay
- * Renders radiation measurements as glowing dots/contours on orbit rings
+ * Renders radiation measurements as glowing dots on orbit rings
  * Uses instanced rendering for performance
  * 
  * Note: Client-side component - uses WebGL/Three.js
@@ -316,78 +316,3 @@ export const RadiationDataOverlay = ({
     </points>
   );
 };
-
-/**
- * Alternative: Contour-based visualization using instanced meshes
- * This provides better performance for large datasets
- */
-export const RadiationDataContours = ({
-  data,
-  orbitFilter,
-  visible,
-}: RadiationDataOverlayProps) => {
-  const groupRef = useRef<THREE.Group>(null);
-  const materialRef = useRef<THREE.MeshBasicMaterial>(null);
-
-  const meshes = useMemo(() => {
-    if (!data || data.length === 0) return [];
-
-    const filtered = data.filter((d) => orbitFilter.includes(d.orbitType));
-    if (filtered.length === 0) return [];
-
-    const fluxes = filtered.map((d) => d.flux);
-    const minFlux = Math.min(...fluxes);
-    const maxFlux = Math.max(...fluxes);
-
-    return filtered.map((point) => {
-      const position = calculatePosition(
-        point.altitude,
-        point.latitude,
-        point.longitude,
-        point.L_shell
-      );
-
-      const color = fluxToColor(point.flux, minFlux, maxFlux);
-      
-      // Size based on flux (logarithmic scale)
-      const logMin = Math.log10(Math.max(minFlux, 1e-10));
-      const logMax = Math.log10(Math.max(maxFlux, 1e-10));
-      const logFlux = Math.log10(Math.max(point.flux, 1e-10));
-      
-      // Handle case where all values are identical (avoid division by zero)
-      let normalizedFlux: number;
-      if (Math.abs(logMax - logMin) < 1e-10) {
-        // All values are the same, use middle size
-        normalizedFlux = 0.5;
-      } else {
-        normalizedFlux = (logFlux - logMin) / (logMax - logMin);
-      }
-      const size = 0.02 + normalizedFlux * 0.08;
-
-      return {
-        position,
-        color,
-        size,
-      };
-    });
-  }, [data, orbitFilter]);
-
-  if (!visible || meshes.length === 0) return null;
-
-  return (
-    <group ref={groupRef}>
-      {meshes.map((mesh, i) => (
-        <mesh key={i} position={[mesh.position.x, mesh.position.y, mesh.position.z]}>
-          <sphereGeometry args={[mesh.size, 8, 8]} />
-          {/* Unlit on purpose: the colour encodes flux, so scene lighting must not shade it. */}
-          <meshBasicMaterial
-            color={mesh.color}
-            transparent
-            opacity={0.8}
-          />
-        </mesh>
-      ))}
-    </group>
-  );
-};
-
