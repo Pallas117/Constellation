@@ -501,3 +501,14 @@ footer p{margin:0 0 6px}
 .lab-steps{margin:12px 0 0;padding-left:22px;color:var(--muted);display:grid;gap:6px}
 .edu-start{margin-top:10px}
 .edu-start .actions{margin-top:12px}
+
+/* Constellation events (from Luma): date on the left, the event on the right. */
+.events{list-style:none;margin:20px 0 0;padding:0;display:grid;gap:10px}
+.event{display:grid;grid-template-columns:minmax(150px,220px) 1fr;gap:16px;align-items:baseline;padding:14px 18px;border:1px solid var(--char);border-radius:var(--radius);
+  background:linear-gradient(180deg,rgba(243,240,232,.04),rgba(243,240,232,0) 50%),var(--panel)}
+.event time{display:grid;gap:2px}
+.event time span{color:var(--muted);font-size:14px}
+.event a{font-weight:600;font-size:18px;text-decoration-color:var(--accent2)}
+.events.past .event{opacity:.72}
+.events-h{margin:36px 0 0}
+@media (max-width:560px){.event{grid-template-columns:1fr;gap:6px}}

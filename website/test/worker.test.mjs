@@ -6,8 +6,8 @@ import { existsSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import worker from "../worker/index.js";
-import { FEEDS, feedState, normaliseLaunches, normaliseWeather, readFeed, refreshFeeds } from "../worker/feeds.js";
-import { countdown, esc, renderConstellationDoor, renderGaussDoor, renderIcs, renderLaunches, renderWeather, whenText } from "../worker/render.js";
+import { FEEDS, feedState, normaliseEvents, normaliseLaunches, normaliseWeather, readFeed, refreshFeeds } from "../worker/feeds.js";
+import { countdown, esc, renderConstellationDoor, renderEvents, renderGaussDoor, renderIcs, renderLaunches, renderWeather, whenText } from "../worker/render.js";
 import { SECURITY_HEADERS } from "../worker/headers.js";
 import { RECORDED_AT, fixture, makeFetch } from "./fixtures/fetch.mjs";
 import { memoryKV } from "./fixtures/kv.mjs";
@@ -69,20 +69,36 @@ test("space weather: NOAA scales, Kp and solar wind; NOAA times are UTC whatever
 test("refresh: fills KV, then leaves fresh feeds alone (LL2 allows 15 calls an hour)", async () => {
   const env = { LIVE: memoryKV() };
   const f = makeFetch();
-  assert.deepEqual(await refreshFeeds(env, { fetchImpl: f, now: RECORDED_AT }), { launches: "updated", weather: "updated" });
-  assert.equal(f.calls.length, 5);
+  assert.deepEqual(await refreshFeeds(env, { fetchImpl: f, now: RECORDED_AT }), { launches: "updated", weather: "updated", events: "updated" });
+  assert.equal(f.calls.length, 6);
   assert.equal((await readFeed(env, "launches")).data.length, 10);
-  assert.deepEqual(await refreshFeeds(env, { fetchImpl: f, now: RECORDED_AT + 10 * MIN }), { launches: "fresh", weather: "fresh" });
-  assert.equal(f.calls.length, 5, "no upstream calls while fresh");
-  assert.deepEqual(await refreshFeeds(env, { fetchImpl: f, now: RECORDED_AT + 15 * MIN }), { launches: "fresh", weather: "updated" });
-  assert.deepEqual(await refreshFeeds(env, { fetchImpl: f, now: RECORDED_AT + 30 * MIN }), { launches: "updated", weather: "updated" });
+  assert.deepEqual(await refreshFeeds(env, { fetchImpl: f, now: RECORDED_AT + 10 * MIN }), { launches: "fresh", weather: "fresh", events: "fresh" });
+  assert.equal(f.calls.length, 6, "no upstream calls while fresh");
+  assert.deepEqual(await refreshFeeds(env, { fetchImpl: f, now: RECORDED_AT + 15 * MIN }), { launches: "fresh", weather: "updated", events: "fresh" });
+  assert.deepEqual(await refreshFeeds(env, { fetchImpl: f, now: RECORDED_AT + 30 * MIN }), { launches: "updated", weather: "updated", events: "fresh" });
+  assert.deepEqual(await refreshFeeds(env, { fetchImpl: f, now: RECORDED_AT + 180 * MIN }), { launches: "updated", weather: "updated", events: "updated" }, "Luma every 3 hours");
+});
+
+test("events: Luma's calendar becomes titles, times and public links only; cancelled events dropped", () => {
+  const ev = normaliseEvents(fixture("events"));
+  assert.deepEqual(ev.map((e) => e.title), ["Example Night", "Workshop: Ethics, data and dual use", "Resilience for teams on a very long folded line"]);
+  assert.deepEqual(ev.map((e) => e.url), ["https://luma.com/pastex01", "https://luma.com/ethics26", "https://luma.com/event/evt-NoPageExample03"]);
+  assert.equal(ev[1].start, "2026-10-24T09:00:00.000Z");
+  assert.deepEqual(Object.keys(ev[0]).sort(), ["end", "start", "title", "url"], "no organiser, description, address or coordinates");
+  assert.throws(() => normaliseEvents("<html>not a calendar</html>"), /not a calendar/);
+  const html = renderEvents({ data: ev, fetchedAt: new Date(RECORDED_AT).toISOString() }, RECORDED_AT);
+  assert.match(html, /<ol class="events"><li class="event"><time datetime="2026-10-24T09:00:00.000Z"><b>Sat 24 Oct 2026<\/b><span>09:00\u00a0UTC<\/span><\/time><a href="https:\/\/luma\.com\/ethics26" rel="noopener">Workshop: Ethics, data and dual use<\/a>/);
+  assert.match(html, /<h3 class="label events-h">Recently<\/h3><ol class="events past">[\s\S]*Example Night/);
+  assert.doesNotMatch(html, /Example Street|calendar-invite|51\.5/, "nothing private reaches the page");
+  assert.match(renderEvents({ data: [] }, RECORDED_AT), /No events are scheduled right now[\s\S]*href="https:\/\/luma\.com\/constellation"/);
+  assert.equal(renderEvents({ data: [{ title: "x", start: "2099-01-01T00:00:00.000Z", end: "2099-01-01T01:00:00.000Z", url: "https://evil.example/" }] }, RECORDED_AT).includes("evil"), false, "only luma.com links");
 });
 
 test("refresh: an upstream failure keeps the last good data and records the error", async () => {
   const env = { LIVE: memoryKV() };
   await refreshFeeds(env, { fetchImpl: makeFetch(), now: RECORDED_AT });
   const r = await refreshFeeds(env, { fetchImpl: makeFetch({ launches: 429, scales: 503 }), now: RECORDED_AT + 60 * MIN });
-  assert.deepEqual(r, { launches: "failed: ll.thespacedevs.com HTTP 429", weather: "failed: services.swpc.noaa.gov HTTP 503" });
+  assert.deepEqual(r, { launches: "failed: ll.thespacedevs.com HTTP 429", weather: "failed: services.swpc.noaa.gov HTTP 503", events: "fresh" });
   const rec = await readFeed(env, "launches");
   assert.equal(rec.data.length, 10, "old data kept");
   assert.equal(rec.fetchedAt, new Date(RECORDED_AT).toISOString());
@@ -197,6 +213,17 @@ test("routes: API, calendar, health, errors", async () => {
   assert.equal((await call("/", { method: "POST" })).status, 405);
 });
 
+test("routes: Luma being down never fails the health check", async () => {
+  const env = { ASSETS, LIVE: memoryKV() };
+  await refreshFeeds(env, { fetchImpl: makeFetch({ events: 503 }, { shiftTo: Date.now() }), now: Date.now() });
+  const res = await send(env, new Request("https://lightbound.uk/api/health"));
+  const body = await res.json();
+  assert.equal(res.status, 200);
+  assert.equal(body.feeds.events.state, "offline");
+  const page = await (await send(env, new Request("https://lightbound.uk/constellation/"))).text();
+  assert.match(page, /No events are scheduled right now/, "the section still shows the Luma link");
+});
+
 test("routes: health turns 503 when a feed goes stale", async () => {
   const rec = await readFeed(env, "weather");
   await env.LIVE.put(FEEDS.weather.key, JSON.stringify({ ...rec, fetchedAt: new Date(Date.now() - 3 * 60 * MIN).toISOString() }));
@@ -214,7 +241,7 @@ test("routes: a fresh deploy fetches once in the background, before the first cr
   const res = await worker.fetch(new Request("https://lightbound.uk/"), fresh, ctx);
   assert.equal(res.status, 200, "page still serves while data loads");
   await settle();
-  assert.equal(f.calls.length, 5);
+  assert.equal(f.calls.length, 6);
   assert.ok(await readFeed(fresh, "launches"));
 });
 
@@ -638,6 +665,20 @@ test("education departments: a yearly quote from admin, an invoice with 30 days 
   lee = await getAccount(env, "lee@physics.example.org");
   assert.deepEqual([lee.edu.plan, lee.edu.billing.status, Date.parse(lee.edu.billing.paidUntil)], ["department", "paid", t0 * 1000 + 365 * 86_400_000]);
   assert.match(await (await send(env, await as(access, "boss@example.test", "/app/admin/"))).text(), /Education: department paid/);
+});
+
+test("workshops: a team's request is stored and listed for admin; marking it contacted creates no account", async () => {
+  const { env, access } = await appEnv();
+  const res = await send(env, post("/api/apply", { kind: "workshop", name: "Ana Example", email: "ana@example.test", org: "Example Space Ltd", topic: "A mix of the three", format: "Online", groupSize: "11–30", timeline: "Next quarter", note: "A leadership away day for our ops team.", consent: "yes" }));
+  assert.equal(res.headers.get("location"), "/constellation/workshops/?sent=1");
+  assert.match(await (await send(env, new Request("https://lightbound.uk/constellation/workshops/?sent=1"))).text(), /Your workshop request is with the Constellation team/);
+  const admin = await (await send(env, await as(access, "boss@example.test", "/app/admin/"))).text();
+  assert.match(admin, /WORKSHOP · A mix of the three/);
+  assert.match(admin, /Example Space Ltd · A mix of the three · Online · group: 11–30 · Next quarter/);
+  const [app] = await listApplications(env);
+  await send(env, await formPost(access, "boss@example.test", "/app/admin/decide", { id: app.id, decision: "approve" }));
+  assert.equal((await listApplications(env))[0].status, "approved");
+  assert.equal(await getAccount(env, "ana@example.test"), null, "no account or membership from a workshop request");
 });
 
 test("support: Constellation shows a Support link only once a Stripe Payment Link is set", async () => {

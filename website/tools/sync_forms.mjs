@@ -3,12 +3,12 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { renderApplyForm, slug } from "../worker/forms.js";
+import { applyPath, renderApplyForm } from "../worker/forms.js";
 
 const pub = join(dirname(fileURLToPath(import.meta.url)), "..", "public");
-for (const kind of ["gauss", "constellation", "argo", "edu"]) {
-  const file = join(pub, slug(kind), "apply", "index.html");
+for (const kind of ["gauss", "constellation", "argo", "edu", "workshop"]) {
+  const file = join(pub, applyPath(kind), "index.html");
   const html = readFileSync(file, "utf8").replace(/<!--live:apply-->[\s\S]*?<!--\/live:apply-->/, () => `<!--live:apply-->${renderApplyForm(kind)}<!--/live:apply-->`);
   writeFileSync(file, html);
-  console.log(`updated ${slug(kind)}/apply/index.html`);
+  console.log(`updated ${applyPath(kind)}index.html`);
 }

@@ -184,16 +184,16 @@ export function renderAdmin({ applications, accounts, details, invited, error })
   const card = (a) => {
     const d = details[a.id] ?? {};
     const planId = tierById(a.plan) ? a.plan : "pilot";
-    const facts = [d.org, d.role, d.institution, d.eduRole, d.course, d.seats ? `${d.seats} (people)` : "", d.missionType, d.stage, d.groundStack, d.dataAccess, d.timeline, d.interest, d.platform, d.devices ? `${d.devices} devices` : "",
+    const facts = [d.org, d.role, d.topic, d.format, d.groupSize ? `group: ${d.groupSize}` : "", d.institution, d.eduRole, d.course, d.seats ? `${d.seats} (people)` : "", d.missionType, d.stage, d.groundStack, d.dataAccess, d.timeline, d.interest, d.platform, d.devices ? `${d.devices} devices` : "",
       d.referrer ? `referred by ${d.referrer}` : "", d.link].filter(Boolean).join(" · ");
     const decide = a.status === "new"
       ? `<form method="post" action="/app/admin/decide" class="inline"><input type="hidden" name="id" value="${esc(a.id)}">` +
         (a.kind === "gauss" ? `${tierSelect(planId)} ${quoteInput(0)} ${invoiceCheck(false, `inv-${esc(a.id)}`)}` : a.kind === "constellation" ? `<input type="hidden" name="community" value="member">` : a.kind === "edu" ? `${quoteInput(0)} ` : "") +
-        `<button class="btn" name="decision" value="approve">${{ gauss: "Approve with quote", constellation: "Invite", argo: "Invite to early access", edu: "Approve for self-serve" }[a.kind] ?? "Approve"}</button> ` +
+        `<button class="btn" name="decision" value="approve">${{ gauss: "Approve with quote", constellation: "Invite", argo: "Invite to early access", edu: "Approve for self-serve", workshop: "Mark contacted" }[a.kind] ?? "Approve"}</button> ` +
         (a.kind === "edu" ? `<button class="btn ghost" name="decision" value="department">Department licence at this yearly quote</button> ` : "") +
         `<button class="btn ghost" name="decision" value="decline">Decline</button></form>`
       : `<span class="tag${a.status === "approved" ? " go" : ""}">${esc(a.status)}</span>`;
-    const kicker = { gauss: `GAUSS · ${tierById(a.plan)?.name ?? a.plan ?? ""}`, constellation: "CONSTELLATION · INVITATION REQUEST", argo: "ARGO · EARLY ACCESS AND RELAY WAITLIST", edu: `EDUCATION · ${d.eduRole ?? ""}` }[a.kind] ?? a.kind;
+    const kicker = { gauss: `GAUSS · ${tierById(a.plan)?.name ?? a.plan ?? ""}`, constellation: "CONSTELLATION · INVITATION REQUEST", argo: "ARGO · EARLY ACCESS AND RELAY WAITLIST", edu: `EDUCATION · ${d.eduRole ?? ""}`, workshop: `WORKSHOP · ${d.topic ?? ""}` }[a.kind] ?? a.kind;
     return `<li class="app-card"><div class="app-head"><span class="label">${esc(kicker)}</span><time datetime="${esc(a.at)}">${esc(day(a.at))}</time></div>` +
       `<h3>${esc(a.name)} <span class="muted">${esc(a.email)}</span></h3>${facts ? `<p class="m">${esc(facts)}</p>` : ""}` +
       (d.message || d.note ? `<p class="msg">${esc(d.message || d.note)}</p>` : "") + decide + `</li>`;
@@ -366,7 +366,7 @@ export async function handleApp(request, env, url, { respond, fillPage, fetchImp
       } else if (approve && app.kind === "argo") { // early access: they can start once ARGO_SALES is "invite" or "open"; no Gauss plan or membership
         const prev = (await getAccount(env, app.email)) ?? { email: app.email };
         await putAccount(env, { ...prev, name: prev.name ?? app.name, argo: { ...(prev.argo ?? {}), invitedAt: new Date().toISOString() } }, id.email);
-      } else if (approve) {
+      } else if (approve && app.kind !== "workshop") { // a workshop request is a lead: "Mark contacted" changes no account
         const prev = (await getAccount(env, app.email)) ?? { email: app.email };
         const base = { ...prev, name: prev.name ?? app.name, org: prev.org ?? app.org ?? null };
         await putAccount(env, app.kind === "gauss"

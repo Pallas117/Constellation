@@ -18,7 +18,7 @@ const PAGES = { "/": "index.html", "/gauss/": "gauss/index.html", "/constellatio
   "/gauss/apply/": "gauss/apply/index.html", "/constellation/apply/": "constellation/apply/index.html", "/privacy/": "privacy/index.html",
   "/app/": "app/index.html", "/app/admin/": "app/admin/index.html", "/gauss/evidence/": "gauss/evidence/index.html",
   "/constellation/time/": "constellation/time/index.html", "/argo/": "argo/index.html", "/argo/apply/": "argo/apply/index.html",
-  "/education/": "education/index.html", "/education/apply/": "education/apply/index.html" };
+  "/education/": "education/index.html", "/education/apply/": "education/apply/index.html", "/constellation/workshops/": "constellation/workshops/index.html" };
 const html = Object.fromEntries(Object.entries(PAGES).map(([route, f]) => [route, read(f)]));
 const API_ROUTES = new Set(["/api/launches", "/api/launches.ics", "/api/space-weather", "/api/health", "/cdn-cgi/access/logout"]);
 
@@ -313,9 +313,23 @@ test("Gauss for Education: free for students, staff price TBC until set, an acad
   assert.match(html["/privacy/"], /Gauss for Education/);
 });
 
+test("Constellation: events from its Luma calendar, then workshops on ethics, resilience and tech leadership, sections in order", () => {
+  const page = html["/constellation/"];
+  assert.match(page, /<!--live:events-->[\s\S]*href="https:\/\/luma\.com\/constellation"[\s\S]*<!--\/live:events-->/);
+  const workshops = page.match(/<section id="workshops"[\s\S]*?<\/section>/)[0];
+  for (const want of [/Ethics/, /Resilience/, /Tech leadership/, /Members join free/]) assert.match(text(workshops), want);
+  assert.match(workshops, /href="\/constellation\/workshops\/">Bring a workshop to your team/);
+  const labels = [...page.matchAll(/<p class="label">(\d\d)_/g)].map((m) => Number(m[1]));
+  assert.deepEqual(labels, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10], "section numbers run in order");
+  assert.match(html["/constellation/workshops/"], /<input type="hidden" name="kind" value="workshop">/);
+  assert.match(html["/constellation/workshops/"], /<body class="page brand-constellation">/);
+  assert.match(html["/privacy/"], /a workshop for your team/);
+});
+
 test("Constellation is free and invite-only: no prices, no payment, invitation wording", () => {
-  for (const route of ["/constellation/", "/constellation/apply/"]) {
+  for (const route of ["/constellation/", "/constellation/apply/", "/constellation/workshops/"]) {
     assert.doesNotMatch(text(html[route]), /£|\$\d|stripe|price|pay /i, `${route}: no pricing`);
+    if (route === "/constellation/workshops/") continue;
     assert.match(text(html[route]), /free/i);
     assert.match(text(html[route]), /invit/i);
   }

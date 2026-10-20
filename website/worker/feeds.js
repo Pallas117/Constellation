@@ -1,9 +1,15 @@
-// Live feeds for lightbound.uk: upcoming launches (The Space Devs Launch Library 2) and space weather
-// (NOAA SWPC). A cron trigger refreshes them into KV every 15 minutes. Pages and the API only ever read
+// Live feeds for lightbound.uk: upcoming launches (The Space Devs Launch Library 2), space weather
+// (NOAA SWPC) and Constellation's events (its public Luma calendar). A cron trigger refreshes them into KV every 15 minutes. Pages and the API only ever read
 // KV, so visitor traffic never reaches the upstream services (LL2 allows 15 anonymous calls an hour).
 // A failed refresh keeps the last good data and records the error; /api/health reports both.
 
+// Constellation's events: the public Luma calendar. Luma publishes an iCal feed for every public calendar
+// (it says to refresh every 12 hours). Only titles, times and public event links are kept: not organisers,
+// descriptions, addresses or coordinates.
+export const LUMA = Object.freeze({ page: "https://luma.com/constellation", id: "cal-JlCHo35H2rXUzYN" });
+
 export const SOURCES = Object.freeze({
+  events: `https://api.lu.ma/ics/get?entity=calendar&id=${LUMA.id}`,
   launches: "https://ll.thespacedevs.com/2.3.0/launches/upcoming/?limit=12&mode=normal&hide_recent_previous=true",
   scales: "https://services.swpc.noaa.gov/products/noaa-scales.json",
   kp: "https://services.swpc.noaa.gov/products/noaa-planetary-k-index.json",
@@ -15,6 +21,8 @@ export const SOURCES = Object.freeze({
 export const FEEDS = Object.freeze({
   launches: { key: "feed:launches", refreshMin: 30, staleMin: 120 },
   weather: { key: "feed:weather", refreshMin: 15, staleMin: 45 },
+  // Optional: Luma being down never makes /api/health fail.
+  events: { key: "feed:events", refreshMin: 180, staleMin: 1440, optional: true },
 });
 
 const UA = "lightbound.uk-site/1 (+https://lightbound.uk)";
@@ -74,6 +82,35 @@ export function normaliseWeather({ scales, kp, wind, mag }) {
   return out;
 }
 
+/** Luma's iCal feed -> [{ title, start, end, url }], soonest first. Unfolds lines; ignores everything else. */
+export function normaliseEvents(ics) {
+  if (typeof ics !== "string" || !ics.includes("BEGIN:VCALENDAR")) throw new Error("not a calendar");
+  const text = ics.replace(/\r?\n[ \t]/g, "");
+  const when = (v) => {
+    const m = /^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z$/.exec(v ?? "");
+    return m ? new Date(Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6])).toISOString() : null;
+  };
+  const unescape = (v) => v.replace(/\\n/gi, " ").replace(/\\([,;\\])/g, "$1");
+  const events = [];
+  for (const block of text.split("BEGIN:VEVENT").slice(1)) {
+    const field = (k) => (new RegExp(`^${k}(?:;[^:\\n]*)?:(.*)$`, "m").exec(block) ?? [])[1]?.trim() ?? "";
+    const id = /^UID:(evt-[A-Za-z0-9]+)@/m.exec(block)?.[1];
+    const page = /https:\/\/luma\.com\/[a-z0-9]{4,20}\b/.exec(field("DESCRIPTION"))?.[0];
+    const start = when(field("DTSTART"));
+    const title = clean(unescape(field("SUMMARY")), 120);
+    if (!start || !title || (!page && !id)) continue;
+    if (/^CANCELLED$/i.test(field("STATUS"))) continue;
+    events.push({ title, start, end: when(field("DTEND")) ?? start, url: page ?? `https://luma.com/event/${id}` });
+  }
+  return events.sort((a, b) => (a.start < b.start ? -1 : 1)).slice(-60);
+}
+
+async function fetchText(url, fetchImpl, timeoutMs = 10_000) {
+  const res = await fetchImpl(url, { headers: { accept: "text/calendar", "user-agent": UA }, signal: AbortSignal.timeout(timeoutMs) });
+  if (!res.ok) throw new Error(`${new URL(url).host} HTTP ${res.status}`);
+  return res.text();
+}
+
 async function fetchJson(url, fetchImpl, timeoutMs = 10_000) {
   const res = await fetchImpl(url, { headers: { accept: "application/json", "user-agent": UA }, signal: AbortSignal.timeout(timeoutMs) });
   if (!res.ok) throw new Error(`${new URL(url).host} HTTP ${res.status}`);
@@ -81,6 +118,7 @@ async function fetchJson(url, fetchImpl, timeoutMs = 10_000) {
 }
 
 const LOADERS = {
+  events: async (f) => normaliseEvents(await fetchText(SOURCES.events, f)),
   // LL2's full-detail query can take ~20 s (measured 18 s on 2026-10-18); the cron can afford to wait.
   launches: async (f) => normaliseLaunches(await fetchJson(SOURCES.launches, f, 30_000)),
   weather: async (f) => {

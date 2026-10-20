@@ -1,6 +1,6 @@
 // Server-side HTML for the live sections, plus the launch calendar (.ics). Everything is escaped;
 // the pages stay script-free. Times are always UTC, and every view says how old its data is.
-import { feedState } from "./feeds.js";
+import { feedState, LUMA } from "./feeds.js";
 import { argoPrice, FEATURES, priceLabel, TIERS } from "./tiers.js";
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -114,6 +114,24 @@ export function renderLaunches(rec, now = Date.now()) {
     })
     .join("");
   return `${top}<ol class="launches">${rows}</ol><p class="src">Source: The Space Devs Launch Library 2 · updated ${esc(at(s.fetchedAt))} · every orbital launch attempt worldwide, times UTC.</p>`;
+}
+
+/** Constellation page: events from the Constellation calendar on Luma (titles, times and links only). */
+// Built by hand, so every runtime prints the same "Sat 24 Oct 2026" (locale data differs between Node and Workers).
+const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const eventDay = (iso) => { const d = new Date(iso); return `${DAYS[d.getUTCDay()]} ${d.getUTCDate()} ${MONTHS[d.getUTCMonth()]} ${d.getUTCFullYear()}`; };
+const eventTime = (iso) => `${new Date(iso).toISOString().slice(11, 16)}${NB}UTC`;
+export function renderEvents(rec, now = Date.now()) {
+  const list = Array.isArray(rec?.data) ? rec.data.filter((e) => /^https:\/\/luma\.com\//.test(e.url ?? "")) : [];
+  const next = list.filter((e) => Date.parse(e.end) > now).slice(0, 6);
+  const past = list.filter((e) => Date.parse(e.end) <= now).slice(-3).reverse();
+  const item = (e) => `<li class="event"><time datetime="${esc(e.start)}"><b>${esc(eventDay(e.start))}</b><span>${esc(eventTime(e.start))}</span></time>` +
+    `<a href="${esc(e.url)}" rel="noopener">${esc(e.title)}</a></li>`;
+  return (next.length ? `<ol class="events">${next.map(item).join("")}</ol>`
+      : `<p class="muted">No events are scheduled right now. Follow the calendar on Luma to hear about the next one first.</p>`) +
+    `<p class="actions"><a class="btn" href="${LUMA.page}" rel="noopener">Follow Constellation on Luma</a></p>` +
+    (past.length ? `<h3 class="label events-h">Recently</h3><ol class="events past">${past.map(item).join("")}</ol>` : "") +
+    (rec?.fetchedAt ? `<p class="src">Source: the Constellation calendar on Luma · updated ${esc(at(rec.fetchedAt))} · times UTC; venues and local times are on each event page.</p>` : "");
 }
 
 /** Constellation page: space weather in detail. */

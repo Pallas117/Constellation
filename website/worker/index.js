@@ -7,12 +7,13 @@
 //   /constellation/time/    public time-zone planner for group calls (no data stored)
 //   /argo/                  Gauss Argo; its buttons follow ARGO_SALES (the list, or start a subscription)
 //   /education/             Gauss for Education; its buttons follow EDU_SALES and EDU_STAFF_PRICE
+//   /constellation/workshops/  ask for an ethics, resilience or tech-leadership workshop for a team
 //   /app/*                  signed-in workspace and admin (Cloudflare Access in front; see app.js)
 //   /api/*                  launches.json, launches.ics, space-weather.json, health, POST apply,
 //                           POST stripe/webhook (signed by Stripe; unlocks paid plans)
 // and on the cron trigger, which refreshes the feeds into KV. Nothing here needs a secret.
 import { FEEDS, feedState, readFeed, refreshFeeds } from "./feeds.js";
-import { renderArgoActions, renderArgoPlan, renderEduActions, renderEduPlans, renderConstellationDoor, renderEventIcs, renderGaussDoor, renderIcs, renderLaunches, renderPlans, renderSupport, renderWeather } from "./render.js";
+import { renderArgoActions, renderArgoPlan, renderEduActions, renderEduPlans, renderEvents, renderConstellationDoor, renderEventIcs, renderGaussDoor, renderIcs, renderLaunches, renderPlans, renderSupport, renderWeather } from "./render.js";
 import { argoMode, eduMode, eduStaffLabel } from "./tiers.js";
 import { plannerParams, renderPlanner } from "./timezones.js";
 import { handleApply, renderApplyForm, renderSent } from "./forms.js";
@@ -30,6 +31,7 @@ const LIVE_PAGES = {
     launches: (f, t) => renderLaunches(f.launches, t),
     weather: (f, t) => renderWeather(f.weather, t),
     "gauss-door": (f, t) => renderGaussDoor(f.weather, t),
+    events: (f, t) => renderEvents(f.events, t),
     support: (f, t, url, env) => renderSupport(env.SUPPORT_URL),
   }),
   "/constellation/time/": () => ({ planner: (f, t, url) => renderPlanner(plannerParams(url, t)) }),
@@ -37,25 +39,27 @@ const LIVE_PAGES = {
   "/constellation/apply/": applyPage("constellation"),
   "/argo/apply/": applyPage("argo"),
   "/education/apply/": applyPage("edu"),
+  "/constellation/workshops/": applyPage("workshop"),
   "/education/": () => ({ "edu-actions": (f, t, url, env) => renderEduActions(eduMode(env)), "edu-plans": (f, t, url, env) => renderEduPlans(eduMode(env), eduStaffLabel(env)) }),
   "/argo/": () => ({ "argo-actions": (f, t, url, env) => renderArgoActions(argoMode(env)), "argo-plan": (f, t, url, env) => renderArgoPlan(argoMode(env)) }),
 };
 const NEEDS_FEEDS = new Set(["/", "/gauss/", "/constellation/"]);
 const ATTRIBUTION = {
   launches: "Data: The Space Devs Launch Library 2 (thespacedevs.com)",
+  events: "Events: Constellation on Luma (luma.com/constellation)",
   weather: "Data: NOAA Space Weather Prediction Center (swpc.noaa.gov)",
 };
 
 let bootstrapping = false;
 
 async function readAll(env, ctx) {
-  const [launches, weather] = await Promise.all([readFeed(env, "launches"), readFeed(env, "weather")]);
+  const [launches, weather, events] = await Promise.all([readFeed(env, "launches"), readFeed(env, "weather"), readFeed(env, "events")]);
   // First request after a fresh deploy, before the cron has run: fetch once in the background.
   if ((!launches || !weather) && !bootstrapping) {
     bootstrapping = true;
     ctx.waitUntil(refreshFeeds(env).catch(() => {}));
   }
-  return { launches, weather };
+  return { launches, weather, events };
 }
 
 const respond = (body, status, type, extra = {}) =>
@@ -112,7 +116,7 @@ async function api(request, url, env, ctx) {
       return json({ ...envelope("weather"), data: feeds.weather?.data ?? null });
     case "/api/health": {
       const status = Object.fromEntries(Object.keys(FEEDS).map((n) => [n, feedState(n, feeds[n], now)]));
-      const ok = Object.values(status).every((s) => s.state === "live");
+      const ok = Object.entries(status).every(([n, s]) => FEEDS[n].optional || s.state === "live");
       return json({ ok, feeds: status, checkedAt: new Date(now).toISOString() }, ok ? 200 : 503, "no-store");
     }
     default:

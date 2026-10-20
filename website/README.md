@@ -180,6 +180,20 @@ Book adds Argo.
   - the same tax and cancellation points as Gauss Argo (above) apply to the staff plan;
   - run the department invoice once in Stripe test mode.
 
+**Constellation events and workshops** (2026-10-20):
+- **Events (05):** the Constellation page lists events from the public Luma calendar, https://luma.com/constellation
+  (`cal-JlCHo35H2rXUzYN`, found from "The Overview Summit Malaysia" at luma.com/ktvyagi2). The cron reads Luma's
+  public iCal feed every 3 hours and keeps only each event's title, start and end times, and public link: never
+  organisers, descriptions, addresses or coordinates. Up to 6 upcoming and the 3 most recent show, with "Follow
+  Constellation on Luma". If Luma is down, the section still shows the link and `/api/health` stays green.
+  New events appear by themselves once they're posted on Luma.
+- **Workshops (06):** ethics, resilience and tech leadership, "led by facilitators from the Constellation community;
+  members join free". `/constellation/workshops/` is a team request form (organisation, workshop, format, group
+  size, when). It lands in admin as "WORKSHOP · …", and "Mark contacted" creates no account.
+- **Facilitators aren't named on the site yet.** Two community members are keen to deliver the workshops in
+  partnership. Add their names here and on the page only once each has agreed to be listed. This repo is public,
+  so the same applies to this file.
+
 **Support Constellation.** The Constellation page (Join section) and a member's workspace show a "Support
 Constellation" link once `SUPPORT_URL` in `wrangler.jsonc` vars holds a Stripe Payment Link. While it's empty,
 nothing shows. Only `https://buy.stripe.com/…` or `https://donate.stripe.com/…` links are accepted. To set it up:
