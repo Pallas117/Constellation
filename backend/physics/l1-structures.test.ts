@@ -70,12 +70,55 @@ test("l1 structures: high pressure and southward Bz put the Shue (1998) magnetop
   assert.equal(mp.confidence, "high");
 });
 
+test("l1 structures: a cold, low-beta ejecta with a strong field is an ICME candidate; a hot sheath is not", () => {
+  // 450 km/s: T_exp = (0.031·450 − 5.1)²·10³ ≈ 78,000 K. 20,000 K is T/T_exp ≈ 0.26; beta ≈ 0.015.
+  const cold = (i: number) => (i >= 60 && i < 420 ? { speedKmS: 450, btNt: 15, temperatureK: 20_000 } : { temperatureK: 80_000 });
+  const r = detectL1Structures(series(540, cold));
+  assert.equal(r.icmeCandidates.length, 1);
+  const [icme] = r.icmeCandidates;
+  assert.ok(Math.abs(icme.hours - 6) <= 0.2, `${icme.hours} h`);
+  assert.deepEqual(icme.signatures, ["low T/T_exp", "low proton beta"]);
+  assert.equal(icme.confidence, "high");
+  // A hot, dense, compressed flow (T/T_exp ≈ 1.5, beta ≈ 1) is sheath-like, not ejecta.
+  const hot = detectL1Structures(series(540, (i) => (i >= 60 && i < 420 ? { speedKmS: 450, densityCm3: 20, btNt: 15, temperatureK: 120_000 } : { temperatureK: 80_000 })));
+  assert.deepEqual(hot.icmeCandidates, []);
+});
+
+test("l1 structures: fast hot flow is a high-speed stream, unless it starts right after a shock", () => {
+  // A stream builds gradually (no shock): speed ramps 400 → 650 km/s over 3 h, then holds.
+  const ramp = (i: number) => {
+    const speed = i < 60 ? 400 : Math.min(650, 400 + ((i - 60) * 250) / 180);
+    return { speedKmS: speed, densityCm3: 3, temperatureK: 1.1 * (speed < 500 ? (0.031 * speed - 5.1) ** 2 * 1e3 : (0.51 * speed - 142) * 1e3) };
+  };
+  const stream = detectL1Structures(series(900, ramp));
+  assert.deepEqual(stream.shocks, []);
+  assert.equal(stream.fastFlows.length, 1);
+  assert.equal(stream.fastFlows[0].kind, "high-speed stream");
+  // The same fast hot flow behind a shock is sheath / ejecta.
+  const shocked = detectL1Structures(
+    series(900, (i) => (i >= 60 ? { speedKmS: 650, densityCm3: 12, btNt: 12, temperatureK: 250_000 } : { temperatureK: 80_000 })),
+  );
+  assert.equal(shocked.shocks.length, 1);
+  assert.equal(shocked.fastFlows.length, 1);
+  assert.match(shocked.fastFlows[0].kind, /^post-shock fast flow/);
+});
+
+test("l1 structures: without a temperature, ICMEs and streams are not assessed, and the result says so", () => {
+  const r = detectL1Structures(series(540, (i) => (i >= 60 && i < 420 ? { speedKmS: 650, btNt: 15 } : {})));
+  assert.deepEqual([r.icmeCandidates, r.fastFlows], [[], []]);
+  assert.equal(r.coverage.temperature, 0);
+  assert.ok(r.notes.some((note) => note.includes("not assessed")));
+});
+
 // Validation on the GAU-138 replay archives (SWPC RTSW as archived by NASA CCMC iSWA).
 // Published times: the Richardson & Cane ICME list, https://izw1.caltech.edu/ACE/ASC/DATA/level3/icmetable2.htm
 // (revised 23 July 2026, read 20 October 2026). Its "Disturbance" column is "the time of the
 // associated geomagnetic storm sudden commencement (typically related to the arrival of a shock
 // at Earth)", so L1 times are propagated to Earth with the nowcast's delay model first.
-// Tolerance: 30 min, the study pack's golden case GC01 (it allows 45 min for October 2024).
+// Tolerance: 30 min for shocks, the study pack's golden case GC01 (it allows 45 min for October
+// 2024); 2 h for ICME starts, which the list gives "to ~ the nearest hour". The low-beta ICME
+// signature was added after these two storms showed hot ejecta, so they don't validate it
+// independently.
 const archive = (id: string) => archiveL1Samples(loadArchive(fileURLToPath(new URL(`../replay/events/${id}.json.gz`, import.meta.url))));
 const minutesApart = (a: string, b: string) => Math.abs(Date.parse(a) - Date.parse(b)) / 60_000;
 
@@ -90,6 +133,8 @@ test("l1 structures, May 2024 replay: shock within 30 min of the published comme
   assert.ok(r.sustainedSouthward.some((s) => s.minBzNt < -40), "no sustained driving with Bz below -40 nT");
   // Study pack GC03: magnetopause inside GEO, minimum under 5.5 Re (about 5 Re in the literature).
   assert.ok(Math.min(...r.magnetopauseInsideGeo.map((m) => m.minStandoffRe)) < 5.5);
+  // R&C ICME start 2024-05-10 20:00 ("to ~ the nearest hour"): tolerance 2 h.
+  assert.ok(r.icmeCandidates.some((c) => minutesApart(c.start, "2024-05-10T20:00:00Z") <= 120), JSON.stringify(r.icmeCandidates));
 });
 
 test("l1 structures, October 2024 replay: shock within 30 min of the published commencement, then a long southward interval", () => {
@@ -100,6 +145,10 @@ test("l1 structures, October 2024 replay: shock within 30 min of the published c
   assert.notEqual(first.confidence, "low");
   // Study pack GC06: sustained southward driving over 6 h, Bz below -40 nT.
   assert.ok(r.sustainedSouthward.some((s) => s.hours > 6 && s.minBzNt < -40));
+  // Study pack GC05: the fast hot flow right behind the shock is sheath, not a coronal-hole stream.
+  assert.ok(r.fastFlows.length > 0 && r.fastFlows.every((f) => f.kind.startsWith("post-shock")), JSON.stringify(r.fastFlows));
+  // R&C ICME start 2024-10-10 22:00: tolerance 2 h.
+  assert.ok(r.icmeCandidates.some((c) => minutesApart(c.start, "2024-10-10T22:00:00Z") <= 120), JSON.stringify(r.icmeCandidates));
 });
 
 test("l1 structures, January 2026 replay: no shock is invented when the plasma speed doesn't move (GAU-153)", () => {

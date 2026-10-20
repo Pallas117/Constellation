@@ -11,13 +11,20 @@
  *   Bz < −10 nT for > 3 h condition for an intense storm (Dst < −100 nT) of Gonzalez & Tsurutani
  *   (1987, Planet. Space Sci. 35, 1101) at ~500 km/s;
  * - a compressed magnetopause: the Shue et al. (1998) standoff inside geostationary orbit
- *   (6.6 Re) for ≥ 10 min, using the nowcast's own Shue and pressure functions.
+ *   (6.6 Re) for ≥ 10 min, using the nowcast's own Shue and pressure functions;
+ * - ICME candidates: Bt > 8 nT for ≥ 4 h with either signature of ejecta: proton temperature
+ *   under half the expected value for the speed (T/T_exp < 0.5, T_exp after Lopez & Freeman
+ *   1986, as Richardson & Cane use it) or low proton beta (< 0.1, the magnetic-cloud signature of
+ *   Burlaga et al. 1981). Fast, compressed ICMEs can stay hot, so the temperature alone misses
+ *   them: inside the May and Oct 2024 ejecta T/T_exp was mostly 0.55–1.8 while beta was 0.00–0.10.
+ *   Boundaries lag the true leading edge by hours;
+ * - high-speed streams: V > 550 km/s with T/T_exp ≥ 0.8 for ≥ 6 h. A fast, hot flow that starts
+ *   within 12 h after a shock is labelled sheath / fast ejecta, not a coronal-hole stream.
  *
  * Thresholds are those of the gauss_swx study pack (patterns.detect_l1_structures). These are
  * heuristics: every result carries a confidence label and is a candidate for an expert to
  * confirm (shocks against an interplanetary-shock list, storms against Richardson & Cane), never
- * a catalogue entry. ICME/sheath and high-speed-stream detection need the proton temperature
- * (T/T_exp, Lopez & Freeman 1986), which the replay archives don't carry yet (GAU-139 part B).
+ * a catalogue entry. Without the proton temperature, ICMEs and streams aren't assessed.
  */
 import { dynamicPressureNpa, propagationDelaySeconds, shueStandoffDistanceRe } from "./mhd-nowcast.js";
 
@@ -28,6 +35,8 @@ export interface L1Sample {
   densityCm3: number | null;
   btNt: number | null;
   bzGsmNt: number | null;
+  /** Proton temperature (K); absent or null where not measured. */
+  temperatureK?: number | null;
 }
 
 /**
@@ -70,18 +79,62 @@ export interface MagnetopauseInterval {
   confidence: DetectionConfidence;
 }
 
+export interface IcmeInterval {
+  kind: "ICME candidate";
+  start: string;
+  end: string;
+  hours: number;
+  /** Which ejecta signatures the interval's medians show. */
+  signatures: ("low T/T_exp" | "low proton beta")[];
+  medianTemperatureRatio: number;
+  medianProtonBeta: number;
+  minBzNt: number;
+  maxBtNt: number;
+  confidence: DetectionConfidence;
+}
+
+export interface FastFlowInterval {
+  /** A stream from a coronal hole, or fast hot flow right behind a shock (CME sheath / ejecta). */
+  kind: "high-speed stream" | "post-shock fast flow (sheath / fast ejecta, not a coronal-hole stream)";
+  start: string;
+  end: string;
+  hours: number;
+  maxSpeedKmS: number;
+  confidence: DetectionConfidence;
+}
+
 export interface L1Structures {
   shocks: ShockCandidate[];
   sustainedSouthward: SouthwardInterval[];
   magnetopauseInsideGeo: MagnetopauseInterval[];
+  icmeCandidates: IcmeInterval[];
+  fastFlows: FastFlowInterval[];
   /** Share of minutes with data, per input. */
-  coverage: { speed: number; density: number; bt: number; bz: number };
+  coverage: { speed: number; density: number; bt: number; bz: number; temperature: number };
   notes: string[];
 }
 
 export const SHOCK_THRESHOLDS = { windowMin: 10, deltaSpeedKmS: 40, densityRatio: 1.2, fieldRatio: 1.2 } as const;
 export const SOUTHWARD_THRESHOLDS = { eyMvM: 5, minHours: 3 } as const;
 export const GEO_RADIUS_RE = 6.6;
+export const ICME_THRESHOLDS = { temperatureRatio: 0.5, protonBeta: 0.1, btNt: 8, minHours: 4 } as const;
+export const STREAM_THRESHOLDS = { speedKmS: 550, temperatureRatio: 0.8, minHours: 6, afterShockHours: 12 } as const;
+
+const K_B = 1.380649e-23; // J/K
+const MU0 = 4e-7 * Math.PI; // H/m
+
+/**
+ * Expected proton temperature (K) of normal solar wind at speed V (km/s), Lopez & Freeman (1986):
+ * (0.031·V − 5.1)²·10³ below 500 km/s, (0.51·V − 142)·10³ above.
+ */
+export function expectedTemperatureK(speedKmS: number): number {
+  return speedKmS < 500 ? (0.031 * speedKmS - 5.1) ** 2 * 1e3 : (0.51 * speedKmS - 142) * 1e3;
+}
+
+/** Proton beta: thermal over magnetic pressure. Magnetic clouds typically sit under ~0.1–0.3. */
+export function protonBeta(densityCm3: number, temperatureK: number, btNt: number): number {
+  return (densityCm3 * 1e6 * K_B * temperatureK) / ((btNt * 1e-9) ** 2 / (2 * MU0));
+}
 
 const MINUTE_MS = 60_000;
 const SMOOTH_MIN = 15; // rolling median before thresholding: bridges gaps and one-minute excursions
@@ -157,14 +210,22 @@ function runs(states: (boolean | null)[], minMinutes: number): [number, number][
 export function detectL1Structures(samples: L1Sample[]): L1Structures {
   const notes = [
     "Heuristic candidates: confirm shocks against an interplanetary-shock list and storm structures against the Richardson & Cane ICME list before treating them as events.",
-    "ICME/sheath and high-speed streams are not assessed: they need the proton temperature (T/T_exp).",
+    "ICMEs and high-speed streams are not assessed: no proton temperature (T/T_exp).",
   ];
   const timed = samples
     .map((s) => ({ ...s, ms: Date.parse(s.time) }))
     .filter((s) => finite(s.ms))
     .sort((a, b) => a.ms - b.ms);
   if (timed.length === 0) {
-    return { shocks: [], sustainedSouthward: [], magnetopauseInsideGeo: [], coverage: { speed: 0, density: 0, bt: 0, bz: 0 }, notes: [...notes, "No data."] };
+    return {
+      shocks: [],
+      sustainedSouthward: [],
+      magnetopauseInsideGeo: [],
+      icmeCandidates: [],
+      fastFlows: [],
+      coverage: { speed: 0, density: 0, bt: 0, bz: 0, temperature: 0 },
+      notes: [...notes, "No data."],
+    };
   }
 
   // On a regular 1-minute grid, NaN where missing; nothing is interpolated.
@@ -175,12 +236,14 @@ export function detectL1Structures(samples: L1Sample[]): L1Structures {
   const den = grid();
   const bt = grid();
   const bz = grid();
+  const temp = grid();
   for (const s of timed) {
     const i = Math.round((s.ms - t0) / MINUTE_MS);
     if (s.speedKmS !== null && finite(s.speedKmS)) v[i] = s.speedKmS;
     if (s.densityCm3 !== null && finite(s.densityCm3)) den[i] = s.densityCm3;
     if (s.btNt !== null && finite(s.btNt)) bt[i] = s.btNt;
     if (s.bzGsmNt !== null && finite(s.bzGsmNt)) bz[i] = s.bzGsmNt;
+    if (s.temperatureK != null && finite(s.temperatureK) && s.temperatureK > 0) temp[i] = s.temperatureK;
   }
   const iso = (i: number) => new Date(t0 + i * MINUTE_MS).toISOString();
 
@@ -272,12 +335,77 @@ export function detectL1Structures(samples: L1Sample[]): L1Structures {
     };
   });
 
+  // ICMEs and streams: T/T_exp from the measured temperature and speed, smoothed like the rest.
+  const ratio = Float64Array.from({ length: n }, (_, j) =>
+    finite(temp[j]) && finite(v[j]) && v[j] > 0 ? temp[j] / expectedTemperatureK(v[j]) : NaN,
+  );
+  const beta = Float64Array.from({ length: n }, (_, j) =>
+    [den[j], temp[j], bt[j]].every(finite) && bt[j] > 0 ? protonBeta(den[j], temp[j], bt[j]) : NaN,
+  );
+  const rs = smooth(ratio);
+  const betas = smooth(beta);
+  const bts = smooth(bt);
+  const valuesIn = (a: Float64Array, s: number, e: number) => Array.from(a.subarray(s, e + 1)).filter(finite);
+  const ejecta = (j: number) => {
+    const signs = [rs[j], betas[j]].filter(finite);
+    if (signs.length === 0 || !finite(bts[j])) return null;
+    const lowRatio = finite(rs[j]) && rs[j] < ICME_THRESHOLDS.temperatureRatio;
+    const lowBeta = finite(betas[j]) && betas[j] < ICME_THRESHOLDS.protonBeta;
+    return (lowRatio || lowBeta) && bts[j] > ICME_THRESHOLDS.btNt;
+  };
+  const icmeCandidates: IcmeInterval[] = runs(Array.from({ length: n }, (_, j) => ejecta(j)), ICME_THRESHOLDS.minHours * 60).map(
+    ([s, e]) => {
+      const coverage = Math.min(share(temp, s, e), share(den, s, e), share(bt, s, e));
+      const medianRatio = median(valuesIn(ratio, s, e));
+      const medianBeta = median(valuesIn(beta, s, e));
+      const signatures: IcmeInterval["signatures"] = [];
+      if (medianRatio < ICME_THRESHOLDS.temperatureRatio) signatures.push("low T/T_exp");
+      if (medianBeta < ICME_THRESHOLDS.protonBeta) signatures.push("low proton beta");
+      return {
+        kind: "ICME candidate",
+        start: iso(s),
+        end: iso(e),
+        hours: round(((e - s + 1) * MINUTE_MS) / 3_600_000, 1),
+        signatures,
+        medianTemperatureRatio: round(medianRatio, 2),
+        medianProtonBeta: round(medianBeta, 3),
+        minBzNt: round(Math.min(...valuesIn(bz, s, e)), 1),
+        maxBtNt: round(Math.max(...valuesIn(bt, s, e)), 1),
+        confidence: confidenceFromCoverage(coverage, signatures.length === 2),
+      };
+    },
+  );
+  const shockTimes = shocks.map((sh) => Date.parse(sh.time));
+  const fastFlows: FastFlowInterval[] = runs(
+    Array.from(rs, (r, j) => (finite(r) && finite(vs[j]) ? vs[j] > STREAM_THRESHOLDS.speedKmS && r >= STREAM_THRESHOLDS.temperatureRatio : null)),
+    STREAM_THRESHOLDS.minHours * 60,
+  ).map(([s, e]) => {
+    const coverage = Math.min(share(v, s, e), share(temp, s, e));
+    const startMs = t0 + s * MINUTE_MS;
+    const afterShock = shockTimes.some((t) => startMs >= t && startMs - t <= STREAM_THRESHOLDS.afterShockHours * 3_600_000);
+    const medianSpeed = median(valuesIn(v, s, e));
+    return {
+      kind: afterShock ? "post-shock fast flow (sheath / fast ejecta, not a coronal-hole stream)" : "high-speed stream",
+      start: iso(s),
+      end: iso(e),
+      hours: round(((e - s + 1) * MINUTE_MS) / 3_600_000, 1),
+      maxSpeedKmS: round(Math.max(...valuesIn(v, s, e)), 0),
+      confidence: confidenceFromCoverage(coverage, medianSpeed >= STREAM_THRESHOLDS.speedKmS + 100),
+    };
+  });
+
   const covered = (a: Float64Array) => round(share(a, 0, n - 1), 3);
+  const temperatureCoverage = covered(temp);
   return {
     shocks,
     sustainedSouthward,
     magnetopauseInsideGeo,
-    coverage: { speed: covered(v), density: covered(den), bt: covered(bt), bz: covered(bz) },
-    notes,
+    icmeCandidates,
+    fastFlows,
+    coverage: { speed: covered(v), density: covered(den), bt: covered(bt), bz: covered(bz), temperature: temperatureCoverage },
+    notes:
+      temperatureCoverage > 0
+        ? [notes[0], "ICME boundaries from T/T_exp lag the true leading edge by hours; the shock or sheath comes first."]
+        : notes,
   };
 }
