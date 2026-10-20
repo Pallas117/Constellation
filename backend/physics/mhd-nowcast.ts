@@ -90,7 +90,8 @@ function akasofuEpsilon(speedKmS: number, btNt: number, byNt: number, bzNt: numb
 }
 
 /** Ballistic L1 -> Earth travel time from the sunward flow component. */
-function propagationDelaySeconds(vxKmS: number): number {
+/** Ballistic L1-to-Earth delay (1.5e6 km at the bulk speed, clamped to 250–2000 km/s). */
+export function propagationDelaySeconds(vxKmS: number): number {
   return L1_DISTANCE_KM / clamp(Math.abs(vxKmS), 250, 2000);
 }
 
@@ -139,7 +140,8 @@ function inducedElectricFieldMvM(velocityKmS: Vector3, magneticNt: Vector3): Vec
   return vec(minus.x * 1000, minus.y * 1000, minus.z * 1000);
 }
 
-function shueStandoffDistanceRe(dynamicPressure: number, bzNt: number): number {
+/** Shue et al. (1998) subsolar magnetopause distance in Re, clamped to 4–25 Re. */
+export function shueStandoffDistanceRe(dynamicPressure: number, bzNt: number): number {
   const r0 =
     (10.22 + 1.29 * Math.tanh(0.184 * (bzNt + 8.14))) * Math.pow(Math.max(dynamicPressure, 0.05), -1 / 6.6);
   return clamp(r0, 4, 25);
