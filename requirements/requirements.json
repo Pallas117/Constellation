@@ -1,6 +1,6 @@
 {
   "$comment": "Constellation requirements baseline (GAU-120). NASA SP-2016-6105 Rev 2 §6.2/§5.3. Methods: T test, A analysis, I inspection, D demonstration. T evidence = exact test names; A/I/D evidence = repo paths. Verified by `npm run verify`.",
-  "version": "1.7.1",
+  "version": "1.7.2",
   "requirements": [
     {
       "id": "REQ-ING-001",
@@ -472,7 +472,10 @@
         "trust record: through the replayed 19 Jan 2026 storm, S1 is consistent and S2 under G0 is degraded (GAU-57)",
         "trust records API: an invalid inference is a 400 listing every error, nothing guessed (GAU-57)",
         "trust records API: a batch returns records for valid items and the errors for the rest (GAU-57)",
-        "trust records API: a server without an environment history says so, never an empty record (GAU-57)"
+        "trust records API: a server without an environment history says so, never an empty record (GAU-57)",
+        "TLE: an epoch more than 7 days from the inference is not used (GAU-57)",
+        "trust record: an ephemeris and a TLE that disagree are conflicting inputs, so both read unknown (GAU-57)",
+        "TLE: format, catalogue number and the modulo-10 checksum are checked; satellite.js checks none of them (GAU-57)"
       ]
     }
   ]
