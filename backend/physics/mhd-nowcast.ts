@@ -12,7 +12,13 @@ import {
   type Vector3,
 } from "./coordinates.js";
 
-let nativeMhd: any = null;
+/** The optional C++ kernel (build/Release/mhd_native.node); each export falls back to TS. */
+interface NativeMhd {
+  dynamicPressureNpa?: (densityCm3: number, speedKmS: number) => number;
+  newellCoupling?: (speedKmS: number, btNt: number, byNt: number, bzNt: number) => number;
+}
+
+let nativeMhd: NativeMhd | null = null;
 try {
   // Attempt to load the native C++ physics core if compiled
   nativeMhd = require("../../build/Release/mhd_native.node");
@@ -53,7 +59,7 @@ export interface MhdState {
   magneticField: Vector3;
 }
 
-function dynamicPressureNpa(densityCm3: number, speedKmS: number): number {
+export function dynamicPressureNpa(densityCm3: number, speedKmS: number): number {
   if (nativeMhd?.dynamicPressureNpa) {
     return nativeMhd.dynamicPressureNpa(densityCm3, speedKmS);
   }
@@ -64,7 +70,7 @@ function toTeslasFromNt(nt: number): number {
   return nt * 1e-9;
 }
 
-function newellCoupling(speedKmS: number, btNt: number, byNt: number, bzNt: number): number {
+export function newellCoupling(speedKmS: number, btNt: number, byNt: number, bzNt: number): number {
   if (nativeMhd?.newellCoupling) {
     return nativeMhd.newellCoupling(speedKmS, btNt, byNt, bzNt);
   }
@@ -89,6 +95,9 @@ function propagationDelaySeconds(vxKmS: number): number {
 }
 
 const DST_REINIT_GAP_HOURS = 3;
+
+export const DST_MODEL_METHOD = "model: O'Brien & McPherron (2000) ring-current";
+export const DST_DERIVED_FROM = ["solarWind.speed", "magneticField.z", "solarWind.dynamicPressure"];
 
 /**
  * Dst model estimate from O'Brien & McPherron (2000): the pressure-corrected ring
@@ -208,6 +217,7 @@ export function computeCanonicalPoint(
   const dtHours = Number.isFinite(dtMs) ? dtMs / 3_600_000 : null;
   const earth = input.atEarth ?? { speed, bzGsm: state.magneticField.z, pdyn };
   const dst = input.dst ?? estimateDst(earth.speed, earth.bzGsm, earth.pdyn, previousDst, dtHours);
+  const dstMeasured = input.dst != null;
   const dstSlope = previousDst == null || !dtHours || dtHours <= 0 ? 0 : (dst - previousDst) / dtHours;
 
   const sorted = [...couplingWindow].sort((a, b) => a - b);
@@ -249,6 +259,9 @@ export function computeCanonicalPoint(
     indices: {
       kp,
       dst,
+      // A modelled Dst must never pass for a measurement (GAU-63 provenance invariant).
+      dstMethod: dstMeasured ? "measured" : DST_MODEL_METHOD,
+      dstDerivedFrom: dstMeasured ? [] : DST_DERIVED_FROM,
     },
     coupling: {
       newell,

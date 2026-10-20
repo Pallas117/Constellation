@@ -10,7 +10,7 @@
 
 - [ ] **Verify build**
   ```bash
-  cd '/Users/josh/.codex/worktrees/09e0/Gauss Aurora'
+  cd "<your checkout>"   # on the dev Mac: cd "$(gauss-where constellation)"
   npm run lint        # Should say: tsc --noEmit (no output = pass)
   ```
 

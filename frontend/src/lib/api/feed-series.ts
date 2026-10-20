@@ -38,8 +38,8 @@ export function lookbackSince(
 
 /**
  * Append the points newer than the newest one held, then trim to the window.
- * Returns `prev` itself when nothing new arrived. Held points are immutable:
- * a re-sent timestamp never replaces one already shown.
+ * Returns `prev` itself when nothing new arrived (an empty series when `prev` is
+ * null). Held points are immutable: a re-sent timestamp never replaces one already shown.
  */
 export function mergeSeries<T extends Timestamped>(
   prev: readonly T[] | null,
@@ -58,7 +58,9 @@ export function mergeSeries<T extends Timestamped>(
       return true;
     })
     .sort((a, b) => time(a) - time(b));
-  if (fresh.length === 0 && prev) return prev as T[];
+  // Nothing new: `prev` itself, or an empty series when nothing is held yet (the history
+  // panel can mount before both its backfill and the first live point, GAU-150).
+  if (fresh.length === 0) return prev ? (prev as T[]) : [];
 
   const all = held.length > 0 ? [...held, ...fresh] : fresh;
   const cutoff = time(all[all.length - 1]) - windowMs;

@@ -4,9 +4,11 @@ import { ChevronDown, Info, Layers, PanelRight, RotateCcw, Video, Zap } from "lu
 import { LayerToggles } from "@/components/ui/LayerToggles";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
-import { SpaceScene, SCENE_VIEWS, type SceneView } from "@/components/scene/SpaceScene";
+import { SpaceScene } from "@/components/scene/SpaceScene";
+import { SCENE_VIEWS, type SceneView } from "@/components/scene/scene-views";
 import type { MagnetosphereModelInfo } from "@/components/scene/Magnetosphere";
-import { FeedStatus, HudButton, HudCluster, HudStat, SceneKey, fmt, signed, type Tone } from "@/components/hud/Hud";
+import { FeedStatus, HudButton, HudCluster, HudStat, SceneKey, type Tone } from "@/components/hud/Hud";
+import { fmt, signed } from "@/components/hud/format";
 import { GEO_RE, SceneHoverTip } from "@/components/hud/SceneHoverTip";
 import { useMMSReconnection } from "@/hooks/useMMSReconnection";
 import { useSolarWind5s } from "@/hooks/useSolarWind5s";
@@ -17,6 +19,7 @@ import mockSolarStormData from "@/data/mock_solar_storm.json";
 import { beltVisuals, liveDrivers, standoffIfReference } from "@/lib/physics/live-drivers";
 import { useNow } from "@/hooks/useNow";
 import { useDocumentTitle } from "@/hooks/useDocumentTitle";
+import { CHECK_LABEL, checkStatus, hudTone, scaleStatus } from "@/lib/readout-status";
 
 const VIEW_KEYS = Object.keys(SCENE_VIEWS) as SceneView[];
 // Below the fold: its own chunk (with the charting library), loaded when scrolled to.
@@ -32,6 +35,8 @@ const pdynTone = (p: number | undefined): Tone =>
 const kpTone = (kp: number | undefined): Tone =>
   kp === undefined ? "default" : kp >= 7 ? "risk" : kp >= 5 ? "caution" : "default";
 const utc = (t: string | number) => new Date(t).toISOString().slice(11, 16);
+/** "18 Oct 17:24" (UTC): alerts span a day, so the time alone is ambiguous. */
+const dayUtc = (t: string) => `${new Date(t).toLocaleDateString("en-GB", { day: "numeric", month: "short", timeZone: "UTC" })} ${utc(t)}`;
 
 /* ------------------------------------------------------------------------- */
 /* Details drawer: the full readouts and method, for touch and deep reading  */
@@ -108,6 +113,13 @@ const HeliophysicsDashboard = () => {
       : "—";
   const etaUtc = next?.etaEarth ? utc(next.etaEarth) : null;
   const stormTier = !simulateStorm ? latest?.alerts.stormTier : undefined;
+  // The two NOAA storm streams, kept apart: radiation (S) and geomagnetic (G) (GAU-135).
+  const radiation = !simulateStorm ? latest?.alerts.radiation : undefined;
+  const geomagnetic = !simulateStorm ? latest?.alerts.geomagnetic : undefined;
+  // Radio blackouts (R) and the input sense-checks, with NOAA's own alerts as a cross-check (GAU-136).
+  const radioBlackout = !simulateStorm ? latest?.alerts.radioBlackout : undefined;
+  const senseChecks = !simulateStorm ? (latest?.senseChecks ?? []) : [];
+  const noaaAlerts = !simulateStorm ? latest?.noaaAlerts : undefined;
   const driversLine = simulateStorm
     ? "Simulated drivers"
     : arriving
@@ -324,6 +336,72 @@ const HeliophysicsDashboard = () => {
                   />
                 </dl>
 
+                <p className="brand-label mt-6">Storm levels · NOAA</p>
+                <dl className="mt-2">
+                  <Readout
+                    label="Radiation (S)"
+                    value={radiation?.level != null ? radiation.label : "—"}
+                    tone={radiation ? hudTone(scaleStatus(radiation).tone) : "default"}
+                    hint={radiation?.basis ?? "No current GOES proton reading"}
+                  />
+                  <Readout
+                    label="Geomagnetic (G)"
+                    value={geomagnetic?.level != null ? geomagnetic.label : "—"}
+                    tone={geomagnetic ? hudTone(scaleStatus(geomagnetic).tone) : "default"}
+                    hint={geomagnetic?.basis ?? "No current NOAA Kp reading"}
+                  />
+                  <Readout
+                    label="Radio blackout (R)"
+                    value={radioBlackout?.level != null ? radioBlackout.label : "—"}
+                    tone={radioBlackout ? hudTone(scaleStatus(radioBlackout).tone) : "default"}
+                    hint={radioBlackout?.basis ?? "No current GOES X-ray reading"}
+                  />
+                </dl>
+                <p className="mt-2 text-xs text-muted-foreground">
+                  Radiation storms (particles), geomagnetic storms (field) and radio blackouts (X-rays) are separate hazards with different effects, and any one can happen without the others.
+                </p>
+
+                {!simulateStorm && (
+                  <>
+                    <p className="brand-label mt-6">Data checks</p>
+                    <dl className="mt-2">
+                      {senseChecks.length === 0 ? (
+                        <Readout label="Input checks" value="Unknown" tone="caution" hint="No checks on this reading" />
+                      ) : (
+                        senseChecks.map((check) => {
+                          const status = checkStatus(check);
+                          return (
+                            <Readout
+                              key={check.id}
+                              label={CHECK_LABEL[check.id] ?? check.id}
+                              value={status.word}
+                              tone={hudTone(status.tone)}
+                              hint={check.reason}
+                            />
+                          );
+                        })
+                      )}
+                    </dl>
+                    <p className="brand-label mt-4">NOAA alerts · 24 h</p>
+                    {noaaAlerts == null ? (
+                      <p className="mt-2 text-xs text-caution">Unknown: NOAA alerts could not be read.</p>
+                    ) : noaaAlerts.length === 0 ? (
+                      <p className="mt-2 text-xs text-muted-foreground">No NOAA alerts, watches or warnings in the last 24 h.</p>
+                    ) : (
+                      <ul className="mt-2 space-y-1.5">
+                        {noaaAlerts.map((a) => (
+                          <li key={a.productId} className="text-xs text-muted-foreground">
+                            <span className="font-mono text-foreground">{dayUtc(a.issuedAt)} UTC</span> {a.headline}
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                    <p className="mt-2 text-xs text-muted-foreground">
+                      NOAA&apos;s own scales and alerts are a cross-check on the levels above, not their source.
+                    </p>
+                  </>
+                )}
+
                 <p className="brand-label mt-6">Next from L1{stormTier ? ` · ${stormTier}` : ""}</p>
                 <dl className="mt-2">
                   <Readout label="IMF Bz (GSM)" value={signed(next?.bz)} unit="nT" tone={bzTone(next?.bz)} />
@@ -454,11 +532,12 @@ const HeliophysicsDashboard = () => {
                 detail={`Planetary geomagnetic activity, 0–9. 5 and above is a storm (G1+). ${kpNote}`}
               />
               <HudStat
-                className="hidden sm:block"
-                label="By"
-                value={signed(next?.by)}
-                unit="nT"
-                detail="Dawn–dusk IMF (GSM). Twists the open field lines and shifts the cusps."
+                label="Radiation"
+                value={radiation?.level != null ? radiation.label : "—"}
+                tone={radiation ? hudTone(scaleStatus(radiation).tone) : "default"}
+                detail={`NOAA radiation-storm level (S-scale) from GOES ≥10 MeV protons. Particle radiation drives bit errors and detector hits; it is a separate hazard from the geomagnetic storm above and can happen without one. ${
+                  simulateStorm ? "The simulation covers the geomagnetic stream only." : radiation?.basis ?? "No current proton reading."
+                }`}
               />
               <HudStat
                 className="hidden sm:block"

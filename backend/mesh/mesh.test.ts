@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
 import type { AddressInfo } from "node:net";
 import test from "node:test";
+import { readFileSync } from "node:fs";
 import express from "express";
 import type { AuthenticatedRequest, AuthRole } from "../auth.js";
 import { createMeshRouters, exitNodesFromEnv, onboardingSteps } from "./router.js";
-import { MeshStore, parseReport } from "./store.js";
+import { MESH_CLASSES, MeshStore, parseReport } from "./store.js";
 
 async function withApp(fn: (base: string, store: MeshStore) => Promise<void>) {
   const store = new MeshStore(null);
@@ -42,7 +43,7 @@ test("team device status is operator-only and never exposes token hashes", async
     await fetch(`${base}/devices`, json({ name: "judith" }, { "x-test-role": "admin" }));
     const res = await fetch(`${base}/devices`, { headers: { "x-test-role": "operator" } });
     assert.equal(res.status, 200);
-    const body = await res.json();
+    const body = (await res.json()) as { devices: { name: string }[] };
     assert.equal(body.devices[0].name, "judith");
     assert.equal(JSON.stringify(body).includes("tokenHash"), false);
   });
@@ -62,9 +63,9 @@ test("staff see and revoke only their own devices; operators see all; admins rev
     await fetch(`${base}/devices`, json({ name: "alice-mac" }, as("alice", "staff")));
     await fetch(`${base}/devices`, json({ name: "bob-mac" }, as("bob", "staff")));
 
-    const alice = await (await fetch(`${base}/devices`, { headers: as("alice", "staff") })).json();
-    assert.deepEqual(alice.devices.map((d: { name: string }) => d.name), ["alice-mac"]);
-    const ops = await (await fetch(`${base}/devices`, { headers: as("olga", "operator") })).json();
+    const alice = (await (await fetch(`${base}/devices`, { headers: as("alice", "staff") })).json()) as { devices: { name: string }[] };
+    assert.deepEqual(alice.devices.map((d) => d.name), ["alice-mac"]);
+    const ops = (await (await fetch(`${base}/devices`, { headers: as("olga", "operator") })).json()) as { devices: { name: string }[] };
     assert.equal(ops.devices.length, 2);
 
     assert.equal((await fetch(`${base}/devices/bob-mac`, { method: "DELETE", headers: as("alice", "staff") })).status, 404);
@@ -76,7 +77,7 @@ test("staff see and revoke only their own devices; operators see all; admins rev
 
 test("agents report with their device token; bad tokens, bad payloads and floods are refused", async () => {
   await withApp(async (base, store) => {
-    const enrolled = await (await fetch(`${base}/devices`, json({ name: "judith" }, { "x-test-role": "admin" }))).json();
+    const enrolled = (await (await fetch(`${base}/devices`, json({ name: "judith" }, { "x-test-role": "admin" }))).json()) as { token: string };
     assert.match(enrolled.token, /^argo_/);
     const auth = { authorization: `Bearer ${enrolled.token}` };
 
@@ -94,7 +95,7 @@ test("agents report with their device token; bad tokens, bad payloads and floods
 
 test("revoked devices can no longer report", async () => {
   await withApp(async (base) => {
-    const { token } = await (await fetch(`${base}/devices`, json({ name: "old-laptop" }, { "x-test-role": "admin" }))).json();
+    const { token } = (await (await fetch(`${base}/devices`, json({ name: "old-laptop" }, { "x-test-role": "admin" }))).json()) as { token: string };
     assert.equal((await fetch(`${base}/devices/old-laptop`, { method: "DELETE", headers: { "x-test-role": "admin" } })).status, 204);
     assert.equal((await fetch(`${base}/report`, json(okReport, { authorization: `Bearer ${token}` }))).status, 401);
   });
@@ -133,14 +134,25 @@ test("devices enrolled by another process (npm run mesh:enroll) are picked up an
   assert.deepEqual(new MeshStore(file).list().map((d) => d.name), ["existing", "judith"]);
 });
 
+type Onboarding = { canEnroll: boolean; canSeeTeam: boolean; steps: unknown[] };
+
 test("onboarding is for staff and above, and tells the page whether team status is visible", async () => {
   await withApp(async (base) => {
     assert.equal((await fetch(`${base}/onboarding`, { headers: { "x-test-role": "user" } })).status, 403);
-    const staff = await (await fetch(`${base}/onboarding`, { headers: { "x-test-role": "staff" } })).json();
-    const operator = await (await fetch(`${base}/onboarding`, { headers: { "x-test-role": "operator" } })).json();
+    const staff = (await (await fetch(`${base}/onboarding`, { headers: { "x-test-role": "staff" } })).json()) as Onboarding;
+    const operator = (await (await fetch(`${base}/onboarding`, { headers: { "x-test-role": "operator" } })).json()) as Onboarding;
     assert.equal(staff.canEnroll, true);
     assert.equal(staff.canSeeTeam, false);
     assert.equal(operator.canSeeTeam, true);
     assert.ok(staff.steps.length > 0);
   });
+});
+
+// Argo is Go, Gauss is TypeScript: a class Argo can report that Gauss doesn't accept makes every
+// report a 400, silently. On 2026-10-19 Argo gained WIFI_RISK and stopped reporting for hours.
+test("Gauss accepts every class Argo can report", () => {
+  const go = readFileSync(new URL("../../tools/argo/classify.go", import.meta.url), "utf8");
+  const argoClasses = [...go.matchAll(/^\s*\w+\s+Class\s*=\s*"([A-Z_]+)"/gm)].map((m) => m[1]);
+  assert.ok(argoClasses.includes("OK") && argoClasses.includes("WIFI_RISK"), `parsed ${argoClasses.join(",")}`);
+  for (const c of argoClasses) assert.ok((MESH_CLASSES as readonly string[]).includes(c), `Gauss rejects Argo class ${c}`);
 });

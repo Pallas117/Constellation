@@ -272,7 +272,7 @@ jobs:
           echo ""
           echo "✅ All performance checks complete"
 
-status-check:
+  status-check:
     name: Performance Tests Passed
     runs-on: ubuntu-latest
     needs: [performance-summary]

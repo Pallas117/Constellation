@@ -16,7 +16,7 @@ Design principles for an operator console:
 Workflow:
 1. Read only what you need; reuse existing shadcn components in `frontend/src/components/ui`.
 2. Put pure maths (physics, layout calculations) in `frontend/src/lib/**` with a `node:test` file, keep components thin.
-3. Typecheck: `npm run lint` (tsc on `frontend/tsconfig.app.json` and `frontend/tsconfig.node.json`). It is clean, so any error is yours to fix.
+3. Typecheck: `npm run lint` (strict tsc on the frontend, backend, e2e tests and scripts). It is clean, so any error is yours to fix.
 4. Verify visually in the Browser pane against a dev server (`npx vite --config frontend/vite.config.ts --port <free port>`), check the console for errors, and capture a screenshot as proof. Check mobile width (375px) when layout changes.
 
 Report back: what changed, screenshots taken, a11y/perf notes, follow-ups.

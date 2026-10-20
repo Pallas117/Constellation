@@ -13,6 +13,33 @@ export interface ESAReadout {
    * blended into the solar-wind IMF.
    */
   magneticFieldNec: { x: number; y: number; z: number };
+  /** Where the sample was taken (geocentric ITRF), so it is usable as LEO/ionospheric context. */
+  position: {
+    latitudeDeg: number;
+    longitudeDeg: number;
+    radiusKm: number;
+    altitudeKm: number;
+  } | null;
+  /** |B| at the satellite (nT), dominated by the main field; see docs/adr/swarm-not-an-imf-source.md. */
+  fieldMagnitudeNt: number;
+}
+
+const EARTH_MEAN_RADIUS_KM = 6371.2;
+
+/**
+ * Row for `parameters=Latitude,Longitude,Radius,B_NEC`: `[time, lat, lon, radius_m, [n, e, c]]`.
+ * Returns null when any value is missing (VirES NaN-fills trailing samples).
+ */
+export function parseSwarmRow(row: unknown): {
+  timestamp: string; latitudeDeg: number; longitudeDeg: number; radiusKm: number; n: number; e: number; c: number;
+} | null {
+  if (!Array.isArray(row) || row.length !== 5 || typeof row[0] !== "string" || !Array.isArray(row[4])) return null;
+  const nec = parseNecRow([row[0], row[4]]);
+  const [lat, lon, radiusM] = row.slice(1, 4).map((v) => (v === null || v === "" ? Number.NaN : Number(v)));
+  if (!nec || ![lat, lon, radiusM].every(Number.isFinite) || Math.abs(lat) > 90 || radiusM < 6.3e6 || radiusM > 8e6) {
+    return null;
+  }
+  return { timestamp: nec.timestamp, latitudeDeg: lat, longitudeDeg: lon, radiusKm: radiusM / 1000, n: nec.n, e: nec.e, c: nec.c };
 }
 
 let latestStatus: SourceStatus = {
@@ -94,47 +121,61 @@ export function parseNecRow(row: unknown): { timestamp: string; n: number; e: nu
   return { timestamp: row[0], n, e, c };
 }
 
-export async function fetchEsaReadout(): Promise<ESAReadout | null> {
+/** Swarm FAST runs hours behind; a newest sample older than this is not current (GAU-63). */
+export const ESA_MAX_AGE_MS = 24 * 3_600_000;
+
+export async function fetchEsaReadout(nowMs = Date.now()): Promise<ESAReadout | null> {
   try {
     // FAST is Swarm's lowest-latency L1b product (hours behind, vs days for OPER). Query
     // the last 15 minutes the dataset actually covers.
     const stopDate = await fetchStopDate(DATASET);
-    const stop = new Date(Math.min(Date.now(), stopDate.getTime()));
+    const stop = new Date(Math.min(nowMs, stopDate.getTime()));
     const start = new Date(stop.getTime() - 15 * 60 * 1000);
-    const data = (await fetchHapiDataset(DATASET, "B_NEC", toIso(start), toIso(stop))) as { data?: unknown[] };
+    const data = (await fetchHapiDataset(DATASET, "Latitude,Longitude,Radius,B_NEC", toIso(start), toIso(stop))) as { data?: unknown[] };
 
     if (!Array.isArray(data.data) || data.data.length === 0) {
       throw new Error("ESA HAPI returned no rows");
     }
 
     // Trailing samples are often NaN-filled; use the latest complete one.
-    let parsed: ReturnType<typeof parseNecRow> = null;
+    let parsed: ReturnType<typeof parseSwarmRow> = null;
     for (let i = data.data.length - 1; i >= 0 && !parsed; i -= 1) {
-      parsed = parseNecRow(data.data[i]);
+      parsed = parseSwarmRow(data.data[i]);
     }
     if (!parsed) {
-      throw new Error("ESA HAPI returned no complete B_NEC sample");
+      throw new Error("ESA HAPI returned no complete Swarm sample");
     }
     const { timestamp, n, e, c } = parsed;
 
+    const ageMs = nowMs - Date.parse(timestamp);
+    const current = ageMs <= ESA_MAX_AGE_MS;
     latestStatus = {
       source: SOURCE,
       lastSeen: timestamp,
-      latencySeconds: Math.max(0, (Date.now() - Date.parse(timestamp)) / 1000),
-      healthy: true,
-      message: `ESA HAPI OK (Swarm A FAST, ${((Date.now() - Date.parse(timestamp)) / 3600000).toFixed(1)} h behind)`,
+      latencySeconds: Math.max(0, ageMs / 1000),
+      healthy: current,
+      message: current
+        ? `ESA HAPI OK (Swarm A FAST, ${(ageMs / 3_600_000).toFixed(1)} h behind)`
+        : `ESA HAPI: newest Swarm A FAST sample is ${(ageMs / 3_600_000).toFixed(0)} h old (limit ${ESA_MAX_AGE_MS / 3_600_000} h)`,
     };
 
     return {
       timestamp,
       magneticFieldNec: vec(n, e, c),
+      position: {
+        latitudeDeg: parsed.latitudeDeg,
+        longitudeDeg: parsed.longitudeDeg,
+        radiusKm: parsed.radiusKm,
+        altitudeKm: parsed.radiusKm - EARTH_MEAN_RADIUS_KM,
+      },
+      fieldMagnitudeNt: Math.hypot(n, e, c),
     };
   } catch (error) {
     latestStatus = {
       source: SOURCE,
       lastSeen: latestStatus.lastSeen,
       latencySeconds: latestStatus.lastSeen
-        ? Math.max(0, (Date.now() - Date.parse(latestStatus.lastSeen)) / 1000)
+        ? Math.max(0, (nowMs - Date.parse(latestStatus.lastSeen)) / 1000)
         : null,
       healthy: false,
       message: error instanceof Error ? error.message : "ESA HAPI fetch failed",

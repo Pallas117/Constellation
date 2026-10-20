@@ -1,0 +1,14 @@
+{
+  "file": "kp3h-mlp-v1-87236383.json",
+  "version": "kp3h-mlp-v1-87236383",
+  "promoted_at": "2026-10-12T04:41:15.880248+00:00",
+  "gate": {
+    "mae_beats_persistence_by_5pct": true,
+    "brier_skill_vs_climatology_positive": true,
+    "outputs_finite": true,
+    "passed": true,
+    "warnings": [
+      "During storm hours the Kp estimate is worse than persistence (MAE 1.3072 vs 1.1099); use the storm probability, not the Kp value, for storm warnings."
+    ]
+  }
+}

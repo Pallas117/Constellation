@@ -31,6 +31,8 @@ export const API_POLICY: ReadonlyArray<{ method: string; path: string; access: A
   { method: "GET", path: "/feed/mms/reconnection", access: "user" },
   { method: "GET", path: "/feed/mms/reconnection/latest", access: "user" },
   { method: "GET", path: "/feed/sources/status", access: "user" },
+  { method: "GET", path: "/world/state", access: "user" }, // typed world state, read-only (GAU-39)
+  { method: "GET", path: "/system/pipeline", access: "user" }, // operator-view data-flow HUD (GAU-110)
   { method: "GET", path: "/forecast/anomaly", access: "user" },
 
   // Own devices (login device binding); the router checks ownership
@@ -57,9 +59,9 @@ export const API_POLICY: ReadonlyArray<{ method: string; path: string; access: A
 
   // Operators: console tools
   { method: "GET", path: "/rag/status", access: "operator" },
-  { method: "POST", path: "/rag/index", access: "operator" },
   { method: "POST", path: "/rag/query", access: "operator" },
   { method: "GET", path: "/security/cybertiger/status", access: "operator" },
+  { method: "GET", path: "/system/tpm", access: "operator" }, // TPM values (GAU-122); /health has the public summary
   { method: "POST", path: "/ai/nowcast/infer", access: "operator" },
   { method: "GET", path: "/device/swap/plan", access: "operator" },
   { method: "POST", path: "/device/swap/rebalance", access: "operator" },
