@@ -6,7 +6,6 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
-	"syscall"
 )
 
 // HostCapacity is what Gauss needs to decide whether a mesh device can host
@@ -81,12 +80,15 @@ func linuxPressure(totalGB, availGB float64) string {
 	return "normal"
 }
 
-func diskFreeGB(path string) float64 {
-	var st syscall.Statfs_t
-	if err := syscall.Statfs(path, &st); err != nil {
-		return 0
+// platformName is the mesh platform word Gauss accepts (backend/mesh/store.ts MESH_PLATFORMS).
+func platformName(goos string) string {
+	switch goos {
+	case "darwin":
+		return "macos"
+	case "linux", "windows":
+		return goos
 	}
-	return gb(float64(st.Bavail) * float64(st.Bsize))
+	return ""
 }
 
 func baseCapacity() HostCapacity {
