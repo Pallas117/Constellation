@@ -386,3 +386,18 @@ test("Constellation: friends' logos are local files shown as supplied, named, an
   assert.match(html["/constellation/time/"], /<body class="page brand-constellation">/);
   assert.match(html["/constellation/time/"], /<!--live:planner-->/);
 });
+
+test("Assured Connectivity: on the Gauss page, what Argo does today, a pilot route, no price or payment", () => {
+  const sec = gauss.match(/<section id="connectivity"[\s\S]*?<\/section>/)?.[0];
+  assert.ok(sec, "connectivity section on /gauss/");
+  const t = text(sec);
+  for (const want of [/Assured Connectivity/, /Argo/, /Self-healing/, /Wi-Fi security/, /Advice only/, /Mac and Linux/, /Running today on Lightbound's own laptops/])
+    assert.match(t, want);
+  assert.match(sec, /href="mailto:jzwnathan@lightbound\.uk\?subject=Assured%20Connectivity%20pilot"/);
+  assert.doesNotMatch(t, /£|\$|per month|a year|Stripe|card|invoice/i, "no price or payment wording");
+  // The numbered sections (id'd <section>s); the hero and the doors to other pages carry their own labels.
+  const order = [...gauss.matchAll(/<section id="[^"]+"[^>]*>\s*<div class="wrap">\s*(?:<div class="section-head"><div>)?<p class="k">(\d\d)_/g)].map((m) => Number(m[1]));
+  assert.ok(order.includes(6) && order.length >= 7, `found ${order}`);
+  assert.deepEqual(order, [...order].sort((a, b) => a - b), "section numbers stay in order");
+});
+
