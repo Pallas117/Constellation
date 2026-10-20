@@ -101,3 +101,15 @@ test("archive: archived GSM is rotated to GSE with the live code; RTSW fills rea
   assert.ok(Math.abs(magnitude(gse) - 13) < 1e-9, "a rotation keeps |B|");
   assert.equal(row.bx_gse, 3, "GSE and GSM share the x axis");
 });
+
+test("replay: the stuck ACE speed in Jan 2026 is flagged and lowers confidence; May and Oct 2024 never flag it (GAU-153)", async () => {
+  const flagged = (records: ReplayRecord[]) => records.filter((r) => r.flags.includes("l1-plasma-tracking"));
+  for (const id of ["may-2024", "oct-2024"]) assert.equal(flagged((await run(id)).records).length, 0, id);
+  const jan = flagged((await run("jan-2026")).records);
+  assert.ok(jan.length > 0, "not flagged");
+  assert.ok(jan.every((r) => r.lowConfidence), "a flagged point kept full confidence");
+  // From the field jump (~19:00 UT) until the speed reading recovers (~21:20 UT).
+  const [first, last] = [jan[0].observedAt ?? "", jan[jan.length - 1].observedAt ?? ""];
+  assert.ok(first >= "2026-01-19T18:50" && first <= "2026-01-19T19:20", `first ${first}`);
+  assert.ok(last >= "2026-01-19T21:00" && last <= "2026-01-19T21:30", `last ${last}`);
+});

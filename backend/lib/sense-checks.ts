@@ -88,6 +88,96 @@ export function checkFieldMagnitude(
 }
 
 // ---------------------------------------------------------------------------------------
+// L1 plasma tracking
+// ---------------------------------------------------------------------------------------
+
+/**
+ * A plasma instrument can stop following the solar wind while the magnetometer still does
+ * (GAU-153). In the January 2026 replay, during the S4 proton event, ACE's speed stayed within
+ * ~10 km/s (5th–95th percentile, 282–293 km/s) from 18:20 to 21:10 UT, while |B| jumped from
+ * about 9 to 55 nT with a shock that published lists put at ΔV 670 km/s. Real wind can hold its
+ * speed while |B| doubles (a field rotation or a current sheet), so the field must at least
+ * triple, to 20 nT or more. With ×2 alone, 7 minutes of steady pre-shock wind in the May 2024
+ * replay flagged. With ×3 and 20 nT, May and October 2024 flag nothing, and January 2026 flags
+ * 19:07–21:13 UT.
+ */
+export const PLASMA_TRACKING = { windowMin: 60, minSamples: 30, speedSpreadKmS: 15, fieldRatio: 3, minFieldNt: 20 } as const;
+
+export interface PlasmaTracking {
+  /** 5th–95th percentile spread of the speed, km/s. */
+  speedSpreadKmS: number;
+  /** 5th and 95th percentile of |B|, nT. */
+  fieldLowNt: number;
+  fieldHighNt: number;
+  /** The speed held while the field rose by PLASMA_TRACKING.fieldRatio to minFieldNt or more. */
+  notTracking: boolean;
+}
+
+const percentile = (sorted: number[], q: number) => sorted[Math.floor(q * (sorted.length - 1))];
+
+/** Whether the speed followed the field over these minutes; null with too few samples. */
+export function plasmaTracking(speeds: number[], fields: number[]): PlasmaTracking | null {
+  const sp = speeds.filter((v) => Number.isFinite(v) && v > 0).sort((a, b) => a - b);
+  const bt = fields.filter((v) => Number.isFinite(v) && v >= 0).sort((a, b) => a - b);
+  if (sp.length < PLASMA_TRACKING.minSamples || bt.length < PLASMA_TRACKING.minSamples) return null;
+  const speedSpreadKmS = percentile(sp, 0.95) - percentile(sp, 0.05);
+  const fieldLowNt = percentile(bt, 0.05);
+  const fieldHighNt = percentile(bt, 0.95);
+  const notTracking =
+    speedSpreadKmS < PLASMA_TRACKING.speedSpreadKmS &&
+    fieldHighNt >= PLASMA_TRACKING.minFieldNt &&
+    fieldHighNt / Math.max(fieldLowNt, 1) >= PLASMA_TRACKING.fieldRatio;
+  return { speedSpreadKmS, fieldLowNt, fieldHighNt, notTracking };
+}
+
+export interface PlasmaSample {
+  t: number;
+  speed: number | null | undefined;
+  /** |B|, nT. */
+  bt: number | null | undefined;
+}
+
+/** Whether the L1 speed followed the field over (endMs − windowMs, endMs]. */
+export function checkPlasmaTracking(
+  series: PlasmaSample[],
+  spacecraft: string | undefined,
+  endMs: number,
+  windowMs = PLASMA_TRACKING.windowMin * 60_000,
+): SenseCheck {
+  const id = "l1-plasma-tracking";
+  const window = series.filter((s) => s.t > endMs - windowMs && s.t <= endMs);
+  const minutes = Math.round(windowMs / 60_000);
+  const tracking = plasmaTracking(
+    window.map((s) => s.speed ?? Number.NaN),
+    window.map((s) => s.bt ?? Number.NaN),
+  );
+  if (!tracking) {
+    return { id, status: "unknown", reason: `Too few L1 plasma and field samples in the last ${minutes} min to check`, observedAt: null };
+  }
+  const observedAt = new Date(window[window.length - 1].t).toISOString();
+  const who = spacecraft ? `${spacecraft} ` : "";
+  const field = `${tracking.fieldLowNt.toFixed(1)}–${tracking.fieldHighNt.toFixed(1)} nT`;
+  if (tracking.notTracking) {
+    return {
+      id,
+      status: "flag",
+      reason: `${who}speed held within ${tracking.speedSpreadKmS.toFixed(0)} km/s while |B| went ${field} (last ${minutes} min): the plasma reading isn't following the field, so speed and density are suspect`,
+      observedAt,
+      checked: window.length,
+      flagged: window.length,
+    };
+  }
+  return {
+    id,
+    status: "pass",
+    reason: `${who}speed varied ${tracking.speedSpreadKmS.toFixed(0)} km/s with |B| ${field} over the last ${minutes} min`,
+    observedAt,
+    checked: window.length,
+    flagged: 0,
+  };
+}
+
+// ---------------------------------------------------------------------------------------
 // GOES protons
 // ---------------------------------------------------------------------------------------
 

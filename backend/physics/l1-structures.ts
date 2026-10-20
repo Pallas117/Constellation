@@ -19,13 +19,17 @@
  *   them: inside the May and Oct 2024 ejecta T/T_exp was mostly 0.55–1.8 while beta was 0.00–0.10.
  *   Boundaries lag the true leading edge by hours;
  * - high-speed streams: V > 550 km/s with T/T_exp ≥ 0.8 for ≥ 6 h. A fast, hot flow that starts
- *   within 12 h after a shock is labelled sheath / fast ejecta, not a coronal-hole stream.
+ *   within 12 h after a shock is labelled sheath / fast ejecta, not a coronal-hole stream;
+ * - field-only discontinuities (GAU-153): where the plasma reading isn't following the field
+ *   (the l1-plasma-tracking sense-check), a shock's speed jump can't be seen. A |B| rise of ×1.5
+ *   or more there is reported with low confidence, and with no shock speed or arrival time.
  *
  * Thresholds are those of the gauss_swx study pack (patterns.detect_l1_structures). These are
  * heuristics: every result carries a confidence label and is a candidate for an expert to
  * confirm (shocks against an interplanetary-shock list, storms against Richardson & Cane), never
  * a catalogue entry. Without the proton temperature, ICMEs and streams aren't assessed.
  */
+import { plasmaTracking } from "../lib/sense-checks.js";
 import { dynamicPressureNpa, propagationDelaySeconds, shueStandoffDistanceRe } from "./mhd-nowcast.js";
 
 /** One minute of L1 data; null where the instrument reported a fill or nothing. */
@@ -103,8 +107,20 @@ export interface FastFlowInterval {
   confidence: DetectionConfidence;
 }
 
+export interface FieldOnlyCandidate {
+  kind: "field-only discontinuity (plasma not tracking)";
+  /** Sharpest one-minute rise in |B| (UTC, at L1). */
+  time: string;
+  fieldRatio: number;
+  /** 5th–95th percentile speed spread in the hour around it, km/s. */
+  speedSpreadKmS: number;
+  /** Always low: without trusted plasma it can't be confirmed as a shock. */
+  confidence: "low";
+}
+
 export interface L1Structures {
   shocks: ShockCandidate[];
+  fieldOnlyDiscontinuities: FieldOnlyCandidate[];
   sustainedSouthward: SouthwardInterval[];
   magnetopauseInsideGeo: MagnetopauseInterval[];
   icmeCandidates: IcmeInterval[];
@@ -117,6 +133,7 @@ export interface L1Structures {
 export const SHOCK_THRESHOLDS = { windowMin: 10, deltaSpeedKmS: 40, densityRatio: 1.2, fieldRatio: 1.2 } as const;
 export const SOUTHWARD_THRESHOLDS = { eyMvM: 5, minHours: 3 } as const;
 export const GEO_RADIUS_RE = 6.6;
+export const FIELD_ONLY_RATIO = 1.5;
 export const ICME_THRESHOLDS = { temperatureRatio: 0.5, protonBeta: 0.1, btNt: 8, minHours: 4 } as const;
 export const STREAM_THRESHOLDS = { speedKmS: 550, temperatureRatio: 0.8, minHours: 6, afterShockHours: 12 } as const;
 
@@ -219,6 +236,7 @@ export function detectL1Structures(samples: L1Sample[]): L1Structures {
   if (timed.length === 0) {
     return {
       shocks: [],
+      fieldOnlyDiscontinuities: [],
       sustainedSouthward: [],
       magnetopauseInsideGeo: [],
       icmeCandidates: [],
@@ -288,6 +306,33 @@ export function detectL1Structures(samples: L1Sample[]): L1Structures {
       ),
     });
     i = best.i + 6 * w - 1; // one shock per hour: the jump stays above threshold for several minutes
+  }
+
+  // Field-only discontinuities: a sharp |B| rise where the speed reading isn't following the field.
+  const fieldOnlyDiscontinuities: FieldOnlyCandidate[] = [];
+  const nearShock = (i: number) => shocks.some((sh) => Math.abs(Date.parse(sh.time) - (t0 + i * MINUTE_MS)) <= 60 * MINUTE_MS);
+  for (let i = w; i < n - w; i++) {
+    const b1 = median(windowValues(bt, i - w, i).values);
+    const b2 = median(windowValues(bt, i, i + w).values);
+    if (!finite(b1) || !finite(b2) || b1 <= 0 || b2 / b1 < FIELD_ONLY_RATIO || nearShock(i)) continue;
+    const from = Math.max(0, i - 30);
+    const to = Math.min(n, i + 30);
+    const tracking = plasmaTracking(Array.from(v.subarray(from, to)), Array.from(bt.subarray(from, to)));
+    if (!tracking?.notTracking) continue;
+    let front = i;
+    let rise = 0;
+    for (let k = i; k < Math.min(i + w, n); k++) {
+      const d = bt[k] - bt[k - 1];
+      if (finite(d) && d > rise) [front, rise] = [k, d];
+    }
+    fieldOnlyDiscontinuities.push({
+      kind: "field-only discontinuity (plasma not tracking)",
+      time: iso(front),
+      fieldRatio: round(b2 / b1, 2),
+      speedSpreadKmS: round(tracking.speedSpreadKmS, 0),
+      confidence: "low",
+    });
+    i = front + 6 * w - 1;
   }
 
   // Sustained southward driving: Ey from smoothed V and Bz. A plasma gap carries the last speed
@@ -398,6 +443,7 @@ export function detectL1Structures(samples: L1Sample[]): L1Structures {
   const temperatureCoverage = covered(temp);
   return {
     shocks,
+    fieldOnlyDiscontinuities,
     sustainedSouthward,
     magnetopauseInsideGeo,
     icmeCandidates,

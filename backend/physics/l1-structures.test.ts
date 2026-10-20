@@ -151,7 +151,7 @@ test("l1 structures, October 2024 replay: shock within 30 min of the published c
   assert.ok(r.icmeCandidates.some((c) => minutesApart(c.start, "2024-10-10T22:00:00Z") <= 120), JSON.stringify(r.icmeCandidates));
 });
 
-test("l1 structures, January 2026 replay: no shock is invented when the plasma speed doesn't move (GAU-153)", () => {
+test("l1 structures, January 2026 replay: no shock from a speed that doesn't move; a low-confidence field-only candidate instead (GAU-153)", () => {
   const samples = archive("jan-2026");
   // Published commencement 2026-01-19 19:17 UT (ΔV 670 km/s). In the archive, ACE's speed stays
   // within ~10 km/s (90% of minutes, 282–293) from 18:20 to 21:10 UT while |B| goes from about 9 to 55 nT: the plasma
@@ -161,5 +161,15 @@ test("l1 structures, January 2026 replay: no shock is invented when the plasma s
   const pct = (q: number) => speeds[Math.floor(q * (speeds.length - 1))];
   assert.ok(pct(0.95) - pct(0.05) < 15, `speed moved (${pct(0.05)}-${pct(0.95)} km/s); revisit this test`);
   assert.ok(Math.max(...window.map((s) => s.btNt ?? 0)) > 50);
-  assert.deepEqual(detectL1Structures(samples).shocks, []);
+  const r = detectL1Structures(samples);
+  assert.deepEqual(r.shocks, []);
+  // The field jump at L1, before the published commencement at Earth (19:17 UT): low confidence,
+  // with no shock speed or arrival, because the plasma can't confirm it.
+  const [first] = r.fieldOnlyDiscontinuities;
+  assert.ok(first && first.time >= "2026-01-19T18:30" && first.time < "2026-01-19T19:17", JSON.stringify(r.fieldOnlyDiscontinuities));
+  assert.ok(r.fieldOnlyDiscontinuities.every((c) => c.confidence === "low" && !("shockSpeedKmS" in c)));
+});
+
+test("l1 structures: May and October 2024, where the plasma tracks the field, give no field-only candidates (GAU-153)", () => {
+  for (const id of ["may-2024", "oct-2024"]) assert.deepEqual(detectL1Structures(archive(id)).fieldOnlyDiscontinuities, [], id);
 });

@@ -57,6 +57,7 @@ export function scaleStatus(reading: ScaleReading | null | undefined): ReadoutSt
 /** What each input sense-check (GAU-136) looks at, for its readout label. */
 export const CHECK_LABEL: Record<SenseCheck['id'], string> = {
   'l1-field-magnitude': 'L1 field magnitude',
+  'l1-plasma-tracking': 'L1 plasma tracking',
   'goes-proton-spectrum': 'Proton spectrum',
   'goes-proton-channels': 'Proton channels',
   'goes-xray': 'X-ray channel',
