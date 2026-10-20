@@ -50,7 +50,7 @@ test("NOAA: Kp reading combines the 1-minute running estimate with the 3-hourly 
     if (url.includes("noaa-planetary-k-index")) return [{ time_tag: "2026-10-12T03:00:00", Kp: 2.33 }];
     if (url.includes("ovation")) return {};
     return undefined;
-  }, fetchNoaaReadout);
+  }, () => fetchNoaaReadout(t)); // Kp recency is judged at the clock, not at the newest L1 sample (GAU-63)
   assert.ok(readout);
   assert.equal(readout.kp, 2.33, "03-06 UT completed at 2.33; the 06-09 running estimate is still 2.0");
   assert.deepEqual(readout.kpReading, { value: 2.33, observedAt: "2026-10-12T03:00:00.000Z", kind: "planetary-3h" });
@@ -68,7 +68,7 @@ type Tickable = {
 function quietWorker(): Tickable {
   const worker = new IngestionWorker() as unknown as Tickable;
   const now = Date.now();
-  for (const key of ["noaa", "esa", "jaxa", "mms", "lasp", "ml-forecast"]) worker.lastFetch.set(key, now);
+  for (const key of ["noaa", "esa", "jaxa", "mms", "lasp", "swpc-products", "ml-forecast"]) worker.lastFetch.set(key, now);
   return worker;
 }
 
@@ -138,5 +138,76 @@ test("ingest: solar wind in transit keeps arriving at Earth after the L1 feed is
     assert.ok(p.arriving, "but the wind measured 50 min ago is reaching Earth now");
     assert.equal(p.arriving.bz, -8);
     assert.ok(Math.abs(Date.parse(p.arriving.observedAt) - (now - 50 * 60_000)) <= 60_000);
+  });
+});
+
+test("ingest: every point carries its sense-checks; an inconsistent newest field sample lowers confidence (GAU-136)", async () => {
+  const worker = quietWorker();
+  const now = Date.now();
+  const sample = (m: number, bt: number): L1Sample => ({
+    t: now - m * 60_000,
+    spacecraft: "SOLAR1",
+    density: 6,
+    speed: 450,
+    velocityGse: vec(-450, 0, 0),
+    velocityGsm: vec(-450, 0, 0),
+    magneticFieldGse: vec(3, 4, 0),
+    magneticFieldGsm: vec(3, 0, 4),
+    bt,
+  });
+  await withFetch(() => undefined, async () => {
+    worker.noaa = readout(60_000, 0);
+    worker.l1Series = [sample(3, 5.2), sample(2, 5.1), sample(1, 5.0)];
+    const ok = (await worker.tick()).canonicalPoint;
+    assert.deepEqual(
+      ok.senseChecks?.map((c) => [c.id, c.status]),
+      [
+        ["l1-field-magnitude", "pass"],
+        ["goes-proton-spectrum", "unknown"],
+        ["goes-proton-channels", "unknown"],
+        ["goes-xray", "unknown"],
+        ["noaa-scales", "unknown"],
+      ],
+      "GOES and NOAA weren't fetched: unknown, never pass",
+    );
+    assert.equal(ok.alerts.radioBlackout?.label, "R?");
+    assert.equal(ok.noaaAlerts, null, "alerts not read: unknown, not an empty list");
+    assert.equal(ok.quality.lowConfidence, false);
+
+    worker.l1Series = [sample(3, 5.2), sample(2, 5.1), sample(1, 2.0)];
+    const bad = (await worker.tick()).canonicalPoint;
+    const field = bad.senseChecks?.[0];
+    assert.equal(field?.status, "flag");
+    assert.equal(field?.flagged, 1);
+    assert.match(field?.reason ?? "", /Bt 2\.00 nT is below \|B\| 5\.00 nT/);
+    assert.equal(bad.quality.lowConfidence, true);
+  });
+});
+
+test("ingest: an L1 data gap leaves the geomagnetic level known while NOAA Kp is current (GAU-138)", async () => {
+  const worker = quietWorker();
+  const kpReading = { value: 1.67, observedAt: new Date(Date.now() - 2 * 3_600_000).toISOString(), kind: "planetary-3h" as const };
+  await withFetch(() => undefined, async () => {
+    worker.noaa = { ...readout(60_000, -2), kpReading };
+    assert.equal((await worker.tick()).canonicalPoint.alerts.geomagnetic?.label, "G0");
+    // The RTSW files hold only fills for the last 20 min, so the readout's newest L1 sample is old;
+    // the Kp product in the same fetch is still current.
+    worker.noaa = { ...readout(NOAA_MAX_AGE_MS + 5 * 60_000, -2), kpReading };
+    const gap = (await worker.tick()).canonicalPoint;
+    assert.equal(gap.quality.stale, true, "the L1 values are unknown");
+    assert.equal(gap.alerts.geomagnetic?.label, "G0", "but Kp, from ground magnetometers, is not");
+    assert.equal(gap.indices.kp, 1.67);
+  });
+});
+
+test("ingest: a velocity assumed from the speed, or a locally rotated field, is labelled as derived (GAU-63)", async () => {
+  const worker = quietWorker();
+  await withFetch(() => undefined, async () => {
+    worker.noaa = { ...readout(60_000, -3), velocityAssumed: true, magneticFieldGsm: null };
+    const p = (await worker.tick()).canonicalPoint;
+    assert.deepEqual(p.derived?.map((d) => d.field), ["velocity", "magneticField"]);
+    assert.deepEqual(p.derived?.[0].derivedFrom, ["proton_speed"]);
+    worker.noaa = readout(60_000, -3);
+    assert.deepEqual((await worker.tick()).canonicalPoint.derived, [], "measured as published: nothing derived");
   });
 });

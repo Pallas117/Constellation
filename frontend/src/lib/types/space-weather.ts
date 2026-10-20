@@ -4,8 +4,8 @@ export interface QualityFlags {
   interpolated: boolean;
   extrapolated: boolean;
   lowConfidence: boolean;
-  /** 0 live, 1 measured but ageing (10-15 min), 3 no measurement within 15 min. */
-  tier?: number;
+  /** 0 live, 1 measured but ageing (10-15 min), 3 no measurement within 15 min. 2 is not emitted. */
+  tier?: 0 | 1 | 2 | 3;
 }
 
 export interface UncertaintyEnvelope {
@@ -36,6 +36,43 @@ export interface DensityDisagreement {
   referenceDensity: number;
   ratio: number;
   minutes: number;
+}
+
+/** A level on a NOAA space-weather scale, from the backend (physics/noaa-scales.ts). */
+export interface ScaleReading {
+  /** 0 = below the scale; null = unknown (input missing or stale), never "no storm". */
+  level: 0 | 1 | 2 | 3 | 4 | 5 | null;
+  /** "S2", "G0", or "S?" / "G?" when unknown. */
+  label: string;
+  /** What the level was read from, e.g. "GOES >=10 MeV protons 152 pfu". */
+  basis: string;
+  observedAt: string | null;
+}
+
+/** One input sense-check (GAU-136); mirrors backend/types.ts. */
+export interface SenseCheck {
+  id: "l1-field-magnitude" | "goes-proton-spectrum" | "goes-proton-channels" | "goes-xray" | "noaa-scales";
+  /** "unknown" when there was nothing current to check, never "pass". */
+  status: "pass" | "flag" | "unknown";
+  reason: string;
+  observedAt: string | null;
+  checked?: number;
+  flagged?: number;
+}
+
+export interface XrayReading {
+  /** GOES 0.1–0.8 nm irradiance, W m^-2. */
+  value: number;
+  band: string;
+  flareClass: string;
+  satellite: string | null;
+  timestamp: string;
+}
+
+export interface NoaaAlert {
+  productId: string;
+  issuedAt: string;
+  headline: string;
 }
 
 export interface CanonicalSpaceWeatherPoint {
@@ -76,7 +113,10 @@ export interface CanonicalSpaceWeatherPoint {
     dst: number;
     kpKind?: "estimated-1m" | "planetary-3h";
     kpObservedAt?: string | null;
+    dstObservedAt?: string | null;
   };
+  /** Values not measured as published, with the method and inputs (GAU-63). */
+  derived?: Array<{ field: string; method: string; derivedFrom: string[] }>;
   coupling: {
     newell: number;
     epsilon: number;
@@ -86,8 +126,26 @@ export interface CanonicalSpaceWeatherPoint {
     etaEarthArrival: string;
   };
   alerts: {
+    /** Bz-driven geomagnetic nowcast. */
     stormTier: "quiet" | "watch" | "warning" | "severe";
     reason: string;
+    /** NOAA S-scale from GOES ≥10 MeV protons: the radiation stream (bit errors, detector hits). */
+    radiation?: ScaleReading;
+    /** NOAA G-scale from planetary Kp: the geomagnetic stream. */
+    geomagnetic?: ScaleReading;
+    /** NOAA R-scale from GOES X-rays: radio blackouts. */
+    radioBlackout?: ScaleReading;
+  };
+  /** GOES long-band X-ray flux; null when missing or older than 15 min. */
+  xray?: XrayReading | null;
+  /** Input sense-checks; a flagged input carries its reason. */
+  senseChecks?: SenseCheck[];
+  /** NOAA alerts from the last 24 h, newest first; null when unreadable. */
+  noaaAlerts?: NoaaAlert[] | null;
+  /** Measured GOES particle flux; null per channel when missing or older than 30 min. */
+  particles?: {
+    protons: ParticleReading | null;
+    electrons: ParticleReading | null;
   };
   quality: QualityFlags;
   uncertainty: {
@@ -146,4 +204,50 @@ export interface AuroraMapResponse {
     coefficients: Array<{ l: number; m: number; re: number; im: number }>;
     powerSpectrum: Array<{ l: number; cL: number }>;
   };
+}
+
+export interface SourceStatus {
+  source: string;
+  lastSeen: string | null;
+  latencySeconds: number | null;
+  healthy: boolean;
+  message?: string;
+}
+
+export interface PipelineStageLatency {
+  stage: string;
+  lastMs: number;
+  p50Ms: number;
+  p95Ms: number;
+  maxMs: number;
+  budgetMs: number | null;
+  overBudget: boolean;
+  samples: number;
+  errors: number;
+  timeouts: number;
+  lastAt: string;
+}
+
+/** Mirrors backend PipelineLatencySnapshot (GET /api/system/pipeline). */
+export interface PipelineLatencySnapshot {
+  generatedAt: string;
+  status: "fresh" | "degraded" | "stale" | "stalled";
+  tickIntervalMs: number;
+  ticks: number;
+  skippedTicks: number;
+  lastTickAt: string | null;
+  lastTickAgeMs: number | null;
+  dataTimestamp: string | null;
+  dataAgeMs: number | null;
+  freshMs: number;
+  maxAgeMs: number;
+  stages: PipelineStageLatency[];
+}
+
+export interface ParticleReading {
+  /** Integral flux, particles cm^-2 s^-1 sr^-1 (pfu for protons). */
+  value: number;
+  energy: string;
+  satellite: string | null;
+  timestamp: string;
 }

@@ -166,7 +166,7 @@ jobs:
             exit 1
           fi
 
-status-check:
+  status-check:
     name: All Security Gates Passed
     runs-on: ubuntu-latest
     needs: [security-compliance, rbac-smoke-test, headers-validation, rate-limit-config]

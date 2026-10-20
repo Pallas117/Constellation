@@ -396,3 +396,53 @@ func TestWeeklySummarySendsOncePerWeekNotOnInstall(t *testing.T) {
 		t.Fatalf("want exactly one weekly message, got %v", sent)
 	}
 }
+
+func countNotes(notes []string, title string) int {
+	n := 0
+	for _, s := range notes {
+		if s == title {
+			n++
+		}
+	}
+	return n
+}
+
+// The breaker reopens every 30 min; before 2026-10-18 each reopening texted again (71 texts in a week).
+func TestEscalationTextsOnceThenEveryTwoHours(t *testing.T) {
+	l, fx := newLoop(t, fixture(t, "port_block.json"))
+	ctx := context.Background()
+	tick := func(d time.Duration) { fx.now = fx.now.Add(d); l.Tick(ctx) }
+	tick(0)
+	for i := 1; i < maxAttempts; i++ {
+		tick(backoffMax)
+	}
+	if got := countNotes(fx.notes, "Argo needs you"); got != 1 {
+		t.Fatalf("first escalation: %d texts, want 1: %v", got, fx.notes)
+	}
+	for i := 0; i < 3; i++ { // three more breaker cycles inside 2 h
+		tick(breakerCooldwn + time.Minute)
+	}
+	if got := countNotes(fx.notes, "Argo needs you"); got != 1 {
+		t.Fatalf("repeat escalations inside 2 h: %d texts, want 1", got)
+	}
+	tick(escalateEvery)
+	if got := countNotes(fx.notes, "Argo needs you"); got != 2 {
+		t.Fatalf("after 2 h: %d texts, want a reminder (2)", got)
+	}
+}
+
+// A Mac with no network cannot send a text; queued ones arrived stale once it was back.
+func TestOfflineNeverTexts(t *testing.T) {
+	l, fx := newLoop(t, fixture(t, "offline.json"))
+	ctx := context.Background()
+	for i := 0; i < 2*maxAttempts; i++ {
+		l.Tick(ctx)
+		fx.now = fx.now.Add(breakerCooldwn + time.Minute)
+	}
+	if len(fx.notes) != 0 {
+		t.Fatalf("OFFLINE sent texts: %v", fx.notes)
+	}
+	if n := len(l.Store.Incidents()); n == 0 {
+		t.Fatal("OFFLINE incidents should still be recorded")
+	}
+}

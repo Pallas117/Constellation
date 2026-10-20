@@ -3,9 +3,12 @@ import { Link } from 'react-router-dom';
 import { Globe, KeyRound, Lock, Orbit } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { GaussGlobe } from '@/components/GaussGlobe';
+import { SceneBoundary } from '@/components/ErrorBoundary';
 import { PilotPanels } from '@/components/PilotPanels';
 import type { MagnetosphereModelInfo } from '@/components/scene/Magnetosphere';
-import { FeedStatus, HudCluster, HudStat, fmt, signed } from '@/components/hud/Hud';
+import { FeedStatus, HudCluster, HudStat } from '@/components/hud/Hud';
+import { fmt, signed } from '@/components/hud/format';
+import { hudTone, scaleStatus } from '@/lib/readout-status';
 import { GEO_RE, SceneHoverTip } from '@/components/hud/SceneHoverTip';
 import { useSolarWind5s } from '@/hooks/useSolarWind5s';
 import { useNow } from '@/hooks/useNow';
@@ -43,6 +46,8 @@ export default function PublicDashboard() {
   const solarWind = useSolarWind5s({ history: false });
   const now = useNow(60_000);
   const live = useMemo(() => liveDrivers(solarWind.latest, now), [solarWind.latest, now]);
+  // The radiation stream (NOAA S-scale), shown beside the geomagnetic Kp (GAU-135).
+  const radiation = solarWind.latest?.alerts?.radiation;
   const { drivers, plasma, arriving } = live;
   const visualParams = useMemo(() => beltVisuals(drivers), [drivers]);
   const r0 = drivers && modelInfo ? modelInfo.r0 : null;
@@ -59,17 +64,19 @@ export default function PublicDashboard() {
   return (
     <div className="relative h-[100dvh] w-full overflow-hidden bg-black font-sans text-foreground">
       <div className="absolute inset-0 z-0">
-        <GaussGlobe
-          layers={LAYERS}
-          visualParams={visualParams}
-          encodingMode="color"
-          canvasRef={canvasRef}
-          isE2E={isE2E}
-          solarWindDrivers={drivers}
-          smoothDrivers={!live.propagated}
-          onModelUpdate={setModelInfo}
-          hoverable
-        />
+        <SceneBoundary>
+          <GaussGlobe
+            layers={LAYERS}
+            visualParams={visualParams}
+            encodingMode="color"
+            canvasRef={canvasRef}
+            isE2E={isE2E}
+            solarWindDrivers={drivers}
+            smoothDrivers={!live.propagated}
+            onModelUpdate={setModelInfo}
+            hoverable
+          />
+        </SceneBoundary>
       </div>
       <div
         aria-hidden="true"
@@ -162,6 +169,16 @@ export default function PublicDashboard() {
               value={fmt(drivers?.kp)}
               tone={drivers ? (drivers.kp >= 7 ? 'risk' : drivers.kp >= 5 ? 'caution' : 'default') : 'default'}
               detail="Planetary geomagnetic activity, 0–9. 5 and above is a storm (G1+)."
+            />
+            <HudStat
+              label="Radiation"
+              value={radiation?.level != null ? radiation.label : '—'}
+              tone={radiation ? hudTone(scaleStatus(radiation).tone) : 'default'}
+              detail={
+                radiation?.level != null
+                  ? `NOAA radiation-storm level from GOES ≥10 MeV protons (${radiation.basis}). A separate hazard from the geomagnetic Kp.`
+                  : 'No current GOES proton reading.'
+              }
             />
           </dl>
           <p className="px-2 pb-0.5 pt-1 font-mono text-[9px] uppercase tracking-[0.14em] text-muted-foreground">

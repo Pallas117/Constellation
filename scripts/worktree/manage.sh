@@ -7,14 +7,17 @@ if [[ -z "${ROOT}" ]]; then
   exit 1
 fi
 
-REPO_NAME="$(basename "${ROOT}")"
-DEFAULT_WORKTREE_HOME="$(cd "${ROOT}/.." && pwd)/.worktrees/${REPO_NAME}"
+# Worktrees live next to the main checkout as "<main checkout>.worktrees/<branch>", whichever
+# worktree this runs from (the common .git dir always belongs to the main checkout).
+COMMON_DIR="$(git rev-parse --path-format=absolute --git-common-dir)"
+MAIN_CHECKOUT="$(dirname "${COMMON_DIR}")"
+DEFAULT_WORKTREE_HOME="${MAIN_CHECKOUT}.worktrees"
 WORKTREE_HOME="${GAUSS_WORKTREE_HOME:-${DEFAULT_WORKTREE_HOME}}"
 
 usage() {
   cat <<EOF
 Usage:
-  bash scripts/worktree/manage.sh create <branch-name> [base-branch]
+  bash scripts/worktree/manage.sh create <branch-name> [base]
   bash scripts/worktree/manage.sh list
   bash scripts/worktree/manage.sh status
   bash scripts/worktree/manage.sh sync
@@ -24,10 +27,12 @@ Usage:
 
 Defaults:
   worktree home: ${WORKTREE_HOME}
-  create base branch: main
+  create base: origin/$(default_branch), fetched first (your local main may be stale)
 
 Notes:
-  - If create branch has no slash, it is prefixed with "codex/".
+  - Branch names need a prefix: the Linear issue's branch name (jzwnathan/gau-<n>-...)
+    or <type>/<name> (fix/..., chore/..., docs/..., ops/...).
+  - New branches don't track the base, so the first push sets the upstream.
   - Paths are mapped as: <worktree-home>/<branch-with-slashes-replaced-by-double-underscore>
 EOF
 }
@@ -43,11 +48,9 @@ default_branch() {
 
 normalize_branch_name() {
   local input="$1"
-  if [[ "${input}" == */* ]]; then
-    echo "${input}"
-  else
-    echo "codex/${input}"
-  fi
+  [[ "${input}" == */* ]] \
+    || die "branch '${input}' needs a prefix: use the Linear issue's branch name (jzwnathan/gau-<n>-...) or <type>/<name> (fix/, chore/, docs/, ops/)"
+  echo "${input}"
 }
 
 branch_to_path() {
@@ -83,8 +86,9 @@ find_worktree_path_by_branch() {
 
 command_create() {
   local raw_name="${1:-}"
-  local base="${2:-main}"
+  local base="${2:-origin/$(default_branch)}"
   [[ -n "${raw_name}" ]] || die "create requires <branch-name>"
+  git fetch --quiet --prune origin || echo "Warning: fetch failed; using the last fetched refs." >&2
 
   local branch
   branch="$(normalize_branch_name "${raw_name}")"
@@ -99,14 +103,8 @@ command_create() {
   elif git show-ref --verify --quiet "refs/remotes/origin/${branch}"; then
     git worktree add --track -b "${branch}" "${wt_path}" "origin/${branch}"
   else
-    if ! git show-ref --verify --quiet "refs/heads/${base}"; then
-      if git show-ref --verify --quiet "refs/remotes/origin/${base}"; then
-        git branch --track "${base}" "origin/${base}" >/dev/null 2>&1 || true
-      else
-        die "base branch not found locally or on origin: ${base}"
-      fi
-    fi
-    git worktree add -b "${branch}" "${wt_path}" "${base}"
+    git rev-parse --verify --quiet "${base}^{commit}" >/dev/null || die "base not found: ${base}"
+    git worktree add --no-track -b "${branch}" "${wt_path}" "${base}"
   fi
 
   echo "Created worktree:"
@@ -148,10 +146,9 @@ command_status() {
 }
 
 command_sync() {
-  echo "Fetching origin for all worktrees..."
-  while IFS= read -r wt; do
-    git -C "${wt}" fetch origin --prune >/dev/null
-  done < <(worktree_paths)
+  # All worktrees share one repository, so a single fetch updates them all.
+  echo "Fetching origin..."
+  git fetch origin --prune >/dev/null
   echo "Fetch complete."
   command_status
 }

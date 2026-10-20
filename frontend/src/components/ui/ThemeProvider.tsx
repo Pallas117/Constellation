@@ -1,32 +1,17 @@
 /**
  * Theme Provider Component
- * Wraps next-themes ThemeProvider with custom radiation-themed configuration
+ * The Lightbound brand has one look (black ground, warm white type), so the
+ * theme is forced to dark. Kept as a provider for next-themes consumers
+ * such as the toaster.
  */
 
 import { ThemeProvider as NextThemesProvider } from 'next-themes';
 import { type ReactNode } from 'react';
 
-interface ThemeProviderProps {
-  children: ReactNode;
-  defaultTheme?: 'light' | 'dark' | 'system';
-  storageKey?: string;
-}
-
-export function ThemeProvider({
-  children,
-  defaultTheme = 'system',
-  storageKey = 'gauss-aurora-theme',
-}: ThemeProviderProps) {
+export function ThemeProvider({ children }: { children: ReactNode }) {
   return (
-    <NextThemesProvider
-      attribute="class"
-      defaultTheme={defaultTheme}
-      storageKey={storageKey}
-      enableSystem
-      disableTransitionOnChange={false}
-    >
+    <NextThemesProvider attribute="class" forcedTheme="dark" enableSystem={false}>
       {children}
     </NextThemesProvider>
   );
 }
-

@@ -156,7 +156,8 @@ function RadiationDashboard() {
 
 ### Statistics
 - `calculateStatistics(measurements)`: Calculate comprehensive statistics
-- `getAlertLevel(flux, particleType)`: Determine alert level based on flux
+- `getAlertLevel(integralFluxPfu, particleType)`: Alert level from integral flux in pfu. Protons (≥10 MeV) use the NOAA S-scale; electrons (>2 MeV) use the SWPC 1000 pfu internal-charging alert. Returns `null` for alpha and heavy ions
+- `getAlertLevelFromMeasurements(measurements)`: Most severe level across species, from a lower bound on the integral flux of differential bins
 
 ### Grouping
 - `groupByOrbitType(measurements)`: Group by orbit type

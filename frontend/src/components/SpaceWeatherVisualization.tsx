@@ -1,22 +1,51 @@
 /**
- * SpaceWeatherVisualization — Thin orchestrator.
+ * SpaceWeatherVisualization — the operator console.
  *
- * Owns top-level state (layers, encoding mode) and composes the three atomic
- * components: GaussGlobe, Nav, and ReasoningStream.
+ * Owns top-level state (layers, encoding mode) and lays the console out in
+ * fixed regions over the 3D scene: header, left control rail, right
+ * telemetry column and the assistant under the scene. On small screens the
+ * regions stack and scroll; telemetry comes first.
  */
 
-import { useState, useRef, useCallback } from 'react';
+import { useState, useRef, useCallback, type ReactNode } from 'react';
 import { useSpaceWeather } from '@/hooks/useSpaceWeather';
 import { useSpaceObjects } from '@/hooks/useSpaceObjects';
 import { GaussGlobe, EncodingPanel } from './GaussGlobe';
-import { Switch } from './ui/switch';
-import { Nav } from './Nav';
+import { ConsoleHeader, ControlRail } from './Nav';
+import { HUD } from './ui/HUD';
 import { ReasoningStream } from './ReasoningStream';
 import { DataFlowHUD } from './DataFlowHUD';
 import { UndetectedObjectsAlert } from './UndetectedObjectsAlert';
+import { SceneBoundary } from './ErrorBoundary';
+import { feedState } from '@/lib/readout-status';
 import type { LayerVisibility, EncodingMode } from './types';
 
-export const SpaceWeatherVisualization = () => {
+function FidelitySwitch({ on, onChange }: { on: boolean; onChange: (next: boolean) => void }) {
+  return (
+    <div className="hud-panel p-1">
+      <button
+        type="button"
+        role="switch"
+        aria-checked={on}
+        onClick={() => onChange(!on)}
+        className="flex w-full items-center gap-3 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      >
+        <span className="min-w-0 flex-1">
+          <span className="block text-sm font-medium leading-tight">High-fidelity belts</span>
+          <span className="block truncate text-xs text-muted-foreground">More particles, more GPU</span>
+        </span>
+        <span
+          aria-hidden="true"
+          className={`relative h-4 w-7 shrink-0 rounded-full border transition-colors ${on ? 'border-foreground/70 bg-foreground/15' : 'border-charcoal'}`}
+        >
+          <span className={`absolute top-0.5 h-2.5 w-2.5 rounded-full transition-all ${on ? 'left-3.5 bg-foreground' : 'left-0.5 bg-muted-foreground'}`} />
+        </span>
+      </button>
+    </div>
+  );
+}
+
+export const SpaceWeatherVisualization = ({ headerActions }: { headerActions?: ReactNode }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const isE2E =
     typeof window !== 'undefined' &&
@@ -42,51 +71,59 @@ export const SpaceWeatherVisualization = () => {
     setLayers(prev => ({ ...prev, [layer]: !prev[layer] }));
   }, []);
 
+  const summary = spaceObjectAlert
+    ? `${spaceObjectAlert.candidateCount} untracked object${spaceObjectAlert.candidateCount === 1 ? '' : 's'} detected`
+    : `${spaceObjects?.length ?? 0} known orbital assets tracked`;
+
   // ---- Render --------------------------------------------------------------
   return (
-    <div className="relative w-full h-full overflow-hidden">
-      {/* 3D Scene */}
-      <GaussGlobe
-        layers={layers}
-        visualParams={visualParams}
-        encodingMode={encodingMode}
-        canvasRef={canvasRef}
-        spaceObjects={spaceObjects}
-        spaceObjectAlert={spaceObjectAlert}
-        isE2E={isE2E}
-        highFidelityBelts={highFidelityBelts}
-      />
-
-      {/* UI overlays: placed around the scene from md up; on a phone, one scrolling
-          column under a strip of the scene, so no panel covers another. */}
-      <div className="pointer-events-none absolute inset-0 flex flex-col gap-3 overflow-y-auto px-3 pb-6 pt-[38vh] md:block md:overflow-visible md:p-0">
-        <Nav
-          data={data}
+    <div className="relative h-full w-full overflow-hidden">
+      {/* 3D scene */}
+      <SceneBoundary>
+        <GaussGlobe
           layers={layers}
-          onToggle={handleToggle}
+          visualParams={visualParams}
+          encodingMode={encodingMode}
           canvasRef={canvasRef}
-          spaceObjectSummary={
-            spaceObjectAlert
-              ? `UNTRACKED OBJECTS DETECTED: ${spaceObjectAlert.candidateCount}`
-              : `KNOWN ORBITAL ASSETS: ${spaceObjects?.length ?? 0}`
-          }
-        >
-          <EncodingPanel
-            encodingMode={encodingMode}
-            setEncodingMode={setEncodingMode}
-          />
-          <div className="hud-panel flex min-h-10 w-full items-center justify-between gap-3 bg-panel/85 px-3 backdrop-blur-md">
-            <label htmlFor="hifi-belts" className="cursor-pointer text-sm">
-              High-fidelity belts
-            </label>
-            <Switch id="hifi-belts" checked={highFidelityBelts} onCheckedChange={setHighFidelityBelts} />
-          </div>
-        </Nav>
+          spaceObjects={spaceObjects}
+          spaceObjectAlert={spaceObjectAlert}
+          isE2E={isE2E}
+          highFidelityBelts={highFidelityBelts}
+        />
+      </SceneBoundary>
 
-        <ReasoningStream />
-        <div className="pointer-events-none flex flex-col gap-2 md:absolute md:bottom-6 md:right-6 md:items-end">
-          <UndetectedObjectsAlert alert={spaceObjectAlert} />
-          <DataFlowHUD tier={data.tier} />
+      {/* Console regions. The overlay ignores the pointer so the scene can be
+          dragged between panels; each panel opts back in. */}
+      <div className="pointer-events-none absolute inset-0 overflow-y-auto lg:overflow-hidden">
+        <div className="flex min-h-full flex-col gap-3 p-3 sm:p-4 lg:grid lg:h-full lg:grid-cols-[264px_minmax(0,1fr)_320px] lg:grid-rows-[auto_minmax(0,1fr)] lg:gap-4">
+          <div className="lg:col-span-3">
+            <ConsoleHeader feed={feedState(data)} summary={summary} actions={headerActions} />
+          </div>
+
+          <aside
+            aria-label="Telemetry"
+            className="pointer-events-auto flex flex-col gap-3 lg:col-start-3 lg:row-start-2 lg:min-h-0 lg:overflow-y-auto"
+          >
+            <HUD data={data} />
+            <UndetectedObjectsAlert alert={spaceObjectAlert} />
+            <DataFlowHUD tier={data.tier} />
+          </aside>
+
+          {/* Scene stays visible here; the assistant sits at its foot */}
+          <div className="flex flex-col items-center justify-end lg:col-start-2 lg:row-start-2 lg:min-h-0">
+            {/* On phones, a window onto the scene between telemetry and the assistant */}
+            <div aria-hidden="true" className="h-[45vh] lg:hidden" />
+            <div className="pointer-events-auto flex w-full justify-center lg:max-h-full lg:overflow-y-auto">
+              <ReasoningStream />
+            </div>
+          </div>
+
+          <div className="lg:col-start-1 lg:row-start-2 lg:min-h-0 lg:overflow-y-auto">
+            <ControlRail layers={layers} onToggle={handleToggle} canvasRef={canvasRef}>
+              <EncodingPanel encodingMode={encodingMode} setEncodingMode={setEncodingMode} />
+              <FidelitySwitch on={highFidelityBelts} onChange={setHighFidelityBelts} />
+            </ControlRail>
+          </div>
         </div>
       </div>
     </div>
