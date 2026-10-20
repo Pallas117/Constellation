@@ -17,6 +17,7 @@
  *   public), so Dst is the nowcast's labelled model estimate, as live when Kyoto is stale.
  */
 import { gsmToGse, vec } from "../physics/coordinates.js";
+import type { L1Sample } from "../physics/l1-structures.js";
 
 /** [time, Bx, By, Bz (GSM, nT), Bt, spacecraft]; RTSW fill -999.9 kept as received. */
 export type MagRow = [string, number, number, number, number, string];
@@ -165,4 +166,24 @@ export function archiveFetch(archive: ReplayArchive, now: () => number): typeof 
       ? new Response(JSON.stringify({ error: "not archived" }), { status: 404 })
       : new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
   }) as typeof fetch;
+}
+
+/**
+ * The archive's L1 minutes as structure-detection input (GAU-139). Fills and non-physical values
+ * (RTSW -999.9 / -9999, zero or negative density, speed or field magnitude) read as missing.
+ */
+export function archiveL1Samples(archive: ReplayArchive): L1Sample[] {
+  const positive = (x: number | undefined) => (x !== undefined && Number.isFinite(x) && x > 0 ? x : null);
+  const mag = new Map(archive.mag.map((row) => [row[0], row]));
+  const plasma = new Map(archive.plasma.map((row) => [row[0], row]));
+  return [...new Set([...mag.keys(), ...plasma.keys()])].sort().map((time) => {
+    const bz = mag.get(time)?.[3];
+    return {
+      time,
+      bzGsmNt: bz !== undefined && Number.isFinite(bz) && bz > -999 ? bz : null,
+      btNt: positive(mag.get(time)?.[4]),
+      densityCm3: positive(plasma.get(time)?.[1]),
+      speedKmS: positive(plasma.get(time)?.[2]),
+    };
+  });
 }
