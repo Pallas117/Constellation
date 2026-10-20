@@ -31,6 +31,9 @@ set -euo pipefail
 
 AGENTS="$HOME/Library/LaunchAgents"
 LOGS="$HOME/Library/Logs/gauss"
+# Runtime data (telemetry, commerce DB, mesh registry) lives outside any checkout, so
+# replacing or removing the deploy checkout never touches it. `install` migrates it once.
+DATA_HOME="${GAUSS_DATA_HOME:-$HOME/.local/share/gauss/data}"
 UID_DOMAIN="gui/$(id -u)"
 NODE="${NODE:-$(command -v node || true)}" # only install needs it; the guard must run without it
 LABELS=(uk.lightbound.gauss-backend uk.lightbound.gauss-frontend uk.lightbound.gauss-learning uk.lightbound.gauss-awake)
@@ -100,8 +103,9 @@ $args  </array>
     <key>PATH</key><string>$(xml "$(dirname "$NODE")"):/usr/bin:/bin:/usr/sbin:/sbin</string>
     <key>GAUSS_PUBLIC_URL</key><string>$(xml "$PUBLIC_URL")</string>
     <key>BETTER_AUTH_URL</key><string>$(xml "$AUTH_URL")</string>
-    <key>MESH_STORE_PATH</key><string>$(xml "$dir/data/mesh/devices.json")</string>
-    <key>COMMERCE_DB_PATH</key><string>$(xml "$dir/data/commerce/commerce.db")</string>
+    <key>MESH_STORE_PATH</key><string>$(xml "$DATA_HOME/mesh/devices.json")</string>
+    <key>COMMERCE_DB_PATH</key><string>$(xml "$DATA_HOME/commerce/commerce.db")</string>
+    <key>GAUSS_BEDROCK_DIR</key><string>$(xml "$DATA_HOME/bedrock")</string>
     <key>ALLOWED_ORIGINS</key><string>$(xml "$PUBLIC_URL,$AUTH_URL,http://127.0.0.1:8080,http://localhost:8080")</string>
   </dict>
 $schedule
@@ -112,6 +116,22 @@ $schedule
 </dict>
 </plist>
 EOF
+}
+
+# migrate_data <old-checkout>: copy <old-checkout>/data/{bedrock,commerce,mesh} into
+# DATA_HOME, one item at a time, only where DATA_HOME has nothing yet. Never overwrites
+# and never deletes, so the old copy stays as a fallback until you remove it.
+migrate_data() {
+  local src="$1/data" d f
+  for d in bedrock commerce mesh; do
+    [ -d "$src/$d" ] || continue
+    mkdir -p "$DATA_HOME/$d"; chmod 700 "$DATA_HOME" "$DATA_HOME/$d"
+    for f in "$src/$d"/* "$src/$d"/.[!.]*; do
+      [ -e "$f" ] || continue
+      if [ -e "$DATA_HOME/$d/${f##*/}" ]; then continue; fi
+      cp -pR "$f" "$DATA_HOME/$d/" && echo "migrated $d/${f##*/} -> $DATA_HOME/$d/"
+    done
+  done
 }
 
 code() { local c; c=$(curl -s -o /dev/null -m 5 -w '%{http_code}' "$1" 2>/dev/null); [ "$c" = 000 ] || [ -z "$c" ] && echo down || echo "$c"; }
@@ -455,6 +475,7 @@ except Exception:
 ' 2>/dev/null || echo "no space-weather data unavailable")
   item "${fresh%% *}" "${fresh#* }"
   local dir; dir=$(launchctl print "$UID_DOMAIN/uk.lightbound.gauss-backend" 2>/dev/null | awk -F'= ' '/working directory =/{print $2; exit}')
+  local mesh="$DATA_HOME/mesh/devices.json"; [ -f "$mesh" ] || mesh="$dir/data/mesh/devices.json"  # pre-migration installs
   local report; report=$(python3 -Ic '
 import json, sys
 from datetime import datetime, timezone
@@ -465,7 +486,7 @@ try:
     print(("ok" if m <= 15 else "no") + " Argo reporting to Gauss (last %.0f min ago)" % m)
 except Exception:
     print("no Argo has not reported to Gauss")
-' "$dir/data/mesh/devices.json" 2>/dev/null || echo "no Argo has not reported to Gauss")
+' "$mesh" 2>/dev/null || echo "no Argo has not reported to Gauss")
   item "${report%% *}" "${report#* }"
   local learned; learned=$(python3 -Ic '
 import json, sys
@@ -502,13 +523,15 @@ case "${1:-}" in
   install)
     dir="$(cd "${2:?usage: $0 install <checkout-dir>}" && pwd)"
     [ -f "$dir/backend/server.ts" ] || { echo "$dir is not a Gauss checkout" >&2; exit 1; }
-    mkdir -p "$LOGS" "$dir/data/mesh" "$dir/data/commerce"
+    # where the running services keep data today (an older install used <checkout>/data)
+    prev=$(plutil -extract WorkingDirectory raw -o - "$AGENTS/uk.lightbound.gauss-backend.plist" 2>/dev/null || echo "$dir")
+    mkdir -p "$LOGS" "$DATA_HOME/bedrock" "$DATA_HOME/mesh" "$DATA_HOME/commerce"
     echo "Building the frontend in $dir (same-origin API) ..."
     (cd "$dir" && VITE_HELIO_PROXY_URL=same-origin "$NODE" node_modules/vite/bin/vite.js build --config frontend/vite.config.ts >/dev/null)
     plist uk.lightbound.gauss-backend "$dir" "$LOGS/backend.log" keepalive \
       "$NODE" --env-file-if-exists=.env --import tsx backend/server.ts >"$AGENTS/uk.lightbound.gauss-backend.plist"
     plist uk.lightbound.gauss-learning "$dir" "$LOGS/learning.log" nightly \
-      "$(command -v python3)" -I ml/train/nightly.py --telemetry data/bedrock/telemetry.jsonl >"$AGENTS/uk.lightbound.gauss-learning.plist"
+      "$(command -v python3)" -I ml/train/nightly.py --telemetry "$DATA_HOME/bedrock/telemetry.jsonl" >"$AGENTS/uk.lightbound.gauss-learning.plist"
     plist uk.lightbound.gauss-frontend "$dir" "$LOGS/frontend.log" keepalive \
       "$NODE" node_modules/vite/bin/vite.js preview --config frontend/vite.config.ts --host 127.0.0.1 --port 8080 --strictPort \
       >"$AGENTS/uk.lightbound.gauss-frontend.plist"
@@ -519,8 +542,9 @@ case "${1:-}" in
       launchctl bootout "$UID_DOMAIN/$l" 2>/dev/null || true
       # bootout returns before the job is gone; bootstrapping too early fails with error 5.
       for _ in $(seq 1 20); do launchctl print "$UID_DOMAIN/$l" >/dev/null 2>&1 || break; sleep 0.5; done
-      launchctl bootstrap "$UID_DOMAIN" "$AGENTS/$l.plist"
     done
+    migrate_data "$prev"   # every job is stopped, so the SQLite files are closed
+    for l in "${LABELS[@]}"; do launchctl bootstrap "$UID_DOMAIN" "$AGENTS/$l.plist"; done
     sleep 8
     health
     [ -f "$SUDOERS" ] || echo "To keep Gauss running with the lid closed, run once: $0 awake setup"
