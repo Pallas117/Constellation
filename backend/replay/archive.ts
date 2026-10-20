@@ -21,8 +21,11 @@ import type { L1Sample } from "../physics/l1-structures.js";
 
 /** [time, Bx, By, Bz (GSM, nT), Bt, spacecraft]; RTSW fill -999.9 kept as received. */
 export type MagRow = [string, number, number, number, number, string];
-/** [time, density cm^-3, speed km/s, spacecraft]; fill -9999. */
-export type PlasmaRow = [string, number, number, string];
+/**
+ * [time, density cm^-3, speed km/s, spacecraft, temperature K]; fill -9999. The temperature is
+ * absent from archives fetched before GAU-139 part B.
+ */
+export type PlasmaRow = [string, number, number, string, number?];
 /** [time, >=10, >=50, >=100 MeV protons (pfu), satellite]; GOES fill -1e5. */
 export type ProtonRow = [string, number, number, number, string];
 /** [time, >=2 MeV electrons, satellite]. */
@@ -118,12 +121,13 @@ export function archiveBody(archive: ReplayArchive, pathname: string, nowMs: num
     case "/json/rtsw/rtsw_wind_1m.json":
       return publishedRows(archive.plasma, nowMs, RTSW_SPAN_MS, MIN)
         .reverse()
-        .map(([t, density, speed, source]) => ({
+        .map(([t, density, speed, source, temperature]) => ({
           time_tag: swpcTag(t),
           active: true,
           source,
           proton_density: fill(density, -9999),
           proton_speed: fill(speed, -9999),
+          ...(temperature === undefined ? {} : { proton_temperature: fill(temperature, -9999) }),
         }));
     case "/json/planetary_k_index_1m.json":
       return []; // not archived: Kp comes from completed intervals only
@@ -184,6 +188,7 @@ export function archiveL1Samples(archive: ReplayArchive): L1Sample[] {
       btNt: positive(mag.get(time)?.[4]),
       densityCm3: positive(plasma.get(time)?.[1]),
       speedKmS: positive(plasma.get(time)?.[2]),
+      temperatureK: positive(plasma.get(time)?.[4]),
     };
   });
 }
