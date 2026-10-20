@@ -4,7 +4,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { useMesh, type MeshDevice } from "@/hooks/useMesh";
+import { useMesh, type MeshDevice, WARNING_CLASSES } from "@/hooks/useMesh";
 import { useDocumentTitle } from "@/hooks/useDocumentTitle";
 
 const STALE_MS = 15 * 60 * 1000;
@@ -13,6 +13,7 @@ const STALE_MS = 15 * 60 * 1000;
 const CLASS_HELP: Record<string, string> = {
   OK: "Connected",
   WPAD_RISK: "Works, but auto-proxy is on",
+  WIFI_RISK: "Works, but the Wi-Fi is weak or this device is open to it",
   OFFLINE: "No network",
   CAPTIVE: "Wi-Fi login page",
   DNS: "DNS failing",
@@ -27,7 +28,7 @@ function statusOf(d: MeshDevice): { label: string; variant: "default" | "seconda
   if (!d.last) return { label: "Never reported", variant: "outline" };
   if (Date.now() - Date.parse(d.last.receivedAt) > STALE_MS) return { label: `${d.last.class} (stale)`, variant: "outline" };
   if (d.last.class === "OK") return { label: "OK", variant: "default" };
-  if (d.last.class === "WPAD_RISK") return { label: "WPAD_RISK", variant: "secondary" };
+  if (WARNING_CLASSES.has(d.last.class)) return { label: d.last.class, variant: "secondary" };
   return { label: d.last.class, variant: "destructive" };
 }
 

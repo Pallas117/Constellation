@@ -165,3 +165,8 @@ test("Kp model unit tests (python)", { skip: !hasPython && "python3 not found" }
   const result = spawnSync("python3", ["-I", "ml/tests/test_kp_model.py"], { encoding: "utf8" });
   assert.equal(result.status, 0, result.stderr);
 });
+
+test("inference server request handling (python)", { skip: !hasPython && "python3 not found" }, () => {
+  const result = spawnSync("python3", ["-I", "ml/tests/test_infer_server.py"], { encoding: "utf8" });
+  assert.equal(result.status, 0, result.stderr);
+});

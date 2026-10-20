@@ -1,0 +1,26 @@
+# Argo for Linux hosts (GalacticOS and other Linux ground-station or edge hosts).
+#
+# Build:  podman build -t argo:dev -f Containerfile .
+# Run:    podman run -d --name argo --network host --read-only --cap-drop ALL \
+#           --security-opt no-new-privileges -v argo-state:/home/nonroot/.local/state/argo \
+#           -v ./config.json:/home/nonroot/.config/argo/config.json:ro argo:dev
+#
+# --network host lets Argo see the host's real route, gateway and links; without it, it
+# checks the container's own network. The image has no shell or package manager, runs as
+# a non-root user, and the Linux tests run during the build (a failing test fails it).
+
+FROM docker.io/library/golang:1.26.1 AS build
+WORKDIR /src
+COPY go.mod ./
+COPY *.go ./
+COPY testdata ./testdata
+COPY launchd ./launchd
+RUN CGO_ENABLED=0 go vet ./... && CGO_ENABLED=0 go test -count=1 ./... \
+ && CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/argo .
+
+FROM gcr.io/distroless/static-debian12:nonroot
+COPY --from=build /out/argo /usr/local/bin/argo
+ENV HOME=/home/nonroot
+USER nonroot:nonroot
+ENTRYPOINT ["/usr/local/bin/argo"]
+CMD ["loop"]

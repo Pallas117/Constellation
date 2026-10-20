@@ -11,6 +11,11 @@ type ScId = (typeof SPACECRAFT)[number];
 // MMS FGM survey L2 is an archival product (weeks behind real time). Samples are taken
 // from the end of the published coverage, and the status reports how far behind that is.
 const WINDOW_MS = 60 * 1000;
+/**
+ * L2 survey data is archival, published well behind real time. Older than this, the source is
+ * not reported healthy: the reconnection vector would describe a different season (GAU-63).
+ */
+export const MMS_MAX_AGE_MS = 90 * 86_400_000;
 const STOP_DATE_TTL_MS = 60 * 60 * 1000;
 
 let latestStatus: SourceStatus = {
@@ -128,15 +133,16 @@ async function fetchSpacecraft(id: ScId, start: string, stop: string): Promise<M
     timestamp: b.time,
     positionGsmRe: vec(r[0] / RE_KM, r[1] / RE_KM, r[2] / RE_KM),
     magneticFieldNt: vec(b.v[0], b.v[1], b.v[2]),
+    positionMethod: "MEC ephemeris (30 s), linearly interpolated to the B sample time",
   };
 }
 
-export async function fetchMmsCdawebSamples(): Promise<MMSSpacecraftSample[]> {
+export async function fetchMmsCdawebSamples(nowMs = Date.now()): Promise<MMSSpacecraftSample[]> {
   try {
     // A common window ending at the earliest coverage end keeps the four samples
     // time-aligned for the tetrahedron skew check.
     const stops = await Promise.all(SPACECRAFT.map((id) => stopDate(id)));
-    const stopMs = Math.min(Date.now(), ...stops);
+    const stopMs = Math.min(nowMs, ...stops);
     const start = toIso(new Date(stopMs - WINDOW_MS));
     const stop = toIso(new Date(stopMs));
 
@@ -159,15 +165,19 @@ export async function fetchMmsCdawebSamples(): Promise<MMSSpacecraftSample[]> {
       null,
     );
     const lastSeen = newest ?? latestStatus.lastSeen;
-    const latencySeconds = lastSeen ? Math.max(0, (Date.now() - Date.parse(lastSeen)) / 1000) : null;
+    const latencySeconds = lastSeen ? Math.max(0, (nowMs - Date.parse(lastSeen)) / 1000) : null;
+    const current = latencySeconds !== null && latencySeconds * 1000 <= MMS_MAX_AGE_MS;
     const failureNote = failures.length > 0 ? `; ${failures.length} failed: ${failures[0]}` : "";
     const behind = latencySeconds !== null ? `, archival L2 ${(latencySeconds / 86400).toFixed(1)} d behind` : "";
     latestStatus = {
       source: SOURCE,
       lastSeen,
       latencySeconds,
-      healthy: samples.length >= 3,
-      message: `Fetched ${samples.length}/4 MMS spacecraft${behind}${failureNote}`,
+      healthy: samples.length >= 3 && current,
+      message:
+        samples.length > 0 && !current
+          ? `Fetched ${samples.length}/4 MMS spacecraft${behind}: older than ${MMS_MAX_AGE_MS / 86_400_000} d, not current${failureNote}`
+          : `Fetched ${samples.length}/4 MMS spacecraft${behind}${failureNote}`,
     };
 
     return samples;
@@ -176,7 +186,7 @@ export async function fetchMmsCdawebSamples(): Promise<MMSSpacecraftSample[]> {
       source: SOURCE,
       lastSeen: latestStatus.lastSeen,
       latencySeconds: latestStatus.lastSeen
-        ? Math.max(0, (Date.now() - Date.parse(latestStatus.lastSeen)) / 1000)
+        ? Math.max(0, (nowMs - Date.parse(latestStatus.lastSeen)) / 1000)
         : null,
       healthy: false,
       message: error instanceof Error ? error.message : "MMS CDAWeb fetch failed",

@@ -15,6 +15,7 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -34,6 +35,17 @@ type Config struct {
 	Device    string            `json:"device,omitempty"`     // display name in Gauss
 	ExitNodes map[string]string `json:"exit_nodes,omitempty"` // tailscale hostname → country (MY/SG only)
 	PhoneTo   string            `json:"phone_to,omitempty"`   // your own iMessage handle for phone alerts
+	// "sms" sends SMS first: iMessages to your own number arrive silently, with no banner.
+	PhoneService string   `json:"phone_service,omitempty"`
+	Watch        []Peer   `json:"watch,omitempty"`   // LaunchAgents Argo keeps alive; default: awake guard + mesh-heal
+	Devices      []string `json:"devices,omitempty"` // tailnet hostnames to watch; default: this user's phones
+}
+
+func (c Config) peers() []Peer {
+	if c.Watch == nil {
+		return defaultPeers()
+	}
+	return c.Watch
 }
 
 func saveConfig(c Config) error {
@@ -42,6 +54,18 @@ func saveConfig(c Config) error {
 	}
 	b, _ := json.MarshalIndent(c, "", "  ")
 	return os.WriteFile(filepath.Join(configDir(), "config.json"), b, 0o600)
+}
+
+// loopInterval parses ARGO_INTERVAL ("60s", "2m"); default 60s, never under 15s.
+func loopInterval(v string) time.Duration {
+	d, err := time.ParseDuration(strings.TrimSpace(v))
+	if err != nil || d <= 0 {
+		return time.Minute
+	}
+	if d < 15*time.Second {
+		return 15 * time.Second
+	}
+	return d
 }
 
 func configDir() string { return filepath.Join(home(), ".config/argo") }
@@ -60,7 +84,7 @@ func main() {
 		cmd = os.Args[1]
 	}
 	cfg, store := loadConfig(), DefaultStore()
-	phone := newPhone(cfg.PhoneTo, cfg.Device)
+	phone := newPhoneFor(cfg)
 	loop := Loop{Prober: SystemProber{ExitNodes: cfg.ExitNodes}, Store: store, Fx: realEffects{phone: phone}}
 	flush := func() {
 		if phone != nil {
@@ -73,6 +97,24 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
 
+	// One scheduled check: the peer watchdog every time (cheap file stats), the
+	// network probe only when skipTick says it is due.
+	tick := func(ctx context.Context) error {
+		if store.Disabled() {
+			return nil
+		}
+		_ = withLock(store, func() { watchPeers(cfg.peers(), store, realWatchFx(phone, store), time.Now()) })
+		if gw, mac := localGateway(ctx); skipTick(store.Load(), gw, mac, time.Now()) {
+			return nil
+		}
+		return withLock(store, func() {
+			flush()
+			loop.Tick(ctx)
+			watchDevices(ctx, cfg.Devices, store, phone, time.Now())
+			maybeSendWeekly(store, phone, time.Now())
+		})
+	}
+
 	var err error
 	switch cmd {
 	case "status":
@@ -83,17 +125,25 @@ func main() {
 		loop.Out = func(s string) { fmt.Println(s) }
 		err = withLock(store, func() { flush(); loop.Tick(ctx) })
 	case "tick": // LaunchAgent entry point
-		if store.Disabled() {
-			return
+		err = tick(ctx)
+	case "loop": // container entry point: a tick every ARGO_INTERVAL (default 60s) until stopped
+		every := loopInterval(os.Getenv("ARGO_INTERVAL"))
+		stop := make(chan os.Signal, 1)
+		signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
+		loop.Out = func(s string) { fmt.Println(time.Now().UTC().Format(time.RFC3339), s) }
+		fmt.Printf("argo %s: checking every %s\n", version, every)
+		for {
+			c, done := context.WithTimeout(context.Background(), 90*time.Second)
+			if e := tick(c); e != nil {
+				fmt.Fprintln(os.Stderr, "argo:", e)
+			}
+			done()
+			select {
+			case <-stop:
+				return
+			case <-time.After(every):
+			}
 		}
-		if gw, mac := localGateway(ctx); skipTick(store.Load(), gw, mac, time.Now()) {
-			return
-		}
-		err = withLock(store, func() {
-			flush()
-			loop.Tick(ctx)
-			maybeSendWeekly(store, phone, time.Now())
-		})
 	case "summary": // what Argo caught, fixed and learned in the last 7 days
 		now := time.Now()
 		st := store.Load()
@@ -121,6 +171,23 @@ func main() {
 			err = nil
 		}
 		fmt.Println("argo active.")
+	case "watch": // run the peer watchdog once and say what it did
+		err = withLock(store, func() {
+			for _, l := range watchPeers(cfg.peers(), store, realWatchFx(phone, store), time.Now()) {
+				fmt.Println(l)
+			}
+			fmt.Println("watch: done")
+		})
+	case "devices": // which watched tailnet devices (default: your phones) are offline
+		lines := watchDevices(ctx, cfg.Devices, store, nil, time.Now())
+		for _, l := range lines {
+			fmt.Println(l)
+		}
+		if len(lines) == 0 {
+			fmt.Println("devices: all watched devices are on the tailnet (or this Mac is off it)")
+		}
+	case "notify": // for mesh-heal, the awake guard and Claude Code hooks
+		err = notifyCmd(os.Args[2:], phone, store, time.Now())
 	case "phone":
 		err = phoneSetup(os.Args[2:], cfg)
 	case "enroll":
@@ -132,7 +199,7 @@ func main() {
 	case "version":
 		fmt.Println("argo", version)
 	default:
-		fmt.Fprintln(os.Stderr, "usage: argo [status|doctor|fix|report|on|off|preflight|run -- cmd|phone <handle>|test|off|summary [--send]|enroll URL DEVICE|install|uninstall|version]")
+		fmt.Fprintln(os.Stderr, "usage: argo [status|doctor|fix|report|on|off|preflight|run -- cmd|phone <handle>|test|off|notify TITLE MSG|watch|summary [--send]|enroll URL DEVICE|install|uninstall|version]")
 		os.Exit(2)
 	}
 	if err != nil {
@@ -160,13 +227,6 @@ func skipTick(st State, gw, mac string, now time.Time) bool {
 }
 
 // localGateway is the cheap, local-only part of a probe (no network traffic).
-func localGateway(ctx context.Context) (string, string) {
-	gw, ok := parseDefaultRoute(run(ctx, "route", "-n", "get", "default"))
-	if !ok {
-		return "", ""
-	}
-	return gw, parseARP(run(ctx, "arp", "-n", gw))
-}
 
 func withLock(s Store, f func()) error {
 	unlock, err := s.Lock()
@@ -353,8 +413,13 @@ func pushToGauss(cfg Config, st State) {
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(string(tok)))
 	c := &http.Client{Timeout: 5 * time.Second, Transport: &http.Transport{Proxy: nil}}
-	if resp, err := c.Do(req); err == nil {
-		resp.Body.Close()
+	resp, err := c.Do(req)
+	if err != nil {
+		return // offline or Gauss down: the next tick reports again
+	}
+	resp.Body.Close()
+	if resp.StatusCode >= 300 { // e.g. a class Gauss doesn't know yet: say so instead of failing silently
+		fmt.Fprintf(os.Stderr, "%s argo: Gauss rejected the report for class %s: HTTP %d\n", time.Now().UTC().Format(time.RFC3339), st.Class, resp.StatusCode)
 	}
 }
 

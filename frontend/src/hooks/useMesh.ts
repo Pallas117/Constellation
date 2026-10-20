@@ -143,3 +143,6 @@ export function useMesh() {
   const { steps, devices, me, canEnroll, canSeeTeam, canRevokeAny, error } = state;
   return { steps, devices, me, canEnroll, canSeeTeam, canRevokeAny, error, enroll, revoke };
 }
+
+/** Argo's non-blocking warnings: the device works, but someone should look. */
+export const WARNING_CLASSES: ReadonlySet<string> = new Set(["WPAD_RISK", "WIFI_RISK"]);

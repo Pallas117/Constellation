@@ -81,7 +81,10 @@ export async function fetchKyotoDst(nowMs = Date.now()): Promise<DstReading | nu
     latestStatus = {
       source: SOURCE,
       lastSeen: latestStatus.lastSeen,
-      latencySeconds: latestStatus.latencySeconds,
+      // The data keeps ageing while fetches fail: never report the last fetch's age as current.
+      latencySeconds: latestStatus.lastSeen
+        ? Math.max(0, Math.round((nowMs - Date.parse(latestStatus.lastSeen)) / 1000))
+        : null,
       healthy: false,
       message: error instanceof Error && error.name === "TimeoutError"
         ? "Kyoto Dst feed timed out"

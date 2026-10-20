@@ -1,7 +1,15 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { geomagneticStorm, KP_MAX_AGE_MS, radiationStorm, S_SCALE_CHANNEL } from "./noaa-scales.js";
-import type { CanonicalSpaceWeatherPoint, ParticleReading } from "../types.js";
+import {
+  flareClass,
+  geomagneticStorm,
+  KP_MAX_AGE_MS,
+  radiationStorm,
+  radioBlackout,
+  S_SCALE_CHANNEL,
+  XRAY_BAND,
+} from "./noaa-scales.js";
+import type { CanonicalSpaceWeatherPoint, ParticleReading, XrayReading } from "../types.js";
 
 const NOW = Date.parse("2026-01-19T20:00:00Z");
 
@@ -73,4 +81,47 @@ test("the streams are independent: a radiation storm under a quiet geomagnetic f
   assert.equal(radiation.label, "S4");
   assert.equal(geomagnetic.label, "G0");
   assert.match(radiation.basis, /GOES >=10 MeV protons 25,000 pfu/);
+});
+
+const xray = (value: number, band = XRAY_BAND): XrayReading => ({
+  value,
+  band,
+  flareClass: flareClass(value),
+  satellite: "GOES-18",
+  timestamp: "2026-10-19T08:44:00Z",
+});
+
+test("R-scale levels start at M1, M5, X1, X10 and X20 (GOES 0.1-0.8 nm, W/m²)", () => {
+  const cases: Array<[number, number]> = [
+    [5.66e-7, 0], // B5.6, the quiet Sun on 2026-10-19
+    [9.99e-6, 0],
+    [1e-5, 1],
+    [4.9e-5, 1],
+    [5e-5, 2],
+    [1e-4, 3],
+    [9.9e-4, 3],
+    [1e-3, 4],
+    [2e-3, 5],
+  ];
+  for (const [wm2, level] of cases) {
+    assert.equal(radioBlackout(xray(wm2)).level, level, `${wm2} W/m²`);
+  }
+  assert.match(radioBlackout(xray(5.66e-7)).basis, /GOES 0\.1-0\.8nm X-rays 5\.7e-7 W\/m² \(B5\.6\)/);
+});
+
+test("flare class truncates, so a flux just under a boundary keeps its class", () => {
+  assert.equal(flareClass(5.66e-7), "B5.6");
+  assert.equal(flareClass(3e-6), "C3.0", "float division error doesn't drop a tenth");
+  assert.equal(flareClass(9.99e-6), "C9.9");
+  assert.equal(flareClass(1e-5), "M1.0");
+  assert.equal(flareClass(2.3e-3), "X23");
+  assert.equal(flareClass(4e-9), "A0.4");
+  assert.equal(flareClass(-1), "?");
+});
+
+test("a missing, wrong-band or fill X-ray reading is unknown, not R0", () => {
+  assert.equal(radioBlackout(null).label, "R?");
+  assert.equal(radioBlackout(xray(1e-4, "0.05-0.4nm")).level, null);
+  assert.equal(radioBlackout(xray(0)).level, null);
+  assert.equal(radioBlackout(xray(Number.NaN)).level, null);
 });

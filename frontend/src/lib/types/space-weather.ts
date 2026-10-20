@@ -49,6 +49,32 @@ export interface ScaleReading {
   observedAt: string | null;
 }
 
+/** One input sense-check (GAU-136); mirrors backend/types.ts. */
+export interface SenseCheck {
+  id: "l1-field-magnitude" | "goes-proton-spectrum" | "goes-proton-channels" | "goes-xray" | "noaa-scales";
+  /** "unknown" when there was nothing current to check, never "pass". */
+  status: "pass" | "flag" | "unknown";
+  reason: string;
+  observedAt: string | null;
+  checked?: number;
+  flagged?: number;
+}
+
+export interface XrayReading {
+  /** GOES 0.1–0.8 nm irradiance, W m^-2. */
+  value: number;
+  band: string;
+  flareClass: string;
+  satellite: string | null;
+  timestamp: string;
+}
+
+export interface NoaaAlert {
+  productId: string;
+  issuedAt: string;
+  headline: string;
+}
+
 export interface CanonicalSpaceWeatherPoint {
   /** When the point was issued (5 s ingest tick). */
   timestamp: string;
@@ -87,7 +113,10 @@ export interface CanonicalSpaceWeatherPoint {
     dst: number;
     kpKind?: "estimated-1m" | "planetary-3h";
     kpObservedAt?: string | null;
+    dstObservedAt?: string | null;
   };
+  /** Values not measured as published, with the method and inputs (GAU-63). */
+  derived?: Array<{ field: string; method: string; derivedFrom: string[] }>;
   coupling: {
     newell: number;
     epsilon: number;
@@ -104,7 +133,15 @@ export interface CanonicalSpaceWeatherPoint {
     radiation?: ScaleReading;
     /** NOAA G-scale from planetary Kp: the geomagnetic stream. */
     geomagnetic?: ScaleReading;
+    /** NOAA R-scale from GOES X-rays: radio blackouts. */
+    radioBlackout?: ScaleReading;
   };
+  /** GOES long-band X-ray flux; null when missing or older than 15 min. */
+  xray?: XrayReading | null;
+  /** Input sense-checks; a flagged input carries its reason. */
+  senseChecks?: SenseCheck[];
+  /** NOAA alerts from the last 24 h, newest first; null when unreadable. */
+  noaaAlerts?: NoaaAlert[] | null;
   /** Measured GOES particle flux; null per channel when missing or older than 30 min. */
   particles?: {
     protons: ParticleReading | null;
