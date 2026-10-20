@@ -57,6 +57,17 @@ const MeshDashboard = () => {
     }
   };
 
+  const [revokeError, setRevokeError] = useState<string | null>(null);
+
+  const onRevoke = async (deviceName: string) => {
+    setRevokeError(null);
+    try {
+      await revoke(deviceName);
+    } catch (err) {
+      setRevokeError(err instanceof Error ? err.message : "Couldn't revoke the device");
+    }
+  };
+
   return (
     <main className="min-h-screen w-full bg-background text-foreground">
       <section className="px-4 py-6 sm:px-8">
@@ -85,6 +96,11 @@ const MeshDashboard = () => {
               <p className="text-sm text-muted-foreground">You see the devices you enrolled. Operators see the whole team.</p>
             )}
             {error && <p className="text-sm text-destructive">{error}</p>}
+            {revokeError && (
+              <p role="alert" className="text-sm text-destructive">
+                {revokeError}
+              </p>
+            )}
             {canEnroll && devices && devices.length === 0 && (
               <p className="text-sm text-muted-foreground">No devices yet. Enroll this laptop below.</p>
             )}
@@ -119,7 +135,7 @@ const MeshDashboard = () => {
                           <td className="py-3 pr-4 text-muted-foreground">{ago(d.last?.receivedAt)}</td>
                           <td className="py-3 text-right">
                             {(canRevokeAny || d.owner === me) && (
-                              <Button size="sm" variant="ghost" onClick={() => void revoke(d.name)}>
+                              <Button size="sm" variant="ghost" onClick={() => void onRevoke(d.name)}>
                                 Revoke
                               </Button>
                             )}

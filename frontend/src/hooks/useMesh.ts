@@ -134,7 +134,9 @@ export function useMesh() {
 
   const revoke = useCallback(
     async (name: string) => {
-      await api(`/devices/${encodeURIComponent(name)}`, { method: "DELETE" });
+      const res = await api(`/devices/${encodeURIComponent(name)}`, { method: "DELETE" });
+      // A failed revoke must not look like a success: the device would keep its mesh access.
+      if (!res.ok) throw new HttpFailure("Couldn't revoke the device", res.status);
       void refresh();
     },
     [refresh],
