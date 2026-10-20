@@ -102,12 +102,19 @@ const sha256 = (text: string) => createHash("sha256").update(text).digest("hex")
  */
 export async function replayArchive(
   archive: ReplayArchive,
-  options: { stepMs?: number; recordEveryMs?: number } = {},
+  options: {
+    stepMs?: number;
+    recordEveryMs?: number;
+    /** Stop earlier than the archive's end (UTC); the summary then covers only the minutes run. */
+    end?: string;
+    /** When given, each recorded minute's full canonical point is pushed here (e.g. for trust records). */
+    points?: CanonicalSpaceWeatherPoint[];
+  } = {},
 ): Promise<{ records: ReplayRecord[]; summary: ReplaySummary }> {
   const stepMs = options.stepMs ?? TICK_MS;
   const recordEveryMs = options.recordEveryMs ?? 60_000;
   const start = Date.parse(archive.start);
-  const end = Date.parse(archive.end);
+  const end = Math.min(Date.parse(archive.end), options.end ? Date.parse(options.end) : Number.POSITIVE_INFINITY);
   let clock = start;
   const worker = new IngestionWorker(undefined, {
     now: () => clock,
@@ -124,7 +131,10 @@ export async function replayArchive(
   try {
     for (; clock < end; clock += stepMs) {
       const { canonicalPoint } = await worker.tick();
-      if (canonicalPoint && (clock - start) % recordEveryMs === 0) records.push(toRecord(clock, canonicalPoint));
+      if (canonicalPoint && (clock - start) % recordEveryMs === 0) {
+        records.push(toRecord(clock, canonicalPoint));
+        options.points?.push(canonicalPoint);
+      }
     }
   } finally {
     globalThis.fetch = realFetch;
