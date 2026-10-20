@@ -84,45 +84,6 @@ export function calculateDoseRate(
 }
 
 /**
- * Estimate magnetic field strength from L-shell and altitude
- * Simplified dipole field model
- * 
- * @param L_shell L-shell parameter
- * @param altitude Altitude in km
- * @param latitude Geographic latitude in degrees (optional)
- * @returns Magnetic field strength in nT (nanotesla)
- */
-export function estimateMagneticField(
-  L_shell: number,
-  altitude: number,
-  latitude?: number
-): number {
-  // Earth's magnetic dipole moment (approximate)
-  const M = 7.94e22; // A·m²
-
-  // Earth radius in meters
-  const R_E = 6.371e6; // meters
-
-  // Distance from Earth center
-  const r = (R_E + altitude * 1000) / R_E; // in Earth radii
-
-  // Simplified dipole field strength at equator
-  // B = (M / r³) × (1 + 3sin²λ)^(1/2) for dipole field
-  // For L-shell: B ≈ M / (L × R_E)³
-  
-  const baseField = (M / (L_shell * R_E) ** 3) * 1e9; // Convert to nT
-
-  // Latitude correction (if provided)
-  if (latitude !== undefined) {
-    const latRad = (latitude * Math.PI) / 180;
-    const latCorrection = Math.sqrt(1 + 3 * Math.sin(latRad) ** 2);
-    return baseField * latCorrection;
-  }
-
-  return baseField;
-}
-
-/**
  * Absorbed dose rate in Si for a radiation measurement (see calculateDoseRate)
  */
 export function getDoseRateFromMeasurement(
@@ -136,16 +97,6 @@ export function getDoseRateFromMeasurement(
     );
   }
   return calculateDoseRate(measurement.flux, measurement.energyRange, measurement.particleType);
-}
-
-/**
- * Get magnetic field for a radiation measurement
- */
-export function getMagneticFieldFromMeasurement(
-  measurement: RadiationMeasurement | RadiationDataPoint
-): number {
-  // Both shapes carry L_shell, altitude and an optional latitude, so no narrowing is needed.
-  return estimateMagneticField(measurement.L_shell, measurement.altitude, measurement.latitude);
 }
 
 /**
