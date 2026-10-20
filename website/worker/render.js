@@ -214,6 +214,24 @@ export function renderArgoPlan(mode) {
     `<p class="actions">${mode === "open" ? `<a class="btn" href="/app/?argo=start">Start for ${esc(argoPrice)}</a>` : `<a class="btn" href="/argo/apply/">Request early access</a>`}</p>`;
 }
 
+// Gauss for Education: three plans; the buttons follow EDU_SALES, and the staff price is TBC until EDU_STAFF_PRICE is set.
+export function renderEduActions(mode) {
+  return mode === "open"
+    ? `<a class="btn" href="/app/?edu=start">Start with your university email</a> <a class="btn ghost" href="/education/apply/">Department licence</a>`
+    : `<a class="btn" href="/education/apply/">Register interest</a> <a class="btn ghost" href="#plans">See the plans</a>`;
+}
+export function renderEduPlans(mode, staffLabel) {
+  const open = mode === "open";
+  const plan = (stage, name, price, what, cta, now = false) =>
+    `<li class="plan${now ? " now" : ""}"><span class="label">${esc(stage)}</span><h3>${esc(name)}</h3><p class="price">${esc(price)}</p><p>${esc(what)}</p><p class="actions">${cta}</p></li>`;
+  const start = (label, ghost = true) => (open ? `<a class="btn${ghost ? " ghost" : ""}" href="/app/?edu=start">${esc(label)}</a>` : `<span class="btn ghost" aria-disabled="true">Opening soon</span>`);
+  return `<ol class="plans three">` +
+    plan("Students", "Student", "Free", "With your university email, for a year at a time. Renew with the same check.", start("Start free", false), true) +
+    plan("Staff and research", "Staff and research", staffLabel, "Monthly, cancel any time. For lecturers, teaching assistants and research groups.", staffLabel === "Price TBC" ? `<span class="btn ghost" aria-disabled="true">Price TBC</span>` : start("Start")) +
+    plan("Departments", "Department licence", "Quoted per year", "Every course in a department. Paid by invoice, 30 days to pay.", `<a class="btn ghost" href="/education/apply/">Ask for a quote</a>`) +
+    `</ol><p class="note">For teaching and non-commercial research. Gauss is advisory: it shows evidence and never commands a spacecraft. Already signed up? <a href="/app/">Sign in</a>.</p>`;
+}
+
 export function renderPlans() {
   const cards = TIERS.map((t) => {
     const first = t.id === "pilot";

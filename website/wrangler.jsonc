@@ -9,7 +9,7 @@
     "html_handling": "auto-trailing-slash",
     "not_found_handling": "404-page",
     // Everything else is a static file: free, and never runs the Worker.
-    "run_worker_first": ["/", "/gauss/", "/constellation/", "/gauss/apply/", "/constellation/apply/", "/argo/", "/argo/apply/", "/constellation/time/", "/app", "/app/*", "/api/*"]
+    "run_worker_first": ["/", "/gauss/", "/constellation/", "/gauss/apply/", "/constellation/apply/", "/argo/", "/argo/apply/", "/education/", "/education/apply/", "/constellation/time/", "/app", "/app/*", "/api/*"]
   },
   // Refresh launches and space weather into KV. Free plan: 5 cron triggers per account.
   "triggers": { "crons": ["*/15 * * * *"] },
@@ -29,7 +29,10 @@
     // A Stripe Payment Link (https://buy.stripe.com/...) for "Support Constellation"; the block stays hidden while empty.
     "SUPPORT_URL": "",
     // Gauss Argo sales: "off" (the list only), "invite" (invited accounts can subscribe) or "open" (anyone signed in).
-    "ARGO_SALES": "off"
+    "ARGO_SALES": "off",
+    // Gauss for Education: "off" (register interest only) or "open". Staff price in US cents (e.g. "500"); empty = "Price TBC", no checkout.
+    "EDU_SALES": "off",
+    "EDU_STAFF_PRICE": ""
   },
   // Secrets, never in this file: STRIPE_SECRET_KEY and STRIPE_WEBHOOK_SECRET (npx wrangler@4 secret put ...).
   "observability": { "enabled": true }

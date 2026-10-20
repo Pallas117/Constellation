@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; img-src 'self'; media-src 'self'; font-src 'self'; base-uri 'none'; form-action 'self'">
+<meta name="theme-color" content="#050505">
+<meta name="referrer" content="strict-origin-when-cross-origin">
+<title>Request · Gauss for Education</title>
+<meta name="description" content="Ask for a Gauss for Education department licence, or a review if you don't have a university email.">
+<link rel="canonical" href="https://lightbound.uk/education/apply/">
+<link rel="preload" href="/assets/fonts/plex-sans-600.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/assets/site.css">
+<link rel="icon" href="/favicon.ico" sizes="any">
+<link rel="icon" href="/assets/marks/gauss-aurora-mark-colour-dark.svg" type="image/svg+xml">
+</head>
+<body class="page">
+<a class="skip" href="#main">Skip to content</a>
+<header class="top">
+  <div class="wrap bar">
+  <a class="brand" href="/" aria-label="Lightbound, home"><picture><source media="(max-width: 560px)" srcset="/assets/marks/lightbound-mark-colour-dark.svg"><img src="/assets/marks/lightbound-horizontal-colour-dark.svg" alt="Lightbound" width="188" height="40"></picture></a>
+  <nav aria-label="Main">
+    <a href="/gauss/">Gauss</a>
+    <a href="/constellation/">Constellation</a>
+    <a href="/turnstone/" class="opt">Turnstone</a>
+    <a href="/app/" class="signin">Sign in</a>
+  </nav>
+  </div>
+</header>
+
+<main id="main">
+<section class="page-hero tight" aria-labelledby="hero-h">
+  <div class="wrap narrow">
+    <p class="k">GAUSS · EDUCATION</p>
+    <h1 id="hero-h">Tell us about your course.</h1>
+    <p class="lead">For a department licence, or if you don&rsquo;t have a university email. A person reads every request; for a department we reply with a yearly quote.</p>
+    <!--live:apply--><form class="form" method="post" action="/api/apply"><input type="hidden" name="kind" value="edu"><div class="field"><label for="f-name">Name</label><input id="f-name" name="name" required type="text" maxlength="100" autocomplete="name" value=""></div><div class="field"><label for="f-email">University email</label><input id="f-email" name="email" required type="email" maxlength="254" autocomplete="email" value=""></div><div class="field"><label for="f-institution">University or school</label><input id="f-institution" name="institution" required type="text" maxlength="160" autocomplete="organization" value=""></div><div class="field"><label for="f-eduRole">Your role</label><select id="f-eduRole" name="eduRole" required><option value="Lecturer or teacher" selected>Lecturer or teacher</option><option value="Researcher">Researcher</option><option value="Department or programme lead">Department or programme lead</option><option value="Student">Student</option><option value="Other">Other</option></select></div><div class="field"><label for="f-course">Course, lab or department (optional)</label><input id="f-course" name="course" type="text" maxlength="160" autocomplete="off" value=""></div><div class="field"><label for="f-seats">How many people</label><select id="f-seats" name="seats" required><option value="Just me" selected>Just me</option><option value="2–20">2–20</option><option value="21–100">21–100</option><option value="More than 100">More than 100</option></select></div><div class="field"><label for="f-note">What you&#39;d like to teach or study with it (optional)</label><textarea id="f-note" name="note" rows="3" maxlength="500"></textarea></div><div class="hp" aria-hidden="true"><label for="f-website">Leave this empty</label><input id="f-website" name="website" tabindex="-1" autocomplete="off"></div><label class="check"><input type="checkbox" name="consent" value="yes" required> <span>Lightbound may keep this for up to 180 days to review it. <a href="/privacy/">Privacy</a></span></label><p class="actions"><button class="btn" type="submit">Send</button></p></form><!--/live:apply-->
+  </div>
+</section>
+</main>
+<footer class="wrap">
+  <div class="cols">
+    <div>
+      <p>Lightbound Limited · registered in England and Wales, company no. 14573199 · 30A Commercial Street, Harrogate, HG1 1AX</p>
+      <p><a href="/privacy/">Privacy</a></p>
+    </div>
+    <nav aria-label="Footer"><a href="/gauss/">Gauss</a><a href="/constellation/">Constellation</a><a href="/turnstone/">Turnstone</a><a href="/argo/">Gauss Argo</a><a href="/education/">Education</a><a href="mailto:jzwnathan@lightbound.uk">Contact</a></nav>
+  </div>
+</footer>
+</body>
+</html>

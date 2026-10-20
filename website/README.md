@@ -14,6 +14,8 @@ JavaScript, no third-party requests, and no secrets.
 | `/gauss/apply/` | Pilot brief in the sales plan's three steps (fit, readiness, pilot brief). Plan links preselect the package. |
 | `/constellation/apply/` | Request an invitation. Constellation is free and invite-only; there is no payment anywhere on its side. |
 | `/argo/` | Gauss Argo, the self-healing connectivity agent, "built like a spacecraft": what it catches, how it works, its security rules, where it runs, the private relay (in development, not available) and the $10-a-month plan. Its buttons follow `ARGO_SALES`. |
+| `/education/` | Gauss for Education (prototype): what a class gets (four labs), the three plans (student free, staff and research monthly, department yearly), and who can join. Buttons follow `EDU_SALES`; the staff price is "Price TBC" until `EDU_STAFF_PRICE` is set. |
+| `/education/apply/` | A department licence request, or a review for people without a university email. |
 | `/argo/apply/` | The Argo list: early access, the private-relay waitlist, or both. Stored like other applications; "Mark contacted" in admin creates no account. |
 | `/app/` | Signed-in workspace: quote and payment (card, or an invoice where you allow it), billing state, pilot progress, space weather, Constellation membership. |
 | `/app/admin/` | For `ADMIN_EMAILS`: approve with a quote, set plan, billing, pilot step; invite Constellation members (free). |
@@ -154,6 +156,29 @@ Book adds Argo.
   5. One full run in Stripe test mode: subscribe, renew, fail, cancel.
 - **The private relay is separate.** Encryption plus anonymity needs export-control and sanctions advice before any
   launch (see the Private Connectivity brief).
+
+**Gauss for Education** (prototype; Josh, 2026-10-20: self-serve plus department, students free, university email or review):
+- **Student:** free for a year at a time. Sign in with a university email (any address ending in `.ac.xx`, `.edu` or `.edu.xx`,
+  see `isAcademicEmail` in `worker/tiers.js`), tick "I'm a student", and the classroom opens. No Stripe involved.
+- **Staff and research:** a monthly card subscription at `EDU_STAFF_PRICE` (US cents). While that's empty the page and
+  workspace say "Price TBC" and there is no checkout. It has its own billing record (`account.edu.billing`).
+- **Department:** request a licence at `/education/apply/`. In admin, enter the yearly quote in pounds and choose
+  "Department licence at this yearly quote". The contact signs in and requests the invoice (30 days to pay). The
+  classroom opens while the invoice is within its terms; `invoice.paid` makes the licence run 365 days.
+- **No university email:** request a review at `/education/apply/`. "Approve for self-serve" in admin then lets them
+  start like anyone with a university address.
+- **The classroom** (`/app/edu/`, `worker/classroom.js`): four prototype labs on public data and this site's demos.
+  Each lab names its source. It's open only to people with active education access, and to admins.
+- **Sales plan:** this is an academic licence for non-commercial use, never a trial of the Gauss packages. It's kept
+  off the Gauss page (a test checks). Proposed line for the sales plan, for Josh to approve: *"Gauss for Education is
+  an academic licence (free for students, paid for staff and departments) for teaching and non-commercial research.
+  It is not a trial of Gauss Aurora and is not shown in the Gauss Aurora packages or pilot flow."*
+- **Before `EDU_SALES=open`:**
+  - set the staff price;
+  - add academic terms of use (non-commercial, students re-confirm each year) to the terms of service;
+  - check the lab pack with a lecturer;
+  - the same tax and cancellation points as Gauss Argo (above) apply to the staff plan;
+  - run the department invoice once in Stripe test mode.
 
 **Support Constellation.** The Constellation page (Join section) and a member's workspace show a "Support
 Constellation" link once `SUPPORT_URL` in `wrangler.jsonc` vars holds a Stripe Payment Link. While it's empty,

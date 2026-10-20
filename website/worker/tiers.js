@@ -110,6 +110,24 @@ export const argoPrice = `$${ARGO.amount / 100} a month`;
 export const argoMode = (env) => (["off", "invite", "open"].includes(env?.ARGO_SALES) ? env.ARGO_SALES : "off");
 export const argoCanStart = (env, account) => argoMode(env) === "open" || (argoMode(env) === "invite" && !!account?.argo?.invitedAt);
 
+// Gauss for Education (prototype; Josh, 2026-10-20). Students: free for a year at a time, with a university email.
+// Staff and research groups: monthly by card at EDU_STAFF_PRICE (US cents, wrangler.jsonc vars); empty means the price is
+// TBC and there is no checkout. Departments: a yearly licence, quoted by an admin and paid by invoice in pounds.
+// It is an academic licence, never a trial of the Gauss packages (sales plan).
+export const EDU = Object.freeze({ id: "edu", name: "Gauss for Education", currency: "usd", interval: "month" });
+export const eduMode = (env) => (["off", "open"].includes(env?.EDU_SALES) ? env.EDU_SALES : "off");
+export const eduStaffPrice = (env) => {
+  const n = Number(env?.EDU_STAFF_PRICE ?? "");
+  return Number.isInteger(n) && n > 0 ? n : null;
+};
+export const eduStaffLabel = (env) => {
+  const n = eduStaffPrice(env);
+  return n ? `$${(n / 100).toFixed(n % 100 ? 2 : 0)} a month` : "Price TBC";
+};
+/** Addresses that can start straight away: ox.ac.uk, mit.edu, um.edu.my, unsw.edu.au and the like. Anyone else asks for a review. */
+export const isAcademicEmail = (email) => /@([a-z0-9-]+\.)+(edu|ac)(\.[a-z]{2})?$/i.test(String(email ?? ""));
+export const eduEligible = (account, email) => isAcademicEmail(email) || !!account?.edu?.approvedAt;
+
 /** Days a customer has to pay an invoice they asked for. */
 export const INVOICE_DAYS = 30;
 

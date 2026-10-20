@@ -282,6 +282,9 @@ footer p{margin:0 0 6px}
 
 /* Gauss plans */
 .plans{list-style:none;margin:0;padding:0;display:grid;gap:16px;grid-template-columns:repeat(auto-fit,minmax(min(100%,420px),1fr))}
+.plans.three{grid-template-columns:repeat(auto-fit,minmax(min(100%,280px),1fr))}
+.plans.three .plan{display:flex;flex-direction:column}
+.plans.three .plan .actions{margin-top:auto;padding-top:16px} /* buttons on one line across the plans */
 .plan{border:1px solid var(--char);border-radius:var(--radius);background:var(--panel);padding:24px;display:grid;gap:10px;align-content:start}
 .plan.now{border-color:rgba(243,240,232,.45)}
 .plan h3{font-size:24px}
@@ -489,3 +492,12 @@ footer p{margin:0 0 6px}
   }
 }
 @keyframes far-drift{to{background-position:0 520px}}
+
+/* Gauss for Education: the classroom's labs and the student start form. */
+.doors-more{margin:22px 0 0;color:var(--muted)}
+.labs{list-style:none;margin:28px 0 0;padding:0;display:grid;gap:16px}
+.lab{border:1px solid var(--char);border-radius:var(--radius);padding:24px;background:linear-gradient(180deg,rgba(243,240,232,.04),rgba(243,240,232,0) 42%),var(--panel)}
+.lab h2{margin:.35em 0 .3em}
+.lab-steps{margin:12px 0 0;padding-left:22px;color:var(--muted);display:grid;gap:6px}
+.edu-start{margin-top:10px}
+.edu-start .actions{margin-top:12px}

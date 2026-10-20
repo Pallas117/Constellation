@@ -29,6 +29,10 @@ const FIELD = {
   platform: { label: "Main platform", type: "select", options: opts("macOS", "Linux", "Windows", "iPhone", "Android"), required: true },
   devices: { label: "How many devices", type: "select", options: opts("1", "2–5", "6–25", "More than 25"), required: true },
   note: { label: "What breaks your connection today? (optional)", type: "textarea", max: 500, required: false },
+  institution: { label: "University or school", type: "text", max: 160, auto: "organization", required: true },
+  eduRole: { label: "Your role", type: "select", options: opts("Lecturer or teacher", "Researcher", "Department or programme lead", "Student", "Other"), required: true },
+  course: { label: "Course, lab or department (optional)", type: "text", max: 160, auto: "off", required: false },
+  seats: { label: "How many people", type: "select", options: opts("Just me", "2–20", "21–100", "More than 100"), required: true },
 };
 
 // Gauss follows the onboarding flow in the sales plan: fit, readiness, pilot brief.
@@ -52,13 +56,20 @@ export const KINDS = Object.freeze({
     labels: {},
     button: "Join the list",
   },
+  edu: {
+    steps: [{ fields: ["name", "email", "institution", "eduRole", "course", "seats", "note"] }],
+    labels: { email: "University email", note: "What you'd like to teach or study with it (optional)" },
+    button: "Send",
+  },
 });
+/** Where each form's page lives: /<slug>/apply/. */
+export const slug = (kind) => ({ edu: "education" })[kind] ?? kind;
 const fieldsOf = (kind) => KINDS[kind].steps.flatMap((st) => st.fields);
 
 const label = (kind, f) => KINDS[kind].labels[f] ?? FIELD[f].label;
 const SHORT = { name: "name", email: "email", org: "company", role: "role", referrer: "referral", link: "link", missionType: "mission type", stage: "programme stage",
   groundStack: "ground stack", dataAccess: "evidence", plan: "package", timeline: "target start", message: "message", consent: "privacy agreement",
-  interest: "what you'd like", platform: "platform", devices: "devices", note: "note" };
+  interest: "what you'd like", platform: "platform", devices: "devices", note: "note", institution: "university or school", eduRole: "role", course: "course", seats: "how many people" };
 
 function control(kind, f, value, error) {
   const d = FIELD[f];
@@ -97,6 +108,7 @@ export function renderApplyForm(kind, values = {}, errors = {}) {
 const SENT = {
   gauss: ["Thank you. Your pilot brief is with the Lightbound team.", "If it's a fit, we'll reply with a fixed quote. Once approved, you sign in to pay and start.", "/gauss/", "Back to Gauss"],
   constellation: ["Thank you. Your request is with the Constellation team.", "Membership is free and by invitation. If it's a fit, you'll receive an invitation by email.", "/constellation/", "Back to Constellation"],
+  edu: ["Thank you. Your request is with the Gauss for Education team.", "With a university email you can start now: sign in with that address. Otherwise we'll review your request; for a department licence we'll reply with a yearly quote.", "/education/", "Back to Gauss for Education"],
   argo: ["Thank you. You're on the Gauss Argo list.", "We'll email you when early access opens, with the price, before anything starts.", "/argo/", "Back to Gauss Argo"],
 };
 
@@ -147,12 +159,12 @@ export async function handleApply(request, env, respond, fillPage) {
   const form = new URLSearchParams(body);
   const kind = form.get("kind");
   if (!Object.hasOwn(KINDS, kind)) return respond("Unknown form\n", 400, "text/plain; charset=utf-8");
-  const done = () => new Response(null, { status: 303, headers: { location: `/${kind}/apply/?sent=1`, "cache-control": "no-store" } });
+  const done = () => new Response(null, { status: 303, headers: { location: `/${slug(kind)}/apply/?sent=1`, "cache-control": "no-store" } });
   if (form.get("website")) return done(); // honeypot: a bot filled the hidden field; pretend all is well
   const { values, errors } = validate(kind, form);
-  if (Object.keys(errors).length) return fillPage(`/${kind}/apply/`, { apply: () => renderApplyForm(kind, values, errors) }, 422);
+  if (Object.keys(errors).length) return fillPage(`/${slug(kind)}/apply/`, { apply: () => renderApplyForm(kind, values, errors) }, 422);
   if (await rateLimited(env, request.headers.get("cf-connecting-ip") ?? "unknown"))
-    return fillPage(`/${kind}/apply/`, { apply: () => `<div class="form-errors" role="alert"><p>Too many applications from this connection. Please try again in an hour.</p></div>` }, 429);
+    return fillPage(`/${slug(kind)}/apply/`, { apply: () => `<div class="form-errors" role="alert"><p>Too many applications from this connection. Please try again in an hour.</p></div>` }, 429);
   const { consent, ...fields } = values;
   await saveApplication(env, { kind, ...fields, consent: true });
   return done();

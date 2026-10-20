@@ -3,7 +3,7 @@
 // and signed webhooks that unlock the workspace. Card details never touch lightbound.uk. The two keys live in Worker secrets
 // (STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET), never in config, URLs or logs.
 import { getAccount, putAccount } from "./data.js";
-import { ARGO, CURRENCY, INVOICE_DAYS, tierById } from "./tiers.js";
+import { ARGO, CURRENCY, EDU, INVOICE_DAYS, tierById } from "./tiers.js";
 
 const api = (env) => env.STRIPE_API_BASE || "https://api.stripe.com"; // STRIPE_API_BASE: local stand-in only
 const enc = (s) => new TextEncoder().encode(s);
@@ -37,8 +37,10 @@ async function call(env, path, params, fetchImpl) {
   return body;
 }
 
+/** Self-serve products with their own billing record (account.argo, account.edu); Gauss plans use account.billing. */
+export const PRODUCTS = Object.freeze([ARGO.id, EDU.id]);
 /** One Stripe customer per person, whichever product they bought first. */
-export const customerOf = (account) => account?.billing?.customer ?? account?.argo?.customer ?? null;
+export const customerOf = (account) => account?.billing?.customer ?? PRODUCTS.map((k) => account?.[k]?.customer).find(Boolean) ?? null;
 
 export const payable = (account) => {
   const tier = tierById(account?.tier);
@@ -52,12 +54,24 @@ export const invoiceable = (account) => payable(account) && account.invoice === 
 export async function createInvoice(env, account, fetchImpl = fetch) {
   if (!invoiceable(account)) throw new Error("Invoicing is not allowed on this account");
   const tier = tierById(account.tier);
-  const meta = { email: account.email, plan: tier.id };
   const description = `Gauss: ${tier.name}${tier.billing === "subscription" ? ", 12 months" : ""}`;
-  const customer = account.billing?.customer ??
+  return sendInvoice(env, account, { amount: account.quote, currency: CURRENCY, description, meta: { email: account.email, plan: tier.id } }, fetchImpl);
+}
+
+/** A department's yearly education licence, at the quote an admin approved, invoiced in pounds. */
+export const eduInvoiceable = (account) => account?.edu?.plan === "department" && Number.isInteger(account.edu.quote) && account.edu.quote > 0;
+export async function createEduInvoice(env, account, fetchImpl = fetch) {
+  if (!eduInvoiceable(account)) throw new Error("No department licence quote on this account");
+  return sendInvoice(env, account, { amount: account.edu.quote, currency: CURRENCY, description: `${EDU.name}: department licence, 12 months`,
+    meta: { email: account.email, product: EDU.id, offer: "department" } }, fetchImpl);
+}
+
+/** Create, finalise and send one invoice (30 days to pay). Stripe emails it to the customer. */
+async function sendInvoice(env, account, { amount, currency, description, meta }, fetchImpl) {
+  const customer = customerOf(account) ??
     (await call(env, "customers", { email: account.email, name: account.org || account.name || undefined, metadata: meta }, fetchImpl)).id;
   const draft = await call(env, "invoices", { customer, collection_method: "send_invoice", days_until_due: INVOICE_DAYS, pending_invoice_items_behavior: "exclude", description, metadata: meta }, fetchImpl);
-  await call(env, "invoiceitems", { customer, invoice: draft.id, amount: account.quote, currency: CURRENCY, description, metadata: meta }, fetchImpl);
+  await call(env, "invoiceitems", { customer, invoice: draft.id, amount, currency, description, metadata: meta }, fetchImpl);
   await call(env, `invoices/${draft.id}/finalize`, {}, fetchImpl);
   return call(env, `invoices/${draft.id}/send`, {}, fetchImpl);
 }
@@ -87,19 +101,28 @@ export async function createCheckout(env, account, origin, fetchImpl = fetch) {
 }
 
 /** Gauss Argo: a monthly subscription at the fixed price. Requires agreeing to the terms (set the terms URL in Stripe first). */
-export async function createArgoCheckout(env, account, origin, fetchImpl = fetch) {
-  const meta = { email: account.email, product: ARGO.id };
+export const createArgoCheckout = (env, account, origin, fetchImpl = fetch) =>
+  createSubscriptionCheckout(env, account, origin, { product: ARGO.id, name: ARGO.name, amount: ARGO.amount, currency: ARGO.currency, interval: ARGO.interval, back: "argo=started" }, fetchImpl);
+
+/** Gauss for Education, staff and research: monthly at EDU_STAFF_PRICE. */
+export const createEduCheckout = (env, account, origin, amount, fetchImpl = fetch) =>
+  createSubscriptionCheckout(env, account, origin, { product: EDU.id, offer: "staff", name: `${EDU.name}: staff and research`, amount, currency: EDU.currency, interval: EDU.interval, back: "edu=started" }, fetchImpl);
+
+/** A self-serve subscription at a fixed price, recorded on the product's own billing (metadata.product). */
+async function createSubscriptionCheckout(env, account, origin, { product, offer, name, amount, currency, interval, back }, fetchImpl) {
+  if (!Number.isInteger(amount) || amount <= 0) throw new Error("No price set");
+  const meta = { email: account.email, product, ...(offer ? { offer } : {}) };
   const customer = customerOf(account);
   return call(env, "checkout/sessions", {
     mode: "subscription",
-    line_items: [{ quantity: 1, price_data: { currency: ARGO.currency, unit_amount: ARGO.amount, product_data: { name: ARGO.name }, recurring: { interval: ARGO.interval } } }],
+    line_items: [{ quantity: 1, price_data: { currency, unit_amount: amount, product_data: { name }, recurring: { interval } } }],
     client_reference_id: account.email,
     ...(customer ? { customer } : { customer_email: account.email }),
     metadata: meta,
     subscription_data: { metadata: meta },
     consent_collection: { terms_of_service: "required" },
     tax_id_collection: { enabled: true },
-    success_url: `${origin}/app/?argo=started`,
+    success_url: `${origin}/app/?${back}`,
     cancel_url: `${origin}/app/?checkout=cancelled`,
   }, fetchImpl);
 }
@@ -150,7 +173,7 @@ export async function applyEvent(env, event) {
   if (!email) return "ignored: no account";
   const account = await getAccount(env, email);
   if (!account) return "ignored: unknown account";
-  if (obj.metadata?.product === ARGO.id) return applyArgoEvent(env, account, event, obj);
+  if (PRODUCTS.includes(obj.metadata?.product)) return applyProductEvent(env, account, event, obj, obj.metadata.product);
   if (obj.metadata?.plan && obj.metadata.plan !== account.tier) return "ignored: plan has changed";
   const prev = account.billing ?? {};
   if (prev.eventAt && event.created < prev.eventAt) return "ignored: older event";
@@ -186,18 +209,26 @@ export async function applyEvent(env, event) {
   return `${event.type} -> ${next.status}`;
 }
 
-/** Gauss Argo has its own billing record (account.argo.billing), so it never touches a Gauss plan's. */
-async function applyArgoEvent(env, account, event, obj) {
-  const prev = account.argo?.billing ?? {};
+/** Self-serve products keep their own billing record (account.argo.billing, account.edu.billing), so they never touch a Gauss plan's. */
+async function applyProductEvent(env, account, event, obj, key) {
+  const rec = account[key] ?? {};
+  const prev = rec.billing ?? {};
   if (prev.eventAt && event.created < prev.eventAt) return "ignored: older event";
   let next;
   if (event.type === "checkout.session.completed") next = { status: "active", customer: obj.customer ?? prev.customer, subscription: obj.subscription ?? prev.subscription };
   else if (event.type.startsWith("customer.subscription."))
     next = { status: event.type.endsWith(".deleted") ? "canceled" : (SUBSCRIPTION[obj.status] ?? prev.status ?? "due"), customer: obj.customer ?? prev.customer, subscription: obj.id };
-  else return `ignored: ${event.type}`;
-  const argo = { ...(account.argo ?? {}), customer: next.customer ?? account.argo?.customer ?? null, billing: { ...prev, ...next, eventAt: event.created, updatedAt: new Date().toISOString() } };
-  await putAccount(env, { ...account, argo }, "stripe");
-  return `argo ${event.type} -> ${next.status}`;
+  else if (["invoice.paid", "invoice.voided", "invoice.marked_uncollectible"].includes(event.type)) {
+    if (!obj.id || obj.id !== prev.invoice) return "ignored: not this account's invoice";
+    next = event.type === "invoice.paid"
+      ? { status: "paid", paidUntil: new Date((obj.created ?? event.created) * 1000 + YEAR_MS).toISOString() }
+      : { status: "due", invoice: null, invoiceUrl: null, dueAt: null };
+  } else return `ignored: ${event.type}`;
+  const offer = obj.metadata?.offer;
+  const updated = { ...rec, ...(offer ? { plan: offer } : {}), customer: next.customer ?? rec.customer ?? null,
+    billing: { ...prev, ...next, eventAt: event.created, updatedAt: new Date().toISOString() } };
+  await putAccount(env, { ...account, [key]: updated }, "stripe");
+  return `${key} ${event.type} -> ${next.status}`;
 }
 
 /** POST /api/stripe/webhook: no cookies or origin here; the signature is the only proof. */

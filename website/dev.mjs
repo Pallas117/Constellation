@@ -114,6 +114,8 @@ const env = {
   STRIPE_WEBHOOK_SECRET: "dev-local-webhook-placeholder",
   SUPPORT_URL: process.env.SUPPORT_URL ?? "", // e.g. SUPPORT_URL=https://buy.stripe.com/test_... npm run site:dev
   ARGO_SALES: process.env.ARGO_SALES ?? "open", // the preview shows Gauss Argo on sale; production defaults to "off"
+  EDU_SALES: process.env.EDU_SALES ?? "open", // the preview opens Gauss for Education; production defaults to "off"
+  EDU_STAFF_PRICE: process.env.EDU_STAFF_PRICE ?? "", // empty = "Price TBC" (no staff checkout), as in production until Josh sets it
 };
 const admin = String(env.ADMIN_EMAILS).split(",")[0].trim();
 const ctx = { waitUntil: (p) => Promise.resolve(p).catch((e) => console.error(e)), passThroughOnException() {} };
@@ -128,6 +130,7 @@ await putAccount(env, { email: "member@example.test", name: "Grace Example", com
   const d = new Date(Date.now() + 3 * 86_400_000); d.setUTCHours(13, 0, 0, 0);
   await saveCall(env, { title: "Monthly members' call", start: d.toISOString(), minutes: 60, capacity: 12, link: "https://meet.example.test/constellation", notes: "Launch round-up and ASTRA VIGILIS planning." });
 }
+await saveApplication(env, { kind: "edu", name: "Dr Lee Example", email: "lee@example.test", institution: "Example University", eduRole: "Department or programme lead", course: "MSc Space Systems", seats: "21–100", note: "A space-weather module for 40 students next term.", consent: true });
 await saveApplication(env, { kind: "argo", name: "Kai Example", email: "kai@example.test", interest: "Both", platform: "macOS", devices: "2–5", note: "Hotel and airport Wi-Fi keep breaking our calls.", consent: true });
 await saveApplication(env, { kind: "constellation", name: "Ada Example", email: "ada@example.test", role: "Satellite operations engineer", link: "https://example.test/ada", message: "I run ground passes for a small LEO fleet and track debris conjunctions in my spare time.", consent: true });
 await saveApplication(env, { kind: "gauss", name: "Ops Example", email: "ops@example.test", org: "Example Space Ltd", role: "Head of mission operations", missionType: "Earth observation", stage: "Launched and operating", groundStack: "Yamcs / XTCE", dataAccess: "Historical packet archive", plan: "pilot", timeline: "This quarter", message: "We fly ONNX models on two smallsats and want to know which outputs to trust after the May storm.", consent: true });
@@ -143,7 +146,8 @@ const devLogin = (redirect) => `<!doctype html><meta charset="utf-8"><meta name=
 <a class="btn ghost" href="/__dev/login?as=pilot%40example.test&amp;redirect=${encodeURIComponent(redirect)}">Approved, payment due (invoice allowed)</a>
 <a class="btn ghost" href="/__dev/login?as=fleet%40example.test&amp;redirect=${encodeURIComponent(redirect)}">Fleet Integration, active</a>
 <a class="btn ghost" href="/__dev/login?as=member%40example.test&amp;redirect=${encodeURIComponent(redirect)}">Constellation member</a>
-<a class="btn ghost" href="/__dev/login?as=visitor%40example.test&amp;redirect=${encodeURIComponent(redirect)}">Signed in, no plan</a></p></div></main>`;
+<a class="btn ghost" href="/__dev/login?as=visitor%40example.test&amp;redirect=${encodeURIComponent(redirect)}">Signed in, no plan</a>
+<a class="btn ghost" href="/__dev/login?as=student%40example.ac.uk&amp;redirect=${encodeURIComponent(redirect)}">University email (education)</a></p></div></main>`;
 
 // ---- Stripe, emulated: just enough of Checkout, the billing portal and webhooks ----
 const sessions = new Map();
@@ -176,7 +180,7 @@ async function stripeStandIn(req, url, send) {
       const id = `cs_dev_${++seq}`;
       sessions.set(id, {
         id, mode: form.get("mode"), amount: Number(form.get("line_items[0][price_data][unit_amount]")), name: form.get("line_items[0][price_data][product_data][name]"),
-        email: form.get("client_reference_id"), plan: form.get("metadata[plan]"), product: form.get("metadata[product]"), customer: form.get("customer") || `cus_dev_${seq}`,
+        email: form.get("client_reference_id"), plan: form.get("metadata[plan]"), product: form.get("metadata[product]"), offer: form.get("metadata[offer]"), customer: form.get("customer") || `cus_dev_${seq}`,
         yearly: form.get("line_items[0][price_data][recurring][interval]") === "year", success: form.get("success_url"), cancel: form.get("cancel_url"),
       });
       // Same origin as the site the visitor is on, so the page's CSP (form-action) allows the redirect.
@@ -189,7 +193,7 @@ async function stripeStandIn(req, url, send) {
     }
     if (url.pathname === "/__stripe/v1/invoices") {
       const inv = { id: `in_dev_${++seq}`, customer: form.get("customer"), description: form.get("description"), days: Number(form.get("days_until_due")),
-        metadata: { email: form.get("metadata[email]"), plan: form.get("metadata[plan]") }, amount: 0, created: Math.floor(Date.now() / 1000), status: "draft" };
+        metadata: Object.fromEntries([...form].filter(([k]) => /^metadata\[[a-z_]+\]$/.test(k)).map(([k, v]) => [k.slice(9, -1), v])), amount: 0, created: Math.floor(Date.now() / 1000), status: "draft" };
       invoices.set(inv.id, inv);
       return json(inv);
     }
@@ -213,7 +217,7 @@ async function stripeStandIn(req, url, send) {
   if (parts[1] === "checkout" && sessions.has(parts[2])) {
     const cs = sessions.get(parts[2]);
     if (req.method === "POST" && parts[3] === "pay") {
-      const meta = cs.product ? { email: cs.email, product: cs.product } : { email: cs.email, plan: cs.plan };
+      const meta = cs.product ? { email: cs.email, product: cs.product, ...(cs.offer ? { offer: cs.offer } : {}) } : { email: cs.email, plan: cs.plan };
       const subscription = cs.mode === "subscription" ? `sub_dev_${++seq}` : null;
       customers.set(cs.customer, { ...meta, meta, subscription });
       await deliver("checkout.session.completed", { id: cs.id, mode: cs.mode, payment_status: "paid", customer: cs.customer, subscription, client_reference_id: cs.email, metadata: meta });

@@ -15,7 +15,7 @@ import { makeAccess } from "./fixtures/access.mjs";
 import { accessIdentity, isAdmin } from "../worker/auth.js";
 import { getAccount, listApplications, putAccount, saveApplication } from "../worker/data.js";
 import { applyEvent, formEncode, signPayload, verifySignature } from "../worker/stripe.js";
-import { billingStatus } from "../worker/tiers.js";
+import { billingStatus, isAcademicEmail } from "../worker/tiers.js";
 import { APP_CSP } from "../worker/headers.js";
 import { formatIn, renderPlanner, tzOffset, zonedToUtc } from "../worker/timezones.js";
 import { listCalls, saveCall } from "../worker/calls.js";
@@ -564,6 +564,80 @@ test("argo sales: off, invite, open; $10 a month subscription with its own billi
   assert.equal(r.status, 303);
   assert.equal((await getAccount(open, "solo@example.test")).email, "solo@example.test");
   assert.equal(stripe.calls.at(-1).body.get("customer_email"), "solo@example.test");
+});
+
+test("education: university emails start straight away; students free for a year; staff checkout only once priced", async () => {
+  for (const [e, ok] of [["a@ox.ac.uk", true], ["b@mit.edu", true], ["c@um.edu.my", true], ["d@student.unsw.edu.au", true], ["e@gmail.com", false], ["f@education.example.com", false], ["g@ac.evil.com", false]])
+    assert.equal(isAcademicEmail(e), ok, e);
+  const { env, access } = await appEnv();
+  const page = async (e) => (await send(e, new Request("https://lightbound.uk/education/"))).text();
+  assert.match(await page(env), /href="\/education\/apply\/">Register interest/, "off by default");
+  const stripe = stripeMock();
+  assert.equal((await withFetch(stripe, async () => send(env, await formPost(access, "kim@uni.ac.uk", "/app/edu/student", { student: "yes" })))).headers.get("location"), "/app/", "off: nothing starts");
+  const open = { ...env, EDU_SALES: "open" };
+  assert.match(await page(open), /<p class="price">Price TBC<\/p>/);
+  assert.match(await page(open), /href="\/app\/\?edu=start">Start free/);
+  const card = await (await send(open, await as(access, "kim@uni.ac.uk", "/app/"))).text();
+  assert.match(card, /Start free as a student/);
+  assert.match(card, /Staff and research: price TBC/);
+  assert.equal((await send(open, await formPost(access, "kim@uni.ac.uk", "/app/edu/student", {}))).headers.get("location"), "/app/", "must confirm student status");
+  assert.equal((await send(open, await formPost(access, "kim@uni.ac.uk", "/app/edu/student", { student: "yes" }))).headers.get("location"), "/app/?edu=student");
+  const kim = await getAccount(open, "kim@uni.ac.uk");
+  assert.deepEqual([kim.edu.plan, kim.edu.billing.status, kim.edu.billing.free], ["student", "paid", true]);
+  assert.ok(Math.abs(Date.parse(kim.edu.billing.paidUntil) - (Date.now() + 365 * 86_400_000)) < 60_000, "a year at a time");
+  assert.equal(billingStatus({ billing: kim.edu.billing }, Date.parse(kim.edu.billing.paidUntil) + 1000), "due", "renews with the same check");
+  assert.match(await (await send(open, await as(access, "kim@uni.ac.uk", "/app/edu/"))).text(), /LAB_01[\s\S]*Storm levels from raw data/);
+  assert.equal(stripe.calls.length, 0, "students never touch Stripe");
+  // Not a university address: review first.
+  assert.match(await (await send(open, await as(access, "sam@gmail.com", "/app/?edu=start"))).text(), /University email needed/);
+  assert.equal((await send(open, await formPost(access, "sam@gmail.com", "/app/edu/student", { student: "yes" }))).headers.get("location"), "/app/");
+  assert.equal((await send(open, await as(access, "sam@gmail.com", "/app/edu/"))).headers.get("location"), "/app/", "the classroom needs access");
+  // Staff: no checkout while the price is TBC; once set, a monthly subscription on Education's own billing.
+  assert.equal((await withFetch(stripe, async () => send(open, await formPost(access, "pat@uni.ac.uk", "/app/edu/checkout")))).headers.get("location"), "/app/");
+  assert.equal(stripe.calls.length, 0);
+  const priced = { ...open, EDU_STAFF_PRICE: "500" };
+  assert.match(await page(priced), /<p class="price">\$5 a month<\/p>/);
+  const go = await withFetch(stripe, async () => send(priced, await formPost(access, "pat@uni.ac.uk", "/app/edu/checkout")));
+  assert.equal(go.headers.get("location"), "https://checkout.stripe.com/c/pay/cs_test_1");
+  const body = stripe.calls.at(-1).body;
+  assert.deepEqual([body.get("mode"), body.get("line_items[0][price_data][unit_amount]"), body.get("line_items[0][price_data][currency]"), body.get("line_items[0][price_data][recurring][interval]"), body.get("metadata[product]"), body.get("metadata[offer]")],
+    ["subscription", "500", "usd", "month", "edu", "staff"]);
+  assert.equal(body.get("success_url"), "https://lightbound.uk/app/?edu=started");
+  const t0 = Math.floor(Date.now() / 1000);
+  assert.equal(await applyEvent(priced, { type: "checkout.session.completed", created: t0, data: { object: { mode: "subscription", customer: "cus_pat", subscription: "sub_edu", metadata: { email: "pat@uni.ac.uk", product: "edu", offer: "staff" } } } }), "edu checkout.session.completed -> active");
+  const pat = await getAccount(priced, "pat@uni.ac.uk");
+  assert.deepEqual([pat.edu.plan, pat.edu.billing.status, pat.edu.customer, pat.argo ?? null, pat.billing ?? null], ["staff", "active", "cus_pat", null, null]);
+  assert.match(await (await send(priced, await as(access, "pat@uni.ac.uk", "/app/"))).text(), /Renews monthly\.[\s\S]*Open the classroom/);
+});
+
+test("education departments: a yearly quote from admin, an invoice with 30 days to pay, the classroom open meanwhile", async () => {
+  const { env, access } = await appEnv();
+  const res = await send(env, post("/api/apply", { kind: "edu", name: "Dr Lee", email: "lee@physics.example.org", institution: "Example University", eduRole: "Department or programme lead", course: "MSc Space Systems", seats: "21–100", note: "A module for 40 students.", consent: "yes" }));
+  assert.equal(res.headers.get("location"), "/education/apply/?sent=1");
+  assert.match(await (await send(env, new Request("https://lightbound.uk/education/apply/?sent=1"))).text(), /Your request is with the Gauss for Education team/);
+  const admin = await (await send(env, await as(access, "boss@example.test", "/app/admin/"))).text();
+  assert.match(admin, /EDUCATION · Department or programme lead/);
+  assert.match(admin, /Example University · Department or programme lead · MSc Space Systems · 21–100 \(people\)/);
+  const [app] = await listApplications(env);
+  assert.equal((await send(env, await formPost(access, "boss@example.test", "/app/admin/decide", { id: app.id, decision: "department", quote: "" }))).headers.get("location"), "/app/admin/?error=edu");
+  await send(env, await formPost(access, "boss@example.test", "/app/admin/decide", { id: app.id, decision: "department", quote: "3000" }));
+  let lee = await getAccount(env, "lee@physics.example.org");
+  assert.deepEqual([lee.edu.plan, lee.edu.quote, lee.edu.billing.status, lee.org, lee.tier ?? null], ["department", 300_000, "due", "Example University", null]);
+  assert.match(await (await send(env, await as(access, "lee@physics.example.org", "/app/"))).text(), /£3,000 a year[\s\S]*Request the invoice/);
+  const stripe = stripeMock();
+  const inv = await withFetch(stripe, async () => send(env, await formPost(access, "lee@physics.example.org", "/app/edu/invoice")));
+  assert.equal(inv.headers.get("location"), "/app/?invoice=sent");
+  const item = stripe.calls.find((c) => c.url.endsWith("/v1/invoiceitems")).body;
+  assert.deepEqual([item.get("amount"), item.get("currency"), item.get("description"), item.get("metadata[product]"), item.get("metadata[offer]")], ["300000", "gbp", "Gauss for Education: department licence, 12 months", "edu", "department"]);
+  lee = await getAccount(env, "lee@physics.example.org");
+  assert.equal(lee.edu.billing.status, "invoice_open");
+  assert.match(await (await send(env, await as(access, "lee@physics.example.org", "/app/edu/"))).text(), /Classroom\./, "open while the invoice is within its terms");
+  const t0 = Math.floor(Date.now() / 1000);
+  assert.equal(await applyEvent(env, { type: "invoice.paid", created: t0, data: { object: { id: "in_other", created: t0, metadata: { email: "lee@physics.example.org", product: "edu" } } } }), "ignored: not this account's invoice");
+  assert.equal(await applyEvent(env, { type: "invoice.paid", created: t0, data: { object: { id: "in_1", created: t0, metadata: { email: "lee@physics.example.org", product: "edu", offer: "department" } } } }), "edu invoice.paid -> paid");
+  lee = await getAccount(env, "lee@physics.example.org");
+  assert.deepEqual([lee.edu.plan, lee.edu.billing.status, Date.parse(lee.edu.billing.paidUntil)], ["department", "paid", t0 * 1000 + 365 * 86_400_000]);
+  assert.match(await (await send(env, await as(access, "boss@example.test", "/app/admin/"))).text(), /Education: department paid/);
 });
 
 test("support: Constellation shows a Support link only once a Stripe Payment Link is set", async () => {

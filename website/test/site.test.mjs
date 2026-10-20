@@ -17,7 +17,8 @@ const text = (s) => s.replace(/<!--[\s\S]*?-->/g, " ").replace(/<[^>]+>/g, " ").
 const PAGES = { "/": "index.html", "/gauss/": "gauss/index.html", "/constellation/": "constellation/index.html", "/turnstone/": "turnstone/index.html", "/404": "404.html",
   "/gauss/apply/": "gauss/apply/index.html", "/constellation/apply/": "constellation/apply/index.html", "/privacy/": "privacy/index.html",
   "/app/": "app/index.html", "/app/admin/": "app/admin/index.html", "/gauss/evidence/": "gauss/evidence/index.html",
-  "/constellation/time/": "constellation/time/index.html", "/argo/": "argo/index.html", "/argo/apply/": "argo/apply/index.html" };
+  "/constellation/time/": "constellation/time/index.html", "/argo/": "argo/index.html", "/argo/apply/": "argo/apply/index.html",
+  "/education/": "education/index.html", "/education/apply/": "education/apply/index.html" };
 const html = Object.fromEntries(Object.entries(PAGES).map(([route, f]) => [route, read(f)]));
 const API_ROUTES = new Set(["/api/launches", "/api/launches.ics", "/api/space-weather", "/api/health", "/cdn-cgi/access/logout"]);
 
@@ -295,6 +296,21 @@ test("Gauss Argo: says what runs today, calls the relay unavailable, one fixed p
   assert.match(html["/argo/apply/"], /<button class="btn" type="submit">Join the list<\/button>/);
   assert.match(read("assets/marks/argo-glyph-provisional.svg"), /provisional glyph, not yet in the Brand Book/, "until the Brand Book adds Argo");
   assert.match(html["/privacy/"], /join the Argo list/);
+});
+
+test("Gauss for Education: free for students, staff price TBC until set, an academic licence kept off the Gauss page", () => {
+  const edu = text(html["/education/"]);
+  assert.match(edu, /Free for students/);
+  assert.match(html["/education/"], /<p class="price">Price TBC<\/p>/, "no invented staff price");
+  assert.doesNotMatch(edu, /\$\d|£\d/, "no prices until Josh sets them");
+  assert.match(edu, /For teaching and non-commercial research/);
+  assert.match(edu, /prototype lab pack/i);
+  for (const rx of [/certified/i, /accredited/i, /space[- ]qualified/i, /\bAI\b/]) assert.doesNotMatch(edu, rx, `found ${rx}`);
+  assert.match(html["/education/apply/"], /<input type="hidden" name="kind" value="edu">/);
+  assert.match(html["/education/apply/"], /<label for="f-email">University email<\/label>/);
+  assert.doesNotMatch(text(html["/gauss/"].match(/<main[\s\S]*<\/main>/)[0]), /Education/, "not in the Gauss page itself (sales plan)");
+  assert.match(html["/"], /<a href="\/education\/">Gauss for Education<\/a> is free for students\./);
+  assert.match(html["/privacy/"], /Gauss for Education/);
 });
 
 test("Constellation is free and invite-only: no prices, no payment, invitation wording", () => {

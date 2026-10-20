@@ -6,13 +6,14 @@
 //   /gauss/apply/, /constellation/apply/, /argo/apply/   application forms (plan preselected, "received" state)
 //   /constellation/time/    public time-zone planner for group calls (no data stored)
 //   /argo/                  Gauss Argo; its buttons follow ARGO_SALES (the list, or start a subscription)
+//   /education/             Gauss for Education; its buttons follow EDU_SALES and EDU_STAFF_PRICE
 //   /app/*                  signed-in workspace and admin (Cloudflare Access in front; see app.js)
 //   /api/*                  launches.json, launches.ics, space-weather.json, health, POST apply,
 //                           POST stripe/webhook (signed by Stripe; unlocks paid plans)
 // and on the cron trigger, which refreshes the feeds into KV. Nothing here needs a secret.
 import { FEEDS, feedState, readFeed, refreshFeeds } from "./feeds.js";
-import { renderArgoActions, renderArgoPlan, renderConstellationDoor, renderEventIcs, renderGaussDoor, renderIcs, renderLaunches, renderPlans, renderSupport, renderWeather } from "./render.js";
-import { argoMode } from "./tiers.js";
+import { renderArgoActions, renderArgoPlan, renderEduActions, renderEduPlans, renderConstellationDoor, renderEventIcs, renderGaussDoor, renderIcs, renderLaunches, renderPlans, renderSupport, renderWeather } from "./render.js";
+import { argoMode, eduMode, eduStaffLabel } from "./tiers.js";
 import { plannerParams, renderPlanner } from "./timezones.js";
 import { handleApply, renderApplyForm, renderSent } from "./forms.js";
 import { handleApp } from "./app.js";
@@ -35,6 +36,8 @@ const LIVE_PAGES = {
   "/gauss/apply/": applyPage("gauss"),
   "/constellation/apply/": applyPage("constellation"),
   "/argo/apply/": applyPage("argo"),
+  "/education/apply/": applyPage("edu"),
+  "/education/": () => ({ "edu-actions": (f, t, url, env) => renderEduActions(eduMode(env)), "edu-plans": (f, t, url, env) => renderEduPlans(eduMode(env), eduStaffLabel(env)) }),
   "/argo/": () => ({ "argo-actions": (f, t, url, env) => renderArgoActions(argoMode(env)), "argo-plan": (f, t, url, env) => renderArgoPlan(argoMode(env)) }),
 };
 const NEEDS_FEEDS = new Set(["/", "/gauss/", "/constellation/"]);
