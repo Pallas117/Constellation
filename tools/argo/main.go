@@ -17,6 +17,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"syscall"
@@ -413,7 +414,8 @@ func pushToGauss(cfg Config, st State) {
 		"device": cfg.Device, "class": st.Class, "reason": Mask(st.Reason), "loc": st.Loc,
 		"network": st.Fingerprint, "tailscale": st.Tailscale.Running, "exitNode": st.Tailscale.ExitNode,
 		"breakerOpen": time.Now().Before(st.BreakerUntil), "argoVersion": version, "checkedAt": st.CheckedAt,
-		"host": hostCapacityNow(), // sizes and pressure only, so Gauss can tell which devices can host agents
+		"host":     hostCapacityNow(), // sizes and pressure only, so Gauss can tell which devices can host agents
+		"platform": platformName(runtime.GOOS),
 	})
 	u.Path = "/api/mesh/report"
 	req, _ := http.NewRequest(http.MethodPost, u.String(), bytes.NewReader(body))

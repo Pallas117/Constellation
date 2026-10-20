@@ -20,6 +20,8 @@ export interface MeshReport {
   checkedAt: string;
   receivedAt: string;
   host?: MeshHost;
+  platform?: "macos" | "linux" | "windows" | "ios" | "android";
+  battery?: { level: number; charging: boolean; lowPower: boolean };
 }
 
 export interface MeshHost {
