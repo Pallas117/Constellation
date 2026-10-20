@@ -96,9 +96,8 @@ S̄    = (1/ΔE) ∫ S(E) dE                 // MeV·cm²/g, NIST PSTAR/ESTAR (S
 - `unidirectionalToOmnidirectional` converts the flux.
 - `formatSourceName` turns a source id into a label, e.g. `erg-arase` → "ERG/Arase".
 
-`estimateMagneticField` and `getMagneticFieldFromMeasurement` are also in this file. Nothing
-calls them, and the dipole formula leaves out μ₀/4π, so their values are 10⁷ too high (GAU-151).
-Don't use them until that is fixed.
+There is no magnetic-field estimate here: the old `estimateMagneticField` left out μ₀/4π
+(10⁷ too high) and was unused, so #114 removed it (GAU-151).
 
 ## Notes
 
