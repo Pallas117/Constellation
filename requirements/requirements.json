@@ -1,6 +1,6 @@
 {
   "$comment": "Constellation requirements baseline (GAU-120). NASA SP-2016-6105 Rev 2 §6.2/§5.3. Methods: T test, A analysis, I inspection, D demonstration. T evidence = exact test names; A/I/D evidence = repo paths. Verified by `npm run verify`.",
-  "version": "1.6.1",
+  "version": "1.7.0",
   "requirements": [
     {
       "id": "REQ-ING-001",
@@ -452,6 +452,24 @@
         "GAU-39: derived values carry method and inputs; unknown inputs give unknown, never a default",
         "GAU-39: a lost source becomes a source-lost event, not silently carried",
         "GAU-39: a forecast is a hypothesis resolved against observed state"
+      ]
+    },
+    {
+      "id": "REQ-TR-001",
+      "title": "Inference trust records",
+      "statement": "For each inference the system shall return the space environment at the inference time, with each field's source, product URL, observed time, fetched time, age, confidence, method and limitations, and a verdict that is unknown whenever a required input is missing, stale or conflicting and is never consistent by default; a record shall carry no wording about harm to hardware or the odds of a wrong output.",
+      "rationale": "PR-01 Inference Trust Record API, ICP-1 P0 (GAU-57): the buyer-facing product rests on provenance on every datum and fail-closed verdicts.",
+      "parent": "GAU-57",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "trust record: a missing reading is unknown, never consistent (GAU-57)",
+        "trust record: a stale input is unknown, even when its level was quiet (GAU-57)",
+        "trust record: conflicting inputs are unknown: NOAA disagrees, or the proton spectrum is impossible (GAU-57)",
+        "trust record: every field carries source, product URL, observed and fetched times, age, confidence and limitations (GAU-57)",
+        "trust record: no wording about harm to hardware or odds of error, in any record (GAU-57)",
+        "trust record: p95 well under 500 ms over a full day of 5 s history (GAU-57)",
+        "trust record: through the replayed 19 Jan 2026 storm, S1 is consistent and S2 under G0 is degraded (GAU-57)"
       ]
     }
   ]
