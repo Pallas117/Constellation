@@ -14,6 +14,7 @@ export const MESH_CLASSES = [
   "PORT_BLOCK",
   "REGION",
   "WPAD_RISK",
+  "WIFI_RISK",
 ] as const;
 export type MeshClass = (typeof MESH_CLASSES)[number];
 

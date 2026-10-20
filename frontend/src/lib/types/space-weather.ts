@@ -113,7 +113,10 @@ export interface CanonicalSpaceWeatherPoint {
     dst: number;
     kpKind?: "estimated-1m" | "planetary-3h";
     kpObservedAt?: string | null;
+    dstObservedAt?: string | null;
   };
+  /** Values not measured as published, with the method and inputs (GAU-63). */
+  derived?: Array<{ field: string; method: string; derivedFrom: string[] }>;
   coupling: {
     newell: number;
     epsilon: number;

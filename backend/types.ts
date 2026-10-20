@@ -148,7 +148,11 @@ export interface CanonicalSpaceWeatherPoint {
     /** "estimated-1m" (current) or "planetary-3h" (lags up to 3 h). */
     kpKind?: "estimated-1m" | "planetary-3h";
     kpObservedAt?: string | null;
+    /** Hour of the measured Kyoto Dst; absent when dst is modelled. */
+    dstObservedAt?: string | null;
   };
+  /** Values not measured as published, with the method and inputs (GAU-63). Empty when all were measured. */
+  derived?: DerivedField[];
   coupling: {
     newell: number;
     epsilon: number;
@@ -253,6 +257,14 @@ export interface ScaleReading {
  * One sense-check on the inputs behind a point (GAU-136). A failed check is reported with
  * its reason and the sample stays visible; nothing is dropped silently.
  */
+export interface DerivedField {
+  /** Canonical field, e.g. "velocity". */
+  field: string;
+  method: string;
+  /** Published inputs it was obtained from. */
+  derivedFrom: string[];
+}
+
 export interface SenseCheck {
   id: "l1-field-magnitude" | "goes-proton-spectrum" | "goes-proton-channels" | "goes-xray" | "noaa-scales";
   /** "unknown" when there was nothing current to check, never "pass". */

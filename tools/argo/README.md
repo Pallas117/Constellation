@@ -29,7 +29,15 @@ Optional extras:
   Argo sends an iMessage from this Mac's Messages app to your own handle, so no app or token is needed.
   macOS asks once to let Argo control Messages. Messages carry only the masked title and reason. Alerts
   raised while offline are queued (up to 20) and sent on the next tick with internet. `argo phone off`
-  turns them off.
+  turns them off. An iMessage to your own number arrives without a banner; for alerts you'll notice, set
+  `"phone_service": "sms"` in `~/.config/argo/config.json` (SMS first via Text Message Forwarding, then
+  iMessage). The background agent needs its own Automation → Messages permission: after every rebuild of the
+  ad-hoc-signed binary, macOS asks again on the first background send, and sends time out after 30 s until
+  someone clicks Allow.
+- **Alerts from other tools.** `argo notify [-key K -every 30m] TITLE MESSAGE` sends through the same
+  channel, mask and offline queue, at most once per interval per key. The gauss-awake battery guard
+  uses it (battery low, at the sleep floor, charger can't keep up, no cutoff configured), as do
+  mesh-heal and Claude Code `Notification` hooks.
 - **Claude Code status line.** In `~/.claude/settings.json`:
   `"statusLine": {"type": "command", "command": "argo status"}`.
   It reads the cached state only, so it never probes the network and is instant.
@@ -59,11 +67,19 @@ Then remove the `statusLine` and `claude()` lines above if you added them, and r
 | `argo fix` | Runs the loop once in the foreground |
 | `argo report` | Incident counts by class, how many needed a fix and were fixed, how many resolved on their own, last 10 events |
 | `argo phone <handle>\|test\|off` | Set up, test or turn off iMessage alerts to your iPhone |
+| `argo notify [-key K -every D] TITLE MSG` | Send an alert to your iPhone (masked, queued offline, rate-limited per key) |
+| `argo watch` | Run the peer watchdog once (also every tick): restarts the gauss-awake guard or mesh-heal when their heartbeat is stale, max 3 restarts/hour each, then alerts. Override the list with `"watch"` in config.json |
+| `argo devices` | Which watched tailnet devices are offline. Every tick, a phone of yours that has been off the tailnet for 30 min or more gets a text (SMS over its own cellular link) with the fix: open Tailscale, turn on Connect On Demand. At most every 6 h per device. Override the list with `"devices": ["hostname", ...]` in config.json |
 | `argo off` / `argo on` | Pauses or resumes the LaunchAgent ticks |
 | `argo preflight` | Fast local check for dead proxies and stuck Claude daemons (exit 1 if found) |
 | `argo run -- cmd` | Runs `cmd` with dead proxy variables removed |
 
 ## How it works
+
+Wi-Fi security is checked on every probe: WIFI_RISK (a warning, like WPAD_RISK) when the network is open, WEP or WPA1, or when this Mac answers sharing services (Remote Login, File Sharing, Screen Sharing, Remote Management, AirPlay Receiver) on its LAN address. Argo only advises; it never changes System Settings.
+
+Alerts stay quiet on purpose: an unresolved problem texts once when it escalates, then at most every 2 h, and OFFLINE never texts (a Mac with no network cannot send, and queued texts would arrive stale).
+
 
 ```
 LaunchAgent: network change (WatchPaths /Library/Preferences/SystemConfiguration), every 5 min, login
@@ -123,6 +139,20 @@ will fail and its breaker will open.
 - **No code is fetched at runtime.** Argo has no dependencies beyond the Go standard library.
 - **State files are `0600` under `~/.local/state/argo`.** The Gauss token lives in `~/.config/argo/token`
   (`0600`), is read from stdin and never put on the command line.
+
+## Linux and containers
+
+Argo also builds for Linux hosts (ground stations, GalacticOS, other edge Linux) as a 9.5 MB container: no shell, non-root, read-only.
+
+```
+podman build -t argo:dev -f Containerfile .        # runs go vet and the Linux tests first
+podman run -d --name argo --network host --read-only --cap-drop ALL \
+  --security-opt no-new-privileges -v argo-state:/home/nonroot/.local/state/argo \
+  -v ./config.json:/home/nonroot/.config/argo/config.json:ro argo:dev
+podman run --rm --network host argo:dev doctor     # one-off diagnosis
+```
+
+`argo loop` (the image's default) checks every `ARGO_INTERVAL` (default 60s; the full probe still runs at most every ~5 min on a stable network). On Linux, route and gateway come from `/proc`, proxies from the environment, alerts are log lines on stdout (no Messages app, so phone texts are off), and Claude Code stale-daemon checks are skipped. `--network host` is what lets it see the host's real network.
 
 ## Tests
 

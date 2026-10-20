@@ -54,7 +54,9 @@ const iso = (t: string | null | undefined) => (t && Number.isFinite(Date.parse(t
 export function observationsFromCanonical(point: CanonicalSpaceWeatherPoint): Observation[] {
   const canonicalTimestamp = iso(point.timestamp);
   if (!canonicalTimestamp) return [];
-  const l1At = iso(point.observedAt) ?? canonicalTimestamp;
+  // No fallback to the issue time: a point with no measurement time (cold start, outage
+  // placeholders) measured nothing, so it yields no observations (GAU-63).
+  const l1At = iso(point.observedAt);
   const quality = {
     tier: point.quality?.tier ?? 3,
     stale: point.quality?.stale ?? true,
@@ -72,11 +74,11 @@ export function observationsFromCanonical(point: CanonicalSpaceWeatherPoint): Ob
     { variable: "imf.bz", value: point.magneticField?.z, observedAt: l1At, source: "noaa-swpc", platform: point.spacecraft ?? "L1", uncertainty: env(point.uncertainty?.bz) },
     { variable: "solar_wind.speed", value: point.solarWind?.speed, observedAt: l1At, source: "noaa-swpc", platform: point.spacecraft ?? "L1", uncertainty: env(point.uncertainty?.speed) },
     { variable: "solar_wind.density", value: point.solarWind?.density, observedAt: l1At, source: "noaa-swpc", platform: point.spacecraft ?? "L1", uncertainty: env(point.uncertainty?.density) },
-    { variable: "kp", value: point.indices?.kp, observedAt: iso(point.indices?.kpObservedAt) ?? l1At, source: "noaa-swpc", platform: point.indices?.kpKind === "planetary-3h" ? "NOAA planetary Kp" : "NOAA estimated Kp", uncertainty: null },
+    { variable: "kp", value: point.indices?.kp, observedAt: iso(point.indices?.kpObservedAt), source: "noaa-swpc", platform: point.indices?.kpKind === "planetary-3h" ? "NOAA planetary Kp" : "NOAA estimated Kp", uncertainty: null },
   ];
   // Dst is an observation only when measured (Kyoto, GAU-116); a modelled Dst is derived state.
   if (point.indices?.dstMethod === "measured") {
-    raw.push({ variable: "dst", value: point.indices.dst, observedAt: l1At, source: "kyoto-dst", platform: "Kyoto WDC", uncertainty: null });
+    raw.push({ variable: "dst", value: point.indices.dst, observedAt: iso(point.indices.dstObservedAt), source: "kyoto-dst", platform: "Kyoto WDC", uncertainty: null });
   }
   for (const [variable, reading] of [["protons_10mev", point.particles?.protons], ["electrons_2mev", point.particles?.electrons]] as const) {
     if (reading) raw.push({ variable, value: reading.value, observedAt: iso(reading.timestamp), source: "goes-swpc", platform: reading.satellite ?? "GOES", uncertainty: null });

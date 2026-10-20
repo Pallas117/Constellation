@@ -45,11 +45,13 @@ const HEADLINE = /^(ALERT|WARNING|EXTENDED WARNING|WATCH|SUMMARY|CANCEL[A-Z ]*):
 
 /**
  * NOAA alerts issued in the last `windowMs`, newest first, one per product code (a newer
- * issue of the same product supersedes the older one), at most `max`.
+ * issue of the same product supersedes the older one), at most `max`. Null when the payload
+ * isn't the alerts format at all (not a list, or no row readable): unknown, not "no alerts".
  */
-export function parseNoaaAlerts(data: unknown, nowMs: number, windowMs = 24 * 3_600_000, max = 5): NoaaAlert[] {
-  if (!Array.isArray(data)) return [];
+export function parseNoaaAlerts(data: unknown, nowMs: number, windowMs = 24 * 3_600_000, max = 5): NoaaAlert[] | null {
+  if (!Array.isArray(data)) return null;
   const latest = new Map<string, NoaaAlert>();
+  let readable = 0;
   for (const item of data) {
     if (!item || typeof item !== "object") continue;
     const rec = item as Rec;
@@ -57,12 +59,14 @@ export function parseNoaaAlerts(data: unknown, nowMs: number, windowMs = 24 * 3_
     const issued = typeof rec.issue_datetime === "string" ? Date.parse(`${rec.issue_datetime.trim().replace(" ", "T")}Z`) : Number.NaN;
     const match = typeof rec.message === "string" ? HEADLINE.exec(rec.message) : null;
     if (!productId || !Number.isFinite(issued) || !match) continue;
+    readable += 1;
     if (issued > nowMs || nowMs - issued > windowMs) continue;
     const prev = latest.get(productId);
     if (prev && Date.parse(prev.issuedAt) >= issued) continue;
     const headline = `${match[1]}: ${match[2].trim()}`.slice(0, 160);
     latest.set(productId, { productId, issuedAt: new Date(issued).toISOString(), headline });
   }
+  if (data.length > 0 && readable === 0) return null;
   return [...latest.values()].sort((a, b) => Date.parse(b.issuedAt) - Date.parse(a.issuedAt)).slice(0, max);
 }
 

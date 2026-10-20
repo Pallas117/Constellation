@@ -2,8 +2,10 @@
  * NOAA space-weather scales for the two storm streams Gauss keeps apart.
  *
  * Radiation storms (S-scale) and geomagnetic storms (G-scale) come from the
- * same Sun but are only loosely coupled, and they call for different actions:
- * the 19 Jan 2026 S4 radiation storm came with only Dst −236 nT. Bit errors
+ * same Sun but are only loosely coupled in time, and they call for different
+ * actions: on 19 Jan 2026 GOES protons were at S2–S3 from 04:40 UT while Kp
+ * stayed below 5 (G0) until 18 UT; both then peaked together at S4 and G4
+ * (backend/replay, GAU-138). Bit errors
  * and detector hits follow the particle (S) stream; induced currents, drag and
  * GNSS/HF effects follow the geomagnetic (G) stream. Radio blackouts (R-scale)
  * follow solar X-rays and reach Earth with the light, before either storm.

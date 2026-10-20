@@ -1,6 +1,6 @@
 {
   "$comment": "Constellation requirements baseline (GAU-120). NASA SP-2016-6105 Rev 2 §6.2/§5.3. Methods: T test, A analysis, I inspection, D demonstration. T evidence = exact test names; A/I/D evidence = repo paths. Verified by `npm run verify`.",
-  "version": "1.5.0",
+  "version": "1.6.1",
   "requirements": [
     {
       "id": "REQ-ING-001",
@@ -13,7 +13,8 @@
       "verifiedBy": [
         "latest feed: points older than 15 min are served flagged stale (GAU-15)",
         "freshness tier follows measurement age, not fetch cadence (GAU-44)",
-        "data expires at 15 min without drifting values toward a baseline"
+        "data expires at 15 min without drifting values toward a baseline",
+        "ingest: an L1 data gap leaves the geomagnetic level known while NOAA Kp is current (GAU-138)"
       ]
     },
     {
@@ -69,6 +70,23 @@
       ]
     },
     {
+      "id": "REQ-ING-006",
+      "title": "Historical replay through the live pipeline",
+      "statement": "The system shall replay archived storm inputs through the same ingest, sense-check and nowcast code that runs live, on a fixed clock with no input served before it was published, without publishing to the live feed, and shall reproduce its golden output from the same inputs.",
+      "rationale": "Radiation-study row 9 and M1 PR-03 groundwork (GAU-138, GAU-59): claims about past storms must come from the code that runs live, reproducibly.",
+      "parent": "GAU-138",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "replay: the cached storms replay to their golden output, record for record (GAU-138)",
+        "replay: May 2024 reaches G5 and Oct 2024 G4 through the live pipeline (GAU-138)",
+        "replay: Jan 2026 reaches S4, with S2–S3 under G0 for hours before the geomagnetic storm (GAU-138)",
+        "replay: never publishes to the live feed (GAU-138)",
+        "archive: a row is served only once its interval has ended, so nothing leaks from the future (GAU-138)",
+        "archive: archived GSM is rotated to GSE with the live code; RTSW fills reach the parser as null (GAU-138)"
+      ]
+    },
+    {
       "id": "REQ-DI-001",
       "title": "Unknown is never nominal",
       "statement": "A missing, stale or failed input shall be reported as unknown and shall never be rendered as nominal, live, healthy or zero.",
@@ -84,7 +102,14 @@
         "an unconfigured memory service is reported, not faked",
         "JAXA: catalog reachability is not reported as a healthy data feed (GAU-55)",
         "a missing, stale or wrong-channel proton reading is unknown, not S0",
-        "a missing, wrong-band or fill X-ray reading is unknown, not R0"
+        "a missing, wrong-band or fill X-ray reading is unknown, not R0",
+        "NOAA: an HTTP failure is unknown, keeps the last real time, and names the product, not the URL (GAU-63)",
+        "NOAA: a newest L1 sample 30 min old is reported, but not as healthy (GAU-63)",
+        "NOAA: Kp fill values are skipped, never read as a quiet Kp 0 (GAU-63)",
+        "ESA: a Swarm sample 30 h old is returned but not healthy (GAU-63)",
+        "MMS: survey data older than 90 days is returned but not healthy (GAU-63)",
+        "NOAA alerts: a payload that isn't the alerts format is unknown (null), not 'no alerts' (GAU-63)",
+        "GAU-63: a point with no measurement time yields no observations, never ones stamped now"
       ]
     },
     {
@@ -111,7 +136,8 @@
       "owner": "Josh",
       "verifiedBy": [
         "modelled Dst is labelled with its method and inputs; a measured Dst says so (GAU-84)",
-        "tick uses measured Kyoto Dst while fresh, and the model once it is stale (GAU-116)"
+        "tick uses measured Kyoto Dst while fresh, and the model once it is stale (GAU-116)",
+        "ingest: a velocity assumed from the speed, or a locally rotated field, is labelled as derived (GAU-63)"
       ]
     },
     {

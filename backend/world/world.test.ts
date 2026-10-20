@@ -26,7 +26,7 @@ function point(min: number, over: { kp?: number; bz?: number; stale?: boolean; d
     magneticField: { x: 2, y: 3, z: over.bz ?? -4, bt: 5.4 },
     electricField: { x: 0, y: 1.8, z: 0, ey: 1.8 },
     solarWind: { speed: 450, density: 5, dynamicPressure: 1.7 },
-    indices: { kp: over.kp ?? 3, dst: -20, dstMethod: over.dstMethod ?? "model: O'Brien & McPherron (2000) ring-current", dstDerivedFrom: ["solarWind.speed"], kpKind: "estimated-1m", kpObservedAt: at(min - 1) },
+    indices: { kp: over.kp ?? 3, dst: -20, dstMethod: over.dstMethod ?? "model: O'Brien & McPherron (2000) ring-current", dstDerivedFrom: ["solarWind.speed"], kpKind: "estimated-1m", kpObservedAt: at(min - 1), dstObservedAt: over.dstMethod === "measured" ? at(min - 40) : null },
     coupling: { newell: 4000, epsilon: 1e11 },
     propagation: { l1DelaySeconds: 3300, etaEarthArrival: at(min + 55) },
     alerts: { stormTier: "quiet", reason: "" },
@@ -57,6 +57,17 @@ test("GAU-39: observations carry only measured values, with unit, frame, platfor
   assert.equal(bz.observedAt, at(-1), "time of measurement, not of ingest");
   const measuredDst = observationsFromCanonical(point(0, { dstMethod: "measured" })).find((o) => o.variable === "dst");
   assert.equal(measuredDst?.platform, "Kyoto WDC");
+  assert.equal(measuredDst?.observedAt, at(-40), "the Kyoto hour, not the L1 time");
+});
+
+test("GAU-63: a point with no measurement time yields no observations, never ones stamped now", () => {
+  // Cold start or outage: the worker issues a placeholder point with no observedAt and no Kp reading.
+  const placeholder = point(0);
+  delete (placeholder as { observedAt?: string | null }).observedAt;
+  placeholder.indices.kpKind = undefined;
+  placeholder.indices.kpObservedAt = null;
+  const vars = observationsFromCanonical(placeholder).map((o) => o.variable);
+  assert.deepEqual(vars, ["protons_10mev"], "only the GOES reading, which carries its own time");
 });
 
 test("GAU-39: ids and checksums are deterministic, and tampering is detected", () => {
