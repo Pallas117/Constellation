@@ -1,7 +1,7 @@
 import crypto from "node:crypto";
 import type { DeviceRecord } from "../types.js";
 
-const PROOF_TTL_MS = Number(process.env.DEVICE_PROOF_TTL_MS ?? 60_000);
+const DEFAULT_PROOF_TTL_MS = 60_000;
 const MIN_SECRET_LENGTH = 32;
 // Values that have been public in this repo; a .env copied without editing may still hold one.
 const PUBLIC_SECRETS = new Set(["dev_device_secret_fallback", "replace-with-your-secret-or-leave-empty-for-dev"]);
@@ -38,6 +38,16 @@ export function deriveDeviceSecret(userId: string, deviceId: string, fingerprint
   return crypto.createHmac("sha256", key).update(`${userId}:${deviceId}:${fingerprintHash}`).digest("hex");
 }
 
+/**
+ * Max age of a proof (either way), in ms. A malformed DEVICE_PROOF_TTL_MS falls back to the
+ * default instead of turning the age check off: NaN compares false with everything (GAU-98).
+ */
+function proofTtlMs(): number {
+  const ttl = Number(process.env.DEVICE_PROOF_TTL_MS ?? DEFAULT_PROOF_TTL_MS);
+  return Number.isFinite(ttl) && ttl > 0 ? ttl : DEFAULT_PROOF_TTL_MS;
+}
+
+/** Signs `${timestamp}:${nonce}`. The timestamp is Unix epoch milliseconds as a decimal string. */
 export function computeProof(deviceSecret: string, nonce = "", timestamp = Date.now().toString()) {
   const payload = `${timestamp}:${nonce}`;
   const sig = crypto.createHmac("sha256", deviceSecret).update(payload).digest("hex");
@@ -51,8 +61,9 @@ export function verifyProof(device: DeviceRecord, sig: string, timestamp: string
   if (typeof sig !== "string" || !/^[0-9a-f]{64}$/i.test(sig) || typeof timestamp !== "string") {
     return false;
   }
-  const age = Date.now() - Date.parse(timestamp);
-  if (Number.isNaN(age) || Math.abs(age) > PROOF_TTL_MS) {
+  // Only the format computeProof signs: epoch milliseconds as a decimal string. Date.parse
+  // returned NaN for that and accepted loose formats ("1" is 2001) instead (GAU-98).
+  if (!/^\d{1,16}$/.test(timestamp) || Math.abs(Date.now() - Number(timestamp)) > proofTtlMs()) {
     return false;
   }
   const secret = deriveDeviceSecret(device.userId, device.id, device.fingerprintHash);

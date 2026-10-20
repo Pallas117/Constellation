@@ -7,20 +7,22 @@ import { computeProof, deriveDeviceSecret, deviceAuthSecret, deviceProofsEnabled
 const device = { id: "dev-1", userId: "u1", fingerprintHash: "fp-1" } as DeviceRecord;
 const strongKey = crypto.randomBytes(32).toString("hex");
 
-function withKey(value: string | undefined, fn: () => void) {
-  const saved = process.env.DEVICE_AUTH_SECRET;
-  if (value === undefined) delete process.env.DEVICE_AUTH_SECRET;
-  else process.env.DEVICE_AUTH_SECRET = value;
+function withEnv(name: string, value: string | undefined, fn: () => void) {
+  const saved = process.env[name];
+  if (value === undefined) delete process.env[name];
+  else process.env[name] = value;
   try {
     fn();
   } finally {
-    if (saved === undefined) delete process.env.DEVICE_AUTH_SECRET;
-    else process.env.DEVICE_AUTH_SECRET = saved;
+    if (saved === undefined) delete process.env[name];
+    else process.env[name] = saved;
   }
 }
 
+const withKey = (value: string | undefined, fn: () => void) => withEnv("DEVICE_AUTH_SECRET", value, fn);
+
 // A proof signed the way the old code did when DEVICE_AUTH_SECRET was unset: with a key that is public.
-function proofSignedWith(serverKey: string, nonce = "n1", timestamp = new Date().toISOString()) {
+function proofSignedWith(serverKey: string, nonce = "n1", timestamp = Date.now().toString()) {
   const deviceSecret = crypto
     .createHmac("sha256", serverKey)
     .update(`${device.userId}:${device.id}:${device.fingerprintHash}`)
@@ -49,7 +51,7 @@ test("without a usable key, device proofs are disabled and a forged proof never 
 test("with a configured key, genuine proofs verify and everything else is rejected without throwing", () => {
   withKey(strongKey, () => {
     assert.equal(deviceAuthSecret(), strongKey);
-    const proof = computeProof(deriveDeviceSecret(device.userId, device.id, device.fingerprintHash), "n1", new Date().toISOString());
+    const proof = computeProof(deriveDeviceSecret(device.userId, device.id, device.fingerprintHash), "n1");
     assert.equal(verifyProof(device, proof.sig, proof.timestamp, proof.nonce), true);
 
     assert.equal(verifyProof(device, proof.sig, proof.timestamp, "other-nonce"), false);
@@ -65,7 +67,7 @@ test("with a configured key, genuine proofs verify and everything else is reject
     const stale = computeProof(
       deriveDeviceSecret(device.userId, device.id, device.fingerprintHash),
       "n1",
-      new Date(Date.now() - 10 * 60_000).toISOString(),
+      String(Date.now() - 10 * 60_000),
     );
     assert.equal(verifyProof(device, stale.sig, stale.timestamp, stale.nonce), false);
   });
@@ -73,9 +75,46 @@ test("with a configured key, genuine proofs verify and everything else is reject
   // Rotating the key invalidates proofs made with the old one.
   let oldProof!: ReturnType<typeof computeProof>;
   withKey(strongKey, () => {
-    oldProof = computeProof(deriveDeviceSecret(device.userId, device.id, device.fingerprintHash), "n1", new Date().toISOString());
+    oldProof = computeProof(deriveDeviceSecret(device.userId, device.id, device.fingerprintHash), "n1");
   });
   withKey(crypto.randomBytes(32).toString("hex"), () => {
     assert.equal(verifyProof(device, oldProof.sig, oldProof.timestamp, oldProof.nonce), false);
+  });
+});
+
+test("timestamps: only computeProof's epoch-ms format, within the TTL; a bad TTL setting can't disable the check (GAU-98)", () => {
+  withKey(strongKey, () => {
+    const secret = deriveDeviceSecret(device.userId, device.id, device.fingerprintHash);
+    const verifiesAt = (timestamp: string) => {
+      const p = computeProof(secret, "n1", timestamp);
+      return verifyProof(device, p.sig, p.timestamp, p.nonce);
+    };
+
+    // computeProof's own default timestamp now verifies (Date.parse returned NaN for it).
+    const p = computeProof(secret, "n1");
+    assert.equal(verifyProof(device, p.sig, p.timestamp, p.nonce), true);
+
+    // Correctly signed, but not the canonical format: rejected rather than parsed leniently.
+    const now = Date.now();
+    for (const ts of [new Date(now).toISOString(), "1", "Oct 11 2026", "-1", `${now}.5`, "1.7e12", ` ${now}`, "", "12345678901234567"]) {
+      assert.equal(verifiesAt(ts), false, `timestamp ${JSON.stringify(ts)}`);
+    }
+
+    // Within the default 60 s either way, and not beyond it.
+    assert.equal(verifiesAt(String(now - 30_000)), true);
+    assert.equal(verifiesAt(String(now + 30_000)), true);
+    assert.equal(verifiesAt(String(now - 90_000)), false);
+    assert.equal(verifiesAt(String(now + 90_000)), false);
+
+    const tenYearsAgo = String(now - 10 * 365 * 24 * 3600 * 1000);
+    for (const bad of ["60s", "abc", "", "0", "-5", "Infinity"]) {
+      withEnv("DEVICE_PROOF_TTL_MS", bad, () => {
+        assert.equal(verifiesAt(tenYearsAgo), false, `DEVICE_PROOF_TTL_MS=${JSON.stringify(bad)}`);
+        assert.equal(verifiesAt(String(now - 90_000)), false, `DEVICE_PROOF_TTL_MS=${JSON.stringify(bad)} falls back to 60 s`);
+        assert.equal(verifiesAt(String(now - 30_000)), true);
+      });
+    }
+    withEnv("DEVICE_PROOF_TTL_MS", "1000", () => assert.equal(verifiesAt(String(now - 5_000)), false));
+    withEnv("DEVICE_PROOF_TTL_MS", "600000", () => assert.equal(verifiesAt(String(now - 5 * 60_000)), true));
   });
 });
