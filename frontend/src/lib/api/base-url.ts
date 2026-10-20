@@ -21,9 +21,14 @@ export function resolveApiBase(raw: string | undefined): ApiBaseMode {
 // Optional chaining keeps this importable under node:test, where import.meta.env is undefined.
 const MODE = resolveApiBase(import.meta.env?.VITE_HELIO_PROXY_URL);
 
+/** The API path prefix for a mode: "" when same-origin, else the absolute origin. */
+export function apiBaseFor(mode: ApiBaseMode): string {
+  return mode.kind === "same-origin" ? "" : mode.url;
+}
+
 /** Prefix for API paths: "" when same-origin, else the absolute origin. Use as `${apiBase()}/api/...`. */
 export function apiBase(): string {
-  return MODE.kind === "same-origin" ? "" : MODE.url;
+  return apiBaseFor(MODE);
 }
 
 /** Absolute origin of the API (the page's own origin when same-origin). */
