@@ -288,7 +288,9 @@ test("Gauss Argo: says what runs today, calls the relay unavailable, one fixed p
     assert.doesNotMatch(argo + text(html["/argo/apply/"]), rx, `found ${rx}`);
   assert.deepEqual([...argo.matchAll(/\$\d+/g)].map((m) => m[0]), ["$10"], "one price, the ARGO constant");
   assert.match(html["/argo/"], /<!--live:argo-plan--><p class="lead">Planned: <strong>\$10 a month<\/strong>/, "the static fallback says planned");
-  assert.doesNotMatch(text(html["/gauss/"].match(/<main[\s\S]*<\/main>/)[0]), /Argo|\$10/, "never in the Gauss page itself (sales plan: no low-price Gauss SaaS); the footer link is fine");
+  const gaussMain = html["/gauss/"].match(/<main[\s\S]*<\/main>/)[0];
+  assert.doesNotMatch(text(gaussMain), /\$\d|a month/, "the self-serve price never appears on the Gauss page (sales plan: no low-price Gauss SaaS)");
+  assert.doesNotMatch(gaussMain, /href="\/argo\//, "the Gauss page offers Argo only as a scoped Assured Connectivity pilot, not the self-serve plan");
   assert.match(html["/argo/apply/"], /<input type="hidden" name="kind" value="argo">/);
   assert.match(html["/argo/apply/"], /<button class="btn" type="submit">Join the list<\/button>/);
   assert.match(read("assets/marks/argo-glyph-provisional.svg"), /provisional glyph, not yet in the Brand Book/, "until the Brand Book adds Argo");

@@ -210,7 +210,7 @@ export function renderArgoActions(mode) {
   return `<a class="btn" href="/argo/apply/">Request early access</a> ` + (mode === "invite" ? `<a class="btn ghost" href="/app/">Invited? Sign in to start</a>` : `<a class="btn ghost" href="#how">How it works</a>`);
 }
 export function renderArgoPlan(mode) {
-  return `<p class="lead">${mode === "off" ? "Planned: " : ""}<strong>${esc(argoPrice)}</strong> per person, cancel any time. For an operations team, <a href="mailto:jzwnathan@lightbound.uk?subject=Assured%20Connectivity">ask about an Assured Connectivity pilot</a>: it adds guards that shed optional load when a Mac runs short of power, memory or disk, and team status in the Gauss console.</p>` +
+  return `<p class="lead">${mode === "off" ? "Planned: " : ""}<strong>${esc(argoPrice)}</strong> per person, cancel any time. For an operations team, <a href="mailto:jzwnathan@lightbound.uk?subject=Assured%20Connectivity%20pilot">ask about an Assured Connectivity pilot</a>: it adds guards that shed optional load when a Mac runs short of power, memory or disk, and team status in the Gauss console.</p>` +
     `<p class="actions">${mode === "open" ? `<a class="btn" href="/app/?argo=start">Start for ${esc(argoPrice)}</a>` : `<a class="btn" href="/argo/apply/">Request early access</a>`}</p>`;
 }
 
