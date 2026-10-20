@@ -5,7 +5,7 @@ import { readFileSync } from "node:fs";
 import express from "express";
 import type { AuthenticatedRequest, AuthRole } from "../auth.js";
 import { createMeshRouters, exitNodesFromEnv, onboardingSteps } from "./router.js";
-import { MESH_CLASSES, MeshStore, parseReport } from "./store.js";
+import { MESH_CLASSES, MeshStore, hostingVerdict, parseHost, parseReport, type MeshHost } from "./store.js";
 
 async function withApp(fn: (base: string, store: MeshStore) => Promise<void>) {
   const store = new MeshStore(null);
@@ -90,6 +90,42 @@ test("agents report with their device token; bad tokens, bad payloads and floods
     assert.equal(last.class, "REGION");
     assert.equal(last.loc, "HK");
     assert.equal(JSON.stringify(last).includes("180.188"), false, "unknown fields must be dropped");
+  });
+});
+
+const judithHost: MeshHost = { ramGB: 8, pressure: "warn", swapUsedGB: 2.9, diskFreeGB: 22, cpus: 8, os: "darwin" };
+
+test("host capacity is allowlisted and range-checked; junk drops the whole block", () => {
+  assert.deepEqual(parseHost(judithHost), judithHost);
+  assert.deepEqual(parseHost({ ...judithHost, ramGB: 8.04, procs: ["claude"], path: "/Users/josh" }), { ...judithHost, ramGB: 8 });
+  for (const bad of [{ ...judithHost, ramGB: -1 }, { ...judithHost, ramGB: 1e9 }, { ...judithHost, cpus: 2.5 }, { ...judithHost, pressure: "fine" }, { ...judithHost, diskFreeGB: "22" }, "x", null]) {
+    assert.equal(parseHost(bad), undefined, JSON.stringify(bad));
+  }
+  assert.equal(parseHost({ ...judithHost, os: "<b>" })!.os, "");
+  assert.equal(parseReport(okReport)!.host, undefined, "old Argo without host still parses");
+  assert.deepEqual(parseReport({ ...okReport, host: judithHost })!.host, judithHost);
+});
+
+test("hosting verdict: agents only with headroom; pressure always means no", () => {
+  assert.equal(hostingVerdict(undefined), "unknown");
+  assert.equal(hostingVerdict({ ...judithHost, pressure: "" }), "unknown");
+  assert.equal(hostingVerdict(judithHost), "no"); // 8 GB under warn: the dev Mac today
+  assert.equal(hostingVerdict({ ...judithHost, pressure: "normal" }), "light");
+  assert.equal(hostingVerdict({ ...judithHost, pressure: "normal", ramGB: 32, diskFreeGB: 200 }), "agents");
+  assert.equal(hostingVerdict({ ...judithHost, pressure: "normal", ramGB: 32, diskFreeGB: 5 }), "no");
+  assert.equal(hostingVerdict({ ...judithHost, pressure: "critical", ramGB: 64, diskFreeGB: 500 }), "no");
+});
+
+test("a report with host capacity shows the verdict on the device list", async () => {
+  await withApp(async (base, store) => {
+    const { token } = (await (await fetch(`${base}/devices`, json({ name: "talos" }, { "x-test-role": "admin" }))).json()) as { token: string };
+    const host = { ramGB: 32, pressure: "normal", swapUsedGB: 0, diskFreeGB: 400, cpus: 12, os: "linux" };
+    assert.equal((await fetch(`${base}/report`, json({ ...okReport, host }, { authorization: `Bearer ${token}` }))).status, 200);
+    const d = store.list()[0];
+    assert.deepEqual(d.last!.host, host);
+    assert.equal(d.hosting, "agents");
+    const listed = (await (await fetch(`${base}/devices`, { headers: { "x-test-role": "operator" } })).json()) as { devices: { hosting: string }[] };
+    assert.equal(listed.devices[0].hosting, "agents");
   });
 });
 
