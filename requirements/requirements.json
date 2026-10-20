@@ -1,6 +1,6 @@
 {
   "$comment": "Constellation requirements baseline (GAU-120). NASA SP-2016-6105 Rev 2 §6.2/§5.3. Methods: T test, A analysis, I inspection, D demonstration. T evidence = exact test names; A/I/D evidence = repo paths. Verified by `npm run verify`.",
-  "version": "1.7.0",
+  "version": "1.7.1",
   "requirements": [
     {
       "id": "REQ-ING-001",
@@ -469,7 +469,10 @@
         "trust record: every field carries source, product URL, observed and fetched times, age, confidence and limitations (GAU-57)",
         "trust record: no wording about harm to hardware or odds of error, in any record (GAU-57)",
         "trust record: p95 well under 500 ms over a full day of 5 s history (GAU-57)",
-        "trust record: through the replayed 19 Jan 2026 storm, S1 is consistent and S2 under G0 is degraded (GAU-57)"
+        "trust record: through the replayed 19 Jan 2026 storm, S1 is consistent and S2 under G0 is degraded (GAU-57)",
+        "trust records API: an invalid inference is a 400 listing every error, nothing guessed (GAU-57)",
+        "trust records API: a batch returns records for valid items and the errors for the rest (GAU-57)",
+        "trust records API: a server without an environment history says so, never an empty record (GAU-57)"
       ]
     }
   ]
