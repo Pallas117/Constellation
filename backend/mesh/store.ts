@@ -29,6 +29,32 @@ export interface MeshReport {
   argoVersion: string;
   checkedAt: string;
   receivedAt: string;
+  host?: MeshHost;
+}
+
+/** Host capacity from Argo (tools/argo/capacity.go): sizes and kernel pressure only. */
+export interface MeshHost {
+  ramGB: number;
+  pressure: "normal" | "warn" | "critical" | "";
+  swapUsedGB: number;
+  diskFreeGB: number;
+  cpus: number;
+  os: string;
+}
+
+/**
+ * Where a device can take mesh work. agents: room for agent runtimes and a
+ * shared-memory replica; light: Argo, monitoring and small local models;
+ * no: already under pressure or short of RAM/disk; unknown: older Argo.
+ */
+export type HostingVerdict = "agents" | "light" | "no" | "unknown";
+
+export function hostingVerdict(host?: MeshHost): HostingVerdict {
+  if (!host || !host.pressure) return "unknown";
+  if (host.pressure !== "normal") return "no";
+  if (host.ramGB >= 16 && host.diskFreeGB >= 20) return "agents";
+  if (host.ramGB >= 8 && host.diskFreeGB >= 10) return "light";
+  return "no";
 }
 
 export interface MeshDevice {
@@ -45,6 +71,23 @@ const MAX_TEXT = 200;
 const hashToken = (token: string) => createHash("sha256").update(token).digest("hex");
 
 const text = (value: unknown, max = MAX_TEXT) => (typeof value === "string" ? value.slice(0, max) : "");
+
+const num = (value: unknown, max: number) =>
+  typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= max ? Math.round(value * 10) / 10 : null;
+
+/** Allowlisted, range-checked host capacity; anything outside the ranges drops the whole block. */
+export function parseHost(value: unknown): MeshHost | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const h = value as Record<string, unknown>;
+  const ramGB = num(h.ramGB, 4096);
+  const swapUsedGB = num(h.swapUsedGB, 4096);
+  const diskFreeGB = num(h.diskFreeGB, 1_000_000);
+  const cpus = typeof h.cpus === "number" && Number.isInteger(h.cpus) && h.cpus >= 1 && h.cpus <= 1024 ? h.cpus : null;
+  const pressure = ["normal", "warn", "critical", ""].includes(h.pressure as string) ? (h.pressure as MeshHost["pressure"]) : null;
+  if (ramGB === null || swapUsedGB === null || diskFreeGB === null || cpus === null || pressure === null) return undefined;
+  const os = text(h.os, 10);
+  return { ramGB, pressure, swapUsedGB, diskFreeGB, cpus, os: /^[a-z]+$/.test(os) ? os : "" };
+}
 
 /**
  * Validates an Argo report against an allowlist of fields. Anything else the
@@ -66,6 +109,7 @@ export function parseReport(body: unknown, now = new Date()): MeshReport | null 
     argoVersion: text(b.argoVersion, 20),
     checkedAt: Number.isNaN(Date.parse(text(b.checkedAt, 40))) ? "" : text(b.checkedAt, 40),
     receivedAt: now.toISOString(),
+    ...(parseHost(b.host) ? { host: parseHost(b.host) } : {}),
   };
 }
 
@@ -126,10 +170,10 @@ export class MeshStore {
     this.persist();
   }
 
-  list(): Array<Omit<MeshDevice, "tokenHash">> {
+  list(): Array<Omit<MeshDevice, "tokenHash"> & { hosting: HostingVerdict }> {
     this.reloadIfChanged();
     return [...this.devices.values()]
-      .map(({ tokenHash: _hidden, ...rest }) => rest)
+      .map(({ tokenHash: _hidden, ...rest }) => ({ ...rest, hosting: hostingVerdict(rest.last?.host) }))
       .sort((a, b) => a.name.localeCompare(b.name));
   }
 
