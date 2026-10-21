@@ -59,7 +59,7 @@ test("trust record: quiet, current inputs are consistent, with the reasons and t
   const r = build([point(T - 30_000)]);
   assert.equal(r.verdict.value, "consistent");
   assert.match(r.verdict.reasons[0], /Radiation S0 and geomagnetic G0, below the policy thresholds \(S2, G3\)/);
-  assert.ok(r.verdict.reasons.includes("South Atlantic Anomaly not assessed (not modelled yet)."));
+  assert.ok(r.verdict.reasons.includes("South Atlantic Anomaly not assessed: No ephemeris or TLE given."));
   assert.deepEqual(r.verdict.policy, DEFAULT_POLICY);
 });
 
@@ -152,13 +152,29 @@ test("trust record: L-shell from the supplied ephemeris; SAA and upset risk say 
   const r = build([point(T - 30_000)], { ephemeris: equator, processorProfileId: "jetson-orin-nx-16" });
   assert.equal(r.orbit.lShell.value, Math.round(((RE_KM + 500) / RE_KM) * 1000) / 1000);
   assert.equal(r.orbit.lShell.confidence, "medium");
-  assert.equal(r.orbit.saa.value, null);
-  assert.match(r.orbit.saa.limitations[0], /GAU-141/);
+  assert.equal(r.orbit.saa.value, null, "the AMS-01 thresholds are not applied at 500 km");
+  assert.match(r.orbit.saa.limitations[0], /not applied at 500 km \(range 300–450 km\)/);
+  // |B| is still reported: about 19,900 nT here, over South America (weak, but 500 km is out of band).
+  assert.equal(Math.round(r.orbit.fieldStrength.value! / 100), 199);
   assert.match(r.upsetRisk.limitations[0], /No cited radiation profile for processor "jetson-orin-nx-16"/);
   const badTle = build([point(T - 30_000)], { tle: ["1 x", "2 x"] });
   assert.match(badTle.orbit.lShell.limitations[0], /^TLE not usable: line 1 must be 69 characters/);
   const strict = buildTrustRecord(req(), new EnvironmentHistory([point(T - 30_000)], "h"), { nowMs: T, policy: { ...DEFAULT_POLICY, requireOrbitContext: true } });
   assert.equal(strict.verdict.value, "unknown", "a policy that requires orbit context gets unknown until it exists");
+});
+
+test("trust record: an inference inside the SAA is degraded context, with |B| and the tier (GAU-141)", () => {
+  const saa = build([point(T - 30_000)], { ephemeris: { latDeg: -30, lonDeg: -45, altKm: 420 } });
+  assert.equal(saa.orbit.saa.value, true);
+  assert.match(saa.orbit.saa.method, /^core: \|B\| 19,\d{3} nT ≤ 21,000 nT$/);
+  assert.equal(saa.orbit.fieldStrength.source, "IGRF-14 (IAGA V-MOD)");
+  assert.equal(saa.verdict.value, "degraded-context", "quiet S and G, so the SAA alone degrades it");
+  assert.match(saa.verdict.reasons[0], /^Spacecraft inside the South Atlantic Anomaly \(core: /);
+  const clear = build([point(T - 30_000)], { ephemeris: { latDeg: 45, lonDeg: 10, altKm: 420 } });
+  assert.equal(clear.orbit.saa.value, false);
+  assert.match(clear.orbit.saa.method, /^outside: /);
+  assert.equal(clear.verdict.value, "consistent");
+  assert.ok(!clear.verdict.reasons.some((r) => r.includes("South Atlantic")));
 });
 
 test("trust record: requests are validated, nothing defaulted; the future is unknown (GAU-57)", () => {
