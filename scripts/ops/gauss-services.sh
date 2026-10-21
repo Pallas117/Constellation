@@ -272,15 +272,23 @@ reload() { unload "$1"; launchctl bootstrap "$UID_DOMAIN" "$2"; } # reload <labe
 FALLBACK_STATE="$WATCH_DIR/fallback"
 FALLBACK_LABELS=(uk.lightbound.gauss-fallback-backend uk.lightbound.gauss-fallback-frontend)
 live_dir() { plutil -extract WorkingDirectory raw -o - "$AGENTS/uk.lightbound.gauss-backend.plist" 2>/dev/null; }
-fallback_ready() { # "<sha> <dir> <epoch>" in ready, both plists and a built site
-  local sha dir; read -r sha dir _ 2>/dev/null <"$FALLBACK_STATE/ready" || return 1
-  [ -f "$FALLBACK_STATE/${FALLBACK_LABELS[0]}.plist" ] && [ -f "$FALLBACK_STATE/${FALLBACK_LABELS[1]}.plist" ] && [ -f "$dir/frontend/dist/index.html" ]
+# ready holds "<sha> <dir> <epoch>". The dir may contain spaces (this repo lives in
+# "Gauss Aurora.worktrees"), so sha is the first word, epoch the last, dir the rest:
+# `read -r sha dir _` would cut it at the first space.
+ready_record() { # sets READY_SHA READY_DIR READY_AT; 1 if there is no valid record
+  local line; IFS= read -r line 2>/dev/null <"$FALLBACK_STATE/ready" || return 1
+  READY_SHA=${line%% *}; READY_AT=${line##* }; READY_DIR=${line#* }; READY_DIR=${READY_DIR% *}
+  [[ "$READY_SHA" =~ ^[0-9a-f]{7,40}$ && "$READY_AT" =~ ^[0-9]+$ && -n "$READY_DIR" && "$READY_DIR" != "$line" ]]
+}
+fallback_ready() { # a valid record, both plists and a built site
+  ready_record || return 1
+  [ -f "$FALLBACK_STATE/${FALLBACK_LABELS[0]}.plist" ] && [ -f "$FALLBACK_STATE/${FALLBACK_LABELS[1]}.plist" ] && [ -f "$READY_DIR/frontend/dist/index.html" ]
 }
 fallback_active() { loaded "${FALLBACK_LABELS[0]}"; }
 
 fallback_on() { # fallback_on <reason>: swap live for the fallback on the same ports
   fallback_ready || { echo "No fallback prepared: $0 fallback prepare <dir>" >&2; return 1; }
-  local sha dir l; read -r sha dir _ <"$FALLBACK_STATE/ready"
+  local sha=$READY_SHA dir=$READY_DIR l
   for l in "${SERVICES[@]}"; do unload "$l"; done
   for l in "${FALLBACK_LABELS[@]}"; do reload "$l" "$FALLBACK_STATE/$l.plist"; done
   echo "$(date '+%F %T') $1" >"$FALLBACK_STATE/active"
@@ -301,9 +309,8 @@ fallback_off() { # back to live; the guard gets a fresh set of restarts for it
 }
 
 fallback_state() { # "ok|no <description>" for status and check
-  local sha dir at
   if fallback_active; then echo "no serving from fallback since $(cut -d' ' -f1-2 "$FALLBACK_STATE/active" 2>/dev/null): fix live, then '$0 fallback off'"
-  elif fallback_ready; then read -r sha dir at <"$FALLBACK_STATE/ready"; echo "ok fallback ready: ${sha:0:7}, prepared $(date -r "$at" '+%F %H:%M') (cold standby)"
+  elif fallback_ready; then echo "ok fallback ready: ${READY_SHA:0:7}, prepared $(date -r "$READY_AT" '+%F %H:%M') (cold standby)"
   else echo "ok fallback: none prepared (warning: '$0 fallback prepare <dir>' before the next deploy)"
   fi
 }
@@ -320,9 +327,9 @@ fallback_prepare() { # fallback_prepare <dir> [sha]: check out, install, build, 
   fi
   if [ -e "$dir" ]; then
     dir=$(cd "$dir" && pwd)
-    local prev; read -r _ prev _ 2>/dev/null <"$FALLBACK_STATE/ready" || true
+    local prev=""; ready_record && prev=$READY_DIR
     # Only ever re-point a directory this command made: never someone's working checkout.
-    [ "$dir" = "${prev:-}" ] || { echo "$dir exists and is not the current fallback; pick a new path." >&2; return 1; }
+    [ "$dir" = "$prev" ] || { echo "$dir exists and is not the current fallback; pick a new path." >&2; return 1; }
     git -C "$dir" checkout -q --detach "$sha"
   else
     git -C "$live" worktree add -q --detach "$dir" "$sha"; dir=$(cd "$dir" && pwd)
@@ -356,7 +363,7 @@ dev_run() { # dev_run <checkout-dir>
   local dir live fdir level _
   dir=$(cd "${1:?usage: $0 dev <checkout-dir>}" && pwd)
   [ -f "$dir/backend/server.ts" ] || { echo "$dir is not a Gauss checkout" >&2; return 1; }
-  live=$(live_dir || true); read -r _ fdir _ 2>/dev/null <"$FALLBACK_STATE/ready" || true
+  live=$(live_dir || true); fdir=""; ready_record && fdir=$READY_DIR
   if [ "$dir" = "${live:-}" ] || [ "$dir" = "${fdir:-}" ]; then
     echo "$dir is the $([ "$dir" = "${live:-}" ] && echo live || echo fallback) checkout; develop in another worktree." >&2; return 1
   fi

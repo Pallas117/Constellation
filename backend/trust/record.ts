@@ -11,6 +11,8 @@
 import { createHash } from "node:crypto";
 import type { CanonicalSpaceWeatherPoint, ScaleReading, SenseCheck } from "../types.js";
 import { MAX_READING_LAG_MS, type EnvironmentHistory } from "./environment.js";
+import { IGRF_LABEL } from "../physics/igrf.js";
+import { SAA_CORE_NT, SAA_EXTENDED_NT, saaContext } from "./saa.js";
 import { dipoleLShell, distanceKm, EPHEMERIS_TLE_CONFLICT_KM, ephemerisProblem, propagateTle, tleProblem, type Ephemeris } from "./orbit.js";
 
 export const TRUST_RECORD_SCHEMA = "gauss.trust-record/0.1";
@@ -128,6 +130,8 @@ export interface TrustRecord {
     /** Where the spacecraft was: the supplied ephemeris, or SGP4 from the TLE. */
     position: Field<Ephemeris>;
     saa: Field<boolean>;
+    /** IGRF-14 total field intensity at the position, nT (what the SAA flag is judged on). */
+    fieldStrength: Field<number>;
     lShell: Field<number>;
   };
   /** Modelled upset-risk band; needs a cited processor profile (PR-02). */
@@ -344,8 +348,13 @@ function environmentFields(p: CanonicalSpaceWeatherPoint, atMs: number, fetchedA
 }
 
 function orbitFields(req: TrustRecordRequest): TrustRecord["orbit"] {
-  const saa = unknownField<boolean>("South Atlantic Anomaly boundary", "Not modelled yet (GAU-141): a centred dipole cannot place the anomaly.");
   const atMs = Date.parse(req.time);
+  const noPosition = (why: string): TrustRecord["orbit"] => ({
+    position: unknownField("Spacecraft position", why),
+    saa: unknownField("South Atlantic Anomaly", why),
+    fieldStrength: unknownField(IGRF_LABEL, why),
+    lShell: unknownField("L-shell", why),
+  });
   const fromTle = req.tle ? propagateTle(req.tle, atMs) : null;
   const tleOk = fromTle && !("error" in fromTle) ? fromTle : null;
   const tleNote = tleOk
@@ -357,7 +366,7 @@ function orbitFields(req: TrustRecordRequest): TrustRecord["orbit"] {
     const apart = tleOk ? distanceKm(req.ephemeris, tleOk.ephemeris) : null;
     if (apart !== null && apart > EPHEMERIS_TLE_CONFLICT_KM) {
       const why = `Conflicting inputs: the ephemeris and the TLE place the spacecraft ${Math.round(apart)} km apart (limit ${EPHEMERIS_TLE_CONFLICT_KM} km)`;
-      return { position: unknownField("Spacecraft position", why), saa, lShell: unknownField("L-shell", why) };
+      return noPosition(why);
     }
     position = {
       value: req.ephemeris,
@@ -388,12 +397,53 @@ function orbitFields(req: TrustRecordRequest): TrustRecord["orbit"] {
     };
   } else {
     const why = fromTle && "error" in fromTle ? `TLE not usable: ${fromTle.error}` : "No ephemeris or TLE given.";
-    return { position: unknownField("Spacecraft position", why), saa, lShell: unknownField("L-shell", why) };
+    return noPosition(why);
   }
+
+  const ctx = saaContext(atMs, position.value!);
+  const nt = (v: number) => `${Math.round(v).toLocaleString("en-GB")} nT`;
+  const saaSource = "South Atlantic Anomaly from IGRF-14 |B| (AMS-01 thresholds, Fiandrini et al. 2002/2003)";
+  const fieldStrength: Field<number> =
+    ctx.fieldNt === null
+      ? unknownField(IGRF_LABEL, ctx.reason ?? "Field not computed")
+      : {
+          value: Math.round(ctx.fieldNt),
+          source: IGRF_LABEL,
+          sourceUrl: "https://www.ngdc.noaa.gov/IAGA/vmod/coeffs/igrf14coeffs.txt",
+          observedAt: req.time,
+          fetchedAt: null,
+          ageSeconds: 0,
+          confidence: "high",
+          method: "spherical-harmonic synthesis to degree 13 at the position and date",
+          limitations: ["Earth's internal (main) field only: no external or storm-time field."],
+        };
+  const saa: Field<boolean> =
+    ctx.tier === null
+      ? unknownField(saaSource, ctx.reason ?? "Not assessed")
+      : {
+          value: ctx.tier !== "outside",
+          source: saaSource,
+          sourceUrl: "https://doi.org/10.1029/2003JA009844",
+          observedAt: req.time,
+          fetchedAt: null,
+          ageSeconds: 0,
+          confidence: "medium",
+          method:
+            ctx.tier === "core"
+              ? `core: |B| ${nt(ctx.fieldNt!)} ≤ ${nt(SAA_CORE_NT)}`
+              : ctx.tier === "extended"
+                ? `extended: |B| ${nt(ctx.fieldNt!)} between ${nt(SAA_CORE_NT)} and ${nt(SAA_EXTENDED_NT)}`
+                : `outside: |B| ${nt(ctx.fieldNt!)} above ${nt(SAA_EXTENDED_NT)}`,
+          limitations: [
+            "Thresholds set by AMS-01 at about 320–390 km; a context flag for likely trapped protons, not a flux model.",
+            "Uses the IGRF-14 main field, so the SAA's westward drift (about 0.3° a year) is followed.",
+          ],
+        };
 
   return {
     position,
     saa,
+    fieldStrength,
     lShell: {
       value: Math.round(dipoleLShell(position.value!) * 1000) / 1000,
       source: position.source === "Supplied ephemeris" ? "Computed from the supplied ephemeris" : "Computed from the TLE-propagated position",
@@ -420,7 +470,7 @@ function verdictFor(env: TrustRecord["environment"], orbit: TrustRecord["orbit"]
     if (env.geomagnetic.value === null) unknown.push(`Geomagnetic level unknown: ${env.geomagnetic.limitations[0]}`);
   }
   if (policy.requireOrbitContext && orbit.saa.value === null) unknown.push(`Orbit context required by the policy but unknown: ${orbit.saa.limitations[0]}`);
-  const notes = orbit.saa.value === null ? ["South Atlantic Anomaly not assessed (not modelled yet)."] : [];
+  const notes = orbit.saa.value === null ? [`South Atlantic Anomaly not assessed: ${orbit.saa.limitations[0]}`] : [];
   if (unknown.length) return { value: "unknown" as const, reasons: [...unknown, ...notes] };
 
   const degraded: string[] = [];
@@ -428,7 +478,7 @@ function verdictFor(env: TrustRecord["environment"], orbit: TrustRecord["orbit"]
   const g = env.geomagnetic.value!;
   if (s.level >= policy.degradedAtRadiation) degraded.push(`Radiation storm ${s.label} at geostationary orbit when the inference ran`);
   if (g.level >= policy.degradedAtGeomagnetic) degraded.push(`Geomagnetic storm ${g.label}`);
-  if (orbit.saa.value === true) degraded.push("Spacecraft inside the South Atlantic Anomaly");
+  if (orbit.saa.value === true) degraded.push(`Spacecraft inside the South Atlantic Anomaly (${orbit.saa.method})`);
   for (const c of checks.filter((x) => x.status === "flag")) degraded.push(`Input check flagged (${c.id}): ${c.reason}`);
   if (degraded.length) return { value: "degraded-context" as const, reasons: [...degraded, ...notes] };
   return {
