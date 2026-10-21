@@ -17,7 +17,7 @@ const text = (s) => s.replace(/<!--[\s\S]*?-->/g, " ").replace(/<[^>]+>/g, " ").
 const PAGES = { "/": "index.html", "/gauss/": "gauss/index.html", "/constellation/": "constellation/index.html", "/turnstone/": "turnstone/index.html", "/404": "404.html",
   "/gauss/apply/": "gauss/apply/index.html", "/constellation/apply/": "constellation/apply/index.html", "/privacy/": "privacy/index.html",
   "/app/": "app/index.html", "/app/admin/": "app/admin/index.html", "/gauss/evidence/": "gauss/evidence/index.html",
-  "/constellation/time/": "constellation/time/index.html", "/argo/": "argo/index.html", "/argo/apply/": "argo/apply/index.html",
+  "/constellation/time/": "constellation/time/index.html", "/argo/": "argo/index.html",
   "/education/": "education/index.html", "/education/apply/": "education/apply/index.html", "/constellation/workshops/": "constellation/workshops/index.html", "/terms/": "terms/index.html" };
 const html = Object.fromEntries(Object.entries(PAGES).map(([route, f]) => [route, read(f)]));
 const API_ROUTES = new Set(["/api/launches", "/api/launches.ics", "/api/space-weather", "/api/health", "/cdn-cgi/access/logout"]);
@@ -83,12 +83,12 @@ test("terms: ethical use after ESA and NASA principles, month-to-month plans, ca
     assert.match(t, want);
   assert.match(html["/terms/"], /<strong>Draft for legal review\.<\/strong>/, "not in force until a lawyer has read it");
   assert.match(html["/terms/"], /id="ethics"[\s\S]*id="cancel"/);
-  for (const route of ["/argo/", "/education/"]) assert.match(text(html[route]), /full refund if you(&rsquo;|')re not satisfied/, `${route}: says how to leave`);
+  assert.match(text(html["/education/"]), /full refund if you(&rsquo;|')re not satisfied/, "/education/: says how to leave");
 });
 
 test("every page with a footer menu has the same one, Privacy included", () => {
   const foot = (p) => [...(p.match(/<nav aria-label="Footer">([\s\S]*?)<\/nav>/)?.[1] ?? "").matchAll(/href="([^"]+)"/g)].map((m) => m[1]);
-  const want = ["/gauss/", "/constellation/", "/turnstone/", "/argo/", "/education/", "mailto:jzwnathan@lightbound.uk", "/privacy/", "/terms/"];
+  const want = ["/gauss/", "/constellation/", "/turnstone/", "mailto:jzwnathan@lightbound.uk", "/privacy/", "/terms/"]; // three projects only (Josh, 2026-10-22)
   for (const [route, page] of Object.entries(html)) if (page.includes('aria-label="Footer"')) assert.deepEqual(foot(page), want, route);
 });
 
@@ -170,7 +170,8 @@ test("live sections have their markers, with a working static fallback", () => {
 // ---- Flow ----
 test("flow: no dead ends; each product page ends with the other doors, Turnstone leads home", () => {
   const doors = (p) => [...p.matchAll(/<a class="door" href="([^"]+)"/g)].map((m) => m[1]);
-  assert.deepEqual(doors(html["/"]), ["/gauss/", "/constellation/", "/turnstone/", "/argo/"]);
+  assert.deepEqual(doors(html["/"]), ["/gauss/", "/constellation/", "/turnstone/"], "three projects");
+  assert.match(html["/"], /<a href="\/education\/">Gauss for Education<\/a>, part of <a href="\/constellation\/#outreach">Constellation&rsquo;s outreach<\/a>/);
   assert.match(html["/"], /Email Josh, the founder/);
   assert.deepEqual(doors(html["/argo/"]), ["/gauss/", "/constellation/"]);
   assert.deepEqual(doors(html["/gauss/"]), ["/constellation/", "/turnstone/"]);
@@ -279,7 +280,7 @@ test("GAU-12: leads with Fleet Integration; the replay demo and evidence link ar
 
 test("sales-plan entry points: /pilot and /sales redirect into the Gauss flow", () => {
   const rules = Object.fromEntries(read("_redirects").split("\n").filter((l) => l.trim() && !l.startsWith("#")).map((l) => l.trim().split(/\s+/)).map(([f, t, c]) => [f, [t, c]]));
-  assert.deepEqual(rules, { "/pilot": ["/gauss/apply/?plan=pilot", "301"], "/sales": ["/gauss/#plans", "301"] });
+  assert.deepEqual(rules, { "/pilot": ["/gauss/apply/?plan=pilot", "301"], "/sales": ["/gauss/#plans", "301"], "/argo/apply/": ["/argo/", "301"], "/argo/apply": ["/argo/", "301"] });
 });
 
 test("no page claims what the requirements rule out", () => {
@@ -297,23 +298,24 @@ test("customer copy never says how payment is taken (the privacy notice still na
   assert.match(read("privacy/index.html"), /Stripe/, "processors stay disclosed");
 });
 
-test("Gauss Argo: says what runs today, calls the relay unavailable, one fixed price, no grade claims", () => {
+test("Gauss Argo: included for operators and staff, no price, not promoted, no grade claims", () => {
   const argo = text(html["/argo/"]);
   assert.match(argo, /Built like a spacecraft/i);
   assert.match(html["/argo/"], /It isn&rsquo;t available yet\./, "the private relay is not built");
   assert.match(argo, /TLS verification is never disabled\./);
   assert.match(argo, /Windows/, "says what it doesn't run on yet");
-  for (const rx of [/space[- ]grade/i, /space[- ]qualified/i, /military[- ]grade/i, /mission[- ]grade/i, /untraceable/i, /unhackable/i, /certified/i, /compliant/i, /\bVPN\b/, /£/, /\bAI\b/])
-    assert.doesNotMatch(argo + text(html["/argo/apply/"]), rx, `found ${rx}`);
-  assert.deepEqual([...argo.matchAll(/\$\d+/g)].map((m) => m[0]), ["$10"], "one price, the ARGO constant");
-  assert.match(html["/argo/"], /<!--live:argo-plan--><p class="lead">Planned: <strong>\$10 a month<\/strong>/, "the static fallback says planned");
+  assert.match(argo, /included for operators, meaning teams with a paid Gauss plan, and for the Lightbound team/);
+  assert.match(html["/argo/"], /<a class="btn" href="\/app\/">Operators: sign in to set it up<\/a>/);
+  assert.match(html["/argo/"], /<meta name="robots" content="noindex">/, "reachable, not promoted");
+  for (const rx of [/space[- ]grade/i, /space[- ]qualified/i, /military[- ]grade/i, /mission[- ]grade/i, /untraceable/i, /unhackable/i, /certified/i, /compliant/i, /\bVPN\b/, /£/, /\$\d/, /a month/i, /waitlist|early access|join the list/i, /\bAI\b/])
+    assert.doesNotMatch(argo, rx, `found ${rx}`);
+  assert.ok(!existsSync(join(pub, "argo/apply/index.html")), "no list to join");
+  assert.match(read("_redirects"), /^\/argo\/apply\/  \/argo\/  301$/m, "old links still land somewhere");
   const gaussMain = html["/gauss/"].match(/<main[\s\S]*<\/main>/)[0];
-  assert.doesNotMatch(text(gaussMain), /\$\d|a month/, "the self-serve price never appears on the Gauss page (sales plan: no low-price Gauss SaaS)");
-  assert.doesNotMatch(gaussMain, /href="\/argo\//, "the Gauss page offers Argo only as a scoped Assured Connectivity pilot, not the self-serve plan");
-  assert.match(html["/argo/apply/"], /<input type="hidden" name="kind" value="argo">/);
-  assert.match(html["/argo/apply/"], /<button class="btn" type="submit">Join the list<\/button>/);
+  assert.doesNotMatch(text(gaussMain), /\$\d|a month/, "no price on the Gauss page (sales plan: no low-price Gauss SaaS)");
+  assert.doesNotMatch(gaussMain, /href="\/argo\//, "the Gauss page offers Argo only as a scoped Assured Connectivity pilot");
   assert.match(read("assets/marks/argo-glyph-provisional.svg"), /provisional glyph, not yet in the Brand Book/, "until the Brand Book adds Argo");
-  assert.match(html["/privacy/"], /join the Argo list/);
+  for (const [route, page] of Object.entries(html)) if (route !== "/argo/") assert.doesNotMatch(page, /href="\/argo\//, `${route}: Argo is only linked from the workspace`);
 });
 
 test("Gauss for Education: free for students, staff price TBC until set, an academic licence kept off the Gauss page", () => {
@@ -327,7 +329,11 @@ test("Gauss for Education: free for students, staff price TBC until set, an acad
   assert.match(html["/education/apply/"], /<input type="hidden" name="kind" value="edu">/);
   assert.match(html["/education/apply/"], /<label for="f-email">University email<\/label>/);
   assert.doesNotMatch(text(html["/gauss/"].match(/<main[\s\S]*<\/main>/)[0]), /Education/, "not in the Gauss page itself (sales plan)");
-  assert.match(html["/"], /<a href="\/education\/">Gauss for Education<\/a> is free for students\./);
+  assert.match(html["/"], /<a href="\/education\/">Gauss for Education<\/a>, part of <a href="\/constellation\/#outreach">Constellation&rsquo;s outreach<\/a>, is free for students\./);
+  const outreach = html["/constellation/"].match(/<section id="outreach"[\s\S]*?<\/section>/)[0];
+  for (const href of ["/education/", "/education/apply/", "/constellation/workshops/", "/api/launches.ics", "/constellation/time/"]) assert.ok(outreach.includes(`href="${href}"`), `outreach links ${href}`);
+  assert.match(html["/education/"], /<a href="\/constellation\/" aria-current="page">Constellation<\/a>/, "Education sits under Constellation");
+  assert.match(html["/constellation/workshops/"], /href="\/education\/">Gauss for Education<\/a>/);
   assert.match(html["/privacy/"], /Gauss for Education/);
 });
 
@@ -345,7 +351,7 @@ test("Constellation: events from its Luma calendar, then workshops on ethics, re
   }
   assert.match(workshops, /href="\/constellation\/workshops\/">Bring a workshop to your team/);
   const labels = [...page.matchAll(/<p class="label">(\d\d)_/g)].map((m) => Number(m[1]));
-  assert.deepEqual(labels, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10], "section numbers run in order");
+  assert.deepEqual(labels, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11], "section numbers run in order");
   assert.match(html["/constellation/workshops/"], /<input type="hidden" name="kind" value="workshop">/);
   assert.match(html["/constellation/workshops/"], /<body class="page brand-constellation">/);
   assert.match(html["/privacy/"], /a workshop for your team/);

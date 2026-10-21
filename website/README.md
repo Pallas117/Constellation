@@ -6,17 +6,16 @@ JavaScript, no third-party requests, and no secrets.
 
 | Page | What it is |
 |---|---|
-| `/` | Hero: the brand kit's ray-traced black-hole film, then the descent (below). Doors show live data: Gauss shows space weather now, Constellation shows the next launch, Turnstone is classified, Argo leads to early access. |
+| `/` | Hero: the brand kit's ray-traced black-hole film, then the descent (below). Doors show live data: Gauss shows space weather now, Constellation shows the next launch, Turnstone is classified. Three projects only (Josh, 2026-10-22); Gauss for Education is a line pointing to Constellation's outreach. |
 | `/gauss/` | The GAU-12 evidence-first Gauss page. It leads with Fleet Integration and has an on-page menu. A script-free **replay demo** walks one synthetic storm through the nominal, degraded, abstain, unknown and blocked states, labelled as screening evidence. Also: claims and boundaries, plans and prices, CCSDS/XTCE/Yamcs/ONNX fit, team. Ends with the other doors. |
 | `/gauss/evidence/` | A synthetic **sample evidence report**: record states, decisions, unknowns and limits, provenance. Clearly labelled; not a mission record. |
 | `/constellation/` | The community: next 10 launches worldwide, space weather now, a calendar feed, intel rules, and how to join. Ends with the other doors. |
 | `/turnstone/` | Mark, "Classified." and a "Request a briefing" link to Josh's 30-minute Cal.com call; nothing about what it does (secret project; `noindex`). |
 | `/gauss/apply/` | Pilot brief in the sales plan's three steps (fit, readiness, pilot brief). Plan links preselect the package. |
 | `/constellation/apply/` | Request an invitation. Constellation is free and invite-only; there is no payment anywhere on its side. |
-| `/argo/` | Gauss Argo, the self-healing connectivity agent, "built like a spacecraft": what it catches, how it works, its security rules, where it runs, the private relay (in development, not available) and the $10-a-month plan. Its buttons follow `ARGO_SALES`. |
-| `/education/` | Gauss for Education (prototype): what a class gets (four labs), the three plans (student free, staff and research monthly, department yearly), and who can join. Buttons follow `EDU_SALES`; the staff price is "Price TBC" until `EDU_STAFF_PRICE` is set. |
+| `/argo/` | Gauss Argo, the self-healing connectivity agent, "built like a spacecraft": what it catches, how it works, its security rules, where it runs, the private relay (in development, not available). Included for operators and staff, no price, `noindex`, linked only from the workspace. |
+| `/education/` | Gauss for Education (prototype), part of Constellation's outreach (nav shows Constellation): what a class gets (four labs), the three plans (student free, staff and research monthly, department yearly), and who can join. Buttons follow `EDU_SALES`; the staff price is "Price TBC" until `EDU_STAFF_PRICE` is set. |
 | `/education/apply/` | A department licence request, or a review for people without a university email. |
-| `/argo/apply/` | The Argo list: early access, the private-relay waitlist, or both. Stored like other applications; "Mark contacted" in admin creates no account. |
 | `/app/` | Signed-in workspace: quote and payment (card, or an invoice where you allow it), billing state, pilot progress, space weather, Constellation membership, members' opportunities, and the staff link for the team. |
 | `/app/admin/` | For `ADMIN_EMAILS`: approve with a quote, set plan, billing, pilot step; invite Constellation members (free). |
 | `/constellation/time/` | Public time-zone planner. Pick a date and up to 8 zones to see the local hour everywhere, with the hours that suit everyone outlined. A picked hour comes with a calendar file. No data is stored. |
@@ -115,45 +114,26 @@ invoice for the quote (Fleet Integration: 12 months) and Stripe emails it, with 
 
 **Friends of Constellation:** the xOrbita, Pan Galactic Corporation and Aphelion Industries logos sit on the Constellation page. They're shown as supplied, link to each site, and show their names on hover or focus (always on touch screens). They're labelled neutrally, with no partnership claim. Pallas confirmed permission to show all three (19 Oct 2026).
 
-**Gauss Argo** (early access). Every claim on `/argo/` comes from Argo's own README and code on main (`tools/argo`):
-the fault classes, the security rules, the Mac agent and the Linux container. The private relay is the two-hop
-design from the "Lightbound Private Connectivity" brief. It is described as in development and not available,
-and as launching only after an outside security review and legal checks (that brief's phase 2 and 3 gates).
-A test keeps out grade or anonymity claims ("space grade", "mission-grade", "untraceable", "certified",
-"VPN") and prices. The Argo glyph in `assets/marks/argo-glyph-provisional.svg` is provisional until the Brand
-Book adds Argo.
+**Gauss Argo** (included for operators and staff; Josh, 2026-10-22). Every claim on `/argo/` comes from Argo's own
+README and code on main (`tools/argo`): the fault classes, the security rules, the Mac agent and the Linux container.
+The private relay is the two-hop design from the "Lightbound Private Connectivity" brief, described as in development
+and not available until an outside security review and legal checks. A test keeps out grade or anonymity claims
+("space grade", "mission-grade", "untraceable", "certified", "VPN"), prices and list wording. The Argo glyph in
+`assets/marks/argo-glyph-provisional.svg` is provisional until the Brand Book adds Argo.
 
-**Selling Gauss Argo** (checked 2026-10-20):
-- **Price:** $10 a month per person (Josh, 2026-10-20), a Stripe subscription in USD from `worker/tiers.js` (`ARGO`).
-  It has its own billing record (`account.argo.billing`) and shares one Stripe customer with any Gauss plan, so
-  cancelling Argo never touches Fleet Integration.
-- **The switch:** `ARGO_SALES` in `wrangler.jsonc` vars.
-  - `off` (default): the list only; the page says "Planned: $10 a month".
-  - `invite`: people you invite from admin can start.
-  - `open`: anyone signed in can start.
-
-  The local preview runs `open`.
-- **Sales plan:** "The public website should sell a paid, bounded pilot. It should not present a generic low-price
-  SaaS trial" (Gauss Aurora `docs/SALES_FEATURE_LIST_AND_ONBOARDING.md`, Positioning). So Gauss Argo is sold on its
-  own page and never appears in the Gauss page, packages or pilot flow (a test checks). Proposed line for the sales
-  plan, for Josh to approve: *"Gauss Argo (device agent) is a separate self-serve subscription at $10 a month. It is
-  not a trial of Gauss Aurora and is not shown in the Gauss Aurora packages or pilot flow."*
-- **Before switching to `invite`:**
-  1. A customer build.
-     - A signed, notarised Mac app (needs an Apple Developer account, which costs money) and a published Linux image.
-     - Customer settings: today Argo is set up for Lightbound, with the MY/SG exit-node list, Claude Code checks and
-       tailnet-only Gauss enrolment.
-     - Install, update and uninstall steps.
-     - The install-link email the workspace promises after someone subscribes.
-  2. A terms-of-service URL in the Stripe Dashboard: Checkout asks every subscriber to accept the terms. Also a
-     refund policy and a privacy-notice section for device data.
-  3. Tax. EU consumers: a non-EU seller owes VAT from the first sale, through the non-Union One Stop Shop, with no
-     threshold (European Commission, vat-one-stop-shop.ec.europa.eu). UK: depends on Lightbound's VAT registration.
-     Decide on Stripe Tax or registration with the accountant (both cost money). The details are UNVERIFIED.
-  4. Cancellation. UK consumers have 14 days to cancel digital content, unless they expressly agree to start straight
-     away and acknowledge losing that right (Consumer Contracts Regulations 2013, legislation.gov.uk/uksi/2013/3134).
-     Counsel should word this.
-  5. One full run in Stripe test mode: subscribe, renew, fail, cancel.
+- **Who gets it:** operators (an account with a Gauss plan whose billing is unlocked: `isOperator` in
+  `worker/tiers.js`) and staff (`STAFF_EMAILS`, plus admins). Nothing extra to pay; there is no Argo price, checkout,
+  Stripe product or list any more. Old `/argo/apply/` links redirect to `/argo/` (`public/_redirects`).
+- **The flow:** the workspace shows an "Included" card with **Request setup**. That records `account.argo.requestedAt`
+  once. Admin shows "Gauss Argo setup requested by N"; email each one their install link and steps, then press **Mark
+  Argo setup sent** (`sentAt`). The card then says "Setup sent".
+- **Before the first operator asks:** a customer build (a signed, notarised Mac app needs an Apple Developer account,
+  which costs money; a published Linux image), customer settings (today Argo is set up for Lightbound: the MY/SG
+  exit-node list, Claude Code checks and tailnet-only Gauss enrolment), install, update and uninstall steps, and the
+  install-link email itself.
+- **Sales plan:** Argo is part of the Gauss plans, never a low-price SaaS on the site. Proposed line for the sales plan,
+  for Josh to approve: *"Gauss Argo (device agent) is included with paid Gauss plans and for the Lightbound team. It is
+  not sold separately."*
 - **The private relay is separate.** Encryption plus anonymity needs export-control and sanctions advice before any
   launch (see the Private Connectivity brief).
 
@@ -177,7 +157,10 @@ Book adds Argo.
   - set the staff price;
   - add academic terms of use (non-commercial, students re-confirm each year) to the terms of service;
   - check the lab pack with a lecturer;
-  - the same tax and cancellation points as Gauss Argo (above) apply to the staff plan;
+  - tax: EU consumers owe VAT from the first sale through the non-Union One Stop Shop, with no threshold
+    (vat-one-stop-shop.ec.europa.eu); decide Stripe Tax or registration with the accountant (UNVERIFIED);
+  - cancellation: UK consumers have 14 days to cancel digital content unless they agree to start straight away
+    (Consumer Contracts Regulations 2013); counsel should word this;
   - run the department invoice once in Stripe test mode.
 
 **Constellation events and workshops** (2026-10-20):
@@ -208,15 +191,15 @@ Book adds Argo.
   - "Not satisfied" refunds within 30 days of a payment are given from the Stripe Dashboard: the payment, then Refund.
   - This is more generous than the 14-day cancellation right for digital services, so no waiver wording is needed at
     Checkout (check with counsel).
-- **Stripe settings:** Checkout asks every Argo or education subscriber to accept the terms, so put
+- **Stripe settings:** Checkout asks every education subscriber to accept the terms, so put
   `https://lightbound.uk/terms/` in Stripe's public business details. Checkout fails until that's set.
 - **UK VAT:**
   - Lightbound must register once UK taxable turnover passes £90,000 in 12 months (gov.uk, VAT Notice 700/1). Three
     Gauss pilots at £20k–£40k would do it.
   - The standard rate is 20% (gov.uk/vat-rates).
   - Prices shown to UK consumers should include VAT once registered (UNVERIFIED: check with the accountant).
-  - Self-serve plans are UK-only for now: a UK seller owes EU VAT from the first sale to an EU consumer (see "Selling
-    Gauss Argo").
+  - Self-serve plans are UK-only for now: a UK seller owes EU VAT from the first sale to an EU consumer (see Gauss
+    for Education, "Before `EDU_SALES=open`").
   - Enforcing "UK only" at checkout is still to do (a Stripe Radar rule, or asking for the country before checkout).
 - **`USER_CAP`** (default 50, Zero Trust's free sign-in seats):
   - Once there are that many accounts, new self-serve sign-ups get "We're full for now" and are pointed to the list.
@@ -240,8 +223,7 @@ Stripe UK pricing; exchange rates and the Apple fee are UNVERIFIED):
   2% for currency conversion.
 - **Fixed costs:**
   - Workers Paid: $5 a month.
-  - A signed Mac build of Argo needs an Apple Developer account (UNVERIFIED: about $99 a year).
-  - Two subscribers cover both.
+  - A signed Mac build of Argo (included for operators) needs an Apple Developer account (UNVERIFIED: about $99 a year).
 - **Past 50 users, seats dominate:** Zero Trust Standard is about $7 per user per month (community-reported,
   UNVERIFIED), and every seat becomes billable. At £8–10 a month the margin would vanish, so keep the cap at 50, or
   price at £15 or more per user before lifting it.
@@ -292,7 +274,7 @@ nothing is sent automatically.
 **Before going live, in dashboards (security review, 2026-10-21; the figures below are UNVERIFIED, from memory):**
 1. **Access seats.** "Include: Everyone" lets anyone sign in, and every sign-in may take a Zero Trust seat; the free
    plan's seat cap is UNVERIFIED (50 from memory). Limit the policy (known customers, members, university domains),
-   turn on seat expiry, or plan for paid seats before `ARGO_SALES`/`EDU_SALES` go `open`.
+   turn on seat expiry, or plan for paid seats before `EDU_SALES` goes `open`.
 2. **Rate limits at the edge.** Add a Cloudflare rate-limiting rule for `POST /api/apply` and `POST /app/*`. The
    KV-based limit can't stop a flood spread across many addresses.
 3. **KV quotas.** The free plan's daily KV write and list limits (UNVERIFIED: about 1,000 each) can be used up by a

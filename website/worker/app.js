@@ -12,10 +12,10 @@ import { esc, renderEventIcs, renderGaussDoor, supportLink } from "./render.js";
 import { deleteCall, getCall, listCalls, renderCalls, renderCallsAdmin, rsvp, saveCall } from "./calls.js";
 import { isZone, zonedToUtc } from "./timezones.js";
 import { APP_CSP } from "./headers.js";
-import { createArgoCheckout, createCheckout, createEduCheckout, createEduInvoice, createInvoice, createPortal, customerOf, eduInvoiceable, invoiceable, payable } from "./stripe.js";
+import { createCheckout, createEduCheckout, createEduInvoice, createInvoice, createPortal, customerOf, eduInvoiceable, invoiceable, payable } from "./stripe.js";
 import { renderClassroom } from "./classroom.js";
 import { cleanTags, renderOpportunities } from "./opportunities.js";
-import { ARGO, BILLING, EDU, FEATURES, INVOICE_DAYS, PILOT_STEPS, TIERS, argoCanStart, argoPrice, billingStatus, eduEligible, eduMode, eduStaffLabel, eduStaffPrice, gbp, isAcademicEmail, priceLabel, quoteInRange, tierById, unlocked } from "./tiers.js";
+import { ARGO, BILLING, EDU, FEATURES, INVOICE_DAYS, PILOT_STEPS, TIERS, billingStatus, isOperator, eduEligible, eduMode, eduStaffLabel, eduStaffPrice, gbp, isAcademicEmail, priceLabel, quoteInRange, tierById, unlocked } from "./tiers.js";
 
 export const APP_HEADERS = { "cache-control": "private, no-store", "x-robots-tag": "noindex", "Content-Security-Policy": APP_CSP };
 const day = (iso) => (iso ? new Date(iso).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" }) : "");
@@ -53,21 +53,18 @@ function billingCard(account, tier) {
   return `<article class="tile billing"><h2 class="label">Billing</h2><p class="big">${esc(quote)}</p><p class="t">${esc(BILLING[status] ?? status)}</p>${body}</article>`;
 }
 
-/** Gauss Argo in the workspace: the list, a start button once ARGO_SALES allows it, then its own billing state. */
-export function argoCard(env, account) {
-  const a = account?.argo;
-  const can = argoCanStart(env, account);
-  if (!a && !can) return "";
-  const status = a?.billing?.status ?? "due";
-  const portal = customerOf(account) ? postButton("/app/billing", "Manage billing", "btn ghost") : "";
-  let body;
-  if (status === "active") body = `<p class="m">Renews monthly. We'll email your install link and setup steps.</p><p class="m">${LEAVE}</p>${portal}`;
-  else if (status === "past_due") body = `<p class="m warn">Your last payment failed. Please update your payment details.</p>${portal}`;
-  else if (can) body = `<p class="m">${status === "canceled" ? "Cancelled. You can start again any time." : "Connectivity that heals itself, on your Mac or Linux machines."}</p>` +
-    `<div class="pay">${postButton("/app/argo/checkout", status === "canceled" ? "Restart Gauss Argo" : "Start Gauss Argo")}</div><p class="m">${AGREE}</p>`;
-  else body = `<p class="m">You're on the early-access list. We'll email you when it opens.</p>`;
-  const state = a?.billing ? BILLING[status] ?? status : can ? "Ready to start" : "Early access";
-  return `<article class="tile billing"><h2 class="label">${esc(ARGO.name)}</h2><p class="big">${esc(argoPrice)}</p><p class="t">${esc(state)}</p>${body}<p class="m"><a href="/argo/">About ${esc(ARGO.name)}</a></p></article>`;
+/** Gauss Argo, included for operators (a paid, active Gauss plan) and staff: what it does, then a setup request we answer by email. */
+export function argoCard(account, { staff = false, now = Date.now() } = {}) {
+  if (!staff && !isOperator(account, now)) return "";
+  const a = account?.argo ?? {};
+  const state = a.sentAt ? "Setup sent" : a.requestedAt ? "Setup requested" : "Ready to set up";
+  const body = a.sentAt ? `<p class="m">We emailed your install link and setup steps on ${esc(day(a.sentAt))}. Need them again? <a href="mailto:jzwnathan@lightbound.uk?subject=Gauss%20Argo%20setup">Email us</a>.</p>`
+    : a.requestedAt ? `<p class="m">Requested on ${esc(day(a.requestedAt))}. We'll email your install link and setup steps.</p>`
+    : `<p class="m">Finds and fixes Wi-Fi sign-in pages, DNS, proxy and blocked-port faults on your Mac or Linux machines, and tells you what it changed.</p>` +
+      `<div class="pay">${postButton("/app/argo/setup", "Request setup")}</div>`;
+  return `<article class="tile"><h2 class="label">${esc(ARGO.name)}</h2><p class="big">Included</p><p class="t">${esc(state)}</p>` +
+    `<p class="m">${staff && !isOperator(account, now) ? "For the Lightbound team." : "Included with your Gauss plan: nothing extra to pay."}</p>${body}` +
+    `<p class="m"><a href="/argo/">How ${esc(ARGO.name)} works</a></p></article>`;
 }
 
 const YEAR_MS = 365 * 86_400_000;
@@ -141,10 +138,9 @@ export function renderWorkspace({ email, account, admin, weather, consoleUrl, su
     success: confirmed ? "Payment received. Thank you." : "Thank you. We're confirming your payment; refresh this page in a minute.",
     cancelled: "Checkout cancelled. Nothing was charged.",
     invoice: `Invoice sent to ${email}.`,
-    argo: `Thank you. ${ARGO.name} is starting; refresh this page in a minute if it doesn't show as active.`,
+    argo: `Thanks. We'll email your ${ARGO.name} install link and setup steps.`,
     "edu-started": `Thank you. Your ${EDU.name} staff plan is starting; refresh this page in a minute if it doesn't show as active.`,
     "edu-student": `Welcome. Your free student year of ${EDU.name} has started: open the classroom below.`,
-    "full-argo": "We're full for now. Join the Gauss Argo list and we'll email you when a place opens.",
     "full-edu": "We're full for now. Ask to join Gauss for Education and we'll email you when a place opens.",
   }[notice];
   const bannerHtml = banner ? `<p class="banner" role="status">${esc(banner)}</p>` : "";
@@ -204,11 +200,11 @@ export function renderAdmin({ applications, accounts, details, invited, error, c
     const decide = a.status === "new"
       ? `<form method="post" action="/app/admin/decide" class="inline"><input type="hidden" name="id" value="${esc(a.id)}">` +
         (a.kind === "gauss" ? `${tierSelect(planId)} ${quoteInput(0)} ${invoiceCheck(false, `inv-${esc(a.id)}`)}` : a.kind === "constellation" ? `<input type="hidden" name="community" value="member">` : a.kind === "edu" ? `${quoteInput(0)} ` : "") +
-        `<button class="btn" name="decision" value="approve">${{ gauss: "Approve with quote", constellation: "Invite", argo: "Invite to early access", edu: "Approve for self-serve", workshop: "Mark contacted" }[a.kind] ?? "Approve"}</button> ` +
+        `<button class="btn" name="decision" value="approve">${{ gauss: "Approve with quote", constellation: "Invite", argo: "Mark handled", edu: "Approve for self-serve", workshop: "Mark contacted" }[a.kind] ?? "Approve"}</button> ` +
         (a.kind === "edu" ? `<button class="btn ghost" name="decision" value="department">Department licence at this yearly quote</button> ` : "") +
         `<button class="btn ghost" name="decision" value="decline">Decline</button></form>`
       : `<span class="tag${a.status === "approved" ? " go" : ""}">${esc(a.status)}</span>`;
-    const kicker = { gauss: `GAUSS · ${tierById(a.plan)?.name ?? a.plan ?? ""}`, constellation: "CONSTELLATION · INVITATION REQUEST", argo: "ARGO · EARLY ACCESS AND RELAY WAITLIST", edu: `EDUCATION · ${d.eduRole ?? ""}`, workshop: `WORKSHOP · ${d.topic ?? ""}` }[a.kind] ?? a.kind;
+    const kicker = { gauss: `GAUSS · ${tierById(a.plan)?.name ?? a.plan ?? ""}`, constellation: "CONSTELLATION · INVITATION REQUEST", argo: "ARGO · EARLY-ACCESS LIST (CLOSED)", edu: `EDUCATION · ${d.eduRole ?? ""}`, workshop: `WORKSHOP · ${d.topic ?? ""}` }[a.kind] ?? a.kind;
     return `<li class="app-card"><div class="app-head"><span class="label">${esc(kicker)}</span><time datetime="${esc(a.at)}">${esc(day(a.at))}</time></div>` +
       `<h3>${esc(a.name)} <span class="muted">${esc(a.email)}</span></h3>${facts ? `<p class="m">${esc(facts)}</p>` : ""}` +
       (d.message || d.note ? `<p class="msg">${esc(d.message || d.note)}</p>` : "") + decide + `</li>`;
@@ -219,7 +215,7 @@ export function renderAdmin({ applications, accounts, details, invited, error, c
       `<input type="hidden" name="email" value="${esc(u.email)}">${tierSelect(u.tier)} ${quoteInput(u.quote)} ${billingSelect()} ${invoiceCheck(u.invoice, `acct-inv-${i}`)} ${pilotSelect(u.pilot)} ${communitySelect(u.community)} ` +
       `<button class="btn ghost" name="action" value="save">Save</button> <button class="btn ghost" name="action" value="delete">Remove</button></form>` +
       `${status ? `<span class="tag${status === "overdue" || status === "past_due" ? " warn" : ""}">${esc(BILLING[status] ?? status)}</span>` : ""}` +
-      `${u.argo ? ` <span class="tag">Argo: ${esc(u.argo === "invited" ? "invited" : BILLING[u.argo] ?? u.argo)}</span>` : ""}` +
+      `${u.argo === "requested" ? `<form method="post" action="/app/admin/argo" class="inline"><input type="hidden" name="email" value="${esc(u.email)}"> <span class="tag warn">Argo: setup requested</span> <button class="btn ghost">Mark Argo setup sent</button></form>` : u.argo === "sent" ? ` <span class="tag">Argo: setup sent</span>` : ""}` +
       `${u.edu ? ` <span class="tag">Education: ${esc(u.edu)}</span>` : ""}</td></tr>`;
   }).join("");
   const banner = error === "quote" || error === "edu"
@@ -231,6 +227,7 @@ export function renderAdmin({ applications, accounts, details, invited, error, c
     `<h2>Invite to Constellation</h2><p class="muted">Free and invite-only. This creates the membership; you send the invitation yourself.</p>` +
     `<form method="post" action="/app/admin/invite" class="inline add"><label class="sr" for="inv-email">Email</label><input id="inv-email" name="email" type="email" placeholder="email@example.com" required> ` +
     `<label class="sr" for="inv-name">Name</label><input id="inv-name" name="name" placeholder="Name" maxlength="100"> <button class="btn">Invite</button></form>` +
+    (accounts.some((u) => u.argo === "requested") ? `<p class="banner" role="status">Gauss Argo setup requested by ${accounts.filter((u) => u.argo === "requested").length}: email each their install link, then press "Mark Argo setup sent" below.</p>` : "") +
     `<h2>Accounts (${accounts.length} of ${cap})</h2><div class="tw"><table class="table"><thead><tr><th>Email</th><th>Plan, quote (£), billing, invoice, pilot, membership</th></tr></thead><tbody>${rows}</tbody></table></div>` +
     `<form method="post" action="/app/admin/account" class="inline add"><label class="sr" for="new-email">Email</label><input id="new-email" name="email" type="email" placeholder="email@company.com" required> ` +
     `${tierSelect("")} ${quoteInput(0)} ${billingSelect()} ${invoiceCheck(false, "new-inv")} ${pilotSelect("")} ${communitySelect("")} <button class="btn" name="action" value="save">Add account</button></form>` +
@@ -354,20 +351,13 @@ export async function handleApp(request, env, url, { respond, fillPage, fetchImp
       }
       return fail(404, "Not found");
     }
-    if (url.pathname === "/app/argo/checkout") {
-      const existing = await getAccount(env, id.email);
-      if (!existing && (await atCap(env))) return back("/app/?full=argo");
-      const account = existing ?? { email: id.email };
-      if (!argoCanStart(env, account) || ["active", "past_due"].includes(account.argo?.billing?.status)) return back("/app/");
-      try {
-        const open = reusable(account.argo?.checkout, ARGO.amount);
-        const session = open ?? (await createArgoCheckout(env, account, url.origin, fetchImpl));
-        if (!session?.url) return back("/app/");
-        if (!open) await putAccount(env, { ...account, argo: { ...(account.argo ?? {}), checkout: keep(session, ARGO.amount) } }, id.email);
-        return new Response(null, { status: 303, headers: { location: session.url, ...APP_HEADERS } });
-      } catch {
-        return billingDown();
-      }
+    if (url.pathname === "/app/argo/setup") {
+      // Included for operators and staff; a request we answer by email (nothing is paid or installed from here).
+      const account = await getAccount(env, id.email);
+      const staff = isStaff(env, id.email);
+      if (!staff && !isOperator(account)) return fail(403, "Forbidden");
+      if (!account?.argo?.requestedAt) await putAccount(env, { ...(account ?? { email: id.email }), argo: { ...(account?.argo ?? {}), requestedAt: new Date().toISOString() } }, id.email);
+      return back("/app/?argo=requested");
     }
     const isMember = admin || (await getAccount(env, id.email))?.community === "member";
     if (url.pathname === "/app/prefs") {
@@ -425,10 +415,7 @@ export async function handleApp(request, env, url, { respond, fillPage, fetchImp
         const edu = { ...(prev.edu ?? {}), approvedAt: new Date().toISOString(),
           ...(department ? { plan: "department", quote: Math.round(pounds * 100), institution: app.institution ?? null, seats: app.seats ?? null, billing: { status: "due" } } : {}) };
         await putAccount(env, { ...prev, name: prev.name ?? app.name, org: prev.org ?? app.institution ?? null, edu }, id.email);
-      } else if (approve && app.kind === "argo") { // early access: they can start once ARGO_SALES is "invite" or "open"; no Gauss plan or membership
-        const prev = (await getAccount(env, app.email)) ?? { email: app.email };
-        await putAccount(env, { ...prev, name: prev.name ?? app.name, argo: { ...(prev.argo ?? {}), invitedAt: new Date().toISOString() } }, id.email);
-      } else if (approve && app.kind !== "workshop") { // a workshop request is a lead: "Mark contacted" changes no account
+      } else if (approve && !["workshop", "argo"].includes(app.kind)) { // workshop requests and old Argo list entries are leads: no account change
         const prev = (await getAccount(env, app.email)) ?? { email: app.email };
         const base = { ...prev, name: prev.name ?? app.name, org: prev.org ?? app.org ?? null };
         await putAccount(env, app.kind === "gauss"
@@ -445,6 +432,11 @@ export async function handleApp(request, env, url, { respond, fillPage, fetchImp
       const name = String(form.get("name") ?? "").trim().slice(0, 100) || prev.name || null;
       await putAccount(env, { ...prev, name, community: "member", invitedAt: new Date().toISOString() }, id.email);
       return back(`/app/admin/?invited=${await flash(env, email)}`);
+    }
+    if (url.pathname === "/app/admin/argo") {
+      const account = await getAccount(env, String(form.get("email") ?? ""));
+      if (account?.argo?.requestedAt && !account.argo.sentAt) await putAccount(env, { ...account, argo: { ...account.argo, sentAt: new Date().toISOString() } }, id.email);
+      return back("/app/admin/");
     }
     if (url.pathname === "/app/admin/account") {
       const email = String(form.get("email") ?? "").trim().toLowerCase();
@@ -500,14 +492,14 @@ export async function handleApp(request, env, url, { respond, fillPage, fetchImp
     const [account, weather, latest] = await Promise.all([getAccount(env, id.email), readFeed(env, "weather"), latestApplication(env, id.email)]);
     const mine = latest ? [latest] : [];
     const eduNotice = { started: "edu-started", student: "edu-student" }[url.searchParams.get("edu")];
-    const full = { argo: "full-argo", edu: "full-edu" }[url.searchParams.get("full")];
-    const notice = full ?? eduNotice ?? (url.searchParams.get("argo") === "started" ? "argo" : url.searchParams.get("invoice") === "sent" ? "invoice" : ["success", "cancelled"].includes(url.searchParams.get("checkout")) ? url.searchParams.get("checkout") : "");
+    const full = { edu: "full-edu" }[url.searchParams.get("full")];
+    const notice = full ?? eduNotice ?? (url.searchParams.get("argo") === "requested" ? "argo" : url.searchParams.get("invoice") === "sent" ? "invoice" : ["success", "cancelled"].includes(url.searchParams.get("checkout")) ? url.searchParams.get("checkout") : "");
     const member = admin || account?.community === "member";
     const calls = member ? await listCalls(env) : [];
     const callNotice = url.searchParams.get("call") ?? "";
     // Members' opportunities: four cached feeds, plus their own application only while no interests are saved.
     const opps = member ? await memberOpportunities(env, account, latest) : "";
-    return fillPage("/app/", { workspace: () => renderWorkspace({ email: id.email, account, admin, weather, consoleUrl: env.GAUSS_APP_URL || "", supportUrl: env.SUPPORT_URL || "", argo: argoCard(env, account ?? { email: id.email }), edu: eduCard(env, account ?? { email: id.email }, id.email, url.searchParams.get("edu") === "start"), staff: isStaff(env, id.email) ? staffCard(env.OPS_URL) : "", applications: mine, notice }) +
+    return fillPage("/app/", { workspace: () => renderWorkspace({ email: id.email, account, admin, weather, consoleUrl: env.GAUSS_APP_URL || "", supportUrl: env.SUPPORT_URL || "", argo: argoCard(account, { staff: isStaff(env, id.email) }), edu: eduCard(env, account ?? { email: id.email }, id.email, url.searchParams.get("edu") === "start"), staff: isStaff(env, id.email) ? staffCard(env.OPS_URL) : "", applications: mine, notice }) +
       (member ? renderCalls({ calls, email: id.email, tz: isZone(account?.tz) ? account.tz : "UTC", notice: callNotice }) : "") + opps }, 200, APP_HEADERS);
   }
   return fail(404, "Not found");

@@ -102,13 +102,9 @@ export const BILLING = Object.freeze({
 // due date; cancellation or an overdue invoice locks the workspace.
 export const unlocked = (status) => ["paid", "active", "past_due", "invoice_open", "invoiced"].includes(status);
 
-// Gauss Argo: the self-serve device agent (tools/argo), at one fixed monthly price. It is sold on its own and never
-// shown with the Gauss packages above: the sales plan says the public site must not present Gauss as a low-price SaaS trial.
-export const ARGO = Object.freeze({ id: "argo", name: "Gauss Argo", amount: 1000, currency: "usd", interval: "month" });
-export const argoPrice = `$${ARGO.amount / 100} a month`;
-/** ARGO_SALES (wrangler.jsonc vars): "off" = the list only (default); "invite" = invited accounts can start; "open" = anyone signed in. */
-export const argoMode = (env) => (["off", "invite", "open"].includes(env?.ARGO_SALES) ? env.ARGO_SALES : "off");
-export const argoCanStart = (env, account) => argoMode(env) === "open" || (argoMode(env) === "invite" && !!account?.argo?.invitedAt);
+// Gauss Argo: the device agent (tools/argo). Included for operators and staff, never sold on its own and never priced
+// on the public site (Josh, 2026-10-21; the sales plan rules out a low-price SaaS on the site).
+export const ARGO = Object.freeze({ id: "argo", name: "Gauss Argo" });
 
 // Gauss for Education (prototype; Josh, 2026-10-20). Students: free for a year at a time, with a university email.
 // Staff and research groups: monthly by card at EDU_STAFF_PRICE (US cents, wrangler.jsonc vars); empty means the price is
@@ -128,6 +124,9 @@ export const eduStaffLabel = (env) => {
  *  Only .edu, .edu.xx and .ac.xx count: a bare .ac (Ascension Island) is open to anyone, so it doesn't. */
 export const isAcademicEmail = (email) => /@([a-z0-9-]+\.)+(edu|(?:ac|edu)\.[a-z]{2})$/i.test(String(email ?? ""));
 export const eduEligible = (account, email) => isAcademicEmail(email) || !!account?.edu?.approvedAt;
+
+/** An operator: an account with a Gauss plan whose billing is unlocked (paid, active, retrying, invoice open, or milestone-billed). */
+export const isOperator = (account, now = Date.now()) => !!tierById(account?.tier) && unlocked(billingStatus(account, now));
 
 /** Days a customer has to pay an invoice they asked for. */
 export const INVOICE_DAYS = 30;

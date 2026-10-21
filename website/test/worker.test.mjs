@@ -547,66 +547,46 @@ test("admin: only ADMIN_EMAILS; approval needs a quote inside the published rang
   assert.equal((await listApplications(env))[0].status, "approved");
 });
 
-test("argo: the early-access list is stored like other applications; an invitation adds Argo only", async () => {
+test("argo: included for operators and staff; a setup request we answer by email, never a checkout", async () => {
   const { env, access } = await appEnv();
-  const res = await send(env, post("/api/apply", { kind: "argo", name: "Ops Example", email: "ops@example.test", interest: "Both", platform: "Linux", devices: "6–25", note: "Hotel Wi-Fi blocks our ground-station VPN.", consent: "yes" }));
-  assert.equal(res.headers.get("location"), "/argo/apply/?sent=1");
-  const page = await (await send(env, new Request("https://lightbound.uk/argo/apply/?sent=1"))).text();
-  assert.match(page, /You're on the Gauss Argo list\./);
-  const bad = await send(env, post("/api/apply", { kind: "argo", name: "Ops", email: "ops@example.test", interest: "Free VPN", platform: "macOS", devices: "1", consent: "yes" }, { "cf-connecting-ip": "203.0.113.10" }));
-  assert.equal(bad.status, 422, "only the listed options");
-  const admin = await (await send(env, await as(access, "boss@example.test", "/app/admin/"))).text();
-  assert.match(admin, /ARGO · EARLY ACCESS AND RELAY WAITLIST/);
-  assert.match(admin, /Both · Linux · 6–25 devices/);
-  assert.match(admin, /Invite to early access/);
-  const [app] = await listApplications(env);
-  await send(env, await formPost(access, "boss@example.test", "/app/admin/decide", { id: app.id, decision: "approve" }));
-  assert.equal((await listApplications(env))[0].status, "approved");
-  const acct = await getAccount(env, "ops@example.test");
-  assert.ok(acct.argo.invitedAt);
-  assert.deepEqual([acct.tier ?? null, acct.community ?? null], [null, null], "no Gauss plan or membership");
-  const work = await (await send(env, await as(access, "ops@example.test", "/app/"))).text();
-  assert.match(work, /You're on the early-access list/, "ARGO_SALES off: no start button");
-  assert.doesNotMatch(work, /Start Gauss Argo/);
-});
-
-test("argo sales: off, invite, open; $10 a month subscription with its own billing; never touches a Gauss plan", async () => {
-  const { env, access } = await appEnv();
-  const argoPage = async (e) => (await send(e, new Request("https://lightbound.uk/argo/"))).text();
-  assert.match(await argoPage(env), /href="\/argo\/apply\/">Request early access/);
-  assert.match(await argoPage(env), /Planned: <strong>\$10 a month/);
-  const stripe = stripeMock();
-  assert.equal((await withFetch(stripe, async () => send(env, await formPost(access, "new@example.test", "/app/argo/checkout")))).headers.get("location"), "/app/", "off: no checkout");
-  const invite = { ...env, ARGO_SALES: "invite" };
-  await putAccount(invite, { email: "fleet@example.test", tier: "fleet_integration", quote: 7_500_000, billing: { status: "active", customer: "cus_fleet" }, argo: { invitedAt: "2026-10-20T00:00:00.000Z" } }, "test");
-  assert.equal((await withFetch(stripe, async () => send(invite, await formPost(access, "stranger@example.test", "/app/argo/checkout")))).headers.get("location"), "/app/", "invite: only invited accounts");
-  assert.match(await (await send(invite, await as(access, "fleet@example.test", "/app/"))).text(), /Start Gauss Argo/);
-  const go = await withFetch(stripe, async () => send(invite, await formPost(access, "fleet@example.test", "/app/argo/checkout")));
-  assert.equal(go.headers.get("location"), "https://checkout.stripe.com/c/pay/cs_test_1");
-  const body = stripe.calls.at(-1).body;
-  assert.deepEqual([body.get("mode"), body.get("line_items[0][price_data][currency]"), body.get("line_items[0][price_data][unit_amount]"), body.get("line_items[0][price_data][recurring][interval]")],
-    ["subscription", "usd", "1000", "month"]);
-  assert.deepEqual([body.get("metadata[product]"), body.get("subscription_data[metadata][product]"), body.get("customer"), body.get("consent_collection[terms_of_service]")], ["argo", "argo", "cus_fleet", "required"],
-    "same Stripe customer as the Gauss plan; terms must be accepted");
-  assert.equal(body.get("success_url"), "https://lightbound.uk/app/?argo=started");
-  // Webhooks: Argo's own billing; the Gauss plan stays as it was.
-  const t0 = Math.floor(Date.now() / 1000);
-  const meta = { email: "fleet@example.test", product: "argo" };
-  assert.equal(await applyEvent(invite, { type: "checkout.session.completed", created: t0, data: { object: { id: "cs_test_1", mode: "subscription", customer: "cus_fleet", subscription: "sub_argo", metadata: meta } } }), "argo checkout.session.completed -> active");
-  let acct = await getAccount(invite, "fleet@example.test");
-  assert.deepEqual([acct.argo.billing.status, acct.argo.billing.subscription, acct.billing.status, acct.tier], ["active", "sub_argo", "active", "fleet_integration"]);
-  assert.match(await (await send(invite, await as(access, "fleet@example.test", "/app/?argo=started"))).text(), /Gauss Argo is starting/);
-  await applyEvent(invite, { type: "customer.subscription.deleted", created: t0 + 5, data: { object: { id: "sub_argo", status: "canceled", customer: "cus_fleet", metadata: meta } } });
-  acct = await getAccount(invite, "fleet@example.test");
-  assert.deepEqual([acct.argo.billing.status, acct.billing.status], ["canceled", "active"], "cancelling Argo leaves Fleet Integration active");
-  assert.match(await (await send(invite, await as(access, "boss@example.test", "/app/admin/"))).text(), /Argo: Cancelled/);
-  // Open: anyone signed in can start; the account is created first so the webhook can find it.
-  const open = { ...env, ARGO_SALES: "open" };
-  assert.match(await argoPage(open), /href="\/app\/\?argo=start">Start for \$10 a month/);
-  const r = await withFetch(stripe, async () => send(open, await formPost(access, "solo@example.test", "/app/argo/checkout")));
-  assert.equal(r.status, 303);
-  assert.equal((await getAccount(open, "solo@example.test")).email, "solo@example.test");
-  assert.equal(stripe.calls.at(-1).body.get("customer_email"), "solo@example.test");
+  const e = { ...env, STAFF_EMAILS: "crew@example.test" };
+  const page = async (who) => (await send(e, await as(access, who, "/app/"))).text();
+  await putAccount(e, { email: "member@example.test", community: "member" }, "test");
+  await putAccount(e, { email: "due@example.test", tier: "pilot", quote: 2_800_000, billing: { status: "due" } }, "test");
+  for (const who of ["visitor@example.test", "member@example.test", "due@example.test"]) assert.doesNotMatch(await page(who), /Gauss Argo<\/h2>/, `${who}: not an operator`);
+  await putAccount(e, { email: "fleet@example.test", tier: "fleet_integration", quote: 7_500_000, billing: { status: "active" } }, "test");
+  const op = await page("fleet@example.test");
+  assert.match(op, /<h2 class="label">Gauss Argo<\/h2><p class="big">Included<\/p><p class="t">Ready to set up<\/p><p class="m">Included with your Gauss plan: nothing extra to pay\.<\/p>/);
+  assert.doesNotMatch(op, /\$10|a month<|Start Gauss Argo/, "no price, no checkout");
+  assert.match(await page("crew@example.test"), /<p class="m">For the Lightbound team\.<\/p>/, "staff without a plan");
+  // A request is recorded once; nothing is paid or installed from here.
+  for (const who of ["due@example.test", "visitor@example.test", "member@example.test"]) assert.equal((await send(e, await formPost(access, who, "/app/argo/setup"))).status, 403, who);
+  assert.equal(await getAccount(e, "visitor@example.test"), null);
+  assert.equal((await send(e, await formPost(access, "fleet@example.test", "/app/argo/setup"))).headers.get("location"), "/app/?argo=requested");
+  const at = (await getAccount(e, "fleet@example.test")).argo.requestedAt;
+  await send(e, await formPost(access, "fleet@example.test", "/app/argo/setup"));
+  assert.equal((await getAccount(e, "fleet@example.test")).argo.requestedAt, at, "asked once");
+  assert.match(await (await send(e, await as(access, "fleet@example.test", "/app/?argo=requested"))).text(), /We(&#39;|')ll email your Gauss Argo install link and setup steps\./);
+  assert.match(await page("fleet@example.test"), /<p class="t">Setup requested<\/p>/);
+  // Admins see who's waiting and mark the install link sent.
+  const admin = await (await send(e, await as(access, "boss@example.test", "/app/admin/"))).text();
+  assert.match(admin, /Gauss Argo setup requested by 1:/);
+  assert.match(admin, /Argo: setup requested<\/span> <button class="btn ghost">Mark Argo setup sent<\/button>/);
+  assert.equal((await send(e, await formPost(access, "fleet@example.test", "/app/admin/argo", { email: "fleet@example.test" }))).status, 403, "admins only");
+  await send(e, await formPost(access, "boss@example.test", "/app/admin/argo", { email: "fleet@example.test" }));
+  assert.ok((await getAccount(e, "fleet@example.test")).argo.sentAt);
+  assert.match(await page("fleet@example.test"), /<p class="t">Setup sent<\/p>/);
+  // The old list, checkout and product are gone.
+  assert.equal((await send(e, post("/api/apply", { kind: "argo", name: "Ops", email: "ops@example.test" }))).status, 400);
+  assert.notEqual((await send(e, await formPost(access, "fleet@example.test", "/app/argo/checkout"))).status, 303);
+  const before = (await getAccount(e, "fleet@example.test")).billing;
+  assert.equal(await applyEvent(e, { type: "customer.subscription.deleted", created: 2_000_000_000, data: { object: { id: "sub_x", status: "canceled", metadata: { email: "fleet@example.test", product: "argo" } } } }), "ignored: not a product we sell");
+  assert.deepEqual((await getAccount(e, "fleet@example.test")).billing, before, "an old Argo event never touches the Gauss plan");
+  // Old list entries are leads: "Mark handled" changes no account.
+  const old = await saveApplication(e, { kind: "argo", name: "Kai", email: "kai@example.test", consent: true });
+  assert.match(await (await send(e, await as(access, "boss@example.test", "/app/admin/"))).text(), /ARGO · EARLY-ACCESS LIST \(CLOSED\)[\s\S]*Mark handled/);
+  await send(e, await formPost(access, "boss@example.test", "/app/admin/decide", { id: old.id, decision: "approve" }));
+  assert.equal(await getAccount(e, "kai@example.test"), null);
 });
 
 test("education: university emails start straight away; students free for a year; staff checkout only once priced", async () => {
@@ -753,13 +733,13 @@ test("security: an oversized upstream feed is refused, and the last good data is
 
 test("security review: checkout sessions reused, not multiplied; student year needs a university address; senders by /64; chunked uploads capped; dev keys local only", async () => {
   const { env, access } = await appEnv();
-  const open = { ...env, ARGO_SALES: "open" };
+  const open = { ...env, EDU_SALES: "open", EDU_STAFF_PRICE: "500" };
   const stripe = stripeMock();
-  const first = await withFetch(stripe, async () => send(open, await formPost(access, "solo@example.test", "/app/argo/checkout")));
-  const again = await withFetch(stripe, async () => send(open, await formPost(access, "solo@example.test", "/app/argo/checkout")));
+  const first = await withFetch(stripe, async () => send(open, await formPost(access, "solo@uni.ac.uk", "/app/edu/checkout")));
+  const again = await withFetch(stripe, async () => send(open, await formPost(access, "solo@uni.ac.uk", "/app/edu/checkout")));
   assert.equal(again.headers.get("location"), first.headers.get("location"));
   assert.equal(stripe.calls.length, 1, "a second click reuses the open session");
-  assert.equal((await getAccount(open, "solo@example.test")).argo.checkout.id, "cs_test_1");
+  assert.equal((await getAccount(open, "solo@uni.ac.uk")).edu.checkout.id, "cs_test_1");
   // An approved department without a university address can't take the free student year.
   const edu = { ...env, EDU_SALES: "open" };
   await putAccount(edu, { email: "lee@physics.example.org", edu: { approvedAt: "2026-10-20T00:00:00.000Z", plan: "department", quote: 300_000, billing: { status: "due" } } }, "test");
@@ -787,19 +767,15 @@ test("security review: checkout sessions reused, not multiplied; student year ne
 
 test("user cap: new self-serve sign-ups wait once USER_CAP accounts exist; existing accounts are never blocked", async () => {
   const { env, access } = await appEnv();
-  const capped = { ...env, ARGO_SALES: "open", EDU_SALES: "open", USER_CAP: "2" };
+  const capped = { ...env, EDU_SALES: "open", USER_CAP: "2" };
   await putAccount(capped, { email: "one@example.test", community: "member" }, "test");
   await putAccount(capped, { email: "two@uni.ac.uk", community: "member" }, "test");
-  const stripe = stripeMock();
-  assert.equal((await withFetch(stripe, async () => send(capped, await formPost(access, "three@example.test", "/app/argo/checkout")))).headers.get("location"), "/app/?full=argo");
   assert.equal((await send(capped, await formPost(access, "four@uni.ac.uk", "/app/edu/student", { student: "yes" }))).headers.get("location"), "/app/?full=edu");
-  assert.equal(await getAccount(capped, "three@example.test"), null);
-  assert.match(await (await send(capped, await as(access, "three@example.test", "/app/?full=argo"))).text(), /We(&#39;|')re full for now\. Join the Gauss Argo list/);
-  const existing = await withFetch(stripe, async () => send(capped, await formPost(access, "one@example.test", "/app/argo/checkout")));
-  assert.equal(existing.headers.get("location"), "https://checkout.stripe.com/c/pay/cs_test_1", "an existing account can still start");
+  assert.equal(await getAccount(capped, "four@uni.ac.uk"), null);
+  assert.match(await (await send(capped, await as(access, "four@uni.ac.uk", "/app/?full=edu"))).text(), /We(&#39;|')re full for now\. Ask to join Gauss for Education/);
   assert.equal((await send(capped, await formPost(access, "two@uni.ac.uk", "/app/edu/student", { student: "yes" }))).headers.get("location"), "/app/?edu=student");
   assert.match(await (await send(capped, await as(access, "boss@example.test", "/app/admin/"))).text(), /Accounts \(2 of 2\)/);
-  assert.match(await (await send(capped, await as(access, "one@example.test", "/app/"))).text(), /Starting means you agree to the <a href="\/terms\/">terms<\/a>/);
+  assert.match(await (await send(capped, await as(access, "five@uni.ac.uk", "/app/"))).text(), /Starting means you agree to the <a href="\/terms\/">terms<\/a>/);
 });
 
 test("support: Constellation shows a Support link only once a Stripe Payment Link is set", async () => {

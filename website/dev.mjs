@@ -114,7 +114,6 @@ const env = {
   STRIPE_SECRET_KEY: "dev-local-placeholder",
   STRIPE_WEBHOOK_SECRET: "dev-local-webhook-placeholder",
   SUPPORT_URL: process.env.SUPPORT_URL ?? "", // e.g. SUPPORT_URL=https://buy.stripe.com/test_... npm run site:dev
-  ARGO_SALES: process.env.ARGO_SALES ?? "open", // the preview shows Gauss Argo on sale; production defaults to "off"
   EDU_SALES: process.env.EDU_SALES ?? "open", // the preview opens Gauss for Education; production defaults to "off"
   EDU_STAFF_PRICE: process.env.EDU_STAFF_PRICE ?? "", // empty = "Price TBC" (no staff checkout), as in production until Josh sets it
   // Staff and the members' programme list (both secrets in production). Offline, the programmes come from a synthetic tab.
@@ -136,7 +135,6 @@ await putAccount(env, { email: "member@example.test", name: "Grace Example", com
   await saveCall(env, { title: "Monthly members' call", start: d.toISOString(), minutes: 60, capacity: 12, link: "https://meet.example.test/constellation", notes: "Launch round-up and ASTRA VIGILIS planning." });
 }
 await saveApplication(env, { kind: "edu", name: "Dr Lee Example", email: "lee@example.test", institution: "Example University", eduRole: "Department or programme lead", course: "MSc Space Systems", seats: "21–100", note: "A space-weather module for 40 students next term.", consent: true });
-await saveApplication(env, { kind: "argo", name: "Kai Example", email: "kai@example.test", interest: "Both", platform: "macOS", devices: "2–5", note: "Hotel and airport Wi-Fi keep breaking our calls.", consent: true });
 await saveApplication(env, { kind: "constellation", name: "Ada Example", email: "ada@example.test", role: "Satellite operations engineer", link: "https://example.test/ada", message: "I run ground passes for a small LEO fleet and track debris conjunctions in my spare time.", consent: true });
 await saveApplication(env, { kind: "gauss", name: "Ops Example", email: "ops@example.test", org: "Example Space Ltd", role: "Head of mission operations", missionType: "Earth observation", stage: "Launched and operating", groundStack: "Yamcs / XTCE", dataAccess: "Historical packet archive", plan: "pilot", timeline: "This quarter", message: "We fly ONNX models on two smallsats and want to know which outputs to trust after the May storm.", consent: true });
 
