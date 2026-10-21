@@ -76,7 +76,6 @@ export function wrap(text: string, font: FontName, size: number, width: number):
       continue;
     }
     if (line) lines.push(line);
-    line = "";
     let rest = word;
     while (textWidth(rest, font, size) > width) {
       let n = rest.length - 1;
