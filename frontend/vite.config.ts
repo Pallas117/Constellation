@@ -3,15 +3,24 @@ import react from "@vitejs/plugin-react-swc";
 import path from "path";
 import { componentTagger } from "lovable-tagger";
 
+// `gauss-services.sh dev` runs a dev checkout beside the live install: it moves the
+// dev server off :8080 (GAUSS_DEV_WEB_PORT) and points /api and /ws at the dev
+// backend (GAUSS_API_TARGET), so development never reaches the live backend.
+const API_TARGET = process.env.GAUSS_API_TARGET || "http://127.0.0.1:3001";
+
 // https://vitejs.dev/config/
 export default defineConfig(({ mode }) => ({
   root: __dirname,
   publicDir: path.resolve(__dirname, "./public"),
   server: {
     host: "127.0.0.1",
-    port: 8080,
+    port: Number(process.env.GAUSS_DEV_WEB_PORT || 8080),
     strictPort: true,
     cors: false,
+    proxy: {
+      "/api": { target: API_TARGET, changeOrigin: false },
+      "/ws": { target: API_TARGET.replace(/^http/, "ws"), ws: true, changeOrigin: false },
+    },
   },
   // Always-on install (scripts/ops/gauss-services.sh): served on loopback only,
   // and shared with the tailnet through `tailscale serve`, which sends the
