@@ -61,6 +61,7 @@
     "replay:holdout": "node --import tsx scripts/replay/score-holdout.ts",
     "trust:ingest": "node --import tsx scripts/trust/ingest-log.ts",
     "trust:replay": "node --import tsx scripts/trust/replay-records.ts",
+    "trust:verify": "node --import tsx scripts/trust/verify-pack.ts",
     "tpm": "node --import tsx scripts/ops/tpm-check.ts",
     "deploy": "node --import tsx scripts/release/deploy.ts",
     "rollback": "node --import tsx scripts/release/deploy.ts --rollback",
