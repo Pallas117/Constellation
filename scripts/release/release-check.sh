@@ -45,7 +45,6 @@ BACKEND_PID=0
 
 export PROXY_PORT="${HEALTH_PORT}"
 export PROXY_HOST="${HEALTH_HOST}"
-export RBAC_SKIP_HEALTH_CHECK="true"
 
 node --import tsx backend/server.ts &
 BACKEND_PID=$!

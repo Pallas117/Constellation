@@ -23,8 +23,8 @@ Pre-release builds:
 3. Security gates:
    - `npm run security:full`
    - `npm run check:security-compliance`
-   - optional runtime RBAC check:
-     - `npm run test:rbac`
+   - RBAC is covered by `npm test` (part of `npm run audit:adherence`), in process; never run
+     role checks against the live backend, where CyberTiger auto-blocks on 401/403s.
 4. Data/backend gates:
    - Supabase migrations are applied in the target environment.
    - backend starts and `/health` responds.
