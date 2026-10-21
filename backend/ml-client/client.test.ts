@@ -175,3 +175,8 @@ test("nightly incremental count and skip-if-unchanged (python)", { skip: !hasPyt
   const result = spawnSync("python3", ["-I", "ml/tests/test_nightly.py"], { encoding: "utf8" });
   assert.equal(result.status, 0, result.stderr);
 });
+
+test("OMNI matrix cache and zero-copy windows match the old results exactly (python)", { skip: !hasPython && "python3 not found" }, () => {
+  const result = spawnSync("python3", ["-I", "ml/tests/test_omni_matrix.py"], { encoding: "utf8" });
+  assert.equal(result.status, 0, result.stderr);
+});
