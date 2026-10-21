@@ -163,12 +163,14 @@ test("ingest: every point carries its sense-checks; an inconsistent newest field
       ok.senseChecks?.map((c) => [c.id, c.status]),
       [
         ["l1-field-magnitude", "pass"],
+        // Three L1 minutes are too few to judge plasma tracking (GAU-153).
+        ["l1-plasma-tracking", "unknown"],
         ["goes-proton-spectrum", "unknown"],
         ["goes-proton-channels", "unknown"],
         ["goes-xray", "unknown"],
         ["noaa-scales", "unknown"],
       ],
-      "GOES and NOAA weren't fetched: unknown, never pass",
+      "GOES and NOAA weren't fetched, and three minutes can't show tracking: unknown, never pass",
     );
     assert.equal(ok.alerts.radioBlackout?.label, "R?");
     assert.equal(ok.noaaAlerts, null, "alerts not read: unknown, not an empty list");
