@@ -136,6 +136,9 @@
     "ml"
   ],
   "overrides": {
-    "three-mesh-bvh": "^0.8.0"
+    "three-mesh-bvh": "^0.8.0",
+    "express": {
+      "qs": "^6.16.1"
+    }
   }
 }
