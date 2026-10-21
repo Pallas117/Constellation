@@ -15,6 +15,14 @@ func TestPressureName(t *testing.T) {
 	}
 }
 
+func TestPlatformName(t *testing.T) {
+	for goos, want := range map[string]string{"darwin": "macos", "linux": "linux", "windows": "windows", "freebsd": "", "ios": ""} {
+		if got := platformName(goos); got != want {
+			t.Errorf("%s: %q, want %q", goos, got, want)
+		}
+	}
+}
+
 func TestParseSwapUsage(t *testing.T) {
 	cases := map[string]float64{
 		"total = 4096.00M  used = 2994.94M  free = 1101.06M  (encrypted)": 2.9,
