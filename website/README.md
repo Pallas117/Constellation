@@ -194,13 +194,13 @@ Book adds Argo.
   "facilitators from the Constellation community". This repo is public, so keep names out of commits too.
 
 **Terms, cancelling and VAT** (Josh, 2026-10-21):
-- **`/terms/`** is a DRAFT for legal review. It's marked so on the page and isn't in force until a lawyer has read it.
-  - Its ethical-use section follows "peaceful purposes" (Outer Space Treaty and Artemis Accords, nasa.gov/artemis-accords),
+- **`/terms/`** and `/privacy/` are DRAFTS for legal review (a brief for counsel exists outside this repo). The terms say so on
+  the page and aren't in force until a lawyer has read them.
+  - The terms' ethical-use section follows "peaceful purposes" (Outer Space Treaty and Artemis Accords, nasa.gov/artemis-accords),
     ESA's terms for its open data ("peaceful purposes, including scientific, technical, educational, and application
     development", gssc.esa.int/tou1), and NASA's Framework for the Ethical Use of AI (NASA/TM-20210012886).
-  - **Decision for Josh:** it bars using the services to plan attacks, target people or develop weapons. Check that
-    this fits the defence customers Gauss is meant for. ESA's own phrase "exclusively peaceful purposes" is read today
-    as "non-aggressive" (one commentator's reading, not an official one).
+  - **Decided (Josh, 2026-10-21):** the clause barring attacks, targeting and weapons stands for every service on this
+    site. No public product is offered for defence use.
 - **Cancelling:**
   - Monthly plans roll month to month, with no minimum term or fee.
   - People cancel in one click from Manage billing. In Stripe's customer-portal settings, set cancellation to "at
