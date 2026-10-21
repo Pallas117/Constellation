@@ -1,0 +1,17 @@
+{
+  "schema": "gauss.log-mapping/0.1",
+  "id": "generic-csv",
+  "version": "0.1.0",
+  "format": "csv",
+  "timeFormat": "iso",
+  "columns": {
+    "time": "inference_time",
+    "spacecraftId": "sat",
+    "modelId": "model",
+    "output": ["label"],
+    "confidence": "score",
+    "latDeg": "lat",
+    "lonDeg": "lon",
+    "altKm": "alt_km"
+  }
+}

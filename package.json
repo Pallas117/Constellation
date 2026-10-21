@@ -58,6 +58,7 @@
     "verify": "node --import tsx scripts/verify/verify.ts",
     "replay": "node --import tsx scripts/replay/run.ts",
     "replay:fetch": "node --import tsx scripts/replay/fetch-event.ts",
+    "trust:ingest": "node --import tsx scripts/trust/ingest-log.ts",
     "trust:replay": "node --import tsx scripts/trust/replay-records.ts",
     "tpm": "node --import tsx scripts/ops/tpm-check.ts",
     "deploy": "node --import tsx scripts/release/deploy.ts",
