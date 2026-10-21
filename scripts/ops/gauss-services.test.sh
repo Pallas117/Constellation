@@ -136,7 +136,9 @@ HEALTH=000 LOADED="uk.lightbound.gauss-backend" run awake guard
 [ -z "$(kicked)" ]; expect "a recovery resets the strike count" $?
 
 # Fallback (GAU-158): when live is out of restarts and still down, swap in the cold standby
-FB="$WD/fallback"; FBDIR="$T/fallback-checkout"; LIVE="$T/live-checkout"; B=uk.lightbound.gauss-backend
+# A space in the fallback path, like the real "Gauss Aurora.worktrees/fallback": the ready
+# record must keep the whole path (a plain `read -r sha dir _` cut it and broke failover).
+FB="$WD/fallback"; FBDIR="$T/Gauss Aurora.worktrees/fallback"; LIVE="$T/live-checkout"; B=uk.lightbound.gauss-backend
 mkdir -p "$FB" "$FBDIR/frontend/dist" "$FBDIR/backend" "$LIVE/backend" "$T/home/Library/LaunchAgents"
 touch "$FBDIR/frontend/dist/index.html" "$FBDIR/backend/server.ts" "$LIVE/backend/server.ts"
 plutil -create xml1 "$T/home/Library/LaunchAgents/$B.plist"
@@ -148,6 +150,8 @@ for _ in 1 2; do HEALTH=000 LOADED="$B" run awake guard; done
 [ -z "$(kicked)" ] && grep -q "gauss-backend keeps failing" "$T/log"; expect "no fallback prepared: out of restarts only alerts" $?
 echo "abc1234def $FBDIR $(date +%s)" >"$FB/ready"
 touch "$FB/uk.lightbound.gauss-fallback-backend.plist" "$FB/uk.lightbound.gauss-fallback-frontend.plist"
+out=$(run fallback); [[ "$out" == *"fallback ready: abc1234"* ]]; expect "fallback status: ready although its path has a space" $?
+out=$(run dev "$FBDIR" 2>&1); [[ "$out" == *"is the fallback checkout"* ]]; expect "dev refuses the fallback checkout (path with a space)" $?
 for _ in 1 2; do HEALTH=000 LOADED="$B uk.lightbound.gauss-frontend" run awake guard; done
 [ "$(kicked)" = "bootout $B bootout uk.lightbound.gauss-frontend bootout uk.lightbound.gauss-fallback-backend bootstrap uk.lightbound.gauss-fallback-backend bootout uk.lightbound.gauss-fallback-frontend bootstrap uk.lightbound.gauss-fallback-frontend" ] \
   && [ "$(alerts)" = "fallback" ] && [ -f "$FB/active" ]
