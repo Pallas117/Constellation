@@ -49,6 +49,7 @@ import { enforceApiPolicy, isPublic } from "./rbac.js";
 import { CommerceStore } from "./commerce/store.js";
 import { createDataApiRouter, createOrgRouter, createPilotRequestHandler } from "./commerce/routers.js";
 import { EnvironmentHistory } from "./trust/environment.js";
+import { getL1Structures } from "./adapters/noaa-swpc.js";
 
 const app = express();
 const cyberTiger = new CyberTigerDaemon();
@@ -514,6 +515,13 @@ app.get("/api/world/state", (_req: AuthenticatedRequest, res) => {
 app.get("/api/system/tpm", async (_req: AuthenticatedRequest, res) => {
   const tpms = await currentTpms();
   res.json({ generatedAt: new Date().toISOString(), status: overall(tpms), measures: tpms });
+});
+
+// L1 structure candidates over the last 24 h (GAU-139), for the operator console (GAU-154). Before
+// the first RTSW fetch there is nothing yet: 200 with null, never an error the UI would retry on.
+app.get("/api/swx/structures", (_req: AuthenticatedRequest, res) => {
+  const latest = getL1Structures();
+  res.json(latest ?? { structures: null, reason: "No L1 data fetched yet" });
 });
 
 app.get("/api/security/cybertiger/events", (req: AuthenticatedRequest, res) => {

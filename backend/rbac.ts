@@ -62,6 +62,7 @@ export const API_POLICY: ReadonlyArray<{ method: string; path: string; access: A
   { method: "POST", path: "/rag/query", access: "operator" },
   { method: "GET", path: "/security/cybertiger/status", access: "operator" },
   { method: "GET", path: "/system/tpm", access: "operator" }, // TPM values (GAU-122); /health has the public summary
+  { method: "GET", path: "/swx/structures", access: "operator" }, // L1 structure candidates (GAU-154)
   { method: "POST", path: "/ai/nowcast/infer", access: "operator" },
   { method: "GET", path: "/device/swap/plan", access: "operator" },
   { method: "POST", path: "/device/swap/rebalance", access: "operator" },

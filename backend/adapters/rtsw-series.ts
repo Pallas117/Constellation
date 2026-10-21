@@ -31,6 +31,8 @@ export interface L1Sample {
   bt?: number | null;
   /** True when no velocity vector was published and velocityGse was assumed anti-sunward (GAU-63). */
   velocityAssumed?: boolean;
+  /** Proton temperature, K; null when not published or a fill. For structure detection (GAU-154). */
+  temperature?: number | null;
 }
 
 /**
@@ -59,6 +61,10 @@ const finite = (v: unknown): number | null => {
   const n = Number(v);
   return Number.isFinite(n) ? n : null;
 };
+const positive = (v: unknown): number | null => {
+  const x = finite(v);
+  return x !== null && x > 0 ? x : null;
+};
 
 /** SWPC time_tags are UTC but carry no zone ("2026-10-10 12:00:00.000"). */
 export function swpcTimeMs(value: unknown): number | null {
@@ -85,6 +91,8 @@ interface WindRec {
   velocityGse: Vector3;
   velocityGsm: Vector3 | null;
   velocityAssumed: boolean;
+  /** Proton temperature, K; null when absent or a fill. */
+  temperature: number | null;
 }
 
 interface MagRec {
@@ -119,6 +127,7 @@ export function parseWind(data: unknown): WindRec[] {
       velocityGse: published ?? vec(-speed, 0, 0),
       velocityGsm: triple(rec, "proton_v", "gsm"),
       velocityAssumed: published === null,
+      temperature: positive(rec.proton_temperature),
     });
   }
   return out.sort((a, b) => a.t - b.t);
@@ -198,6 +207,7 @@ export function buildL1Series(windData: unknown, magData: unknown): L1Sample[] {
       velocityGsm: w.velocityGsm,
       magneticFieldGse: m.gse,
       magneticFieldGsm: m.gsm,
+      temperature: w.temperature,
       bt: m.bt,
       velocityAssumed: w.velocityAssumed,
     });

@@ -1,6 +1,7 @@
 import { Link } from "react-router-dom";
 import { SpaceWeatherVisualization } from '@/components/SpaceWeatherVisualization';
 import { useOperatorNotifications } from "@/hooks/useOperatorNotifications";
+import { L1StructuresPill } from "@/components/L1StructuresPill";
 import { MeshStatusPill } from "@/components/MeshStatusPill";
 import { StatusBadge } from "@/components/brand/StatusBadge";
 import { Button } from "@/components/ui/button";
@@ -19,6 +20,7 @@ export default function OperatorDashboard() {
             <Button asChild variant="ghost" size="sm">
               <Link to="/protection">Protection research</Link>
             </Button>
+            <L1StructuresPill />
             <MeshStatusPill />
             <StatusBadge tone="neutral">Alerts on</StatusBadge>
           </>
