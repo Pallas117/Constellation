@@ -18,7 +18,7 @@ const PAGES = { "/": "index.html", "/gauss/": "gauss/index.html", "/constellatio
   "/gauss/apply/": "gauss/apply/index.html", "/constellation/apply/": "constellation/apply/index.html", "/privacy/": "privacy/index.html",
   "/app/": "app/index.html", "/app/admin/": "app/admin/index.html", "/gauss/evidence/": "gauss/evidence/index.html",
   "/constellation/time/": "constellation/time/index.html", "/argo/": "argo/index.html", "/argo/apply/": "argo/apply/index.html",
-  "/education/": "education/index.html", "/education/apply/": "education/apply/index.html", "/constellation/workshops/": "constellation/workshops/index.html" };
+  "/education/": "education/index.html", "/education/apply/": "education/apply/index.html", "/constellation/workshops/": "constellation/workshops/index.html", "/terms/": "terms/index.html" };
 const html = Object.fromEntries(Object.entries(PAGES).map(([route, f]) => [route, read(f)]));
 const API_ROUTES = new Set(["/api/launches", "/api/launches.ics", "/api/space-weather", "/api/health", "/cdn-cgi/access/logout"]);
 
@@ -76,9 +76,19 @@ test("landing: the tagline is the headline, over the kit's black-hole film", () 
   assert.match(home, /<img class="poster" src="\/assets\/media\/blackhole-poster\.jpg"/, "still frame without JS or video");
 });
 
+test("terms: ethical use after ESA and NASA principles, month-to-month plans, cancel any time, refund if not satisfied; marked as a draft", () => {
+  const t = text(html["/terms/"]);
+  for (const want of [/Outer Space Treaty and the Artemis Accords/, /ESA.{1,7}s and NASA.{1,7}s data policies/, /NASA.{1,7}s principles for ethical AI/, /peaceful purposes/,
+    /never commands a spacecraft/, /no minimum term and no cancellation fee/, /Cancel any time in one click/, /within 30 days of any payment/, /England and Wales/])
+    assert.match(t, want);
+  assert.match(html["/terms/"], /<strong>Draft for legal review\.<\/strong>/, "not in force until a lawyer has read it");
+  assert.match(html["/terms/"], /id="ethics"[\s\S]*id="cancel"/);
+  for (const route of ["/argo/", "/education/"]) assert.match(text(html[route]), /full refund if you(&rsquo;|')re not satisfied/, `${route}: says how to leave`);
+});
+
 test("every page with a footer menu has the same one, Privacy included", () => {
   const foot = (p) => [...(p.match(/<nav aria-label="Footer">([\s\S]*?)<\/nav>/)?.[1] ?? "").matchAll(/href="([^"]+)"/g)].map((m) => m[1]);
-  const want = ["/gauss/", "/constellation/", "/turnstone/", "/argo/", "/education/", "mailto:jzwnathan@lightbound.uk", "/privacy/"];
+  const want = ["/gauss/", "/constellation/", "/turnstone/", "/argo/", "/education/", "mailto:jzwnathan@lightbound.uk", "/privacy/", "/terms/"];
   for (const [route, page] of Object.entries(html)) if (page.includes('aria-label="Footer"')) assert.deepEqual(foot(page), want, route);
 });
 

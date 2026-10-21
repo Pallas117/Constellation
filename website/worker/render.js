@@ -229,7 +229,7 @@ export function renderArgoActions(mode) {
   return `<a class="btn" href="/argo/apply/">Request early access</a> ` + (mode === "invite" ? `<a class="btn ghost" href="/app/">Invited? Sign in to start</a>` : `<a class="btn ghost" href="#how">How it works</a>`);
 }
 export function renderArgoPlan(mode) {
-  return `<p class="lead">${mode === "off" ? "Planned: " : ""}<strong>${esc(argoPrice)}</strong> per person, cancel any time. For an operations team, <a href="mailto:jzwnathan@lightbound.uk?subject=Assured%20Connectivity%20pilot">ask about an Assured Connectivity pilot</a>: it adds guards that shed optional load when a Mac runs short of power, memory or disk, and team status in the Gauss console.</p>` +
+  return `<p class="lead">${mode === "off" ? "Planned: " : ""}<strong>${esc(argoPrice)}</strong> per person, month to month: cancel any time, and a full refund if you're not satisfied (<a href="/terms/#cancel">terms</a>). For an operations team, <a href="mailto:jzwnathan@lightbound.uk?subject=Assured%20Connectivity%20pilot">ask about an Assured Connectivity pilot</a>: it adds guards that shed optional load when a Mac runs short of power, memory or disk, and team status in the Gauss console.</p>` +
     `<p class="actions">${mode === "open" ? `<a class="btn" href="/app/?argo=start">Start for ${esc(argoPrice)}</a>` : `<a class="btn" href="/argo/apply/">Request early access</a>`}</p>`;
 }
 
@@ -246,7 +246,7 @@ export function renderEduPlans(mode, staffLabel) {
   const start = (label, ghost = true) => (open ? `<a class="btn${ghost ? " ghost" : ""}" href="/app/?edu=start">${esc(label)}</a>` : `<span class="btn ghost" aria-disabled="true">Opening soon</span>`);
   return `<ol class="plans three">` +
     plan("Students", "Student", "Free", "With your university email, for a year at a time. Renew with the same check.", start("Start free", false), true) +
-    plan("Staff and research", "Staff and research", staffLabel, "Monthly, cancel any time. For lecturers, teaching assistants and research groups.", staffLabel === "Price TBC" ? `<span class="btn ghost" aria-disabled="true">Price TBC</span>` : start("Start")) +
+    plan("Staff and research", "Staff and research", staffLabel, "Month to month: cancel any time, and a full refund if you're not satisfied. For lecturers, teaching assistants and research groups.", staffLabel === "Price TBC" ? `<span class="btn ghost" aria-disabled="true">Price TBC</span>` : start("Start")) +
     plan("Departments", "Department licence", "Quoted per year", "Every course in a department. Paid by invoice, 30 days to pay.", `<a class="btn ghost" href="/education/apply/">Ask for a quote</a>`) +
     `</ol><p class="note">For teaching and non-commercial research. Gauss is advisory: it shows evidence and never commands a spacecraft. Already signed up? <a href="/app/">Sign in</a>.</p>`;
 }

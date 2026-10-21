@@ -59,16 +59,18 @@ export function argoCard(env, account) {
   const status = a?.billing?.status ?? "due";
   const portal = customerOf(account) ? postButton("/app/billing", "Manage billing", "btn ghost") : "";
   let body;
-  if (status === "active") body = `<p class="m">Renews monthly. We'll email your install link and setup steps.</p>${portal}`;
+  if (status === "active") body = `<p class="m">Renews monthly. We'll email your install link and setup steps.</p><p class="m">${LEAVE}</p>${portal}`;
   else if (status === "past_due") body = `<p class="m warn">Your last payment failed. Please update your payment details.</p>${portal}`;
   else if (can) body = `<p class="m">${status === "canceled" ? "Cancelled. You can start again any time." : "Connectivity that heals itself, on your Mac or Linux machines."}</p>` +
-    `<div class="pay">${postButton("/app/argo/checkout", status === "canceled" ? "Restart Gauss Argo" : "Start Gauss Argo")}</div>`;
+    `<div class="pay">${postButton("/app/argo/checkout", status === "canceled" ? "Restart Gauss Argo" : "Start Gauss Argo")}</div><p class="m">${AGREE}</p>`;
   else body = `<p class="m">You're on the early-access list. We'll email you when it opens.</p>`;
   const state = a?.billing ? BILLING[status] ?? status : can ? "Ready to start" : "Early access";
   return `<article class="tile billing"><h2 class="label">${esc(ARGO.name)}</h2><p class="big">${esc(argoPrice)}</p><p class="t">${esc(state)}</p>${body}<p class="m"><a href="/argo/">About ${esc(ARGO.name)}</a></p></article>`;
 }
 
 const YEAR_MS = 365 * 86_400_000;
+const LEAVE = "Cancel any time from Manage billing. Not satisfied? Ask within 30 days of a payment for a full refund.";
+const AGREE = `Starting means you agree to the <a href="/terms/">terms</a>: use it for discovery and resilience. Month to month, cancel any time.`;
 const ADMIN_DETAILS = 50; // the admin page reads full details for the newest 50 waiting applications; older ones show their summary
 /** Education access is open: a free student year, a staff subscription, or a department licence (paid, or invoiced and not overdue). */
 export const eduOpen = (account, now = Date.now()) => !!account?.edu?.billing && unlocked(billingStatus({ billing: account.edu.billing }, now));
@@ -95,7 +97,7 @@ export function eduCard(env, account, email, start = false) {
     price = student ? "Free" : eduStaffLabel(env);
     state = student ? "Student" : BILLING[status] ?? status;
     body = (status === "past_due" ? `<p class="m warn">Your last payment failed. Please update your payment details.</p>`
-      : `<p class="m">${student ? `Free until ${esc(day(b.paidUntil))}; renew then with the same check.` : "Renews monthly."}</p>`) +
+      : `<p class="m">${student ? `Free until ${esc(day(b.paidUntil))}; renew then with the same check.` : `Renews monthly. ${LEAVE}`}</p>`) +
       classroom + (student || !customerOf(account) ? "" : postButton("/app/billing", "Manage billing", "btn ghost"));
   } else if (mode !== "open") {
     state = "Opening soon";
@@ -108,7 +110,7 @@ export function eduCard(env, account, email, start = false) {
     state = status === "due" && e?.plan === "student" ? "Renew your student year" : status === "canceled" ? "Cancelled" : "Ready to start";
     body = `<form method="post" action="/app/edu/student" class="edu-start"><label class="check"><input type="checkbox" name="student" value="yes" required> <span>I'm a student at this university, using it to study.</span></label>` +
       `<p class="actions"><button class="btn">Start free as a student</button></p></form>` +
-      `<div class="pay">${staff ? postButton("/app/edu/checkout", `Staff and research · ${eduStaffLabel(env)}`, "btn ghost") : `<span class="btn ghost" aria-disabled="true">Staff and research: price TBC</span>`}</div>`;
+      `<div class="pay">${staff ? postButton("/app/edu/checkout", `Staff and research · ${eduStaffLabel(env)}`, "btn ghost") : `<span class="btn ghost" aria-disabled="true">Staff and research: price TBC</span>`}</div><p class="m">${AGREE}</p>`;
   }
   return `<article class="tile billing"><h2 class="label">${esc(EDU.name)}</h2>${price ? `<p class="big">${esc(price)}</p>` : ""}<p class="t">${esc(state)}</p>${body}<p class="m"><a href="/education/">About ${esc(EDU.name)}</a></p></article>`;
 }
@@ -133,6 +135,8 @@ export function renderWorkspace({ email, account, admin, weather, consoleUrl, su
     argo: `Thank you. ${ARGO.name} is starting; refresh this page in a minute if it doesn't show as active.`,
     "edu-started": `Thank you. Your ${EDU.name} staff plan is starting; refresh this page in a minute if it doesn't show as active.`,
     "edu-student": `Welcome. Your free student year of ${EDU.name} has started: open the classroom below.`,
+    "full-argo": "We're full for now. Join the Gauss Argo list and we'll email you when a place opens.",
+    "full-edu": "We're full for now. Ask to join Gauss for Education and we'll email you when a place opens.",
   }[notice];
   const bannerHtml = banner ? `<p class="banner" role="status">${esc(banner)}</p>` : "";
   if (!tier) {
@@ -180,7 +184,7 @@ const inviteDraft = (email, name) => {
   return `mailto:${encodeURIComponent(email)}?subject=${encodeURIComponent("Your invitation to Constellation")}&body=${encodeURIComponent(body)}`;
 };
 
-export function renderAdmin({ applications, accounts, details, invited, error }) {
+export function renderAdmin({ applications, accounts, details, invited, error, cap = 50 }) {
   const open = applications.filter((a) => a.status === "new");
   const done = applications.filter((a) => a.status !== "new");
   const card = (a) => {
@@ -218,7 +222,7 @@ export function renderAdmin({ applications, accounts, details, invited, error })
     `<h2>Invite to Constellation</h2><p class="muted">Free and invite-only. This creates the membership; you send the invitation yourself.</p>` +
     `<form method="post" action="/app/admin/invite" class="inline add"><label class="sr" for="inv-email">Email</label><input id="inv-email" name="email" type="email" placeholder="email@example.com" required> ` +
     `<label class="sr" for="inv-name">Name</label><input id="inv-name" name="name" placeholder="Name" maxlength="100"> <button class="btn">Invite</button></form>` +
-    `<h2>Accounts (${accounts.length})</h2><div class="tw"><table class="table"><thead><tr><th>Email</th><th>Plan, quote (£), billing, invoice, pilot, membership</th></tr></thead><tbody>${rows}</tbody></table></div>` +
+    `<h2>Accounts (${accounts.length} of ${cap})</h2><div class="tw"><table class="table"><thead><tr><th>Email</th><th>Plan, quote (£), billing, invoice, pilot, membership</th></tr></thead><tbody>${rows}</tbody></table></div>` +
     `<form method="post" action="/app/admin/account" class="inline add"><label class="sr" for="new-email">Email</label><input id="new-email" name="email" type="email" placeholder="email@company.com" required> ` +
     `${tierSelect("")} ${quoteInput(0)} ${billingSelect()} ${invoiceCheck(false, "new-inv")} ${pilotSelect("")} ${communitySelect("")} <button class="btn" name="action" value="save">Add account</button></form>` +
     `<h2>Decided (${done.length})</h2>${done.length ? `<ul class="apps">${done.map(card).join("")}</ul>` : `<p class="muted">None yet.</p>`}` +
@@ -229,6 +233,10 @@ export function renderAdmin({ applications, accounts, details, invited, error })
 }
 
 const MAX_FORM = 16 * 1024;
+// USER_CAP (wrangler vars, default 50 = Cloudflare Zero Trust's free sign-in seats): once there are that many accounts,
+// new self-serve sign-ups wait on the list. People who already have an account are never blocked.
+export const userCap = (env) => { const n = Number(env.USER_CAP ?? 50); return Number.isInteger(n) && n > 0 ? n : 50; };
+const atCap = async (env) => (await listAccounts(env)).length >= userCap(env);
 // A Checkout Session is kept on the account (id, link, expiry, amount). Clicking again reuses it while it has more than
 // 10 minutes left at the same amount, so repeated clicks don't create sessions; and only that session's payment counts.
 const keep = (session, amount) => ({ id: session.id, url: session.url, amount, expiresAt: session.expires_at ? new Date(session.expires_at * 1000).toISOString() : null });
@@ -296,7 +304,9 @@ export async function handleApp(request, env, url, { respond, fillPage, fetchImp
       }
     }
     if (url.pathname.startsWith("/app/edu/")) {
-      const account = (await getAccount(env, id.email)) ?? { email: id.email };
+      const existing = await getAccount(env, id.email);
+      if (!existing && url.pathname !== "/app/edu/invoice" && (await atCap(env))) return back("/app/?full=edu");
+      const account = existing ?? { email: id.email };
       const form = new URLSearchParams(raw);
       const ready = eduMode(env) === "open" && eduEligible(account, id.email) && !eduOpen(account);
       try {
@@ -330,7 +340,9 @@ export async function handleApp(request, env, url, { respond, fillPage, fetchImp
       return fail(404, "Not found");
     }
     if (url.pathname === "/app/argo/checkout") {
-      const account = (await getAccount(env, id.email)) ?? { email: id.email };
+      const existing = await getAccount(env, id.email);
+      if (!existing && (await atCap(env))) return back("/app/?full=argo");
+      const account = existing ?? { email: id.email };
       if (!argoCanStart(env, account) || ["active", "past_due"].includes(account.argo?.billing?.status)) return back("/app/");
       try {
         const open = reusable(account.argo?.checkout, ARGO.amount);
@@ -457,7 +469,7 @@ export async function handleApp(request, env, url, { respond, fillPage, fetchImp
     const invited = invitedEmail ? await getAccount(env, invitedEmail) : null;
     const error = ["quote", "call", "edu"].includes(url.searchParams.get("error")) ? url.searchParams.get("error") : null;
     const calls = await listCalls(env);
-    return fillPage("/app/admin/", { admin: () => renderAdmin({ applications, accounts, details, invited: invited?.community === "member" ? invited : null, error }) +
+    return fillPage("/app/admin/", { admin: () => renderAdmin({ applications, accounts, details, invited: invited?.community === "member" ? invited : null, error, cap: userCap(env) }) +
       `<div id="calls">${error === "call" ? `<p class="banner warn" role="alert">Not scheduled: give a title, a future start time and an https link (or none).</p>` : ""}` +
       `${renderCallsAdmin(calls, accounts.filter((a) => a.community === "member").map((a) => a.email), url.origin)}</div>` }, 200, APP_HEADERS);
   }
@@ -465,7 +477,8 @@ export async function handleApp(request, env, url, { respond, fillPage, fetchImp
     const [account, weather, latest] = await Promise.all([getAccount(env, id.email), readFeed(env, "weather"), latestApplication(env, id.email)]);
     const mine = latest ? [latest] : [];
     const eduNotice = { started: "edu-started", student: "edu-student" }[url.searchParams.get("edu")];
-    const notice = eduNotice ?? (url.searchParams.get("argo") === "started" ? "argo" : url.searchParams.get("invoice") === "sent" ? "invoice" : ["success", "cancelled"].includes(url.searchParams.get("checkout")) ? url.searchParams.get("checkout") : "");
+    const full = { argo: "full-argo", edu: "full-edu" }[url.searchParams.get("full")];
+    const notice = full ?? eduNotice ?? (url.searchParams.get("argo") === "started" ? "argo" : url.searchParams.get("invoice") === "sent" ? "invoice" : ["success", "cancelled"].includes(url.searchParams.get("checkout")) ? url.searchParams.get("checkout") : "");
     const member = admin || account?.community === "member";
     const calls = member ? await listCalls(env) : [];
     const callNotice = url.searchParams.get("call") ?? "";

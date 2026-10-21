@@ -776,6 +776,23 @@ test("security review: checkout sessions reused, not multiplied; student year ne
   assert.equal(await accessIdentity(req, leaked, { fetchImpl: certs, now: Date.now() + 20 * 3_600_000 }), null);
 });
 
+test("user cap: new self-serve sign-ups wait once USER_CAP accounts exist; existing accounts are never blocked", async () => {
+  const { env, access } = await appEnv();
+  const capped = { ...env, ARGO_SALES: "open", EDU_SALES: "open", USER_CAP: "2" };
+  await putAccount(capped, { email: "one@example.test", community: "member" }, "test");
+  await putAccount(capped, { email: "two@uni.ac.uk", community: "member" }, "test");
+  const stripe = stripeMock();
+  assert.equal((await withFetch(stripe, async () => send(capped, await formPost(access, "three@example.test", "/app/argo/checkout")))).headers.get("location"), "/app/?full=argo");
+  assert.equal((await send(capped, await formPost(access, "four@uni.ac.uk", "/app/edu/student", { student: "yes" }))).headers.get("location"), "/app/?full=edu");
+  assert.equal(await getAccount(capped, "three@example.test"), null);
+  assert.match(await (await send(capped, await as(access, "three@example.test", "/app/?full=argo"))).text(), /We(&#39;|')re full for now\. Join the Gauss Argo list/);
+  const existing = await withFetch(stripe, async () => send(capped, await formPost(access, "one@example.test", "/app/argo/checkout")));
+  assert.equal(existing.headers.get("location"), "https://checkout.stripe.com/c/pay/cs_test_1", "an existing account can still start");
+  assert.equal((await send(capped, await formPost(access, "two@uni.ac.uk", "/app/edu/student", { student: "yes" }))).headers.get("location"), "/app/?edu=student");
+  assert.match(await (await send(capped, await as(access, "boss@example.test", "/app/admin/"))).text(), /Accounts \(2 of 2\)/);
+  assert.match(await (await send(capped, await as(access, "one@example.test", "/app/"))).text(), /Starting means you agree to the <a href="\/terms\/">terms<\/a>/);
+});
+
 test("support: Constellation shows a Support link only once a Stripe Payment Link is set", async () => {
   const { env, access } = await appEnv();
   const page = async (e) => (await send(e, new Request("https://lightbound.uk/constellation/"))).text();

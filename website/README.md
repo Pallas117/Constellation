@@ -193,6 +193,59 @@ Book adds Argo.
 - **Facilitators aren't named yet** (Josh, 2026-10-21: don't name who will run the workshops yet). The page says
   "facilitators from the Constellation community". This repo is public, so keep names out of commits too.
 
+**Terms, cancelling and VAT** (Josh, 2026-10-21):
+- **`/terms/`** is a DRAFT for legal review. It's marked so on the page and isn't in force until a lawyer has read it.
+  - Its ethical-use section follows "peaceful purposes" (Outer Space Treaty and Artemis Accords, nasa.gov/artemis-accords),
+    ESA's terms for its open data ("peaceful purposes, including scientific, technical, educational, and application
+    development", gssc.esa.int/tou1), and NASA's Framework for the Ethical Use of AI (NASA/TM-20210012886).
+  - **Decision for Josh:** it bars using the services to plan attacks, target people or develop weapons. Check that
+    this fits the defence customers Gauss is meant for. ESA's own phrase "exclusively peaceful purposes" is read today
+    as "non-aggressive" (one commentator's reading, not an official one).
+- **Cancelling:**
+  - Monthly plans roll month to month, with no minimum term or fee.
+  - People cancel in one click from Manage billing. In Stripe's customer-portal settings, set cancellation to "at
+    the end of the billing period", to match the terms.
+  - "Not satisfied" refunds within 30 days of a payment are given from the Stripe Dashboard: the payment, then Refund.
+  - This is more generous than the 14-day cancellation right for digital services, so no waiver wording is needed at
+    Checkout (check with counsel).
+- **Stripe settings:** Checkout asks every Argo or education subscriber to accept the terms, so put
+  `https://lightbound.uk/terms/` in Stripe's public business details. Checkout fails until that's set.
+- **UK VAT:**
+  - Lightbound must register once UK taxable turnover passes £90,000 in 12 months (gov.uk, VAT Notice 700/1). Three
+    Gauss pilots at £20k–£40k would do it.
+  - The standard rate is 20% (gov.uk/vat-rates).
+  - Prices shown to UK consumers should include VAT once registered (UNVERIFIED: check with the accountant).
+  - Self-serve plans are UK-only for now: a UK seller owes EU VAT from the first sale to an EU consumer (see "Selling
+    Gauss Argo").
+  - Enforcing "UK only" at checkout is still to do (a Stripe Radar rule, or asking for the country before checkout).
+- **`USER_CAP`** (default 50, Zero Trust's free sign-in seats):
+  - Once there are that many accounts, new self-serve sign-ups get "We're full for now" and are pointed to the list.
+  - People who already have an account are never blocked.
+  - The admin page shows "Accounts (n of 50)".
+  - Members, customers and students all count, because every sign-in takes an Access seat.
+
+**What it costs, and what to charge** (sources: Cloudflare KV and Workers pricing docs, Cloudflare Zero Trust pricing,
+Stripe UK pricing; exchange rates and the Apple fee are UNVERIFIED):
+- **Up to 50 users, Cloudflare is free:**
+  - Zero Trust is free for up to 50 users.
+  - KV's free daily limits are 100,000 reads, 1,000 writes and 1,000 lists.
+  - The cron alone writes about 152 times a day: weather 96, launches 48, events 8.
+  - 50 active users add perhaps 100 writes a day.
+  - Lists are the tight one: each member's visit lists group calls, so expect about 4 lists per visit with 3 calls
+    scheduled.
+- **Upgrade at launch of paid plans:** Workers Paid is $5 a month (10M reads, 1M writes, 1M lists a month). It removes
+  the daily limits and pays for itself with one subscriber.
+- **Fees per £8 monthly payment on a UK card:** Stripe 1.5% + 20p, plus Billing 0.7%, comes to about £0.38, leaving
+  about £7.62. Once VAT-registered it's about £6.29 (£8 includes £1.33 VAT). International cards cost 3.15% + 20p, plus
+  2% for currency conversion.
+- **Fixed costs:**
+  - Workers Paid: $5 a month.
+  - A signed Mac build of Argo needs an Apple Developer account (UNVERIFIED: about $99 a year).
+  - Two subscribers cover both.
+- **Past 50 users, seats dominate:** Zero Trust Standard is about $7 per user per month (community-reported,
+  UNVERIFIED), and every seat becomes billable. At £8–10 a month the margin would vanish, so keep the cap at 50, or
+  price at £15 or more per user before lifting it.
+
 **Support Constellation.** The Constellation page (Join section) and a member's workspace show a "Support
 Constellation" link once `SUPPORT_URL` in `wrangler.jsonc` vars holds a Stripe Payment Link. While it's empty,
 nothing shows. Only `https://buy.stripe.com/…` or `https://donate.stripe.com/…` links are accepted. To set it up:
