@@ -51,7 +51,7 @@ export interface ScaleReading {
 
 /** One input sense-check (GAU-136); mirrors backend/types.ts. */
 export interface SenseCheck {
-  id: "l1-field-magnitude" | "goes-proton-spectrum" | "goes-proton-channels" | "goes-xray" | "noaa-scales";
+  id: "l1-field-magnitude" | "l1-plasma-tracking" | "goes-proton-spectrum" | "goes-proton-channels" | "goes-xray" | "noaa-scales";
   /** "unknown" when there was nothing current to check, never "pass". */
   status: "pass" | "flag" | "unknown";
   reason: string;

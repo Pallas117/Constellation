@@ -186,7 +186,7 @@
     {
       "id": "REQ-DI-007",
       "title": "Inputs are sense-checked",
-      "statement": "The system shall check each L1 magnetic-field sample, the GOES proton spectrum and channels, and the GOES X-ray channel for physical consistency, and shall cross-check its own R, S and G levels against NOAA's published scales; a failed check shall be reported with its reason without silently dropping the sample, and a check with no current input shall read unknown, not pass.",
+      "statement": "The system shall check each L1 magnetic-field sample, whether the L1 plasma speed follows large changes in the field, the GOES proton spectrum and channels, and the GOES X-ray channel for physical consistency, and shall cross-check its own R, S and G levels against NOAA's published scales; a failed check shall be reported with its reason without silently dropping the sample, and a check with no current input shall read unknown, not pass.",
       "rationale": "Radiation-study build order step 1 (GAU-134): sense-checks stop wrong conclusions before any analysis is built on them.",
       "parent": "GAU-136",
       "method": "T",
@@ -194,6 +194,10 @@
       "verifiedBy": [
         "field: Bt below the magnitude of its own components is flagged with a reason",
         "field: GSE and GSM magnitudes that differ are flagged; a frame change can't alter |B|",
+        "plasma: a speed that holds while |B| triples to over 20 nT is flagged as not tracking (GAU-153)",
+        "plasma: a field that doubles at a steady speed, or a shock that moves the speed, is not flagged",
+        "plasma: too few samples in the window is unknown, not pass",
+        "replay: the stuck ACE speed in Jan 2026 is flagged and lowers confidence; May and Oct 2024 never flag it (GAU-153)",
         "protons: a spectrum that rises with energy is flagged with both channels",
         "channels: a fill as the newest sample is flagged; older fills are reported, not hidden",
         "channels: a flat-lined channel is flagged as saturated or stuck",

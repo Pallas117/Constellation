@@ -8,7 +8,7 @@ import {
   type GoesParticleReadout,
 } from "../adapters/goes-particles.js";
 import { fetchSwpcProducts, type SwpcProducts } from "../adapters/swpc-products.js";
-import { checkFieldMagnitude, compareScales, expireCheck, fieldSampleProblem } from "../lib/sense-checks.js";
+import { checkFieldMagnitude, checkPlasmaTracking, compareScales, expireCheck, fieldSampleProblem } from "../lib/sense-checks.js";
 import { geomagneticStorm, radiationStorm, radioBlackout } from "../physics/noaa-scales.js";
 import { getJaxaStatus, probeJaxaCatalog } from "../adapters/jaxa-erg.js";
 import { fetchKyotoDst, freshDst, getKyotoDstStatus, type DstReading } from "../adapters/kyoto-dst.js";
@@ -16,7 +16,7 @@ import { fetchMmsCdawebSamples, getMmsCdawebStatus } from "../adapters/mms-cdawe
 import { fetchMmsBurstWindows, getMmsLaspStatus } from "../adapters/mms-lasp.js";
 import { fetchNoaaReadout, getNoaaStatus, type KpReading, type NOAAReadout } from "../adapters/noaa-swpc.js";
 import { arrivingNow, type L1Sample } from "../adapters/rtsw-series.js";
-import { gseToGsm } from "../physics/coordinates.js";
+import { gseToGsm, magnitude } from "../physics/coordinates.js";
 import { buildAuroraGrid } from "../physics/healpix.js";
 import { computeCanonicalPoint, type MhdInput } from "../physics/mhd-nowcast.js";
 import {
@@ -313,15 +313,23 @@ export class IngestionWorker {
   }
 
   /**
-   * Field consistency over the L1 history, the GOES checks from the last fetch (unknown once
-   * that fetch is older than the particle limit), and NOAA's scales against this point's.
-   * An inconsistent newest field sample lowers the point's confidence; the rest only report.
+   * Field consistency and plasma tracking over the L1 history, the GOES checks from the last
+   * fetch (unknown once that fetch is older than the particle limit), and NOAA's scales against
+   * this point's. An inconsistent newest field sample, or a speed that stopped following the
+   * field (GAU-153), lowers the point's confidence; the rest only report.
    */
   private senseChecks(point: CanonicalSpaceWeatherPoint, nowMs: number): SenseCheck[] {
     const series = this.noaa ? this.l1Series : [];
-    const field = checkFieldMagnitude(series, this.noaa?.spacecraft, this.noaa ? Date.parse(this.noaa.timestamp) : nowMs);
+    const endMs = this.noaa ? Date.parse(this.noaa.timestamp) : nowMs;
+    const field = checkFieldMagnitude(series, this.noaa?.spacecraft, endMs);
     const newest = series.at(-1);
     if (newest && fieldSampleProblem(newest)) point.quality.lowConfidence = true;
+    const plasma = checkPlasmaTracking(
+      series.map((s) => ({ t: s.t, speed: s.speed, bt: s.bt ?? magnitude(s.magneticFieldGse) })),
+      this.noaa?.spacecraft,
+      endMs,
+    );
+    if (plasma.status === "flag") point.quality.lowConfidence = true;
 
     const goes: SenseCheck[] = (["goes-proton-spectrum", "goes-proton-channels", "goes-xray"] as const).map((id) => {
       const check = this.goes?.checks?.find((c) => c.id === id);
@@ -335,7 +343,7 @@ export class IngestionWorker {
       { R: point.alerts.radioBlackout, S: point.alerts.radiation, G: point.alerts.geomagnetic },
       nowMs,
     );
-    return [field, ...goes, scales];
+    return [field, plasma, ...goes, scales];
   }
 
   /** Hand the point to the shared feed and persist it locally. Never called by a replay. */
