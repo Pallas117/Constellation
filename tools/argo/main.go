@@ -86,7 +86,7 @@ func main() {
 	}
 	cfg, store := loadConfig(), DefaultStore()
 	phone := newPhoneFor(cfg)
-	loop := Loop{Prober: SystemProber{ExitNodes: cfg.ExitNodes}, Store: store, Fx: realEffects{phone: phone}}
+	loop := Loop{Prober: SystemProber{ExitNodes: cfg.ExitNodes, SignalCache: store.path("signal.json")}, Store: store, Fx: realEffects{phone: phone}}
 	flush := func() {
 		if phone != nil {
 			phone.Flush() // deliver alerts queued while offline
@@ -266,6 +266,7 @@ func doctor(ctx context.Context, p Prober) error {
 	b, _ := json.MarshalIndent(s, "", "  ")
 	fmt.Println(Mask(string(b)))
 	fmt.Printf("\nclass: %s — %s\n", class, reason)
+	fmt.Printf("network: %s\n", ScoreNet(s).Line())
 	for _, a := range Plan(class, s, "") {
 		fmt.Println("→", a.Say)
 		if a.Command != "" {
@@ -416,6 +417,7 @@ func pushToGauss(cfg Config, st State) {
 		"breakerOpen": time.Now().Before(st.BreakerUntil), "argoVersion": version, "checkedAt": st.CheckedAt,
 		"host":     hostCapacityNow(), // sizes and pressure only, so Gauss can tell which devices can host agents
 		"platform": platformName(runtime.GOOS),
+		"net":      netReport(st.Net), // scores and their reasons; no SSID, BSSID or IP
 	})
 	u.Path = "/api/mesh/report"
 	req, _ := http.NewRequest(http.MethodPost, u.String(), bytes.NewReader(body))
