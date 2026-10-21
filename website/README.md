@@ -10,7 +10,7 @@ JavaScript, no third-party requests, and no secrets.
 | `/gauss/` | The GAU-12 evidence-first Gauss page. It leads with Fleet Integration and has an on-page menu. A script-free **replay demo** walks one synthetic storm through the nominal, degraded, abstain, unknown and blocked states, labelled as screening evidence. Also: claims and boundaries, plans and prices, CCSDS/XTCE/Yamcs/ONNX fit, team. Ends with the other doors. |
 | `/gauss/evidence/` | A synthetic **sample evidence report**: record states, decisions, unknowns and limits, provenance. Clearly labelled; not a mission record. |
 | `/constellation/` | The community: next 10 launches worldwide, space weather now, a calendar feed, intel rules, and how to join. Ends with the other doors. |
-| `/turnstone/` | Mark and "Classified." only (secret project; `noindex`). |
+| `/turnstone/` | Mark, "Classified." and a "Request a briefing" link to Josh's 30-minute Cal.com call; nothing about what it does (secret project; `noindex`). |
 | `/gauss/apply/` | Pilot brief in the sales plan's three steps (fit, readiness, pilot brief). Plan links preselect the package. |
 | `/constellation/apply/` | Request an invitation. Constellation is free and invite-only; there is no payment anywhere on its side. |
 | `/argo/` | Gauss Argo, the self-healing connectivity agent, "built like a spacecraft": what it catches, how it works, its security rules, where it runs, the private relay (in development, not available) and the $10-a-month plan. Its buttons follow `ARGO_SALES`. |

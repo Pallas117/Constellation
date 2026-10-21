@@ -122,6 +122,8 @@ test("Turnstone: mark and name only; nothing says what it does", () => {
   const page = html["/turnstone/"];
   assert.doesNotMatch(text(page), tells);
   assert.match(page, /<meta name="robots" content="noindex">/);
+  // The one way in: Josh's booking page, worded neutrally (Josh, 2026-10-22).
+  assert.match(page, /<a class="btn" href="https:\/\/cal\.com\/joshua-nathan-xrnrqh\/30min" rel="noopener">Request a briefing<\/a>/);
   for (const [route, p] of Object.entries(html))
     assert.doesNotMatch(text(p), /Turnstone[^.]{0,120}(consult|hardware|security)|(consult|hardware|security)[^.]{0,120}Turnstone/i, route);
 });
