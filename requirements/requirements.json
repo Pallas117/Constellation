@@ -254,6 +254,22 @@
       ]
     },
     {
+      "id": "REQ-PHY-004",
+      "title": "L1 structure candidates for operators",
+      "statement": "The system shall detect L1 structure candidates (interplanetary shocks, ICMEs, high-speed streams, sustained southward driving and a magnetopause inside geostationary orbit) over the last 24 h of L1 data, and shall present each to operators with a confidence label, never as a confirmed event, on an operator-only route.",
+      "rationale": "Radiation-study row 6 (GAU-139), shown to operators by GAU-154; validated on a pre-registered holdout (docs/L1_STRUCTURES_HOLDOUT.md).",
+      "parent": "GAU-154",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "l1 structures: a clean fast-forward shock is found at the jump, with its arrival at Earth",
+        "l1 structures: a cold, low-beta ejecta with a strong field is an ICME candidate; a hot sheath is not",
+        "SWPC adapter: structure candidates cover all the L1 hours it reads, not just the point's 3 h (GAU-154)",
+        "operator console: L1 candidates are listed newest first with their confidence; recent non-low ones need attention (GAU-154)",
+        "role matrix"
+      ]
+    },
+    {
       "id": "REQ-ML-001",
       "title": "Model promotion gate",
       "statement": "A forecasting model shall be served only after passing its held-out promotion gate, and promotion shall be an explicit step that refuses failed candidates.",
