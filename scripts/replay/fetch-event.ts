@@ -1,6 +1,6 @@
 /**
  * Cache a storm's inputs for the offline replay (GAU-138):
- *   npm run replay:fetch -- may-2024 [oct-2024 …]
+ *   npm run replay:fetch -- may-2024 [oct-2024 …]   (also the GAU-154 holdout ids)
  *
  * Reads the archived SWPC real-time products from NASA CCMC iSWA (HAPI) and writes
  * backend/replay/events/<id>.json.gz. Run once per event; the replay and its tests never touch
@@ -13,6 +13,7 @@ import { fileURLToPath } from "node:url";
 import { gzipSync } from "node:zlib";
 import type { ReplayArchive } from "../../backend/replay/archive.js";
 import { eventById, WARMUP_HOURS, type ReplayEvent } from "../../backend/replay/events.js";
+import { holdoutById } from "../../backend/replay/holdout.js";
 
 const ISWA = "https://iswa.gsfc.nasa.gov/IswaSystemWebApp/hapi/data";
 const OUT = join(dirname(fileURLToPath(import.meta.url)), "../../backend/replay/events");
@@ -80,7 +81,7 @@ if (ids.length === 0) {
 }
 mkdirSync(OUT, { recursive: true });
 for (const id of ids) {
-  const event = eventById(id);
+  const event = eventById(id) ?? holdoutById(id); // holdout storms: GAU-154
   if (!event) throw new Error(`unknown event ${id}`);
   const archive = await fetchEvent(event);
   const path = join(OUT, `${id}.json.gz`);
