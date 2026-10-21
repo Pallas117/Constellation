@@ -5,11 +5,13 @@ import type { ParticleReading, ScaleReading } from "../types.js";
 import {
   checkChannelRows,
   checkFieldMagnitude,
+  checkPlasmaTracking,
   checkProtonSpectrum,
   compareScales,
   expireCheck,
   fieldSampleProblem,
   FLAT_RUN,
+  PLASMA_TRACKING,
   type FieldSample,
 } from "./sense-checks.js";
 
@@ -56,6 +58,32 @@ test("field: no samples in the window is unknown, not pass", () => {
 });
 
 const p = (energy: string, value: number): ParticleReading => ({ value, energy, satellite: "GOES-18", timestamp: "2026-10-19T08:40:00.000Z" });
+
+/** `n` minutes ending at END. */
+const minutes = (n: number, at: (i: number) => { speed: number; bt: number }) =>
+  Array.from({ length: n }, (_, i) => ({ t: END - (n - 1 - i) * 60_000, ...at(i) }));
+
+test("plasma: a speed that holds while |B| triples to over 20 nT is flagged as not tracking (GAU-153)", () => {
+  // As ACE on 2026-01-19 18:20–21:10 UT: speed within a few km/s while the field jumped 9 → 55 nT.
+  const check = checkPlasmaTracking(minutes(60, (i) => ({ speed: 289 + (i % 5), bt: i < 30 ? 9 : 55 })), "ACE", END);
+  assert.equal(check.status, "flag");
+  assert.match(check.reason, /^ACE speed held within \d+ km\/s while \|B\| went 9\.0–55\.0 nT \(last 60 min\)/);
+});
+
+test("plasma: a field that doubles at a steady speed, or a shock that moves the speed, is not flagged", () => {
+  // A field rotation or current sheet: |B| doubles while the speed holds.
+  assert.equal(checkPlasmaTracking(minutes(60, (i) => ({ speed: 400, bt: i < 30 ? 5 : 10 })), "DSCOVR", END).status, "pass");
+  // A shock the plasma instrument does see.
+  assert.equal(checkPlasmaTracking(minutes(60, (i) => ({ speed: i < 30 ? 450 : 700, bt: i < 30 ? 9 : 55 })), "DSCOVR", END).status, "pass");
+  // A strong but steady field isn't a change.
+  assert.equal(checkPlasmaTracking(minutes(60, () => ({ speed: 400, bt: 30 })), "DSCOVR", END).status, "pass");
+});
+
+test("plasma: too few samples in the window is unknown, not pass", () => {
+  const few = minutes(PLASMA_TRACKING.minSamples - 1, () => ({ speed: 400, bt: 5 }));
+  assert.equal(checkPlasmaTracking(few, "ACE", END).status, "unknown");
+  assert.equal(checkPlasmaTracking([], undefined, END).status, "unknown");
+});
 
 test("protons: integral flux that falls with energy passes, including background noise", () => {
   // GOES-18 at 08:40 UTC on 2026-10-19: background, channels within 5 % of each other.

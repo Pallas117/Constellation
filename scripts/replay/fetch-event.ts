@@ -1,6 +1,6 @@
 /**
  * Cache a storm's inputs for the offline replay (GAU-138):
- *   npm run replay:fetch -- may-2024 [oct-2024 …]
+ *   npm run replay:fetch -- may-2024 [oct-2024 …]   (also the GAU-154 holdout ids)
  *
  * Reads the archived SWPC real-time products from NASA CCMC iSWA (HAPI) and writes
  * backend/replay/events/<id>.json.gz. Run once per event; the replay and its tests never touch
@@ -13,6 +13,7 @@ import { fileURLToPath } from "node:url";
 import { gzipSync } from "node:zlib";
 import type { ReplayArchive } from "../../backend/replay/archive.js";
 import { eventById, WARMUP_HOURS, type ReplayEvent } from "../../backend/replay/events.js";
+import { holdoutById } from "../../backend/replay/holdout.js";
 
 const ISWA = "https://iswa.gsfc.nasa.gov/IswaSystemWebApp/hapi/data";
 const OUT = join(dirname(fileURLToPath(import.meta.url)), "../../backend/replay/events");
@@ -43,7 +44,7 @@ async function fetchEvent(event: ReplayEvent): Promise<ReplayArchive> {
   const to = event.end;
   const [mag, plasma, protons, electrons, xrays, kp] = await Promise.all([
     hapi(ISWA, "swpc_rtsw_mag_P1M", ["B_x", "B_y", "B_z", "B_t", "isPrimary", "source"], from, to),
-    hapi(ISWA, "swpc_rtsw_plasma_P1M", ["ProtonDensity", "BulkSpeed", "isPrimary", "source"], from, to),
+    hapi(ISWA, "swpc_rtsw_plasma_P1M", ["ProtonDensity", "BulkSpeed", "IonTemperature", "isPrimary", "source"], from, to),
     hapi(ISWA, "goesp_part_flux_P5M", ["P10", "P50", "P100", "satelliteProton"], from, to),
     hapi(ISWA, "goesp_part_flux_P5M", ["E2_0", "satelliteElectron"], from, to),
     hapi(ISWA, "goesp_xray_flux_P1M", ["Short_Wave", "Long_Wave", "satellite"], from, to),
@@ -60,7 +61,8 @@ async function fetchEvent(event: ReplayEvent): Promise<ReplayArchive> {
     terms: TERMS,
     // Only the operational spacecraft (isPrimary = 1), as the live pipeline uses it.
     mag: sorted(mag.filter((r) => r[5] === "1").map((r) => [iso(r[0]), num(r[1]), num(r[2]), num(r[3]), num(r[4]), r[6]])),
-    plasma: sorted(plasma.filter((r) => r[3] === "1").map((r) => [iso(r[0]), num(r[1]), num(r[2]), r[4]])),
+    // Temperature last, so the older rows' positions still hold (GAU-139 part B needs T/T_exp).
+    plasma: sorted(plasma.filter((r) => r[4] === "1").map((r) => [iso(r[0]), num(r[1]), num(r[2]), r[5], num(r[3])])),
     protons: sorted(protons.map((r) => [iso(r[0]), num(r[1]), num(r[2]), num(r[3]), r[4]])),
     electrons: sorted(electrons.map((r) => [iso(r[0]), num(r[1]), r[2]])),
     xrays: sorted(xrays.map((r) => [iso(r[0]), num(r[2]), num(r[1]), r[3]])),
@@ -79,7 +81,7 @@ if (ids.length === 0) {
 }
 mkdirSync(OUT, { recursive: true });
 for (const id of ids) {
-  const event = eventById(id);
+  const event = eventById(id) ?? holdoutById(id); // holdout storms: GAU-154
   if (!event) throw new Error(`unknown event ${id}`);
   const archive = await fetchEvent(event);
   const path = join(OUT, `${id}.json.gz`);

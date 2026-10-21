@@ -1,6 +1,6 @@
 {
   "$comment": "Constellation requirements baseline (GAU-120). NASA SP-2016-6105 Rev 2 §6.2/§5.3. Methods: T test, A analysis, I inspection, D demonstration. T evidence = exact test names; A/I/D evidence = repo paths. Verified by `npm run verify`.",
-  "version": "1.6.1",
+  "version": "1.9.0",
   "requirements": [
     {
       "id": "REQ-ING-001",
@@ -186,7 +186,7 @@
     {
       "id": "REQ-DI-007",
       "title": "Inputs are sense-checked",
-      "statement": "The system shall check each L1 magnetic-field sample, the GOES proton spectrum and channels, and the GOES X-ray channel for physical consistency, and shall cross-check its own R, S and G levels against NOAA's published scales; a failed check shall be reported with its reason without silently dropping the sample, and a check with no current input shall read unknown, not pass.",
+      "statement": "The system shall check each L1 magnetic-field sample, whether the L1 plasma speed follows large changes in the field, the GOES proton spectrum and channels, and the GOES X-ray channel for physical consistency, and shall cross-check its own R, S and G levels against NOAA's published scales; a failed check shall be reported with its reason without silently dropping the sample, and a check with no current input shall read unknown, not pass.",
       "rationale": "Radiation-study build order step 1 (GAU-134): sense-checks stop wrong conclusions before any analysis is built on them.",
       "parent": "GAU-136",
       "method": "T",
@@ -194,6 +194,10 @@
       "verifiedBy": [
         "field: Bt below the magnitude of its own components is flagged with a reason",
         "field: GSE and GSM magnitudes that differ are flagged; a frame change can't alter |B|",
+        "plasma: a speed that holds while |B| triples to over 20 nT is flagged as not tracking (GAU-153)",
+        "plasma: a field that doubles at a steady speed, or a shock that moves the speed, is not flagged",
+        "plasma: too few samples in the window is unknown, not pass",
+        "replay: the stuck ACE speed in Jan 2026 is flagged and lowers confidence; May and Oct 2024 never flag it (GAU-153)",
         "protons: a spectrum that rises with energy is flagged with both channels",
         "channels: a fill as the newest sample is flagged; older fills are reported, not hidden",
         "channels: a flat-lined channel is flagged as saturated or stuck",
@@ -452,6 +456,62 @@
         "GAU-39: derived values carry method and inputs; unknown inputs give unknown, never a default",
         "GAU-39: a lost source becomes a source-lost event, not silently carried",
         "GAU-39: a forecast is a hypothesis resolved against observed state"
+      ]
+    },
+    {
+      "id": "REQ-TR-001",
+      "title": "Inference trust records",
+      "statement": "For each inference the system shall return the space environment at the inference time, with each field's source, product URL, observed time, fetched time, age, confidence, method and limitations, and a verdict that is unknown whenever a required input is missing, stale or conflicting and is never consistent by default; a record shall carry no wording about harm to hardware or the odds of a wrong output.",
+      "rationale": "PR-01 Inference Trust Record API, ICP-1 P0 (GAU-57): the buyer-facing product rests on provenance on every datum and fail-closed verdicts.",
+      "parent": "GAU-57",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "trust record: a missing reading is unknown, never consistent (GAU-57)",
+        "trust record: a stale input is unknown, even when its level was quiet (GAU-57)",
+        "trust record: conflicting inputs are unknown: NOAA disagrees, or the proton spectrum is impossible (GAU-57)",
+        "trust record: every field carries source, product URL, observed and fetched times, age, confidence and limitations (GAU-57)",
+        "trust record: no wording about harm to hardware or odds of error, in any record (GAU-57)",
+        "trust record: p95 well under 500 ms over a full day of 5 s history (GAU-57)",
+        "trust record: through the replayed 19 Jan 2026 storm, S1 is consistent and S2 under G0 is degraded (GAU-57)",
+        "trust records API: an invalid inference is a 400 listing every error, nothing guessed (GAU-57)",
+        "trust records API: a batch returns records for valid items and the errors for the rest (GAU-57)",
+        "trust records API: a server without an environment history says so, never an empty record (GAU-57)",
+        "TLE: an epoch more than 7 days from the inference is not used (GAU-57)",
+        "trust record: an ephemeris and a TLE that disagree are conflicting inputs, so both read unknown (GAU-57)",
+        "TLE: format, catalogue number and the modulo-10 checksum are checked; satellite.js checks none of them (GAU-57)"
+      ]
+    },
+    {
+      "id": "REQ-TR-002",
+      "title": "Customer log ingest",
+      "statement": "The system shall read a customer's inference log (CSV, JSON or JSONL) through a declared, versioned column mapping into trust-record requests, shall reject and report every malformed, out-of-order or duplicate row with its reason rather than drop it, shall attach to every accepted row its file hash, row number and mapping version, and shall produce identical output from identical input.",
+      "rationale": "PR-03a (GAU-66): the replay pilot on customer logs (GAU-59) must account for every row it was given.",
+      "parent": "GAU-66",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "ingest: valid rows become requests with file hash, row number and mapping version (GAU-66)",
+        "ingest: malformed, duplicate and out-of-order rows are rejected with reasons, never dropped (GAU-66)",
+        "ingest: the same bytes and mapping give the same result; a changed byte changes the hash (GAU-66)",
+        "ingest: a mapping naming a missing column, or an invalid mapping, fails the whole file with the reason (GAU-66)",
+        "ingest: an ingested log becomes trust records that carry their provenance, through the replayed storm (GAU-66)"
+      ]
+    },
+    {
+      "id": "REQ-TR-003",
+      "title": "South Atlantic Anomaly context",
+      "statement": "For each inference with a position the system shall report the IGRF-14 field strength at the spacecraft and flag the South Atlantic Anomaly as core (|B| at most 21,000 nT) or extended (at most 26,000 nT), citing the thresholds; it shall report the flag as unknown, with the reason, outside 300–450 km altitude or outside IGRF-14 validity (2015–2030), and an inference inside the SAA shall be degraded context.",
+      "rationale": "GAU-141 (SWx P2): trapped-proton exposure in low orbit is concentrated in the SAA; an operator needs to know whether an inference was made there, from a published definition rather than a hand-drawn box.",
+      "parent": "GAU-141",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "IGRF-14: agrees with an independent implementation to 0.001 nT, surface to 800 km (GAU-141)",
+        "IGRF-14: a pure dipole matches its closed form; the official check value; validity 2015–2030 (GAU-141)",
+        "SAA: along six days of an ISS orbit, NICER's SAA lies inside the extended tier and the core inside NICER's (GAU-141)",
+        "SAA: the thresholds and the altitude band are applied as published (GAU-141)",
+        "trust record: an inference inside the SAA is degraded context, with |B| and the tier (GAU-141)"
       ]
     }
   ]

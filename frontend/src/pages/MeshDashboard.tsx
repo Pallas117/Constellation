@@ -8,6 +8,14 @@ import { useMesh, type MeshDevice, WARNING_CLASSES } from "@/hooks/useMesh";
 import { useDocumentTitle } from "@/hooks/useDocumentTitle";
 
 const STALE_MS = 15 * 60 * 1000;
+const PLATFORM_LABEL: Record<string, string> = { macos: "macOS", linux: "Linux", windows: "Windows", ios: "iPhone", android: "Android" };
+// Mirrors hostingVerdict in backend/mesh/store.ts.
+const HOSTING_LABEL: Record<string, string> = {
+  agents: "Agents + memory",
+  light: "Light work",
+  no: "No spare capacity",
+  unknown: "Unknown (update Argo)",
+};
 
 // What each Argo class means for the person reading the table.
 const CLASS_HELP: Record<string, string> = {
@@ -113,6 +121,7 @@ const MeshDashboard = () => {
                       <th className="py-2 pr-4">Status</th>
                       <th className="py-2 pr-4">Exit</th>
                       <th className="py-2 pr-4">Tailscale</th>
+                      <th className="py-2 pr-4">Can host</th>
                       <th className="py-2 pr-4">Last report</th>
                       <th className="py-2" />
                     </tr>
@@ -122,7 +131,17 @@ const MeshDashboard = () => {
                       const s = statusOf(d);
                       return (
                         <tr key={d.name} className="border-t border-border/60 align-top">
-                          <td className="py-3 pr-4 font-mono">{d.name}</td>
+                          <td className="py-3 pr-4">
+                            <span className="font-mono">{d.name}</span>
+                            {(d.last?.platform || d.last?.battery) && (
+                              <p className="mt-1 text-xs text-muted-foreground">
+                                {d.last.platform ? PLATFORM_LABEL[d.last.platform] : ""}
+                                {d.last.battery
+                                  ? `${d.last.platform ? " · " : ""}${d.last.battery.level}%${d.last.battery.charging ? " charging" : ""}${d.last.battery.lowPower ? " · low power" : ""}`
+                                  : ""}
+                              </p>
+                            )}
+                          </td>
                           <td className="py-3 pr-4">
                             <Badge variant={s.variant}>{s.label}</Badge>
                             {d.last && d.last.class !== "OK" && (
@@ -132,6 +151,17 @@ const MeshDashboard = () => {
                           </td>
                           <td className="py-3 pr-4">{d.last?.loc || "—"}</td>
                           <td className="py-3 pr-4">{d.last ? (d.last.tailscale ? d.last.exitNode || "on" : "off") : "—"}</td>
+                          <td className="py-3 pr-4">
+                            <Badge variant={d.hosting === "agents" ? "default" : d.hosting === "light" ? "secondary" : "outline"}>
+                              {d.last?.platform === "ios" || d.last?.platform === "android" ? "Phone: status only" : HOSTING_LABEL[d.hosting ?? "unknown"]}
+                            </Badge>
+                            {d.last?.host && (
+                              <p className="mt-1 text-xs text-muted-foreground">
+                                {d.last.host.ramGB} GB RAM · {d.last.host.diskFreeGB} GB free
+                                {d.last.host.pressure && d.last.host.pressure !== "normal" ? ` · memory ${d.last.host.pressure}` : ""}
+                              </p>
+                            )}
+                          </td>
                           <td className="py-3 pr-4 text-muted-foreground">{ago(d.last?.receivedAt)}</td>
                           <td className="py-3 text-right">
                             {(canRevokeAny || d.owner === me) && (

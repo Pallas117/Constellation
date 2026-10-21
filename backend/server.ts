@@ -48,6 +48,7 @@ import { createMeshRouters } from "./mesh/router.js";
 import { enforceApiPolicy, isPublic } from "./rbac.js";
 import { CommerceStore } from "./commerce/store.js";
 import { createDataApiRouter, createOrgRouter, createPilotRequestHandler } from "./commerce/routers.js";
+import { EnvironmentHistory } from "./trust/environment.js";
 
 const app = express();
 const cyberTiger = new CyberTigerDaemon();
@@ -264,6 +265,8 @@ app.use(
       return fromDb ? { source: "database", points: fromDb } : { source: "memory", points: filterByLookback(getCanonicalFeed(), lookbackMs, limit) };
     },
     sources: () => getSourceStatus(),
+    // Trust records read the in-memory feed (~28 h at 5 s), longer than any plan's lookback.
+    environment: () => new EnvironmentHistory(getCanonicalFeed(), "live feed"),
   }),
 );
 

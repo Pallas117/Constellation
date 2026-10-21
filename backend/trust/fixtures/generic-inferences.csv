@@ -1,0 +1,10 @@
+inference_time,sat,model,label,score,lat,lon,alt_km
+2026-01-19T02:10:00Z,DEMO-SAT-1,cloudmask-v3.2,clear,0.94,12.4,101.7,525
+2026-01-19T04:50:30Z,DEMO-SAT-1,cloudmask-v3.2,cloud,0.88,,,
+2026-01-19T04:50:30Z,DEMO-SAT-1,cloudmask-v3.2,cloud,0.88,,,
+2026-01-19T03:00:00Z,DEMO-SAT-1,cloudmask-v3.2,cloud,0.81,,,
+2026-01-19T05:00:00,DEMO-SAT-1,cloudmask-v3.2,cloud,0.80,,,
+2026-01-19T05:10:00Z,DEMO-SAT-2,ship-detect-v1.4,"vessel, small ""fishing""",0.71,-30.5,-45.0,525
+2026-01-19T05:20:00Z,DEMO-SAT-2,ship-detect-v1.4,vessel,1.7,,,
+not-a-time,DEMO-SAT-2,ship-detect-v1.4,vessel,0.5,,,
+2026-01-19T05:30:00Z,DEMO-SAT-2,ship-detect-v1.4,vessel

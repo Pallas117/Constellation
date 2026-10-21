@@ -19,13 +19,28 @@ export interface MeshReport {
   argoVersion: string;
   checkedAt: string;
   receivedAt: string;
+  host?: MeshHost;
+  platform?: "macos" | "linux" | "windows" | "ios" | "android";
+  battery?: { level: number; charging: boolean; lowPower: boolean };
 }
+
+export interface MeshHost {
+  ramGB: number;
+  pressure: "normal" | "warn" | "critical" | "";
+  swapUsedGB: number;
+  diskFreeGB: number;
+  cpus: number;
+  os: string;
+}
+
+export type HostingVerdict = "agents" | "light" | "no" | "unknown";
 
 export interface MeshDevice {
   name: string;
   enrolledAt: string;
   owner?: string;
   last?: MeshReport;
+  hosting?: HostingVerdict;
 }
 
 export interface OnboardingStep {

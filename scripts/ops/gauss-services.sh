@@ -12,6 +12,16 @@
 #   scripts/ops/gauss-services.sh awake setup|on|off       keep running with the lid closed (setup: once, asks for sudo)
 #   scripts/ops/gauss-services.sh restart                  restart services
 #   scripts/ops/gauss-services.sh uninstall                unload + remove agents
+#   scripts/ops/gauss-services.sh dev <checkout-dir>        run a dev/R&D checkout beside live (:3101 API, :5174 site)
+#   scripts/ops/gauss-services.sh fallback prepare <dir> [sha]|on|off|status   cold-standby last-known-good build
+#
+# Three layers (GAU-158): dev (any other checkout, foreground, own ports and data,
+# never the live API), production (this install), and fallback: a built, not running,
+# checkout of the last known-good commit. When the guard has used all its restarts on
+# a service this hour and it is still down, it swaps the live agents for the fallback's
+# on the same ports and URLs (live data, live .env) and texts the phone. Back with
+# `fallback off`. Prepare it from what is running before each deploy:
+#   gauss-services.sh fallback prepare <dir>   (default sha: the live checkout's HEAD)
 #
 # Agents: backend (:3001) and frontend (:8080) restart if they crash; a nightly
 # learning job (03:00, or on next wake) rebuilds the nowcast dataset from the
@@ -75,7 +85,7 @@ AUTH_URL="${GAUSS_AUTH_URL:-$PUBLIC_URL}"
 
 xml() { sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g' <<<"$1"; }
 
-plist() { # plist <label> <dir> <log> <keepalive|nightly|minutely> <arg>...
+plist() { # plist <label> <dir> <log> <keepalive|nightly|minutely> <arg>...; PLIST_DATA=<dir> overrides <dir>/data
   local label=$1 dir=$2 log=$3 mode=$4; shift 4
   local schedule="  <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><true/>"
@@ -100,9 +110,10 @@ $args  </array>
     <key>PATH</key><string>$(xml "$(dirname "$NODE")"):/usr/bin:/bin:/usr/sbin:/sbin</string>
     <key>GAUSS_PUBLIC_URL</key><string>$(xml "$PUBLIC_URL")</string>
     <key>BETTER_AUTH_URL</key><string>$(xml "$AUTH_URL")</string>
-    <key>MESH_STORE_PATH</key><string>$(xml "$dir/data/mesh/devices.json")</string>
-    <key>COMMERCE_DB_PATH</key><string>$(xml "$dir/data/commerce/commerce.db")</string>
-    <key>ALLOWED_ORIGINS</key><string>$(xml "$PUBLIC_URL,$AUTH_URL,http://127.0.0.1:8080,http://localhost:8080")</string>
+    <key>MESH_STORE_PATH</key><string>$(xml "${PLIST_DATA:-$dir/data}/mesh/devices.json")</string>
+    <key>COMMERCE_DB_PATH</key><string>$(xml "${PLIST_DATA:-$dir/data}/commerce/commerce.db")</string>
+${PLIST_DATA:+    <key>GAUSS_BEDROCK_DIR</key><string>$(xml "$PLIST_DATA/bedrock")</string>
+}    <key>ALLOWED_ORIGINS</key><string>$(xml "$PUBLIC_URL,$AUTH_URL,http://127.0.0.1:8080,http://localhost:8080")</string>
   </dict>
 $schedule
   <key>ThrottleInterval</key><integer>10</integer>
@@ -201,9 +212,11 @@ memory_alerts() { # memory_alerts <pressure level> <swap used MB>
 mtime_age_min() { local m; m=$(stat -f %m "$1" 2>/dev/null) || { echo 99999; return; }; echo $(( ($(date +%s) - m) / 60 )); }
 loaded() { launchctl print "$UID_DOMAIN/$1" >/dev/null 2>&1; }
 
+recent_kicks() { { awk -v l="$1" -v n="$(date +%s)" '$1==l && n-$2<3600' "$WATCH_KICKS" 2>/dev/null || true; } | wc -l | tr -d ' '; }
+
 kick() { # kick <label> <reason>: rate-limited launchctl kickstart, logged and alerted
   local label=$1 reason=$2 now; now=$(date +%s)
-  local recent; recent=$({ awk -v l="$label" -v n="$now" '$1==l && n-$2<3600' "$WATCH_KICKS" 2>/dev/null || true; } | wc -l | tr -d ' ')
+  local recent; recent=$(recent_kicks "$label")
   if [ "$recent" -ge "$WATCH_MAX_KICKS" ]; then
     phone -key "watch-$label" -every 1h "Gauss: $label keeps failing" "$reason after $recent restarts this hour. Check its log."
     return 0
@@ -229,16 +242,142 @@ watch_peers() {
     age=$(mtime_age_min "$HOME/.local/share/mesh-heal/state")
     [ "$age" -gt 10 ] && kick uk.lightbound.mesh-heal "no mesh-heal check for ${age} min"
   fi
-  local svc url strikes
+  local svc url strikes prefix=uk.lightbound.gauss
+  fallback_active && prefix=uk.lightbound.gauss-fallback
   for svc in backend:http://127.0.0.1:3001/health frontend:http://127.0.0.1:8080/; do
-    url=${svc#*:}; svc=uk.lightbound.gauss-${svc%%:*}
+    url=${svc#*:}; svc=$prefix-${svc%%:*}
     loaded "$svc" || continue
     strikes="$WATCH_DIR/$svc.strikes"
     if [ "$(code "$url")" = 200 ]; then rm -f "$strikes"; continue; fi
     echo x >>"$strikes"
-    [ "$(wc -l <"$strikes" | tr -d ' ')" -ge 2 ] && { rm -f "$strikes"; kick "$svc" "health check failed twice"; }
+    [ "$(wc -l <"$strikes" | tr -d ' ')" -ge 2 ] || continue
+    rm -f "$strikes"
+    # Out of restarts and still down: serve the last known-good build instead of nothing.
+    if [ "$prefix" = uk.lightbound.gauss ] && [ "$(recent_kicks "$svc")" -ge "$WATCH_MAX_KICKS" ] && fallback_ready; then
+      fallback_on "${svc#uk.lightbound.gauss-} still down after $WATCH_MAX_KICKS restarts this hour" || true
+      break
+    fi
+    kick "$svc" "health check failed twice"
   done
   return 0
+}
+
+# Agents are swapped with bootout + bootstrap. bootout returns before the job is
+# gone, and bootstrapping too early fails with error 5, so wait for it.
+unload() { launchctl bootout "$UID_DOMAIN/$1" 2>/dev/null || true; local _; for _ in $(seq 1 20); do loaded "$1" || break; sleep 0.5; done; }
+reload() { unload "$1"; launchctl bootstrap "$UID_DOMAIN" "$2"; } # reload <label> <plist>
+
+# Fallback: a cold standby (built, not loaded, so it costs disk, not memory). Its
+# plists live in FALLBACK_STATE, not LaunchAgents, so a reboot always brings up live.
+FALLBACK_STATE="$WATCH_DIR/fallback"
+FALLBACK_LABELS=(uk.lightbound.gauss-fallback-backend uk.lightbound.gauss-fallback-frontend)
+live_dir() { plutil -extract WorkingDirectory raw -o - "$AGENTS/uk.lightbound.gauss-backend.plist" 2>/dev/null; }
+fallback_ready() { # "<sha> <dir> <epoch>" in ready, both plists and a built site
+  local sha dir; read -r sha dir _ 2>/dev/null <"$FALLBACK_STATE/ready" || return 1
+  [ -f "$FALLBACK_STATE/${FALLBACK_LABELS[0]}.plist" ] && [ -f "$FALLBACK_STATE/${FALLBACK_LABELS[1]}.plist" ] && [ -f "$dir/frontend/dist/index.html" ]
+}
+fallback_active() { loaded "${FALLBACK_LABELS[0]}"; }
+
+fallback_on() { # fallback_on <reason>: swap live for the fallback on the same ports
+  fallback_ready || { echo "No fallback prepared: $0 fallback prepare <dir>" >&2; return 1; }
+  local sha dir l; read -r sha dir _ <"$FALLBACK_STATE/ready"
+  for l in "${SERVICES[@]}"; do unload "$l"; done
+  for l in "${FALLBACK_LABELS[@]}"; do reload "$l" "$FALLBACK_STATE/$l.plist"; done
+  echo "$(date '+%F %T') $1" >"$FALLBACK_STATE/active"
+  echo "$(date '+%F %T') failover to fallback ${sha:0:7} ($dir): $1"
+  phone -key fallback -every 1h "Gauss: on fallback" \
+    "$1. Serving last known-good ${sha:0:7} on the same URLs. Fix live, then: gauss-services.sh fallback off"
+}
+
+fallback_off() { # back to live; the guard gets a fresh set of restarts for it
+  local l; for l in "${FALLBACK_LABELS[@]}"; do unload "$l"; done
+  for l in "${SERVICES[@]}"; do
+    rm -f "$WATCH_DIR/$l.strikes"
+    reload "$l" "$AGENTS/$l.plist"
+  done
+  [ -f "$WATCH_KICKS" ] && { grep -Ev '^uk\.lightbound\.gauss-(backend|frontend) ' "$WATCH_KICKS" >"$WATCH_KICKS.tmp" || true; mv "$WATCH_KICKS.tmp" "$WATCH_KICKS"; }
+  rm -f "$FALLBACK_STATE/active"
+  echo "Back on live. If it fails again, the guard fails over again after $WATCH_MAX_KICKS restarts."
+}
+
+fallback_state() { # "ok|no <description>" for status and check
+  local sha dir at
+  if fallback_active; then echo "no serving from fallback since $(cut -d' ' -f1-2 "$FALLBACK_STATE/active" 2>/dev/null): fix live, then '$0 fallback off'"
+  elif fallback_ready; then read -r sha dir at <"$FALLBACK_STATE/ready"; echo "ok fallback ready: ${sha:0:7}, prepared $(date -r "$at" '+%F %H:%M') (cold standby)"
+  else echo "ok fallback: none prepared (warning: '$0 fallback prepare <dir>' before the next deploy)"
+  fi
+}
+
+fallback_prepare() { # fallback_prepare <dir> [sha]: check out, install, build, write plists; never loads them
+  local live dir sha level _
+  live=$(live_dir) && [ -d "$live" ] || { echo "No live install ($AGENTS/uk.lightbound.gauss-backend.plist): run install first" >&2; return 1; }
+  fallback_active && { echo "The fallback is serving now; '$0 fallback off' before preparing a new one." >&2; return 1; }
+  dir=${1:?usage: $0 fallback prepare <dir> [sha]}
+  sha=$(git -C "$live" rev-parse --verify "${2:-HEAD}^{commit}") || return 1
+  read -r level _ < <(memory_stats)
+  if [ "$level" -ge "$MEM_SHED_LEVEL" ]; then
+    echo "Memory pressure is $(pressure_name "$level"): not installing now (npm ci was killed under pressure on 2026-10-19). Retry when normal." >&2; return 1
+  fi
+  if [ -e "$dir" ]; then
+    dir=$(cd "$dir" && pwd)
+    local prev; read -r _ prev _ 2>/dev/null <"$FALLBACK_STATE/ready" || true
+    # Only ever re-point a directory this command made: never someone's working checkout.
+    [ "$dir" = "${prev:-}" ] || { echo "$dir exists and is not the current fallback; pick a new path." >&2; return 1; }
+    git -C "$dir" checkout -q --detach "$sha"
+  else
+    git -C "$live" worktree add -q --detach "$dir" "$sha"; dir=$(cd "$dir" && pwd)
+  fi
+  [ "$dir" != "$live" ] || { echo "The fallback must not be the live checkout." >&2; return 1; }
+  local lock; lock=$(shasum "$dir/package-lock.json" | cut -d' ' -f1)
+  if [ "$(cat "$dir/node_modules/.gauss-lock" 2>/dev/null)" != "$lock" ]; then
+    echo "Installing dependencies in $dir ..."
+    (cd "$dir" && PATH="$(dirname "$NODE"):$PATH" npm ci --no-audit --no-fund >/dev/null) && echo "$lock" >"$dir/node_modules/.gauss-lock"
+  fi
+  echo "Building the fallback site (same-origin API) ..."
+  (cd "$dir" && VITE_HELIO_PROXY_URL=same-origin "$NODE" node_modules/vite/bin/vite.js build --config frontend/vite.config.ts >/dev/null)
+  mkdir -p "$FALLBACK_STATE" "$LOGS"
+  # Same ports, live data and live .env (read in place, never copied): only one of the
+  # two ever runs, and devices, accounts and telemetry carry over in both directions.
+  PLIST_DATA="$live/data" plist "${FALLBACK_LABELS[0]}" "$dir" "$LOGS/fallback-backend.log" keepalive \
+    "$NODE" --env-file-if-exists="$live/.env" --import tsx backend/server.ts >"$FALLBACK_STATE/${FALLBACK_LABELS[0]}.plist"
+  PLIST_DATA="$live/data" plist "${FALLBACK_LABELS[1]}" "$dir" "$LOGS/fallback-frontend.log" keepalive \
+    "$NODE" node_modules/vite/bin/vite.js preview --config frontend/vite.config.ts --host 127.0.0.1 --port 8080 --strictPort \
+    >"$FALLBACK_STATE/${FALLBACK_LABELS[1]}.plist"
+  plutil -lint -s "$FALLBACK_STATE/${FALLBACK_LABELS[0]}.plist" "$FALLBACK_STATE/${FALLBACK_LABELS[1]}.plist"
+  echo "$sha $dir $(date +%s)" >"$FALLBACK_STATE/ready"
+  echo "Fallback ready: ${sha:0:7} at $dir (cold: not running, no memory used)."
+}
+
+# Dev / R&D: any checkout but live or fallback, in the foreground, on its own ports
+# and its own data/, with its site's /api pointed at its own backend. Explicit env
+# beats the checkout's .env (node --env-file never overrides), so a copied .env with
+# live paths or PROXY_PORT=3001 can't reach production.
+dev_run() { # dev_run <checkout-dir>
+  local dir live fdir level _
+  dir=$(cd "${1:?usage: $0 dev <checkout-dir>}" && pwd)
+  [ -f "$dir/backend/server.ts" ] || { echo "$dir is not a Gauss checkout" >&2; return 1; }
+  live=$(live_dir || true); read -r _ fdir _ 2>/dev/null <"$FALLBACK_STATE/ready" || true
+  if [ "$dir" = "${live:-}" ] || [ "$dir" = "${fdir:-}" ]; then
+    echo "$dir is the $([ "$dir" = "${live:-}" ] && echo live || echo fallback) checkout; develop in another worktree." >&2; return 1
+  fi
+  read -r level _ < <(memory_stats)
+  if [ "$level" -ge "$MEM_SHED_LEVEL" ]; then
+    echo "Memory pressure is $(pressure_name "$level"): a dev server now risks the live services. Close something first." >&2; return 1
+  fi
+  local api="${GAUSS_DEV_API_PORT:-3101}" web="${GAUSS_DEV_WEB_PORT:-5174}"
+  [ "$api" != 3001 ] && [ "$web" != 8080 ] || { echo "Ports 3001 and 8080 belong to live." >&2; return 1; }
+  [ "$(code "http://127.0.0.1:$api/health")" = down ] || { echo "Port $api is in use (another dev server?)." >&2; return 1; }
+  [ -d "$dir/node_modules" ] || { echo "No node_modules in $dir: run npm ci there first." >&2; return 1; }
+  [ "${GAUSS_DEV_DRY:-0}" = 1 ] && { echo "dev ok: $dir site http://127.0.0.1:$web api :$api"; return 0; }
+  local origin="http://127.0.0.1:$web"; mkdir -p "$dir/data/mesh" "$dir/data/commerce"
+  cd "$dir"
+  env PROXY_PORT="$api" GAUSS_PUBLIC_URL="$origin" BETTER_AUTH_URL="$origin" ALLOWED_ORIGINS="$origin,http://localhost:$web" \
+    GAUSS_BEDROCK_DIR="$dir/data/bedrock" MESH_STORE_PATH="$dir/data/mesh/devices.json" COMMERCE_DB_PATH="$dir/data/commerce/commerce.db" \
+    "$NODE" --env-file-if-exists=.env --import tsx backend/server.ts &
+  local pid=$!; trap "kill $pid 2>/dev/null || true" EXIT INT TERM
+  echo "Dev: site $origin, API http://127.0.0.1:$api (live stays on :8080/:3001). Ctrl-C stops both."
+  GAUSS_DEV_WEB_PORT="$web" GAUSS_API_TARGET="http://127.0.0.1:$api" VITE_HELIO_PROXY_URL=same-origin \
+    "$NODE" node_modules/vite/bin/vite.js --config frontend/vite.config.ts
 }
 
 awake_guard() { # run every minute by the awake agent
@@ -494,6 +633,7 @@ except Exception:
   item "${memory%% *}" "${memory#* }"
   [ "$(code "${GAUSS_BRAIN_URL:-http://127.0.0.1:3032}/v1/models")" = 200 ] && ok=ok || ok=no
   item $ok "answer model up (${GAUSS_BRAIN_URL:-http://127.0.0.1:3032})"
+  local fb; fb=$(fallback_state); item "${fb%% *}" "${fb#* }"
   [ $fail = 0 ] && echo "Ready to demo." || echo "Not ready: fix the ✗ items above."
   return $fail
 }
@@ -516,10 +656,7 @@ case "${1:-}" in
       /bin/bash "$dir/scripts/ops/gauss-services.sh" awake guard >"$AGENTS/uk.lightbound.gauss-awake.plist"
     for l in "${LABELS[@]}"; do
       plutil -lint -s "$AGENTS/$l.plist"
-      launchctl bootout "$UID_DOMAIN/$l" 2>/dev/null || true
-      # bootout returns before the job is gone; bootstrapping too early fails with error 5.
-      for _ in $(seq 1 20); do launchctl print "$UID_DOMAIN/$l" >/dev/null 2>&1 || break; sleep 0.5; done
-      launchctl bootstrap "$UID_DOMAIN" "$AGENTS/$l.plist"
+      reload "$l" "$AGENTS/$l.plist"
     done
     sleep 8
     health
@@ -562,13 +699,26 @@ case "${1:-}" in
     done
     health
     printf 'awake    %s\n' "$(awake_state | cut -d' ' -f2-)"
+    printf 'fallback %s\n' "$(fallback_state | cut -d' ' -f2-)"
     ;;
   restart)
     for l in "${SERVICES[@]}"; do launchctl kickstart -k "$UID_DOMAIN/$l"; done
     sleep 8
     health
     ;;
+  dev)
+    dev_run "${2:-}"
+    ;;
+  fallback)
+    case "${2:-}" in
+      prepare) fallback_prepare "${3:-}" "${4:-}" ;;
+      on) fallback_on "switched by hand" ;;
+      off) fallback_off ;;
+      *) fallback_state | cut -d' ' -f2- ;;
+    esac
+    ;;
   uninstall)
+    for l in "${FALLBACK_LABELS[@]}"; do launchctl bootout "$UID_DOMAIN/$l" 2>/dev/null || true; done
     for l in "${LABELS[@]}"; do
       launchctl bootout "$UID_DOMAIN/$l" 2>/dev/null || true
       rm -f "$AGENTS/$l.plist"
@@ -577,7 +727,7 @@ case "${1:-}" in
     echo "Gauss services removed. Logs kept in $LOGS."
     ;;
   *)
-    sed -n '2,13p' "$0"
+    sed -n '2,15p' "$0"
     exit 2
     ;;
 esac

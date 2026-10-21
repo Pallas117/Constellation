@@ -1,5 +1,7 @@
 import express from "express";
 import { roleSatisfies, type AuthenticatedRequest } from "../auth.js";
+import type { EnvironmentHistory } from "../trust/environment.js";
+import { buildTrustRecord, parseTrustRequest, type TrustRecord } from "../trust/record.js";
 import { PLANS, type Plan, type PlanLimits } from "./plans.js";
 import type { CommerceStore, Org, PilotInterest } from "./store.js";
 
@@ -8,7 +10,12 @@ export interface DataProvider {
   latest(): Promise<unknown | null>;
   history(lookbackMs: number, limit: number): Promise<{ source: string; points: unknown[] }>;
   sources(): unknown;
+  /** The environment history trust records are read from (GAU-57); absent when not offered. */
+  environment?(): EnvironmentHistory | null;
 }
+
+/** Inferences per trust-record request. */
+export const MAX_TRUST_BATCH = 100;
 
 type KeyedRequest = express.Request & { apiKey?: { keyId: string; org: Org } };
 
@@ -99,6 +106,47 @@ export function createDataApiRouter(
 
   router.get("/data/sources/status", (req: KeyedRequest, res) => {
     res.json({ data: data.sources(), meta: meta(req) });
+  });
+
+  /**
+   * PR-01 trust records (GAU-57): one inference, or {"inferences": [...]} up to MAX_TRUST_BATCH.
+   * Each item is validated on its own; an invalid one is returned with its errors, never
+   * guessed. Inference times beyond the plan's lookback are refused here: older windows are a
+   * replay pilot (PR-03), not a live lookup.
+   */
+  router.post("/data/trust/records", (req: KeyedRequest, res) => {
+    const history = data.environment?.() ?? null;
+    if (!history) {
+      res.status(503).json({ error: "Trust records are not available on this server" });
+      return;
+    }
+    const body: unknown = req.body;
+    const batch = body && typeof body === "object" && !Array.isArray(body) && "inferences" in body;
+    const items: unknown[] = batch ? ((body as { inferences: unknown }).inferences as unknown[]) : [body];
+    if (!Array.isArray(items) || items.length === 0 || items.length > MAX_TRUST_BATCH) {
+      res.status(400).json({ error: `Send one inference, or {"inferences": [...]} with 1 to ${MAX_TRUST_BATCH} items` });
+      return;
+    }
+    const nowMs = now().getTime();
+    const oldest = nowMs - plans[req.apiKey!.org.plan].maxLookbackMs;
+    const records: TrustRecord[] = [];
+    const rejected: Array<{ index: number; errors: string[] }> = [];
+    items.forEach((item, index) => {
+      const parsed = parseTrustRequest(item);
+      if ("errors" in parsed) {
+        rejected.push({ index, errors: parsed.errors });
+      } else if (Date.parse(parsed.request.time) < oldest) {
+        rejected.push({ index, errors: ["time is older than this plan's lookback; older windows are covered by a replay pilot"] });
+      } else {
+        records.push(buildTrustRecord(parsed.request, history, { nowMs }));
+      }
+    });
+    if (!batch) {
+      if (rejected.length) res.status(400).json({ error: "Invalid inference", errors: rejected[0].errors });
+      else res.json({ data: records[0], meta: meta(req) });
+      return;
+    }
+    res.json({ data: records, rejected, meta: { ...meta(req), count: records.length } });
   });
 
   return router;

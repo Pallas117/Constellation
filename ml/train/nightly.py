@@ -10,7 +10,11 @@ Skips itself while `gauss-services.sh balance` has paused learning to save batte
 (~/Library/Application Support/Gauss/learning-paused).
 
 The --telemetry argument is kept for the existing LaunchAgent; the live buffer is only counted,
-so the log shows how much live data has accumulated for future fine-tuning.
+so the log shows how much live data has accumulated for future fine-tuning. Counting is
+incremental (GAU-156): only bytes appended since the last run are read, from a byte offset kept in
+ml/data/nightly/telemetry-count.json (counts and offsets only; the telemetry is never modified).
+Training is skipped when the same data, code and libraries were already trained (status
+"unchanged"), since the run is deterministic.
 """
 
 from __future__ import annotations
@@ -26,16 +30,41 @@ HERE = Path(__file__).resolve().parent
 PAUSE_FLAG = Path.home() / "Library" / "Application Support" / "Gauss" / "learning-paused"
 
 
-def count_canonical(telemetry: Path) -> int:
-  """Live canonical points buffered so far (unreadable lines skipped)."""
+COUNT_STATE = HERE.parent / "data" / "nightly" / "telemetry-count.json"
+CHUNK = 1 << 20  # read 1 MiB at a time: memory stays flat however large the buffer grows
+MARKERS = (b'"type":"canonical"', b'"type": "canonical"')
+
+
+def count_canonical(telemetry: Path, state_path: Path = COUNT_STATE) -> int:
+  """Live canonical points buffered so far, reading only what was appended since the last count.
+
+  Only complete lines are counted; a partly written last line is picked up next time. If the file
+  shrank or was replaced (rotation), it is recounted from the start.
+  """
   if not telemetry.exists():
     return 0
-  n = 0
-  with telemetry.open("r", encoding="utf-8") as f:
-    for line in f:
-      if '"type":"canonical"' in line or '"type": "canonical"' in line:
-        n += 1
-  return n
+  st = telemetry.stat()
+  try:
+    prev = json.loads(state_path.read_text())
+  except Exception:  # noqa: BLE001
+    prev = {}
+  same_file = prev.get("inode") == st.st_ino and prev.get("offset", 0) <= st.st_size
+  offset, count = (prev["offset"], prev["count"]) if same_file else (0, 0)
+  with telemetry.open("rb") as f:
+    f.seek(offset)
+    tail = b""
+    while True:
+      chunk = f.read(CHUNK)
+      if not chunk:
+        break
+      lines = (tail + chunk).split(b"\n")
+      tail = lines.pop()  # incomplete (or empty) last piece
+      count += sum(1 for line in lines if any(m in line for m in MARKERS))
+      offset += len(chunk)
+  offset -= len(tail)  # resume at the start of the incomplete line
+  state_path.parent.mkdir(parents=True, exist_ok=True)
+  state_path.write_text(json.dumps({"inode": st.st_ino, "offset": offset, "count": count}) + "\n")
+  return count
 
 
 def main() -> int:
@@ -49,14 +78,15 @@ def main() -> int:
     print(json.dumps(log))
     return 0
 
-  result = subprocess.run([sys.executable, "-I", str(HERE / "train_kp.py")], capture_output=True, text=True)
+  result = subprocess.run([sys.executable, "-I", str(HERE / "train_kp.py"), "--skip-if-unchanged"],
+                          capture_output=True, text=True)
   if result.returncode != 0:
     log.update(status="failed", error=result.stderr.strip()[-500:])
     print(json.dumps(log))
     return 1
   out = json.loads(result.stdout)
   log.update(
-    status="ok",
+    status="unchanged" if out.get("unchanged") else "ok",
     candidate=out["version"],
     gate_passed=out["gate"]["passed"],
     test_mae=out["test"]["mae"],

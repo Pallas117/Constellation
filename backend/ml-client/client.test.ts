@@ -170,3 +170,8 @@ test("inference server request handling (python)", { skip: !hasPython && "python
   const result = spawnSync("python3", ["-I", "ml/tests/test_infer_server.py"], { encoding: "utf8" });
   assert.equal(result.status, 0, result.stderr);
 });
+
+test("nightly incremental count and skip-if-unchanged (python)", { skip: !hasPython && "python3 not found" }, () => {
+  const result = spawnSync("python3", ["-I", "ml/tests/test_nightly.py"], { encoding: "utf8" });
+  assert.equal(result.status, 0, result.stderr);
+});

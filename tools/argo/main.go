@@ -17,6 +17,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"syscall"
@@ -393,6 +394,12 @@ func tailnetOnly(raw string) (*url.URL, error) {
 	return nil, fmt.Errorf("gauss_url %q is not this Mac or a tailnet address (100.64.0.0/10 or *.ts.net)", h)
 }
 
+func hostCapacityNow() HostCapacity {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	return hostCapacity(ctx)
+}
+
 // pushToGauss sends a minimal record: no public IP, no MAC, no SSID, no env.
 func pushToGauss(cfg Config, st State) {
 	u, err := tailnetOnly(cfg.GaussURL)
@@ -407,6 +414,8 @@ func pushToGauss(cfg Config, st State) {
 		"device": cfg.Device, "class": st.Class, "reason": Mask(st.Reason), "loc": st.Loc,
 		"network": st.Fingerprint, "tailscale": st.Tailscale.Running, "exitNode": st.Tailscale.ExitNode,
 		"breakerOpen": time.Now().Before(st.BreakerUntil), "argoVersion": version, "checkedAt": st.CheckedAt,
+		"host":     hostCapacityNow(), // sizes and pressure only, so Gauss can tell which devices can host agents
+		"platform": platformName(runtime.GOOS),
 	})
 	u.Path = "/api/mesh/report"
 	req, _ := http.NewRequest(http.MethodPost, u.String(), bytes.NewReader(body))
