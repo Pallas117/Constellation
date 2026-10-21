@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import type { L1Structures } from "../physics/l1-structures.js";
+import type { IcmeInterval, L1Structures, ShockCandidate } from "../physics/l1-structures.js";
 import { HOLDOUT_EVENTS, type HoldoutEvent } from "./holdout.js";
 import { holdoutScorecard, holdoutTotals, scoreHoldout } from "./holdout-score.js";
 
@@ -25,10 +25,28 @@ const none: L1Structures = {
   coverage: { speed: 1, density: 1, bt: 1, bz: 1, temperature: 1 },
   notes: [],
 };
-const shockAt = (time: string, earthArrival: string) =>
-  ({ kind: "fast-forward shock candidate", time, earthArrival, shockSpeedKmS: 600, deltaSpeedKmS: 100, densityRatio: 2, fieldRatio: 2, confidence: "high" }) as const;
-const icmeFrom = (start: string, end: string) =>
-  ({ kind: "ICME candidate", start, end, hours: 6, signatures: ["low proton beta"], medianTemperatureRatio: 0.9, medianProtonBeta: 0.05, minBzNt: -5, maxBtNt: 15, confidence: "medium" }) as const;
+const shockAt = (time: string, earthArrival: string): ShockCandidate => ({
+  kind: "fast-forward shock candidate",
+  time,
+  earthArrival,
+  shockSpeedKmS: 600,
+  deltaSpeedKmS: 100,
+  densityRatio: 2,
+  fieldRatio: 2,
+  confidence: "high",
+});
+const icmeFrom = (start: string, end: string): IcmeInterval => ({
+  kind: "ICME candidate",
+  start,
+  end,
+  hours: 6,
+  signatures: ["low proton beta"],
+  medianTemperatureRatio: 0.9,
+  medianProtonBeta: 0.05,
+  minBzNt: -5,
+  maxBtNt: 15,
+  confidence: "medium",
+});
 
 test("holdout scoring: a shock within 30 min and an ICME start within 2 h are hits; outside, misses", () => {
   const hit = scoreHoldout(event, { ...none, shocks: [shockAt("2025-01-01T05:20:00Z", "2025-01-01T06:25:00Z")], icmeCandidates: [icmeFrom("2025-01-01T11:30:00Z", "2025-01-01T20:00:00Z")] });
