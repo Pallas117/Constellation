@@ -1,6 +1,6 @@
 {
   "$comment": "Constellation requirements baseline (GAU-120). NASA SP-2016-6105 Rev 2 §6.2/§5.3. Methods: T test, A analysis, I inspection, D demonstration. T evidence = exact test names; A/I/D evidence = repo paths. Verified by `npm run verify`.",
-  "version": "1.7.2",
+  "version": "1.8.0",
   "requirements": [
     {
       "id": "REQ-ING-001",
@@ -480,6 +480,22 @@
         "TLE: an epoch more than 7 days from the inference is not used (GAU-57)",
         "trust record: an ephemeris and a TLE that disagree are conflicting inputs, so both read unknown (GAU-57)",
         "TLE: format, catalogue number and the modulo-10 checksum are checked; satellite.js checks none of them (GAU-57)"
+      ]
+    },
+    {
+      "id": "REQ-TR-002",
+      "title": "Customer log ingest",
+      "statement": "The system shall read a customer's inference log (CSV, JSON or JSONL) through a declared, versioned column mapping into trust-record requests, shall reject and report every malformed, out-of-order or duplicate row with its reason rather than drop it, shall attach to every accepted row its file hash, row number and mapping version, and shall produce identical output from identical input.",
+      "rationale": "PR-03a (GAU-66): the replay pilot on customer logs (GAU-59) must account for every row it was given.",
+      "parent": "GAU-66",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "ingest: valid rows become requests with file hash, row number and mapping version (GAU-66)",
+        "ingest: malformed, duplicate and out-of-order rows are rejected with reasons, never dropped (GAU-66)",
+        "ingest: the same bytes and mapping give the same result; a changed byte changes the hash (GAU-66)",
+        "ingest: a mapping naming a missing column, or an invalid mapping, fails the whole file with the reason (GAU-66)",
+        "ingest: an ingested log becomes trust records that carry their provenance, through the replayed storm (GAU-66)"
       ]
     }
   ]

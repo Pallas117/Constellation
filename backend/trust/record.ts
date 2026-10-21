@@ -68,6 +68,17 @@ export interface TrustRecordRequest {
   ephemeris?: Ephemeris | null;
   /** Two-line element set, propagated with SGP4 when no ephemeris is given (and cross-checked when both are). */
   tle?: [string, string] | null;
+  /** Set by the log ingest adapter (GAU-66), never taken from an API body. */
+  ingest?: IngestProvenance | null;
+}
+
+/** Where an ingested inference came from: the exact file, row and mapping (GAU-66). */
+export interface IngestProvenance {
+  fileSha256: string;
+  /** 1-based data row (the header is row 0 for CSV). */
+  row: number;
+  mappingId: string;
+  mappingVersion: string;
 }
 
 /** Thresholds a pilot agrees with the customer; the record states the policy it used. */
@@ -99,6 +110,8 @@ export interface TrustRecord {
     processorProfileId: string | null;
     output: unknown;
     confidence: number | null;
+    /** Present when the inference came from an ingested customer log. */
+    ingest: IngestProvenance | null;
   };
   /** Which history the environment was read from, e.g. "live feed" or "replay jan-2026". */
   environmentSource: string;
@@ -511,6 +524,7 @@ export function buildTrustRecord(
       processorProfileId: req.processorProfileId ?? null,
       output: req.output ?? null,
       confidence: req.confidence ?? null,
+      ingest: req.ingest ?? null,
     },
     environmentSource: history.label,
     environment: env,
