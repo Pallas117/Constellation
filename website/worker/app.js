@@ -2,7 +2,8 @@
 // /app/admin/ (applications, quotes, billing, invitations; for the emails in ADMIN_EMAILS).
 // Every request is checked: a valid Cloudflare Access token for who, the account record for what.
 // Paying happens on Stripe's own pages (checkout, or an invoice where an admin allows it); this side starts it and reads the result.
-import { accessIdentity, isAdmin } from "./auth.js";
+// Staff (STAFF_EMAILS) also get a link to the staff operations and training site (OPS_URL), which has its own Access application.
+import { accessIdentity, isAdmin, isStaff } from "./auth.js";
 import { deleteAccount, getAccount, getApplication, latestApplication, listAccounts, listApplications, putAccount, setApplicationStatus } from "./data.js";
 import { readCapped } from "./body.js";
 import { sameOrigin } from "./forms.js";
@@ -13,6 +14,7 @@ import { isZone, zonedToUtc } from "./timezones.js";
 import { APP_CSP } from "./headers.js";
 import { createArgoCheckout, createCheckout, createEduCheckout, createEduInvoice, createInvoice, createPortal, customerOf, eduInvoiceable, invoiceable, payable } from "./stripe.js";
 import { renderClassroom } from "./classroom.js";
+import { cleanTags, renderOpportunities } from "./opportunities.js";
 import { ARGO, BILLING, EDU, FEATURES, INVOICE_DAYS, PILOT_STEPS, TIERS, argoCanStart, argoPrice, billingStatus, eduEligible, eduMode, eduStaffLabel, eduStaffPrice, gbp, isAcademicEmail, priceLabel, quoteInRange, tierById, unlocked } from "./tiers.js";
 
 export const APP_HEADERS = { "cache-control": "private, no-store", "x-robots-tag": "noindex", "Content-Security-Policy": APP_CSP };
@@ -122,7 +124,14 @@ function memberCard(supportUrl = "") {
     `<p class="m"><a href="/constellation/">Constellation</a></p></article>`;
 }
 
-export function renderWorkspace({ email, account, admin, weather, consoleUrl, supportUrl = "", argo = "", edu = "", applications = [], notice = "" }) {
+/** Staff only, and only once OPS_URL is an https address: the way into the operations and training site. */
+export function staffCard(opsUrl) {
+  if (!/^https:\/\/[^\s"<>]+$/.test(opsUrl ?? "")) return "";
+  return `<article class="tile"><h2 class="label">Staff</h2><p class="big">Operations and training</p><p class="t">Missions, check-ins and the training academy.</p>` +
+    `<p class="m">For the Lightbound team. It signs you in with the same email.</p><p class="m"><a href="${esc(opsUrl)}" rel="noopener">Open operations and training</a></p></article>`;
+}
+
+export function renderWorkspace({ email, account, admin, weather, consoleUrl, supportUrl = "", argo = "", edu = "", staff = "", applications = [], notice = "" }) {
   const tier = tierById(account?.tier);
   const who = esc(account?.name || email);
   const adminLink = admin ? `<p class="actions"><a class="btn ghost" href="/app/admin/">Applications and accounts</a></p>` : "";
@@ -143,10 +152,10 @@ export function renderWorkspace({ email, account, admin, weather, consoleUrl, su
     const pending = applications.filter((a) => a.status === "new");
     const status = pending.length
       ? `<p class="lead">Your application from ${esc(day(pending[0].at))} is with the Lightbound team. You'll hear from us by email.</p>`
-      : `<p class="lead">You're signed in as ${esc(email)}.${member || argo || edu ? "" : " This account has no Gauss plan yet."}</p>`;
+      : `<p class="lead">You're signed in as ${esc(email)}.${member || argo || edu || staff ? "" : " This account has no Gauss plan yet."}</p>`;
     return `<p class="k">00_WORKSPACE</p><h1 id="hero-h">Welcome, ${who}.</h1>${bannerHtml}${status}` +
-      (member || argo || edu ? `<div class="tiles">${member ? memberCard(supportUrl) : ""}${argo}${edu}</div>` : "") +
-      (member || argo || edu ? "" : `<p class="actions"><a class="btn" href="/gauss/#plans">See the Gauss plans</a>${pending.length ? "" : ` <a class="btn ghost" href="/gauss/apply/">Apply</a>`}</p>`) + adminLink;
+      (member || argo || edu || staff ? `<div class="tiles">${staff}${member ? memberCard(supportUrl) : ""}${argo}${edu}</div>` : "") +
+      (member || argo || edu || staff ? "" : `<p class="actions"><a class="btn" href="/gauss/#plans">See the Gauss plans</a>${pending.length ? "" : ` <a class="btn ghost" href="/gauss/apply/">Apply</a>`}</p>`) + adminLink;
   }
   const open = unlocked(billingStatus(account));
   const next = TIERS[TIERS.indexOf(tier) + 1];
@@ -161,7 +170,7 @@ export function renderWorkspace({ email, account, admin, weather, consoleUrl, su
     `<div class="tiles">${billingCard(account, tier)}` +
     (open ? `<article class="tile"><h2 class="label">Pilot</h2>${account.pilot ? pilotTrack(account.pilot) : `<p class="m">Not started. We'll set this up with you.</p>`}</article>` : "") +
     `<article class="tile"><h2 class="label">Space environment</h2>${renderGaussDoor(weather) || `<p class="m">Space-weather data is unavailable right now.</p>`}</article>` +
-    (member ? memberCard(supportUrl) : "") + argo + edu + `</div>` +
+    (member ? memberCard(supportUrl) : "") + argo + edu + staff + `</div>` +
     `<div class="two plan-lists"><div><h2 class="label">${open ? "Included" : "What you get"}: ${esc(tier.name)}</h2><ul class="ticks">${list(tier.features)}</ul></div>` +
     (next ? `<div><h2 class="label">Next: ${esc(next.name)}</h2><ul class="locked">${list(next.features.filter((f) => !tier.features.includes(f)))}</ul><p class="m">${esc(next.entry)} Planning range: ${esc(priceLabel(next))}.</p></div>` : "") +
     `</div><p class="actions"><a class="btn ghost" href="mailto:jzwnathan@lightbound.uk?subject=${encodeURIComponent(`Gauss ${tier.name}`)}">Email Josh, the founder</a></p>` +
@@ -261,6 +270,12 @@ function quoteFrom(form, tier) {
   return tier && quoteInRange(tier, pounds) ? Math.round(pounds * 100) : null;
 }
 
+async function memberOpportunities(env, account, latest) {
+  const [programmes, ukri, uksa, news] = await Promise.all(["programmes", "ukri", "uksa", "news"].map((n) => readFeed(env, n)));
+  const application = !Array.isArray(account?.interests) && latest?.kind === "constellation" ? await getApplication(env, latest.id) : null;
+  return renderOpportunities({ feeds: { programmes, ukri, uksa, news }, account, application });
+}
+
 /** Everything under /app/. */
 export async function handleApp(request, env, url, { respond, fillPage, fetchImpl }) {
   const id = await accessIdentity(request, env, { fetchImpl });
@@ -356,8 +371,16 @@ export async function handleApp(request, env, url, { respond, fillPage, fetchImp
     }
     const isMember = admin || (await getAccount(env, id.email))?.community === "member";
     if (url.pathname === "/app/prefs") {
-      const tz = new URLSearchParams(raw).get("tz");
+      const form = new URLSearchParams(raw);
       const account = await getAccount(env, id.email);
+      if (form.get("what") === "interests") {
+        // Members' matching interests: known tags only; an empty choice is kept (it means "none", not "suggest again").
+        if (!(account?.community === "member" || admin)) return fail(403, "Forbidden");
+        const interests = cleanTags(form.getAll("interest"));
+        if (JSON.stringify(account?.interests) !== JSON.stringify(interests)) await putAccount(env, { ...(account ?? { email: id.email }), interests }, id.email);
+        return back("/app/#opps-h");
+      }
+      const tz = form.get("tz");
       if (isZone(tz) && (account || admin) && account?.tz !== tz) await putAccount(env, { ...(account ?? { email: id.email }), tz }, id.email);
       return back("/app/#calls-h");
     }
@@ -482,8 +505,10 @@ export async function handleApp(request, env, url, { respond, fillPage, fetchImp
     const member = admin || account?.community === "member";
     const calls = member ? await listCalls(env) : [];
     const callNotice = url.searchParams.get("call") ?? "";
-    return fillPage("/app/", { workspace: () => renderWorkspace({ email: id.email, account, admin, weather, consoleUrl: env.GAUSS_APP_URL || "", supportUrl: env.SUPPORT_URL || "", argo: argoCard(env, account ?? { email: id.email }), edu: eduCard(env, account ?? { email: id.email }, id.email, url.searchParams.get("edu") === "start"), applications: mine, notice }) +
-      (member ? renderCalls({ calls, email: id.email, tz: isZone(account?.tz) ? account.tz : "UTC", notice: callNotice }) : "") }, 200, APP_HEADERS);
+    // Members' opportunities: four cached feeds, plus their own application only while no interests are saved.
+    const opps = member ? await memberOpportunities(env, account, latest) : "";
+    return fillPage("/app/", { workspace: () => renderWorkspace({ email: id.email, account, admin, weather, consoleUrl: env.GAUSS_APP_URL || "", supportUrl: env.SUPPORT_URL || "", argo: argoCard(env, account ?? { email: id.email }), edu: eduCard(env, account ?? { email: id.email }, id.email, url.searchParams.get("edu") === "start"), staff: isStaff(env, id.email) ? staffCard(env.OPS_URL) : "", applications: mine, notice }) +
+      (member ? renderCalls({ calls, email: id.email, tz: isZone(account?.tz) ? account.tz : "UTC", notice: callNotice }) : "") + opps }, 200, APP_HEADERS);
   }
   return fail(404, "Not found");
 }

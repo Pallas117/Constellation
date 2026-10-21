@@ -17,7 +17,7 @@ JavaScript, no third-party requests, and no secrets.
 | `/education/` | Gauss for Education (prototype): what a class gets (four labs), the three plans (student free, staff and research monthly, department yearly), and who can join. Buttons follow `EDU_SALES`; the staff price is "Price TBC" until `EDU_STAFF_PRICE` is set. |
 | `/education/apply/` | A department licence request, or a review for people without a university email. |
 | `/argo/apply/` | The Argo list: early access, the private-relay waitlist, or both. Stored like other applications; "Mark contacted" in admin creates no account. |
-| `/app/` | Signed-in workspace: quote and payment (card, or an invoice where you allow it), billing state, pilot progress, space weather, Constellation membership. |
+| `/app/` | Signed-in workspace: quote and payment (card, or an invoice where you allow it), billing state, pilot progress, space weather, Constellation membership, members' opportunities, and the staff link for the team. |
 | `/app/admin/` | For `ADMIN_EMAILS`: approve with a quote, set plan, billing, pilot step; invite Constellation members (free). |
 | `/constellation/time/` | Public time-zone planner. Pick a date and up to 8 zones to see the local hour everywhere, with the hours that suit everyone outlined. A picked hour comes with a calendar file. No data is stored. |
 | `/privacy/` | What is kept, why, for how long, and how to have it deleted. |
@@ -363,6 +363,43 @@ npm run test:website        # pages, claims, Turnstone secrecy, headers, budgets
 
 `dev.mjs` emulates Cloudflare: assets with `_headers`, trailing slashes, the 404 page and byte
 ranges; the `run_worker_first` routes from `wrangler.jsonc`; an in-memory KV; and the cron.
+
+## Members' opportunities and the staff link
+
+**Opportunities (Constellation members only, in `/app/`).** `worker/opportunities.js` lists accelerators
+(such as CDL), ESA BIC-style incubators, hackathons, grants and calls, and ranks them for each member:
+
+- **Sources, all cached by the cron:** the programmes we track in the Gauss Funding Tracker (every 3 hours),
+  UKRI's opportunities RSS filtered to space-related calls and the UK Space Agency's GOV.UK feed (both every 6
+  hours, kept for 60 days), and Spaceflight News API headlines (hourly). Only titles, dates, short summaries and
+  official links are kept, never article text. All four are optional: none of them can fail `/api/health`.
+- **Matching** uses plain keyword rules in the Worker, and nothing is sent anywhere. Until a member saves their own
+  interests, they are suggested from their Constellation application, while we hold it (180 days). The page never
+  shows the application text. Saved interests are a short list of tags on the account (privacy notice:
+  "Opportunities for members"). Closed programmes (deadline passed) are hidden.
+- **The tracker stays private.** The Worker reads one tab only, published as CSV, holding public facts.
+  It never sees owners, status, notes, investors or templates. Set it up once:
+  1. In the Gauss Funding Tracker, add a tab called `Public programmes`. In A1, paste this (UK locale). It copies
+     only the public columns, and only rows a person has checked (column V = Y):
+     ```
+     ={"Programme","Type","Organiser","Deadline","Indicative value","Who can apply","Region","What you get","Official URL";
+     FILTER({Programmes!B2:B,Programmes!O2:O,Programmes!Q2:Q,ARRAYFORMULA(TEXT(Programmes!F2:F,"yyyy-mm-dd")),Programmes!M2:M,Programmes!N2:N,Programmes!P2:P,Programmes!L2:L,Programmes!Y2:Y},Programmes!B2:B<>"",Programmes!V2:V="Y")}
+     ```
+     Deadlines must come out as `2026-11-01`, `1 Nov 2026` or `Rolling`. Slashed dates are skipped, because 04/11
+     means different days in the UK and the US.
+  2. File → Share → Publish to web → choose **that tab only** → Comma-separated values (.csv) → Publish. Leave
+     "Automatically republish" on.
+  3. `npx wrangler@4 secret put PROGRAMMES_CSV_URL` and paste the link. Only a Google "Publish to web" CSV link is
+     accepted. It is a secret, so the address isn't in this public repo.
+- **Before you publish, check the tab** for anything you wouldn't want members to read: it is reachable by
+  anyone who has its link. `/api/health` shows `programmes: not configured` until the secret is set.
+
+**Staff link.** People in `STAFF_EMAILS` (and admins) see an "Operations and training" card in `/app/` that
+links to `OPS_URL`: the staff site, built from the private UI-UX-Gauss repo, with its own Worker and its own
+Cloudflare Access application (a staff-only email policy). Set `STAFF_EMAILS` as a secret
+(`npx wrangler@4 secret put STAFF_EMAILS`, comma-separated) so the team's addresses stay out of this repo. Set
+`OPS_URL` in `wrangler.jsonc` once the staff site is live (https only; the card stays hidden while it's empty).
+Keep the same addresses in the staff site's Access policy and its own `STAFF_EMAILS`.
 
 ## Deploy (Pallas runs these; they need your Cloudflare login)
 

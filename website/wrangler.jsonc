@@ -26,6 +26,8 @@
     "ACCESS_AUD": "REPLACE_WITH_ACCESS_APPLICATION_AUD",
     "ADMIN_EMAILS": "jzwnathan@lightbound.uk",
     "GAUSS_APP_URL": "",
+    // The staff operations and training site (its own Worker and Access application); the staff card stays hidden while empty.
+    "OPS_URL": "",
     // A Stripe Payment Link (https://buy.stripe.com/...) for "Support Constellation"; the block stays hidden while empty.
     "SUPPORT_URL": "",
     // Gauss Argo sales: "off" (the list only), "invite" (invited accounts can subscribe) or "open" (anyone signed in).
@@ -37,6 +39,8 @@
     "USER_CAP": "50"
   },
   // Secrets, never in this file: STRIPE_SECRET_KEY and STRIPE_WEBHOOK_SECRET (npx wrangler@4 secret put ...).
+  // Also set as secrets, so they stay out of this public repo: STAFF_EMAILS (comma-separated team addresses) and
+  // PROGRAMMES_CSV_URL (the Funding Tracker's published "Public programmes" tab, as CSV).
   "observability": { "enabled": true }
   // When the workers.dev preview looks right, uncomment to serve lightbound.uk (adds proxied A/AAAA
   // records only; the Google Workspace MX records are not touched):

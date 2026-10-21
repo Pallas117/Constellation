@@ -12,7 +12,7 @@
 //   /api/*                  launches.json, launches.ics, space-weather.json, health, POST apply,
 //                           POST stripe/webhook (signed by Stripe; unlocks paid plans)
 // and on the cron trigger, which refreshes the feeds into KV. Nothing here needs a secret.
-import { FEEDS, feedState, readFeed, refreshFeeds } from "./feeds.js";
+import { FEEDS, configured, feedState, readFeed, refreshFeeds } from "./feeds.js";
 import { renderArgoActions, renderArgoPlan, renderEduActions, renderEduPlans, renderEvents, renderConstellationDoor, renderEventIcs, renderGaussDoor, renderIcs, renderLaunches, renderPlans, renderSupport, renderWeather } from "./render.js";
 import { argoMode, eduMode, eduStaffLabel } from "./tiers.js";
 import { plannerParams, renderPlanner } from "./timezones.js";
@@ -115,7 +115,10 @@ async function api(request, url, env, ctx) {
     case "/api/space-weather":
       return json({ ...envelope("weather"), data: feeds.weather?.data ?? null });
     case "/api/health": {
-      const status = Object.fromEntries(Object.keys(FEEDS).map((n) => [n, feedState(n, feeds[n], now)]));
+      // Pages read only the feeds they show; health reads the rest too, and says which wait on a setting.
+      const rest = await Promise.all(Object.keys(FEEDS).filter((n) => !(n in feeds)).map(async (n) => [n, await readFeed(env, n)]));
+      const all = { ...feeds, ...Object.fromEntries(rest) };
+      const status = Object.fromEntries(Object.keys(FEEDS).map((n) => [n, configured(env, n) ? feedState(n, all[n], now) : { state: "not configured" }]));
       const ok = Object.entries(status).every(([n, s]) => FEEDS[n].optional || s.state === "live");
       return json({ ok, feeds: status, checkedAt: new Date(now).toISOString() }, ok ? 200 : 503, "no-store");
     }
