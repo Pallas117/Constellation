@@ -18,9 +18,13 @@ stub sysctl 'case "$*" in
 esac'
 stub ps 'echo "2097152 node"'
 stub ioreg 'echo "\"AppleClamshellState\" = No"'
-stub launchctl 'case "$1" in
-  print) for l in $LOADED; do [ "$2" = "gui/$(id -u)/$l" ] && exit 0; done; exit 1 ;;
+# bootout/bootstrap flip a label in $KICKS.state (over $LOADED) and are logged in $KICKS
+stub launchctl 'S="$KICKS.state"; case "$1" in
+  print) l=${2##*/}; grep -qx "in $l" "$S" 2>/dev/null && exit 0; grep -qx "out $l" "$S" 2>/dev/null && exit 1
+         for x in $LOADED; do [ "$2" = "gui/$(id -u)/$x" ] && exit 0; done; exit 1 ;;
   kickstart) echo "${3##*/}" >>"$KICKS"; exit 0 ;;
+  bootout) l=${2##*/}; { grep -vx "in $l" "$S" 2>/dev/null; echo "out $l"; } >"$S.t"; mv "$S.t" "$S"; echo "bootout $l" >>"$KICKS"; exit 0 ;;
+  bootstrap) l=$(basename "$3" .plist); { grep -vx "out $l" "$S" 2>/dev/null; echo "in $l"; } >"$S.t"; mv "$S.t" "$S"; echo "bootstrap $l" >>"$KICKS"; exit 0 ;;
 esac; exit 1'
 stub df 'printf "Filesystem 1G-blocks Used Available\n/dev/disk3s1s1 228 13 %s\n" "${DISKGB:-50}"'
 stub curl 'printf "%s" "${HEALTH:-200}"' # code() reads only the HTTP status
@@ -44,6 +48,7 @@ run() { # run <args...>: gauss-services.sh with the stubs; alerts land in $LOG
   env -i PATH="$T/bin:/usr/bin:/bin" HOME="$T/home" ARGO="$T/bin/argo" LOG="$T/log" KICKS="$T/kicks" GAUSS_PUBLIC_URL=http://127.0.0.1:8080 \
     GAUSS_SUDOERS="$T/sudoers" MLX="${MLX:-0}" MLXPORT="${MLXPORT:-8089}" ACTIONS="$T/actions" GAUSS_BALANCE="${GAUSS_BALANCE:-1}" \
     LOADED="${LOADED:-}" HEALTH="${HEALTH:-200}" DISKGB="${DISKGB:-50}" \
+    GAUSS_DEV_DRY="${GAUSS_DEV_DRY:-0}" GAUSS_DEV_API_PORT="${GAUSS_DEV_API_PORT:-3101}" \
     SRC="${SRC:-AC Power}" BATT="${BATT:-80%; charging; present: true}" SD="${SD:-0}" \
     ARGOSTATUS="${ARGOSTATUS:-}" LEVEL="${LEVEL:-1}" FREE="${FREE:-50}" SWAPUSED="${SWAPUSED:-1000}" OLD_ARGO="${OLD_ARGO:-}" bash "$SCRIPT" "$@"
 }
@@ -129,6 +134,47 @@ HEALTH=000 LOADED="uk.lightbound.gauss-backend" run awake guard
 HEALTH=200 LOADED="uk.lightbound.gauss-backend" run awake guard
 HEALTH=000 LOADED="uk.lightbound.gauss-backend" run awake guard
 [ -z "$(kicked)" ]; expect "a recovery resets the strike count" $?
+
+# Fallback (GAU-158): when live is out of restarts and still down, swap in the cold standby
+FB="$WD/fallback"; FBDIR="$T/fallback-checkout"; LIVE="$T/live-checkout"; B=uk.lightbound.gauss-backend
+mkdir -p "$FB" "$FBDIR/frontend/dist" "$FBDIR/backend" "$LIVE/backend" "$T/home/Library/LaunchAgents"
+touch "$FBDIR/frontend/dist/index.html" "$FBDIR/backend/server.ts" "$LIVE/backend/server.ts"
+plutil -create xml1 "$T/home/Library/LaunchAgents/$B.plist"
+plutil -insert WorkingDirectory -string "$LIVE" "$T/home/Library/LaunchAgents/$B.plist"
+exhaust() { local n; n=$(date +%s); : >"$WD/watch-kicks"; for _ in 1 2 3; do echo "$B $n" >>"$WD/watch-kicks"; done; }
+rm -f "$T/kicks.state" "$WD"/*.strikes; exhaust
+out=$(run fallback); [[ "$out" == *"none prepared (warning"* ]]; expect "fallback status: none prepared is a warning" $?
+for _ in 1 2; do HEALTH=000 LOADED="$B" run awake guard; done
+[ -z "$(kicked)" ] && grep -q "gauss-backend keeps failing" "$T/log"; expect "no fallback prepared: out of restarts only alerts" $?
+echo "abc1234def $FBDIR $(date +%s)" >"$FB/ready"
+touch "$FB/uk.lightbound.gauss-fallback-backend.plist" "$FB/uk.lightbound.gauss-fallback-frontend.plist"
+for _ in 1 2; do HEALTH=000 LOADED="$B uk.lightbound.gauss-frontend" run awake guard; done
+[ "$(kicked)" = "bootout $B bootout uk.lightbound.gauss-frontend bootout uk.lightbound.gauss-fallback-backend bootstrap uk.lightbound.gauss-fallback-backend bootout uk.lightbound.gauss-fallback-frontend bootstrap uk.lightbound.gauss-fallback-frontend" ] \
+  && [ "$(alerts)" = "fallback" ] && [ -f "$FB/active" ]
+expect "out of restarts and still down: fails over to the fallback and texts the phone" $?
+out=$(LOADED="$B" run status); [[ "$out" == *"fallback serving from fallback since"* ]]; expect "status shows the fallback is serving" $?
+for _ in 1 2; do HEALTH=000 LOADED="$B" run awake guard; done
+[ "$(kicked)" = "uk.lightbound.gauss-fallback-backend uk.lightbound.gauss-fallback-frontend" ]; expect "on fallback: the guard restarts the fallback, never fails over again" $?
+LOADED="$B" run fallback off >/dev/null
+[ "$(kicked)" = "bootout uk.lightbound.gauss-fallback-backend bootout uk.lightbound.gauss-fallback-frontend bootout $B bootstrap $B bootout uk.lightbound.gauss-frontend bootstrap uk.lightbound.gauss-frontend" ] \
+  && [ ! -f "$FB/active" ] && ! grep -q "^$B " "$WD/watch-kicks"
+expect "fallback off: live back, fresh restarts for it" $?
+rm -f "$T/kicks.state" "$WD/watch-kicks"
+
+# Dev layer: never the live or fallback checkout, never under memory pressure, never live's ports
+out=$(run dev "$LIVE" 2>&1); [[ "$out" == *"is the live checkout"* ]]; expect "dev refuses the live checkout" $?
+out=$(run dev "$FBDIR" 2>&1); [[ "$out" == *"is the fallback checkout"* ]]; expect "dev refuses the fallback checkout" $?
+DEV="$T/dev-checkout"; mkdir -p "$DEV/backend" "$DEV/node_modules"; touch "$DEV/backend/server.ts"
+out=$(LEVEL=2 run dev "$DEV" 2>&1); [[ "$out" == *"Memory pressure is warn"* ]]; expect "dev refuses at memory pressure warn" $?
+out=$(HEALTH=000 GAUSS_DEV_DRY=1 run dev "$DEV" 2>&1); [[ "$out" == *"dev ok: $DEV site http://127.0.0.1:5174 api :3101"* ]]; expect "dev runs on :5174 and :3101" $?
+out=$(GAUSS_DEV_DRY=1 run dev "$DEV" 2>&1); [[ "$out" == *"Port 3101 is in use"* ]]; expect "dev refuses a busy dev port" $?
+out=$(HEALTH=000 GAUSS_DEV_DRY=1 GAUSS_DEV_API_PORT=3001 run dev "$DEV" 2>&1); [[ "$out" == *"belong to live"* ]]; expect "dev refuses live's ports" $?
+
+# fallback prepare: only a fresh path or the previous fallback dir, never under memory pressure
+git -C "$LIVE" init -q && git -C "$LIVE" -c user.email=t@t -c user.name=t commit -q --allow-empty -m t
+out=$(LEVEL=2 run fallback prepare "$T/new-fb" 2>&1); [[ "$out" == *"Memory pressure is warn"* ]] && [ ! -e "$T/new-fb" ]
+expect "prepare refuses at memory pressure warn" $?
+out=$(run fallback prepare "$DEV" 2>&1); [[ "$out" == *"is not the current fallback"* ]]; expect "prepare never re-points someone else's checkout" $?
 
 # balance (GAU-126): shed optional load, undo it when conditions recover
 acts() { tr '\n' ';' <"$T/actions" | sed 's/;$//'; }
