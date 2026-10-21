@@ -5,7 +5,7 @@ import { readFileSync } from "node:fs";
 import express from "express";
 import type { AuthenticatedRequest, AuthRole } from "../auth.js";
 import { createMeshRouters, exitNodesFromEnv, onboardingSteps } from "./router.js";
-import { MESH_CLASSES, MeshStore, hostingVerdict, parseHost, parseReport, type MeshHost } from "./store.js";
+import { MESH_CLASSES, MeshStore, hostingVerdict, parseBattery, parseHost, parseReport, type MeshHost } from "./store.js";
 
 async function withApp(fn: (base: string, store: MeshStore) => Promise<void>) {
   const store = new MeshStore(null);
@@ -126,6 +126,36 @@ test("a report with host capacity shows the verdict on the device list", async (
     assert.equal(d.hosting, "agents");
     const listed = (await (await fetch(`${base}/devices`, { headers: { "x-test-role": "operator" } })).json()) as { devices: { hosting: string }[] };
     assert.equal(listed.devices[0].hosting, "agents");
+  });
+});
+
+test("battery is range-checked; Shortcuts fractions become percent", () => {
+  assert.deepEqual(parseBattery({ level: 83, charging: false }), { level: 83, charging: false, lowPower: false });
+  assert.deepEqual(parseBattery({ level: 0.83, charging: true, lowPower: true }), { level: 83, charging: true, lowPower: true });
+  assert.deepEqual(parseBattery({ level: 1, charging: false })!.level, 1, "integer 1 is 1%, not 100%");
+  for (const bad of [{ level: 101, charging: false }, { level: -5, charging: false }, { level: "83", charging: false }, { level: 50 }, { level: 50, charging: "yes" }, null, 7]) {
+    assert.equal(parseBattery(bad), undefined, JSON.stringify(bad));
+  }
+});
+
+test("platform is allowlisted and phones never host", () => {
+  assert.equal(parseReport({ ...okReport, platform: "ios" })!.platform, "ios");
+  assert.equal(parseReport({ ...okReport, platform: "playstation" })!.platform, undefined);
+  assert.equal(hostingVerdict(undefined, "ios"), "no");
+  assert.equal(hostingVerdict({ ...judithHost, pressure: "normal", ramGB: 64, diskFreeGB: 500 }, "android"), "no");
+  assert.equal(hostingVerdict({ ...judithHost, pressure: "normal", ramGB: 32, diskFreeGB: 200 }, "linux"), "agents");
+});
+
+test("a phone Shortcut report (class + platform + battery) is accepted and listed", async () => {
+  await withApp(async (base, store) => {
+    const { token } = (await (await fetch(`${base}/devices`, json({ name: "iphone-13" }, { "x-test-role": "admin" }))).json()) as { token: string };
+    const phone = { class: "OK", platform: "ios", battery: { level: 0.41, charging: false, lowPower: true }, reason: "iOS Shortcut", checkedAt: "2026-10-21T09:00:00+08:00" };
+    assert.equal((await fetch(`${base}/report`, json(phone, { authorization: `Bearer ${token}` }))).status, 200);
+    const d = store.list()[0];
+    assert.equal(d.last!.platform, "ios");
+    assert.deepEqual(d.last!.battery, { level: 41, charging: false, lowPower: true });
+    assert.equal(d.last!.host, undefined);
+    assert.equal(d.hosting, "no");
   });
 });
 

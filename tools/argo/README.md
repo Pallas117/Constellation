@@ -181,6 +181,45 @@ AC	argo-config	~/.config/argo	Argo config (exit-node allowlist, Gauss URL, devic
 AL	argo-agent	~/Library/LaunchAgents/uk.lightbound.argo.plist	Argo LaunchAgent
 ```
 
+## Phones: report to the mesh (iOS Shortcut, Android)
+
+Phones can't run Argo, but they can post the same report so the Mesh page shows them with platform and
+battery. Phones are always "status only": Gauss never places mesh work on them.
+
+**Once per phone:** on Gauss → **Mesh**, an admin enrolls a device (e.g. `iphone-13`) and copies the
+one-time token. Tailscale must be on (the report URL is tailnet-only).
+
+**Report body** (`POST http://<gauss-tailnet-host>/api/mesh/report`, header `Authorization: Bearer <token>`,
+`Content-Type: application/json`):
+
+```json
+{"class": "OK", "platform": "ios", "loc": "MY", "battery": {"level": 83, "charging": false, "lowPower": false},
+ "reason": "phone shortcut", "checkedAt": "2026-10-21T09:00:00+08:00"}
+```
+
+`class` is `OK`, or `REGION` when `loc` isn't MY/SG. `level` may be a percent (83) or a fraction (0.83).
+Unknown fields are dropped; reports more often than every 10 s get HTTP 429.
+
+**iOS Shortcut** (*Mesh report*):
+1. **Get Contents of URL** `https://www.cloudflare.com/cdn-cgi/trace` → **Match Text** `loc=([A-Z]{2})` →
+   **Get Group at Index** 1 (as in *Exit check* below).
+2. **If** *Group* is `MY` or `SG` → **Text** `OK`, otherwise **Text** `REGION`; set variable *Class*.
+3. **Get Battery Level**; **Get Device Details** → *Is Charging* and *Low Power Mode* (where available).
+4. **Format Date** *Current Date* as ISO 8601.
+5. **Get Contents of URL** `http://<gauss-tailnet-host>/api/mesh/report`, Method **POST**, Headers
+   `Authorization` = `Bearer <token>`, Request Body **JSON**: `class` = *Class*, `platform` = `ios`,
+   `loc` = *Group*, `battery` (Dictionary: `level` = *Battery Level*, `charging` = *Is Charging*,
+   `lowPower` = *Low Power Mode*), `reason` = `phone shortcut`, `checkedAt` = *Formatted Date*.
+6. Automation → **Time of Day** (e.g. every 2 h: one automation per time), and **When joining any Wi-Fi**
+   and **When Personal Hotspot turns on** → **Run** *Mesh report* → *Run Immediately*.
+
+**Android:** the open-source **HTTP Shortcuts** app (or Tasker's *HTTP Request*) can send the same body;
+use variables for battery level and charging, and schedule it every 2 h and on network change.
+
+**Security:** the token can only post this phone's status (it reads nothing). The Shortcut keeps it in
+your Shortcuts library (iCloud-synced if Shortcuts sync is on). If the phone is lost, revoke the device
+on **Mesh**: its token stops working immediately.
+
 ## iPhone Shortcut: "Am I in MY/SG?"
 
 Use this on the phone whose hotspot the Mac uses. It catches a Hong Kong eSIM before Claude does.

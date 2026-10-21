@@ -30,6 +30,19 @@ export interface MeshReport {
   checkedAt: string;
   receivedAt: string;
   host?: MeshHost;
+  platform?: MeshPlatform;
+  battery?: MeshBattery;
+}
+
+/** Reported by Argo (macOS, Linux) or by a phone Shortcut/automation (iOS, Android). */
+export const MESH_PLATFORMS = ["macos", "linux", "windows", "ios", "android"] as const;
+export type MeshPlatform = (typeof MESH_PLATFORMS)[number];
+const PHONES: ReadonlySet<string> = new Set(["ios", "android"]);
+
+export interface MeshBattery {
+  level: number; // percent, 0-100
+  charging: boolean;
+  lowPower: boolean;
 }
 
 /** Host capacity from Argo (tools/argo/capacity.go): sizes and kernel pressure only. */
@@ -49,7 +62,8 @@ export interface MeshHost {
  */
 export type HostingVerdict = "agents" | "light" | "no" | "unknown";
 
-export function hostingVerdict(host?: MeshHost): HostingVerdict {
+export function hostingVerdict(host?: MeshHost, platform?: MeshPlatform): HostingVerdict {
+  if (platform && PHONES.has(platform)) return "no"; // phones report status; they never host mesh work
   if (!host || !host.pressure) return "unknown";
   if (host.pressure !== "normal") return "no";
   if (host.ramGB >= 16 && host.diskFreeGB >= 20) return "agents";
@@ -74,6 +88,18 @@ const text = (value: unknown, max = MAX_TEXT) => (typeof value === "string" ? va
 
 const num = (value: unknown, max: number) =>
   typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= max ? Math.round(value * 10) / 10 : null;
+
+/** Battery from a phone reporter: integer percent 0-100 and two flags; anything else drops the block. */
+export function parseBattery(value: unknown): MeshBattery | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const b = value as Record<string, unknown>;
+  // Shortcuts' "Battery Level" can arrive as a fraction (0.83) or a percent (83).
+  const raw = typeof b.level === "number" && Number.isFinite(b.level) ? b.level : NaN;
+  const level = raw > 0 && raw <= 1 && !Number.isInteger(raw) ? Math.round(raw * 100) : Math.round(raw);
+  if (!(level >= 0 && level <= 100)) return undefined;
+  if (typeof b.charging !== "boolean") return undefined;
+  return { level, charging: b.charging, lowPower: b.lowPower === true };
+}
 
 /** Allowlisted, range-checked host capacity; anything outside the ranges drops the whole block. */
 export function parseHost(value: unknown): MeshHost | undefined {
@@ -110,6 +136,8 @@ export function parseReport(body: unknown, now = new Date()): MeshReport | null 
     checkedAt: Number.isNaN(Date.parse(text(b.checkedAt, 40))) ? "" : text(b.checkedAt, 40),
     receivedAt: now.toISOString(),
     ...(parseHost(b.host) ? { host: parseHost(b.host) } : {}),
+    ...(MESH_PLATFORMS.includes(b.platform as MeshPlatform) ? { platform: b.platform as MeshPlatform } : {}),
+    ...(parseBattery(b.battery) ? { battery: parseBattery(b.battery) } : {}),
   };
 }
 
@@ -173,7 +201,7 @@ export class MeshStore {
   list(): Array<Omit<MeshDevice, "tokenHash"> & { hosting: HostingVerdict }> {
     this.reloadIfChanged();
     return [...this.devices.values()]
-      .map(({ tokenHash: _hidden, ...rest }) => ({ ...rest, hosting: hostingVerdict(rest.last?.host) }))
+      .map(({ tokenHash: _hidden, ...rest }) => ({ ...rest, hosting: hostingVerdict(rest.last?.host, rest.last?.platform) }))
       .sort((a, b) => a.name.localeCompare(b.name));
   }
 

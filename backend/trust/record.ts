@@ -11,7 +11,7 @@
 import { createHash } from "node:crypto";
 import type { CanonicalSpaceWeatherPoint, ScaleReading, SenseCheck } from "../types.js";
 import { MAX_READING_LAG_MS, type EnvironmentHistory } from "./environment.js";
-import { dipoleLShell, ephemerisProblem, type Ephemeris } from "./orbit.js";
+import { dipoleLShell, distanceKm, EPHEMERIS_TLE_CONFLICT_KM, ephemerisProblem, propagateTle, tleProblem, type Ephemeris } from "./orbit.js";
 
 export const TRUST_RECORD_SCHEMA = "gauss.trust-record/0.1";
 
@@ -66,7 +66,7 @@ export interface TrustRecordRequest {
   confidence?: number | null;
   /** Spacecraft position at the inference time. */
   ephemeris?: Ephemeris | null;
-  /** Two-line element set; not propagated yet, so orbit context needs `ephemeris`. */
+  /** Two-line element set, propagated with SGP4 when no ephemeris is given (and cross-checked when both are). */
   tle?: [string, string] | null;
 }
 
@@ -112,6 +112,8 @@ export interface TrustRecord {
     dst: Field<{ value: number }>;
   };
   orbit: {
+    /** Where the spacecraft was: the supplied ephemeris, or SGP4 from the TLE. */
+    position: Field<Ephemeris>;
     saa: Field<boolean>;
     lShell: Field<number>;
   };
@@ -157,8 +159,9 @@ export function parseTrustRequest(body: unknown): { request: TrustRecordRequest 
     const problem = ephemerisProblem(b.ephemeris);
     if (problem) errors.push(`ephemeris: ${problem}`);
   }
-  if (b.tle != null && !(Array.isArray(b.tle) && b.tle.length === 2 && b.tle.every((l) => typeof l === "string" && l.length <= 80))) {
-    errors.push("tle must be two lines of at most 80 characters");
+  if (b.tle != null) {
+    const problem = tleProblem(b.tle);
+    if (problem) errors.push(`tle: ${problem}`);
   }
   if (errors.length) return { errors };
   return {
@@ -329,24 +332,67 @@ function environmentFields(p: CanonicalSpaceWeatherPoint, atMs: number, fetchedA
 
 function orbitFields(req: TrustRecordRequest): TrustRecord["orbit"] {
   const saa = unknownField<boolean>("South Atlantic Anomaly boundary", "Not modelled yet (GAU-141): a centred dipole cannot place the anomaly.");
+  const atMs = Date.parse(req.time);
+  const fromTle = req.tle ? propagateTle(req.tle, atMs) : null;
+  const tleOk = fromTle && !("error" in fromTle) ? fromTle : null;
+  const tleNote = tleOk
+    ? `SGP4 (satellite.js) from the TLE, epoch ${tleOk.epoch.slice(0, 16)}Z, ${Math.abs(tleOk.ageDays).toFixed(1)} days ${tleOk.ageDays >= 0 ? "before" : "after"} the inference`
+    : null;
+
+  let position: Field<Ephemeris>;
   if (req.ephemeris && !ephemerisProblem(req.ephemeris)) {
-    return {
-      saa,
-      lShell: {
-        value: Math.round(dipoleLShell(req.ephemeris) * 1000) / 1000,
-        source: "Computed from the supplied ephemeris",
-        sourceUrl: null,
-        observedAt: req.time,
-        fetchedAt: null,
-        ageSeconds: 0,
-        confidence: "medium",
-        method: "centred-dipole L = (r/RE)/cos²(magnetic latitude), IGRF-14 2025 dipole pole",
-        limitations: ["Centred-dipole approximation: differs most from the full-field L where the field is least dipolar, including the South Atlantic Anomaly."],
-      },
+    const apart = tleOk ? distanceKm(req.ephemeris, tleOk.ephemeris) : null;
+    if (apart !== null && apart > EPHEMERIS_TLE_CONFLICT_KM) {
+      const why = `Conflicting inputs: the ephemeris and the TLE place the spacecraft ${Math.round(apart)} km apart (limit ${EPHEMERIS_TLE_CONFLICT_KM} km)`;
+      return { position: unknownField("Spacecraft position", why), saa, lShell: unknownField("L-shell", why) };
+    }
+    position = {
+      value: req.ephemeris,
+      source: "Supplied ephemeris",
+      sourceUrl: null,
+      observedAt: req.time,
+      fetchedAt: null,
+      ageSeconds: 0,
+      confidence: "high",
+      method: apart !== null ? `as supplied; agrees with the TLE to ${apart.toFixed(1)} km` : "as supplied",
+      limitations: ["Read as geocentric latitude and longitude, altitude above a 6371.2 km sphere."],
     };
+  } else if (tleOk) {
+    position = {
+      value: {
+        latDeg: Math.round(tleOk.ephemeris.latDeg * 1e4) / 1e4,
+        lonDeg: Math.round(tleOk.ephemeris.lonDeg * 1e4) / 1e4,
+        altKm: Math.round(tleOk.ephemeris.altKm * 1e3) / 1e3,
+      },
+      source: "Propagated from the supplied TLE",
+      sourceUrl: null,
+      observedAt: tleOk.epoch,
+      fetchedAt: null,
+      ageSeconds: Math.round(tleOk.ageDays * 86_400),
+      confidence: Math.abs(tleOk.ageDays) <= 2 ? "high" : "medium",
+      method: tleNote!,
+      limitations: ["SGP4 error grows with time from the TLE epoch, fastest in low orbits where drag changes."],
+    };
+  } else {
+    const why = fromTle && "error" in fromTle ? `TLE not usable: ${fromTle.error}` : "No ephemeris or TLE given.";
+    return { position: unknownField("Spacecraft position", why), saa, lShell: unknownField("L-shell", why) };
   }
-  const why = req.tle ? "TLE propagation is not supported yet: send the position as ephemeris." : "No ephemeris given.";
-  return { saa, lShell: unknownField("L-shell", why) };
+
+  return {
+    position,
+    saa,
+    lShell: {
+      value: Math.round(dipoleLShell(position.value!) * 1000) / 1000,
+      source: position.source === "Supplied ephemeris" ? "Computed from the supplied ephemeris" : "Computed from the TLE-propagated position",
+      sourceUrl: null,
+      observedAt: req.time,
+      fetchedAt: null,
+      ageSeconds: 0,
+      confidence: "medium",
+      method: "centred-dipole L = (r/RE)/cos²(magnetic latitude), IGRF-14 2025 dipole pole",
+      limitations: ["Centred-dipole approximation: differs most from the full-field L where the field is least dipolar, including the South Atlantic Anomaly."],
+    },
+  };
 }
 
 // ---------------------------------------------------------------------------------------
