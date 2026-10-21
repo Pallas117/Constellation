@@ -190,9 +190,8 @@ Book adds Argo.
 - **Workshops (06):** ethics, resilience and tech leadership, "led by facilitators from the Constellation community;
   members join free". `/constellation/workshops/` is a team request form (organisation, workshop, format, group
   size, when). It lands in admin as "WORKSHOP · …", and "Mark contacted" creates no account.
-- **Facilitators aren't named on the site yet.** Two community members are keen to deliver the workshops in
-  partnership. Add their names here and on the page only once each has agreed to be listed. This repo is public,
-  so the same applies to this file.
+- **Facilitators aren't named yet** (Josh, 2026-10-21: don't name who will run the workshops yet). The page says
+  "facilitators from the Constellation community". This repo is public, so keep names out of commits too.
 
 **Support Constellation.** The Constellation page (Join section) and a member's workspace show a "Support
 Constellation" link once `SUPPORT_URL` in `wrangler.jsonc` vars holds a Stripe Payment Link. While it's empty,
@@ -221,7 +220,33 @@ nothing is sent automatically.
   never overwrites a newer state, and an event for a different plan is ignored.
 - Only the signed-in pages may redirect a form to `checkout.stripe.com` and `billing.stripe.com`,
   via a CSP `form-action` exception. Public pages post only to the site itself.
-- Stripe keys are Worker secrets, never in config, URLs, logs or git.
+- Stripe keys are Worker secrets, never in config, URLs, logs or git. `STRIPE_API_BASE` (the local stand-in) is
+  honoured only for a localhost URL, so the key can never be sent to another host.
+- Payments are tied to the account's own Checkout Session and subscription. A session opened before a re-quote
+  (re-quoting clears it), or anyone else's, changes nothing, and every event must carry `metadata.email`.
+  Clicking Pay again reuses the open session rather than creating more.
+- Request bodies are read through a byte cap, even without a Content-Length header: 16 KB for forms and
+  `/app`, 512 KB for the webhook. Upstream feeds are capped at 2 MB.
+- Form rate limits count an IPv6 /64 as one sender. The workspace reads the person's own latest application
+  (`appby:<email>`) instead of listing everyone's. The admin page reads full details for the newest 50 waiting
+  applications only.
+- A sign-in alone never creates a record (time-zone preferences need an account). After an invitation the admin
+  page gets a 10-minute token, not the email, in its URL.
+- The dev signing key (`ACCESS_JWKS`) is honoured only for a `*.local` team domain. An unknown key id makes the
+  Worker refetch Access's keys at most once a minute, so key rotation doesn't lock people out.
+- Calendar files escape every line break and limit UIDs to safe characters.
+
+**Before going live, in dashboards (security review, 2026-10-21; the figures below are UNVERIFIED, from memory):**
+1. **Access seats.** "Include: Everyone" lets anyone sign in, and every sign-in may take a Zero Trust seat; the free
+   plan's seat cap is UNVERIFIED (50 from memory). Limit the policy (known customers, members, university domains),
+   turn on seat expiry, or plan for paid seats before `ARGO_SALES`/`EDU_SALES` go `open`.
+2. **Rate limits at the edge.** Add a Cloudflare rate-limiting rule for `POST /api/apply` and `POST /app/*`. The
+   KV-based limit can't stop a flood spread across many addresses.
+3. **KV quotas.** The free plan's daily KV write and list limits (UNVERIFIED: about 1,000 each) can be used up by a
+   flood or busy sales. Move to the Workers paid plan before opening sales.
+4. **Logs.** Observability is on. Check whether Workers Logs record request headers, since the Access token header
+   carries the email. If they do, turn invocation logs off.
+5. **Re-quoting an active subscription:** cancel the old subscription in Stripe first; its events still count.
 
 **Locally:** `npm run site:dev`, then go to `/app/`. Pick "Approved, payment due (invoice allowed)"
 and press "Pay now", or "Request an invoice" then "View invoice". A local Stripe stand-in shows a

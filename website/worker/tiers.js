@@ -124,8 +124,9 @@ export const eduStaffLabel = (env) => {
   const n = eduStaffPrice(env);
   return n ? `$${(n / 100).toFixed(n % 100 ? 2 : 0)} a month` : "Price TBC";
 };
-/** Addresses that can start straight away: ox.ac.uk, mit.edu, um.edu.my, unsw.edu.au and the like. Anyone else asks for a review. */
-export const isAcademicEmail = (email) => /@([a-z0-9-]+\.)+(edu|ac)(\.[a-z]{2})?$/i.test(String(email ?? ""));
+/** Addresses that can start straight away: ox.ac.uk, mit.edu, um.edu.my, unsw.edu.au and the like. Anyone else asks for a review.
+ *  Only .edu, .edu.xx and .ac.xx count: a bare .ac (Ascension Island) is open to anyone, so it doesn't. */
+export const isAcademicEmail = (email) => /@([a-z0-9-]+\.)+(edu|(?:ac|edu)\.[a-z]{2})$/i.test(String(email ?? ""));
 export const eduEligible = (account, email) => isAcademicEmail(email) || !!account?.edu?.approvedAt;
 
 /** Days a customer has to pay an invoice they asked for. */

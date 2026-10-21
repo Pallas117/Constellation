@@ -159,7 +159,8 @@ export function renderWeather(rec, now = Date.now()) {
 }
 
 // ---- Calendar feed (RFC 5545) ----
-const icsEsc = (v) => String(v ?? "").replace(/\\/g, "\\\\").replace(/;/g, "\\;").replace(/,/g, "\\,").replace(/\r?\n/g, "\\n");
+const icsEsc = (v) => String(v ?? "").replace(/\\/g, "\\\\").replace(/;/g, "\\;").replace(/,/g, "\\,").replace(/\r\n|\r|\n/g, "\\n");
+const icsUid = (v) => String(v ?? "").replace(/[^A-Za-z0-9-]/g, "").slice(0, 64) || "event";
 const icsTime = (iso) => iso.replace(/[-:]/g, "").replace(/\.\d{3}/, "");
 const icsDate = (iso) => iso.slice(0, 10).replace(/-/g, "");
 function fold(line) {
@@ -182,7 +183,7 @@ function fold(line) {
 export function renderEventIcs({ uid, start, minutes, summary, description = "", url = "" }, now = Date.now()) {
   const s0 = new Date(start);
   const lines = ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//Lightbound//Constellation calls//EN", "CALSCALE:GREGORIAN", "METHOD:PUBLISH",
-    "BEGIN:VEVENT", `UID:${uid}@lightbound.uk`, `DTSTAMP:${icsTime(new Date(now).toISOString())}`,
+    "BEGIN:VEVENT", `UID:${icsUid(uid)}@lightbound.uk`, `DTSTAMP:${icsTime(new Date(now).toISOString())}`,
     `DTSTART:${icsTime(s0.toISOString())}`, `DTEND:${icsTime(new Date(s0.getTime() + minutes * 60_000).toISOString())}`,
     `SUMMARY:${icsEsc(summary)}`, ...(description ? [`DESCRIPTION:${icsEsc(description)}`] : []), ...(url ? [`URL:${url}`] : []),
     "END:VEVENT", "END:VCALENDAR"];
@@ -198,7 +199,7 @@ export function renderIcs(rec, now = Date.now()) {
     const timed = PRECISE.has(l.precision);
     const start = new Date(l.net);
     const end = timed ? new Date(Math.max(Date.parse(l.windowEnd ?? l.net), start.getTime() + 30 * 60_000)) : null;
-    lines.push("BEGIN:VEVENT", `UID:${l.id}@lightbound.uk`, `DTSTAMP:${stamp}`,
+    lines.push("BEGIN:VEVENT", `UID:${icsUid(l.id)}@lightbound.uk`, `DTSTAMP:${stamp}`,
       timed ? `DTSTART:${icsTime(start.toISOString())}` : `DTSTART;VALUE=DATE:${icsDate(l.net)}`,
       timed ? `DTEND:${icsTime(end.toISOString())}` : `DTEND;VALUE=DATE:${icsDate(new Date(start.getTime() + 86_400_000).toISOString())}`,
       `SUMMARY:${icsEsc(title(l))}`, `LOCATION:${icsEsc(l.location)}`,

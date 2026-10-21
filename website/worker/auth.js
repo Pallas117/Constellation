@@ -9,9 +9,12 @@ const json = (part) => JSON.parse(decoder.decode(b64url(part)));
 
 let cache = { at: 0, domain: "", keys: null };
 
-async function signingKeys(env, fetchImpl, now) {
-  if (env.ACCESS_JWKS) return JSON.parse(env.ACCESS_JWKS).keys; // local dev and tests only; never set in production
-  if (cache.keys && cache.domain === env.ACCESS_TEAM_DOMAIN && now - cache.at < 3_600_000) return cache.keys;
+async function signingKeys(env, fetchImpl, now, refresh = false) {
+  // Local dev and tests only: honoured just for a *.local team domain, so production can never accept a locally minted token.
+  if (env.ACCESS_JWKS && /\.local$/.test(env.ACCESS_TEAM_DOMAIN ?? "")) return JSON.parse(env.ACCESS_JWKS).keys;
+  const cached = cache.keys && cache.domain === env.ACCESS_TEAM_DOMAIN;
+  // A refresh (unknown kid: Access rotated its keys) is allowed at most once a minute, so bad tokens can't hammer Access.
+  if (cached && (refresh ? now - cache.at < 60_000 : now - cache.at < 3_600_000)) return cache.keys;
   const res = await fetchImpl(`https://${env.ACCESS_TEAM_DOMAIN}/cdn-cgi/access/certs`, { signal: AbortSignal.timeout(5_000) });
   if (!res.ok) throw new Error(`Access certs HTTP ${res.status}`);
   cache = { at: now, domain: env.ACCESS_TEAM_DOMAIN, keys: (await res.json()).keys };
@@ -28,7 +31,8 @@ export async function accessIdentity(request, env, { fetchImpl = fetch, now = Da
     const header = json(parts[0]);
     const claims = json(parts[1]);
     if (header.alg !== "RS256") return null;
-    const jwk = (await signingKeys(env, fetchImpl, now)).find((k) => k.kid === header.kid);
+    const jwk = (await signingKeys(env, fetchImpl, now)).find((k) => k.kid === header.kid) ??
+      (await signingKeys(env, fetchImpl, now, true)).find((k) => k.kid === header.kid);
     if (!jwk) return null;
     const key = await crypto.subtle.importKey("jwk", { kty: jwk.kty, n: jwk.n, e: jwk.e, alg: "RS256", ext: true },
       { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" }, false, ["verify"]);

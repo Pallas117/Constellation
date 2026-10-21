@@ -7,6 +7,7 @@
 import { esc } from "./render.js";
 import { TIERS, optionLabel } from "./tiers.js";
 import { rateLimited, saveApplication, APPLICATION_DAYS } from "./data.js";
+import { readCapped } from "./body.js";
 
 const PLANS = TIERS.map((t) => [t.id, optionLabel(t)]);
 const opts = (...xs) => xs.map((x) => [x, x]);
@@ -121,9 +122,19 @@ const SENT = {
   argo: ["Thank you. You're on the Gauss Argo list.", "We'll email you when early access opens, with the price, before anything starts.", "/argo/", "Back to Gauss Argo"],
 };
 
+// A useful next step after sending, beside the way back.
+const NEXT = {
+  gauss: ["/gauss/evidence/", "See a sample evidence report"],
+  constellation: ["https://luma.com/constellation", "Follow Constellation on Luma"],
+  workshop: ["https://luma.com/constellation", "See dates on Luma"],
+  edu: ["/education/#labs", "See the labs"],
+  argo: ["/argo/#how", "How Gauss Argo works"],
+};
+
 export function renderSent(kind) {
   const [title, lead, href, back] = SENT[kind];
-  const next = `<a class="btn ghost" href="${href}">${back}</a>`;
+  const [nextHref, nextLabel] = NEXT[kind];
+  const next = `<a class="btn" href="${nextHref}"${nextHref.startsWith("https://") ? ' rel="noopener"' : ""}>${nextLabel}</a> <a class="btn ghost" href="${href}">${back}</a>`;
   return `<div class="sent" role="status"><p class="k">RECEIVED</p><h2>${title}</h2><p class="lead">${lead}</p><p class="actions">${next}</p></div>`;
 }
 
@@ -163,8 +174,8 @@ export async function handleApply(request, env, respond, fillPage) {
   if (!sameOrigin(request)) return respond("Forbidden\n", 403, "text/plain; charset=utf-8");
   if (!(request.headers.get("content-type") ?? "").startsWith("application/x-www-form-urlencoded"))
     return respond("Unsupported form encoding\n", 415, "text/plain; charset=utf-8");
-  const body = await request.text();
-  if (body.length > MAX_BODY) return respond("Too large\n", 413, "text/plain; charset=utf-8");
+  const body = await readCapped(request, MAX_BODY);
+  if (body === null) return respond("Too large\n", 413, "text/plain; charset=utf-8");
   const form = new URLSearchParams(body);
   const kind = form.get("kind");
   if (!Object.hasOwn(KINDS, kind)) return respond("Unknown form\n", 400, "text/plain; charset=utf-8");

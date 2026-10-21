@@ -105,16 +105,20 @@ export function normaliseEvents(ics) {
   return events.sort((a, b) => (a.start < b.start ? -1 : 1)).slice(-60);
 }
 
-async function fetchText(url, fetchImpl, timeoutMs = 10_000) {
-  const res = await fetchImpl(url, { headers: { accept: "text/calendar", "user-agent": UA }, signal: AbortSignal.timeout(timeoutMs) });
+// No upstream answer we use is near this size; anything bigger is refused rather than read into memory.
+const MAX_FEED_BYTES = 2 * 1024 * 1024;
+
+async function fetchText(url, fetchImpl, timeoutMs = 10_000, accept = "text/calendar") {
+  const res = await fetchImpl(url, { headers: { accept, "user-agent": UA }, signal: AbortSignal.timeout(timeoutMs) });
   if (!res.ok) throw new Error(`${new URL(url).host} HTTP ${res.status}`);
-  return res.text();
+  if (Number(res.headers.get("content-length") ?? 0) > MAX_FEED_BYTES) throw new Error(`${new URL(url).host} response too large`);
+  const text = await res.text();
+  if (text.length > MAX_FEED_BYTES) throw new Error(`${new URL(url).host} response too large`);
+  return text;
 }
 
 async function fetchJson(url, fetchImpl, timeoutMs = 10_000) {
-  const res = await fetchImpl(url, { headers: { accept: "application/json", "user-agent": UA }, signal: AbortSignal.timeout(timeoutMs) });
-  if (!res.ok) throw new Error(`${new URL(url).host} HTTP ${res.status}`);
-  return res.json();
+  return JSON.parse(await fetchText(url, fetchImpl, timeoutMs, "application/json"));
 }
 
 const LOADERS = {

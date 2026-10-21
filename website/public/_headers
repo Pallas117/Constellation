@@ -7,8 +7,9 @@
   X-Content-Type-Options: nosniff
   X-Frame-Options: DENY
   Referrer-Policy: strict-origin-when-cross-origin
-  Permissions-Policy: camera=(), microphone=(), geolocation=()
+  Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=(), usb=()
   Cross-Origin-Opener-Policy: same-origin
+  Cross-Origin-Resource-Policy: same-site
 
 # Fonts, film and marks rarely change: cache for a week (rename the file if one does change).
 # site.css and the pages keep Cloudflare's default (revalidate every time), so edits show at once.

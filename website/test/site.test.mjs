@@ -76,6 +76,12 @@ test("landing: the tagline is the headline, over the kit's black-hole film", () 
   assert.match(home, /<img class="poster" src="\/assets\/media\/blackhole-poster\.jpg"/, "still frame without JS or video");
 });
 
+test("every page with a footer menu has the same one, Privacy included", () => {
+  const foot = (p) => [...(p.match(/<nav aria-label="Footer">([\s\S]*?)<\/nav>/)?.[1] ?? "").matchAll(/href="([^"]+)"/g)].map((m) => m[1]);
+  const want = ["/gauss/", "/constellation/", "/turnstone/", "/argo/", "/education/", "mailto:jzwnathan@lightbound.uk", "/privacy/"];
+  for (const [route, page] of Object.entries(html)) if (page.includes('aria-label="Footer"')) assert.deepEqual(foot(page), want, route);
+});
+
 test("every page has one h1, the same main navigation and the same footer links", () => {
   const nav = (p) => [...(p.match(/<nav aria-label="Main">([\s\S]*?)<\/nav>/)?.[1] ?? "").matchAll(/href="([^"]+)"/g)].map((m) => m[1]);
   for (const [route, page] of Object.entries(html)) {
@@ -317,7 +323,14 @@ test("Constellation: events from its Luma calendar, then workshops on ethics, re
   const page = html["/constellation/"];
   assert.match(page, /<!--live:events-->[\s\S]*href="https:\/\/luma\.com\/constellation"[\s\S]*<!--\/live:events-->/);
   const workshops = page.match(/<section id="workshops"[\s\S]*?<\/section>/)[0];
-  for (const want of [/Ethics/, /Resilience/, /Tech leadership/, /Members join free/]) assert.match(text(workshops), want);
+  for (const want of [/Ethics/, /Resilience/, /Tech leadership/, /Members join free/, /led by facilitators from the Constellation community/]) assert.match(text(workshops), want);
+  // Every on-page menu link lands on a section of the same page.
+  for (const route of ["/gauss/", "/constellation/", "/argo/", "/education/"]) {
+    const menu = html[route].match(/<nav class="subnav" aria-label="On this page">([\s\S]*?)<\/nav>/)?.[1] ?? "";
+    const ids = [...menu.matchAll(/href="#([a-z-]+)"/g)].map((m) => m[1]);
+    assert.ok(ids.length >= 3, `${route}: on-page menu`);
+    for (const id of ids) assert.match(html[route], new RegExp(`<section id="${id}"`), `${route}: #${id}`);
+  }
   assert.match(workshops, /href="\/constellation\/workshops\/">Bring a workshop to your team/);
   const labels = [...page.matchAll(/<p class="label">(\d\d)_/g)].map((m) => Number(m[1]));
   assert.deepEqual(labels, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10], "section numbers run in order");

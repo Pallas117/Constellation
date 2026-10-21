@@ -3,9 +3,13 @@
 // and signed webhooks that unlock the workspace. Card details never touch lightbound.uk. The two keys live in Worker secrets
 // (STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET), never in config, URLs or logs.
 import { getAccount, putAccount } from "./data.js";
+import { readCapped } from "./body.js";
 import { ARGO, CURRENCY, EDU, INVOICE_DAYS, tierById } from "./tiers.js";
 
-const api = (env) => env.STRIPE_API_BASE || "https://api.stripe.com"; // STRIPE_API_BASE: local stand-in only
+// STRIPE_API_BASE points at the local stand-in (dev.mjs). Honoured only for this machine, so a stray setting in
+// production can never send the secret key to another host.
+const LOCAL_BASE = /^http:\/\/(127\.0\.0\.1|localhost)(:\d{2,5})?\/[A-Za-z0-9_/-]*$/;
+const api = (env) => (LOCAL_BASE.test(env.STRIPE_API_BASE ?? "") ? env.STRIPE_API_BASE : "https://api.stripe.com");
 const enc = (s) => new TextEncoder().encode(s);
 const hex = (buf) => [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, "0")).join("");
 
@@ -169,18 +173,22 @@ const SUBSCRIPTION = { active: "active", trialing: "active", past_due: "past_due
 /** Apply one verified event to the account it names. Safe to repeat; older events never overwrite newer ones. */
 export async function applyEvent(env, event) {
   const obj = event?.data?.object ?? {};
-  const email = String(obj.metadata?.email ?? obj.client_reference_id ?? "").toLowerCase();
+  // Every object we create carries metadata.email; anything without it isn't ours to act on.
+  const email = String(obj.metadata?.email ?? "").toLowerCase();
   if (!email) return "ignored: no account";
   const account = await getAccount(env, email);
   if (!account) return "ignored: unknown account";
   if (PRODUCTS.includes(obj.metadata?.product)) return applyProductEvent(env, account, event, obj, obj.metadata.product);
   if (obj.metadata?.plan && obj.metadata.plan !== account.tier) return "ignored: plan has changed";
   const prev = account.billing ?? {};
+  const stale = staleFor(event, obj, prev.checkout, prev);
+  if (stale) return stale;
   if (prev.eventAt && event.created < prev.eventAt) return "ignored: older event";
   let next;
   switch (event.type) {
     case "checkout.session.completed":
-      next = { status: obj.mode === "subscription" ? "active" : obj.payment_status === "paid" ? "paid" : "processing", customer: obj.customer ?? prev.customer, subscription: obj.subscription ?? prev.subscription };
+      next = { status: obj.mode === "subscription" ? "active" : obj.payment_status === "paid" ? "paid" : "processing", customer: obj.customer ?? prev.customer, subscription: obj.subscription ?? prev.subscription,
+        checkout: { ...prev.checkout, url: null } }; // used: never offered again
       break;
     case "checkout.session.async_payment_succeeded":
       next = { status: "paid", customer: obj.customer ?? prev.customer };
@@ -210,9 +218,19 @@ export async function applyEvent(env, event) {
 }
 
 /** Self-serve products keep their own billing record (account.argo.billing, account.edu.billing), so they never touch a Gauss plan's. */
+// Only the Checkout Session this account opened, and the subscription it started, can change its billing: a session
+// opened before a re-quote (FRESH clears it) or anyone else's can't.
+function staleFor(event, obj, checkout, prev) {
+  if (event.type.startsWith("checkout.session.") && (!obj.id || obj.id !== checkout?.id)) return "ignored: not this account's checkout";
+  if (event.type.startsWith("customer.subscription.") && (!obj.id || obj.id !== prev.subscription)) return "ignored: not this account's subscription";
+  return null;
+}
+
 async function applyProductEvent(env, account, event, obj, key) {
   const rec = account[key] ?? {};
   const prev = rec.billing ?? {};
+  const stale = staleFor(event, obj, rec.checkout, prev);
+  if (stale) return stale;
   if (prev.eventAt && event.created < prev.eventAt) return "ignored: older event";
   let next;
   if (event.type === "checkout.session.completed") next = { status: "active", customer: obj.customer ?? prev.customer, subscription: obj.subscription ?? prev.subscription };
@@ -225,7 +243,8 @@ async function applyProductEvent(env, account, event, obj, key) {
       : { status: "due", invoice: null, invoiceUrl: null, dueAt: null };
   } else return `ignored: ${event.type}`;
   const offer = obj.metadata?.offer;
-  const updated = { ...rec, ...(offer ? { plan: offer } : {}), customer: next.customer ?? rec.customer ?? null,
+  const used = event.type === "checkout.session.completed" ? { checkout: { ...rec.checkout, url: null } } : {};
+  const updated = { ...rec, ...used, ...(offer ? { plan: offer } : {}), customer: next.customer ?? rec.customer ?? null,
     billing: { ...prev, ...next, eventAt: event.created, updatedAt: new Date().toISOString() } };
   await putAccount(env, { ...account, [key]: updated }, "stripe");
   return `${key} ${event.type} -> ${next.status}`;
@@ -233,8 +252,8 @@ async function applyProductEvent(env, account, event, obj, key) {
 
 /** POST /api/stripe/webhook: no cookies or origin here; the signature is the only proof. */
 export async function handleWebhook(request, env, respond) {
-  const payload = await request.text();
-  if (payload.length > 512 * 1024) return respond("Too large\n", 413, "text/plain; charset=utf-8");
+  const payload = await readCapped(request, 512 * 1024);
+  if (payload === null) return respond("Too large\n", 413, "text/plain; charset=utf-8");
   if (!(await verifySignature(env.STRIPE_WEBHOOK_SECRET, payload, request.headers.get("stripe-signature"))))
     return respond("Bad signature\n", 400, "text/plain; charset=utf-8");
   let event;

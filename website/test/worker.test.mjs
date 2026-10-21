@@ -7,14 +7,14 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import worker from "../worker/index.js";
 import { FEEDS, feedState, normaliseEvents, normaliseLaunches, normaliseWeather, readFeed, refreshFeeds } from "../worker/feeds.js";
-import { countdown, esc, renderConstellationDoor, renderEvents, renderGaussDoor, renderIcs, renderLaunches, renderWeather, whenText } from "../worker/render.js";
+import { countdown, esc, renderConstellationDoor, renderEventIcs, renderEvents, renderGaussDoor, renderIcs, renderLaunches, renderWeather, whenText } from "../worker/render.js";
 import { SECURITY_HEADERS } from "../worker/headers.js";
 import { RECORDED_AT, fixture, makeFetch } from "./fixtures/fetch.mjs";
 import { memoryKV } from "./fixtures/kv.mjs";
 import { makeAccess } from "./fixtures/access.mjs";
 import { accessIdentity, isAdmin } from "../worker/auth.js";
-import { getAccount, listApplications, putAccount, saveApplication } from "../worker/data.js";
-import { applyEvent, formEncode, signPayload, verifySignature } from "../worker/stripe.js";
+import { getAccount, listApplications, putAccount, saveApplication, senderOf } from "../worker/data.js";
+import { applyEvent, createPortal, formEncode, signPayload, verifySignature } from "../worker/stripe.js";
 import { billingStatus, isAcademicEmail } from "../worker/tiers.js";
 import { APP_CSP } from "../worker/headers.js";
 import { formatIn, renderPlanner, tzOffset, zonedToUtc } from "../worker/timezones.js";
@@ -344,7 +344,7 @@ function stripeMock(fail = false) {
     calls.push({ url: String(url), body: new URLSearchParams(init.body), auth: init.headers.authorization });
     if (fail) return new Response('{"error":{"code":"api_error"}}', { status: 500 });
     const path = new URL(url).pathname;
-    if (path.endsWith("/checkout/sessions")) return Response.json({ id: "cs_test_1", url: "https://checkout.stripe.com/c/pay/cs_test_1" });
+    if (path.endsWith("/checkout/sessions")) return Response.json({ id: "cs_test_1", url: "https://checkout.stripe.com/c/pay/cs_test_1", expires_at: Math.floor(Date.now() / 1000) + 86_400 });
     if (path.endsWith("/billing_portal/sessions")) return Response.json({ url: "https://billing.stripe.com/p/session/test_1" });
     if (path.endsWith("/customers")) return Response.json({ id: "cus_new" });
     if (path.endsWith("/invoiceitems")) return Response.json({ id: "ii_1" });
@@ -400,6 +400,9 @@ test("workspace: an approved quote shows Pay; checkout goes to Stripe with the q
   assert.deepEqual([body.get("client_reference_id"), body.get("metadata[email]"), body.get("metadata[plan]"), body.get("customer_creation")], ["ops@example.test", "ops@example.test", "pilot", "always"]);
   assert.equal(body.get("success_url"), "https://lightbound.uk/app/?checkout=success");
   assert.equal((await withFetch(stripe, async () => send(env, await formPost(access, "ops@example.test", "/app/checkout", {}, "https://evil.example")))).status, 403);
+  assert.equal((await getAccount(env, "ops@example.test")).billing.checkout.id, "cs_test_1", "the session is kept, so only its payment counts");
+  const ops = await getAccount(env, "ops@example.test");
+  await putAccount(env, { ...ops, billing: { ...ops.billing, checkout: null } }, "test"); // no open session: the next click calls Stripe
   const down = await withFetch(stripeMock(true), async () => send(env, await formPost(access, "ops@example.test", "/app/checkout")));
   assert.equal(down.status, 503);
   assert.match(await down.text(), /Nothing was charged/);
@@ -482,7 +485,7 @@ test("stripe: form encoding and webhook signatures (wrong secret, stale or tampe
 
 test("stripe webhook: verified events unlock, renew, fail and cancel plans; forged ones change nothing", async () => {
   const { env, access } = await appEnv();
-  await putAccount(env, { email: "fleet@example.test", tier: "fleet_integration", quote: 7_500_000, billing: { status: "due" } }, "test");
+  await putAccount(env, { email: "fleet@example.test", tier: "fleet_integration", quote: 7_500_000, billing: { status: "due", checkout: { id: "cs_1" } } }, "test");
   const t0 = Math.floor(Date.now() / 1000);
   const hook = async (type, object, created = t0, secret = env.STRIPE_WEBHOOK_SECRET) => {
     const payload = JSON.stringify({ id: `evt_${type}_${created}`, type, created, data: { object } });
@@ -490,9 +493,13 @@ test("stripe webhook: verified events unlock, renew, fail and cancel plans; forg
   };
   const meta = { email: "fleet@example.test", plan: "fleet_integration" };
   const status = async () => (await getAccount(env, "fleet@example.test")).billing.status;
-  assert.equal((await hook("checkout.session.completed", { mode: "subscription", customer: "cus_1", subscription: "sub_1", metadata: meta }, t0, "forged")).status, 400);
+  assert.equal((await hook("checkout.session.completed", { id: "cs_1", mode: "subscription", customer: "cus_1", subscription: "sub_1", metadata: meta }, t0, "forged")).status, 400);
+  assert.equal(await applyEvent(env, { type: "checkout.session.completed", created: t0, data: { object: { id: "cs_old", mode: "subscription", customer: "cus_1", subscription: "sub_x", metadata: meta } } }),
+    "ignored: not this account's checkout", "a session from before a re-quote, or anyone else's, changes nothing");
+  assert.equal(await applyEvent(env, { type: "customer.subscription.updated", created: t0, data: { object: { id: "sub_x", status: "active", metadata: meta } } }), "ignored: not this account's subscription");
+  assert.equal(await applyEvent(env, { type: "checkout.session.completed", created: t0, data: { object: { id: "cs_1", client_reference_id: "fleet@example.test" } } }), "ignored: no account", "metadata.email is required");
   assert.equal(await status(), "due", "forged event ignored");
-  assert.equal((await hook("checkout.session.completed", { mode: "subscription", customer: "cus_1", subscription: "sub_1", client_reference_id: "fleet@example.test", metadata: meta })).status, 200);
+  assert.equal((await hook("checkout.session.completed", { id: "cs_1", mode: "subscription", customer: "cus_1", subscription: "sub_1", client_reference_id: "fleet@example.test", metadata: meta })).status, 200);
   assert.equal(await status(), "active");
   const page = await (await send(env, await as(access, "fleet@example.test", "/app/"))).text();
   assert.match(page, /Renews yearly/);
@@ -576,7 +583,7 @@ test("argo sales: off, invite, open; $10 a month subscription with its own billi
   // Webhooks: Argo's own billing; the Gauss plan stays as it was.
   const t0 = Math.floor(Date.now() / 1000);
   const meta = { email: "fleet@example.test", product: "argo" };
-  assert.equal(await applyEvent(invite, { type: "checkout.session.completed", created: t0, data: { object: { mode: "subscription", customer: "cus_fleet", subscription: "sub_argo", metadata: meta } } }), "argo checkout.session.completed -> active");
+  assert.equal(await applyEvent(invite, { type: "checkout.session.completed", created: t0, data: { object: { id: "cs_test_1", mode: "subscription", customer: "cus_fleet", subscription: "sub_argo", metadata: meta } } }), "argo checkout.session.completed -> active");
   let acct = await getAccount(invite, "fleet@example.test");
   assert.deepEqual([acct.argo.billing.status, acct.argo.billing.subscription, acct.billing.status, acct.tier], ["active", "sub_argo", "active", "fleet_integration"]);
   assert.match(await (await send(invite, await as(access, "fleet@example.test", "/app/?argo=started"))).text(), /Gauss Argo is starting/);
@@ -594,7 +601,7 @@ test("argo sales: off, invite, open; $10 a month subscription with its own billi
 });
 
 test("education: university emails start straight away; students free for a year; staff checkout only once priced", async () => {
-  for (const [e, ok] of [["a@ox.ac.uk", true], ["b@mit.edu", true], ["c@um.edu.my", true], ["d@student.unsw.edu.au", true], ["e@gmail.com", false], ["f@education.example.com", false], ["g@ac.evil.com", false]])
+  for (const [e, ok] of [["a@ox.ac.uk", true], ["b@mit.edu", true], ["c@um.edu.my", true], ["d@student.unsw.edu.au", true], ["e@gmail.com", false], ["f@education.example.com", false], ["g@ac.evil.com", false], ["h@free.ac", false], ["i@kyoto-u.ac.jp", true], ["j@uni.edu.evil.com", false]])
     assert.equal(isAcademicEmail(e), ok, e);
   const { env, access } = await appEnv();
   const page = async (e) => (await send(e, new Request("https://lightbound.uk/education/"))).text();
@@ -631,7 +638,7 @@ test("education: university emails start straight away; students free for a year
     ["subscription", "500", "usd", "month", "edu", "staff"]);
   assert.equal(body.get("success_url"), "https://lightbound.uk/app/?edu=started");
   const t0 = Math.floor(Date.now() / 1000);
-  assert.equal(await applyEvent(priced, { type: "checkout.session.completed", created: t0, data: { object: { mode: "subscription", customer: "cus_pat", subscription: "sub_edu", metadata: { email: "pat@uni.ac.uk", product: "edu", offer: "staff" } } } }), "edu checkout.session.completed -> active");
+  assert.equal(await applyEvent(priced, { type: "checkout.session.completed", created: t0, data: { object: { id: "cs_test_1", mode: "subscription", customer: "cus_pat", subscription: "sub_edu", metadata: { email: "pat@uni.ac.uk", product: "edu", offer: "staff" } } } }), "edu checkout.session.completed -> active");
   const pat = await getAccount(priced, "pat@uni.ac.uk");
   assert.deepEqual([pat.edu.plan, pat.edu.billing.status, pat.edu.customer, pat.argo ?? null, pat.billing ?? null], ["staff", "active", "cus_pat", null, null]);
   assert.match(await (await send(priced, await as(access, "pat@uni.ac.uk", "/app/"))).text(), /Renews monthly\.[\s\S]*Open the classroom/);
@@ -681,6 +688,94 @@ test("workshops: a team's request is stored and listed for admin; marking it con
   assert.equal(await getAccount(env, "ana@example.test"), null, "no account or membership from a workshop request");
 });
 
+test("security: big bodies refused before reading; the Stripe key only ever goes to Stripe; sign-ins never create records", async () => {
+  const { env, access } = await appEnv();
+  const big = "x=" + "a".repeat(20 * 1024);
+  const appPost = await send(env, await as(access, "member@example.test", "/app/prefs", { method: "POST", body: big, headers: { origin: "https://lightbound.uk", "content-type": "application/x-www-form-urlencoded" } }));
+  assert.equal(appPost.status, 413);
+  assert.equal((await send(env, post("/api/apply", { kind: "constellation", message: "a".repeat(20 * 1024) }))).status, 413);
+  const hook = await send(env, new Request("https://lightbound.uk/api/stripe/webhook", { method: "POST", body: "{}", headers: { "content-length": String(600 * 1024) } }));
+  assert.equal(hook.status, 413);
+  // STRIPE_API_BASE is only for the local stand-in: anything else is ignored.
+  const calls = [];
+  const f = async (url) => { calls.push(String(url)); return Response.json({ url: "https://billing.stripe.com/p/session/x" }); };
+  for (const base of ["https://evil.example/v1x/", "http://127.0.0.1.evil.example/", "http://10.0.0.5:8788/__stripe"])
+    await createPortal({ ...env, STRIPE_API_BASE: base }, { email: "a@example.test", billing: { customer: "cus_1" } }, "https://lightbound.uk", f);
+  await createPortal({ ...env, STRIPE_API_BASE: "http://127.0.0.1:8788/__stripe" }, { email: "a@example.test", billing: { customer: "cus_1" } }, "https://lightbound.uk", f);
+  assert.deepEqual(calls.map((u) => new URL(u).origin), ["https://api.stripe.com", "https://api.stripe.com", "https://api.stripe.com", "http://127.0.0.1:8788"]);
+  // Saving a time-zone preference never creates an account for someone who only signed in.
+  await send(env, await formPost(access, "stranger@example.test", "/app/prefs", { tz: "Asia/Kuala_Lumpur" }));
+  assert.equal(await getAccount(env, "stranger@example.test"), null);
+});
+
+test("security: Access key rotation is followed (once a minute at most); calendar files can't be broken into", async () => {
+  const oldKey = await makeAccess({ kid: "old" });
+  const newKey = await makeAccess({ kid: "new" });
+  const jwk = (a) => JSON.parse(a.env.ACCESS_JWKS).keys[0];
+  let served = [jwk(oldKey)];
+  let fetches = 0;
+  const certs = async () => { fetches++; return Response.json({ keys: served }); };
+  const env = { ACCESS_TEAM_DOMAIN: oldKey.env.ACCESS_TEAM_DOMAIN, ACCESS_AUD: oldKey.env.ACCESS_AUD };
+  const t = Date.now() + 10 * 3_600_000; // past any key cache left by other tests; tokens are signed for that time
+  const req = async (a) => new Request("https://lightbound.uk/app/", { headers: { "cf-access-jwt-assertion": await a.sign("a@example.test", { exp: Math.floor(t / 1000) + 7200 }) } });
+  assert.deepEqual(await accessIdentity(await req(oldKey), env, { fetchImpl: certs, now: t }), { email: "a@example.test" });
+  served = [jwk(oldKey), jwk(newKey)]; // Access rotates
+  assert.deepEqual(await accessIdentity(await req(newKey), env, { fetchImpl: certs, now: t + 120_000 }), { email: "a@example.test" }, "unknown kid: refetch once");
+  const before = fetches;
+  assert.equal(await accessIdentity(await req(await makeAccess({ kid: "forged" })), env, { fetchImpl: certs, now: t + 150_000 }), null);
+  assert.equal(fetches, before, "an unknown kid can't make us refetch more than once a minute");
+  const ics = renderEventIcs({ uid: "call-x\r\nATTENDEE:evil", start: "2030-01-01T00:00:00.000Z", minutes: 60, summary: "Hi\rDTSTART:19700101T000000Z", description: "a\nb" });
+  assert.match(ics, /^UID:call-xATTENDEEevil@lightbound\.uk\r$/m);
+  assert.match(ics, /^SUMMARY:Hi\\nDTSTART:19700101T000000Z\r$/m, "a lone CR is escaped, not a new line");
+  assert.equal(ics.match(/^DTSTART/gm).length, 1);
+  assert.equal(SECURITY_HEADERS["Cross-Origin-Resource-Policy"], "same-site");
+  assert.match(SECURITY_HEADERS["Permissions-Policy"], /payment=\(\), usb=\(\)/);
+});
+
+test("security: an oversized upstream feed is refused, and the last good data is kept", async () => {
+  const env = { LIVE: memoryKV() };
+  await refreshFeeds(env, { fetchImpl: makeFetch(), now: RECORDED_AT });
+  const huge = async () => new Response("x".repeat(3 * 1024 * 1024), { headers: { "content-type": "application/json" } });
+  const r = await refreshFeeds(env, { fetchImpl: huge, now: RECORDED_AT + 200 * MIN });
+  assert.match(r.launches, /response too large/);
+  assert.match(r.events, /response too large/);
+  assert.equal((await readFeed(env, "launches")).data.length, 10, "old data kept");
+});
+
+test("security review: checkout sessions reused, not multiplied; student year needs a university address; senders by /64; chunked uploads capped; dev keys local only", async () => {
+  const { env, access } = await appEnv();
+  const open = { ...env, ARGO_SALES: "open" };
+  const stripe = stripeMock();
+  const first = await withFetch(stripe, async () => send(open, await formPost(access, "solo@example.test", "/app/argo/checkout")));
+  const again = await withFetch(stripe, async () => send(open, await formPost(access, "solo@example.test", "/app/argo/checkout")));
+  assert.equal(again.headers.get("location"), first.headers.get("location"));
+  assert.equal(stripe.calls.length, 1, "a second click reuses the open session");
+  assert.equal((await getAccount(open, "solo@example.test")).argo.checkout.id, "cs_test_1");
+  // An approved department without a university address can't take the free student year.
+  const edu = { ...env, EDU_SALES: "open" };
+  await putAccount(edu, { email: "lee@physics.example.org", edu: { approvedAt: "2026-10-20T00:00:00.000Z", plan: "department", quote: 300_000, billing: { status: "due" } } }, "test");
+  await putAccount(edu, { email: "dept@uni.ac.uk", edu: { approvedAt: "2026-10-20T00:00:00.000Z", plan: "department", quote: 300_000, billing: { status: "due" } } }, "test");
+  for (const who of ["lee@physics.example.org", "dept@uni.ac.uk"]) {
+    assert.equal((await send(edu, await formPost(access, who, "/app/edu/student", { student: "yes" }))).headers.get("location"), "/app/", who);
+    assert.equal((await getAccount(edu, who)).edu.plan, "department");
+  }
+  // Rate limits count an IPv6 /64 as one sender (one host can hold the whole /64).
+  assert.equal(senderOf("2001:db8:1:2:aaaa::1"), senderOf("2001:db8:1:2:bbbb:cccc:dddd:1"));
+  assert.equal(senderOf("2001:db8::1"), "2001:db8:0:0::/64");
+  assert.notEqual(senderOf("2001:db8:1:2::1"), senderOf("2001:db8:1:3::1"));
+  assert.equal(senderOf("203.0.113.9"), "203.0.113.9");
+  // A chunked upload with no Content-Length is still capped.
+  const stream = new ReadableStream({ start(c) { for (let i = 0; i < 40; i++) c.enqueue(new TextEncoder().encode("x".repeat(1024))); c.close(); } });
+  const chunked = new Request("https://lightbound.uk/app/prefs", { method: "POST", body: stream, duplex: "half",
+    headers: { origin: "https://lightbound.uk", "content-type": "application/x-www-form-urlencoded", "cf-access-jwt-assertion": await access.sign("member@example.test") } });
+  assert.equal((await send(env, chunked)).status, 413);
+  // The dev signing key is honoured only for a *.local team domain.
+  const leaked = { ...env, ACCESS_TEAM_DOMAIN: "lightbound.cloudflareaccess.com" };
+  const certs = async () => Response.json({ keys: [] });
+  const req = new Request("https://lightbound.uk/app/", { headers: { "cf-access-jwt-assertion": await access.sign("boss@example.test", { iss: "https://lightbound.cloudflareaccess.com" }) } });
+  assert.equal(await accessIdentity(req, leaked, { fetchImpl: certs, now: Date.now() + 20 * 3_600_000 }), null);
+});
+
 test("support: Constellation shows a Support link only once a Stripe Payment Link is set", async () => {
   const { env, access } = await appEnv();
   const page = async (e) => (await send(e, new Request("https://lightbound.uk/constellation/"))).text();
@@ -698,10 +793,12 @@ test("support: Constellation shows a Support link only once a Stripe Payment Lin
 test("admin: Constellation invitations are free memberships with a draft email, never sent automatically", async () => {
   const { env, access } = await appEnv();
   const res = await send(env, await formPost(access, "boss@example.test", "/app/admin/invite", { email: "Grace@Example.test", name: "Grace" }));
-  assert.equal(res.headers.get("location"), "/app/admin/?invited=grace%40example.test");
+  const to = res.headers.get("location");
+  assert.match(to, /^\/app\/admin\/\?invited=[0-9a-f-]{36}$/, "a one-time token, never the email, in the URL");
   const acct = await getAccount(env, "grace@example.test");
   assert.deepEqual([acct.community, acct.tier ?? null, acct.quote ?? null], ["member", null, null]);
-  const page = await (await send(env, await as(access, "boss@example.test", "/app/admin/?invited=grace%40example.test"))).text();
+  const page = await (await send(env, await as(access, "boss@example.test", to))).text();
+  assert.doesNotMatch(await (await send(env, await as(access, "boss@example.test", "/app/admin/?invited=grace%40example.test"))).text(), /is now a Constellation member/, "an email in the URL does nothing");
   assert.match(page, /href="mailto:grace%40example\.test\?subject=Your%20invitation%20to%20Constellation&amp;body=/);
   assert.match(page, /nothing is sent automatically/);
 });

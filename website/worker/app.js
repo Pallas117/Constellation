@@ -3,7 +3,8 @@
 // Every request is checked: a valid Cloudflare Access token for who, the account record for what.
 // Paying happens on Stripe's own pages (checkout, or an invoice where an admin allows it); this side starts it and reads the result.
 import { accessIdentity, isAdmin } from "./auth.js";
-import { deleteAccount, getAccount, getApplication, listAccounts, listApplications, putAccount, setApplicationStatus } from "./data.js";
+import { deleteAccount, getAccount, getApplication, latestApplication, listAccounts, listApplications, putAccount, setApplicationStatus } from "./data.js";
+import { readCapped } from "./body.js";
 import { sameOrigin } from "./forms.js";
 import { readFeed } from "./feeds.js";
 import { esc, renderEventIcs, renderGaussDoor, supportLink } from "./render.js";
@@ -68,6 +69,7 @@ export function argoCard(env, account) {
 }
 
 const YEAR_MS = 365 * 86_400_000;
+const ADMIN_DETAILS = 50; // the admin page reads full details for the newest 50 waiting applications; older ones show their summary
 /** Education access is open: a free student year, a staff subscription, or a department licence (paid, or invoiced and not overdue). */
 export const eduOpen = (account, now = Date.now()) => !!account?.edu?.billing && unlocked(billingStatus({ billing: account.edu.billing }, now));
 
@@ -226,12 +228,24 @@ export function renderAdmin({ applications, accounts, details, invited, error })
   );
 }
 
+const MAX_FORM = 16 * 1024;
+// A Checkout Session is kept on the account (id, link, expiry, amount). Clicking again reuses it while it has more than
+// 10 minutes left at the same amount, so repeated clicks don't create sessions; and only that session's payment counts.
+const keep = (session, amount) => ({ id: session.id, url: session.url, amount, expiresAt: session.expires_at ? new Date(session.expires_at * 1000).toISOString() : null });
+const reusable = (c, amount) => (c?.url && c.amount === amount && c.expiresAt && Date.parse(c.expiresAt) > Date.now() + 600_000 ? c : null);
+/** Hand an email to the next admin page without putting it in a URL: a random token that expires in 10 minutes. */
+async function flash(env, email) {
+  const token = crypto.randomUUID();
+  await env.DATA.put(`flash:${token}`, email, { expirationTtl: 600 });
+  return token;
+}
+
 const signedOut = (respond) =>
   respond(`<!doctype html><meta charset="utf-8"><title>Sign in · Lightbound</title><link rel="stylesheet" href="/assets/site.css"><main class="vault wrap"><div><p class="k">401_SIGN_IN</p><h1>Please sign in.</h1><p class="muted">The workspace is for approved accounts and Constellation members.</p><p class="actions"><a class="btn" href="/app/">Sign in</a> <a class="btn ghost" href="/gauss/apply/">Apply</a></p></div></main>`,
     401, "text/html; charset=utf-8", APP_HEADERS);
 
 // A new plan or quote starts billing afresh: no earlier invoice, paid year or event can count towards it.
-const FRESH = { eventAt: null, invoice: null, invoiceUrl: null, dueAt: null, paidUntil: null };
+const FRESH = { eventAt: null, invoice: null, invoiceUrl: null, dueAt: null, paidUntil: null, checkout: null };
 
 /** Quote from the form, in pence, only if it sits inside the plan's range. */
 function quoteFrom(form, tier) {
@@ -251,6 +265,9 @@ export async function handleApp(request, env, url, { respond, fillPage, fetchImp
 
   if (request.method === "POST") {
     if (!sameOrigin(request)) return fail(403, "Forbidden");
+    // Every form here is small: the body is read once, through a byte cap.
+    const raw = await readCapped(request, MAX_FORM);
+    if (raw === null) return fail(413, "Too large");
     // Customer actions: start checkout or open the billing portal (both on Stripe's own pages), or ask for an invoice.
     if (url.pathname === "/app/checkout" || url.pathname === "/app/billing" || url.pathname === "/app/invoice") {
       const account = await getAccount(env, id.email);
@@ -263,9 +280,15 @@ export async function handleApp(request, env, url, { respond, fillPage, fetchImp
             invoiceUrl: inv.hosted_invoice_url ?? null, dueAt: inv.due_date ? new Date(inv.due_date * 1000).toISOString() : null } }, id.email);
           return back("/app/?invoice=sent");
         }
-        const session = url.pathname === "/app/checkout"
-          ? (canPay ? await createCheckout(env, account, url.origin, fetchImpl) : null)
-          : customerOf(account) ? await createPortal(env, account, url.origin, fetchImpl) : null;
+        if (url.pathname === "/app/checkout") {
+          if (!canPay) return back("/app/");
+          const open = reusable(account.billing?.checkout, account.quote);
+          const session = open ?? (await createCheckout(env, account, url.origin, fetchImpl));
+          if (!session?.url) return back("/app/");
+          if (!open) await putAccount(env, { ...account, billing: { ...(account.billing ?? {}), checkout: keep(session, account.quote) } }, id.email);
+          return new Response(null, { status: 303, headers: { location: session.url, ...APP_HEADERS } });
+        }
+        const session = customerOf(account) ? await createPortal(env, account, url.origin, fetchImpl) : null;
         if (!session?.url) return back("/app/");
         return new Response(null, { status: 303, headers: { location: session.url, ...APP_HEADERS } });
       } catch {
@@ -274,11 +297,12 @@ export async function handleApp(request, env, url, { respond, fillPage, fetchImp
     }
     if (url.pathname.startsWith("/app/edu/")) {
       const account = (await getAccount(env, id.email)) ?? { email: id.email };
-      const form = new URLSearchParams(await request.text());
+      const form = new URLSearchParams(raw);
       const ready = eduMode(env) === "open" && eduEligible(account, id.email) && !eduOpen(account);
       try {
         if (url.pathname === "/app/edu/student") {
-          if (!ready || form.get("student") !== "yes") return back("/app/");
+          // Students need their own university address: an approval for review or a department licence doesn't count.
+          if (!ready || form.get("student") !== "yes" || !isAcademicEmail(id.email) || account.edu?.plan === "department") return back("/app/");
           const now = new Date();
           await putAccount(env, { ...account, edu: { ...(account.edu ?? {}), plan: "student", studentConfirmedAt: now.toISOString(),
             billing: { status: "paid", free: true, paidUntil: new Date(now.getTime() + YEAR_MS).toISOString() } } }, id.email);
@@ -287,9 +311,10 @@ export async function handleApp(request, env, url, { respond, fillPage, fetchImp
         if (url.pathname === "/app/edu/checkout") {
           const price = eduStaffPrice(env);
           if (!ready || !price) return back("/app/");
-          if (!account.updatedAt) await putAccount(env, account, id.email); // the webhook needs an account to update
-          const session = await createEduCheckout(env, account, url.origin, price, fetchImpl);
+          const open = reusable(account.edu?.checkout, price);
+          const session = open ?? (await createEduCheckout(env, account, url.origin, price, fetchImpl));
           if (!session?.url) return back("/app/");
+          if (!open) await putAccount(env, { ...account, edu: { ...(account.edu ?? {}), checkout: keep(session, price) } }, id.email);
           return new Response(null, { status: 303, headers: { location: session.url, ...APP_HEADERS } });
         }
         if (url.pathname === "/app/edu/invoice") {
@@ -308,9 +333,10 @@ export async function handleApp(request, env, url, { respond, fillPage, fetchImp
       const account = (await getAccount(env, id.email)) ?? { email: id.email };
       if (!argoCanStart(env, account) || ["active", "past_due"].includes(account.argo?.billing?.status)) return back("/app/");
       try {
-        if (!account.updatedAt) await putAccount(env, account, id.email); // the webhook needs an account to update
-        const session = await createArgoCheckout(env, account, url.origin, fetchImpl);
+        const open = reusable(account.argo?.checkout, ARGO.amount);
+        const session = open ?? (await createArgoCheckout(env, account, url.origin, fetchImpl));
         if (!session?.url) return back("/app/");
+        if (!open) await putAccount(env, { ...account, argo: { ...(account.argo ?? {}), checkout: keep(session, ARGO.amount) } }, id.email);
         return new Response(null, { status: 303, headers: { location: session.url, ...APP_HEADERS } });
       } catch {
         return billingDown();
@@ -318,18 +344,19 @@ export async function handleApp(request, env, url, { respond, fillPage, fetchImp
     }
     const isMember = admin || (await getAccount(env, id.email))?.community === "member";
     if (url.pathname === "/app/prefs") {
-      const tz = new URLSearchParams(await request.text()).get("tz");
-      if (isZone(tz)) await putAccount(env, { ...((await getAccount(env, id.email)) ?? { email: id.email }), tz }, id.email);
+      const tz = new URLSearchParams(raw).get("tz");
+      const account = await getAccount(env, id.email);
+      if (isZone(tz) && (account || admin) && account?.tz !== tz) await putAccount(env, { ...(account ?? { email: id.email }), tz }, id.email);
       return back("/app/#calls-h");
     }
     if (url.pathname === "/app/calls/rsvp") {
       if (!isMember) return fail(403, "Forbidden");
-      const f = new URLSearchParams(await request.text());
+      const f = new URLSearchParams(raw);
       const result = await rsvp(env, f.get("id") ?? "", id.email, f.get("want") === "yes");
       return back(`/app/?call=${result}#calls-h`);
     }
     if (!admin) return fail(403, "Forbidden");
-    const form = new URLSearchParams(await request.text());
+    const form = new URLSearchParams(raw);
     if (url.pathname === "/app/admin/calls") {
       if (form.get("action") === "delete") {
         if (await getCall(env, form.get("id") ?? "")) await deleteCall(env, form.get("id"));
@@ -372,7 +399,7 @@ export async function handleApp(request, env, url, { respond, fillPage, fetchImp
         await putAccount(env, app.kind === "gauss"
           ? { ...base, tier: tier.id, quote: quoteFrom(form, tier), invoice: form.get("invoice") === "yes", billing: { ...(prev.billing ?? {}), ...FRESH, status: tier.billing === "invoice" ? "invoiced" : "due" }, pilot: prev.pilot ?? (tier.id === "pilot" ? "Scoping" : null) }
           : { ...base, community: "member", invitedAt: new Date().toISOString() }, id.email);
-        if (app.kind === "constellation") return back(`/app/admin/?invited=${encodeURIComponent(app.email)}`);
+        if (app.kind === "constellation") return back(`/app/admin/?invited=${await flash(env, app.email)}`);
       }
       return back("/app/admin/");
     }
@@ -382,7 +409,7 @@ export async function handleApp(request, env, url, { respond, fillPage, fetchImp
       const prev = (await getAccount(env, email)) ?? { email };
       const name = String(form.get("name") ?? "").trim().slice(0, 100) || prev.name || null;
       await putAccount(env, { ...prev, name, community: "member", invitedAt: new Date().toISOString() }, id.email);
-      return back(`/app/admin/?invited=${encodeURIComponent(email)}`);
+      return back(`/app/admin/?invited=${await flash(env, email)}`);
     }
     if (url.pathname === "/app/admin/account") {
       const email = String(form.get("email") ?? "").trim().toLowerCase();
@@ -423,9 +450,10 @@ export async function handleApp(request, env, url, { respond, fillPage, fetchImp
   if (url.pathname === "/app/admin/") {
     if (!admin) return fail(403, "Forbidden");
     const applications = await listApplications(env);
-    const details = Object.fromEntries(await Promise.all(applications.filter((a) => a.status === "new").map(async (a) => [a.id, (await getApplication(env, a.id)) ?? {}])));
+    const details = Object.fromEntries(await Promise.all(applications.filter((a) => a.status === "new").slice(0, ADMIN_DETAILS).map(async (a) => [a.id, (await getApplication(env, a.id)) ?? {}])));
     const accounts = await listAccounts(env);
-    const invitedEmail = url.searchParams.get("invited");
+    const token = url.searchParams.get("invited");
+    const invitedEmail = /^[0-9a-f-]{36}$/.test(token ?? "") ? await env.DATA.get(`flash:${token}`) : null;
     const invited = invitedEmail ? await getAccount(env, invitedEmail) : null;
     const error = ["quote", "call", "edu"].includes(url.searchParams.get("error")) ? url.searchParams.get("error") : null;
     const calls = await listCalls(env);
@@ -434,8 +462,8 @@ export async function handleApp(request, env, url, { respond, fillPage, fetchImp
       `${renderCallsAdmin(calls, accounts.filter((a) => a.community === "member").map((a) => a.email), url.origin)}</div>` }, 200, APP_HEADERS);
   }
   if (url.pathname === "/app/") {
-    const [account, weather, applications] = await Promise.all([getAccount(env, id.email), readFeed(env, "weather"), listApplications(env)]);
-    const mine = applications.filter((a) => a.email === id.email);
+    const [account, weather, latest] = await Promise.all([getAccount(env, id.email), readFeed(env, "weather"), latestApplication(env, id.email)]);
+    const mine = latest ? [latest] : [];
     const eduNotice = { started: "edu-started", student: "edu-student" }[url.searchParams.get("edu")];
     const notice = eduNotice ?? (url.searchParams.get("argo") === "started" ? "argo" : url.searchParams.get("invoice") === "sent" ? "invoice" : ["success", "cancelled"].includes(url.searchParams.get("checkout")) ? url.searchParams.get("checkout") : "");
     const member = admin || account?.community === "member";
