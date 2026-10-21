@@ -27,7 +27,7 @@ stub launchctl 'S="$KICKS.state"; case "$1" in
   bootstrap) l=$(basename "$3" .plist); { grep -vx "out $l" "$S" 2>/dev/null; echo "in $l"; } >"$S.t"; mv "$S.t" "$S"; echo "bootstrap $l" >>"$KICKS"; exit 0 ;;
 esac; exit 1'
 stub df 'printf "Filesystem 1G-blocks Used Available\n/dev/disk3s1s1 228 13 %s\n" "${DISKGB:-50}"'
-stub curl 'printf "%s" "${HEALTH:-200}"' # code() reads only the HTTP status
+stub curl 'printf "%s" "$(cat "$HEALTH_FILE" 2>/dev/null || echo "${HEALTH:-200}")"' # code() reads only the HTTP status
 stub sudo 'exit 1'
 stub argo 'case "$1" in
   notify) [ $# -gt 1 ] || { [ -n "${OLD_ARGO:-}" ] && echo "usage: argo [status|doctor]" >&2 || echo "usage: argo notify [-key K -every 30m] TITLE MESSAGE" >&2; exit 1; }
@@ -47,7 +47,7 @@ run() { # run <args...>: gauss-services.sh with the stubs; alerts land in $LOG
   : >"$T/log"; : >"$T/kicks"; : >"$T/actions"
   env -i PATH="$T/bin:/usr/bin:/bin" HOME="$T/home" ARGO="$T/bin/argo" LOG="$T/log" KICKS="$T/kicks" GAUSS_PUBLIC_URL=http://127.0.0.1:8080 \
     GAUSS_SUDOERS="$T/sudoers" MLX="${MLX:-0}" MLXPORT="${MLXPORT:-8089}" ACTIONS="$T/actions" GAUSS_BALANCE="${GAUSS_BALANCE:-1}" \
-    LOADED="${LOADED:-}" HEALTH="${HEALTH:-200}" DISKGB="${DISKGB:-50}" \
+    LOADED="${LOADED:-}" HEALTH="${HEALTH:-200}" HEALTH_FILE="${HEALTH_FILE:-}" GAUSS_DEPLOY_WAIT=0 DISKGB="${DISKGB:-50}" \
     GAUSS_DEV_DRY="${GAUSS_DEV_DRY:-0}" GAUSS_DEV_API_PORT="${GAUSS_DEV_API_PORT:-3101}" \
     SRC="${SRC:-AC Power}" BATT="${BATT:-80%; charging; present: true}" SD="${SD:-0}" \
     ARGOSTATUS="${ARGOSTATUS:-}" LEVEL="${LEVEL:-1}" FREE="${FREE:-50}" SWAPUSED="${SWAPUSED:-1000}" OLD_ARGO="${OLD_ARGO:-}" bash "$SCRIPT" "$@"
@@ -179,6 +179,54 @@ git -C "$LIVE" init -q && git -C "$LIVE" -c user.email=t@t -c user.name=t commit
 out=$(LEVEL=2 run fallback prepare "$T/new-fb" 2>&1); [[ "$out" == *"Memory pressure is warn"* ]] && [ ! -e "$T/new-fb" ]
 expect "prepare refuses at memory pressure warn" $?
 out=$(run fallback prepare "$DEV" 2>&1); [[ "$out" == *"is not the current fallback"* ]]; expect "prepare never re-points someone else's checkout" $?
+
+# deploy: live is a real repo; curl answers with the checked-out commit's "health" file,
+# so a bad commit really fails and a rollback really brings the good one back.
+stub node 'if [[ " $* " == *" build "* ]]; then mkdir -p frontend/dist && touch frontend/dist/index.html; fi'
+stub npm 'echo "npm $*" >>"$ACTIONS"; mkdir -p node_modules'
+g() { git -C "$LIVE" -c user.email=t@t -c user.name=t "$@"; }
+head_is() { [ "$(g rev-parse HEAD)" = "$1" ]; }
+mkdir -p "$LIVE/data/bedrock" "$LIVE/node_modules"
+printf 'node_modules/\nfrontend/dist/\n' >"$LIVE/.gitignore"
+echo 200 >"$LIVE/health"; echo a >"$LIVE/package-lock.json"; echo t0 >"$LIVE/data/bedrock/telemetry.jsonl"
+g add -A && g commit -qm good-a; A=$(g rev-parse HEAD)
+echo v2 >"$LIVE/backend/server.ts"; g commit -qam good-b; Bc=$(g rev-parse HEAD)
+echo 500 >"$LIVE/health"; g commit -qam bad; C=$(g rev-parse HEAD)
+g checkout -q --detach "$Bc"; echo b >"$LIVE/package-lock.json"; g commit -qam new-lock; D=$(g rev-parse HEAD)
+g checkout -q --detach "$A"; echo t1 >>"$LIVE/data/bedrock/telemetry.jsonl" # live data changed in place
+FB2="$T/Gauss Aurora.worktrees/fb2"; rm -f "$FB/ready" "$T/kicks.state"; export HEALTH_FILE="$LIVE/health"
+out=$(run deploy "$Bc" "$FB2" 2>&1); rc=$?
+[ $rc = 0 ] && head_is "$Bc" && [[ "$out" == *"Deployed ${Bc:0:7}"* ]] && grep -q t1 "$LIVE/data/bedrock/telemetry.jsonl" && [ ! -d "$WD/deploying" ]
+expect "deploy: live switched, its local data kept, lock released" $?
+[[ "$(cat "$FB/ready")" == "$A $FB2 "* ]] && [ "$(grep -c '^npm ci' "$T/actions")" = 1 ]
+expect "deploy: fallback refreshed to the previous version; npm ci only for the new fallback (live's lockfile unchanged)" $?
+out=$(run deploy "$C" 2>&1); rc=$?
+[ $rc = 1 ] && head_is "$Bc" && [[ "$out" == *"Rolled back: live is on ${Bc:0:7}"* ]] && [ "$(alerts)" = "deploy" ] && [[ "$(cat "$FB/ready")" == "$Bc $FB2 "* ]]
+expect "deploy of a bad commit: rolls back by itself and texts the phone; fallback is the last good one" $?
+grep -q "${C:0:7} failed, rolled back to ${Bc:0:7}" "$T/home/Library/Logs/gauss/deploy.log"; expect "deploy log records the rollback" $?
+out=$(run deploy "$D" 2>&1); rc=$?
+[ $rc = 0 ] && head_is "$D" && [[ "$out" == *"Fallback already at ${Bc:0:7}"* ]] && [ "$(cat "$T/actions")" = "npm ci --no-audit --no-fund" ]
+expect "deploy: lockfile changed, so npm ci runs in live; fallback not rebuilt needlessly" $?
+out=$(HEALTH_FILE=/nonexistent HEALTH=500 run deploy "$C" 2>&1); rc=$?
+[ $rc = 1 ] && head_is "$D" && [[ "$out" == *"fallback stays at ${Bc:0:7}"* ]] && [ -f "$FB/active" ] && [[ " $(alerts) " == *" fallback "* ]]
+expect "deploy and rollback both fail: switches to the fallback (kept, not replaced by an unhealthy live)" $?
+out=$(run deploy "$Bc" 2>&1); [[ "$out" == *"The fallback is serving now"* ]]; expect "deploy refuses while the fallback serves" $?
+run fallback off >/dev/null
+out=$(run deploy deadbeef 2>&1); [[ "$out" == *"Unknown commit 'deadbeef'"* ]]; expect "deploy refuses an unknown commit" $?
+out=$(run deploy "$D" 2>&1); [[ "$out" == *"already at ${D:0:7}"* ]]; expect "deploy: already there is a no-op" $?
+out=$(LEVEL=2 run deploy "$Bc" 2>&1); [[ "$out" == *"Memory pressure is warn"* ]] && head_is "$D"; expect "deploy refuses at memory pressure warn" $?
+echo local >>"$LIVE/backend/server.ts"
+out=$(run deploy "$Bc" 2>&1); [[ "$out" == *"local code changes"*"backend/server.ts"* ]] && head_is "$D"; expect "deploy refuses over local code changes in live" $?
+g checkout -q -- backend/server.ts
+mkdir "$WD/deploying"
+out=$(run deploy "$Bc" 2>&1); [[ "$out" == *"Another deploy is running"* ]] && head_is "$D"; expect "one deploy at a time" $?
+rm -f "$T/kicks.state" "$WD/watch-kicks"; unset HEALTH_FILE # health from $HEALTH again: services down
+HEALTH=000 LOADED="$B" run awake guard; HEALTH=000 LOADED="$B" run awake guard
+[ -z "$(kicked)" ] && [ ! -f "$WD/$B.strikes" ]; expect "the guard leaves the services alone during a deploy" $?
+touch -t 202001010000 "$WD/deploying"
+HEALTH=000 LOADED="$B" run awake guard; HEALTH=000 LOADED="$B" run awake guard
+[ "$(kicked)" = "$B" ]; expect "a deploy lock older than 30 min no longer silences the guard" $?
+rmdir "$WD/deploying"; rm -f "$WD/watch-kicks" "$WD"/*.strikes "$T/kicks.state"
 
 # balance (GAU-126): shed optional load, undo it when conditions recover
 acts() { tr '\n' ';' <"$T/actions" | sed 's/;$//'; }
