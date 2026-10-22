@@ -52,7 +52,7 @@ run() { # run <args...>: gauss-services.sh with the stubs; alerts land in $LOG
   env -i PATH="$T/bin:/usr/bin:/bin" HOME="$T/home" ARGO="$T/bin/argo" LOG="$T/log" KICKS="$T/kicks" GAUSS_PUBLIC_URL=http://127.0.0.1:8080 \
     GAUSS_SUDOERS="$T/sudoers" MLX="${MLX:-0}" MLXPORT="${MLXPORT:-8089}" ACTIONS="$T/actions" GAUSS_BALANCE="${GAUSS_BALANCE:-1}" \
     LOADED="${LOADED:-}" HEALTH="${HEALTH:-200}" HEALTH_FILE="${HEALTH_FILE:-}" GAUSS_DEPLOY_WAIT=0 DISKGB="${DISKGB:-50}" \
-    BOOT="${BOOT:-1000}" GAUSS_DIAG_DIRS="$T/diag" GAUSS_EVENTS_MAX_KB="${GAUSS_EVENTS_MAX_KB:-5120}" \
+    GATEFAIL="${GATEFAIL:-}" GAUSS_BY=test-user BOOT="${BOOT:-1000}" GAUSS_DIAG_DIRS="$T/diag" GAUSS_EVENTS_MAX_KB="${GAUSS_EVENTS_MAX_KB:-5120}" \
     GAUSS_DEV_DRY="${GAUSS_DEV_DRY:-0}" GAUSS_DEV_API_PORT="${GAUSS_DEV_API_PORT:-3101}" \
     SRC="${SRC:-AC Power}" BATT="${BATT:-80%; charging; present: true}" SD="${SD:-0}" \
     ARGOSTATUS="${ARGOSTATUS:-}" LEVEL="${LEVEL:-1}" FREE="${FREE:-50}" SWAPUSED="${SWAPUSED:-1000}" OLD_ARGO="${OLD_ARGO:-}" bash "$SCRIPT" "$@"
@@ -195,7 +195,16 @@ out=$(run fallback prepare "$DEV" 2>&1); [[ "$out" == *"is not the current fallb
 # deploy: live is a real repo; curl answers with the checked-out commit's "health" file,
 # so a bad commit really fails and a rollback really brings the good one back.
 stub node 'if [[ " $* " == *" build "* ]]; then mkdir -p frontend/dist && touch frontend/dist/index.html; fi'
-stub npm 'echo "npm $*" >>"$ACTIONS"; mkdir -p node_modules'
+# npm run <gate> prints what the real gates print (counts parsed by `gates record`); GATEFAIL=<gate> fails one
+stub npm 'if [ "$1" = run ]; then
+  case "$2" in
+    test:ops) echo "gauss-services: 99 passed, 0 failed"; echo "ok  	argo	1.0s" ;;
+    test) if [ "$GATEFAIL" = test ]; then printf "ℹ tests 5\nℹ pass 4\nℹ fail 1\n"; else printf "ℹ tests 5\nℹ pass 5\nℹ fail 0\n"; fi ;;
+    verify) echo "▶ VCRM: 40/40 requirements verified"; echo "▶ FMEA: 12/14 failure modes mitigated"; echo "✅ VERIFY PASSED at $(git rev-parse --short HEAD)" ;;
+  esac
+  [ "$GATEFAIL" != "$2" ]; exit
+fi
+echo "npm $*" >>"$ACTIONS"; mkdir -p node_modules'
 g() { git -C "$LIVE" -c user.email=t@t -c user.name=t "$@"; }
 head_is() { [ "$(g rev-parse HEAD)" = "$1" ]; }
 mkdir -p "$LIVE/data/bedrock" "$LIVE/node_modules"
@@ -206,6 +215,11 @@ echo v2 >"$LIVE/backend/server.ts"; g commit -qam good-b; Bc=$(g rev-parse HEAD)
 echo 500 >"$LIVE/health"; g commit -qam bad; C=$(g rev-parse HEAD)
 g checkout -q --detach "$Bc"; echo b >"$LIVE/package-lock.json"; g commit -qam new-lock; D=$(g rev-parse HEAD)
 g checkout -q --detach "$A"; echo t1 >>"$LIVE/data/bedrock/telemetry.jsonl" # live data changed in place
+# GAU-162: deploys need the commit on origin/main and a passing gate record for its tree
+main_at() { g update-ref refs/remotes/origin/main "$1"; }
+gated() { local t; t=$(g rev-parse "$1^{tree}"); mkdir -p "$WD/gates"
+  printf '{"sha":"%s","tree":"%s","passed":true,"by":"test-user","at":"2026-10-22T00:00:00Z","test":{"pass":5}}\n' "$1" "$t" >"$WD/gates/$t.json"; }
+main_at "$C"; for x in "$A" "$Bc" "$C" "$D"; do gated "$x"; done
 FB2="$T/Gauss Aurora.worktrees/fb2"; rm -f "$FB/ready" "$T/kicks.state"; export HEALTH_FILE="$LIVE/health"
 out=$(run deploy "$Bc" "$FB2" 2>&1); rc=$?
 [ $rc = 0 ] && head_is "$Bc" && [[ "$out" == *"Deployed ${Bc:0:7}"* ]] && grep -q t1 "$LIVE/data/bedrock/telemetry.jsonl" && [ ! -d "$WD/deploying" ]
@@ -222,10 +236,10 @@ ev '[(e["event"],e["result"],e["live_sha"]) for e in E if e["event"] in ("deploy
 expect "events: a failed deploy and its rollback, each with the SHA live was on" $?
 ev 'any(e["event"]=="fallback_prepared" and e["fallback_sha"]=="'"$A"'" for e in E) and any(e["event"]=="alert" and e["label"]=="deploy" for e in E)'
 expect "events: fallback prepared and the deploy alert are logged" $?
-out=$(run deploy "$D" 2>&1); rc=$?
+main_at "$D"; out=$(run deploy "$D" 2>&1); rc=$?
 [ $rc = 0 ] && head_is "$D" && [[ "$out" == *"Fallback already at ${Bc:0:7}"* ]] && [ "$(cat "$T/actions")" = "npm ci --no-audit --no-fund" ]
 expect "deploy: lockfile changed, so npm ci runs in live; fallback not rebuilt needlessly" $?
-out=$(HEALTH_FILE=/nonexistent HEALTH=500 run deploy "$C" 2>&1); rc=$?
+main_at "$C"; out=$(HEALTH_FILE=/nonexistent HEALTH=500 run deploy "$C" 2>&1); rc=$?
 [ $rc = 1 ] && head_is "$D" && [[ "$out" == *"fallback stays at ${Bc:0:7}"* ]] && [ -f "$FB/active" ] && [[ " $(alerts) " == *" fallback "* ]]
 expect "deploy and rollback both fail: switches to the fallback (kept, not replaced by an unhealthy live)" $?
 ev 'E[-1]["event"]=="failover" and E[-1]["to"]=="'"$Bc"'" and E[-1]["live_sha"]=="'"$D"'" and E[-2]["event"]=="rollback" and E[-2]["result"]=="failed"'
@@ -247,6 +261,48 @@ touch -t 202001010000 "$WD/deploying"
 HEALTH=000 LOADED="$B" run awake guard; HEALTH=000 LOADED="$B" run awake guard
 [ "$(kicked)" = "$B" ]; expect "a deploy lock older than 30 min no longer silences the guard" $?
 rmdir "$WD/deploying"; rm -f "$WD/watch-kicks" "$WD"/*.strikes "$T/kicks.state"
+
+# GAU-162: every deploy and rollback is recorded; only merged, gated trees go live without --emergency
+H="$WD/deploy-history.jsonl"
+hist() { python3 -Ic 'import json,sys; H=[json.loads(l) for l in open(sys.argv[1])]; sys.exit(0 if eval(sys.argv[2]) else 1)' "$H" "$1" 2>/dev/null; }
+hist 'H[0]["action"]=="deploy" and H[0]["result"]=="ok" and H[0]["by"]=="test-user" and H[0]["from"]=="'"$A"'" and H[0]["to"]=="'"$Bc"'" and H[0]["tree"]=="'"$(g rev-parse "$Bc^{tree}")"'" and H[0]["gates"]["passed"] is True and H[0]["fallback"]=="'"$A"'" and H[0]["emergency"] is None'
+expect "history: a deploy records by, from, to, tree, gates and the fallback SHA" $?
+hist '[(h["action"],h["result"],h["to"]) for h in H[1:3]]==[("deploy","failed","'"$C"'"),("rollback","ok","'"$Bc"'")] and H[2]["gates"]["tree"]=="'"$(g rev-parse "$Bc^{tree}")"'"'
+expect "history: a failed deploy and its rollback (with the gates of what it rolled back to)" $?
+ev '(d:=[e for e in E if e["event"]=="deploy"][0])["by"]=="test-user" and d["tree"]=="'"$(g rev-parse "$Bc^{tree}")"'" and d["gates"]["passed"] is True'
+expect "events: the deploy event carries by, tree and gates too" $?
+main_at "$D"
+out=$(run check | plain); [[ "$out" == *"✓ live = ${D:0:7}, deployed "*" by test-user, gates recorded"* ]]; expect "check: live is a recorded, gated deploy" $?
+out=$(run status); [[ "$out" == *"deploy   live = ${D:0:7}, deployed"* ]]; expect "status shows the deploy record" $?
+g checkout -q --detach "$A"
+out=$(run check | plain); [[ "$out" == *"✗ live = ${A:0:7} has no deploy record"* ]]; expect "check: a checkout by hand has no deploy record" $?
+g checkout -q --detach "$D"
+echo e >"$LIVE/backend/server.ts"; g add backend/server.ts; g commit -qm ungated; E=$(g rev-parse HEAD); g checkout -q --detach "$D"
+out=$(run deploy "$E" 2>&1); [[ "$out" == *"${E:0:7} is not on origin/main"* ]] && head_is "$D"; expect "deploy refuses a commit not on origin/main" $?
+main_at "$E"
+out=$(run deploy "$E" 2>&1); [[ "$out" == *"No passing gate record for ${E:0:7}"* ]] && head_is "$D"; expect "deploy refuses a tree with no passing gate record" $?
+main_at "$D"
+out=$(run deploy "$E" --emergency "hotfix for the outage" 2>&1); rc=$?
+[ $rc = 0 ] && head_is "$E" && [[ "$out" == *"EMERGENCY deploy of ${E:0:7} by test-user"* && " $(alerts) " == *" emergency-deploy "* ]] \
+  && hist 'H[-1]["emergency"]=="hotfix for the outage" and H[-1]["gates"] is None and H[-1]["to"]=="'"$E"'" and H[-1]["result"]=="ok"'
+expect "--emergency deploys without the checks, texts the phone and is recorded" $?
+out=$(run check | plain); [[ "$out" == *"✗ live = ${E:0:7}, deployed "*"EMERGENCY (hotfix for the outage)"* ]]; expect "check: an emergency deploy stays ✗" $?
+out=$(run deploy "$D" --emergency 2>&1); [ $? = 2 ] && [[ "$out" == *"needs a reason"* ]]; expect "--emergency needs a reason" $?
+
+# gates record: the five gates on a clean checkout (path with a space), recorded by tree
+GW="$T/gates checkout"; git clone -q "$LIVE" "$GW"; git -C "$GW" checkout -q --detach "$D"; mkdir -p "$GW/node_modules"
+rec="$WD/gates/$(g rev-parse "$D^{tree}").json"; rm -f "$rec"
+out=$(run gates record "$GW" 2>&1); rc=$?
+[ $rc = 0 ] && [[ "$out" == *"PASSED ${D:0:7}"*"npm test 5/5, test:ops 99 passed, build ok, quality ok, VCRM 40/40, FMEA 12/14"* ]] \
+  && python3 -Ic 'import json,sys; r=json.load(open(sys.argv[1])); sys.exit(0 if r["passed"] and r["sha"]==sys.argv[2] and r["by"]=="test-user" and r["test_ops"]["go_ok"]==1 else 1)' "$rec" "$D"
+expect "gates record: runs the five gates and records the counts by tree" $?
+[ ! -d "$T/home/.local/state/gauss-gate.lock" ]; expect "gates record releases the shared gate lock" $?
+out=$(run gates); [[ "$out" == *"PASSED ${D:0:7}"* ]]; expect "gates lists the records" $?
+out=$(GATEFAIL=test run gates record "$GW" 2>&1); rc=$?
+[ $rc != 0 ] && [[ "$out" == *"FAILED (test) ${D:0:7}"* ]] && ! python3 -Ic 'import json,sys; sys.exit(0 if json.load(open(sys.argv[1]))["passed"] else 1)' "$rec"
+expect "gates record: a failing gate is recorded as FAILED, so the tree can't be deployed" $?
+touch "$GW/stray"; out=$(run gates record "$GW" 2>&1); [[ "$out" == *"uncommitted or untracked"* ]]; expect "gates record refuses a dirty checkout" $?
+rm -f "$GW/stray"
 
 # balance (GAU-126): shed optional load, undo it when conditions recover
 acts() { tr '\n' ';' <"$T/actions" | sed 's/;$//'; }
