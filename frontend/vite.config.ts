@@ -53,10 +53,12 @@ export default defineConfig(({ mode }) => ({
     // Same-origin API (VITE_HELIO_PROXY_URL=same-origin, see lib/api/base-url.ts):
     // forward /api and /ws to the backend so http://127.0.0.1:8080 works on this
     // Mac too. tailscale serve does the same for the tailnet name. The Host
-    // header is kept so the backend sees the origin the browser used.
+    // header is kept so the backend sees the origin the browser used. The live
+    // install leaves GAUSS_API_TARGET unset (:3001); the e2e suite points it at
+    // a closed port so no test can reach a real backend.
     proxy: {
-      "/api": { target: "http://127.0.0.1:3001", changeOrigin: false },
-      "/ws": { target: "ws://127.0.0.1:3001", ws: true, changeOrigin: false },
+      "/api": { target: API_TARGET, changeOrigin: false },
+      "/ws": { target: API_TARGET.replace(/^http/, "ws"), ws: true, changeOrigin: false },
     },
   },
   plugins: [react(), fontLicences(), mode === "development" && componentTagger()].filter(Boolean),

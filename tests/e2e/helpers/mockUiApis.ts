@@ -113,8 +113,8 @@ export async function mockUiApis(page: Page, options?: { auth?: boolean }): Prom
     });
   };
 
-  // Hermetic: anything not mocked below gets a 404 here instead of reaching a real
-  // backend (the dev proxy points at :3001, where CyberTiger counts 401/403s per IP).
+  // Hermetic: anything not mocked below gets a 404 here, not the server's proxy (which
+  // playwright.config.ts points at a closed port, never the live backend on :3001).
   // Registered first, so every specific mock below takes precedence.
   await page.route(
     (url) => /^\/(api|ws|functions)\//.test(url.pathname),
