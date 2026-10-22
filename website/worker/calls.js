@@ -2,6 +2,9 @@
 // their own zone; the call link is shown only to people who booked. Free, members only.
 //   call:<id>              { id, title, start (ISO UTC), minutes, capacity, link, notes }
 //   rsvp:<callId>:<email>  one key per booking (separate keys, so two bookings never overwrite each other)
+//   calls:index            upcoming calls with their bookings, so a member's page costs one read, not 1 + N lists
+//                          (Workers Free allows 1,000 lists a day). Every write patches it; it is rebuilt from the keys
+//                          above at most every 10 minutes, so a lost patch heals itself. The keys stay the source of truth.
 // KV is eventually consistent: at a busy moment a call can go one or two over capacity. Fine at this size.
 import { esc } from "./render.js";
 import { DEFAULT_ZONES, formatIn, zoneLabel, ZONES } from "./timezones.js";
@@ -13,6 +16,7 @@ export async function saveCall(env, call) {
   const c = { ...call, id: call.id ?? newId() };
   const end = Math.floor(Date.parse(c.start) / 1000) + c.minutes * 60;
   await env.DATA.put(`call:${c.id}`, JSON.stringify(c), { expiration: end + 30 * DAY, metadata: { title: c.title.slice(0, 80), start: c.start } });
+  await patchIndex(env, (calls) => [...calls.filter((x) => x.id !== c.id), { ...c, rsvps: calls.find((x) => x.id === c.id)?.rsvps ?? [] }]);
   return c;
 }
 
@@ -31,16 +35,41 @@ async function keys(env, prefix) {
   return out;
 }
 
+const INDEX = "calls:index";
+const INDEX_MAX_AGE = 10 * 60_000;
+const upcoming = (calls, now) => calls.filter((c) => Date.parse(c.start) > now - 3_600_000).sort((a, b) => (a.start < b.start ? -1 : 1));
+
+/** Every upcoming call and its bookings, read from the keys themselves (the expensive way). */
+async function fromKeys(env, now) {
+  const calls = upcoming((await keys(env, "call:")).map((k) => ({ id: k.name.slice(5), ...k.metadata })), now);
+  return (await Promise.all(calls.map(async (c) => {
+    const call = await getCall(env, c.id);
+    return call && { ...call, rsvps: (await keys(env, `rsvp:${c.id}:`)).map((k) => k.name.split(":").slice(2).join(":")) };
+  }))).filter(Boolean);
+}
+
 /** Upcoming calls (started less than an hour ago or later), soonest first, with their bookings. */
 export async function listCalls(env, now = Date.now()) {
-  const calls = (await keys(env, "call:")).map((k) => ({ id: k.name.slice(5), ...k.metadata }))
-    .filter((c) => Date.parse(c.start) > now - 3_600_000).sort((a, b) => (a.start < b.start ? -1 : 1));
-  return Promise.all(calls.map(async (c) => ({ ...(await getCall(env, c.id)), rsvps: (await keys(env, `rsvp:${c.id}:`)).map((k) => k.name.split(":").slice(2).join(":")) })));
+  const index = await env.DATA.get(INDEX, { type: "json" });
+  if (index && now - index.builtAt < INDEX_MAX_AGE) return upcoming(index.calls, now);
+  const calls = await fromKeys(env, now);
+  await env.DATA.put(INDEX, JSON.stringify({ builtAt: now, calls }));
+  return calls;
+}
+
+/** Apply a change to the cached index, if there is one (otherwise the next read builds it). */
+async function patchIndex(env, change) {
+  const index = await env.DATA.get(INDEX, { type: "json" });
+  if (index) await env.DATA.put(INDEX, JSON.stringify({ ...index, calls: change(index.calls) }));
 }
 
 export async function deleteCall(env, id) {
   await Promise.all([(await keys(env, `rsvp:${id}:`)).map((k) => env.DATA.delete(k.name)), env.DATA.delete(`call:${id}`)].flat());
+  await patchIndex(env, (calls) => calls.filter((c) => c.id !== id));
 }
+
+const withBooking = (id, email, want) => (calls) =>
+  calls.map((c) => (c.id !== id ? c : { ...c, rsvps: want ? [...new Set([...c.rsvps, email])] : c.rsvps.filter((e) => e !== email) }));
 
 /** Book or cancel a seat. Returns "booked", "cancelled", "full" or "gone". */
 export async function rsvp(env, id, email, want, now = Date.now()) {
@@ -49,12 +78,14 @@ export async function rsvp(env, id, email, want, now = Date.now()) {
   const key = `rsvp:${id}:${email}`;
   if (!want) {
     await env.DATA.delete(key);
+    await patchIndex(env, withBooking(id, email, false));
     return "cancelled";
   }
   if (await env.DATA.get(key)) return "booked";
   if ((await keys(env, `rsvp:${id}:`)).length >= call.capacity) return "full";
   const end = Math.floor(Date.parse(call.start) / 1000) + call.minutes * 60;
   await env.DATA.put(key, "1", { expiration: end + 30 * DAY });
+  await patchIndex(env, withBooking(id, email, true));
   return "booked";
 }
 
