@@ -18,7 +18,7 @@ import { applyEvent, createPortal, formEncode, signPayload, verifySignature } fr
 import { billingStatus, isAcademicEmail } from "../worker/tiers.js";
 import { APP_CSP } from "../worker/headers.js";
 import { formatIn, renderPlanner, tzOffset, zonedToUtc } from "../worker/timezones.js";
-import { listCalls, saveCall } from "../worker/calls.js";
+import { listCalls, rsvp, saveCall } from "../worker/calls.js";
 import { PROGRAMMES_URL, newsJson, programmesCsv, ukriXml, uksaAtom } from "./fixtures/opportunities.mjs";
 import { collect, interestsFor, rank, tagsOf } from "../worker/opportunities.js";
 
@@ -1030,4 +1030,24 @@ test("staff: the operations and training card is for STAFF_EMAILS and admins, wi
   assert.doesNotMatch(await page(e, "visitor@example.test"), /Operations and training/);
   assert.doesNotMatch(await page({ ...e, OPS_URL: "javascript:alert(1)" }, "crew@example.test"), /Operations and training/, "https only");
   assert.doesNotMatch(await page({ ...e, OPS_URL: "" }, "crew@example.test"), /Operations and training/, "hidden until set");
+});
+
+test("group calls: a member's page reads one cached index, not a KV list per call; the index heals itself", async () => {
+  const base = memoryKV();
+  let lists = 0;
+  const DATA = { ...base, get: base.get.bind(base), put: base.put.bind(base), delete: base.delete.bind(base), list: (o) => (lists++, base.list(o)) };
+  const env = { DATA };
+  const t0 = Date.parse("2026-11-01T00:00:00Z");
+  const a = await saveCall(env, { title: "Call A", start: new Date(t0 + 86_400_000).toISOString(), minutes: 60, capacity: 2, link: "" });
+  await saveCall(env, { title: "Call B", start: new Date(t0 + 2 * 86_400_000).toISOString(), minutes: 60, capacity: 2, link: "" });
+  assert.equal((await listCalls(env, t0)).length, 2, "first read builds the index");
+  lists = 0;
+  for (let i = 0; i < 5; i++) await listCalls(env, t0 + i * 60_000);
+  assert.equal(lists, 0, "fresh index: no lists at all");
+  assert.equal(await rsvp(env, a.id, "m@example.test", true, t0), "booked");
+  assert.deepEqual((await listCalls(env, t0 + 60_000)).find((c) => c.id === a.id).rsvps, ["m@example.test"], "a booking shows at once");
+  await DATA.put(`rsvp:${a.id}:lost@example.test`, "1"); // a write whose index patch was lost
+  assert.equal((await listCalls(env, t0 + 5 * 60_000)).find((c) => c.id === a.id).rsvps.length, 1);
+  assert.equal((await listCalls(env, t0 + 11 * 60_000)).find((c) => c.id === a.id).rsvps.length, 2, "rebuilt from the keys after 10 minutes");
+  assert.equal(await rsvp(env, a.id, "third@example.test", true, t0), "full", "capacity is checked against the keys, not the cache");
 });
