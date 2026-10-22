@@ -50,11 +50,14 @@ export default defineConfig({
       name: "chromium",
       use: {
         ...devices["Desktop Chrome"],
-        // No internet: every hostname except localhost fails to resolve at once. The page's
-        // `load` event waits for the Google Fonts stylesheet (frontend/src/index.css); on a slow
-        // link that request hung the first navigation of each worker past the 45 s test timeout
-        // (2026-10-22, 4 of 12 failed). Pages fall back to system fonts; nothing leaves the Mac.
-        launchOptions: { args: ["--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE localhost"] },
+        // No internet: every host except the server under test fails to resolve at once. The
+        // page's `load` event waits for the Google Fonts stylesheet (frontend/src/index.css); on a
+        // slow link that request hung the first navigation of each worker past the 45 s test
+        // timeout (2026-10-22, 4 of 12 failed). Pages fall back to system fonts; nothing leaves
+        // the Mac. The rule matches IP literals too, so the server's host must be excluded.
+        launchOptions: {
+          args: [`--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE ${new URL(baseURL).hostname}, EXCLUDE localhost`],
+        },
       },
     },
   ],
