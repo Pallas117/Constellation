@@ -49,5 +49,46 @@ class KpModelTest(unittest.TestCase):
       bad.unlink()
 
 
+  def test_promotion_pointing_at_a_missing_file_is_a_failed_load_not_no_model(self):
+    """FMEA (GAU-121): a broken deployment must not read as 'no model deployed'."""
+    import importlib
+    import kp_model
+    promoted = MODELS_DIR / "promoted.json"
+    before = promoted.read_text() if promoted.exists() else None
+    promoted.write_text(json.dumps({"file": "does-not-exist.json", "version": "ghost"}))
+    try:
+      with self.assertRaises(FileNotFoundError):
+        kp_model.KpForecaster.load_promoted()
+      sys.path.insert(0, str(ML_DIR / "infer"))
+      server = importlib.import_module("infer_server")
+      server._model_loaded = False
+      out = server.anomaly({"sequence": []})
+      self.assertFalse(out["available"])
+      self.assertIn("failed to load", out["reason"])
+    finally:
+      if before is None:
+        promoted.unlink()
+      else:
+        promoted.write_text(before)
+
+
+  def test_nightly_job_skips_while_balance_has_paused_learning(self):
+    """GAU-127: the nightly job honours the battery-saving pause and never promotes."""
+    import os
+    import tempfile
+    with tempfile.TemporaryDirectory() as home:
+      flag = Path(home) / "Library" / "Application Support" / "Gauss" / "learning-paused"
+      flag.parent.mkdir(parents=True)
+      flag.touch()
+      result = subprocess.run(
+        [sys.executable, "-I", str(ML_DIR / "train" / "nightly.py"), "--telemetry", "/nonexistent"],
+        capture_output=True, text=True, env={**os.environ, "HOME": home},
+      )
+      self.assertEqual(result.returncode, 0, result.stderr)
+      out = json.loads(result.stdout)
+      self.assertEqual(out["status"], "paused")
+      self.assertEqual(out["live_points"], 0)
+
+
 if __name__ == "__main__":
   unittest.main()

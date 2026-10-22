@@ -1,5 +1,8 @@
 import { useEffect, useState } from 'react';
-import { Database, Search, Terminal as TerminalIcon } from 'lucide-react';
+import { Database, Search } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { StatusBadge } from '@/components/brand/StatusBadge';
+import { apiBase } from "@/lib/api/base-url";
 
 type RagStatus = {
   ok: boolean;
@@ -14,11 +17,9 @@ type RagQueryResponse = {
   error?: string;
 };
 
-const RAG_BASE =
-  import.meta.env.VITE_GAUSS_RAG_URL || 'http://127.0.0.1:3001';
-
-const DEFAULT_INDEX_DIR =
-  import.meta.env.VITE_GAUSS_RAG_INDEX_DIR || '/Users/josh/Documents/lightbound';
+// Always through this backend: it applies the role policy and is the only way to the
+// memory service, which listens on loopback without auth of its own.
+const RAG_BASE = apiBase();
 
 const MOCK_AI_TEXT = `[URGENT] SYSTEM ANOMALY DETECTED
 
@@ -39,15 +40,16 @@ Tactical Recommendation:
 
 export function GaussRagPanel() {
   const [status, setStatus] = useState<RagStatus | null>(null);
-  const [indexing, setIndexing] = useState(false);
   const [question, setQuestion] = useState('');
   const [answer, setAnswer] = useState<string | null>(null);
   const [sources, setSources] = useState<{ filePath: string; score: number }[]>([]);
   const [asking, setAsking] = useState(false);
   const [error, setError] = useState<string | null>(null);
   
-  // New state for Trace UI
+  // Source chip the user expanded
   const [activeTrace, setActiveTrace] = useState<string | null>(null);
+  // True while the answer is the scripted storm narration, not a model reply
+  const [simulated, setSimulated] = useState(false);
 
   // Helper to parse text and render citation badges
   const renderTextWithTraces = (text: string) => {
@@ -60,11 +62,12 @@ export function GaussRagPanel() {
           <button
             key={i}
             onClick={() => setActiveTrace(activeTrace === sourceName ? null : sourceName)}
-            className="inline-flex items-center gap-1 px-1.5 py-0.5 mx-1 rounded bg-blue-500/20 text-blue-400 border border-blue-500/30 hover:bg-blue-500/30 transition-colors text-[9px] uppercase tracking-wider font-bold cursor-pointer align-middle"
-            title="View Reasoning Trace"
+            className="mx-1 inline-flex items-center gap-1 rounded border border-charcoal px-1.5 py-0.5 align-middle font-mono text-[11px] uppercase tracking-[0.06em] text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
+            aria-expanded={activeTrace === sourceName}
+            title={`Source: ${sourceName}`}
           >
-            <Database size={10} />
-            TRC
+            <Database size={10} aria-hidden="true" />
+            Source
           </button>
         );
       }
@@ -83,8 +86,9 @@ export function GaussRagPanel() {
       }
     };
 
-    const handleStorm = (e: any) => {
-      if (e.detail) {
+    const handleStorm = (e: Event) => {
+      if ((e as CustomEvent<boolean>).detail) {
+        setSimulated(true);
         setAnswer("");
         setSources([]);
         currentIndex = 0;
@@ -102,6 +106,7 @@ export function GaussRagPanel() {
           currentIndex += 1;
         }, 15);
       } else {
+        setSimulated(false);
         setAnswer(null);
         clearStormInterval();
       }
@@ -114,45 +119,23 @@ export function GaussRagPanel() {
     };
   }, []);
 
-  async function fetchStatus() {
-    try {
-      const res = await fetch(`${RAG_BASE}/api/rag/status`);
-      const json = (await res.json()) as RagStatus;
-      setStatus(json);
-    } catch (e) {
-      setStatus({ ok: false, error: 'Gauss RAG server not reachable' });
-    }
-  }
-
   useEffect(() => {
-    void fetchStatus();
-  }, []);
-
-  async function handleIndex() {
-    setIndexing(true);
-    setError(null);
-    try {
-      const res = await fetch(`${RAG_BASE}/api/rag/index`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ dir: DEFAULT_INDEX_DIR }),
-      });
-      const json = await res.json();
-      if (!json.ok) {
-        setError(json.error || 'Indexing failed');
+    // Indexing is an operator task on the memory host, not something this page can trigger.
+    void (async () => {
+      try {
+        const res = await fetch(`${RAG_BASE}/api/rag/status`);
+        setStatus((await res.json()) as RagStatus);
+      } catch {
+        setStatus({ ok: false, error: 'Knowledge base not reachable' });
       }
-      await fetchStatus();
-    } catch (e) {
-      setError('Could not reach Gauss RAG server');
-    } finally {
-      setIndexing(false);
-    }
-  }
+    })();
+  }, []);
 
   async function handleAsk() {
     if (!question.trim()) return;
     setAsking(true);
     setError(null);
+    setSimulated(false);
     setAnswer(null);
     setSources([]);
     try {
@@ -166,7 +149,9 @@ export function GaussRagPanel() {
         setError(json.error || 'Query failed');
       } else {
         setAnswer(json.answer || '');
-        setSources(json.sources || []);
+        // Evidence comes back per chunk; list each source file once.
+        const seen = new Set<string>();
+        setSources((json.sources || []).filter((s) => !seen.has(s.filePath) && seen.add(s.filePath)));
       }
     } catch (e) {
       setError('Could not reach Gauss RAG server');
@@ -175,106 +160,78 @@ export function GaussRagPanel() {
     }
   }
 
-  const chunkLabel =
-    status?.ok && typeof status.chunkCount === 'number'
-      ? `${status.chunkCount} knowledge chunks`
-      : 'No index yet';
+  const chunkLabel = !status
+    ? 'Checking knowledge base…'
+    : !status.ok
+      ? 'Knowledge base offline'
+      : status.chunkCount
+        ? `${status.chunkCount} knowledge chunks`
+        : 'No documents indexed';
   return (
-    <div className="hud-panel p-4 w-[min(94vw,480px)] pointer-events-auto animate-fade-in-up space-y-4 bg-black/60 border-primary/20 backdrop-blur-md">
-      <div className="scanline" />
-      <div className="flex items-center justify-between gap-3 border-b border-primary/20 pb-2">
-        <div>
-          <h3 className="text-[10px] font-bold tracking-[0.3em] text-primary uppercase flex items-center gap-2 phosphor-text">
-            LOGIC_ENGINE // Ret_Layer_01
-          </h3>
-          <p className="text-[7px] text-primary/40 uppercase tracking-[0.2em] font-bold mt-0.5">
-            LANCEDB_FUSION_V2_ACTIVE
-          </p>
-        </div>
-        <button
-          type="button"
-          onClick={handleIndex}
-          disabled={indexing}
-          className="text-[9px] px-3 py-1 border border-primary/30 hover:bg-primary/20 hover:text-primary transition-colors disabled:opacity-30 uppercase tracking-widest font-bold inline-flex items-center gap-2"
-        >
-          <Database size={10} />
-          {indexing ? 'INDEXING...' : 'R_INDEX_LGB'}
-        </button>
+    <section aria-labelledby="rag-title" className="hud-panel w-full space-y-3 p-4">
+      <div className="min-w-0">
+        <h2 id="rag-title" className="brand-label">06_LOGIC_ENGINE</h2>
+        <p className="mt-0.5 font-mono text-[11px] text-muted-foreground">{chunkLabel}</p>
       </div>
 
-      <div className="space-y-3">
+      <form
+        className="space-y-2"
+        onSubmit={(e) => {
+          e.preventDefault();
+          void handleAsk();
+        }}
+      >
+        <label htmlFor="rag-question" className="sr-only">
+          Question for the knowledge base
+        </label>
         <textarea
+          id="rag-question"
           value={question}
           onChange={(e) => setQuestion(e.target.value)}
-          placeholder="[ENTER_QUERY_INPUT...]"
-          className="w-full h-20 text-[10px] bg-black/40 border border-primary/10 px-3 py-2 resize-none focus:outline-none focus:border-primary/40 text-primary font-mono placeholder:text-primary/20"
+          placeholder="Ask about current conditions…"
+          className="h-20 w-full resize-none rounded-md border border-charcoal bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus-visible:border-signal focus-visible:outline-none"
         />
-        <button
-          type="button"
-          onClick={handleAsk}
-          disabled={asking || !question.trim()}
-          className="w-full text-[10px] px-3 py-2 border border-primary/40 bg-primary/5 hover:bg-primary/20 hover:text-primary transition-colors disabled:opacity-30 font-bold uppercase tracking-[0.2em] inline-flex items-center justify-center gap-2"
-        >
-          <Search size={12} />
-          {asking ? 'CONSULTING_GAUSS_CO_PROCESSOR...' : 'EXEC_QUERY_RAG'}
-        </button>
-      </div>
+        <Button type="submit" variant="secondary" className="w-full" disabled={asking || !question.trim()}>
+          <Search aria-hidden="true" />
+          {asking ? 'Searching the knowledge base…' : 'Ask'}
+        </Button>
+      </form>
 
       {error && (
-        <p className="text-[9px] text-destructive phosphor-text uppercase">
-          ERR_STK: {error}
+        <p role="alert" className="rounded-md border border-caution/50 px-3 py-2 text-sm text-caution">
+          {error}
         </p>
       )}
 
       {answer && (
-        <div className="mt-2 space-y-2 relative border-t border-primary/10 pt-3">
-          <div className="flex justify-between items-center text-[8px] font-bold tracking-widest uppercase">
-            <span className="text-primary/40">INV_SHELL_OUTPUT</span>
-            <span className="text-primary animate-pulse">VERIFIED_COVE</span>
+        <div className="space-y-2 border-t border-charcoal pt-3">
+          <div className="flex items-center justify-between gap-2">
+            <span className="font-mono text-[11px] uppercase tracking-[0.06em] text-muted-foreground">Answer</span>
+            {simulated && <StatusBadge tone="caution">Simulated scenario</StatusBadge>}
           </div>
-          <div className="p-3 bg-black/40 border border-primary/10 shadow-inner">
-            <p className="text-[10px] text-primary/90 whitespace-pre-wrap text-left leading-relaxed font-mono">
-              {renderTextWithTraces(answer)}
-            </p>
-          </div>
-          
-          {/* Active Expandable Trace Panel */}
+          <p className="max-h-60 overflow-y-auto whitespace-pre-wrap text-left text-sm leading-relaxed text-foreground">
+            {renderTextWithTraces(answer)}
+          </p>
           {activeTrace && (
-            <div className="mt-2 p-3 bg-primary/5 border border-primary/30 animate-in fade-in slide-in-from-top-1">
-              <h4 className="text-[9px] uppercase text-primary font-bold mb-1 flex items-center gap-2">
-                <Database size={10} />
-                HEX_TRACE_KGRAPH
-              </h4>
-              <p className="text-[8px] text-primary/60 mb-2">
-                SRC: <span className="text-primary font-mono">{activeTrace}</span>
-              </p>
-              <div className="text-[8px] font-mono text-primary/40 bg-black/40 p-2 border-l border-primary/20">
-                <span>&gt; verifying node constraints... ok.</span><br/>
-                <span>&gt; multi-hop citation verified against GraphDB.</span><br/>
-                <span className="text-primary/70">"Observations confirm metric deviations map to historical G4 profiles."</span>
-              </div>
-            </div>
+            <p className="rounded-md border border-charcoal px-3 py-2 font-mono text-xs text-muted-foreground">
+              Cited source: <span className="text-foreground">{activeTrace}</span>
+            </p>
           )}
         </div>
       )}
 
       {sources.length > 0 && (
-        <div className="mt-1 pt-2 border-t border-primary/5">
-          <p className="text-[8px] font-bold text-primary/40 uppercase tracking-widest mb-1">
-            SOURCE_ATTRIBUTION
-          </p>
-          <ul className="space-y-0.5 max-h-16 overflow-y-auto text-left">
+        <div className="border-t border-charcoal pt-2">
+          <p className="mb-1 font-mono text-[11px] uppercase tracking-[0.06em] text-muted-foreground">Sources</p>
+          <ul className="max-h-16 space-y-0.5 overflow-y-auto text-left">
             {sources.map((s, i) => (
-              <li
-                key={`${s.filePath}-${i}`}
-                className="text-[8px] text-primary/60 truncate font-mono"
-              >
-                + {s.filePath}
+              <li key={`${s.filePath}-${i}`} className="truncate font-mono text-xs text-muted-foreground">
+                {s.filePath}
               </li>
             ))}
           </ul>
         </div>
       )}
-    </div>
+    </section>
   );
 }

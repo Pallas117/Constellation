@@ -5,6 +5,8 @@ import { transformApiResponse } from "./dataProcessing.ts";
 import { measuredDrivers } from "./measured.ts";
 
 const live = {
+  // A current point: the drivers are also gated on age (GAU-81).
+  timestamp: new Date().toISOString(),
   indices: { kp: 3.3, dst: -10 },
   magneticField: { x: 1, y: 2, z: -4, bt: 5 },
   solarWind: { speed: 480, density: 5, dynamicPressure: 2 },

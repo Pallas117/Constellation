@@ -1,0 +1,257 @@
+# Argo
+
+Argo keeps Claude Code (terminal, desktop app, background agents) connected on phone hotspots and public Wi-Fi.
+It runs as **your** LaunchAgent (never root). It works out what is wrong, applies the least invasive fix,
+checks the fix worked, and remembers what worked on each network. It can also report a short status to the
+Gauss **Mesh & Network** page (`/mesh`) so the team can see who is blocked.
+
+## Install
+
+```bash
+cd tools/argo
+go build -trimpath -o ~/.local/bin/argo .
+argo doctor          # read-only diagnosis; check class: OK and loc=MY/SG
+argo install         # writes ~/Library/LaunchAgents/uk.lightbound.argo.plist and prints the next command
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/uk.lightbound.argo.plist
+```
+
+Optional extras:
+
+- **Report to Gauss automatically (one command).** With the Gauss backend running from this repo, run
+  `tools/argo/connect-gauss.sh [device-name] [gauss-url]` (defaults: this Mac's name, `http://127.0.0.1:3001`).
+  It enrolls the device via `npm run mesh:enroll`, pipes the one-time token straight into `argo enroll`
+  (never shown or stored in history), runs a check, and confirms Gauss received it. After that, every Argo check
+  updates the Mesh page. Gauss on this Mac (loopback) or on the tailnet is accepted; nothing else is.
+- **Report to a remote Gauss.** An admin creates a token on `/mesh`. Then run
+  `argo enroll http://<gauss-tailnet-host>:3001 <device-name>` and paste the token when asked.
+  Argo refuses any URL that isn't a tailnet address (`100.64.0.0/10`, `fd7a:115c:a1e0::/48` or `*.ts.net`).
+- **Alerts on your iPhone.** Run `argo phone +60XXXXXXXXX` (or your Apple ID email), then `argo phone test`.
+  Argo sends an iMessage from this Mac's Messages app to your own handle, so no app or token is needed.
+  macOS asks once to let Argo control Messages. Messages carry only the masked title and reason. Alerts
+  raised while offline are queued (up to 20) and sent on the next tick with internet. `argo phone off`
+  turns them off. An iMessage to your own number arrives without a banner; for alerts you'll notice, set
+  `"phone_service": "sms"` in `~/.config/argo/config.json` (SMS first via Text Message Forwarding, then
+  iMessage). The background agent needs its own Automation → Messages permission: after every rebuild of the
+  ad-hoc-signed binary, macOS asks again on the first background send, and sends time out after 30 s until
+  someone clicks Allow.
+- **Alerts from other tools.** `argo notify [-key K -every 30m] TITLE MESSAGE` sends through the same
+  channel, mask and offline queue, at most once per interval per key. The gauss-awake battery guard
+  uses it (battery low, at the sleep floor, charger can't keep up, no cutoff configured), as do
+  mesh-heal and Claude Code `Notification` hooks.
+- **Claude Code status line.** In `~/.claude/settings.json`:
+  `"statusLine": {"type": "command", "command": "argo status"}`.
+  It reads the cached state only, so it never probes the network and is instant.
+- **Check before each `claude` launch.** In `~/.zshrc`:
+  ```zsh
+  claude() { command argo preflight; command argo run -- "$(whence -p claude)" "$@"; }
+  ```
+  `argo run` drops only proxy variables that refuse connections. Working proxies and CA settings
+  (`NODE_EXTRA_CA_CERTS`) are left alone.
+
+## Uninstall
+
+```bash
+launchctl bootout gui/$(id -u)/uk.lightbound.argo
+argo uninstall       # removes the plist, ~/.local/state/argo and ~/.config/argo
+rm ~/.local/bin/argo
+```
+
+Then remove the `statusLine` and `claude()` lines above if you added them, and revoke the device on `/mesh`.
+
+## Commands
+
+| Command | What it does |
+|---|---|
+| `argo status` | One line, e.g. `● OK MY ts:on` or `▲ REGION HK ts:on` |
+| `argo doctor` | Full probe snapshot (secrets masked), the class, and what to do. Changes nothing. |
+| `argo fix` | Runs the loop once in the foreground |
+| `argo report` | Incident counts by class, how many needed a fix and were fixed, how many resolved on their own, last 10 events |
+| `argo phone <handle>\|test\|off` | Set up, test or turn off iMessage alerts to your iPhone |
+| `argo notify [-key K -every D] TITLE MSG` | Send an alert to your iPhone (masked, queued offline, rate-limited per key) |
+| `argo watch` | Run the peer watchdog once (also every tick): restarts the gauss-awake guard or mesh-heal when their heartbeat is stale, max 3 restarts/hour each, then alerts. Override the list with `"watch"` in config.json |
+| `argo devices` | Which watched tailnet devices are offline. Every tick, a phone of yours that has been off the tailnet for 30 min or more gets a text (SMS over its own cellular link) with the fix: open Tailscale, turn on Connect On Demand. At most every 6 h per device. Override the list with `"devices": ["hostname", ...]` in config.json |
+| `argo off` / `argo on` | Pauses or resumes the LaunchAgent ticks |
+| `argo preflight` | Fast local check for dead proxies and stuck Claude daemons (exit 1 if found) |
+| `argo run -- cmd` | Runs `cmd` with dead proxy variables removed |
+
+## How it works
+
+Wi-Fi security is checked on every probe: WIFI_RISK (a warning, like WPAD_RISK) when the network is open, WEP or WPA1, or when this Mac answers sharing services (Remote Login, File Sharing, Screen Sharing, Remote Management, AirPlay Receiver) on its LAN address. Argo only advises; it never changes System Settings.
+
+Alerts stay quiet on purpose: an unresolved problem texts once when it escalates, then at most every 2 h, and OFFLINE never texts (a Mac with no network cannot send, and queued texts would arrive stale).
+
+
+```
+LaunchAgent: network change (WatchPaths /Library/Preferences/SystemConfiguration), every 5 min, login
+   │
+   ▼
+probe ──► classify ──► remediate ──► verify ──► remember
+ │          │             │            │           │
+ │          │             │            │           └─ ~/.local/state/argo/state.json (per-network fixes)
+ │          │             │            │              ~/.local/state/argo/incidents.jsonl
+ │          │             │            └─ re-probe after automatic fixes; fixes you run are checked next tick
+ │          │             └─ ladder, least invasive first; only "open captive portal" runs by itself
+ │          └─ first match wins: OFFLINE, CAPTIVE, DNS, DEAD_PROXY, STALE_DAEMON,
+ │             TLS_INTERCEPT, PORT_BLOCK, REGION, WPAD_RISK, OK
+ └─ default route and gateway MAC, scutil --proxy, proxy variables, `ps -E` for claude processes,
+    tailscale status, DNS, api.anthropic.com (direct, TLS verified), Cloudflare trace (loc),
+    captive.apple.com
+```
+
+- **Probes sit behind the `Prober` interface.** Tests replay recorded snapshots from `testdata/`, including
+  the real HK eSIM 403 and the two ECONNREFUSED cases.
+- **`STALE_DAEMON`** comes from the 2026-10-08/09 incident. The `claude daemon` had re-executed itself on an
+  upgrade and kept `HTTPS_PROXY=127.0.0.1:4000` from an old shell, so every background agent got
+  ECONNREFUSED even though new shells were clean. Argo finds any `claude` process carrying a loopback proxy
+  that refuses connections and tells you to run `claude daemon stop --any`. It doesn't run that itself,
+  because it ends background sessions.
+- **Backoff and circuit breaker match mesh-heal.** At most 4 attempts, `60s·2^(n-1)` capped at 15 min,
+  then the breaker stays open for 30 min with one "Argo needs you" notification.
+- **Notifications fire only when the class changes**, so you won't get a ping every 5 minutes for the
+  same problem.
+- **Memory.** Each network is fingerprinted as `sha256(gateway MAC | public IP prefix)[:12]`, using the
+  first 3 IPv4 octets or IPv6 hextets. The fix that resolved a class on a network is tried first next time.
+  The raw IP and MAC are never stored or reported.
+
+### Tailscale: Argo defers to mesh-heal
+
+Argo never runs `tailscale` commands that change anything. mesh-heal owns the tunnel. It heals with a bare
+`tailscale up`, which refuses to run once non-default settings such as an exit node are set, so the two must
+not fight over settings. For `REGION` and `PORT_BLOCK`, Argo *recommends*
+`tailscale set --exit-node=<node>`, and only for nodes you have allow-listed as MY or SG in
+`~/.config/argo/config.json`:
+
+```json
+{ "exit_nodes": { "exit-sg-1": "SG", "exit-my-1": "MY" } }
+```
+
+Any other country, Hong Kong included, is never offered. **Before deploying an exit node,** change
+mesh-heal's heal step to `tailscale up --exit-node=…` (or use `tailscale set`), otherwise its heal attempts
+will fail and its breaker will open.
+
+### Security rules (enforced in code, covered by tests)
+
+- **TLS verification is never disabled.** Probes use the system trust store, and no action touches
+  `NODE_TLS_REJECT_UNAUTHORIZED` or CA settings.
+- **No admin action runs automatically.** `sudo`/`networksetup` fixes are printed for you to run.
+- **No secrets are written or sent.** Values whose names contain key/token/secret/password and URL
+  `user:pass@` are masked. Recorded process commands stop before the environment that `ps -E` appends.
+- **No code is fetched at runtime.** Argo has no dependencies beyond the Go standard library.
+- **State files are `0600` under `~/.local/state/argo`.** The Gauss token lives in `~/.config/argo/token`
+  (`0600`), is read from stdin and never put on the command line.
+
+## Network scores (privacy, speed, signal)
+
+Network texts (class changes, recoveries, the weekly summary) and `argo doctor` end with one line, e.g.
+`Privacy 70/100 (Remote Login (SSH) reachable on this network -10, …) · Speed excellent (29 ms) · Signal fair (SNR 22 dB)`.
+The same scores go to Gauss and show in the Network column on `/mesh`. Each one uses only what this check measured.
+Anything Argo couldn't measure says `not measured` (signal says `n/a` off Wi-Fi), never a guessed number.
+
+- **Privacy** starts at 100 and loses named points:
+  - TLS interception −50
+  - open Wi-Fi −40, or weak encryption (WEP/WPA1) −30; only −10 while a Tailscale exit node tunnels the traffic
+  - each sharing service reachable on this network −10, up to −30 (turn it off in System Settings > General > Sharing)
+  - auto-proxy (WPAD/PAC) −15
+  - captive portal −10
+- **Speed** is the TCP connect time to api.anthropic.com on the check Argo already makes: one round trip, no extra data.
+  Bands: ≤60 ms excellent, ≤150 good, ≤300 fair, above that poor. It is latency, not a throughput test.
+- **Signal** is Wi-Fi signal-to-noise from `system_profiler SPAirPortDataType` (no sudo).
+  Bands: ≥40 dB excellent, ≥25 good, ≥15 fair, below that poor. Only the current network is read.
+  The reading is cached for 5 minutes per network, because the command takes about 5 seconds.
+
+## Linux and containers
+
+Argo also builds for Linux hosts (ground stations, GalacticOS, other edge Linux) as a 9.5 MB container: no shell, non-root, read-only.
+
+```
+podman build -t argo:dev -f Containerfile .        # runs go vet and the Linux tests first
+podman run -d --name argo --network host --read-only --cap-drop ALL \
+  --security-opt no-new-privileges -v argo-state:/home/nonroot/.local/state/argo \
+  -v ./config.json:/home/nonroot/.config/argo/config.json:ro argo:dev
+podman run --rm --network host argo:dev doctor     # one-off diagnosis
+```
+
+`argo loop` (the image's default) checks every `ARGO_INTERVAL` (default 60s; the full probe still runs at most every ~5 min on a stable network). On Linux, route and gateway come from `/proc`, proxies from the environment, alerts are log lines on stdout (no Messages app, so phone texts are off), and Claude Code stale-daemon checks are skipped. `--network host` is what lets it see the host's real network.
+
+## Tests
+
+```bash
+go test ./...                                   # unit: every class, loop, masking, parsers
+go test -tags integration -v ./...              # runs the real probes on this machine (read-only)
+```
+
+## Migrating from netguard, netstatus and fixnet
+
+| Old | New |
+|---|---|
+| `~/gauss-agent/bin/netstatus` (status line) | `argo status` |
+| `~/gauss-agent/bin/fixnet` | `argo doctor` (read-only) or `argo fix` |
+| `install-claude-netguard.sh` / `claude-netcheck` | `argo preflight` plus the LaunchAgent. netguard was never installed as a LaunchAgent on judith, so there is nothing to unload. |
+| `.zshrc` `claude()` wrapper that strips every proxy | `argo run -- claude`, which strips only dead ones |
+| `~/Library/Logs/claude-netguard.log` | `~/.local/state/argo/incidents.jsonl` and `argo report` |
+
+Keep `netstatus` and `fixnet` until Argo has run cleanly for a week, then delete them. Suggested
+`~/gauss-agent/index.tsv` rows:
+
+```
+AR	argo	~/.local/bin/argo	Network-integrity agent (replaces netstatus/fixnet/netguard)
+AS	argo-state	~/.local/state/argo	Argo state.json + incidents.jsonl
+AC	argo-config	~/.config/argo	Argo config (exit-node allowlist, Gauss URL, device token)
+AL	argo-agent	~/Library/LaunchAgents/uk.lightbound.argo.plist	Argo LaunchAgent
+```
+
+## Phones: report to the mesh (iOS Shortcut, Android)
+
+Phones can't run Argo, but they can post the same report so the Mesh page shows them with platform and
+battery. Phones are always "status only": Gauss never places mesh work on them.
+
+**Once per phone:** on Gauss → **Mesh**, an admin enrolls a device (e.g. `iphone-13`) and copies the
+one-time token. Tailscale must be on (the report URL is tailnet-only).
+
+**Report body** (`POST http://<gauss-tailnet-host>/api/mesh/report`, header `Authorization: Bearer <token>`,
+`Content-Type: application/json`):
+
+```json
+{"class": "OK", "platform": "ios", "loc": "MY", "battery": {"level": 83, "charging": false, "lowPower": false},
+ "reason": "phone shortcut", "checkedAt": "2026-10-21T09:00:00+08:00"}
+```
+
+`class` is `OK`, or `REGION` when `loc` isn't MY/SG. `level` may be a percent (83) or a fraction (0.83).
+Unknown fields are dropped; reports more often than every 10 s get HTTP 429.
+
+**iOS Shortcut** (*Mesh report*):
+1. **Get Contents of URL** `https://www.cloudflare.com/cdn-cgi/trace` → **Match Text** `loc=([A-Z]{2})` →
+   **Get Group at Index** 1 (as in *Exit check* below).
+2. **If** *Group* is `MY` or `SG` → **Text** `OK`, otherwise **Text** `REGION`; set variable *Class*.
+3. **Get Battery Level**; **Get Device Details** → *Is Charging* and *Low Power Mode* (where available).
+4. **Format Date** *Current Date* as ISO 8601.
+5. **Get Contents of URL** `http://<gauss-tailnet-host>/api/mesh/report`, Method **POST**, Headers
+   `Authorization` = `Bearer <token>`, Request Body **JSON**: `class` = *Class*, `platform` = `ios`,
+   `loc` = *Group*, `battery` (Dictionary: `level` = *Battery Level*, `charging` = *Is Charging*,
+   `lowPower` = *Low Power Mode*), `reason` = `phone shortcut`, `checkedAt` = *Formatted Date*.
+6. Automation → **Time of Day** (e.g. every 2 h: one automation per time), and **When joining any Wi-Fi**
+   and **When Personal Hotspot turns on** → **Run** *Mesh report* → *Run Immediately*.
+
+**Android:** the open-source **HTTP Shortcuts** app (or Tasker's *HTTP Request*) can send the same body;
+use variables for battery level and charging, and schedule it every 2 h and on network change.
+
+**Security:** the token can only post this phone's status (it reads nothing). The Shortcut keeps it in
+your Shortcuts library (iCloud-synced if Shortcuts sync is on). If the phone is lost, revoke the device
+on **Mesh**: its token stops working immediately.
+
+## iPhone Shortcut: "Am I in MY/SG?"
+
+Use this on the phone whose hotspot the Mac uses. It catches a Hong Kong eSIM before Claude does.
+
+1. Shortcuts → **New Shortcut**, named *Exit check*.
+2. **Get Contents of URL**: `https://www.cloudflare.com/cdn-cgi/trace`
+3. **Match Text** with pattern `loc=([A-Z]{2})`, then **Get Group at Index** 1.
+4. **If** *Group* **is not** `MY`, then **If** it **is not** `SG`, then **Show Notification**:
+   "Exit is {Group}. Claude will fail. Switch to the Malaysian SIM or turn on the MY/SG exit node in
+   Tailscale."
+5. Otherwise, **Show Notification**: "Exit {Group} OK".
+6. Automation → **When** *Personal Hotspot* turns on, or **When joining any Wi-Fi** → **Run** *Exit check*
+   → *Run Immediately*.
+
+If your Tailscale iOS version provides Shortcuts actions for exit nodes, you can add one to step 4 to switch
+to the allow-listed node automatically.

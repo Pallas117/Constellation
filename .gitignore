@@ -12,6 +12,8 @@ dist
 frontend/dist
 dist-ssr
 build
+# compiled C/C++ objects (node-gyp builds into build/)
+*.o
 test-results
 bun.lockb
 .auth.db
@@ -35,3 +37,9 @@ bun.lockb
 # ML training data (downloaded, never committed)
 ml/data/
 __pycache__/
+
+# Argo device registry (hashed tokens + last reports)
+data/mesh/
+
+# Organisations, API keys (hashed) and usage metering
+data/commerce/

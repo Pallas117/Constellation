@@ -2,6 +2,8 @@
 // DATA PROCESSING & INTERPOLATION ENGINE
 // ============================================================================
 
+import type { CanonicalSpaceWeatherPoint, ScaleReading } from './types/space-weather';
+
 export interface SpaceWeatherResponse {
   timestamp: string;
   solarWind: {
@@ -40,6 +42,8 @@ export interface InterpolatedData {
   /** null = not measured by any connected source; never substitute a value. */
   protonFlux: number | null;
   electronFlux: number | null;
+  /** NOAA radiation-storm (S) level from the backend; null when the feed doesn't carry one. */
+  radiation: ScaleReading | null;
   timestamp: Date;
   isStale: boolean;
   source: string;
@@ -87,6 +91,7 @@ export class EMAInterpolator {
       kpIndex: Math.round(lerp(this.current.kpIndex, this.target.kpIndex, t)),
       protonFlux: lerpNullable(this.current.protonFlux, this.target.protonFlux, t),
       electronFlux: lerpNullable(this.current.electronFlux, this.target.electronFlux, t),
+      radiation: this.target.radiation,
       timestamp: this.target.timestamp,
       isStale: this.target.isStale,
       source: this.target.source,
@@ -131,15 +136,12 @@ export function unavailableData(): InterpolatedData {
     kpIndex: 0,
     protonFlux: null,
     electronFlux: null,
+    radiation: null,
     timestamp: new Date(),
     isStale: true,
     source: 'unavailable',
     tier: 3,
   };
-}
-
-export function isUnavailable(data: InterpolatedData): boolean {
-  return data.source === 'unavailable';
 }
 
 // ============================================================================
@@ -199,10 +201,6 @@ function lerpNullable(a: number | null, b: number | null, t: number): number | n
   return lerp(a, b, t);
 }
 
-export function clamp(value: number, min: number, max: number): number {
-  return Math.min(max, Math.max(min, value));
-}
-
 export function transformApiResponse(response: SpaceWeatherResponse): InterpolatedData {
   return {
     solarWind: {
@@ -214,6 +212,7 @@ export function transformApiResponse(response: SpaceWeatherResponse): Interpolat
     kpIndex: response.indices.kp,
     protonFlux: response.particles.protonFlux,
     electronFlux: response.particles.electronFlux,
+    radiation: null,
     timestamp: new Date(response.timestamp),
     isStale: response.flags.stale,
     source: response.flags.source,
@@ -262,29 +261,42 @@ export function validateSpaceWeatherResponse(data: unknown): SpaceWeatherRespons
 
 const isFiniteNumber = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
 
+const asRecord = (v: unknown): Record<string, unknown> | null =>
+  v !== null && typeof v === 'object' ? (v as Record<string, unknown>) : null;
+
+/**
+ * True when `data` carries what every consumer of a canonical point reads: a valid
+ * timestamp, the quality block, solar wind, Bz and Kp. Anything else is treated as
+ * no data, so one malformed response can't take a page down.
+ */
+export function isCanonicalPoint(data: unknown): data is CanonicalSpaceWeatherPoint {
+  const d = asRecord(data);
+  if (!d) return false;
+  const solarWind = asRecord(d.solarWind);
+  return (
+    typeof d.timestamp === 'string' &&
+    !Number.isNaN(Date.parse(d.timestamp)) &&
+    asRecord(d.quality) !== null &&
+    isFiniteNumber(solarWind?.speed) &&
+    isFiniteNumber(solarWind?.density) &&
+    isFiniteNumber(solarWind?.dynamicPressure) &&
+    isFiniteNumber(asRecord(d.magneticField)?.z) &&
+    isFiniteNumber(asRecord(d.indices)?.kp)
+  );
+}
+
 /**
  * Maps the backend's CanonicalSpaceWeatherPoint. It carries no particle flux, so those
  * stay null instead of being filled in.
  */
 export function canonicalToInterpolated(data: unknown): InterpolatedData | null {
-  if (!data || typeof data !== 'object') return null;
-  const d = data as Record<string, any>;
-  const ts = typeof d.timestamp === 'string' ? new Date(d.timestamp) : null;
-  if (!ts || Number.isNaN(ts.getTime())) return null;
+  if (!isCanonicalPoint(data)) return null;
+  const d = data;
+  const ts = new Date(d.timestamp);
   const sw = d.solarWind;
   const b = d.magneticField;
   const idx = d.indices;
   const q = d.quality;
-  if (
-    !sw || !b || !idx || !q ||
-    !isFiniteNumber(sw.speed) ||
-    !isFiniteNumber(sw.density) ||
-    !isFiniteNumber(sw.dynamicPressure) ||
-    !isFiniteNumber(b.z) ||
-    !isFiniteNumber(idx.kp)
-  ) {
-    return null;
-  }
   const tier = isFiniteNumber(q.tier) ? q.tier : 3;
   return {
     solarWind: { speed: sw.speed, density: sw.density, pressure: sw.dynamicPressure },
@@ -293,6 +305,7 @@ export function canonicalToInterpolated(data: unknown): InterpolatedData | null 
     // Measured GOES flux when the backend has a current reading; otherwise unknown (null), never 0.
     protonFlux: isFiniteNumber(d.particles?.protons?.value) ? d.particles.protons.value : null,
     electronFlux: isFiniteNumber(d.particles?.electrons?.value) ? d.particles.electrons.value : null,
+    radiation: d.alerts?.radiation ?? null,
     timestamp: ts,
     isStale: q.stale === true || tier === 3,
     source: typeof d.source === 'string' ? d.source : 'unknown',

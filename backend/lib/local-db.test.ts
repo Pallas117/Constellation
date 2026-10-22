@@ -50,3 +50,14 @@ test("bedrock skips corrupt and torn lines instead of returning nothing (GAU-117
   const since = await db.getCanonicalSince(now - 24 * 3_600_000, 100);
   assert.deepEqual(since.map((p: { h: number }) => p.h), [20, 2, 1], "last 24 h, canonical only, oldest first");
 });
+
+test("FMEA: best-effort appends never reject (no unhandled rejection); strict appends do; both count (GAU-121)", async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "bedrock-fail-"));
+  await fs.mkdir(path.join(dir, "telemetry.jsonl")); // EISDIR on every append
+  process.env.GAUSS_BEDROCK_DIR = dir;
+  const { BedrockDB } = await import(`./local-db.js?fail=${encodeURIComponent(dir)}`);
+  const db = new BedrockDB();
+  await db.appendTelemetry({ type: "device-heartbeat" }); // must resolve
+  await assert.rejects(db.appendTelemetryStrict({ type: "canonical" }));
+  assert.equal(db.failedWrites, 2);
+});

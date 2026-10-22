@@ -6,6 +6,7 @@ import {
   canonicalToInterpolated,
   DATA_EXPIRY_MS,
   EMAInterpolator,
+  isCanonicalPoint,
   unavailableData,
 } from "./dataProcessing.ts";
 
@@ -75,4 +76,20 @@ test("maps measured GOES particle flux, and keeps a missing channel unknown (GAU
   assert.ok(d);
   assert.equal(d.protonFlux, 0.25);
   assert.equal(d.electronFlux, null, "missing electrons stay unknown, never 0");
+});
+
+test("only a complete canonical point counts as data; legacy or partial payloads are rejected", () => {
+  assert.equal(isCanonicalPoint(canonical), true);
+  const { quality: _quality, ...noQuality } = canonical;
+  assert.equal(isCanonicalPoint(noQuality), false, "no quality block: the landing would crash reading it");
+  const legacy = {
+    timestamp: canonical.timestamp,
+    solarWind: { speed: 425, density: 5.5, pressure: 2.4 },
+    imf: { bz: -6.2, bt: 7.4 },
+    indices: { kp: 4, dst: -40 },
+    flags: { stale: false, source: "live" },
+  };
+  assert.equal(isCanonicalPoint(legacy), false);
+  assert.equal(isCanonicalPoint(null), false);
+  assert.equal(isCanonicalPoint({ ...canonical, indices: {} }), false);
 });

@@ -232,7 +232,7 @@ jobs:
             exit 1
           fi
 
-status-check:
+  status-check:
     name: Release Pipeline Status
     runs-on: ubuntu-latest
     needs: [build, auto-version, database-migration-check, health-check]

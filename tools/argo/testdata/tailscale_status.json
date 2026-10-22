@@ -1,0 +1,5 @@
+{"BackendState":"Running","Peer":{
+ "a":{"HostName":"iphone-13","Online":true,"ExitNode":false,"ExitNodeOption":false},
+ "b":{"HostName":"exit-sg-1","Online":true,"ExitNode":true,"ExitNodeOption":true},
+ "c":{"HostName":"exit-hk-1","Online":true,"ExitNode":false,"ExitNodeOption":true},
+ "d":{"HostName":"exit-my-1","Online":false,"ExitNode":false,"ExitNodeOption":true}}}

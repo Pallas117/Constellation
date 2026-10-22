@@ -1,23 +1,32 @@
 import { Navigate, useLocation } from "react-router-dom";
 import { useSession } from "@/lib/auth-client";
+import { hasRole, roleOf, type Role } from "@/lib/roles";
 
-export const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
+export const ProtectedRoute = ({ children, minRole = "user" }: { children: React.ReactNode; minRole?: Role }) => {
   const { data: session, isPending } = useSession();
   const location = useLocation();
 
-  const authSession =
-    session?.session ?? session?.data?.session ?? session;
+  // better-auth's useSession data is { session, user }: the user sits beside
+  // the session, not inside it, so checking session.session.user always failed.
+  const user = session?.user;
 
   if (isPending) {
     return (
-      <div className="h-screen w-screen bg-black flex items-center justify-center phosphor-text font-mono text-sm tracking-widest uppercase">
-        Establishing secure uplink...
+      <div role="status" className="flex h-dvh w-screen items-center justify-center gap-2 bg-background font-mono text-sm text-muted-foreground">
+        <span aria-hidden="true" className="h-1.5 w-1.5 animate-pulse rounded-full bg-signal" />
+        Checking your session…
       </div>
     );
   }
 
-  if (!authSession || !authSession.user?.id) {
+  if (!user?.id) {
     return <Navigate to="/login" state={{ from: location }} replace />;
+  }
+
+  // Signed in but not allowed here: back to the public visualisation, never a
+  // login loop. The API enforces the same rule; this only avoids dead pages.
+  if (!hasRole(roleOf(user), minRole)) {
+    return <Navigate to="/" replace />;
   }
 
   return <>{children}</>;

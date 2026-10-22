@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import type { CanonicalSpaceWeatherPoint } from "../types.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -10,7 +11,18 @@ const DATA_DIR = process.env.GAUSS_BEDROCK_DIR
   : path.resolve(__dirname, "../../data/bedrock");
 const TELEMETRY_FILE = path.join(DATA_DIR, "telemetry.jsonl");
 
+/** One line of telemetry.jsonl: a `type` tag, usually a `timestamp`, and that record's fields. */
+export interface BedrockRecord {
+  type: string;
+  timestamp?: string;
+  data?: unknown;
+  [field: string]: unknown;
+}
+
 export class BedrockDB {
+  /** Directory holding telemetry.jsonl (its volume's free space is a TPM). */
+  readonly dataDir = DATA_DIR;
+
   private initialized = false;
 
   private async ensureDir() {
@@ -23,13 +35,31 @@ export class BedrockDB {
     }
   }
 
-  public async appendTelemetry(data: any) {
+  /** Appends that failed (disk full, permissions, ...) since start; surfaced, never swallowed. GAU-121. */
+  public failedWrites = 0;
+
+  /** Best-effort append for fire-and-forget callers: never rejects; failures are counted and logged. */
+  public async appendTelemetry(data: BedrockRecord) {
+    try {
+      await this.appendTelemetryStrict(data);
+    } catch {
+      // already counted and logged
+    }
+  }
+
+  /**
+   * Append that rejects on failure, for callers that must know (the ingest loop records it as a
+   * persist-stage error instead of reporting the write as ok). GAU-121.
+   */
+  public async appendTelemetryStrict(data: BedrockRecord) {
     await this.ensureDir();
     const line = JSON.stringify(data) + "\n";
     try {
       await fs.appendFile(TELEMETRY_FILE, line, "utf8");
     } catch (err) {
+      this.failedWrites += 1;
       console.error("[Bedrock] Append failed", err);
+      throw err;
     }
   }
 
@@ -40,10 +70,10 @@ export class BedrockDB {
    * The last `limit` records, oldest first. Reads the file backwards in fixed-size chunks, so the
    * cost scales with `limit`, not with the file size (the live file grows ~17 MB/day). GAU-117.
    */
-  public async getRecent(limit: number = 200): Promise<any[]> {
+  public async getRecent(limit: number = 200): Promise<BedrockRecord[]> {
     await this.ensureDir();
     const lines = await readTailLines(TELEMETRY_FILE, Math.max(0, Math.floor(limit)));
-    const records: any[] = [];
+    const records: BedrockRecord[] = [];
     let skipped = 0;
     for (const line of lines) {
       try {
@@ -57,11 +87,12 @@ export class BedrockDB {
   }
 
   /** Canonical points measured at or after `sinceMs`, oldest first, from at most `maxLines` lines. */
-  public async getCanonicalSince(sinceMs: number, maxLines: number): Promise<any[]> {
+  public async getCanonicalSince(sinceMs: number, maxLines: number): Promise<CanonicalSpaceWeatherPoint[]> {
     const recent = await this.getRecent(maxLines);
     return recent
-      .filter((r) => r?.type === "canonical" && r.data && Date.parse(r.data.timestamp) >= sinceMs)
-      .map((r) => r.data)
+      .filter((r) => r?.type === "canonical" && r.data)
+      .map((r) => r.data as CanonicalSpaceWeatherPoint)
+      .filter((p) => Date.parse(p.timestamp) >= sinceMs)
       .sort((a, b) => Date.parse(a.timestamp) - Date.parse(b.timestamp));
   }
 

@@ -1,4 +1,5 @@
 import { spawnSync } from "node:child_process";
+import path from "node:path";
 
 type CheckStatus = "PASS" | "WARN" | "FAIL";
 
@@ -23,9 +24,14 @@ function hasRbacCreds(): boolean {
   });
 }
 
+// Checks run with the Node that runs this audit. A login shell (bash -l) re-reads the
+// profile, which can put another Node first; native modules built for this one then fail
+// to load (NODE_MODULE_VERSION mismatch) and the test step fails for no code reason.
+const CHECK_ENV = { ...process.env, PATH: `${path.dirname(process.execPath)}${path.delimiter}${process.env.PATH ?? ""}` };
+
 function runCommand(name: string, command: string, opts?: { allowFail?: boolean }): CheckResult {
-  const proc = spawnSync("bash", ["-lc", command], {
-    env: process.env,
+  const proc = spawnSync("bash", ["-c", command], {
+    env: CHECK_ENV,
     encoding: "utf8",
     maxBuffer: 4 * 1024 * 1024,
   });

@@ -1,4 +1,4 @@
-import { createClient } from "@supabase/supabase-js";
+import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
 type AppRole = "viewer" | "operator" | "admin";
 
@@ -65,7 +65,7 @@ function truncateId(value: string): string {
 }
 
 async function findUserByEmail(
-  supabase: ReturnType<typeof createClient>,
+  supabase: SupabaseClient,
   email: string,
 ): Promise<{ id: string; app_metadata?: Record<string, unknown> } | null> {
   const target = normalizeEmail(email);
@@ -93,7 +93,7 @@ async function findUserByEmail(
 }
 
 async function ensureRoleUser(
-  supabase: ReturnType<typeof createClient>,
+  supabase: SupabaseClient,
   roleSpec: RoleSpec,
   email: string,
   password: string,
