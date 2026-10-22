@@ -1,0 +1,543 @@
+/* Lightbound site. Tokens from the Lightbound Brand Room (9 Oct 2026): black ground, warm-white type,
+   one lime signal per view, amber for caution, Plex Sans + JetBrains Mono labels. No JS. */
+@font-face{font-family:"IBM Plex Sans";font-weight:400;font-display:swap;src:url(fonts/plex-sans-400.woff2) format("woff2")}
+@font-face{font-family:"IBM Plex Sans";font-weight:500;font-display:swap;src:url(fonts/plex-sans-500.woff2) format("woff2")}
+@font-face{font-family:"IBM Plex Sans";font-weight:600;font-display:swap;src:url(fonts/plex-sans-600.woff2) format("woff2")}
+@font-face{font-family:"JetBrains Mono";font-weight:700;font-display:swap;src:url(fonts/jetbrains-mono-700.woff2) format("woff2")}
+
+/* Shared foundations (Lightbound Brand Book, 15-18 Oct 2026): one ground, one warm white, two typefaces;
+   only the accent changes per brand. Status colours always travel with their word. */
+:root{--black:#050505;--panel:#0D1010;--char:#252A2A;--warm:#F3F0E8;--muted:#87938E;--lime:#CCFF00;--amber:#E7B14A;
+  --live:#4E972F;--sim:#318ADA;--danger:#D4673B;--accent:var(--lime);--accent2:var(--lime);
+  --sans:"IBM Plex Sans",Arial,sans-serif;--mono:"JetBrains Mono","Courier New",monospace;--radius:10px;color-scheme:dark}
+*,*::before,*::after{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%;scroll-behavior:smooth;scroll-padding-top:76px}
+::selection{background:var(--accent);color:var(--black)}
+body{margin:0;background:var(--black);color:var(--warm);font:400 16px/1.55 var(--sans);font-feature-settings:"tnum"}
+img,video{display:block;max-width:100%}
+button,input,select,textarea{font:inherit}
+button{cursor:pointer}
+a{color:var(--warm);text-underline-offset:3px;text-decoration-thickness:1px}
+a:hover{color:#fff;text-decoration-thickness:2px}
+:focus-visible{outline:2px solid var(--accent);outline-offset:3px;border-radius:4px}
+h1,h2,h3{font-weight:600;text-wrap:balance;margin:0}
+h1{font-size:clamp(34px,6vw,64px);line-height:1.02;letter-spacing:-.01em}
+h2{font-size:clamp(24px,3.4vw,34px);line-height:1.15;margin:.3em 0 .5em}
+h3{font-size:19px;line-height:1.3}
+p{margin:0 0 1em}
+.wrap{max-width:1120px;margin:0 auto;padding-inline:clamp(16px,4vw,40px)}
+.k{font:700 12px/1 var(--mono);letter-spacing:.12em;color:var(--accent);text-transform:uppercase;margin:0}
+.label{font:700 11px/1 var(--mono);letter-spacing:.12em;color:var(--muted);text-transform:uppercase}
+.lead{color:var(--muted);max-width:62ch;font-size:18px}
+.muted{color:var(--muted)}
+.skip{position:absolute;left:-9999px;top:8px;background:var(--warm);color:var(--black);padding:8px 12px;z-index:10;border-radius:6px}
+.skip:focus{left:8px}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+
+/* Header: logo left, four doors right. Over the film on the landing page. */
+/* Header: sticks on every page so the doors are always one tap away. On the landing page it starts
+   clear over the film and turns solid as you scroll (CSS scroll timeline; older browsers keep it
+   in place at the top instead). */
+.top{position:sticky;top:0;z-index:5;background:rgba(5,5,5,.88);-webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px);
+  border-bottom:1px solid var(--char);view-transition-name:site-header}
+.bar{display:flex;align-items:center;justify-content:space-between;gap:16px;padding-block:12px}
+.top.over{position:absolute;inset:0 0 auto 0;background:transparent;border-bottom-color:transparent;-webkit-backdrop-filter:none;backdrop-filter:none}
+@supports (animation-timeline:scroll()){
+  .top.over{position:fixed;animation:solidify linear both;animation-timeline:scroll(root);animation-range:0 40vh}
+  @keyframes solidify{to{background:rgba(5,5,5,.88);border-bottom-color:var(--char);-webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px)}}
+}
+.brand{display:block;padding:4px 0}
+.brand img{height:40px;width:auto}
+.top nav{display:flex;gap:clamp(12px,2.4vw,28px);font-size:15px}
+.top nav a{color:var(--muted);text-decoration:none;padding:8px 0}
+.top nav a:hover,.top nav a[aria-current=page]{color:var(--warm)}
+.top nav a[aria-current=page]{box-shadow:inset 0 -1px 0 var(--warm)}
+
+/* Buttons */
+.actions{display:flex;flex-wrap:wrap;gap:12px;margin:28px 0 0}
+.actions+.tiles{margin-top:20px}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:46px;padding:0 20px;border-radius:4px;background:var(--warm);color:var(--black);
+  background-image:linear-gradient(180deg,rgba(255,255,255,.45),rgba(255,255,255,0) 70%);
+  font-weight:600;line-height:1.1;text-decoration:none;border:1px solid var(--warm);transition:background-color .2s,border-color .2s,color .2s}
+.btn:hover{background-color:#fff;color:var(--black)}
+.btn:active{transform:translateY(1px)}
+.btn.ghost{background-color:rgba(243,240,232,.03);background-image:linear-gradient(180deg,rgba(243,240,232,.08),rgba(243,240,232,0) 75%);color:var(--warm);
+  border-color:rgba(243,240,232,.32);-webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px)}
+.btn.ghost:hover{border-color:var(--accent);color:#fff}
+
+/* Hero film: the kit's ray-traced black hole. Poster image underneath, so no-JS, reduced motion and
+   slow links all get the still frame. */
+.hero{position:relative;min-height:max(520px,86svh);display:grid;align-items:end;overflow:hidden;border-bottom:1px solid var(--char);isolation:isolate}
+.hero .poster,.hero .film{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;z-index:-2}
+.hero::after{content:"";position:absolute;inset:0;z-index:-1;background:linear-gradient(180deg,rgba(5,5,5,.55) 0,rgba(5,5,5,0) 22%,rgba(5,5,5,0) 40%,rgba(5,5,5,.92) 88%),linear-gradient(90deg,rgba(5,5,5,.7) 0,rgba(5,5,5,.35) 45%,rgba(5,5,5,0) 70%)}
+.hero-copy{padding-block:120px 40px;display:grid;gap:14px;width:100%}
+.hero-copy>:last-child{margin-bottom:0}
+.hero .wedge{margin:6px 0 0;font-size:clamp(17px,1.6vw,20px);color:rgba(243,240,232,.78);max-width:40ch}
+.hero .wedge a{color:var(--warm)}
+.hero h1{font-size:clamp(56px,9vw,128px);line-height:.95;letter-spacing:-.025em}
+.down{display:inline-flex;align-items:center;gap:10px;margin-top:8px;font:700 12px/1 var(--mono);letter-spacing:.12em;text-transform:uppercase;color:var(--warm);text-decoration:none;padding:10px 0}
+.down::after{content:"\2193";font-size:16px;display:inline-block}
+@media (prefers-reduced-motion:no-preference){.down::after{animation:nudge 2.4s ease-in-out infinite}}
+@keyframes nudge{50%{transform:translateY(4px)}}
+@media (prefers-reduced-motion:reduce){.hero .film{display:none}html{scroll-behavior:auto}}
+/* Portrait screens: the film fills the top of the hero and fades to black, so the copy sits on black. */
+@media (max-aspect-ratio:1/1){
+  .hero .poster,.hero .film{height:62%}
+  .hero::after{background:linear-gradient(180deg,rgba(5,5,5,.5) 0,rgba(5,5,5,0) 16%,rgba(5,5,5,0) 36%,var(--black) 62%)}
+  .hero-copy{padding-top:56vw}
+  .hero h1{font-size:clamp(44px,13vw,104px)}
+}
+
+/* Sections */
+section{padding-block:clamp(48px,6vw,80px);border-bottom:1px solid var(--char);border-image:linear-gradient(90deg,transparent,var(--char) 16%,var(--char) 84%,transparent) 1}
+section.tight{padding-block:48px}
+.section-head{display:flex;flex-wrap:wrap;align-items:end;justify-content:space-between;gap:12px 24px;margin-bottom:28px}
+.section-head h2{margin-bottom:0}
+
+/* Doors */
+.doors{list-style:none;margin:20px 0 0;padding:0;display:grid;gap:16px;grid-template-columns:repeat(auto-fit,minmax(min(100%,240px),1fr))}
+.door{position:relative;display:flex;flex-direction:column;gap:10px;height:100%;padding:24px;border:1px solid var(--char);border-radius:var(--radius);overflow:hidden;
+  background:linear-gradient(180deg,rgba(243,240,232,.04),rgba(243,240,232,0) 42%),var(--panel);color:var(--warm);text-decoration:none;transition:border-color .2s,transform .2s;--door-accent:var(--accent)}
+.door::before{content:"";position:absolute;inset:0 0 auto;height:1px;background:linear-gradient(90deg,transparent,rgba(243,240,232,.3),transparent);pointer-events:none}
+.door::after{content:"";position:absolute;left:24px;right:24px;bottom:0;height:2px;background:var(--door-accent);transform:scaleX(0);transform-origin:left;transition:transform .35s cubic-bezier(.2,.7,.2,1)}
+.door:hover::after,.door:focus-visible::after{transform:scaleX(1)}
+.door[href="/constellation/"]{--door-accent:#B0906F}
+.door[href="/turnstone/"]{--door-accent:#F0782A}
+.door:hover{border-color:rgba(243,240,232,.42);color:var(--warm)}
+@media (prefers-reduced-motion:no-preference){.door:hover{transform:translateY(-2px)}}
+.door .mark{align-self:flex-start;height:64px;width:auto;max-width:100%;margin-bottom:14px;transition:transform .35s cubic-bezier(.2,.7,.2,1)}
+@media (prefers-reduced-motion:no-preference){.door:hover .mark{transform:scale(1.04)}}
+.door h3{font-size:24px}
+.door p{color:var(--muted);margin:0}
+.door .go{margin-top:auto;padding-top:12px;font-weight:600} /* every card's call to action sits on one line */
+.door .go::after{content:"\2192";display:inline-block;margin-left:6px;transition:transform .2s}
+.door:hover .go::after,.door:focus-visible .go::after{transform:translateX(4px)}
+.door:active{transform:scale(.99)}
+.door-now{display:grid;gap:4px;margin-top:10px;padding-top:14px;border-top:1px solid var(--char)}
+.door-big{font-size:26px;font-weight:600;line-height:1.15;color:var(--warm)}
+.door-line{color:var(--muted);font-size:15px}
+.as-of{color:var(--amber);font:700 11px/1.4 var(--mono);letter-spacing:.08em;text-transform:uppercase}
+.redact{display:grid;gap:8px;margin:2px 0 4px}
+.redact span{display:block;height:12px;border-radius:2px;background:var(--char)}
+.redact span:nth-child(1){width:92%}.redact span:nth-child(2){width:64%}
+
+/* Live status chip: the one lime signal in its view */
+.chip{display:inline-flex;align-items:center;gap:8px;font:700 11px/1 var(--mono);letter-spacing:.12em;text-transform:uppercase;color:var(--muted);
+  border:1px solid var(--char);border-radius:999px;padding:7px 12px}
+.chip::before{content:"";width:7px;height:7px;border-radius:50%;background:currentColor}
+.chip.live{color:var(--live)}
+.chip.sim{color:var(--sim);border-color:rgba(49,138,218,.5)}
+.chip.stale{color:var(--amber)}
+
+/* Now-in-orbit tiles */
+.tiles{display:grid;gap:16px;grid-template-columns:repeat(auto-fit,minmax(min(100%,320px),1fr))}
+.tile{border:1px solid var(--char);border-radius:var(--radius);background:linear-gradient(180deg,rgba(243,240,232,.04),rgba(243,240,232,0) 42%),var(--panel);padding:22px;display:grid;gap:6px;align-content:start;min-width:0}
+.tile .big{font-size:clamp(28px,4vw,40px);font-weight:600;line-height:1.1;margin:6px 0 2px}
+.tile .t{margin:0;font-weight:600}
+.tile .m{margin:0;color:var(--muted);font-size:15px}
+.tile a{margin-top:10px;font-size:15px}
+.lvl-1{color:var(--amber)}.lvl-3{color:var(--danger)}
+.src{margin:18px 0 0;color:var(--muted);font-size:13px}
+
+/* Launch list */
+.launches{list-style:none;margin:0;padding:0;border-top:1px solid var(--char)}
+.launch{display:grid;grid-template-columns:150px 1fr auto;gap:6px 24px;padding:16px 0;border-bottom:1px solid var(--char);align-items:baseline}
+.launch .when{display:grid;gap:2px}
+.launch .when b{font-size:18px;font-weight:600}
+.launch .when time{color:var(--muted);font-size:14px}
+.launch .what b{font-weight:600}
+.launch .what span{display:block;color:var(--muted);font-size:15px}
+.launch .tags{display:flex;gap:8px;flex-wrap:wrap;justify-content:end}
+.tag{font:700 11px/1 var(--mono);letter-spacing:.08em;text-transform:uppercase;border:1px solid var(--char);border-radius:4px;padding:6px 8px;color:var(--muted)}
+.tag.go{color:var(--warm);border-color:rgba(243,240,232,.4)}
+.tag.hold{color:var(--amber);border-color:rgba(231,177,74,.5)}
+@media (max-width:640px){.launch{grid-template-columns:1fr}.launch .tags{justify-content:start}}
+
+/* Space-weather scales */
+.scales{display:grid;gap:12px;grid-template-columns:repeat(3,minmax(0,1fr));margin-bottom:16px}
+.scales .label{min-height:2.4em;line-height:1.2}
+
+/* Text blocks (Gauss page, policy lists) */
+.prose{max-width:70ch}
+.steps,.facts,.people,.ticks,.crosses,.stages{list-style:none;margin:0;padding:0;display:grid;gap:14px}
+.steps{counter-reset:s;grid-template-columns:repeat(auto-fit,minmax(min(100%,240px),1fr));gap:16px}
+.steps li,.stages li{border:1px solid var(--char);border-radius:var(--radius);background:linear-gradient(180deg,rgba(243,240,232,.04),rgba(243,240,232,0) 42%),var(--panel);padding:20px}
+.steps li::before{counter-increment:s;content:"0" counter(s);display:block;font:700 12px/1 var(--mono);letter-spacing:.12em;color:var(--muted);margin-bottom:14px}
+.steps h3,.stages h3{margin-bottom:6px}
+.steps p,.stages p{color:var(--muted);margin:0}
+.facts li,.people li{border-top:1px solid var(--char);padding-top:14px;color:var(--muted)}
+.facts strong,.people strong{display:block;color:var(--warm);font-weight:600}
+.two{display:grid;gap:24px;grid-template-columns:repeat(auto-fit,minmax(min(100%,320px),1fr))}
+.ticks li,.crosses li{padding-left:28px;position:relative;color:var(--muted)}
+.ticks li::before,.crosses li::before{position:absolute;left:0;font:700 14px/1.55 var(--mono)}
+.ticks li::before{content:"+";color:var(--warm)}
+.crosses li::before{content:"\00D7";color:var(--amber)}
+.two h3{margin-bottom:12px}
+.stages{grid-template-columns:repeat(auto-fit,minmax(min(100%,260px),1fr));gap:16px}
+.stages .label{display:block;margin-bottom:14px}
+.stages .now{border-color:rgba(243,240,232,.45)}
+.note{color:var(--muted);font-size:15px;border-left:2px solid var(--char);padding-left:14px;margin-top:24px}
+.logos{margin:20px 0 0}
+.logos img{height:40px;width:auto}
+
+/* Product page hero */
+.page-hero{padding-block:clamp(32px,5vw,64px) clamp(40px,6vw,64px)}
+/* Lockups sized by width (an SVG img with auto sizes falls back to its own 56 px height). */
+.page-hero .lockup{display:block;height:auto;width:min(100%,480px);margin:0 0 28px -8px}
+.page-hero .lockup.lockup-constellation{width:min(100%,520px)}
+.page-hero h1{max-width:20ch;margin:14px 0 18px}
+.page-hero .who{color:var(--muted);max-width:72ch}
+.page-hero .who strong{color:var(--warm)}
+.page-hero .mark-lg{display:block;width:72px;height:72px;margin:0 0 22px}
+.support{margin-top:28px;padding:22px;border:1px solid var(--char);border-radius:var(--radius);background:var(--panel);max-width:64ch}
+.support h3{margin:8px 0 6px}
+.support p:not(.label){color:var(--muted);margin:0}
+.support .actions{margin-top:16px}
+
+/* Turnstone: nothing to see here */
+.vault{min-height:calc(100svh - 74px);display:grid;place-items:center;text-align:center;padding-block:64px}
+.vault .mark{width:min(220px,50vw);height:auto;margin:0 auto 40px}
+.vault h1{font-size:clamp(28px,4vw,40px);margin:16px 0 12px}
+.vault .actions{justify-content:center}
+
+/* Footer */
+footer{padding-block:48px;color:var(--muted);font-size:14px}
+footer .cols{display:flex;flex-wrap:wrap;justify-content:space-between;gap:24px}
+footer nav{display:flex;flex-wrap:wrap;gap:8px 20px}
+footer nav a{color:var(--muted);display:inline-block;padding:10px 0}
+footer p{margin:0 0 6px}
+
+/* Sign-in pill in the header */
+.top nav a.signin{border:1px solid rgba(243,240,232,.4);border-radius:4px;padding:6px 14px;color:var(--warm);white-space:nowrap;background:rgba(243,240,232,.04)}
+.top nav a.signin:hover{border-color:var(--accent)}
+
+/* Forms: plain HTML, validated on the server */
+.narrow{max-width:760px}
+.form{display:grid;gap:18px;margin-top:32px}
+.field{display:grid;gap:6px}
+.field label{font-weight:600}
+.form input:not([type=checkbox]),.form select,.form textarea{width:100%;font:inherit;color:var(--warm);background:var(--panel);border:1px solid var(--char);border-radius:4px;padding:12px 14px}
+.form textarea{resize:vertical;min-height:140px}
+.form input:focus,.form select:focus,.form textarea:focus{outline:2px solid var(--accent);outline-offset:1px}
+.form [aria-invalid=true]{border-color:var(--amber)}
+.err{color:var(--amber);font-size:14px;margin:0}
+.form-errors{border:1px solid rgba(231,177,74,.5);border-radius:8px;padding:12px 14px;color:var(--amber)}
+.form-errors p{margin:0}
+.check{display:flex;gap:10px;align-items:flex-start;color:var(--muted);font-size:15px}
+.check input{margin:0;width:24px;height:24px;flex:none;accent-color:var(--accent)}
+.check span{padding-top:1px}
+.check a{display:inline-block;padding:4px 0} /* a comfortable tap target inside the consent sentence */
+.hp{position:absolute;left:-9999px;width:1px;height:1px;overflow:hidden}
+.sent{margin-top:32px;border:1px solid var(--char);border-radius:var(--radius);background:var(--panel);padding:28px}
+.sent h2{margin-top:10px}
+
+.step{border:1px solid var(--char);border-radius:var(--radius);padding:20px;margin:0;display:grid;gap:16px;min-width:0}
+.step legend{padding:0 8px;font-weight:600;font-size:18px}
+.step legend .label{margin-right:8px}
+.banner{border:1px solid rgba(243,240,232,.3);border-radius:8px;padding:12px 14px;margin:18px 0}
+.banner.warn,.warn{color:var(--amber);border-color:rgba(231,177,74,.5)}
+.money{display:inline-flex;align-items:center;gap:4px;color:var(--muted)}
+.money input{width:9em}
+.billing .inline{margin-top:6px}
+.billing .pay{display:flex;flex-wrap:wrap;gap:8px;margin-top:6px}
+.billing .pay .inline{margin-top:0}
+
+/* On-page menu (long pages) */
+.subnav{display:flex;flex-wrap:wrap;gap:8px;margin-top:28px}
+.subnav a{font-size:14px;color:var(--muted);text-decoration:none;border:1px solid var(--char);border-radius:4px;padding:9px 14px;white-space:nowrap;
+  background:linear-gradient(180deg,rgba(243,240,232,.05),rgba(243,240,232,0) 80%);transition:color .2s,border-color .2s}
+.subnav a:hover{color:var(--warm);border-color:var(--accent2)}
+
+/* Evidence states: one look everywhere (replay, sample report) */
+.st{display:inline-block;justify-self:start;font:700 11px/1 var(--mono);letter-spacing:.08em;text-transform:uppercase;border:1px solid;border-radius:4px;padding:6px 8px}
+.st.nominal{color:var(--warm);border-color:rgba(243,240,232,.4)}
+.st.degraded{color:var(--amber);border-color:rgba(231,177,74,.6)}
+.st.abstain{color:var(--amber);border-color:rgba(231,177,74,.6);border-style:dashed}
+.st.unknown{color:var(--muted);border-color:var(--muted);border-style:dashed}
+.st.blocked{color:var(--danger);border-color:var(--danger);border-width:2px;padding:5px 7px}
+.st.fallback{color:var(--warm);border-color:rgba(243,240,232,.55);border-style:dotted}
+
+/* Replay demo: a static, script-free walk through one synthetic storm */
+.replay-chart{margin:24px 0 0}
+.replay-chart svg{display:block;width:100%;height:120px}
+.replay-chart figcaption{color:var(--muted);font-size:13px;margin-top:6px}
+.replay{list-style:none;margin:16px 0 0;padding:0;display:grid;gap:10px}
+.replay li{display:grid;grid-template-columns:auto 1fr;gap:8px 12px;align-items:center;border:1px solid var(--char);border-radius:var(--radius);background:var(--panel);padding:14px}
+.replay li:nth-child(3),.replay li:nth-child(4){border-color:rgba(231,177,74,.4)}
+.replay .t{font:700 11px/1.3 var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+.replay .env{font-weight:600}
+.replay .why{grid-column:1/-1;color:var(--muted);font-size:14px}
+.replay-key{color:var(--muted);font-size:13px;margin:12px 0 0}
+.replay-key span{color:var(--warm);font-weight:600}
+@media (min-width:900px){
+  .replay{grid-template-columns:repeat(6,minmax(0,1fr))}
+  .replay li{grid-template-columns:1fr;align-content:start;gap:10px}
+  .replay .env{min-height:2.7em}
+  .replay .why{grid-column:auto}
+}
+
+/* Sample evidence report */
+.report-head{display:grid;gap:16px;grid-template-columns:repeat(auto-fit,minmax(min(100%,240px),1fr));margin:28px 0 0}
+.report-head div{border-top:1px solid var(--char);padding-top:12px}
+.report-head dt{font:700 11px/1.3 var(--mono);letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin-bottom:6px}
+.report-head dd{margin:0}
+.table td{font-variant-numeric:tabular-nums}
+
+/* Gauss plans */
+.plans{list-style:none;margin:0;padding:0;display:grid;gap:16px;grid-template-columns:repeat(auto-fit,minmax(min(100%,420px),1fr))}
+.plans.three{grid-template-columns:repeat(auto-fit,minmax(min(100%,280px),1fr))}
+.plans.three .plan{display:flex;flex-direction:column}
+.plans.three .plan .actions{margin-top:auto;padding-top:16px} /* buttons on one line across the plans */
+.plan{border:1px solid var(--char);border-radius:var(--radius);background:var(--panel);padding:24px;display:grid;gap:10px;align-content:start}
+.plan.now{border-color:rgba(243,240,232,.45)}
+.plan h3{font-size:24px}
+.plan p{margin:0}
+.plan .aud{color:var(--muted)}
+.plan .m{color:var(--muted);font-size:15px}
+.plan .price{font-size:20px;font-weight:600;margin-top:6px}
+
+/* Workspace */
+.chip.tier{color:var(--warm);border-color:rgba(243,240,232,.4)}
+.chip.tier::before{display:none}
+.track{list-style:none;margin:8px 0 0;padding:0;display:grid;gap:8px}
+.track li{position:relative;padding-left:26px;color:var(--muted)}
+.track li::before{content:"";position:absolute;left:3px;top:.5em;width:9px;height:9px;border-radius:50%;border:1px solid var(--muted)}
+.track li.done{color:var(--warm)}
+.track li.done::before{background:var(--warm);border-color:var(--warm)}
+.track li.here{color:var(--warm);font-weight:600}
+.track li.here::before{background:var(--accent);border-color:var(--accent)}
+.plan-lists{margin-top:32px}
+.plan-lists .m,.app-card .m{color:var(--muted);font-size:15px}
+.locked{list-style:none;margin:0 0 12px;padding:0;display:grid;gap:14px}
+.locked li{position:relative;padding-left:28px;color:var(--muted)}
+.locked li::before{content:"";position:absolute;left:2px;top:.5em;width:9px;height:9px;border-radius:50%;border:1px solid var(--muted)}
+/* Not available yet: a dashed outline that never lights up, so it can't be mistaken for a button. */
+.btn[aria-disabled=true]{opacity:1;cursor:not-allowed;color:var(--muted);background:transparent;background-image:none;border-style:dashed;border-color:rgba(243,240,232,.22);-webkit-backdrop-filter:none;backdrop-filter:none}
+.btn[aria-disabled=true]:hover{color:var(--muted);border-color:rgba(243,240,232,.22)}
+.btn[aria-disabled=true]::after{content:none}
+
+/* Admin */
+.apps{list-style:none;margin:0 0 24px;padding:0;display:grid;grid-template-columns:minmax(0,1fr);gap:12px}
+.app-card{min-width:0;grid-template-columns:minmax(0,1fr);overflow-wrap:anywhere;border:1px solid var(--char);border-radius:var(--radius);background:var(--panel);padding:18px;display:grid;gap:8px}
+.app-head{display:flex;justify-content:space-between;gap:12px;color:var(--muted);font-size:13px}
+.app-card h3 .muted{font-weight:400;font-size:15px}
+.app-card p{margin:0}
+.msg{white-space:pre-wrap;border-left:2px solid var(--char);padding-left:12px}
+.inline{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.app-card .inline select{flex:1 1 220px;min-width:0}
+.inline select,.inline input{max-width:100%;font:inherit;font-size:14px;color:var(--warm);background:var(--black);border:1px solid var(--char);border-radius:4px;padding:8px 10px}
+.inline .btn{min-height:38px;padding:0 14px;font-size:14px}
+.inline .check{align-items:center;font-size:14px}
+.table{width:100%;border-collapse:collapse;font-size:14px}
+.table td{overflow-wrap:anywhere}
+.table th,.table td{text-align:left;padding:12px 8px;border-bottom:1px solid var(--char);vertical-align:top}
+.table th{font:700 11px var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+.tw{overflow-x:auto}
+.add{margin:16px 0 32px}
+
+/* Brand themes (Brand Book): Constellation is navy and gold, with no Lightbound badge; Turnstone is
+   restrained, signal orange as its one spot colour and earth blue as accent-2. */
+.brand-constellation{--accent:#B0906F;--accent2:#B0906F;--panel:#081C4D;--char:#1C3470;--muted:#A9ABA6}
+.brand-constellation h1,.brand-constellation h2,.brand-constellation h3{font-weight:500}
+.brand-constellation .k,.brand-constellation .label{letter-spacing:.2em}
+.brand-constellation main a:not(.btn):not(.door),.brand-turnstone main a:not(.btn){text-decoration-color:var(--accent2)}
+.brand-constellation .btn.ghost:hover,.brand-turnstone .btn.ghost:hover{border-color:var(--accent2);color:var(--accent2)}
+.motto{margin:6px 0 14px;color:var(--accent);font-weight:500;font-size:clamp(16px,1.6vw,19px)}
+.values{list-style:none;margin:24px 0 0;padding:0;display:flex;flex-wrap:wrap;gap:8px}
+.values li{border:1px solid var(--char);border-radius:999px;padding:8px 14px;font-size:14px;color:var(--warm)}
+/* Friends of Constellation: logos shown as supplied (no recolouring); names on hover, focus, or always on touch */
+.friends{list-style:none;margin:8px 0 0;padding:0;display:flex;flex-wrap:wrap;gap:16px}
+.friend{position:relative;display:grid;place-items:center;min-width:120px;height:96px;padding:0 24px;border:1px solid var(--char);border-radius:10px;text-decoration:none}
+.friend img{height:40px;width:auto}
+.friend-name{position:absolute;left:0;right:0;bottom:8px;text-align:center;font:700 10px/1.2 var(--mono);letter-spacing:.12em;text-transform:uppercase;color:var(--muted);opacity:0;transition:opacity .2s}
+.friend:hover,.friend:focus-visible{border-color:var(--accent2)}
+.friend:hover .friend-name,.friend:focus-visible .friend-name{opacity:1}
+@media (hover:none){.friend{height:112px;align-content:start;padding-top:22px}.friend-name{opacity:1}}
+/* Time-zone planner and group calls */
+.planner-form{display:grid;gap:16px;margin-top:24px}
+.planner-form .field{max-width:240px}
+.zones{border:1px solid var(--char);border-radius:10px;padding:14px 16px;margin:0;display:flex;flex-wrap:wrap;gap:8px 18px}
+.zones legend{padding:0 6px;font-weight:600}
+.zone{display:inline-flex;align-items:center;gap:8px;font-size:14px;color:var(--muted);min-height:36px}
+.zone input{width:24px;height:24px;margin:0;accent-color:var(--accent)}
+.planner-summary{margin-top:24px}
+.planner{border-collapse:separate;border-spacing:2px;font-size:13px;min-width:860px}
+.planner th,.planner td{text-align:center;padding:6px 0;min-width:30px;border-radius:4px}
+.planner th[scope=row]{text-align:left;padding-right:10px;white-space:nowrap;font-weight:600;color:var(--warm)}
+.planner thead th{font:700 11px var(--mono);color:var(--muted)}
+.planner thead a{display:block;color:inherit;text-decoration:none;padding:7px 0;min-width:28px}
+.planner td.work{background:rgba(176,144,111,.28);color:var(--warm)}
+.planner td.edge{background:rgba(243,240,232,.06);color:var(--muted)}
+.planner td.quiet{color:var(--muted)}
+.planner .best{outline:1px solid var(--accent)}
+.planner .picked{outline:2px solid var(--warm)}
+.slot{margin-top:24px;border:1px solid var(--char);border-radius:10px;background:var(--panel);padding:20px}
+.slot h2{margin:8px 0 12px;font-size:22px}
+.slot-list{list-style:none;margin:0;padding:0;display:grid;gap:6px;grid-template-columns:repeat(auto-fill,minmax(220px,1fr))}
+.slot-list li{display:grid;gap:2px}
+.slot-list b{font-weight:600}
+.calls{margin-top:40px}
+.call-list{list-style:none;margin:0;padding:0;display:grid;gap:12px}
+.call{display:grid;grid-template-columns:200px 1fr auto;gap:12px 24px;align-items:start;border:1px solid var(--char);border-radius:10px;background:var(--panel);padding:18px;min-width:0}
+.call-when b{display:block;font-size:18px}
+.call-when span{color:var(--muted);font-size:13px}
+.call-what h3{margin-bottom:4px}
+.call-what .m{color:var(--muted);font-size:15px;margin:0;overflow-wrap:anywhere}
+.call-act{display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:end}
+.call-act .btn{min-height:38px;padding:0 14px;font-size:14px}
+@media (max-width:760px){.call{grid-template-columns:1fr}.call-act{justify-content:start}}
+.call-form{max-width:760px}
+.opps{margin-top:40px}
+.opps h3.label{margin:28px 0 12px}
+.opp-list{list-style:none;margin:0;padding:0;display:grid;gap:12px;grid-template-columns:repeat(auto-fill,minmax(min(100%,320px),1fr))}
+.opp{border:1px solid var(--char);border-radius:10px;background:var(--panel);padding:18px;min-width:0}
+.opp-head{display:flex;flex-wrap:wrap;gap:8px 12px;align-items:center;justify-content:space-between;margin-bottom:10px}
+.opp-when{color:var(--muted);font-size:13px}
+.opp h3{margin:0 0 6px;font-size:18px;overflow-wrap:anywhere}
+.opp h3 a{display:inline-block;padding:2px 0}
+.opp .m{color:var(--muted);font-size:15px;margin:4px 0 0;overflow-wrap:anywhere}
+.opp .why{color:var(--warm)}
+.interests{margin:16px 0 8px;border:1px solid var(--char);border-radius:10px;padding:12px 18px}
+.interests summary{cursor:pointer;font-weight:600;min-height:32px;display:flex;align-items:center}
+.interest-grid{display:grid;gap:10px 18px;grid-template-columns:repeat(auto-fill,minmax(min(100%,220px),1fr));margin-top:12px}
+.news{list-style:none;margin:0;padding:0;display:grid;gap:10px}
+.news li{overflow-wrap:anywhere}
+.news a{display:inline-block;padding:3px 0}
+.news .m{color:var(--muted);font-size:13px;margin-left:6px}
+.opps>.m{color:var(--muted);font-size:14px;margin-top:12px}
+.brand-turnstone{--accent:#F0782A;--accent2:#318ADA;--muted:#A9ABA6}
+.brand-turnstone .k{color:var(--muted);letter-spacing:.14em}
+.brand-turnstone .k .dot{color:var(--accent)}
+.brand-turnstone .vault h1{font-weight:400;letter-spacing:-.01em}
+.ts-wordmark{margin:0 0 28px;display:grid;gap:6px;justify-items:center}
+.ts-wordmark b{font-weight:500;font-size:clamp(18px,2.4vw,24px);letter-spacing:.32em;margin-right:-.32em}
+.ts-wordmark small{font:700 10px/1 var(--mono);letter-spacing:.18em;color:var(--muted);text-transform:uppercase}
+
+/* Page-to-page continuity: a door's mark flies into the page it opens (native view transitions,
+   no script; browsers without them just load the page). */
+@media (prefers-reduced-motion:no-preference){
+  @view-transition{navigation:auto}
+  ::view-transition-group(*){animation-duration:.45s;animation-timing-function:cubic-bezier(.2,.7,.2,1)}
+}
+::view-transition-old(*),::view-transition-new(*){height:100%;object-fit:contain}
+.vt-gauss{view-transition-name:mark-gauss}
+.vt-constellation{view-transition-name:mark-constellation}
+.vt-turnstone{view-transition-name:mark-turnstone}
+.vt-argo{view-transition-name:mark-argo}
+
+@media (max-width:560px){
+  .brand img{height:32px}
+  /* Compact doors: every mark at one height above the words, so wide and round marks line up. */
+  .door{gap:6px;padding:18px}
+  .door .mark{height:40px;margin:0 0 8px}
+  .door::after{left:18px;right:18px}
+  .door h3{font-size:21px}
+  .door .go{padding-top:6px}
+  .door-big{font-size:22px}
+  .top nav{font-size:14px;gap:14px}
+  .top nav a.signin{padding:5px 10px}
+  .subnav{flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none;padding-bottom:4px;
+    -webkit-mask-image:linear-gradient(90deg,var(--black) 82%,transparent);mask-image:linear-gradient(90deg,var(--black) 82%,transparent)} /* the fade says it scrolls */
+  .hero-copy{padding-bottom:28px}
+  .btn{flex:1 1 auto;justify-content:center}
+}
+@media (max-width:400px){.top nav .opt{display:none}}
+
+/* Descent (landing): the black hole's ring shrinks into Earth's aurora, then the field and the Van Allen
+   belts draw in, driven by scrolling (art: tools/make_descent.py). Without scroll-driven animations, or
+   with reduced motion, the final frame shows beside all five captions. No script. */
+.descent-stage{max-width:1120px;margin:0 auto;padding-inline:clamp(16px,4vw,40px);display:grid;gap:clamp(20px,4vw,56px);align-items:center}
+@media (min-width:900px){.descent-stage{grid-template-columns:minmax(0,1.35fr) minmax(0,1fr)}.descent-note{grid-column:1/-1}}
+.descent-art{display:block;width:100%;height:auto;max-height:72svh}
+.descent-steps{list-style:none;margin:0;padding:0;display:grid;gap:22px}
+.descent-steps h2,.descent-steps h3{font-size:clamp(21px,2.6vw,28px);line-height:1.22;margin:.4em 0 0;max-width:24ch}
+.descent-steps p:not(.label){margin:.5em 0 0;color:var(--muted);font-size:17px}
+.descent-steps a{color:var(--warm)}
+.descent-note{margin:0}
+.d-belt.in{fill:rgba(243,240,232,.16)}
+.d-belt.out{fill:rgba(243,240,232,.08)}
+.d-lines path{fill:none;stroke:var(--warm);stroke-opacity:.32;stroke-width:1.1}
+.d-earth circle{fill:var(--panel);stroke:var(--muted);stroke-width:1.2}
+.d-axis{stroke:var(--muted);stroke-width:1;stroke-dasharray:2 4}
+.d-aurora path,.d-halo{fill:none;stroke:var(--lime);stroke-width:2.6;stroke-linecap:round}
+.d-p{fill:var(--warm)}
+.d-p.e{fill:var(--lime)}
+.d-tags text{fill:var(--muted);font:700 9px var(--mono);letter-spacing:.12em}
+.d-bh{display:none}
+.d-ring{fill:none;stroke:var(--warm);stroke-width:1.6;vector-effect:non-scaling-stroke}
+@media (prefers-reduced-motion:reduce){.d-particles{display:none}}
+@supports (animation-timeline:view()){
+  @media (prefers-reduced-motion:no-preference){
+    .descent{height:320svh;padding:0;view-timeline:--descent block}
+    .descent-stage{position:sticky;top:0;height:100svh;max-width:none;overflow:clip;grid-template-columns:minmax(0,1fr);grid-template-rows:minmax(0,1fr) auto auto;gap:10px;padding-block:76px 20px}
+    .descent-art{height:100%;max-height:none;overflow:visible}
+    .descent-steps{max-width:660px;width:100%;margin:0 auto;min-height:7.6em;gap:0}
+    .descent-steps li{grid-area:1/1;animation:d-step linear both;animation-timeline:--descent}
+    .descent-steps li:nth-child(1){animation-name:d-step-first;animation-range:contain 0% contain 18%}
+    .descent-steps li:nth-child(2){animation-range:contain 16% contain 40%}
+    .descent-steps li:nth-child(3){animation-range:contain 38% contain 60%}
+    .descent-steps li:nth-child(4){animation-range:contain 58% contain 80%}
+    .descent-steps li:nth-child(5){animation-name:d-step-last;animation-range:contain 78% contain 90%}
+    .descent-steps li:focus-within{opacity:1!important;visibility:visible!important;transform:none!important}
+    .descent-note{text-align:center}
+    @media (max-width:560px){.descent-art{transform:scale(1.4)}}
+    .d-bh{display:inline;transform-origin:0 0;animation:d-shrink linear both;animation-timeline:--descent;animation-range:contain 0% contain 30%}
+    .d-bh image{animation:d-out linear both;animation-timeline:--descent;animation-range:contain 2% contain 20%}
+    .d-earth{animation:d-in linear both;animation-timeline:--descent;animation-range:contain 14% contain 26%}
+    .d-halo{animation:d-in linear both;animation-timeline:--descent;animation-range:contain 24% contain 30%}
+    .d-lines path{stroke-dasharray:1;animation:d-draw linear both;animation-timeline:--descent;animation-range:contain 22% contain 46%}
+    .d-particles{animation:d-in linear both;animation-timeline:--descent;animation-range:contain 46% contain 56%}
+    .d-belts{animation:d-in linear both;animation-timeline:--descent;animation-range:contain 40% contain 58%}
+    .d-tags text{animation:d-in linear both;animation-timeline:--descent;animation-range:contain 50% contain 60%}
+    .d-tags text:last-child,.d-aurora path{animation:d-in linear both;animation-timeline:--descent;animation-range:contain 60% contain 72%}
+  }
+}
+/* The ring ends exactly on the north-pole halo (numbers printed by tools/make_descent.py). */
+@keyframes d-shrink{0%{transform:none;opacity:1}85%{opacity:1}100%{transform:translate(0px,-37px) scale(.1014,.0304);opacity:0}}
+@keyframes d-out{to{opacity:0}}
+@keyframes d-in{from{opacity:0}}
+@keyframes d-draw{from{stroke-dashoffset:1}to{stroke-dashoffset:0}}
+@keyframes d-step{0%{opacity:0;visibility:hidden;transform:translateY(10px)}20%,80%{opacity:1;visibility:visible;transform:none}100%{opacity:0;visibility:hidden;transform:translateY(-10px)}}
+@keyframes d-step-first{0%,70%{opacity:1;visibility:visible}100%{opacity:0;visibility:hidden}}
+@keyframes d-step-last{from{opacity:0;visibility:hidden;transform:translateY(10px)}to{opacity:1;visibility:visible;transform:none}}
+
+/* Starfield (landing): two planes of faint stars behind the descent and the doors. They scroll with the page while the
+   descent's stage stays put, and the far plane drifts at a different rate, so the scene reads as deep space. */
+.starfield{position:relative;isolation:isolate}
+.starfield::before,.starfield::after{content:"";position:absolute;inset:0;z-index:-1;pointer-events:none}
+.starfield::before{opacity:.5;background-size:380px 380px;background-image:radial-gradient(1px 1px at 12% 18%,rgba(243,240,232,.85),transparent 70%),
+  radial-gradient(1px 1px at 68% 42%,rgba(243,240,232,.7),transparent 70%),radial-gradient(1.4px 1.4px at 38% 76%,rgba(243,240,232,.8),transparent 70%),
+  radial-gradient(1px 1px at 86% 12%,rgba(243,240,232,.6),transparent 70%),radial-gradient(1px 1px at 24% 58%,rgba(243,240,232,.5),transparent 70%),
+  radial-gradient(1px 1px at 54% 92%,rgba(243,240,232,.6),transparent 70%)}
+.starfield::after{opacity:.28;background-size:610px 610px;background-image:radial-gradient(1px 1px at 30% 30%,rgba(243,240,232,.9),transparent 70%),
+  radial-gradient(1px 1px at 78% 64%,rgba(243,240,232,.8),transparent 70%),radial-gradient(1px 1px at 8% 84%,rgba(243,240,232,.7),transparent 70%)}
+@supports (animation-timeline:scroll()){
+  @media (prefers-reduced-motion:no-preference){
+    .starfield::after{animation:far-drift linear both;animation-timeline:scroll(root)}
+  }
+}
+@keyframes far-drift{to{background-position:0 520px}}
+
+/* Gauss for Education: the classroom's labs and the student start form. */
+.doors-more{margin:22px 0 0;color:var(--muted)}
+.labs{list-style:none;margin:28px 0 0;padding:0;display:grid;gap:16px}
+.lab{border:1px solid var(--char);border-radius:var(--radius);padding:24px;background:linear-gradient(180deg,rgba(243,240,232,.04),rgba(243,240,232,0) 42%),var(--panel)}
+.lab h2{margin:.35em 0 .3em}
+.lab-steps{margin:12px 0 0;padding-left:22px;color:var(--muted);display:grid;gap:6px}
+.edu-start{margin-top:10px}
+.edu-start .actions{margin-top:12px}
+
+/* Constellation events (from Luma): date on the left, the event on the right. */
+.events{list-style:none;margin:20px 0 0;padding:0;display:grid;gap:10px}
+.event{display:grid;grid-template-columns:minmax(150px,220px) 1fr;gap:16px;align-items:baseline;padding:14px 18px;border:1px solid var(--char);border-radius:var(--radius);
+  background:linear-gradient(180deg,rgba(243,240,232,.04),rgba(243,240,232,0) 50%),var(--panel)}
+.event time{display:grid;gap:2px}
+.event time span{color:var(--muted);font-size:14px}
+.event a{font-weight:600;font-size:18px;text-decoration-color:var(--accent2)}
+.events.past .event{opacity:.72}
+.events-h{margin:36px 0 0}
+@media (max-width:560px){.event{grid-template-columns:1fr;gap:6px}}
+
+/* Primary link buttons point onward; the arrow eases forward on hover (form buttons and outlines stay plain). */
+.actions > a.btn:not(.ghost)::after{content:"\2192";display:inline-block;transition:transform .2s cubic-bezier(.2,.7,.2,1)}
+@media (prefers-reduced-motion:no-preference){.actions > a.btn:not(.ghost):hover::after{transform:translateX(3px)}}
