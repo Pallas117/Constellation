@@ -173,10 +173,10 @@ jobs:
               body: `${validIcon} **Migration Validation**: ${validation === 'success' ? 'PASSED' : 'FAILED'}\n${safeIcon} **Downtime Risk**: ${safety === 'success' ? 'NONE' : 'Review detected'}\n\nEnsure backup created before deployment.`
             });
 
-status-check:
+  status-check:
     name: Migration Safety Gates
     runs-on: ubuntu-latest
-    needs: [migration-validation, migration-safety, rollback-test, backup-verification]
+    needs: [migration-validation, migration-safety, migration-rollback, backup-verification]
     if: always()
     steps:
       - name: Check migration safety

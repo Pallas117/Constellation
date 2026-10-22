@@ -10,7 +10,7 @@
 
 'use client';
 
-import { useRef, useMemo } from 'react';
+import { useEffect, useRef, useMemo } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 
@@ -37,8 +37,8 @@ export const MHDWaves = ({
   amplitude = 0.4,
   speed = 1,
 }: MHDWavesProps) => {
-  const shearLinesRef = useRef<THREE.Group>(null);
-  const fastWaveRef = useRef<THREE.Mesh>(null);
+  const shearLinesRef = useRef<THREE.LineSegments<THREE.BufferGeometry, THREE.ShaderMaterial>>(null);
+  const fastWaveRef = useRef<THREE.Mesh<THREE.BufferGeometry, THREE.ShaderMaterial>>(null);
 
   // ---- Shear Alfvén: field lines along B (z) with transverse displacement ----
   // Displacement u_perp ∝ sin(k·z - ω·t), ω = k·V_A
@@ -87,10 +87,10 @@ export const MHDWaves = ({
     return new THREE.ShaderMaterial({
       uniforms: {
         time: { value: 0 },
-        amplitude: { value: amplitude },
+        amplitude: { value: 0 }, // set every frame
         k: { value: K },
         vA: { value: V_A },
-        speed: { value: speed },
+        speed: { value: 1 }, // set every frame
       },
       vertexShader: `
         attribute float phase;
@@ -119,7 +119,7 @@ export const MHDWaves = ({
       depthWrite: true,
       linewidth: 2,
     });
-  }, [amplitude, speed]);
+  }, []); // amplitude and speed are uniforms, set every frame: no rebuild or recompile
 
   // ---- Fast magnetosonic: ripple on a disc (compressional wave) ----
   const fastWaveGeometry = useMemo(() => {
@@ -159,9 +159,9 @@ export const MHDWaves = ({
     return new THREE.ShaderMaterial({
       uniforms: {
         time: { value: 0 },
-        amplitude: { value: amplitude * 0.5 },
+        amplitude: { value: 0 }, // set every frame
         k: { value: K * 0.8 },
-        speed: { value: speed },
+        speed: { value: 1 }, // set every frame
       },
       vertexShader: `
         varying vec3 vNormal;
@@ -200,46 +200,53 @@ export const MHDWaves = ({
       depthWrite: false,
       blending: THREE.AdditiveBlending,
     });
-  }, [amplitude, speed]);
+  }, []); // amplitude and speed are uniforms, set every frame: no rebuild or recompile
+
+  useEffect(
+    () => () => {
+      shearGeometry.dispose();
+      fastWaveGeometry.dispose();
+      shearMaterial.dispose();
+      fastWaveMaterial.dispose();
+    },
+    [shearGeometry, fastWaveGeometry, shearMaterial, fastWaveMaterial],
+  );
 
   useFrame((state) => {
+    if (!visible) return;
     const t = state.clock.elapsedTime;
-    if (shearMaterial) {
-      shearMaterial.uniforms.time.value = t;
-      shearMaterial.uniforms.amplitude.value = amplitude;
-      shearMaterial.uniforms.speed.value = speed;
+    const shear = shearLinesRef.current?.material;
+    if (shear) {
+      shear.uniforms.time.value = t;
+      shear.uniforms.amplitude.value = amplitude;
+      shear.uniforms.speed.value = speed;
     }
-    if (fastWaveMaterial) {
-      fastWaveMaterial.uniforms.time.value = t;
-      fastWaveMaterial.uniforms.amplitude.value = amplitude * 0.5;
-      fastWaveMaterial.uniforms.speed.value = speed;
+    const fast = fastWaveRef.current?.material;
+    if (fast) {
+      fast.uniforms.time.value = t;
+      fast.uniforms.amplitude.value = amplitude * 0.5;
+      fast.uniforms.speed.value = speed;
     }
   });
-
-  if (!visible) return null;
 
   const showShear = mode === 'shear' || mode === 'both';
   const showFast = mode === 'fast' || mode === 'both';
 
+  // Mounted even when hidden, so the scene's shader warm-up compiles these too and
+  // switching the layer on draws at once instead of stalling to compile.
   return (
-    <group name="mhd-waves">
-      {showShear && (
-        <group ref={shearLinesRef}>
-          <lineSegments
-            geometry={shearGeometry}
-            material={shearMaterial}
-          />
-        </group>
-      )}
-      {showFast && (
-        <mesh
-          ref={fastWaveRef}
-          geometry={fastWaveGeometry}
-          material={fastWaveMaterial}
-          rotation={[-Math.PI / 2, 0, 0]}
-          position={[0, 0, 0]}
-        />
-      )}
+    <group name="mhd-waves" visible={visible}>
+      <group visible={showShear}>
+        <lineSegments ref={shearLinesRef} geometry={shearGeometry} material={shearMaterial} />
+      </group>
+      <mesh
+        ref={fastWaveRef}
+        visible={showFast}
+        geometry={fastWaveGeometry}
+        material={fastWaveMaterial}
+        rotation={[-Math.PI / 2, 0, 0]}
+        position={[0, 0, 0]}
+      />
     </group>
   );
 };

@@ -1,28 +1,22 @@
 /**
- * ReasoningStream — LLM / RAG inference panel + 72-hour ML forecast widget.
- *
- * Self-contained; wraps GaussRagPanel with bottom-centre positioning and
- * the 72-hour anomaly-probability banner (or "unavailable" when no trained model is deployed). GPU-isolated via will-change.
+ * ReasoningStream — knowledge-base assistant plus the ML storm forecast,
+ * centred under the scene in the operator console. The forecast says
+ * "unavailable" when no trained model is deployed.
  */
 
 import { GaussRagPanel } from './GaussRagPanel';
 import { useAnomalyForecast } from '@/hooks/useAnomalyForecast';
-import { AlertTriangle, Activity, ShieldCheck } from 'lucide-react';
-
-const containerStyle: React.CSSProperties = {
-  willChange: 'transform',
-  transform: 'translate3d(-50%, 0, 0)',
-  contain: 'layout style',
-};
+import { StatusBadge, type BadgeTone } from '@/components/brand/StatusBadge';
 
 function ForecastBanner() {
   const { forecast, loading, error } = useAnomalyForecast();
 
   if (loading && !forecast) {
+    // 250 ms rule: show that the model is working rather than an empty slot.
     return (
-      <div className="flex items-center gap-2 px-3 py-1.5 bg-black/50 border border-primary/10 text-[8px] font-mono text-primary/30 uppercase tracking-widest">
-        <Activity size={8} className="animate-pulse" />
-        FORECAST: AWAITING_NODE
+      <div className="hud-panel flex items-center gap-2 px-3 py-2 font-mono text-xs text-muted-foreground">
+        <span aria-hidden="true" className="h-1.5 w-1.5 animate-pulse rounded-full bg-muted-foreground" />
+        Storm forecast: computing…
       </div>
     );
   }
@@ -31,70 +25,43 @@ function ForecastBanner() {
   if (!forecast || !('anomalyProbability' in forecast)) {
     const reason = forecast && 'reason' in forecast ? forecast.reason : error ?? 'No forecast';
     return (
-      <div
-        className="flex items-center gap-2 px-3 py-1.5 bg-black/50 border border-primary/10 text-[8px] font-mono text-muted-foreground uppercase tracking-widest"
-        title={reason}
-      >
-        <Activity size={8} />
-        FORECAST: UNAVAILABLE &nbsp;|&nbsp; {reason}
+      <div className="hud-panel flex items-center gap-2 px-3 py-2 font-mono text-xs text-muted-foreground" title={reason}>
+        <StatusBadge tone="neutral">Unavailable</StatusBadge>
+        <span className="truncate">{reason}</span>
       </div>
     );
   }
 
-  const pct = (forecast.anomalyProbability * 100).toFixed(1);
-  const kpMax = forecast.predictedKpMax.toFixed(1);
   // Severity follows the storm probability: it has held-out skill, while the Kp estimate trails
   // persistence during storms (see the model's gate warnings).
-  const isHighRisk = forecast.anomalyProbability >= 0.2;
-  const isSevere = forecast.anomalyProbability >= 0.5;
-
-  const colour = isSevere
-    ? 'border-red-500/60 text-red-400'
-    : isHighRisk
-    ? 'border-yellow-500/50 text-yellow-400'
-    : 'border-primary/20 text-primary/60';
-
-  const Icon = isSevere ? AlertTriangle : isHighRisk ? AlertTriangle : ShieldCheck;
+  const p = forecast.anomalyProbability;
+  const tone: BadgeTone = p >= 0.5 ? 'risk' : p >= 0.2 ? 'caution' : 'neutral';
+  const word = p >= 0.5 ? 'Storm likely' : p >= 0.2 ? 'Elevated' : 'Quiet';
 
   return (
-    <div
-      className={`flex items-start gap-2 px-3 py-2 bg-black/60 border backdrop-blur-sm ${colour}`}
-      title={forecast.warningMessage}
-    >
-      <Icon size={10} className="mt-0.5 shrink-0" />
-      <div className="space-y-0.5 text-left">
-        <p className="text-[9px] font-bold uppercase tracking-wider">
-          {forecast.horizonHours}H_FORECAST &nbsp;|&nbsp; P(G1+) = {pct}% &nbsp;|&nbsp; Kp ≈ {kpMax}
+    <div className="hud-panel px-3 py-2" title={forecast.warningMessage}>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="font-mono text-xs tabular-nums text-foreground">
+          {forecast.horizonHours} h forecast · P(G1+) {(p * 100).toFixed(1)}% · Kp max ≈ {forecast.predictedKpMax.toFixed(1)}
         </p>
-        <p className="text-[8px] opacity-70 font-mono truncate max-w-[440px]">
-          {forecast.warningMessage}
-        </p>
-        <p className="text-[7px] opacity-40 font-mono">
-          ENSEMBLE: [{(forecast.confidenceInterval[0] * 100).toFixed(0)}%,
-          {(forecast.confidenceInterval[1] * 100).toFixed(0)}%]
-          &nbsp; MDL: {forecast.modelVersion}
-        </p>
+        <StatusBadge tone={tone}>{word}</StatusBadge>
       </div>
+      <p className="mt-1 truncate text-xs text-muted-foreground">{forecast.warningMessage}</p>
+      <p className="mt-0.5 font-mono text-[11px] text-muted-foreground">
+        CI {(forecast.confidenceInterval[0] * 100).toFixed(0)}–{(forecast.confidenceInterval[1] * 100).toFixed(0)}% · model{' '}
+        {forecast.modelVersion}
+      </p>
     </div>
   );
 }
 
 export function ReasoningStream() {
   return (
-    <div
-      className="absolute bottom-6 left-1/2 flex flex-col items-center gap-1.5 pointer-events-none"
-      style={containerStyle}
-    >
-      <div className="pointer-events-auto">
-        <GaussRagPanel />
-      </div>
-
-      <div className="pointer-events-auto w-full">
-        <ForecastBanner />
-      </div>
-
-      <p className="text-[8px] text-primary/30 font-bold uppercase tracking-[0.4em]">
-        FEED_SRC: NOAA_SWPC // NASA_DSCOVR
+    <div className="flex w-full max-w-xl flex-col gap-2">
+      <GaussRagPanel />
+      <ForecastBanner />
+      <p className="text-center font-mono text-[11px] text-muted-foreground">
+        Sources: NOAA SWPC real-time solar wind (L1) · ML storm forecast
       </p>
     </div>
   );

@@ -1,5 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
+import { deviceAuthSecret } from "../services/device-auth.js";
 
 type ControlStatus = "pass" | "warn" | "fail";
 
@@ -48,15 +49,23 @@ function runChecks(): ControlCheck[] {
       : "AUTH_REQUIRED=false detected. Use only for local non-production debugging.",
   });
 
-  const hasRoleGate = checkFileContains("backend/server.ts", /requireRole\("admin"\)|requireRole\("operator"\)/);
+  // Role gates live in one deny-by-default table (backend/rbac.ts) applied to every /api route;
+  // rbac.test.ts fails if a declared route has no policy. Per-route requireRole() also counts.
+  const centralPolicy =
+    checkFileContains("backend/server.ts", /app\.use\("\/api",\s*enforceApiPolicy\)/) &&
+    checkFileContains("backend/rbac.ts", /access:\s*"(operator|admin)"/);
+  const perRouteGate = checkFileContains("backend/server.ts", /requireRole\("admin"\)|requireRole\("operator"\)/);
+  const hasRoleGate = centralPolicy || perRouteGate;
   checks.push({
     id: "NIST-CSF-PR.AA",
     framework: "NIST CSF 2.0",
     title: "Role-based authorization control",
     status: hasRoleGate ? "pass" : "fail",
-    details: hasRoleGate
-      ? "Role gate calls found in backend routes."
-      : "No role gate calls detected in backend routes.",
+    details: centralPolicy
+      ? "Deny-by-default role policy (backend/rbac.ts) enforced on every /api route."
+      : perRouteGate
+        ? "Role gate calls found in backend routes."
+        : "No role gate detected: neither the API policy table nor per-route requireRole().",
   });
 
   const hasAuditEvents = checkFileContains("backend/cybertiger/daemon.ts", /type:\s*"auth\.failure"|type:\s*"ip\.blocked"/);
@@ -101,6 +110,17 @@ function runChecks(): ControlCheck[] {
     details: hasSpaceGuidanceDoc
       ? "Compliance baseline document present."
       : "Compliance baseline document missing.",
+  });
+
+  const deviceKeyConfigured = deviceAuthSecret() !== null;
+  checks.push({
+    id: "NIST-IA-3",
+    framework: "NIST SP 800-53 Rev.5",
+    title: "Device identification and authentication key",
+    status: deviceKeyConfigured ? "pass" : "warn",
+    details: deviceKeyConfigured
+      ? "DEVICE_AUTH_SECRET is set (32+ characters, not a value that has been public)."
+      : "DEVICE_AUTH_SECRET is unset, too short or a public value; device proofs are disabled (fail closed).",
   });
 
   return checks;

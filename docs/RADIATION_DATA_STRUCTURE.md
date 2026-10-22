@@ -1,299 +1,105 @@
 # Space Radiation Data Structure
 
-This document describes the project structure for the space radiation web app, focusing on visualizing real-time and historical radiation data in Earth's orbit (LEO, MEO, GEO).
+The types, CSV parsers and utilities behind the radiation overlay in the heliophysics scene
+(`components/scene/RadiationDataOverlay.tsx`, `RadiationDataOverlayLOD.tsx`, `SpaceScene.tsx`,
+`pages/HeliophysicsDashboard.tsx`). The old radiation dashboard (its components, the
+`useRadiationData` hooks and the NASA OMNI and SPENVIS clients) was removed in #74.
 
-## Project Structure
+## Where it lives
 
 ```
-src/
-├── lib/
-│   ├── types/
-│   │   ├── radiation.ts          # Type definitions for radiation measurements
-│   │   └── index.ts              # Central type exports
-│   ├── api/
-│   │   ├── nasa-omni.ts          # NASA OMNI API client
-│   │   ├── spenvis.ts            # SPENVIS API client
-│   │   ├── csv-parsers.ts        # CSV parsers for ERG/Arase and CSES
-│   │   └── index.ts              # Central API exports
-│   ├── utils/
-│   │   ├── radiation.ts          # Radiation data processing utilities
-│   │   └── index.ts              # Central utility exports
-│   └── utils.ts                  # General utilities (cn, etc.)
-├── hooks/
-│   ├── useRadiationData.ts       # Main hook for radiation data management
-│   └── ...                       # Other hooks
-├── components/
-│   ├── radiation/                # Radiation-specific components
-│   │   ├── RadiationChart.tsx    # Recharts visualization component
-│   │   ├── RadiationFilter.tsx   # Data filtering UI
-│   │   ├── RadiationStatistics.tsx # Statistics display
-│   │   └── index.ts              # Component exports
-│   ├── ui/                       # ShadCN/ui components
-│   └── ...                       # Other components
-└── pages/                        # Page components
+frontend/src/lib/
+├── types/radiation.ts              # Measurement, data point, time series and filter types
+├── api/csv-parsers.ts              # CSV parsers for ERG/Arase, CSES and generic files
+├── utils/radiation.ts              # Filtering, zones, time series, statistics, alert levels
+├── utils/radiation-calculations.ts # Absorbed dose rate, flux conversion, source names
+└── physics/stopping-power.ts       # NIST stopping powers in silicon (used by the dose rate)
 ```
 
-## Type Definitions
+## Type definitions (`lib/types/radiation.ts`)
 
-### Core Types (`lib/types/radiation.ts`)
-
-#### `RadiationMeasurement`
-The core interface for a single radiation measurement:
+### `RadiationMeasurement`
+One radiation measurement:
 - `timestamp`: ISO 8601 timestamp
-- `particleFlux`: Particle flux in particles/(cm²·s·sr·MeV)
-- `altitude`: Altitude in kilometers
-- `L_shell`: L-shell parameter (McIlwain L)
-- `latitude` / `longitude`: Optional geographic coordinates
-- `particleType`: 'proton' | 'electron' | 'alpha' | 'heavy_ion'
-- `energyRange`: Energy range in MeV
-- `orbitType`: 'LEO' | 'MEO' | 'GEO'
-- `source`: Data source identifier
-- `metadata`: Optional metadata
+- `particleFlux`: particles/(cm²·s·sr·MeV), or particles/(cm²·s)
+- `altitude`: km
+- `L_shell`: McIlwain L (dimensionless)
+- `radiationZone`: optional zone derived from L-shell and altitude
+- `latitude` / `longitude`: optional geographic coordinates (degrees)
+- `particleType`: `'proton' | 'electron' | 'alpha' | 'heavy_ion'`
+- `energyRange`: energy range in MeV
+- `orbitType`: `'LEO' | 'MEO' | 'GEO'`
+- `source`: data source identifier
+- `metadata`: optional (instrument, quality, uncertainty)
 
-#### `RadiationDataFilter`
-Filter parameters for querying radiation data:
-- Time range (startTime, endTime)
-- Orbit types, particle types
-- Energy range, L-shell range, altitude range
-- Data sources
-- Result limit
+### `RadiationDataFilter`
+Query filter: time range, orbit and particle types, energy, L-shell and altitude ranges, data
+sources, result limit.
 
-## Data Sources
+The file also defines `RadiationDataPoint` (what the overlay draws), `RadiationTimeSeries`,
+`RadiationDataResponse`, `RealTimeRadiationSnapshot`, `RadiationZone`, `AlertLevel` and
+`EnergyRange`.
 
-### 1. NASA OMNI (`lib/api/nasa-omni.ts`)
-- **Purpose**: Solar wind and radiation data from NASA's OMNI database
-- **Function**: `fetchOMNIData(params: OMNIQueryParams)`
-- **Returns**: Array of `RadiationMeasurement`
-- **Note**: API endpoint may need adjustment based on actual OMNI web service
+## CSV sources (`lib/api/csv-parsers.ts`)
 
-### 2. SPENVIS (`lib/api/spenvis.ts`)
-- **Purpose**: Space environment and radiation data
-- **Function**: `fetchSPENVISData(params: SPENVISQueryParams)`
-- **Returns**: Array of `RadiationMeasurement`
-- **Note**: May require authentication or web interface adaptation
+- **ERG/Arase:** `parseERGAraseCSV(csvContent, options)`, or `loadRadiationCSV(fileOrUrl, 'erg-arase')`
+- **CSES** (China Seismo-Electromagnetic Satellite): `parseCSESCSV(csvContent, options)`, or
+  `loadRadiationCSV(fileOrUrl, 'cses')`
+- **Other files:** `parseGenericRadiationCSV(csvContent, options)`
 
-### 3. ERG/Arase CSV (`lib/api/csv-parsers.ts`)
-- **Purpose**: Parse ERG/Arase satellite data from CSV files
-- **Function**: `parseERGAraseCSV(csvContent, options)`
-- **Usage**: `loadRadiationCSV(fileOrUrl, 'erg-arase')`
+The parsers assume the standard column layouts; `CSVParserOptions` adjusts them.
 
-### 4. CSES CSV (`lib/api/csv-parsers.ts`)
-- **Purpose**: Parse CSES (China Seismo-Electromagnetic Satellite) data from CSV files
-- **Function**: `parseCSESCSV(csvContent, options)`
-- **Usage**: `loadRadiationCSV(fileOrUrl, 'cses')`
+## Utilities (`lib/utils/radiation.ts`)
 
-## Custom Hook: `useRadiationData`
+### Filtering and zones
+- `filterRadiationData(data, filter)`: filter measurements by a `RadiationDataFilter`
+- `RADIATION_ZONES`, `getRadiationZone(measurement)`: zone from L-shell and altitude
+- `toDataPoint(measurement)`: `RadiationMeasurement` → `RadiationDataPoint`
 
-### Basic Usage
+### Time series and statistics
+- `createTimeSeries(measurements, orbitType?, particleType?, energyRange?)`
+- `interpolateTimeSeries(timeSeries, intervalMs)`: fill missing points
+- `calculateStatistics(measurements)`
+- `groupByOrbitType(measurements)`, `groupByParticleType(measurements)`
 
-```tsx
-import { useRadiationData } from '@/hooks/useRadiationData';
+### Alert levels
+- `getAlertLevel(integralFluxPfu, particleType)`: alert level from integral flux in pfu.
+  - Protons (≥10 MeV) use the NOAA S-scale (`noaaSolarRadiationStormLevel`: S1 ≥ 10 pfu up to S5 ≥ 10⁵ pfu).
+  - Electrons (>2 MeV) use the SWPC 1000 pfu internal-charging alert (`SWPC_ELECTRON_ALERT_PFU`).
+  - Returns `null` for alpha particles and heavy ions.
+  - `ALERT_CHANNEL_MEV` gives each threshold's channel.
+  - Sources: https://www.swpc.noaa.gov/noaa-scales-explanation and
+    https://www.swpc.noaa.gov/products/goes-electron-flux
+- `getAlertLevelFromMeasurements(measurements)`: the most severe level across species, from a
+  lower bound on the integral flux of differential bins.
 
-function RadiationDashboard() {
-  const {
-    measurements,
-    filteredMeasurements,
-    filter,
-    setFilter,
-    timeSeries,
-    realTimeSnapshot,
-    statistics,
-    isLoading,
-    error,
-    refetch,
-  } = useRadiationData({
-    realTime: true,
-    updateInterval: 60000, // 1 minute
-    sources: ['nasa-omni', 'spenvis'],
-    csvSources: {
-      'erg-arase': '/data/erg-arase.csv',
-      'cses': '/data/cses.csv',
-    },
-  });
+## Calculations (`lib/utils/radiation-calculations.ts`)
 
-  if (isLoading) return <div>Loading...</div>;
-  if (error) return <div>Error: {error.message}</div>;
+### Absorbed dose rate (Si)
 
-  return (
-    <div>
-      {/* Your UI here */}
-    </div>
-  );
-}
+`calculateDoseRate(flux, energyRange, particleType)` returns the absorbed dose rate in a thin,
+unshielded silicon layer (Gy(Si)/s), or `null`:
+
+```
+Φ    = 4π × j × (Emax − Emin)          // cm⁻²·s⁻¹, isotropic; j in cm⁻²·s⁻¹·sr⁻¹·MeV⁻¹
+S̄    = (1/ΔE) ∫ S(E) dE                 // MeV·cm²/g, NIST PSTAR/ESTAR (Si, electronic)
+Ḋ    = 1.602e-10 × Φ × S̄                // Gy(Si)/s
 ```
 
-### Options
+- Stopping powers come from `lib/physics/stopping-power.ts` (NIST SRD 124, silicon).
+- The bin uses the bin-averaged S̄ because j is taken as flat across the bin.
+- Gy(Si) is the total-ionising-dose unit for electronics. It is not a tissue dose, and it is
+  not in Sv: Sv needs tissue and a LET-dependent quality factor.
+- Alpha particles and heavy ions return `null` (no stopping-power table here), as do empty bins
+  and bins outside the table.
+- `getDoseRateFromMeasurement(measurement)` applies it to one measurement.
+- `unidirectionalToOmnidirectional` converts the flux.
+- `formatSourceName` turns a source id into a label, e.g. `erg-arase` → "ERG/Arase".
 
-- `realTime`: Enable automatic updates (default: false)
-- `updateInterval`: Update interval in milliseconds (default: 60000)
-- `initialFilter`: Initial filter parameters
-- `sources`: Array of data sources to fetch from
-- `csvSources`: Object mapping source names to CSV file URLs or File objects
-- `enableCache`: Enable React Query caching (default: true)
-
-### Return Values
-
-- `measurements`: All fetched measurements
-- `filteredMeasurements`: Measurements filtered by current filter
-- `filter`: Current filter parameters
-- `setFilter`: Function to update filter
-- `timeSeries`: Array of time series data for visualization
-- `realTimeSnapshot`: Current real-time snapshot (if realTime enabled)
-- `statistics`: Calculated statistics for current data
-- `isLoading`: Loading state
-- `error`: Error state
-- `refetch`: Manual refetch function
-- `lastUpdate`: Last update timestamp
-
-## Utility Functions (`lib/utils/radiation.ts`)
-
-### Filtering
-- `filterRadiationData(data, filter)`: Filter measurements by criteria
-
-### Time Series
-- `createTimeSeries(measurements, orbitType?, particleType?, energyRange?)`: Create time series from measurements
-- `interpolateTimeSeries(timeSeries, intervalMs)`: Interpolate missing data points
-
-### Statistics
-- `calculateStatistics(measurements)`: Calculate comprehensive statistics
-- `getAlertLevel(flux, particleType)`: Determine alert level based on flux
-
-### Grouping
-- `groupByOrbitType(measurements)`: Group by orbit type
-- `groupByParticleType(measurements)`: Group by particle type
-
-## Components
-
-### `RadiationChart`
-Recharts-based line chart for visualizing radiation flux over time.
-
-```tsx
-import { RadiationChart } from '@/components/radiation';
-
-<RadiationChart
-  timeSeries={timeSeries}
-  title="Radiation Flux Over Time"
-  description="LEO, MEO, and GEO measurements"
-  showLegend={true}
-/>
-```
-
-### `RadiationFilter`
-Interactive filter UI for configuring data queries.
-
-```tsx
-import { RadiationFilter } from '@/components/radiation';
-
-<RadiationFilter
-  filter={filter}
-  onFilterChange={setFilter}
-  onApply={() => refetch()}
-/>
-```
-
-### `RadiationStatistics`
-Display statistics and real-time status.
-
-```tsx
-import { RadiationStatistics } from '@/components/radiation';
-
-<RadiationStatistics
-  statistics={statistics}
-  realTimeSnapshot={realTimeSnapshot}
-  lastUpdate={lastUpdate}
-/>
-```
-
-## Example: Complete Dashboard
-
-```tsx
-import { useRadiationData } from '@/hooks/useRadiationData';
-import { RadiationChart, RadiationFilter, RadiationStatistics } from '@/components/radiation';
-
-function RadiationDashboard() {
-  const {
-    filteredMeasurements,
-    filter,
-    setFilter,
-    timeSeries,
-    realTimeSnapshot,
-    statistics,
-    isLoading,
-    error,
-    refetch,
-    lastUpdate,
-  } = useRadiationData({
-    realTime: true,
-    sources: ['nasa-omni'],
-    initialFilter: {
-      orbitTypes: ['LEO', 'MEO', 'GEO'],
-      particleTypes: ['proton', 'electron'],
-    },
-  });
-
-  if (isLoading) {
-    return <div>Loading radiation data...</div>;
-  }
-
-  if (error) {
-    return <div>Error: {error.message}</div>;
-  }
-
-  return (
-    <div className="container mx-auto p-6 space-y-6">
-      <h1 className="text-3xl font-bold">Space Radiation Dashboard</h1>
-      
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <div className="lg:col-span-2">
-          <RadiationChart
-            timeSeries={timeSeries}
-            title="Radiation Flux Over Time"
-          />
-        </div>
-        
-        <div>
-          <RadiationFilter
-            filter={filter}
-            onFilterChange={setFilter}
-            onApply={() => refetch()}
-          />
-        </div>
-      </div>
-      
-      <RadiationStatistics
-        statistics={statistics}
-        realTimeSnapshot={realTimeSnapshot}
-        lastUpdate={lastUpdate}
-      />
-    </div>
-  );
-}
-```
-
-## Data Flow
-
-1. **Fetch**: `useRadiationData` hook fetches from configured sources
-2. **Transform**: Raw API/CSV data is converted to `RadiationMeasurement` format
-3. **Filter**: Measurements are filtered based on `RadiationDataFilter`
-4. **Process**: Utilities process data (statistics, time series, etc.)
-5. **Visualize**: Components render the processed data
+There is no magnetic-field estimate here: the old `estimateMagneticField` left out μ₀/4π
+(10⁷ too high) and was unused, so #114 removed it (GAU-151).
 
 ## Notes
 
-- All timestamps are in ISO 8601 format
-- Flux values are in particles/(cm²·s·sr·MeV) or particles/(cm²·s)
-- API endpoints in `nasa-omni.ts` and `spenvis.ts` are placeholders and may need adjustment
-- CSV parsers assume standard formats but can be customized via options
-- React Query handles caching and automatic refetching
-- Components use ShadCN/ui for consistent styling
-
-## Future Enhancements
-
-- WebSocket support for real-time streaming
-- Advanced interpolation algorithms
-- Export functionality (CSV, JSON)
-- 3D visualization components
-- Historical data comparison
-- Alert notifications
-- Data aggregation and downsampling for large datasets
-
+- All timestamps are ISO 8601.
+- Flux values are in particles/(cm²·s·sr·MeV) or particles/(cm²·s).

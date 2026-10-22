@@ -1,0 +1,534 @@
+{
+  "$comment": "Constellation requirements baseline (GAU-120). NASA SP-2016-6105 Rev 2 §6.2/§5.3. Methods: T test, A analysis, I inspection, D demonstration. T evidence = exact test names; A/I/D evidence = repo paths. Verified by `npm run verify`.",
+  "version": "1.9.0",
+  "requirements": [
+    {
+      "id": "REQ-ING-001",
+      "title": "Freshness bound",
+      "statement": "The system shall flag any served space-weather point whose measurement is older than 15 minutes as stale, and shall not carry a measurement forward beyond 15 minutes.",
+      "rationale": "Operators must never act on expired data presented as current.",
+      "parent": "GAU-15",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "latest feed: points older than 15 min are served flagged stale (GAU-15)",
+        "freshness tier follows measurement age, not fetch cadence (GAU-44)",
+        "data expires at 15 min without drifting values toward a baseline",
+        "ingest: an L1 data gap leaves the geomagnetic level known while NOAA Kp is current (GAU-138)"
+      ]
+    },
+    {
+      "id": "REQ-ING-002",
+      "title": "No synthetic variation",
+      "statement": "The ingest pipeline shall not add variation to measured values between fetches.",
+      "rationale": "Jitter makes stale data look live (GAU-44).",
+      "parent": "GAU-44",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "ingest tick: no jitter between fetches, and an over-age readout is dropped (GAU-44)"
+      ]
+    },
+    {
+      "id": "REQ-ING-003",
+      "title": "Bounded ingest tick",
+      "statement": "The ingest tick shall fetch sources in parallel within per-source time budgets and shall never start a tick while the previous one is running.",
+      "rationale": "Sequential 8-9 s timeouts allowed ~40 s ticks and stacked ticks (GAU-110).",
+      "parent": "GAU-110",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "tick reports per-stage latency, and sources are fetched in parallel",
+        "interval never stacks a tick on one still running",
+        "pipeline timer: a stage past its timeout is abandoned and counted"
+      ]
+    },
+    {
+      "id": "REQ-ING-004",
+      "title": "Pipeline health is observable",
+      "statement": "The system shall report per-stage latency and an overall fresh/degraded/stale/stalled verdict derived from data age and loop liveness.",
+      "rationale": "Technical performance measures need a live source (GAU-110).",
+      "parent": "GAU-110",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "pipeline timer: rolling last/p50/p95/max per stage",
+        "pipeline timer: status follows data age and loop liveness"
+      ]
+    },
+    {
+      "id": "REQ-ING-005",
+      "title": "Aurora grid within budget",
+      "statement": "The aurora grid shall be computed within its 1 s stage budget at nside 64 without changing the harmonic coefficients.",
+      "rationale": "It was the dominant stage at 0.6-1.1 s (GAU-110).",
+      "parent": "GAU-110",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "aurora grid at nside 64 builds within its 1 s pipeline budget",
+        "separable harmonics match the generic per-pixel sum"
+      ]
+    },
+    {
+      "id": "REQ-ING-006",
+      "title": "Historical replay through the live pipeline",
+      "statement": "The system shall replay archived storm inputs through the same ingest, sense-check and nowcast code that runs live, on a fixed clock with no input served before it was published, without publishing to the live feed, and shall reproduce its golden output from the same inputs.",
+      "rationale": "Radiation-study row 9 and M1 PR-03 groundwork (GAU-138, GAU-59): claims about past storms must come from the code that runs live, reproducibly.",
+      "parent": "GAU-138",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "replay: the cached storms replay to their golden output, record for record (GAU-138)",
+        "replay: May 2024 reaches G5 and Oct 2024 G4 through the live pipeline (GAU-138)",
+        "replay: Jan 2026 reaches S4, with S2–S3 under G0 for hours before the geomagnetic storm (GAU-138)",
+        "replay: never publishes to the live feed (GAU-138)",
+        "archive: a row is served only once its interval has ended, so nothing leaks from the future (GAU-138)",
+        "archive: archived GSM is rotated to GSE with the live code; RTSW fills reach the parser as null (GAU-138)"
+      ]
+    },
+    {
+      "id": "REQ-DI-001",
+      "title": "Unknown is never nominal",
+      "statement": "A missing, stale or failed input shall be reported as unknown and shall never be rendered as nominal, live, healthy or zero.",
+      "rationale": "GAU-63 sales-gate invariant.",
+      "parent": "GAU-63",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "measured drivers come only from current, complete measurements (GAU-114)",
+        "a feed response that omits its tier is not shown as live (GAU-114)",
+        "HUD never shows stale or missing data as fresh",
+        "unavailable placeholder is deterministic and never claims to be live",
+        "an unconfigured memory service is reported, not faked",
+        "JAXA: catalog reachability is not reported as a healthy data feed (GAU-55)",
+        "a missing, stale or wrong-channel proton reading is unknown, not S0",
+        "a missing, wrong-band or fill X-ray reading is unknown, not R0",
+        "NOAA: an HTTP failure is unknown, keeps the last real time, and names the product, not the URL (GAU-63)",
+        "NOAA: a newest L1 sample 30 min old is reported, but not as healthy (GAU-63)",
+        "NOAA: Kp fill values are skipped, never read as a quiet Kp 0 (GAU-63)",
+        "ESA: a Swarm sample 30 h old is returned but not healthy (GAU-63)",
+        "MMS: survey data older than 90 days is returned but not healthy (GAU-63)",
+        "NOAA alerts: a payload that isn't the alerts format is unknown (null), not 'no alerts' (GAU-63)",
+        "GAU-63: a point with no measurement time yields no observations, never ones stamped now"
+      ]
+    },
+    {
+      "id": "REQ-DI-002",
+      "title": "No fabricated model output",
+      "statement": "The system shall not present random or heuristic values as trained-model output; with no model it shall answer 'unavailable' with a reason.",
+      "rationale": "The '72h LSTM' forecast was Math.random() (GAU-111).",
+      "parent": "GAU-111",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "no inference server: forecast is an explicit unavailable, never a number (GAU-111)",
+        "heuristic nowcast is deterministic, labelled, and claims no confidence (GAU-111)",
+        "inference server failures become unavailable with no URL in the reason (GAU-111)"
+      ]
+    },
+    {
+      "id": "REQ-DI-003",
+      "title": "Derived values carry provenance",
+      "statement": "Every derived value shall carry the method and inputs it was derived from; measured values shall say they are measured.",
+      "rationale": "GAU-63 provenance invariant; Dst was modelled but unlabelled (GAU-84).",
+      "parent": "GAU-84",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "modelled Dst is labelled with its method and inputs; a measured Dst says so (GAU-84)",
+        "tick uses measured Kyoto Dst while fresh, and the model once it is stale (GAU-116)",
+        "ingest: a velocity assumed from the speed, or a locally rotated field, is labelled as derived (GAU-63)"
+      ]
+    },
+    {
+      "id": "REQ-DI-004",
+      "title": "Source freshness from data time",
+      "statement": "Each source's lastSeen and latency shall be taken from the measurement time, never the request time, and a failed fetch shall keep the last real lastSeen.",
+      "rationale": "Request-time freshness hides dead feeds (GAU-54).",
+      "parent": "GAU-54",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "MMS: zero samples does not advance lastSeen to now (GAU-54)",
+        "LASP: valid file_info query, timetag parsed, freshness from the newest file (GAU-89)",
+        "GOES: status freshness comes from the older channel; failures keep the last real time (GAU-112)",
+        "Kyoto Dst: status from the data time; failures keep the last real time, no URL (GAU-116)"
+      ]
+    },
+    {
+      "id": "REQ-DI-005",
+      "title": "Fill values are missing, not zero",
+      "statement": "Adapters shall treat fill, blank and non-numeric values as missing and shall never coerce them to zero.",
+      "rationale": "Number('') is 0; GOES fill values are negative.",
+      "parent": "GAU-63",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "MMS: fill-valued components are rejected rather than zeroed",
+        "GOES: newest valid sample of the S-scale channel; fill and null flux skipped (GAU-112)",
+        "Kyoto Dst: newest valid hour, read as UTC; blanks and bad times skipped (GAU-116)",
+        "Swarm rows: position plus B_NEC; any missing value rejects the row (GAU-85)"
+      ]
+    },
+    {
+      "id": "REQ-DI-006",
+      "title": "Times are UTC",
+      "statement": "Zone-less upstream timestamps shall be interpreted as UTC and invalid ones rejected.",
+      "rationale": "The host runs in UTC+8; local-time parsing shifts data by 8 h.",
+      "parent": "GAU-114",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "NOAA: zone-less SWPC time_tags are read as UTC, invalid ones rejected",
+        "CSV rows with unparseable times are skipped, and compact times are UTC (GAU-114)"
+      ]
+    },
+    {
+      "id": "REQ-DI-007",
+      "title": "Inputs are sense-checked",
+      "statement": "The system shall check each L1 magnetic-field sample, whether the L1 plasma speed follows large changes in the field, the GOES proton spectrum and channels, and the GOES X-ray channel for physical consistency, and shall cross-check its own R, S and G levels against NOAA's published scales; a failed check shall be reported with its reason without silently dropping the sample, and a check with no current input shall read unknown, not pass.",
+      "rationale": "Radiation-study build order step 1 (GAU-134): sense-checks stop wrong conclusions before any analysis is built on them.",
+      "parent": "GAU-136",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "field: Bt below the magnitude of its own components is flagged with a reason",
+        "field: GSE and GSM magnitudes that differ are flagged; a frame change can't alter |B|",
+        "plasma: a speed that holds while |B| triples to over 20 nT is flagged as not tracking (GAU-153)",
+        "plasma: a field that doubles at a steady speed, or a shock that moves the speed, is not flagged",
+        "plasma: too few samples in the window is unknown, not pass",
+        "replay: the stuck ACE speed in Jan 2026 is flagged and lowers confidence; May and Oct 2024 never flag it (GAU-153)",
+        "protons: a spectrum that rises with energy is flagged with both channels",
+        "channels: a fill as the newest sample is flagged; older fills are reported, not hidden",
+        "channels: a flat-lined channel is flagged as saturated or stuck",
+        "GOES X-rays: NOAA's electron-contamination mark on the newest sample is flagged (GAU-136)",
+        "NOAA scales: agreement passes; a disagreement is flagged with both values and Gauss's basis",
+        "NOAA scales: missing or over an hour old is unknown, never agreement",
+        "ingest: every point carries its sense-checks; an inconsistent newest field sample lowers confidence (GAU-136)",
+        "SWPC feeds: only HTTPS JSON on services.swpc.noaa.gov is fetched"
+      ]
+    },
+    {
+      "id": "REQ-PHY-001",
+      "title": "Correct coordinate frames",
+      "statement": "GSE/GSM transforms shall rotate about the shared X axis with the dipole tilt, and the IMF shall come from L1 monitors only.",
+      "rationale": "GAU-51 frame mislabels; Swarm measures the main field (GAU-85).",
+      "parent": "GAU-51",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "gseToGsm rotates about the shared X axis and puts the dipole on +Z",
+        "gsmToGse is the exact inverse of gseToGsm",
+        "dipole tilt follows season and UT (Hapgood 1992)",
+        "ingest: Swarm main-field values never leak into the IMF blend"
+      ]
+    },
+    {
+      "id": "REQ-PHY-002",
+      "title": "Physically valid reconnection products",
+      "statement": "Curlometer currents shall be in correct units, rejected for degenerate tetrahedra, and LMN frames shall be derived by MDD or reported unknown.",
+      "rationale": "GAU-47/GAU-89 review findings.",
+      "parent": "GAU-89",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "curlometer recovers a known current at real MMS separations (nA/m^2)",
+        "curlometer rejects a near-planar tetrahedron",
+        "MDD recovers the current-sheet normal and L along the reconnecting field (GAU-89)",
+        "MDD reports an unknown frame when no direction dominates (GAU-89)"
+      ]
+    },
+    {
+      "id": "REQ-PHY-003",
+      "title": "Bounded Dst model",
+      "statement": "The Dst model estimate shall track driving physically and shall not saturate at its clamp for ordinary IMF.",
+      "rationale": "estimateDst saturated at -400 nT (GAU-62).",
+      "parent": "GAU-62",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "Dst: quiet northward IMF stays near the pressure baseline, not a storm",
+        "Dst: weak southward IMF gives a modest equilibrium, never the -400 clamp",
+        "Dst: strong driving deepens over hours and relaxes back after",
+        "nowcast: constant input keeps Bz's sign and value across ticks (no component-mean shift)"
+      ]
+    },
+    {
+      "id": "REQ-PHY-004",
+      "title": "L1 structure candidates for operators",
+      "statement": "The system shall detect L1 structure candidates (interplanetary shocks, ICMEs, high-speed streams, sustained southward driving and a magnetopause inside geostationary orbit) over the last 24 h of L1 data, and shall present each to operators with a confidence label, never as a confirmed event, on an operator-only route.",
+      "rationale": "Radiation-study row 6 (GAU-139), shown to operators by GAU-154; validated on a pre-registered holdout (docs/L1_STRUCTURES_HOLDOUT.md).",
+      "parent": "GAU-154",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "l1 structures: a clean fast-forward shock is found at the jump, with its arrival at Earth",
+        "l1 structures: a cold, low-beta ejecta with a strong field is an ICME candidate; a hot sheath is not",
+        "SWPC adapter: structure candidates cover all the L1 hours it reads, not just the point's 3 h (GAU-154)",
+        "operator console: L1 candidates are listed newest first with their confidence; recent non-low ones need attention (GAU-154)",
+        "role matrix"
+      ]
+    },
+    {
+      "id": "REQ-ML-001",
+      "title": "Model promotion gate",
+      "statement": "A forecasting model shall be served only after passing its held-out promotion gate, and promotion shall be an explicit step that refuses failed candidates.",
+      "rationale": "GAU-38 guardrail: no automatic production model promotion (GAU-113).",
+      "parent": "GAU-113",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "Kp model unit tests (python)",
+        "the real inference server serves the promoted Kp model, honestly (GAU-113)"
+      ]
+    },
+    {
+      "id": "REQ-ML-002",
+      "title": "Live forecast from measured history",
+      "statement": "The live forecast shall be computed from the last 6 h of non-stale measured points and served from the ingest loop's cache.",
+      "rationale": "GAU-115.",
+      "parent": "GAU-115",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "forecast window: last 6 h of measured points, one per minute (GAU-115)",
+        "the worker exposes its last forecast for the API to serve (GAU-115)"
+      ]
+    },
+    {
+      "id": "REQ-ML-003",
+      "title": "Model card",
+      "statement": "Every promoted model shall have a model card stating data, splits, held-out metrics, gate result and known limitations.",
+      "rationale": "Evaluation evidence (GAU-40).",
+      "parent": "GAU-40",
+      "method": "I",
+      "owner": "Josh",
+      "evidence": [
+        "ml/models/README.md",
+        "ml/models/promoted.json"
+      ]
+    },
+    {
+      "id": "REQ-PER-001",
+      "title": "Persistence robustness",
+      "statement": "Local persistence shall read recent records in time bounded by the records requested, skip corrupt lines, and reload the last 24 h into memory after a restart.",
+      "rationale": "38 MB whole-file reads; one torn line hid all data (GAU-117).",
+      "parent": "GAU-117",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "tail read returns the last lines in order without reading the whole file (GAU-117)",
+        "tail read keeps multi-byte UTF-8 intact across chunk boundaries (GAU-117)",
+        "bedrock skips corrupt and torn lines instead of returning nothing (GAU-117)",
+        "restart reload fills an empty buffer once, in order, and never duplicates (GAU-117)"
+      ]
+    },
+    {
+      "id": "REQ-PER-002",
+      "title": "Bounded memory",
+      "statement": "In-memory feeds and windows shall be bounded.",
+      "rationale": "Unbounded growth on an 8 GB host.",
+      "parent": "GAU-110",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "caps coupling window length to prevent unbounded memory growth",
+        "canonical feed keeps a fixed-size ring buffer"
+      ]
+    },
+    {
+      "id": "REQ-PER-003",
+      "title": "Persistence failures are surfaced",
+      "statement": "A failed telemetry write shall be counted and reported as a persist-stage error, shall not stop the point being served, and shall never crash the process.",
+      "rationale": "Write failures were swallowed and the persist stage read ok (GAU-121, FMEA FM-10).",
+      "parent": "GAU-121",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "FMEA: a failed telemetry write is counted and reported, and the tick still publishes (GAU-121)",
+        "FMEA: best-effort appends never reject (no unhandled rejection); strict appends do; both count (GAU-121)"
+      ]
+    },
+    {
+      "id": "REQ-SEC-001",
+      "title": "Abuse protection",
+      "statement": "The API shall block malicious signatures, rate-limit clients and auto-block repeated authentication failures.",
+      "rationale": "CyberTiger baseline.",
+      "parent": "GAU-25",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "blocks malicious signature and places IP on blocklist",
+        "rate limits after max requests within configured window",
+        "auth failure threshold auto-blocks IP"
+      ]
+    },
+    {
+      "id": "REQ-SEC-002",
+      "title": "Upstream courtesy",
+      "statement": "Adapters shall respect source cadences and not poll faster than the data updates.",
+      "rationale": "Public APIs (NOAA, CDAWeb) rate-limit abusive clients.",
+      "parent": "GAU-44",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "throttles NOAA fetches to once per 60s while worker ticks every 5s",
+        "allows MMS survey fetch on each 5s cadence boundary"
+      ]
+    },
+    {
+      "id": "REQ-OPS-001",
+      "title": "Backend starts and reports health",
+      "statement": "The backend shall start on an ephemeral port and answer /health.",
+      "rationale": "Basic operational readiness.",
+      "parent": "GAU-46",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "backend harness starts and responds to /health"
+      ]
+    },
+    {
+      "id": "REQ-ARC-001",
+      "title": "IMF source decision recorded",
+      "statement": "Architecture decisions affecting data provenance shall be recorded as ADRs.",
+      "rationale": "GAU-85.",
+      "parent": "GAU-85",
+      "method": "I",
+      "owner": "Josh",
+      "evidence": [
+        "docs/adr/swarm-not-an-imf-source.md"
+      ]
+    },
+    {
+      "id": "REQ-OPS-002",
+      "title": "Technical performance measures",
+      "statement": "The system shall report its technical performance measures with green/amber/red thresholds and margins, including live forecast skill against persistence and free disk, and shall expose only an overall status publicly.",
+      "rationale": "NASA SE §6.7; closes FMEA FM-09 and FM-14 detection gaps (GAU-122).",
+      "parent": "GAU-122",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "TPM: thresholds and margins for lower-is-better and higher-is-better measures (GAU-122)",
+        "TPM: overall status never lets 'insufficient' hide amber or red (GAU-122)",
+        "TPM: a cold first tick after restart is not a red p95 (GAU-122)",
+        "FMEA FM-09: live forecast skill is scored against observed Kp and compared with persistence (GAU-122)",
+        "FMEA FM-14: free disk is read from the data volume and graded (GAU-122)",
+        "backend harness starts and responds to /health"
+      ]
+    },
+    {
+      "id": "REQ-OPS-003",
+      "title": "Controlled deployment",
+      "statement": "Only verified release tags on main shall be deployed to the live checkout; every deploy shall be recorded, health-checked, and rolled back automatically when unhealthy.",
+      "rationale": "NASA SE §6.5 configuration management and §5.5 transition (GAU-123).",
+      "parent": "GAU-123",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "deploy: only verified tags on main to a clean checkout (GAU-123)",
+        "deploy: healthy release is activated and recorded; dry run changes nothing (GAU-123)",
+        "deploy: an unhealthy release rolls back automatically (GAU-123)",
+        "rollback: returns to the previous healthy release (GAU-123)"
+      ]
+    },
+    {
+      "id": "REQ-WM-001",
+      "title": "Deterministic, tamper-evident world records",
+      "statement": "Every world-state record shall have a deterministic id and a SHA-256 checksum over its canonical content, and validation shall reject records whose content, id or schema do not match.",
+      "rationale": "GAU-39 acceptance: deterministic IDs and checksums for every record; replays must be comparable.",
+      "parent": "GAU-39",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "GAU-39: ids and checksums are deterministic, and tampering is detected",
+        "GAU-39: replay of a storm gives identical records, an onset event, an advisory and a transition"
+      ]
+    },
+    {
+      "id": "REQ-WM-002",
+      "title": "State reconstructable from bounded observations",
+      "statement": "World state shall be reconstructable from a bounded, time-windowed observation sequence, independent of input order, using no stale or future observations, and without mutating operational data.",
+      "rationale": "GAU-39 acceptance; exploratory coupling must not alter operational state.",
+      "parent": "GAU-39",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "GAU-39: state is reconstructed from a bounded window; stale and future observations are not used",
+        "GAU-39: reconstruction is order-independent and does not mutate its inputs",
+        "GAU-39: live world state uses only the needed window of the feed, newest first"
+      ]
+    },
+    {
+      "id": "REQ-WM-003",
+      "title": "Provenance on every world value",
+      "statement": "Every world-state value shall state whether it is measured, derived or unknown, with the observations or variables and method it rests on; missing inputs shall yield unknown, never a default.",
+      "rationale": "GAU-39 acceptance: every derived value has provenance and truth state (GAU-63 invariant).",
+      "parent": "GAU-39",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "GAU-39: observations carry only measured values, with unit, frame, platform and evidence",
+        "GAU-39: derived values carry method and inputs; unknown inputs give unknown, never a default",
+        "GAU-39: a lost source becomes a source-lost event, not silently carried",
+        "GAU-39: a forecast is a hypothesis resolved against observed state"
+      ]
+    },
+    {
+      "id": "REQ-TR-001",
+      "title": "Inference trust records",
+      "statement": "For each inference the system shall return the space environment at the inference time, with each field's source, product URL, observed time, fetched time, age, confidence, method and limitations, and a verdict that is unknown whenever a required input is missing, stale or conflicting and is never consistent by default; a record shall carry no wording about harm to hardware or the odds of a wrong output.",
+      "rationale": "PR-01 Inference Trust Record API, ICP-1 P0 (GAU-57): the buyer-facing product rests on provenance on every datum and fail-closed verdicts.",
+      "parent": "GAU-57",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "trust record: a missing reading is unknown, never consistent (GAU-57)",
+        "trust record: a stale input is unknown, even when its level was quiet (GAU-57)",
+        "trust record: conflicting inputs are unknown: NOAA disagrees, or the proton spectrum is impossible (GAU-57)",
+        "trust record: every field carries source, product URL, observed and fetched times, age, confidence and limitations (GAU-57)",
+        "trust record: no wording about harm to hardware or odds of error, in any record (GAU-57)",
+        "trust record: p95 well under 500 ms over a full day of 5 s history (GAU-57)",
+        "trust record: through the replayed 19 Jan 2026 storm, S1 is consistent and S2 under G0 is degraded (GAU-57)",
+        "trust records API: an invalid inference is a 400 listing every error, nothing guessed (GAU-57)",
+        "trust records API: a batch returns records for valid items and the errors for the rest (GAU-57)",
+        "trust records API: a server without an environment history says so, never an empty record (GAU-57)",
+        "TLE: an epoch more than 7 days from the inference is not used (GAU-57)",
+        "trust record: an ephemeris and a TLE that disagree are conflicting inputs, so both read unknown (GAU-57)",
+        "TLE: format, catalogue number and the modulo-10 checksum are checked; satellite.js checks none of them (GAU-57)"
+      ]
+    },
+    {
+      "id": "REQ-TR-002",
+      "title": "Customer log ingest",
+      "statement": "The system shall read a customer's inference log (CSV, JSON or JSONL) through a declared, versioned column mapping into trust-record requests, shall reject and report every malformed, out-of-order or duplicate row with its reason rather than drop it, shall attach to every accepted row its file hash, row number and mapping version, and shall produce identical output from identical input.",
+      "rationale": "PR-03a (GAU-66): the replay pilot on customer logs (GAU-59) must account for every row it was given.",
+      "parent": "GAU-66",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "ingest: valid rows become requests with file hash, row number and mapping version (GAU-66)",
+        "ingest: malformed, duplicate and out-of-order rows are rejected with reasons, never dropped (GAU-66)",
+        "ingest: the same bytes and mapping give the same result; a changed byte changes the hash (GAU-66)",
+        "ingest: a mapping naming a missing column, or an invalid mapping, fails the whole file with the reason (GAU-66)",
+        "ingest: an ingested log becomes trust records that carry their provenance, through the replayed storm (GAU-66)"
+      ]
+    },
+    {
+      "id": "REQ-TR-003",
+      "title": "South Atlantic Anomaly context",
+      "statement": "For each inference with a position the system shall report the IGRF-14 field strength at the spacecraft and flag the South Atlantic Anomaly as core (|B| at most 21,000 nT) or extended (at most 26,000 nT), citing the thresholds; it shall report the flag as unknown, with the reason, outside 300–450 km altitude or outside IGRF-14 validity (2015–2030), and an inference inside the SAA shall be degraded context.",
+      "rationale": "GAU-141 (SWx P2): trapped-proton exposure in low orbit is concentrated in the SAA; an operator needs to know whether an inference was made there, from a published definition rather than a hand-drawn box.",
+      "parent": "GAU-141",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "IGRF-14: agrees with an independent implementation to 0.001 nT, surface to 800 km (GAU-141)",
+        "IGRF-14: a pure dipole matches its closed form; the official check value; validity 2015–2030 (GAU-141)",
+        "SAA: along six days of an ISS orbit, NICER's SAA lies inside the extended tier and the core inside NICER's (GAU-141)",
+        "SAA: the thresholds and the altitude band are applied as published (GAU-141)",
+        "trust record: an inference inside the SAA is degraded context, with |B| and the tier (GAU-141)"
+      ]
+    }
+  ]
+}

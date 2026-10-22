@@ -1,176 +1,97 @@
+/** @jsxRuntime automatic */
+// Bare `node --import tsx --test` runs miss tsconfig.app.json's react-jsx; this keeps them working.
+
 /**
- * UndetectedObjectsAlert — Dramatic alert panel for untracked spacecraft candidates
- * Shows on the right side of the HUD with real-time detection updates
+ * UndetectedObjectsAlert — untracked spacecraft candidates for the operator
+ * console's telemetry column. Shows only what the detection alert contains.
  */
 
-import React, { useEffect, useState } from 'react';
-import { AlertTriangle, Radar, TrendingUp, Radio } from 'lucide-react';
+import type { FC } from 'react';
+import { AlertTriangle, Radar } from 'lucide-react';
 import type { SpaceObjectDetectionAlert } from '@/lib/types/space-object';
+import { StatusBadge, type BadgeTone } from '@/components/brand/StatusBadge';
+import { ssaStatus } from '@/lib/ssaStatus';
 
 interface UndetectedObjectsAlertProps {
   alert: SpaceObjectDetectionAlert | null;
-  isOperator?: boolean;
 }
 
-export const UndetectedObjectsAlert: React.FC<UndetectedObjectsAlertProps> = ({
-  alert,
-  isOperator = false,
-}) => {
-  const [pulse, setPulse] = useState(false);
+const SEVERITY_TONE: Record<SpaceObjectDetectionAlert['severity'], BadgeTone> = {
+  critical: 'risk',
+  high: 'risk',
+  moderate: 'caution',
+  low: 'neutral',
+};
 
-  useEffect(() => {
-    if (!alert) return;
-    const interval = setInterval(() => {
-      setPulse((p) => !p);
-    }, 800);
-    return () => clearInterval(interval);
-  }, [alert]);
-
+export const UndetectedObjectsAlert: FC<UndetectedObjectsAlertProps> = ({ alert }) => {
+  // No alert is not "nominal": with no detector connected, the SSA state is unknown (GAU-81).
   if (!alert) {
     return (
-      <div className="absolute right-6 bottom-6 pointer-events-auto">
-        <div className="hud-panel p-3 min-w-[300px] border-primary/20 bg-black/60">
-          <div className="flex items-center gap-2 mb-2">
-            <Radar className="w-4 h-4 text-primary/50" />
-            <h3 className="text-[10px] font-bold tracking-[0.2em] uppercase phosphor-text opacity-50">
-              SSA_NOMINAL
-            </h3>
-          </div>
-          <div className="text-[9px] text-primary/40">
-            All known orbital assets accounted for. No anomalies detected.
-          </div>
-          <div className="scanline opacity-20" />
+      <section aria-labelledby="ssa-title" className="hud-panel p-3">
+        <div className="mb-1 flex items-center justify-between gap-3">
+          <h2 id="ssa-title" className="brand-label flex items-center gap-2">
+            <Radar className="h-3.5 w-3.5" aria-hidden="true" />
+            04_ORBITAL_OBJECTS
+          </h2>
+          <StatusBadge tone="neutral">Unknown</StatusBadge>
         </div>
-      </div>
+        <p className="text-sm text-muted-foreground">{ssaStatus(alert).detail}</p>
+      </section>
     );
   }
 
-  const getSeverityColor = (severity: string) => {
-    switch (severity) {
-      case 'critical':
-        return 'text-destructive phosphor-text animate-pulse';
-      case 'high':
-        return 'text-orange-500 phosphor-text';
-      case 'moderate':
-        return 'text-yellow-500';
-      default:
-        return 'text-cyan-400';
-    }
-  };
-
-  const getSeverityBorder = (severity: string) => {
-    switch (severity) {
-      case 'critical':
-        return 'border-destructive/50 bg-destructive/5';
-      case 'high':
-        return 'border-orange-500/50 bg-orange-500/5';
-      case 'moderate':
-        return 'border-yellow-500/50 bg-yellow-500/5';
-      default:
-        return 'border-cyan-400/50 bg-cyan-400/5';
-    }
-  };
+  const tone = SEVERITY_TONE[alert.severity];
+  const orbits = [...new Set(alert.candidates.map((c) => c.orbitType).filter(Boolean))].join(' · ') || '—';
 
   return (
-    <div className="absolute right-6 bottom-6 pointer-events-auto">
-      <div
-        className={`hud-panel p-4 min-w-[320px] border-2 ${getSeverityBorder(
-          alert.severity
-        )} transition-all duration-300 ${
-          pulse ? 'shadow-lg shadow-destructive/30' : 'shadow-md'
-        }`}
-      >
-        {/* Header */}
-        <div className={`flex items-center justify-between mb-4 pb-3 border-b ${getSeverityBorder(alert.severity)}`}>
-          <div className="flex items-center gap-2">
-            <AlertTriangle
-              className={`w-5 h-5 ${getSeverityColor(alert.severity)} ${
-                pulse ? 'scale-110' : 'scale-100'
-              } transition-transform`}
-            />
-            <div>
-              <h3
-                className={`text-[11px] font-bold tracking-[0.3em] uppercase ${getSeverityColor(
-                  alert.severity
-                )}`}
-              >
-                UNTRACKED OBJECT ALERT
-              </h3>
-              <p className="text-[8px] text-primary/40 uppercase tracking-widest">
-                {alert.severity.toUpperCase()} PRIORITY
-              </p>
-            </div>
-          </div>
-          <div className="text-[8px] text-primary/40 font-mono">
-            {new Date(alert.timestamp).toLocaleTimeString()}
-          </div>
-        </div>
-
-        {/* Alert Description */}
-        <div className="mb-4 p-3 bg-black/40 border border-primary/10 rounded">
-          <p className="text-[9px] leading-relaxed text-primary/80">{alert.description}</p>
-        </div>
-
-        {/* Candidate Count */}
-        <div className="mb-4 grid grid-cols-3 gap-2">
-          <div className="p-2 bg-primary/5 border border-primary/20 rounded text-center">
-            <div className="text-[9px] text-primary/60 uppercase tracking-wider">Candidates</div>
-            <div className={`text-xl font-bold ${getSeverityColor(alert.severity)}`}>
-              {alert.candidateCount}
-            </div>
-          </div>
-          <div className="p-2 bg-primary/5 border border-primary/20 rounded text-center">
-            <div className="text-[9px] text-primary/60 uppercase tracking-wider">Orbit</div>
-            <div className="text-[10px] font-mono text-primary">GEO</div>
-          </div>
-          <div className="p-2 bg-primary/5 border border-primary/20 rounded text-center">
-            <div className="text-[9px] text-primary/60 uppercase tracking-wider">Status</div>
-            <div className={`text-[10px] font-bold ${getSeverityColor(alert.severity)}`}>
-              ACTIVE
-            </div>
-          </div>
-        </div>
-
-        {/* Candidate List */}
-        <div className="mb-3">
-          <div className="text-[8px] uppercase tracking-[0.2em] text-primary/60 mb-2 flex items-center gap-1">
-            <Radio className="w-3 h-3" />
-            Detected Candidates
-          </div>
-          <div className="space-y-1">
-            {alert.candidates.map((candidate, idx) => (
-              <div
-                key={`${candidate.id}-${idx}`}
-                className="p-2 bg-black/40 border border-primary/10 rounded text-[8px] font-mono"
-              >
-                <div className="flex justify-between items-start mb-1">
-                  <span className="text-primary">{candidate.name}</span>
-                  <span className="text-[7px] text-primary/50">{candidate.id}</span>
-                </div>
-                <div className="flex justify-between text-primary/60 text-[7px]">
-                  <span>{candidate.category}</span>
-                  <span>{candidate.altitude.toLocaleString()} km</span>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        {/* Operator Notice */}
-        {isOperator && (
-          <div className="p-2 bg-orange-500/10 border border-orange-500/30 rounded text-[8px] text-orange-300 uppercase tracking-wider">
-            ⚠ OPERATOR ALERT ENABLED · SECURITY PROTOCOLS ACTIVE · AUDIT TRAIL RECORDING
-          </div>
-        )}
-
-        {/* Trend */}
-        <div className="mt-3 flex items-center gap-2 text-[9px] text-primary/60">
-          <TrendingUp className="w-3 h-3" />
-          <span>Detection confidence increasing with radiation flux correlation</span>
-        </div>
-
-        <div className="scanline" />
+    <section
+      aria-labelledby="ssa-title"
+      role="alert"
+      className={`hud-panel p-3 ${tone === 'risk' ? 'border-sun' : tone === 'caution' ? 'border-caution/60' : ''}`}
+    >
+      <div className="mb-2 flex items-start justify-between gap-3">
+        <h2 id="ssa-title" className="flex items-center gap-2 text-sm font-semibold">
+          <AlertTriangle className={`h-4 w-4 ${tone === 'risk' ? 'text-sun' : tone === 'caution' ? 'text-caution' : 'text-muted-foreground'}`} aria-hidden="true" />
+          Untracked object alert
+        </h2>
+        <StatusBadge tone={tone} pulse={alert.severity === 'critical'}>
+          {alert.severity}
+        </StatusBadge>
       </div>
-    </div>
+
+      <p className="text-sm leading-snug text-muted-foreground">{alert.description}</p>
+
+      <dl className="mt-3 grid grid-cols-2 gap-2">
+        <div className="rounded-md border border-charcoal p-2">
+          <dt className="font-mono text-[11px] uppercase tracking-[0.06em] text-muted-foreground">Candidates</dt>
+          <dd className="font-mono text-xl font-medium tabular-nums">{alert.candidateCount}</dd>
+        </div>
+        <div className="rounded-md border border-charcoal p-2">
+          <dt className="font-mono text-[11px] uppercase tracking-[0.06em] text-muted-foreground">Orbit</dt>
+          <dd className="font-mono text-sm">{orbits}</dd>
+        </div>
+      </dl>
+
+      {alert.candidates.length > 0 && (
+        <ul className="mt-3 max-h-40 space-y-1 overflow-y-auto">
+          {alert.candidates.map((candidate, idx) => (
+            <li key={`${candidate.id}-${idx}`} className="rounded-md border border-charcoal px-2 py-1.5 font-mono text-xs">
+              <div className="flex justify-between gap-2">
+                <span className="truncate text-foreground">{candidate.name}</span>
+                <span className="shrink-0 text-muted-foreground">{candidate.id}</span>
+              </div>
+              <div className="flex justify-between gap-2 text-muted-foreground">
+                <span>{candidate.category}</span>
+                <span className="tabular-nums">{candidate.altitude.toLocaleString()} km</span>
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      <p className="mt-2 font-mono text-[11px] text-muted-foreground">
+        Detected {new Date(alert.timestamp).toISOString().slice(11, 19)} UTC
+      </p>
+    </section>
   );
 };

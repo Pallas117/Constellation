@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { IngestionWorker } from "./ingest-loop.js";
+import type { CanonicalSpaceWeatherPoint } from "../types.js";
 
 type WorkerInternals = {
   shouldFetch: (key: string, cadenceMs: number) => boolean;
@@ -64,14 +65,17 @@ test("caps coupling window length to prevent unbounded memory growth", () => {
   assert.equal(worker.couplingWindow[179], 249);
 });
 
-type TimedWorker = {
+// The public methods keep their real types; `lastFetch` and `ticking` are private fields the tests drive.
+type TimedWorker = Pick<IngestionWorker, "tick" | "getPipelineLatency" | "start" | "stop"> & {
   lastFetch: Map<string, number>;
   ticking: boolean;
-  tick: () => Promise<{ pipeline?: { status: string; stages: Array<{ stage: string; lastMs: number; errors: number }> } }>;
-  getPipelineLatency: () => { ticks: number; skippedTicks: number };
-  start: () => void;
-  stop: () => void;
 };
+
+async function tickPoint(worker: TimedWorker): Promise<CanonicalSpaceWeatherPoint> {
+  const { canonicalPoint } = await worker.tick();
+  assert.ok(canonicalPoint, "tick produced a canonical point");
+  return canonicalPoint;
+}
 
 async function withSlowFetch<T>(delayMs: number, fn: () => Promise<T>): Promise<T> {
   const realFetch = globalThis.fetch;
@@ -118,7 +122,7 @@ test("interval never stacks a tick on one still running", async () => {
     intervalFn = fn;
     return realSetInterval(() => undefined, 1_000_000);
   }) as typeof setInterval;
-  worker.tick = async () => ({}); // the first (retrying) tick
+  worker.tick = async () => ({ canonicalPoint: null, mmsVector: null, sourceStatus: [], auroraMap: null }); // the first (retrying) tick
   try {
     worker.start();
     worker.ticking = true; // pretend a slow tick is in flight
@@ -132,16 +136,13 @@ test("interval never stacks a tick on one still running", async () => {
 });
 
 test("tick attaches only current GOES particle readings to the canonical point (GAU-112)", async () => {
-  const worker = new IngestionWorker() as unknown as TimedWorker & {
-    goes: unknown;
-    tick: () => Promise<{ canonicalPoint: { particles?: { protons: unknown; electrons: unknown } } }>;
-  };
+  const worker = new IngestionWorker() as unknown as TimedWorker & { goes: unknown };
   const now = Date.now();
-  for (const key of ["noaa", "esa", "jaxa", "mms", "lasp", "goes", "kyoto-dst", "ml-forecast"]) worker.lastFetch.set(key, now);
+  for (const key of ["noaa", "esa", "jaxa", "mms", "lasp", "goes", "kyoto-dst", "swpc-products", "ml-forecast"]) worker.lastFetch.set(key, now);
   const fresh = { value: 0.25, energy: ">=10 MeV", satellite: "GOES-18", timestamp: new Date(now - 5 * 60_000).toISOString() };
   const old = { value: 150, energy: ">=2 MeV", satellite: "GOES-19", timestamp: new Date(now - 45 * 60_000).toISOString() };
   worker.goes = { protons: fresh, electrons: old };
-  const { canonicalPoint } = await worker.tick();
+  const canonicalPoint = await tickPoint(worker);
   assert.deepEqual(canonicalPoint.particles, { protons: fresh, electrons: null });
 });
 
@@ -174,18 +175,37 @@ test("the worker exposes its last forecast for the API to serve (GAU-115)", () =
 });
 
 test("tick uses measured Kyoto Dst while fresh, and the model once it is stale (GAU-116)", async () => {
-  const worker = new IngestionWorker() as unknown as TimedWorker & {
-    kyotoDst: unknown;
-    tick: () => Promise<{ canonicalPoint: { indices: { dst: number; dstMethod?: string } } }>;
-  };
+  const worker = new IngestionWorker() as unknown as TimedWorker & { kyotoDst: unknown };
   const now = Date.now();
-  for (const key of ["noaa", "esa", "jaxa", "mms", "lasp", "goes", "kyoto-dst", "ml-forecast"]) worker.lastFetch.set(key, now);
+  for (const key of ["noaa", "esa", "jaxa", "mms", "lasp", "goes", "kyoto-dst", "swpc-products", "ml-forecast"]) worker.lastFetch.set(key, now);
   worker.kyotoDst = { dst: -123, timestamp: new Date(now - 30 * 60_000).toISOString() };
-  const measured = (await worker.tick()).canonicalPoint.indices;
+  const measured = (await tickPoint(worker)).indices;
   assert.equal(measured.dst, -123);
   if ("dstMethod" in measured) assert.equal(measured.dstMethod, "measured"); // once #50 is merged
 
   worker.kyotoDst = { dst: -123, timestamp: new Date(now - 3 * 3_600_000).toISOString() };
-  const modelled = (await worker.tick()).canonicalPoint.indices;
+  const modelled = (await tickPoint(worker)).indices;
   assert.notEqual(modelled.dst, -123, "a 3 h old reading is not used as current");
+});
+
+test("FMEA: a failed telemetry write is counted and reported, and the tick still publishes (GAU-121)", async () => {
+  const fs = await import("node:fs/promises");
+  const path = await import("node:path");
+  const { bedrock } = await import("../lib/local-db.js");
+  const dir = process.env.GAUSS_BEDROCK_DIR!;
+  const file = path.join(dir, "telemetry.jsonl");
+  await fs.rm(file, { force: true, recursive: true });
+  await fs.mkdir(file); // a directory where the file should be: every append fails with EISDIR
+  const worker = new IngestionWorker() as unknown as TimedWorker;
+  const now = Date.now();
+  for (const key of ["noaa", "esa", "jaxa", "mms", "lasp", "goes", "kyoto-dst", "swpc-products", "ml-forecast"]) worker.lastFetch.set(key, now);
+  const before = bedrock.failedWrites;
+  try {
+    const result = await worker.tick();
+    assert.ok(result.canonicalPoint, "the point is still served from memory");
+    assert.equal(bedrock.failedWrites, before + 1);
+    assert.equal(result.pipeline?.stages.find((s) => s.stage === "persist")?.errors, 1, "persist stage reports the error");
+  } finally {
+    await fs.rm(file, { recursive: true, force: true });
+  }
 });
