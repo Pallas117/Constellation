@@ -22,6 +22,18 @@ export interface MeshReport {
   host?: MeshHost;
   platform?: "macos" | "linux" | "windows" | "ios" | "android";
   battery?: { level: number; charging: boolean; lowPower: boolean };
+  net?: MeshNet;
+}
+
+/** Argo's measured network scores (backend/mesh/store.ts MeshNet); -1 / "not measured" is never a guess. */
+export interface MeshNet {
+  privacy: number;
+  privacyWhy: string[];
+  rttMs: number;
+  speed: string;
+  signal: string;
+  rssi?: number;
+  noise?: number;
 }
 
 export interface MeshHost {

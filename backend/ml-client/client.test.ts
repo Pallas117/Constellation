@@ -113,7 +113,9 @@ test("the real inference server serves the promoted Kp model, honestly (GAU-113)
   });
   t.after(() => server.kill());
   const port = await new Promise<number>((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error("inference server did not start")), 10_000);
+    // Startup is about 1 s alone, but under the full suite at memory pressure a cold Python import
+    // overran 10 s (2026-10-21). This test is about serving honestly, not startup speed.
+    const timer = setTimeout(() => reject(new Error("inference server did not start within 30 s")), 30_000);
     server.stdout!.on("data", (chunk: Buffer) => {
       const m = /listening on [\d.]+:(\d+)/.exec(chunk.toString());
       if (m) {
@@ -173,5 +175,10 @@ test("inference server request handling (python)", { skip: !hasPython && "python
 
 test("nightly incremental count and skip-if-unchanged (python)", { skip: !hasPython && "python3 not found" }, () => {
   const result = spawnSync("python3", ["-I", "ml/tests/test_nightly.py"], { encoding: "utf8" });
+  assert.equal(result.status, 0, result.stderr);
+});
+
+test("OMNI matrix cache and zero-copy windows match the old results exactly (python)", { skip: !hasPython && "python3 not found" }, () => {
+  const result = spawnSync("python3", ["-I", "ml/tests/test_omni_matrix.py"], { encoding: "utf8" });
   assert.equal(result.status, 0, result.stderr);
 });

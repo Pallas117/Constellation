@@ -140,6 +140,25 @@ will fail and its breaker will open.
 - **State files are `0600` under `~/.local/state/argo`.** The Gauss token lives in `~/.config/argo/token`
   (`0600`), is read from stdin and never put on the command line.
 
+## Network scores (privacy, speed, signal)
+
+Network texts (class changes, recoveries, the weekly summary) and `argo doctor` end with one line, e.g.
+`Privacy 70/100 (Remote Login (SSH) reachable on this network -10, …) · Speed excellent (29 ms) · Signal fair (SNR 22 dB)`.
+The same scores go to Gauss and show in the Network column on `/mesh`. Each one uses only what this check measured.
+Anything Argo couldn't measure says `not measured` (signal says `n/a` off Wi-Fi), never a guessed number.
+
+- **Privacy** starts at 100 and loses named points:
+  - TLS interception −50
+  - open Wi-Fi −40, or weak encryption (WEP/WPA1) −30; only −10 while a Tailscale exit node tunnels the traffic
+  - each sharing service reachable on this network −10, up to −30 (turn it off in System Settings > General > Sharing)
+  - auto-proxy (WPAD/PAC) −15
+  - captive portal −10
+- **Speed** is the TCP connect time to api.anthropic.com on the check Argo already makes: one round trip, no extra data.
+  Bands: ≤60 ms excellent, ≤150 good, ≤300 fair, above that poor. It is latency, not a throughput test.
+- **Signal** is Wi-Fi signal-to-noise from `system_profiler SPAirPortDataType` (no sudo).
+  Bands: ≥40 dB excellent, ≥25 good, ≥15 fair, below that poor. Only the current network is read.
+  The reading is cached for 5 minutes per network, because the command takes about 5 seconds.
+
 ## Linux and containers
 
 Argo also builds for Linux hosts (ground stations, GalacticOS, other edge Linux) as a 9.5 MB container: no shell, non-root, read-only.

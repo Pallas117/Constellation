@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import Dict, Iterable, Tuple
 
 import numpy as np
+from numpy.lib.stride_tricks import sliding_window_view
 
 ML_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ML_DIR))
@@ -65,7 +66,9 @@ def build_split(years: Iterable[int]) -> Tuple[np.ndarray, np.ndarray, np.ndarra
   )
   n = hourly.shape[0]
   t = np.arange(WINDOW_HOURS - 1, n - HORIZON_HOURS)
-  windows = np.stack([hourly[t - lag] for lag in range(WINDOW_HOURS - 1, -1, -1)], axis=1)
+  # (len(t), WINDOW_HOURS, F), oldest hour first: a zero-copy view (t is the contiguous range
+  # starting at WINDOW_HOURS - 1), so only the reshape below copies, instead of 6 shifted copies.
+  windows = sliding_window_view(hourly, WINDOW_HOURS, axis=0)[: len(t)].transpose(0, 2, 1)
   x = np.concatenate([windows.reshape(len(t), -1), d["kp"][t, None]], axis=1)
   y = d["kp"][t + HORIZON_HOURS]
   ok = np.all(np.isfinite(x), axis=1) & np.isfinite(y)

@@ -32,6 +32,24 @@ export interface MeshReport {
   host?: MeshHost;
   platform?: MeshPlatform;
   battery?: MeshBattery;
+  net?: MeshNet;
+}
+
+/**
+ * Network scores computed by Argo from what it measured (tools/argo/netscore.go):
+ * privacy 0-100 with a reason per point lost, round-trip latency and Wi-Fi signal.
+ * -1 / "not measured" means Argo couldn't measure it; it is never a guess.
+ */
+export const NET_GRADES = ["excellent", "good", "fair", "poor", "not measured"] as const;
+export type NetGrade = (typeof NET_GRADES)[number];
+export interface MeshNet {
+  privacy: number; // -1 not measured
+  privacyWhy: string[];
+  rttMs: number; // -1 not measured
+  speed: NetGrade;
+  signal: NetGrade | "n/a";
+  rssi?: number;
+  noise?: number;
 }
 
 /** Reported by Argo (macOS, Linux) or by a phone Shortcut/automation (iOS, Android). */
@@ -101,6 +119,27 @@ export function parseBattery(value: unknown): MeshBattery | undefined {
   return { level, charging: b.charging, lowPower: b.lowPower === true };
 }
 
+const WHY_RE = /^[A-Za-z0-9 ()/,.-]{1,80}$/;
+const int = (value: unknown, min: number, max: number) =>
+  typeof value === "number" && Number.isInteger(value) && value >= min && value <= max ? value : null;
+
+/** Allowlisted network scores; a bad score or grade drops the block, a bad reason is dropped alone. */
+export function parseNet(value: unknown): MeshNet | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const n = value as Record<string, unknown>;
+  const privacy = int(n.privacy, -1, 100);
+  const rttMs = int(n.rttMs, -1, 60_000);
+  const speed = NET_GRADES.includes(n.speed as NetGrade) ? (n.speed as NetGrade) : null;
+  const signal = n.signal === "n/a" || NET_GRADES.includes(n.signal as NetGrade) ? (n.signal as MeshNet["signal"]) : null;
+  if (privacy === null || rttMs === null || speed === null || signal === null) return undefined;
+  const why = Array.isArray(n.privacyWhy) ? n.privacyWhy : [];
+  const privacyWhy = why.filter((w): w is string => typeof w === "string" && WHY_RE.test(w)).slice(0, 8);
+  const rssi = int(n.rssi, -120, 0);
+  const noise = int(n.noise, -120, 0);
+  const measured = signal !== "n/a" && signal !== "not measured" && rssi !== null && noise !== null;
+  return { privacy, privacyWhy, rttMs, speed, signal, ...(measured ? { rssi, noise } : {}) };
+}
+
 /** Allowlisted, range-checked host capacity; anything outside the ranges drops the whole block. */
 export function parseHost(value: unknown): MeshHost | undefined {
   if (!value || typeof value !== "object") return undefined;
@@ -138,6 +177,7 @@ export function parseReport(body: unknown, now = new Date()): MeshReport | null 
     ...(parseHost(b.host) ? { host: parseHost(b.host) } : {}),
     ...(MESH_PLATFORMS.includes(b.platform as MeshPlatform) ? { platform: b.platform as MeshPlatform } : {}),
     ...(parseBattery(b.battery) ? { battery: parseBattery(b.battery) } : {}),
+    ...(parseNet(b.net) ? { net: parseNet(b.net) } : {}),
   };
 }
 

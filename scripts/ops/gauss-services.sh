@@ -14,14 +14,24 @@
 #   scripts/ops/gauss-services.sh uninstall                unload + remove agents
 #   scripts/ops/gauss-services.sh dev <checkout-dir>        run a dev/R&D checkout beside live (:3101 API, :5174 site)
 #   scripts/ops/gauss-services.sh fallback prepare <dir> [sha]|on|off|status   cold-standby last-known-good build
+#   scripts/ops/gauss-services.sh deploy <commit> [fallback-dir]   switch live to <commit>; rolls back by itself if it doesn't come up
 #
 # Three layers (GAU-158): dev (any other checkout, foreground, own ports and data,
 # never the live API), production (this install), and fallback: a built, not running,
 # checkout of the last known-good commit. When the guard has used all its restarts on
 # a service this hour and it is still down, it swaps the live agents for the fallback's
 # on the same ports and URLs (live data, live .env) and texts the phone. Back with
-# `fallback off`. Prepare it from what is running before each deploy:
-#   gauss-services.sh fallback prepare <dir>   (default sha: the live checkout's HEAD)
+# `fallback off`. `deploy` refreshes the fallback from what is running before it
+# switches, so the standby is always the previous version (by hand:
+# `fallback prepare <dir>`, default sha: the live checkout's HEAD).
+#
+# deploy (run the gates on the commit first): refuses under memory pressure or over
+# local code changes in live (live's data files are kept), refreshes the fallback,
+# checks out the commit, runs npm ci only if package-lock.json changed, reinstalls and
+# waits for what a deploy can break (backend, site, site -> API, same-origin build).
+# If that doesn't come up it puts the previous commit back; if that fails too it
+# switches to the fallback. Either way it texts the phone. The guard leaves the
+# services alone while a deploy runs.
 #
 # Agents: backend (:3001) and frontend (:8080) restart if they crash; a nightly
 # learning job (03:00, or on next wake) rebuilds the nowcast dataset from the
@@ -62,6 +72,8 @@ WATCH_DIR="$HOME/Library/Application Support/Gauss"
 GUARD_HEARTBEAT="$WATCH_DIR/guard.heartbeat" # Argo restarts the guard if this goes stale
 WATCH_KICKS="$WATCH_DIR/watch-kicks"         # "<label> <epoch>" per watchdog restart
 WATCH_MAX_KICKS=3
+DEPLOY_LOCK="$WATCH_DIR/deploying" # held by deploy; the guard leaves the services alone meanwhile
+DEPLOY_WAIT="${GAUSS_DEPLOY_WAIT:-90}" # seconds a deploy waits for the services to come up
 # balance: safe, reversible load shedding (GAU-126). GAUSS_BALANCE=0 turns it off.
 BALANCE="${GAUSS_BALANCE:-1}"
 LOCAL_CODER="${GAUSS_LOCAL_CODER:-$HOME/.local/bin/local-coder}"   # optional on-device model server
@@ -242,6 +254,9 @@ watch_peers() {
     age=$(mtime_age_min "$HOME/.local/share/mesh-heal/state")
     [ "$age" -gt 10 ] && kick uk.lightbound.mesh-heal "no mesh-heal check for ${age} min"
   fi
+  # A deploy restarts them on purpose and rolls back by itself. A lock left by a
+  # deploy that died stops counting after 30 min.
+  if [ -d "$DEPLOY_LOCK" ] && [ "$(mtime_age_min "$DEPLOY_LOCK")" -lt 30 ]; then return 0; fi
   local svc url strikes prefix=uk.lightbound.gauss
   fallback_active && prefix=uk.lightbound.gauss-fallback
   for svc in backend:http://127.0.0.1:3001/health frontend:http://127.0.0.1:8080/; do
@@ -330,18 +345,20 @@ fallback_prepare() { # fallback_prepare <dir> [sha]: check out, install, build, 
     local prev=""; ready_record && prev=$READY_DIR
     # Only ever re-point a directory this command made: never someone's working checkout.
     [ "$dir" = "$prev" ] || { echo "$dir exists and is not the current fallback; pick a new path." >&2; return 1; }
-    git -C "$dir" checkout -q --detach "$sha"
+    git -C "$dir" checkout -q --detach "$sha" || return 1
   else
-    git -C "$live" worktree add -q --detach "$dir" "$sha"; dir=$(cd "$dir" && pwd)
+    git -C "$live" worktree add -q --detach "$dir" "$sha" || return 1; dir=$(cd "$dir" && pwd)
   fi
+  # Explicit returns throughout: deploy calls this in a condition, where set -e is off.
   [ "$dir" != "$live" ] || { echo "The fallback must not be the live checkout." >&2; return 1; }
-  local lock; lock=$(shasum "$dir/package-lock.json" | cut -d' ' -f1)
+  local lock; lock=$(shasum "$dir/package-lock.json" | cut -d' ' -f1) || return 1
   if [ "$(cat "$dir/node_modules/.gauss-lock" 2>/dev/null)" != "$lock" ]; then
     echo "Installing dependencies in $dir ..."
-    (cd "$dir" && PATH="$(dirname "$NODE"):$PATH" npm ci --no-audit --no-fund >/dev/null) && echo "$lock" >"$dir/node_modules/.gauss-lock"
+    (cd "$dir" && PATH="$(dirname "$NODE"):$PATH" npm ci --no-audit --no-fund >/dev/null) || return 1
+    echo "$lock" >"$dir/node_modules/.gauss-lock"
   fi
   echo "Building the fallback site (same-origin API) ..."
-  (cd "$dir" && VITE_HELIO_PROXY_URL=same-origin "$NODE" node_modules/vite/bin/vite.js build --config frontend/vite.config.ts >/dev/null)
+  (cd "$dir" && VITE_HELIO_PROXY_URL=same-origin "$NODE" node_modules/vite/bin/vite.js build --config frontend/vite.config.ts >/dev/null) || return 1
   mkdir -p "$FALLBACK_STATE" "$LOGS"
   # Same ports, live data and live .env (read in place, never copied): only one of the
   # two ever runs, and devices, accounts and telemetry carry over in both directions.
@@ -350,9 +367,111 @@ fallback_prepare() { # fallback_prepare <dir> [sha]: check out, install, build, 
   PLIST_DATA="$live/data" plist "${FALLBACK_LABELS[1]}" "$dir" "$LOGS/fallback-frontend.log" keepalive \
     "$NODE" node_modules/vite/bin/vite.js preview --config frontend/vite.config.ts --host 127.0.0.1 --port 8080 --strictPort \
     >"$FALLBACK_STATE/${FALLBACK_LABELS[1]}.plist"
-  plutil -lint -s "$FALLBACK_STATE/${FALLBACK_LABELS[0]}.plist" "$FALLBACK_STATE/${FALLBACK_LABELS[1]}.plist"
+  plutil -lint -s "$FALLBACK_STATE/${FALLBACK_LABELS[0]}.plist" "$FALLBACK_STATE/${FALLBACK_LABELS[1]}.plist" || return 1
   echo "$sha $dir $(date +%s)" >"$FALLBACK_STATE/ready"
   echo "Fallback ready: ${sha:0:7} at $dir (cold: not running, no memory used)."
+}
+
+install_agents() { # install_agents <checkout-dir>: build the site, write and (re)load the agents
+  local dir=$1 l
+  [ -f "$dir/backend/server.ts" ] || { echo "$dir is not a Gauss checkout" >&2; return 1; }
+  mkdir -p "$LOGS" "$dir/data/mesh" "$dir/data/commerce"
+  echo "Building the frontend in $dir (same-origin API) ..."
+  (cd "$dir" && VITE_HELIO_PROXY_URL=same-origin "$NODE" node_modules/vite/bin/vite.js build --config frontend/vite.config.ts >/dev/null) || return 1
+  plist uk.lightbound.gauss-backend "$dir" "$LOGS/backend.log" keepalive \
+    "$NODE" --env-file-if-exists=.env --import tsx backend/server.ts >"$AGENTS/uk.lightbound.gauss-backend.plist"
+  plist uk.lightbound.gauss-learning "$dir" "$LOGS/learning.log" nightly \
+    "$(command -v python3)" -I ml/train/nightly.py --telemetry data/bedrock/telemetry.jsonl >"$AGENTS/uk.lightbound.gauss-learning.plist"
+  plist uk.lightbound.gauss-frontend "$dir" "$LOGS/frontend.log" keepalive \
+    "$NODE" node_modules/vite/bin/vite.js preview --config frontend/vite.config.ts --host 127.0.0.1 --port 8080 --strictPort \
+    >"$AGENTS/uk.lightbound.gauss-frontend.plist"
+  plist uk.lightbound.gauss-awake "$dir" "$LOGS/awake.log" minutely \
+    /bin/bash "$dir/scripts/ops/gauss-services.sh" awake guard >"$AGENTS/uk.lightbound.gauss-awake.plist"
+  for l in "${LABELS[@]}"; do
+    plutil -lint -s "$AGENTS/$l.plist" || return 1
+    reload "$l" "$AGENTS/$l.plist" || return 1
+  done
+}
+
+# What a deploy can break, and so what decides a rollback. The rest of `check`
+# (network, space weather, memory service, Argo) can be off for reasons a rollback
+# wouldn't fix, so it is reported after a deploy, never acted on.
+deploy_ready() { # deploy_ready <dir> <seconds>: poll until the services answer, or give up
+  local dir=$1 waited=0
+  until [ "$(code http://127.0.0.1:3001/health)" = 200 ] && [ "$(code http://127.0.0.1:8080/)" = 200 ] \
+    && [ "$(code http://127.0.0.1:8080/api/system/connectivity)" = 200 ] \
+    && ! grep -rqs 'ts\.net' "$dir/frontend/dist/assets"; do
+    [ "$waited" -ge "$2" ] && return 1
+    sleep 3; waited=$((waited + 3)); touch "$DEPLOY_LOCK" 2>/dev/null || true
+  done
+}
+
+switch_live() { # switch_live <dir> <from sha> <to sha>: check out, npm ci if the lockfile changed, reinstall
+  git -C "$1" checkout -q --detach "$3" || return 1
+  if [ ! -d "$1/node_modules" ] || ! git -C "$1" diff --quiet "$2" "$3" -- package-lock.json; then
+    echo "package-lock.json changed: installing dependencies in $1 ..."
+    (cd "$1" && PATH="$(dirname "$NODE"):$PATH" npm ci --no-audit --no-fund >/dev/null) || return 1
+  fi
+  install_agents "$1"
+}
+
+deploy() { # deploy <commit> [fallback-dir]
+  local live sha prev level fbdir=${2:-} _
+  live=$(live_dir) && [ -d "$live" ] || { echo "No live install ($AGENTS/uk.lightbound.gauss-backend.plist): run install first" >&2; return 1; }
+  fallback_active && { echo "The fallback is serving now: fix live and '$0 fallback off' before deploying." >&2; return 1; }
+  git -C "$live" fetch -q origin 2>/dev/null || echo "(git fetch failed; using the commits already in $live)"
+  sha=$(git -C "$live" rev-parse -q --verify "${1:?usage: $0 deploy <commit> [fallback-dir]}^{commit}") \
+    || { echo "Unknown commit '$1' in $live." >&2; return 1; }
+  prev=$(git -C "$live" rev-parse HEAD) || return 1
+  [ "$sha" != "$prev" ] || { echo "Live is already at ${sha:0:7}."; return 0; }
+  read -r level _ < <(memory_stats)
+  if [ "$level" -ge "$MEM_SHED_LEVEL" ]; then
+    echo "Memory pressure is $(pressure_name "$level"): not deploying now (npm ci and the build need headroom). Retry when normal." >&2; return 1
+  fi
+  # Live's data files (telemetry, models) change in place and carry over; code must not.
+  local dirty; dirty=$(git -C "$live" status --porcelain --untracked-files=no | cut -c4- | grep -Ev '^(data|ml/models)/' || true)
+  [ -z "$dirty" ] || { printf 'Live has local code changes; not deploying over them:\n%s\n' "$dirty" >&2; return 1; }
+  mkdir -p "$WATCH_DIR" "$LOGS"
+  if ! mkdir "$DEPLOY_LOCK" 2>/dev/null; then
+    [ "$(mtime_age_min "$DEPLOY_LOCK")" -ge 30 ] || { echo "Another deploy is running ($DEPLOY_LOCK)." >&2; return 1; }
+    touch "$DEPLOY_LOCK" # left by a deploy that died
+  fi
+  trap 'rmdir "$DEPLOY_LOCK" 2>/dev/null || true' EXIT
+
+  # The standby becomes what runs now, if it is healthy: never swap a good fallback for a broken live.
+  [ -z "$fbdir" ] && ready_record && fbdir=$READY_DIR
+  if [ -z "$fbdir" ]; then
+    echo "warning: no fallback to refresh (pass a path: $0 deploy <commit> <fallback-dir>); rollback to ${prev:0:7} still works."
+  elif ready_record && [ "$READY_SHA" = "$prev" ] && [ "$READY_DIR" = "$(cd "$fbdir" 2>/dev/null && pwd)" ]; then
+    echo "Fallback already at ${prev:0:7}."
+  elif deploy_ready "$live" 0; then
+    fallback_prepare "$fbdir" "$prev" || { echo "Couldn't refresh the fallback; not deploying." >&2; return 1; }
+  else
+    local kept=${READY_SHA:-none}
+    echo "Live isn't healthy now, so the fallback stays at ${kept:0:7} rather than becoming ${prev:0:7}."
+  fi
+
+  echo "Deploying ${prev:0:7} -> ${sha:0:7} in $live ..."
+  git -C "$live" checkout -q --detach "$sha" \
+    || { echo "Checkout refused (a local data file conflicts with ${sha:0:7}?): nothing changed." >&2; return 1; }
+  if switch_live "$live" "$prev" "$sha" && deploy_ready "$live" "$DEPLOY_WAIT"; then
+    echo "$(date '+%F %T') deployed ${sha:0:7} (was ${prev:0:7})" >>"$LOGS/deploy.log"
+    echo "Deployed ${sha:0:7}. Full checklist (for information; only the services decide a rollback):"
+    check || true
+    return 0
+  fi
+  echo "${sha:0:7} didn't come up within ${DEPLOY_WAIT}s: rolling back to ${prev:0:7} ..." >&2
+  if switch_live "$live" "$sha" "$prev" && deploy_ready "$live" "$DEPLOY_WAIT"; then
+    echo "$(date '+%F %T') ${sha:0:7} failed, rolled back to ${prev:0:7}" >>"$LOGS/deploy.log"
+    phone -key deploy -every 10m "Gauss: deploy rolled back" \
+      "${sha:0:7} didn't come up; live is back on ${prev:0:7}. Logs: ~/Library/Logs/gauss/backend.log"
+    echo "Rolled back: live is on ${prev:0:7} again." >&2
+    return 1
+  fi
+  echo "$(date '+%F %T') ${sha:0:7} failed and rollback to ${prev:0:7} failed" >>"$LOGS/deploy.log"
+  fallback_on "deploy of ${sha:0:7} failed and rolling back to ${prev:0:7} failed too" \
+    || phone -key deploy -every 10m "Gauss: down after a deploy" "${sha:0:7} failed, rollback failed and there is no fallback. Needs a person."
+  return 1
 }
 
 # Dev / R&D: any checkout but live or fallback, in the foreground, on its own ports
@@ -648,23 +767,7 @@ except Exception:
 case "${1:-}" in
   install)
     dir="$(cd "${2:?usage: $0 install <checkout-dir>}" && pwd)"
-    [ -f "$dir/backend/server.ts" ] || { echo "$dir is not a Gauss checkout" >&2; exit 1; }
-    mkdir -p "$LOGS" "$dir/data/mesh" "$dir/data/commerce"
-    echo "Building the frontend in $dir (same-origin API) ..."
-    (cd "$dir" && VITE_HELIO_PROXY_URL=same-origin "$NODE" node_modules/vite/bin/vite.js build --config frontend/vite.config.ts >/dev/null)
-    plist uk.lightbound.gauss-backend "$dir" "$LOGS/backend.log" keepalive \
-      "$NODE" --env-file-if-exists=.env --import tsx backend/server.ts >"$AGENTS/uk.lightbound.gauss-backend.plist"
-    plist uk.lightbound.gauss-learning "$dir" "$LOGS/learning.log" nightly \
-      "$(command -v python3)" -I ml/train/nightly.py --telemetry data/bedrock/telemetry.jsonl >"$AGENTS/uk.lightbound.gauss-learning.plist"
-    plist uk.lightbound.gauss-frontend "$dir" "$LOGS/frontend.log" keepalive \
-      "$NODE" node_modules/vite/bin/vite.js preview --config frontend/vite.config.ts --host 127.0.0.1 --port 8080 --strictPort \
-      >"$AGENTS/uk.lightbound.gauss-frontend.plist"
-    plist uk.lightbound.gauss-awake "$dir" "$LOGS/awake.log" minutely \
-      /bin/bash "$dir/scripts/ops/gauss-services.sh" awake guard >"$AGENTS/uk.lightbound.gauss-awake.plist"
-    for l in "${LABELS[@]}"; do
-      plutil -lint -s "$AGENTS/$l.plist"
-      reload "$l" "$AGENTS/$l.plist"
-    done
+    install_agents "$dir"
     sleep 8
     health
     [ -f "$SUDOERS" ] || echo "To keep Gauss running with the lid closed, run once: $0 awake setup"
@@ -716,6 +819,9 @@ case "${1:-}" in
   dev)
     dev_run "${2:-}"
     ;;
+  deploy)
+    deploy "${2:-}" "${3:-}"
+    ;;
   fallback)
     case "${2:-}" in
       prepare) fallback_prepare "${3:-}" "${4:-}" ;;
@@ -734,7 +840,7 @@ case "${1:-}" in
     echo "Gauss services removed. Logs kept in $LOGS."
     ;;
   *)
-    sed -n '2,15p' "$0"
+    sed -n '2,17p' "$0"
     exit 2
     ;;
 esac

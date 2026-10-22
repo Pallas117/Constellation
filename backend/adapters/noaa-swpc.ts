@@ -1,4 +1,5 @@
-import type { Vector3 } from "../physics/coordinates.js";
+import { gseToGsm, magnitude, type Vector3 } from "../physics/coordinates.js";
+import { detectL1Structures, type L1Sample as StructureSample, type L1Structures } from "../physics/l1-structures.js";
 import type { DataSource, SourceStatus } from "../types.js";
 import { buildL1Series, checkDensity, type DensityCheck, type L1Sample } from "./rtsw-series.js";
 
@@ -46,6 +47,38 @@ export interface NOAAReadout {
   /** True when no velocity vector was published and the flow was assumed anti-sunward from the speed. */
   velocityAssumed?: boolean;
   ovation: unknown | null;
+}
+
+/** Structure candidates over the active spacecraft's last 24 h of L1 data (GAU-139, shown to operators by GAU-154). */
+export interface LiveL1Structures {
+  generatedAt: string;
+  spacecraft: string;
+  /** Oldest and newest L1 minute the detectors saw (UTC). */
+  from: string;
+  to: string;
+  structures: L1Structures;
+}
+
+let latestStructures: LiveL1Structures | null = null;
+
+/** The L1 series as detector input: Bt where published, else |B|; GSM Bz, converted locally when SWPC gave only GSE. */
+export function structureSamples(series: L1Sample[]): StructureSample[] {
+  return series.map((s) => {
+    const time = new Date(s.t).toISOString();
+    return {
+      time,
+      speedKmS: s.speed,
+      densityCm3: s.density,
+      btNt: s.bt ?? magnitude(s.magneticFieldGse),
+      bzGsmNt: (s.magneticFieldGsm ?? gseToGsm(s.magneticFieldGse, time)).z,
+      temperatureK: s.temperature ?? null,
+    };
+  });
+}
+
+/** The latest structure candidates, or null before the first successful RTSW fetch. */
+export function getL1Structures(): LiveL1Structures | null {
+  return latestStructures;
 }
 
 let latestStatus: SourceStatus = {
@@ -151,6 +184,15 @@ export async function fetchNoaaReadout(nowMs = Date.now()): Promise<NOAAReadout 
 
     const timestamp = new Date(latest.t).toISOString();
     const series = all.filter((x) => x.t > latest.t - SERIES_KEEP_MS);
+    // The detectors need hours of context (an ICME candidate lasts at least 4 h), so they see all
+    // 24 h SWPC publishes, not the 3 h the point keeps.
+    latestStructures = {
+      generatedAt: new Date(nowMs).toISOString(),
+      spacecraft: latest.spacecraft,
+      from: new Date(all[0].t).toISOString(),
+      to: timestamp,
+      structures: detectL1Structures(structureSamples(all)),
+    };
     const densityCheck = checkDensity(windData, latest.spacecraft, latest.t);
     const ageMs = nowMs - latest.t;
     const current = ageMs <= RTSW_MAX_AGE_MS;
