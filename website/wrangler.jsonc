@@ -1,0 +1,44 @@
+// lightbound.uk: one Cloudflare Worker with static assets. Deploy: see website/README.md.
+{
+  "name": "lightbound-site",
+  "main": "worker/index.js",
+  "compatibility_date": "2026-09-01",
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS",
+    "html_handling": "auto-trailing-slash",
+    "not_found_handling": "404-page",
+    // Everything else is a static file: free, and never runs the Worker.
+    "run_worker_first": ["/", "/gauss/", "/constellation/", "/gauss/apply/", "/constellation/apply/", "/constellation/workshops/", "/argo/", "/argo/apply/", "/education/", "/education/apply/", "/constellation/time/", "/app", "/app/*", "/api/*"]
+  },
+  // Refresh launches and space weather into KV. Free plan: 5 cron triggers per account.
+  "triggers": { "crons": ["*/15 * * * *"] },
+  // Create once each with `npx wrangler@4 kv namespace create LIVE` / `... create DATA` and paste the
+  // ids here (they are not secrets). LIVE = feed cache; DATA = applications and accounts.
+  "kv_namespaces": [
+    { "binding": "LIVE", "id": "REPLACE_WITH_LIVE_NAMESPACE_ID" },
+    { "binding": "DATA", "id": "REPLACE_WITH_DATA_NAMESPACE_ID" }
+  ],
+  // Not secrets. ACCESS_* come from the Cloudflare Access application protecting lightbound.uk/app
+  // (Zero Trust > Access > Applications: the team domain and the application's AUD tag).
+  "vars": {
+    "ACCESS_TEAM_DOMAIN": "REPLACE_TEAM.cloudflareaccess.com",
+    "ACCESS_AUD": "REPLACE_WITH_ACCESS_APPLICATION_AUD",
+    "ADMIN_EMAILS": "jzwnathan@lightbound.uk",
+    "GAUSS_APP_URL": "",
+    // A Stripe Payment Link (https://buy.stripe.com/...) for "Support Constellation"; the block stays hidden while empty.
+    "SUPPORT_URL": "",
+    // Gauss Argo sales: "off" (the list only), "invite" (invited accounts can subscribe) or "open" (anyone signed in).
+    "ARGO_SALES": "off",
+    // Gauss for Education: "off" (register interest only) or "open". Staff price in US cents (e.g. "500"); empty = "Price TBC", no checkout.
+    "EDU_SALES": "off",
+    "EDU_STAFF_PRICE": "",
+    // New self-serve sign-ups stop at this many accounts (Zero Trust's free plan covers up to 50 users).
+    "USER_CAP": "50"
+  },
+  // Secrets, never in this file: STRIPE_SECRET_KEY and STRIPE_WEBHOOK_SECRET (npx wrangler@4 secret put ...).
+  "observability": { "enabled": true }
+  // When the workers.dev preview looks right, uncomment to serve lightbound.uk (adds proxied A/AAAA
+  // records only; the Google Workspace MX records are not touched):
+  // ,"routes": [{ "pattern": "lightbound.uk", "custom_domain": true }]
+}

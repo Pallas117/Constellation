@@ -1,0 +1,3 @@
+# Entry points from the Gauss sales plan (docs/SALES_FEATURE_LIST_AND_ONBOARDING.md: "/pilot and /sales").
+/pilot  /gauss/apply/?plan=pilot  301
+/sales  /gauss/#plans  301

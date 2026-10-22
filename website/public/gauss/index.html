@@ -1,0 +1,221 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; img-src 'self'; media-src 'self'; font-src 'self'; base-uri 'none'; form-action 'self'">
+<meta name="theme-color" content="#050505">
+<meta name="referrer" content="strict-origin-when-cross-origin">
+<title>Gauss by Lightbound · radiation-aware mission-data assurance</title>
+<meta name="description" content="Gauss Fleet Integration: a ground-first mission-data assurance and protection layer. It replays satellite telemetry and onboard-AI logs against the space weather they met, with the evidence attached.">
+<link rel="canonical" href="https://lightbound.uk/gauss/">
+<link rel="preload" href="/assets/fonts/plex-sans-600.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/assets/site.css">
+<link rel="icon" href="/favicon.ico" sizes="any">
+<link rel="icon" href="/assets/marks/gauss-aurora-mark-colour-dark.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/assets/apple-touch-icon.png">
+</head>
+<body class="page">
+<a class="skip" href="#main">Skip to content</a>
+<header class="top">
+  <div class="wrap bar">
+  <a class="brand" href="/" aria-label="Lightbound, home"><picture><source media="(max-width: 560px)" srcset="/assets/marks/lightbound-mark-colour-dark.svg"><img src="/assets/marks/lightbound-horizontal-colour-dark.svg" alt="Lightbound" width="188" height="40"></picture></a>
+  <nav aria-label="Main">
+    <a href="/gauss/" aria-current="page">Gauss</a>
+    <a href="/constellation/">Constellation</a>
+    <a href="/turnstone/" class="opt">Turnstone</a>
+    <a href="/app/" class="signin">Sign in</a>
+  </nav>
+  </div>
+</header>
+
+<main id="main">
+<section class="hero-gauss page-hero" aria-labelledby="hero-h">
+  <div class="wrap">
+    <img class="lockup vt-gauss" src="/assets/marks/gauss-aurora-horizontal-colour-dark.svg" alt="Gauss Aurora" width="480" height="96">
+    <p class="k">01_GAUSS · FLEET INTEGRATION</p>
+    <h1 id="hero-h">Know which satellite data and onboard-AI outputs you can trust.</h1>
+    <p class="lead">Radiation and space weather can silently corrupt telemetry and AI results in orbit. A corrupted output looks the same as a good one. Gauss replays your telemetry and inference logs against the space environment they were produced in, and shows your ground team what held up, what didn't, and what is unknown.</p>
+    <p class="who"><strong>Built for</strong> mission-data, ground-segment and mission-operations teams, and onboard-AI and orbital-compute teams who need evidence, not dashboards. Fleet Integration is a ground-first mission-data assurance and protection layer.</p>
+    <p class="actions"><a class="btn" href="/gauss/apply/?plan=pilot">Start with a pilot</a> <a class="btn ghost" href="#replay">Watch a replay</a></p>
+    <nav class="subnav" aria-label="On this page"><a href="#replay">Replay demo</a><a href="#how">How it works</a><a href="#plans">Plans and prices</a><a href="#fit">Where it fits</a><a href="#connectivity">Connectivity</a><a href="#team">Team</a><a href="#contact">Contact</a></nav>
+  </div>
+</section>
+
+<section id="replay" aria-labelledby="replay-h">
+  <div class="wrap">
+    <div class="section-head"><div><p class="k">01_REPLAY</p><h2 id="replay-h">One storm, replayed record by record.</h2></div><span class="chip sim">Synthetic · screening evidence</span></div>
+    <p class="lead">An illustrative pass through a geomagnetic storm. Watch what Gauss does to each telemetry record and each onboard-AI output as conditions change.</p>
+    <figure class="replay-chart">
+      <svg viewBox="0 0 600 120" role="img" aria-labelledby="rc-t" preserveAspectRatio="none">
+        <title id="rc-t">Synthetic activity: the proton level (S) and the geomagnetic level (G) rise into a storm and recover</title>
+        <rect x="200" y="0" width="200" height="120" fill="#E7B14A" fill-opacity="0.08"/>
+        <line x1="0" y1="110" x2="600" y2="110" stroke="#252A2A" stroke-width="1"/>
+        <path d="M0 100 C60 98 90 96 120 92 S170 70 200 52 S260 12 300 10 S350 28 400 52 S470 86 520 96 S580 100 600 100 L600 110 L0 110 Z" fill="#E7B14A" fill-opacity="0.14"/>
+        <path d="M0 100 C60 98 90 96 120 92 S170 70 200 52 S260 12 300 10 S350 28 400 52 S470 86 520 96 S580 100 600 100" fill="none" stroke="#E7B14A" stroke-width="2" vector-effect="non-scaling-stroke"/>
+        <path d="M0 98 C50 96 80 90 110 80 S160 50 210 40 S280 24 330 30 S420 46 470 66 S560 94 600 98" fill="none" stroke="#F3F0E8" stroke-width="1.5" stroke-dasharray="5 5" vector-effect="non-scaling-stroke"/>
+      </svg>
+      <figcaption>Synthetic, illustrative. Amber: proton level (NOAA S-scale), which drives bit errors. Dashed: geomagnetic level (G-scale), which drives link and GNSS disturbances. Shaded: storm window.</figcaption>
+    </figure>
+    <ol class="replay">
+      <li><span class="t">T&minus;24 min</span><span class="env">G0 · S0 · quiet</span><span class="st nominal">Nominal</span><span class="st nominal">Run</span><span class="why">Inputs fresh, provenance complete.</span></li>
+      <li><span class="t">T&minus;12 min</span><span class="env">G1 · S0 · field turning</span><span class="st nominal">Nominal</span><span class="st nominal">Run</span><span class="why">Watch: geomagnetic activity rising; no proton event yet.</span></li>
+      <li><span class="t">Storm onset</span><span class="env">G2 · S2 · protons rising</span><span class="st degraded">Degraded</span><span class="st degraded">Degrade</span><span class="why">Proton flux up: bit errors climbing; outputs flagged, confidence lowered.</span></li>
+      <li><span class="t">Peak</span><span class="env">G3 · S2 · storm</span><span class="st blocked">Blocked</span><span class="st abstain">Abstain</span><span class="why">Packet integrity failed in the proton event; no trusted input, so no output.</span></li>
+      <li><span class="t">T+10 min</span><span class="env">G2 · S1 · easing</span><span class="st unknown">Unknown</span><span class="st fallback">Fallback</span><span class="why">Geomagnetic link gap: records stay unknown, never "nominal". Deterministic fallback used.</span></li>
+      <li><span class="t">T+30 min</span><span class="env">G0 · S0 · recovered</span><span class="st nominal">Nominal</span><span class="st nominal">Run</span><span class="why">Quality gate passed; every flagged record is in the report.</span></li>
+    </ol>
+    <p class="replay-key">Each step reads top to bottom: <span>space environment</span> (G = geomagnetic, S = solar radiation), then the <span>telemetry record state</span>, the <span>onboard-AI output policy</span>, and what the evidence records. Bit errors follow S; link gaps follow G.</p>
+    <p class="note">Illustrative data, not a mission record. In a pilot, the same replay runs on your own telemetry and inference logs, against the public space-weather record. Gauss is observe-only and advisory: decisions stay with your operators.</p>
+    <p class="actions"><a class="btn" href="/gauss/evidence/">See a sample evidence report</a> <a class="btn ghost" href="/gauss/apply/?plan=pilot">Start with a pilot</a></p>
+  </div>
+</section>
+
+<section id="how" aria-labelledby="how-h">
+  <div class="wrap">
+    <p class="k">02_HOW_IT_WORKS</p>
+    <h2 id="how-h">How a replay pilot works</h2>
+    <p class="lead">Fleet Integration v0.1 runs on the ground, on your own logs. Nothing is installed on a spacecraft.</p>
+    <ol class="steps">
+      <li><h3>Bring your logs</h3><p>Telemetry (CCSDS/XTCE-shaped packets or Yamcs exports) and onboard inference logs, shared under a data-sharing agreement.</p></li>
+      <li><h3>Correlate with the space environment</h3><p>Each record is lined up with the space-weather conditions at the time: radiation and geomagnetic activity from public NOAA and NASA HAPI services.</p></li>
+      <li><h3>Score quality and provenance</h3><p>Every value carries its source and age. Bounded inference with a deterministic fallback flags outputs taken under stress. Missing or stale inputs stay <em>unknown</em>, never "nominal".</p></li>
+      <li><h3>Get the evidence</h3><p>A report your engineers and assurance reviewers can check, with success metrics agreed before the pilot starts.</p></li>
+    </ol>
+    <p class="note"><strong>Working today:</strong> live NOAA and NASA HAPI space-weather ingest; three L1 spacecraft cross-checked, with a flag when SOLAR-1 and IMAP disagree on density; the solar wind propagated to Earth for about 50 minutes of warning; a Kp 3-hour forecast that beats persistence on held-out 2022&ndash;24 data and says plainly that it is worse during storms; radiation (S), geomagnetic (G) and radio-blackout (R) levels kept apart, computed from GOES protons, Kp and GOES X-rays to NOAA&rsquo;s thresholds and cross-checked against NOAA&rsquo;s published scales; every input sense-checked, so inconsistent sensor data is flagged with a reason instead of dropped; stale or missing inputs shown as unknown (S?, G?, R?), never as quiet. <strong>Being built for the first pilots:</strong> ingest of your own logs, output flagging and the evidence export.</p>
+  </div>
+</section>
+
+<section id="claims" aria-labelledby="claims-h">
+  <div class="wrap">
+    <p class="k">03_CLAIMS</p>
+    <h2 id="claims-h">What we claim, and what we don't</h2>
+    <div class="two">
+      <div>
+        <h3>We will show you</h3>
+        <ul class="ticks">
+          <li>Which records were produced under elevated space-weather conditions (proton, electron and geomagnetic levels)</li>
+          <li>Where data quality or provenance is missing, with "unknown" said plainly</li>
+          <li>Simulation results labelled as simulation</li>
+        </ul>
+      </div>
+      <div>
+        <h3>We don't claim</h3>
+        <ul class="crosses">
+          <li>Flight readiness or space qualification</li>
+          <li>Radiation dose or hardware damage figures</li>
+          <li>Any ability to command a spacecraft: Gauss is advisory only</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="plans" aria-labelledby="plans-h">
+  <div class="wrap">
+    <p class="k">04_PLANS</p>
+    <h2 id="plans-h">Start with a pilot. Grow in gated stages.</h2>
+    <!--live:plans-->
+    <ol class="stages">
+      <li class="now"><span class="label">Now</span><h3>Fleet Integration</h3><p>Ground-side replay, quality and provenance, radiation correlation, bounded inference and operator evidence.</p></li>
+      <li><span class="label">Gated</span><h3>Flight Candidate Adapter</h3><p>Only with a named mission, target processor, mission dictionary, hardware evidence and operator authority.</p></li>
+      <li><span class="label">Gated</span><h3>Federated Bridge Node</h3><p>A hosted-payload or in-orbit demonstration option, considered only after the stages before it.</p></li>
+    </ol>
+    <!--/live:plans-->
+  </div>
+</section>
+
+<section id="fit" aria-labelledby="fit-h">
+  <div class="wrap">
+    <p class="k">05_FIT</p>
+    <h2 id="fit-h">Where Gauss fits</h2>
+    <p class="lead">We integrate at standard boundaries. We don't replace your mission control.</p>
+    <ul class="facts">
+      <li><strong>CCSDS and XTCE</strong> Packet identity and telemetry definitions, as your ground segment already uses them.</li>
+      <li><strong>Yamcs (pilot integration)</strong> Designed to replay from mission-control archives; tested on sample data so far.</li>
+      <li><strong>ONNX (pilot integration)</strong> Designed for model portability across processors, for teams whose models run in orbit.</li>
+      <li><strong>Your operators decide</strong> Observe-only and advisory, with deterministic fallback. Gauss consumes the mission data you already have and never replaces mission control.</li>
+    </ul>
+    <p class="note">Design-partner paths: we are working towards validation pilots with <strong>JAOPS</strong> and <strong>xOrbita</strong>.</p>
+    <p class="logos"><img src="/assets/partners/xorbita.png" alt="xOrbita" width="122" height="40" loading="lazy" decoding="async"></p>
+  </div>
+</section>
+
+<section id="connectivity" aria-labelledby="connectivity-h">
+  <div class="wrap">
+    <p class="k">06_CONNECTIVITY</p>
+    <h2 id="connectivity-h">Assured Connectivity for the team on the ground.</h2>
+    <p class="lead">Argo keeps an operations team's laptops and ground hosts working on hotspots, hotel and caf&eacute; Wi-Fi. It finds what broke, fixes what it safely can, and tells a person what it can't.</p>
+    <ul class="facts">
+      <li><strong>Self-healing</strong> Checks the connection every minute, fixes DNS and proxy faults, opens Wi-Fi login pages, and remembers what worked on each network. One alert per problem, not one every few minutes.</li>
+      <li><strong>Power, memory and disk</strong> Sheds optional work when memory, battery or disk run short, and keeps a closed laptop working down to 10% battery.</li>
+      <li><strong>Wi-Fi security</strong> Flags weakly encrypted networks and devices left open to everyone on them. Advice only: it never changes your settings.</li>
+      <li><strong>Approved exit countries</strong> Keeps traffic inside an approved-country policy and says when a SIM or network breaks it.</li>
+      <li><strong>Team status</strong> Each device reports to the Gauss operator console, and a phone that drops off the team network gets a text with the fix.</li>
+      <li><strong>Mac and Linux</strong> Runs on macOS laptops, and on Linux ground hosts as a small, locked-down container.</li>
+    </ul>
+    <p class="note">Running today on Lightbound's own laptops. Offered to pilot teams, scoped per team.</p>
+    <p class="actions"><a class="btn" href="mailto:jzwnathan@lightbound.uk?subject=Assured%20Connectivity%20pilot">Ask about a connectivity pilot</a></p>
+  </div>
+</section>
+
+<section id="team" aria-labelledby="team-h">
+  <div class="wrap">
+    <p class="k">07_TEAM</p>
+    <h2 id="team-h">Team</h2>
+    <ul class="people">
+      <li><strong>Joshua Nathan</strong> CEO. Aerospace engineering (University of Sheffield), venture leadership.</li>
+      <li><strong>Shubham Hule</strong> CTO. Space-systems engineering (MSc, University of Southampton); working on a LEO satellite.</li>
+      <li><strong>Merve Nur Yaşar</strong> Chief Strategist. PhD researcher in astropolitics; space policy and regulation.</li>
+      <li><strong>Ashwin Sriramoju</strong> Applied AI and multi-agent systems; edge compute.</li>
+      <li><strong>Aatish Patel</strong> AI systems and revenue operations.</li>
+    </ul>
+  </div>
+</section>
+
+<section id="contact" class="tight" aria-labelledby="contact-h">
+  <div class="wrap">
+    <p class="k">08_CONTACT</p>
+    <h2 id="contact-h">Talk to us</h2>
+    <p class="lead">Tell us about your mission and the logs you have. We'll reply with whether a replay pilot fits and what it would cover. Approved teams sign in to their Gauss workspace.</p>
+    <p class="actions"><a class="btn" href="/gauss/apply/">Send a pilot brief</a> <a class="btn ghost" href="mailto:jzwnathan@lightbound.uk?subject=Gauss">Email Josh, the founder</a> <a class="btn ghost" href="/app/">Sign in</a></p>
+  </div>
+</section>
+
+<section class="tight" aria-labelledby="more-h">
+  <div class="wrap">
+    <p class="label">09_KEEP_GOING</p>
+    <h2 id="more-h">More from Lightbound.</h2>
+    <ul class="doors">
+      <li><a class="door" href="/constellation/">
+        <img class="mark vt-constellation" src="/assets/marks/constellation-mark-colour-dark.svg" alt="" width="72" height="72" loading="lazy" decoding="async">
+        <span class="label">02_CONSTELLATION</span>
+        <h3>Constellation</h3>
+        <p>The space community.</p>
+        <!--live:constellation-door--><!--/live:constellation-door-->
+        <span class="go">Visit Constellation</span>
+      </a></li>
+      <li><a class="door" href="/turnstone/">
+        <img class="mark vt-turnstone" src="/assets/marks/turnstone-mark-colour-dark.svg" alt="" width="73" height="72" loading="lazy" decoding="async">
+        <span class="label">03_TURNSTONE</span>
+        <h3>Turnstone</h3>
+        <span class="redact" aria-hidden="true"><span></span><span></span></span>
+        <p class="sr">Classified.</p>
+        <span class="go">Restricted</span>
+      </a></li>
+    </ul>
+  </div>
+</section>
+</main>
+
+<footer class="wrap">
+  <div class="cols">
+    <div>
+      <p>Lightbound Limited · registered in England and Wales, company no. 14573199 · 30A Commercial Street, Harrogate, HG1 1AX</p>
+      <p>Space-weather data: NOAA Space Weather Prediction Center and NASA HAPI services. Gauss is advisory software and does not command spacecraft.</p>
+    </div>
+    <nav aria-label="Footer"><a href="/gauss/">Gauss</a><a href="/constellation/">Constellation</a><a href="/turnstone/">Turnstone</a><a href="/argo/">Gauss Argo</a><a href="/education/">Education</a><a href="mailto:jzwnathan@lightbound.uk">Contact</a><a href="/privacy/">Privacy</a><a href="/terms/">Terms</a></nav>
+  </div>
+</footer>
+</body>
+</html>
