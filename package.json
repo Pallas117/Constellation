@@ -70,7 +70,8 @@
     "site:dev": "node website/dev.mjs",
     "site:dev:offline": "node website/dev.mjs --offline",
     "site:forms": "node website/tools/sync_forms.mjs",
-    "audit:website": "node website/tools/audit.mjs"
+    "audit:website": "node website/tools/audit.mjs",
+    "smoke:website": "node website/tools/smoke.mjs"
   },
   "dependencies": {
     "@radix-ui/react-dialog": "^1.1.14",

@@ -20,6 +20,10 @@ const PAGES = { "/": "index.html", "/gauss/": "gauss/index.html", "/constellatio
   "/constellation/time/": "constellation/time/index.html", "/argo/": "argo/index.html",
   "/education/": "education/index.html", "/education/apply/": "education/apply/index.html", "/constellation/workshops/": "constellation/workshops/index.html", "/terms/": "terms/index.html" };
 const html = Object.fromEntries(Object.entries(PAGES).map(([route, f]) => [route, read(f)]));
+// wrangler.jsonc, read as JSON once its whole-line comments are gone.
+const WRANGLER_RAW = readFileSync(join(pub, "..", "wrangler.jsonc"), "utf8");
+const WRANGLER = JSON.parse(WRANGLER_RAW.replace(/^\s*\/\/.*$/gm, "").replace(/,(\s*[}\]])/g, "$1"));
+const WORKER_ROUTES = WRANGLER.assets.run_worker_first;
 const API_ROUTES = new Set(["/api/launches", "/api/launches.ics", "/api/space-weather", "/api/health", "/cdn-cgi/access/logout"]);
 
 function walk(dir) {
@@ -96,8 +100,9 @@ test("every page has one h1, the same main navigation and the same footer links"
   const nav = (p) => [...(p.match(/<nav aria-label="Main">([\s\S]*?)<\/nav>/)?.[1] ?? "").matchAll(/href="([^"]+)"/g)].map((m) => m[1]);
   for (const [route, page] of Object.entries(html)) {
     assert.equal((page.match(/<h1[\s>]/g) || []).length, 1, `${route}: exactly one h1`);
-    const auth = route.startsWith("/app/") ? "/cdn-cgi/access/logout" : "/app/";
-    assert.deepEqual(nav(page), ["/gauss/", "/constellation/", "/turnstone/", auth], `${route}: main nav ends with sign in/out`);
+    // Public pages end with Contact (the public release has no sign-in); /argo/ opens only with accounts, so it keeps Sign in.
+    const last = route.startsWith("/app/") ? "/cdn-cgi/access/logout" : route === "/argo/" ? "/app/" : "mailto:jzwnathan@lightbound.uk";
+    assert.deepEqual(nav(page), ["/gauss/", "/constellation/", "/turnstone/", last], `${route}: main nav ends with Contact, or sign in/out`);
     assert.match(page, /<html lang="en-GB">/);
     assert.match(page, /<a class="skip" href="#main">/);
   }
@@ -387,6 +392,26 @@ test("production config: no Stripe secrets, no local stand-in, no test keys anyw
   for (const f of walk(join(pub, ".."))) {
     if (f.includes(`${join("website", "public", "assets")}`) && !f.endsWith(".css")) continue; // binary assets
     assert.doesNotMatch(readFileSync(f, "utf8"), /\b(sk|rk)_(live|test)_[A-Za-z0-9]{8,}|whsec_[A-Za-z0-9]{8,}/, `${f}: looks like a Stripe key`);
+  }
+});
+
+// ---- The public release (GAU-178) ----
+test("public release: the config holds only what the public pages need, and keeps the closed routes on the Worker", () => {
+  const [raw, config] = [WRANGLER_RAW, WRANGLER];
+  assert.equal(config.vars.RELEASE, "public");
+  assert.deepEqual(config.kv_namespaces.map((k) => k.binding), ["LIVE"], "no DATA namespace until accounts open");
+  assert.doesNotMatch(raw.replace(/^\s*\/\/.*$/gm, ""), /ACCESS_|ADMIN_EMAILS|STAFF_EMAILS|SUPPORT_URL|"DATA"/, "no placeholder sign-in or payment settings");
+  assert.deepEqual(raw.match(/REPLACE_[A-Z_]+/g), ["REPLACE_WITH_LIVE_NAMESPACE_ID"], "the one id to fill in at launch");
+  for (const route of ["/app", "/app/*", "/argo/", "/api/*"]) assert.ok(config.assets.run_worker_first.includes(route), `${route} must reach the Worker, or its static file would be served`);
+  assert.equal(config.routes, undefined, "lightbound.uk is routed only with Josh's go-ahead");
+});
+
+test("public release: public pages link to sign-in only inside <!--full--> blocks, which the Worker removes", () => {
+  for (const [route, page] of Object.entries(html)) {
+    if (route.startsWith("/app/") || route === "/argo/") continue;
+    const open = page.replace(/<!--full-->[\s\S]*?<!--\/full-->/g, "");
+    assert.doesNotMatch(open, /href="\/app\/|href="\/argo\//, `${route}: links into a closed area`);
+    if (open !== page) assert.ok(WORKER_ROUTES.includes(route), `${route}: <!--full--> needs the Worker to remove it`);
   }
 });
 
