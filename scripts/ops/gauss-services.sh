@@ -580,19 +580,20 @@ gate_lock() {
 }
 
 gates_record() { # gates_record <checkout-dir>: run the gates on a clean checkout and record the result by tree
-  local dir sha tree tmp g rc
+  local dir sha tree g rc
   dir=$(cd "${1:?usage: $0 gates record <checkout-dir>}" && pwd) || return 1
   [ -f "$dir/backend/server.ts" ] && [ -d "$dir/node_modules" ] || { echo "$dir is not a Gauss checkout with node_modules" >&2; return 1; }
   # A record vouches for a tree, so nothing uncommitted may be in it.
   [ -z "$(git -C "$dir" status --porcelain)" ] || { echo "$dir has uncommitted or untracked files: commit or stash them first." >&2; return 1; }
   sha=$(git -C "$dir" rev-parse HEAD) && tree=$(git -C "$dir" rev-parse 'HEAD^{tree}') || return 1
-  tmp=$(mktemp -d)
-  trap 'rmdir "$GATE_LOCK" 2>/dev/null || true; rm -rf "$tmp"' EXIT
+  GATES_TMP=$(mktemp -d); local tmp=$GATES_TMP # global: the EXIT trap runs after this function's locals are gone
+  # Release the lock on exit only while holding it: an interrupted wait must not free another agent's lock.
+  trap '[ "${GATES_HOLD:-0}" = 1 ] && rmdir "$GATE_LOCK" 2>/dev/null; rm -rf "$GATES_TMP"' EXIT
   for g in "${GATES[@]}"; do
-    gate_lock
+    gate_lock; GATES_HOLD=1
     echo "gate $g ..."
     rc=0; (cd "$dir" && PATH="$(dirname "$NODE"):$PATH" npm run "$g" >"$tmp/$g.log" 2>&1) || rc=$?
-    rmdir "$GATE_LOCK" 2>/dev/null || true
+    rmdir "$GATE_LOCK" 2>/dev/null || true; GATES_HOLD=0
     echo "$rc" >"$tmp/$g.rc"
   done
   [ "$(git -C "$dir" rev-parse HEAD)" = "$sha" ] && [ -z "$(git -C "$dir" status --porcelain)" ] \
@@ -1032,7 +1033,8 @@ except Exception:
     print("no space-weather data unavailable")
 ' 2>/dev/null || echo "no space-weather data unavailable")
   item "${fresh%% *}" "${fresh#* }"
-  local dir; dir=$(launchctl print "$UID_DOMAIN/uk.lightbound.gauss-backend" 2>/dev/null | awk -F'= ' '/working directory =/{print $2; exit}')
+  # || true: with the backend not loaded, launchctl fails and pipefail + set -e would end the checklist here.
+  local dir; dir=$(launchctl print "$UID_DOMAIN/uk.lightbound.gauss-backend" 2>/dev/null | awk -F'= ' '/working directory =/{print $2; exit}' || true)
   local report; report=$(python3 -Ic '
 import json, sys
 from datetime import datetime, timezone
