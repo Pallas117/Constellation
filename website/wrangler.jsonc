@@ -16,9 +16,9 @@
   },
   // Refresh launches, space weather and events into KV. Free plan: 5 cron triggers per account.
   "triggers": { "crons": ["*/15 * * * *"] },
-  // The feed cache. Create it once with `npx wrangler@4 kv namespace create LIVE` and paste its id here (not a secret).
+  // The feed cache, created 23 Oct 2026 with `npx wrangler@4 kv namespace create LIVE` (ids are not secrets).
   "kv_namespaces": [
-    { "binding": "LIVE", "id": "REPLACE_WITH_LIVE_NAMESPACE_ID" }
+    { "binding": "LIVE", "id": "1322d2fae0a345c18f94862eebbd1572" }
   ],
   "vars": {
     // "public": pages, feeds and an email route; sign-in, forms, payments and members' pages answer 404 (worker/release.js).

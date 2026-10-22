@@ -409,7 +409,7 @@ One time:
 ```bash
 cd website
 npx wrangler@4 login                       # opens Cloudflare in your browser
-npx wrangler@4 kv namespace create LIVE    # paste its id into wrangler.jsonc (not a secret) and commit it
+npx wrangler@4 kv namespace create LIVE    # done 23 Oct 2026: its id is in wrangler.jsonc (not a secret)
 ```
 
 Each deploy, from a clean checkout of the exact commit whose gates passed (`npm run test:website`, and

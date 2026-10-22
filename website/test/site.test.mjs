@@ -401,7 +401,8 @@ test("public release: the config holds only what the public pages need, and keep
   assert.equal(config.vars.RELEASE, "public");
   assert.deepEqual(config.kv_namespaces.map((k) => k.binding), ["LIVE"], "no DATA namespace until accounts open");
   assert.doesNotMatch(raw.replace(/^\s*\/\/.*$/gm, ""), /ACCESS_|ADMIN_EMAILS|STAFF_EMAILS|SUPPORT_URL|"DATA"/, "no placeholder sign-in or payment settings");
-  assert.deepEqual(raw.match(/REPLACE_[A-Z_]+/g), ["REPLACE_WITH_LIVE_NAMESPACE_ID"], "the one id to fill in at launch");
+  assert.equal(raw.match(/REPLACE_[A-Z_]+/g), null, "no placeholders left to deploy");
+  assert.match(config.kv_namespaces[0].id, /^[0-9a-f]{32}$/, "the LIVE namespace id");
   for (const route of ["/app", "/app/*", "/argo/", "/api/*"]) assert.ok(config.assets.run_worker_first.includes(route), `${route} must reach the Worker, or its static file would be served`);
   assert.equal(config.routes, undefined, "lightbound.uk is routed only with Josh's go-ahead");
 });
