@@ -49,5 +49,7 @@ export async function accessIdentity(request, env, { fetchImpl = fetch, now = Da
   }
 }
 
-export const isAdmin = (env, email) =>
-  !!email && String(env.ADMIN_EMAILS ?? "").toLowerCase().split(",").map((s) => s.trim()).filter(Boolean).includes(email);
+const listed = (list, email) => !!email && String(list ?? "").toLowerCase().split(",").map((s) => s.trim()).filter(Boolean).includes(email);
+export const isAdmin = (env, email) => listed(env.ADMIN_EMAILS, email);
+/** The Lightbound team (STAFF_EMAILS, a secret so the addresses stay out of the public repo); admins count as staff. */
+export const isStaff = (env, email) => isAdmin(env, email) || listed(env.STAFF_EMAILS, email);

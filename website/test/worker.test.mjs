@@ -6,19 +6,21 @@ import { existsSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import worker from "../worker/index.js";
-import { FEEDS, feedState, normaliseEvents, normaliseLaunches, normaliseWeather, readFeed, refreshFeeds } from "../worker/feeds.js";
+import { FEEDS, feedState, normaliseEvents, normaliseLaunches, normaliseNews, normaliseProgrammes, normaliseUkri, normaliseUksa, normaliseWeather, parseCsv, programmesUrl, readFeed, refreshFeeds } from "../worker/feeds.js";
 import { countdown, esc, renderConstellationDoor, renderEventIcs, renderEvents, renderGaussDoor, renderIcs, renderLaunches, renderWeather, whenText } from "../worker/render.js";
 import { SECURITY_HEADERS } from "../worker/headers.js";
 import { RECORDED_AT, fixture, makeFetch } from "./fixtures/fetch.mjs";
 import { memoryKV } from "./fixtures/kv.mjs";
 import { makeAccess } from "./fixtures/access.mjs";
-import { accessIdentity, isAdmin } from "../worker/auth.js";
+import { accessIdentity, isAdmin, isStaff } from "../worker/auth.js";
 import { getAccount, listApplications, putAccount, saveApplication, senderOf } from "../worker/data.js";
 import { applyEvent, createPortal, formEncode, signPayload, verifySignature } from "../worker/stripe.js";
 import { billingStatus, isAcademicEmail } from "../worker/tiers.js";
 import { APP_CSP } from "../worker/headers.js";
 import { formatIn, renderPlanner, tzOffset, zonedToUtc } from "../worker/timezones.js";
-import { listCalls, saveCall } from "../worker/calls.js";
+import { listCalls, rsvp, saveCall } from "../worker/calls.js";
+import { PROGRAMMES_URL, newsJson, programmesCsv, ukriXml, uksaAtom } from "./fixtures/opportunities.mjs";
+import { collect, interestsFor, rank, tagsOf } from "../worker/opportunities.js";
 
 const pub = join(dirname(fileURLToPath(import.meta.url)), "..", "public");
 const MIN = 60_000;
@@ -66,17 +68,24 @@ test("space weather: NOAA scales, Kp and solar wind; NOAA times are UTC whatever
 });
 
 // ---- The cron refresh ----
+// The public pages' feeds; the members' opportunity feeds have their own tests below.
+const core = (r) => ({ launches: r.launches, weather: r.weather, events: r.events });
+
 test("refresh: fills KV, then leaves fresh feeds alone (LL2 allows 15 calls an hour)", async () => {
   const env = { LIVE: memoryKV() };
   const f = makeFetch();
-  assert.deepEqual(await refreshFeeds(env, { fetchImpl: f, now: RECORDED_AT }), { launches: "updated", weather: "updated", events: "updated" });
-  assert.equal(f.calls.length, 6);
+  const first = await refreshFeeds(env, { fetchImpl: f, now: RECORDED_AT });
+  assert.deepEqual(core(first), { launches: "updated", weather: "updated", events: "updated" });
+  assert.deepEqual([first.news, first.ukri, first.uksa, first.programmes], ["updated", "updated", "updated", "not configured"]);
+  assert.equal(f.calls.length, 9, "six for the public pages, three for members (news, UKRI, UKSA)");
   assert.equal((await readFeed(env, "launches")).data.length, 10);
-  assert.deepEqual(await refreshFeeds(env, { fetchImpl: f, now: RECORDED_AT + 10 * MIN }), { launches: "fresh", weather: "fresh", events: "fresh" });
-  assert.equal(f.calls.length, 6, "no upstream calls while fresh");
-  assert.deepEqual(await refreshFeeds(env, { fetchImpl: f, now: RECORDED_AT + 15 * MIN }), { launches: "fresh", weather: "updated", events: "fresh" });
-  assert.deepEqual(await refreshFeeds(env, { fetchImpl: f, now: RECORDED_AT + 30 * MIN }), { launches: "updated", weather: "updated", events: "fresh" });
-  assert.deepEqual(await refreshFeeds(env, { fetchImpl: f, now: RECORDED_AT + 180 * MIN }), { launches: "updated", weather: "updated", events: "updated" }, "Luma every 3 hours");
+  assert.deepEqual(core(await refreshFeeds(env, { fetchImpl: f, now: RECORDED_AT + 10 * MIN })), { launches: "fresh", weather: "fresh", events: "fresh" });
+  assert.equal(f.calls.length, 9, "no upstream calls while fresh");
+  assert.deepEqual(core(await refreshFeeds(env, { fetchImpl: f, now: RECORDED_AT + 15 * MIN })), { launches: "fresh", weather: "updated", events: "fresh" });
+  assert.deepEqual(core(await refreshFeeds(env, { fetchImpl: f, now: RECORDED_AT + 30 * MIN })), { launches: "updated", weather: "updated", events: "fresh" });
+  const later = await refreshFeeds(env, { fetchImpl: f, now: RECORDED_AT + 180 * MIN });
+  assert.deepEqual(core(later), { launches: "updated", weather: "updated", events: "updated" }, "Luma every 3 hours");
+  assert.deepEqual([later.news, later.ukri, later.uksa], ["updated", "fresh", "fresh"], "news hourly, calls every 6 hours");
 });
 
 test("events: Luma's calendar becomes titles, times and public links only; cancelled events dropped", () => {
@@ -98,7 +107,7 @@ test("refresh: an upstream failure keeps the last good data and records the erro
   const env = { LIVE: memoryKV() };
   await refreshFeeds(env, { fetchImpl: makeFetch(), now: RECORDED_AT });
   const r = await refreshFeeds(env, { fetchImpl: makeFetch({ launches: 429, scales: 503 }), now: RECORDED_AT + 60 * MIN });
-  assert.deepEqual(r, { launches: "failed: ll.thespacedevs.com HTTP 429", weather: "failed: services.swpc.noaa.gov HTTP 503", events: "fresh" });
+  assert.deepEqual(core(r), { launches: "failed: ll.thespacedevs.com HTTP 429", weather: "failed: services.swpc.noaa.gov HTTP 503", events: "fresh" });
   const rec = await readFeed(env, "launches");
   assert.equal(rec.data.length, 10, "old data kept");
   assert.equal(rec.fetchedAt, new Date(RECORDED_AT).toISOString());
@@ -241,7 +250,7 @@ test("routes: a fresh deploy fetches once in the background, before the first cr
   const res = await worker.fetch(new Request("https://lightbound.uk/"), fresh, ctx);
   assert.equal(res.status, 200, "page still serves while data loads");
   await settle();
-  assert.equal(f.calls.length, 6);
+  assert.equal(f.calls.length, 9);
   assert.ok(await readFeed(fresh, "launches"));
 });
 
@@ -538,66 +547,46 @@ test("admin: only ADMIN_EMAILS; approval needs a quote inside the published rang
   assert.equal((await listApplications(env))[0].status, "approved");
 });
 
-test("argo: the early-access list is stored like other applications; an invitation adds Argo only", async () => {
+test("argo: included for operators and staff; a setup request we answer by email, never a checkout", async () => {
   const { env, access } = await appEnv();
-  const res = await send(env, post("/api/apply", { kind: "argo", name: "Ops Example", email: "ops@example.test", interest: "Both", platform: "Linux", devices: "6–25", note: "Hotel Wi-Fi blocks our ground-station VPN.", consent: "yes" }));
-  assert.equal(res.headers.get("location"), "/argo/apply/?sent=1");
-  const page = await (await send(env, new Request("https://lightbound.uk/argo/apply/?sent=1"))).text();
-  assert.match(page, /You're on the Gauss Argo list\./);
-  const bad = await send(env, post("/api/apply", { kind: "argo", name: "Ops", email: "ops@example.test", interest: "Free VPN", platform: "macOS", devices: "1", consent: "yes" }, { "cf-connecting-ip": "203.0.113.10" }));
-  assert.equal(bad.status, 422, "only the listed options");
-  const admin = await (await send(env, await as(access, "boss@example.test", "/app/admin/"))).text();
-  assert.match(admin, /ARGO · EARLY ACCESS AND RELAY WAITLIST/);
-  assert.match(admin, /Both · Linux · 6–25 devices/);
-  assert.match(admin, /Invite to early access/);
-  const [app] = await listApplications(env);
-  await send(env, await formPost(access, "boss@example.test", "/app/admin/decide", { id: app.id, decision: "approve" }));
-  assert.equal((await listApplications(env))[0].status, "approved");
-  const acct = await getAccount(env, "ops@example.test");
-  assert.ok(acct.argo.invitedAt);
-  assert.deepEqual([acct.tier ?? null, acct.community ?? null], [null, null], "no Gauss plan or membership");
-  const work = await (await send(env, await as(access, "ops@example.test", "/app/"))).text();
-  assert.match(work, /You're on the early-access list/, "ARGO_SALES off: no start button");
-  assert.doesNotMatch(work, /Start Gauss Argo/);
-});
-
-test("argo sales: off, invite, open; $10 a month subscription with its own billing; never touches a Gauss plan", async () => {
-  const { env, access } = await appEnv();
-  const argoPage = async (e) => (await send(e, new Request("https://lightbound.uk/argo/"))).text();
-  assert.match(await argoPage(env), /href="\/argo\/apply\/">Request early access/);
-  assert.match(await argoPage(env), /Planned: <strong>\$10 a month/);
-  const stripe = stripeMock();
-  assert.equal((await withFetch(stripe, async () => send(env, await formPost(access, "new@example.test", "/app/argo/checkout")))).headers.get("location"), "/app/", "off: no checkout");
-  const invite = { ...env, ARGO_SALES: "invite" };
-  await putAccount(invite, { email: "fleet@example.test", tier: "fleet_integration", quote: 7_500_000, billing: { status: "active", customer: "cus_fleet" }, argo: { invitedAt: "2026-10-20T00:00:00.000Z" } }, "test");
-  assert.equal((await withFetch(stripe, async () => send(invite, await formPost(access, "stranger@example.test", "/app/argo/checkout")))).headers.get("location"), "/app/", "invite: only invited accounts");
-  assert.match(await (await send(invite, await as(access, "fleet@example.test", "/app/"))).text(), /Start Gauss Argo/);
-  const go = await withFetch(stripe, async () => send(invite, await formPost(access, "fleet@example.test", "/app/argo/checkout")));
-  assert.equal(go.headers.get("location"), "https://checkout.stripe.com/c/pay/cs_test_1");
-  const body = stripe.calls.at(-1).body;
-  assert.deepEqual([body.get("mode"), body.get("line_items[0][price_data][currency]"), body.get("line_items[0][price_data][unit_amount]"), body.get("line_items[0][price_data][recurring][interval]")],
-    ["subscription", "usd", "1000", "month"]);
-  assert.deepEqual([body.get("metadata[product]"), body.get("subscription_data[metadata][product]"), body.get("customer"), body.get("consent_collection[terms_of_service]")], ["argo", "argo", "cus_fleet", "required"],
-    "same Stripe customer as the Gauss plan; terms must be accepted");
-  assert.equal(body.get("success_url"), "https://lightbound.uk/app/?argo=started");
-  // Webhooks: Argo's own billing; the Gauss plan stays as it was.
-  const t0 = Math.floor(Date.now() / 1000);
-  const meta = { email: "fleet@example.test", product: "argo" };
-  assert.equal(await applyEvent(invite, { type: "checkout.session.completed", created: t0, data: { object: { id: "cs_test_1", mode: "subscription", customer: "cus_fleet", subscription: "sub_argo", metadata: meta } } }), "argo checkout.session.completed -> active");
-  let acct = await getAccount(invite, "fleet@example.test");
-  assert.deepEqual([acct.argo.billing.status, acct.argo.billing.subscription, acct.billing.status, acct.tier], ["active", "sub_argo", "active", "fleet_integration"]);
-  assert.match(await (await send(invite, await as(access, "fleet@example.test", "/app/?argo=started"))).text(), /Gauss Argo is starting/);
-  await applyEvent(invite, { type: "customer.subscription.deleted", created: t0 + 5, data: { object: { id: "sub_argo", status: "canceled", customer: "cus_fleet", metadata: meta } } });
-  acct = await getAccount(invite, "fleet@example.test");
-  assert.deepEqual([acct.argo.billing.status, acct.billing.status], ["canceled", "active"], "cancelling Argo leaves Fleet Integration active");
-  assert.match(await (await send(invite, await as(access, "boss@example.test", "/app/admin/"))).text(), /Argo: Cancelled/);
-  // Open: anyone signed in can start; the account is created first so the webhook can find it.
-  const open = { ...env, ARGO_SALES: "open" };
-  assert.match(await argoPage(open), /href="\/app\/\?argo=start">Start for \$10 a month/);
-  const r = await withFetch(stripe, async () => send(open, await formPost(access, "solo@example.test", "/app/argo/checkout")));
-  assert.equal(r.status, 303);
-  assert.equal((await getAccount(open, "solo@example.test")).email, "solo@example.test");
-  assert.equal(stripe.calls.at(-1).body.get("customer_email"), "solo@example.test");
+  const e = { ...env, STAFF_EMAILS: "crew@example.test" };
+  const page = async (who) => (await send(e, await as(access, who, "/app/"))).text();
+  await putAccount(e, { email: "member@example.test", community: "member" }, "test");
+  await putAccount(e, { email: "due@example.test", tier: "pilot", quote: 2_800_000, billing: { status: "due" } }, "test");
+  for (const who of ["visitor@example.test", "member@example.test", "due@example.test"]) assert.doesNotMatch(await page(who), /Gauss Argo<\/h2>/, `${who}: not an operator`);
+  await putAccount(e, { email: "fleet@example.test", tier: "fleet_integration", quote: 7_500_000, billing: { status: "active" } }, "test");
+  const op = await page("fleet@example.test");
+  assert.match(op, /<h2 class="label">Gauss Argo<\/h2><p class="big">Included<\/p><p class="t">Ready to set up<\/p><p class="m">Included with your Gauss plan: nothing extra to pay\.<\/p>/);
+  assert.doesNotMatch(op, /\$10|a month<|Start Gauss Argo/, "no price, no checkout");
+  assert.match(await page("crew@example.test"), /<p class="m">For the Lightbound team\.<\/p>/, "staff without a plan");
+  // A request is recorded once; nothing is paid or installed from here.
+  for (const who of ["due@example.test", "visitor@example.test", "member@example.test"]) assert.equal((await send(e, await formPost(access, who, "/app/argo/setup"))).status, 403, who);
+  assert.equal(await getAccount(e, "visitor@example.test"), null);
+  assert.equal((await send(e, await formPost(access, "fleet@example.test", "/app/argo/setup"))).headers.get("location"), "/app/?argo=requested");
+  const at = (await getAccount(e, "fleet@example.test")).argo.requestedAt;
+  await send(e, await formPost(access, "fleet@example.test", "/app/argo/setup"));
+  assert.equal((await getAccount(e, "fleet@example.test")).argo.requestedAt, at, "asked once");
+  assert.match(await (await send(e, await as(access, "fleet@example.test", "/app/?argo=requested"))).text(), /We(&#39;|')ll email your Gauss Argo install link and setup steps\./);
+  assert.match(await page("fleet@example.test"), /<p class="t">Setup requested<\/p>/);
+  // Admins see who's waiting and mark the install link sent.
+  const admin = await (await send(e, await as(access, "boss@example.test", "/app/admin/"))).text();
+  assert.match(admin, /Gauss Argo setup requested by 1:/);
+  assert.match(admin, /Argo: setup requested<\/span> <button class="btn ghost">Mark Argo setup sent<\/button>/);
+  assert.equal((await send(e, await formPost(access, "fleet@example.test", "/app/admin/argo", { email: "fleet@example.test" }))).status, 403, "admins only");
+  await send(e, await formPost(access, "boss@example.test", "/app/admin/argo", { email: "fleet@example.test" }));
+  assert.ok((await getAccount(e, "fleet@example.test")).argo.sentAt);
+  assert.match(await page("fleet@example.test"), /<p class="t">Setup sent<\/p>/);
+  // The old list, checkout and product are gone.
+  assert.equal((await send(e, post("/api/apply", { kind: "argo", name: "Ops", email: "ops@example.test" }))).status, 400);
+  assert.notEqual((await send(e, await formPost(access, "fleet@example.test", "/app/argo/checkout"))).status, 303);
+  const before = (await getAccount(e, "fleet@example.test")).billing;
+  assert.equal(await applyEvent(e, { type: "customer.subscription.deleted", created: 2_000_000_000, data: { object: { id: "sub_x", status: "canceled", metadata: { email: "fleet@example.test", product: "argo" } } } }), "ignored: not a product we sell");
+  assert.deepEqual((await getAccount(e, "fleet@example.test")).billing, before, "an old Argo event never touches the Gauss plan");
+  // Old list entries are leads: "Mark handled" changes no account.
+  const old = await saveApplication(e, { kind: "argo", name: "Kai", email: "kai@example.test", consent: true });
+  assert.match(await (await send(e, await as(access, "boss@example.test", "/app/admin/"))).text(), /ARGO · EARLY-ACCESS LIST \(CLOSED\)[\s\S]*Mark handled/);
+  await send(e, await formPost(access, "boss@example.test", "/app/admin/decide", { id: old.id, decision: "approve" }));
+  assert.equal(await getAccount(e, "kai@example.test"), null);
 });
 
 test("education: university emails start straight away; students free for a year; staff checkout only once priced", async () => {
@@ -744,13 +733,13 @@ test("security: an oversized upstream feed is refused, and the last good data is
 
 test("security review: checkout sessions reused, not multiplied; student year needs a university address; senders by /64; chunked uploads capped; dev keys local only", async () => {
   const { env, access } = await appEnv();
-  const open = { ...env, ARGO_SALES: "open" };
+  const open = { ...env, EDU_SALES: "open", EDU_STAFF_PRICE: "500" };
   const stripe = stripeMock();
-  const first = await withFetch(stripe, async () => send(open, await formPost(access, "solo@example.test", "/app/argo/checkout")));
-  const again = await withFetch(stripe, async () => send(open, await formPost(access, "solo@example.test", "/app/argo/checkout")));
+  const first = await withFetch(stripe, async () => send(open, await formPost(access, "solo@uni.ac.uk", "/app/edu/checkout")));
+  const again = await withFetch(stripe, async () => send(open, await formPost(access, "solo@uni.ac.uk", "/app/edu/checkout")));
   assert.equal(again.headers.get("location"), first.headers.get("location"));
   assert.equal(stripe.calls.length, 1, "a second click reuses the open session");
-  assert.equal((await getAccount(open, "solo@example.test")).argo.checkout.id, "cs_test_1");
+  assert.equal((await getAccount(open, "solo@uni.ac.uk")).edu.checkout.id, "cs_test_1");
   // An approved department without a university address can't take the free student year.
   const edu = { ...env, EDU_SALES: "open" };
   await putAccount(edu, { email: "lee@physics.example.org", edu: { approvedAt: "2026-10-20T00:00:00.000Z", plan: "department", quote: 300_000, billing: { status: "due" } } }, "test");
@@ -778,19 +767,15 @@ test("security review: checkout sessions reused, not multiplied; student year ne
 
 test("user cap: new self-serve sign-ups wait once USER_CAP accounts exist; existing accounts are never blocked", async () => {
   const { env, access } = await appEnv();
-  const capped = { ...env, ARGO_SALES: "open", EDU_SALES: "open", USER_CAP: "2" };
+  const capped = { ...env, EDU_SALES: "open", USER_CAP: "2" };
   await putAccount(capped, { email: "one@example.test", community: "member" }, "test");
   await putAccount(capped, { email: "two@uni.ac.uk", community: "member" }, "test");
-  const stripe = stripeMock();
-  assert.equal((await withFetch(stripe, async () => send(capped, await formPost(access, "three@example.test", "/app/argo/checkout")))).headers.get("location"), "/app/?full=argo");
   assert.equal((await send(capped, await formPost(access, "four@uni.ac.uk", "/app/edu/student", { student: "yes" }))).headers.get("location"), "/app/?full=edu");
-  assert.equal(await getAccount(capped, "three@example.test"), null);
-  assert.match(await (await send(capped, await as(access, "three@example.test", "/app/?full=argo"))).text(), /We(&#39;|')re full for now\. Join the Gauss Argo list/);
-  const existing = await withFetch(stripe, async () => send(capped, await formPost(access, "one@example.test", "/app/argo/checkout")));
-  assert.equal(existing.headers.get("location"), "https://checkout.stripe.com/c/pay/cs_test_1", "an existing account can still start");
+  assert.equal(await getAccount(capped, "four@uni.ac.uk"), null);
+  assert.match(await (await send(capped, await as(access, "four@uni.ac.uk", "/app/?full=edu"))).text(), /We(&#39;|')re full for now\. Ask to join Gauss for Education/);
   assert.equal((await send(capped, await formPost(access, "two@uni.ac.uk", "/app/edu/student", { student: "yes" }))).headers.get("location"), "/app/?edu=student");
   assert.match(await (await send(capped, await as(access, "boss@example.test", "/app/admin/"))).text(), /Accounts \(2 of 2\)/);
-  assert.match(await (await send(capped, await as(access, "one@example.test", "/app/"))).text(), /Starting means you agree to the <a href="\/terms\/">terms<\/a>/);
+  assert.match(await (await send(capped, await as(access, "five@uni.ac.uk", "/app/"))).text(), /Starting means you agree to the <a href="\/terms\/">terms<\/a>/);
 });
 
 test("support: Constellation shows a Support link only once a Stripe Payment Link is set", async () => {
@@ -923,4 +908,146 @@ test("group calls: each member sees times in their own zone", async () => {
   assert.match(page, /<b>[A-Za-z]{3} 10 Jan, 20:00<\/b><span>Kuala Lumpur · [A-Za-z]{3} 10 Jan, 12:00 UTC · 60 min/);
   await send(env, await formPost(access, "kl@example.test", "/app/prefs", { tz: "Not/AZone" }));
   assert.equal((await getAccount(env, "kl@example.test")).tz, "Asia/Kuala_Lumpur", "unknown zones ignored");
+});
+// ---- Members' opportunities and staff ----
+test("opportunities: each feed keeps titles, dates and official https links only", () => {
+  const now = RECORDED_AT;
+  const news = normaliseNews(newsJson(now));
+  assert.deepEqual(news.map((n) => n.url), ["https://news.example.test/leo-seed", "https://news.example.test/lunar-challenge"], "no javascript: links");
+  assert.deepEqual(Object.keys(news[0]).sort(), ["at", "site", "title", "url"], "no article text");
+  assert.throws(() => normaliseNews({}), /no results array/);
+  const ukri = normaliseUkri(ukriXml(now), null, now);
+  assert.deepEqual(ukri.map((i) => i.title), ["Example: satellite data for flood resilience"], "near space, recent, on ukri.org");
+  assert.equal(ukri[0].summary, "UK businesses and start-ups can apply for a share of up to £1 million to use Earth observation data.", "entities decoded, council badge dropped");
+  assert.equal(ukri[0].funder, "Innovate UK");
+  const kept = normaliseUkri(ukriXml(now).replace(/<item>[\s\S]*<\/item>/, ""), ukri, now + 86_400_000);
+  assert.equal(kept.length, 1, "a call stays listed after the feed moves on");
+  assert.equal(normaliseUkri(ukriXml(now).replace(/<item>[\s\S]*<\/item>/, ""), ukri, now + 70 * 86_400_000).length, 0, "...for up to 60 days");
+  assert.throws(() => normaliseUkri("<html></html>"), /not an RSS feed/);
+  const uksa = normaliseUksa(uksaAtom(now), null, now);
+  assert.deepEqual(uksa.map((i) => [i.kind, i.title]), [["Guidance", "Example student hackathon call"]], "calls only, document type split off");
+  assert.throws(() => normaliseUksa("<rss></rss>"), /not an Atom feed/);
+});
+
+test("opportunities: the tracker's published CSV tab, read loosely and safely", () => {
+  assert.deepEqual(parseCsv('a,"b ""q"", c"\r\n1,"two\nlines"\n'), [["a", 'b "q", c'], ["1", "two\nlines"]]);
+  const rows = normaliseProgrammes(programmesCsv(RECORDED_AT));
+  assert.deepEqual(rows.map((r) => r.name), ["Example Space Accelerator", "Example Student Hackathon", "Example Business Incubation Centre", "Example closed grant"], "rows without an https link dropped");
+  assert.equal(rows[0].amount, "Up to $100,000");
+  assert.equal(rows[0].eligibility, 'Early-stage space startups, "seed" or earlier');
+  assert.equal(rows[0].funder, "Example Ventures", "the tracker's 'Organiser' column");
+  assert.equal(rows[2].deadline, "rolling");
+  const dated = (d) => normaliseProgrammes(`Programme,Deadline,Official URL\nX,${d},https://x.example.test/`)[0].deadline;
+  assert.equal(dated("1 Nov 2026"), "2026-11-01", "the tracker's own date format");
+  assert.equal(dated("2026-11-04"), "2026-11-04");
+  assert.equal(dated("04/11/2026"), null, "slashed dates mean different days in the UK and US");
+  assert.throws(() => normaliseProgrammes("<!doctype html><html>Sign in</html>"), /not CSV/);
+  assert.throws(() => normaliseProgrammes("Owner,Status\nJosh,Open"), /needs a Name and a Link column/);
+  assert.equal(programmesUrl({ PROGRAMMES_CSV_URL: PROGRAMMES_URL }), PROGRAMMES_URL);
+  for (const bad of ["https://evil.example/pub?output=csv", "http://docs.google.com/spreadsheets/d/e/2PACX-example-public-programmes-tab/pub?output=csv",
+    "https://docs.google.com/spreadsheets/d/1pawQ4Ttjd2G83STu30XXHFaRcfBe-TgzyKgLdQGdYxE/edit", "https://docs.google.com/spreadsheets/d/e/2PACX-example-public-programmes-tab/pub?output=html"]) {
+    assert.equal(programmesUrl({ PROGRAMMES_CSV_URL: bad }), "", bad);
+  }
+});
+
+test("opportunities: the programme feed waits for its setting, and health says so", async () => {
+  const env = { ASSETS, LIVE: memoryKV() };
+  const f = makeFetch({}, { shiftTo: Date.now() });
+  assert.equal((await refreshFeeds(env, { fetchImpl: f })).programmes, "not configured");
+  assert.ok(!f.calls.includes("programmes"));
+  const health = await (await send(env, new Request("https://lightbound.uk/api/health"))).json();
+  assert.equal(health.ok, true, "optional feeds never fail health");
+  assert.deepEqual(health.feeds.programmes, { state: "not configured" });
+  assert.equal(health.feeds.news.state, "live", "health reads the members' feeds too");
+  const set = { ...env, PROGRAMMES_CSV_URL: PROGRAMMES_URL };
+  assert.equal((await refreshFeeds(set, { fetchImpl: f, force: true })).programmes, "updated");
+  assert.equal((await readFeed(set, "programmes")).data.length, 4);
+});
+
+test("opportunities: a reply without a length still can't exceed the 2 MB cap", async () => {
+  const env = { LIVE: memoryKV() };
+  const big = async (url) => String(url).includes("spaceflightnewsapi")
+    ? new Response(new ReadableStream({ start(c) { for (let i = 0; i < 3; i++) c.enqueue(new Uint8Array(1024 * 1024)); c.close(); } }))
+    : makeFetch()(url);
+  const r = await refreshFeeds(env, { fetchImpl: big, now: RECORDED_AT });
+  assert.equal(r.news, "failed: api.spaceflightnewsapi.net response too large");
+});
+
+test("opportunities: matching is keyword rules a member can see and change", () => {
+  assert.deepEqual(tagsOf("PhD student building AI for Earth observation; I want to start a company"), ["student", "research", "founder", "eo", "ai"]);
+  assert.deepEqual(interestsFor({ interests: ["eo", "nope"] }, { kind: "constellation", role: "student" }), { tags: ["eo"], from: "saved" }, "saved interests win; unknown tags dropped");
+  assert.deepEqual(interestsFor({}, { kind: "gauss", message: "student" }), { tags: [], from: "none" }, "only a Constellation application suggests interests");
+  const now = RECORDED_AT;
+  const items = collect({ programmes: normaliseProgrammes(programmesCsv(now)), ukri: normaliseUkri(ukriXml(now), null, now), uksa: normaliseUksa(uksaAtom(now), null, now) }, now);
+  assert.ok(!items.some((i) => i.title === "Example closed grant"), "closed programmes are hidden");
+  const founder = rank(items, ["founder"]);
+  assert.deepEqual(founder.slice(0, 2).map((i) => i.title), ["Example Space Accelerator", "Example Business Incubation Centre"], "accelerators and incubators suit founders; nearest deadline first");
+  assert.equal(rank(items, ["student"])[0].title, "Example Student Hackathon");
+  assert.deepEqual(rank(items, []), [], "no interests, no matches");
+});
+
+test("opportunities: members see matches suggested from their application and can save their own", async () => {
+  const { env, access } = await appEnv();
+  const e = { ...env, PROGRAMMES_CSV_URL: PROGRAMMES_URL };
+  await refreshFeeds(e, { fetchImpl: makeFetch({}, { shiftTo: Date.now() }) });
+  await saveApplication(e, { kind: "constellation", name: "Ada", email: "ada@example.test", role: "PhD student", message: "I build AI tools for Earth observation data, privately noted.", consent: true });
+  await putAccount(e, { email: "ada@example.test", community: "member" }, "test");
+  const page = async (who) => (await send(e, await as(access, who, "/app/"))).text();
+  let html = await page("ada@example.test");
+  assert.match(html, /<h2 id="opps-h">Opportunities for you<\/h2>/);
+  assert.match(html, /Suggested from your application/);
+  assert.match(html, /<h3 class="label">Matched for you<\/h3><ol class="opp-list"><li class="opp">[\s\S]*Example Student Hackathon[\s\S]*Matches: Students/);
+  assert.match(html, /<input type="checkbox" name="interest" value="student" checked>/);
+  assert.match(html, /href="https:\/\/news\.example\.test\/leo-seed" rel="noopener noreferrer"/);
+  assert.doesNotMatch(html, /privately noted|Example closed grant/, "the application text is never shown; closed programmes hidden");
+  const save = async (who, tags) => send(e, await formPost(access, who, "/app/prefs", [["what", "interests"], ...tags.map((t) => ["interest", t])]));
+  const res = await save("ada@example.test", ["founder", "admin"]);
+  assert.equal(res.headers.get("location"), "/app/#opps-h");
+  assert.deepEqual((await getAccount(e, "ada@example.test")).interests, ["founder"], "only known tags are kept");
+  html = await page("ada@example.test");
+  assert.match(html, /Your saved interests/);
+  assert.match(html, /Matched for you<\/h3><ol class="opp-list"><li class="opp">[\s\S]*?Example Space Accelerator[\s\S]*?Matches: Founders and startups/);
+  await save("ada@example.test", []);
+  assert.deepEqual((await getAccount(e, "ada@example.test")).interests, [], "choosing none is kept, not re-suggested");
+  assert.match(await page("ada@example.test"), /Choose what you work on to see matches|Your saved interests/);
+  assert.equal((await save("visitor@example.test", ["eo"])).status, 403, "members only");
+  assert.equal(await getAccount(e, "visitor@example.test"), null);
+  assert.doesNotMatch(await page("visitor@example.test"), /Opportunities for you/, "not shown to non-members");
+});
+
+test("staff: the operations and training card is for STAFF_EMAILS and admins, with an https OPS_URL only", async () => {
+  const { env, access } = await appEnv();
+  const e = { ...env, STAFF_EMAILS: "Team@Example.test, crew@example.test", OPS_URL: "https://ops.example.test/" };
+  assert.equal(isStaff(e, "team@example.test"), true);
+  assert.equal(isStaff(e, "boss@example.test"), true, "admins count as staff");
+  assert.equal(isStaff(e, "visitor@example.test"), false);
+  assert.equal(isStaff({ ...e, STAFF_EMAILS: "" }, "team@example.test"), false);
+  const page = async (env2, who) => (await send(env2, await as(access, who, "/app/"))).text();
+  const html = await page(e, "crew@example.test");
+  assert.match(html, /<h2 class="label">Staff<\/h2><p class="big">Operations and training<\/p>/);
+  assert.match(html, /<a href="https:\/\/ops\.example\.test\/" rel="noopener">Open operations and training<\/a>/);
+  assert.doesNotMatch(html, /This account has no Gauss plan yet/, "staff aren't told to buy a plan");
+  assert.doesNotMatch(await page(e, "visitor@example.test"), /Operations and training/);
+  assert.doesNotMatch(await page({ ...e, OPS_URL: "javascript:alert(1)" }, "crew@example.test"), /Operations and training/, "https only");
+  assert.doesNotMatch(await page({ ...e, OPS_URL: "" }, "crew@example.test"), /Operations and training/, "hidden until set");
+});
+
+test("group calls: a member's page reads one cached index, not a KV list per call; the index heals itself", async () => {
+  const base = memoryKV();
+  let lists = 0;
+  const DATA = { ...base, get: base.get.bind(base), put: base.put.bind(base), delete: base.delete.bind(base), list: (o) => (lists++, base.list(o)) };
+  const env = { DATA };
+  const t0 = Date.parse("2026-11-01T00:00:00Z");
+  const a = await saveCall(env, { title: "Call A", start: new Date(t0 + 86_400_000).toISOString(), minutes: 60, capacity: 2, link: "" });
+  await saveCall(env, { title: "Call B", start: new Date(t0 + 2 * 86_400_000).toISOString(), minutes: 60, capacity: 2, link: "" });
+  assert.equal((await listCalls(env, t0)).length, 2, "first read builds the index");
+  lists = 0;
+  for (let i = 0; i < 5; i++) await listCalls(env, t0 + i * 60_000);
+  assert.equal(lists, 0, "fresh index: no lists at all");
+  assert.equal(await rsvp(env, a.id, "m@example.test", true, t0), "booked");
+  assert.deepEqual((await listCalls(env, t0 + 60_000)).find((c) => c.id === a.id).rsvps, ["m@example.test"], "a booking shows at once");
+  await DATA.put(`rsvp:${a.id}:lost@example.test`, "1"); // a write whose index patch was lost
+  assert.equal((await listCalls(env, t0 + 5 * 60_000)).find((c) => c.id === a.id).rsvps.length, 1);
+  assert.equal((await listCalls(env, t0 + 11 * 60_000)).find((c) => c.id === a.id).rsvps.length, 2, "rebuilt from the keys after 10 minutes");
+  assert.equal(await rsvp(env, a.id, "third@example.test", true, t0), "full", "capacity is checked against the keys, not the cache");
 });

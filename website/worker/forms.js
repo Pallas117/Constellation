@@ -1,6 +1,6 @@
 // Applications: "Request an invitation" for Constellation (free, invite-only), the Gauss pilot
-// brief (the sales plan's onboarding: fit, readiness, pilot brief) and Argo early access (with the
-// private-relay waitlist). Plain HTML forms that post to
+// brief (the sales plan's onboarding: fit, readiness, pilot brief), Gauss for Education and workshop
+// requests. (Gauss Argo has no list any more: it's included for operators and staff.) Plain HTML forms that post to
 // /api/apply, so they work without JavaScript. The server validates everything, drops bots (a
 // hidden honeypot field plus a per-IP hourly limit) and uses post/redirect/get, so a refresh never
 // resubmits. No personal data ever goes into a URL.
@@ -26,9 +26,6 @@ const FIELD = {
   plan: { label: "Package", type: "select", options: PLANS, required: true },
   timeline: { label: "Target start", type: "select", options: opts("This quarter", "Next quarter", "Later"), required: true },
   message: { label: "Message", type: "textarea", min: 20, max: 2000, required: true },
-  interest: { label: "What you'd like", type: "select", options: opts("Argo: early access", "Private relay: waitlist", "Both"), required: true },
-  platform: { label: "Main platform", type: "select", options: opts("macOS", "Linux", "Windows", "iPhone", "Android"), required: true },
-  devices: { label: "How many devices", type: "select", options: opts("1", "2–5", "6–25", "More than 25"), required: true },
   note: { label: "What breaks your connection today? (optional)", type: "textarea", max: 500, required: false },
   institution: { label: "University or school", type: "text", max: 160, auto: "organization", required: true },
   eduRole: { label: "Your role", type: "select", options: opts("Lecturer or teacher", "Researcher", "Department or programme lead", "Student", "Other"), required: true },
@@ -54,11 +51,6 @@ export const KINDS = Object.freeze({
     steps: [{ fields: ["name", "email", "role", "referrer", "link", "message"] }],
     labels: { role: "What you work on", message: "Why you'd like to join" },
     button: "Request an invitation",
-  },
-  argo: {
-    steps: [{ fields: ["name", "email", "interest", "platform", "devices", "note"] }],
-    labels: {},
-    button: "Join the list",
   },
   workshop: {
     steps: [{ fields: ["name", "email", "org", "topic", "format", "groupSize", "timeline", "note"] }],
@@ -119,7 +111,6 @@ const SENT = {
   constellation: ["Thank you. Your request is with the Constellation team.", "Membership is free and by invitation. If it's a fit, you'll receive an invitation by email.", "/constellation/", "Back to Constellation"],
   workshop: ["Thank you. Your workshop request is with the Constellation team.", "A person reads every request and replies with a proposal for your team.", "/constellation/", "Back to Constellation"],
   edu: ["Thank you. Your request is with the Gauss for Education team.", "With a university email you can start now: sign in with that address. Otherwise we'll review your request; for a department licence we'll reply with a yearly quote.", "/education/", "Back to Gauss for Education"],
-  argo: ["Thank you. You're on the Gauss Argo list.", "We'll email you when early access opens, with the price, before anything starts.", "/argo/", "Back to Gauss Argo"],
 };
 
 // A useful next step after sending, beside the way back.
@@ -128,7 +119,6 @@ const NEXT = {
   constellation: ["https://luma.com/constellation", "Follow Constellation on Luma"],
   workshop: ["https://luma.com/constellation", "See dates on Luma"],
   edu: ["/education/#labs", "See the labs"],
-  argo: ["/argo/#how", "How Gauss Argo works"],
 };
 
 export function renderSent(kind) {

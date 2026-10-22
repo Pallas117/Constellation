@@ -1,9 +1,11 @@
-// A fetch() stand-in that answers the upstream URLs: five responses recorded on 17 Oct 2026, and a synthetic
-// Luma calendar (luma-constellation.ics: example events only, no real names or places).
+// A fetch() stand-in that answers the upstream URLs: five responses recorded on 17 Oct 2026, a synthetic
+// Luma calendar (luma-constellation.ics: example events only, no real names or places) and synthetic
+// opportunity feeds (opportunities.mjs).
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { SOURCES } from "../../worker/feeds.js";
+import { PROGRAMMES_URL, newsJson, programmesCsv, ukriXml, uksaAtom } from "./opportunities.mjs";
 
 const dir = dirname(fileURLToPath(import.meta.url));
 const FILES = { launches: "ll-upcoming.json", scales: "swpc-scales.json", kp: "swpc-kp.json", wind: "swpc-wind.json", mag: "swpc-mag.json", events: "luma-constellation.ics" };
@@ -32,10 +34,13 @@ function shiftLaunches(json, to) {
 export function makeFetch(failures = {}, { shiftTo } = {}) {
   const calls = [];
   const f = async (url) => {
-    const name = Object.keys(SOURCES).find((k) => SOURCES[k] === String(url));
+    const name = String(url) === PROGRAMMES_URL ? "programmes" : Object.keys(SOURCES).find((k) => SOURCES[k] === String(url));
     calls.push(name ?? String(url));
     if (!name) return new Response("unexpected URL", { status: 599 });
     if (failures[name]) return new Response("upstream error", { status: failures[name] });
+    const now = shiftTo ?? RECORDED_AT;
+    const made = { news: () => JSON.stringify(newsJson(now)), ukri: () => ukriXml(now), uksa: () => uksaAtom(now), programmes: () => programmesCsv(now) }[name];
+    if (made) return new Response(made());
     if (name === "events") return new Response(shiftTo ? shiftEvents(fixture(name), shiftTo) : fixture(name), { headers: { "content-type": "text/calendar; charset=utf-8" } });
     let body = fixture(name);
     if (name === "launches" && shiftTo) body = shiftLaunches(body, shiftTo);

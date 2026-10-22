@@ -69,7 +69,8 @@
     "test:website": "node --test website/test/site.test.mjs website/test/worker.test.mjs",
     "site:dev": "node website/dev.mjs",
     "site:dev:offline": "node website/dev.mjs --offline",
-    "site:forms": "node website/tools/sync_forms.mjs"
+    "site:forms": "node website/tools/sync_forms.mjs",
+    "audit:website": "node website/tools/audit.mjs"
   },
   "dependencies": {
     "@radix-ui/react-dialog": "^1.1.14",

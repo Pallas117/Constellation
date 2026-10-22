@@ -4,7 +4,7 @@
 // (STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET), never in config, URLs or logs.
 import { getAccount, putAccount } from "./data.js";
 import { readCapped } from "./body.js";
-import { ARGO, CURRENCY, EDU, INVOICE_DAYS, tierById } from "./tiers.js";
+import { CURRENCY, EDU, INVOICE_DAYS, tierById } from "./tiers.js";
 
 // STRIPE_API_BASE points at the local stand-in (dev.mjs). Honoured only for this machine, so a stray setting in
 // production can never send the secret key to another host.
@@ -41,8 +41,9 @@ async function call(env, path, params, fetchImpl) {
   return body;
 }
 
-/** Self-serve products with their own billing record (account.argo, account.edu); Gauss plans use account.billing. */
-export const PRODUCTS = Object.freeze([ARGO.id, EDU.id]);
+/** Self-serve products with their own billing record (account.edu); Gauss plans use account.billing.
+ *  Gauss Argo isn't sold any more (it's included for operators and staff), so its old product id is refused below. */
+export const PRODUCTS = Object.freeze([EDU.id]);
 /** One Stripe customer per person, whichever product they bought first. */
 export const customerOf = (account) => account?.billing?.customer ?? PRODUCTS.map((k) => account?.[k]?.customer).find(Boolean) ?? null;
 
@@ -103,10 +104,6 @@ export async function createCheckout(env, account, origin, fetchImpl = fetch) {
     cancel_url: `${origin}/app/?checkout=cancelled`,
   }, fetchImpl);
 }
-
-/** Gauss Argo: a monthly subscription at the fixed price. Requires agreeing to the terms (set the terms URL in Stripe first). */
-export const createArgoCheckout = (env, account, origin, fetchImpl = fetch) =>
-  createSubscriptionCheckout(env, account, origin, { product: ARGO.id, name: ARGO.name, amount: ARGO.amount, currency: ARGO.currency, interval: ARGO.interval, back: "argo=started" }, fetchImpl);
 
 /** Gauss for Education, staff and research: monthly at EDU_STAFF_PRICE. */
 export const createEduCheckout = (env, account, origin, amount, fetchImpl = fetch) =>
@@ -179,6 +176,7 @@ export async function applyEvent(env, event) {
   const account = await getAccount(env, email);
   if (!account) return "ignored: unknown account";
   if (PRODUCTS.includes(obj.metadata?.product)) return applyProductEvent(env, account, event, obj, obj.metadata.product);
+  if (obj.metadata?.product) return "ignored: not a product we sell"; // never let another product's event touch the Gauss plan
   if (obj.metadata?.plan && obj.metadata.plan !== account.tier) return "ignored: plan has changed";
   const prev = account.billing ?? {};
   const stale = staleFor(event, obj, prev.checkout, prev);
@@ -217,7 +215,7 @@ export async function applyEvent(env, event) {
   return `${event.type} -> ${next.status}`;
 }
 
-/** Self-serve products keep their own billing record (account.argo.billing, account.edu.billing), so they never touch a Gauss plan's. */
+/** Self-serve products keep their own billing record (account.edu.billing), so they never touch a Gauss plan's. */
 // Only the Checkout Session this account opened, and the subscription it started, can change its billing: a session
 // opened before a re-quote (FRESH clears it) or anyone else's can't.
 function staleFor(event, obj, checkout, prev) {
