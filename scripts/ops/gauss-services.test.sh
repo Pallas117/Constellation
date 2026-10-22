@@ -10,10 +10,12 @@ mkdir -p "$T/bin" "$T/home/.config/argo" "$T/home/.claude" "$T/home/.local/share
 pass=0; failed=0
 
 stub() { printf '#!/bin/bash\n%s\n' "$2" >"$T/bin/$1"; chmod +x "$T/bin/$1"; }
-stub pmset 'if [ "$1 $2" = "-g batt" ]; then printf "Now drawing from '"'"'%s'"'"'\n -InternalBattery-0 (id=1)\t%s\n" "$SRC" "$BATT"; else printf " SleepDisabled\t\t%s\n" "${SD:-0}"; fi'
+stub pmset 'if [ "$1 $2" = "-g log" ]; then echo "2026-10-21 00:05:01 +0800 Shutdown Cause  	Shutdown Cause: ${CAUSE:--128}";
+elif [ "$1 $2" = "-g batt" ]; then printf "Now drawing from '"'"'%s'"'"'\n -InternalBattery-0 (id=1)\t%s\n" "$SRC" "$BATT"; else printf " SleepDisabled\t\t%s\n" "${SD:-0}"; fi'
 stub memory_pressure 'echo "System-wide memory free percentage: ${FREE:-50}%"'
 stub sysctl 'case "$*" in
   *pressure_level*) echo "${LEVEL:-1}" ;;
+  *boottime*) echo "{ sec = ${BOOT:-1000}, usec = 5 } Thu Oct 22 01:01:27 2026" ;;
   *) echo "total = 6144.00M  used = ${SWAPUSED:-1000}.00M  free = 0.00M  (encrypted)" ;;
 esac'
 stub ps 'echo "2097152 node"'
@@ -41,13 +43,16 @@ stub pkill 'echo "pkill $*" >>"$ACTIONS"'
 mkdir -p "$T/home/.local/bin"
 printf '#!/bin/bash\necho "local-coder $*" >>"$ACTIONS"\n' >"$T/home/.local/bin/local-coder"
 printf '#!/bin/bash\necho "disk-cleanup $*" >>"$ACTIONS"\n' >"$T/home/.local/bin/disk-cleanup"
-chmod +x "$T/home/.local/bin/local-coder" "$T/home/.local/bin/disk-cleanup"
+printf '#!/bin/bash\necho sample >>"$HOME/mem-samples"\n' >"$T/home/.local/bin/mem-guard"
+chmod +x "$T/home/.local/bin/local-coder" "$T/home/.local/bin/disk-cleanup" "$T/home/.local/bin/mem-guard"
+mkdir -p "$T/diag"
 
 run() { # run <args...>: gauss-services.sh with the stubs; alerts land in $LOG
   : >"$T/log"; : >"$T/kicks"; : >"$T/actions"
   env -i PATH="$T/bin:/usr/bin:/bin" HOME="$T/home" ARGO="$T/bin/argo" LOG="$T/log" KICKS="$T/kicks" GAUSS_PUBLIC_URL=http://127.0.0.1:8080 \
     GAUSS_SUDOERS="$T/sudoers" MLX="${MLX:-0}" MLXPORT="${MLXPORT:-8089}" ACTIONS="$T/actions" GAUSS_BALANCE="${GAUSS_BALANCE:-1}" \
     LOADED="${LOADED:-}" HEALTH="${HEALTH:-200}" HEALTH_FILE="${HEALTH_FILE:-}" GAUSS_DEPLOY_WAIT=0 DISKGB="${DISKGB:-50}" \
+    BOOT="${BOOT:-1000}" GAUSS_DIAG_DIRS="$T/diag" GAUSS_EVENTS_MAX_KB="${GAUSS_EVENTS_MAX_KB:-5120}" \
     GAUSS_DEV_DRY="${GAUSS_DEV_DRY:-0}" GAUSS_DEV_API_PORT="${GAUSS_DEV_API_PORT:-3101}" \
     SRC="${SRC:-AC Power}" BATT="${BATT:-80%; charging; present: true}" SD="${SD:-0}" \
     ARGOSTATUS="${ARGOSTATUS:-}" LEVEL="${LEVEL:-1}" FREE="${FREE:-50}" SWAPUSED="${SWAPUSED:-1000}" OLD_ARGO="${OLD_ARGO:-}" bash "$SCRIPT" "$@"
@@ -85,6 +90,7 @@ run awake guard
 [ -z "$(alerts)" ]; expect "2.8 of 3 GB swap (91%; macOS adds swap files on demand): no alert" $?
 stub sysctl 'case "$*" in
   *pressure_level*) echo "${LEVEL:-1}" ;;
+  *boottime*) echo "{ sec = ${BOOT:-1000}, usec = 5 } Thu Oct 22 01:01:27 2026" ;;
   *) echo "total = 6144.00M  used = ${SWAPUSED:-1000}.00M  free = 0.00M  (encrypted)" ;;
 esac'
 LEVEL=1 SWAPUSED=3000 run awake guard
@@ -106,6 +112,10 @@ done
 [ "$seq" = "57: 48: 30: 21: 20:battery-low 15:battery-low 11:battery-low 10:battery-critical 6:battery-critical 2:battery-critical " ]
 expect "replayed 57→2% drain: warn from 20%, critical from 10%" $?
 
+EV="$T/home/Library/Logs/gauss/events.jsonl"
+# ev <python expr over the list E of events>: true when it holds (python3 -I, so the check can't import from here)
+ev() { python3 -Ic 'import json,sys; E=[json.loads(l) for l in open(sys.argv[1])]; sys.exit(0 if eval(sys.argv[2]) else 1)' "$EV" "$1" 2>/dev/null; }
+
 # Watchdog: the guard keeps Argo, mesh-heal and the services alive, and leaves a heartbeat for Argo
 kicked() { tr '\n' ' ' <"$T/kicks" | sed 's/ $//'; }
 WD="$T/home/Library/Application Support/Gauss"
@@ -116,6 +126,8 @@ LOADED="uk.lightbound.argo uk.lightbound.mesh-heal" run awake guard
 touch -t 202601010000 "$T/home/.local/state/argo/state.json" "$T/home/.local/share/mesh-heal/state"
 LOADED="uk.lightbound.argo uk.lightbound.mesh-heal" run awake guard
 [ "$(kicked)" = "uk.lightbound.argo uk.lightbound.mesh-heal" ]; expect "stale Argo and mesh-heal: both restarted" $?
+ev '[e["label"] for e in E if e["event"]=="watchdog_kick"][-2:]==["uk.lightbound.argo","uk.lightbound.mesh-heal"] and "no Argo check for" in E[-2]["reason"] and E[-1]["pressure"]==1 and E[-1]["swap_mb"]==1000 and E[-1]["battery"]==80 and E[-1]["on_ac"] is True'
+expect "events: each watchdog restart is a JSON line with the memory and power state" $?
 touch "$T/home/.local/state/argo/disabled"
 LOADED="uk.lightbound.argo" run awake guard
 [ -z "$(kicked)" ]; expect "argo off: not restarted" $?
@@ -204,12 +216,20 @@ out=$(run deploy "$C" 2>&1); rc=$?
 [ $rc = 1 ] && head_is "$Bc" && [[ "$out" == *"Rolled back: live is on ${Bc:0:7}"* ]] && [ "$(alerts)" = "deploy" ] && [[ "$(cat "$FB/ready")" == "$Bc $FB2 "* ]]
 expect "deploy of a bad commit: rolls back by itself and texts the phone; fallback is the last good one" $?
 grep -q "${C:0:7} failed, rolled back to ${Bc:0:7}" "$T/home/Library/Logs/gauss/deploy.log"; expect "deploy log records the rollback" $?
+ev 'any(e["event"]=="deploy" and e["result"]=="ok" and e["live_sha"]=="'"$Bc"'" and e["from"]=="'"$A"'" and e["fallback_sha"]=="'"$A"'" for e in E)'
+expect "events: a deploy line carries live_sha (the new commit), from and the fallback SHA" $?
+ev '[(e["event"],e["result"],e["live_sha"]) for e in E if e["event"] in ("deploy","rollback")][-2:]==[("deploy","failed","'"$C"'"),("rollback","ok","'"$Bc"'")]'
+expect "events: a failed deploy and its rollback, each with the SHA live was on" $?
+ev 'any(e["event"]=="fallback_prepared" and e["fallback_sha"]=="'"$A"'" for e in E) and any(e["event"]=="alert" and e["label"]=="deploy" for e in E)'
+expect "events: fallback prepared and the deploy alert are logged" $?
 out=$(run deploy "$D" 2>&1); rc=$?
 [ $rc = 0 ] && head_is "$D" && [[ "$out" == *"Fallback already at ${Bc:0:7}"* ]] && [ "$(cat "$T/actions")" = "npm ci --no-audit --no-fund" ]
 expect "deploy: lockfile changed, so npm ci runs in live; fallback not rebuilt needlessly" $?
 out=$(HEALTH_FILE=/nonexistent HEALTH=500 run deploy "$C" 2>&1); rc=$?
 [ $rc = 1 ] && head_is "$D" && [[ "$out" == *"fallback stays at ${Bc:0:7}"* ]] && [ -f "$FB/active" ] && [[ " $(alerts) " == *" fallback "* ]]
 expect "deploy and rollback both fail: switches to the fallback (kept, not replaced by an unhealthy live)" $?
+ev 'E[-1]["event"]=="failover" and E[-1]["to"]=="'"$Bc"'" and E[-1]["live_sha"]=="'"$D"'" and E[-2]["event"]=="rollback" and E[-2]["result"]=="failed"'
+expect "events: rollback failed, then failover to the fallback with both SHAs" $?
 out=$(run deploy "$Bc" 2>&1); [[ "$out" == *"The fallback is serving now"* ]]; expect "deploy refuses while the fallback serves" $?
 run fallback off >/dev/null
 out=$(run deploy deadbeef 2>&1); [[ "$out" == *"Unknown commit 'deadbeef'"* ]]; expect "deploy refuses an unknown commit" $?
@@ -282,5 +302,57 @@ out=$(ARGOSTATUS="● WIFI_RISK MY ts:on" run resilience | plain)
 [[ "$out" == *"✓ network: ● WIFI_RISK MY ts:on (warning:"* ]]; expect "WIFI_RISK is a warning, not a failure" $?
 out=$(ARGOSTATUS="● REGION HK ts:on" run resilience | plain)
 [[ "$out" == *"✗ network: ● REGION HK"* ]]; expect "REGION still fails the network item" $?
+# Boot breadcrumb (GAU-164): the first guard run after kern.boottime changes says when the Mac went
+# away and what it looked like; a panic report since the previous boot is named.
+rm -f "$WD/watch-kicks" "$WD"/*.strikes "$T/kicks.state"
+printf 'ts\tlevel\tfree_pct\twired\tanon\tfile\tcmp_occ\tcmp_data\tswap\n2026-10-21 23:56:00\t2\t40\t1\t1\t1\t1\t1\t5.30\n' >"$T/home/Library/Logs/gauss/memory.tsv"
+boots() { python3 -Ic 'import json,sys; print(sum(json.loads(l)["event"]=="boot" for l in open(sys.argv[1])))' "$EV"; }
+n0=$(boots); BOOT=1000 run awake guard
+[ "$(boots)" = "$n0" ]; expect "boot: same boottime, no boot event" $?
+touch -t 202001010000 "$WD/guard.heartbeat"; touch "$T/diag/Kernel-2026-10-21.panic" "$T/diag/JetsamEvent-2026-10-21.ips"
+touch -t 196901010000 "$T/diag/old.panic" # before the previous boot: not this crash
+BOOT=1761000000 run awake guard
+[ "$(boots)" = $((n0 + 1)) ] && [[ "$(alerts)" == *boot* ]] && grep -q "last seen 00:00, pressure warn, swap 5.30 GB" "$T/log"
+expect "boot: simulated reboot gives one boot event and a phone text with the last-seen window" $?
+ev 'b=[e for e in E if e["event"]=="boot"][-1]; b["prev_boot"]=="1970-01-01T00:16:40Z" and "2019-12-31" <= b["last_seen"] < "2020-01-02" and b["last_memory"].startswith("2026-10-21 23:56:00 pressure warn") and b["shutdown_cause"]=="-128" and sorted(b["reports"].split())==["JetsamEvent-2026-10-21.ips","Kernel-2026-10-21.panic"]'
+expect "boot: the event has the previous boot, last seen, last memory row, reports since then and the shutdown cause" $?
+BOOT=1761000000 run awake guard
+[ "$(boots)" = $((n0 + 1)) ]; expect "boot: only the first run after a boot writes it" $?
+echo 1000 >"$WD/boottime" # back to the default boot for the rest of the suite
+
+# memory.tsv every minute while memory is short (mem-guard lives outside the repo; stubbed here)
+rm -f "$T/home/mem-samples" "$T/home/Library/Logs/gauss/memory.tsv"
+run awake guard; [ ! -f "$T/home/mem-samples" ]; expect "memory normal: no extra memory.tsv sample" $?
+LEVEL=2 run awake guard; [ "$(cat "$T/home/mem-samples")" = sample ]; expect "pressure warn: memory.tsv sampled by the guard" $?
+SWAPUSED=4200 run awake guard; [ "$(wc -l <"$T/home/mem-samples" | tr -d ' ')" = 2 ]; expect "swap high: memory.tsv sampled by the guard" $?
+
+# Alerts are events once per key per interval, not every minute
+rm -rf "$WD/alerts"
+n=$(python3 -Ic 'import json,sys; print(sum(json.loads(l)["event"]=="alert" for l in open(sys.argv[1])))' "$EV")
+LEVEL=4 run awake guard; LEVEL=4 run awake guard
+ev 'sum(e["event"]=="alert" for e in E)=='"$((n + 1))"' and E[-1]["label"]=="memory-low"'; expect "alerts: a repeated alert is one event per interval" $?
+
+# Escaping and redaction: helpers sourced on their own (the script's case would run otherwise)
+lit=$(bash -c 'eval "$(sed -n "/^redact() {/,/^json_opt()/p" "$1")"; json_str "$2"' _ "$SCRIPT" $'say "hi"\\ 	 https://u:pw@h.example/p?token=abc api_key=s3cr3t')
+python3 -Ic 'import json,sys; v=json.loads(sys.argv[1]); sys.exit(0 if v=="say \"hi\"\\ \t https://h.example/p?<redacted> api_key=<redacted>" else 1)' "$lit"
+expect "events: quotes, backslashes and control characters escaped; credentials, query strings and key= values redacted" $?
+
+# Every line is valid JSON with the required fields
+python3 -Ic '
+import json, sys
+keys = {"ts","host","event","label","reason","live_sha","fallback_sha","pressure","swap_mb","battery","on_ac"}
+rows = [json.loads(l) for l in open(sys.argv[1])]
+sys.exit(0 if rows and all(keys <= set(r) for r in rows) else 1)' "$EV"
+expect "events.jsonl: every line is valid JSON with all fields" $?
+out=$(run events --since 2h); [[ "$out" == *"watchdog_kick"*"uk.lightbound.argo"*"[live"* && "$out" == *"boot"* ]]; expect "events --since 2h: readable timeline" $?
+out=$(run events --json --since 1d); [ "$(printf '%s\n' "$out" | wc -l | tr -d ' ')" = "$(wc -l <"$EV" | tr -d ' ')" ]; expect "events --json: raw lines" $?
+out=$(run events --since 2x 2>&1); [ $? = 2 ] && [[ "$out" == *"30m, 2h or 1d"* ]]; expect "events: bad --since is refused" $?
+
+# Rotation by size: one old file kept
+lines=$(wc -l <"$EV" | tr -d ' ')
+GAUSS_EVENTS_MAX_KB=1 run awake guard >/dev/null; LEVEL=4 GAUSS_EVENTS_MAX_KB=1 run fallback off >/dev/null
+[ "$(wc -l <"$EV.1" | tr -d ' ')" -ge "$lines" ] && [ "$(wc -l <"$EV" | tr -d ' ')" = 1 ]; expect "events.jsonl rotates by size into events.jsonl.1" $?
+out=$(run events --json --since 1d); [ "$(printf '%s\n' "$out" | wc -l | tr -d ' ')" -gt 1 ]; expect "events reads the rotated file too" $?
+
 echo "gauss-services: $pass passed, $failed failed"
 [ "$failed" = 0 ]

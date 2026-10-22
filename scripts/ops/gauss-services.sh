@@ -15,6 +15,7 @@
 #   scripts/ops/gauss-services.sh dev <checkout-dir>        run a dev/R&D checkout beside live (:3101 API, :5174 site)
 #   scripts/ops/gauss-services.sh fallback prepare <dir> [sha]|on|off|status   cold-standby last-known-good build
 #   scripts/ops/gauss-services.sh deploy <commit> [fallback-dir]   switch live to <commit>; rolls back by itself if it doesn't come up
+#   scripts/ops/gauss-services.sh events [--since 2h] [--json]     timeline: watchdog, failover, deploys, alerts, boots (events.jsonl)
 #
 # Three layers (GAU-158): dev (any other checkout, foreground, own ports and data,
 # never the live API), production (this install), and fallback: a built, not running,
@@ -154,7 +155,166 @@ awake_set() { # awake_set 0|1 <reason>
 
 # Phone alerts go through Argo's iMessage channel (masked, queued while
 # offline, rate-limited per key); silently skipped if Argo isn't installed.
-phone() { [ -x "$ARGO" ] && "$ARGO" notify "$@" >/dev/null 2>&1 || true; }
+# Every call is `phone -key K -every N <title> <message>`; a new alert is also an event.
+phone() {
+  [ "${1:-}" = -key ] && alert_event "${2:-}" "${4:-1h}" "${5:-}" "${6:-}"
+  [ -x "$ARGO" ] && "$ARGO" notify "$@" >/dev/null 2>&1 || true
+}
+
+# Events (GAU-164): one JSON object per line in events.jsonl, so the timeline before a crash
+# is one file instead of four free-text logs. Every line carries the SHAs live and the
+# fallback were on and the memory and power state at that moment. deploy.ts writes the same
+# format. Rotated by size, one old file kept.
+EVENTS="${GAUSS_EVENTS_LOG:-$LOGS/events.jsonl}"
+EVENTS_MAX_KB="${GAUSS_EVENTS_MAX_KB:-5120}"
+BOOT_STATE="$WATCH_DIR/boottime"
+MEMORY_TSV="${MEM_GUARD_LOG:-$LOGS/memory.tsv}"       # written by ~/.local/bin/mem-guard, not this repo
+MEM_GUARD="${GAUSS_MEM_GUARD:-$HOME/.local/bin/mem-guard}"
+DIAG_DIRS="${GAUSS_DIAG_DIRS:-/Library/Logs/DiagnosticReports:$HOME/Library/Logs/DiagnosticReports}"
+
+# Reasons are free text (alert bodies, paths, git output): drop credentials in URLs, query
+# strings and token=/secret=/password=/key= values before they reach a log.
+redact() {
+  sed -E -e 's#(://)[^/@ ]+@#\1#g' -e 's#(https?://[^ ?"]*)\?[^ "]*#\1?<redacted>#g' \
+    -e 's#([A-Za-z_]*([Tt][Oo][Kk][Ee][Nn]|[Ss][Ee][Cc][Rr][Ee][Tt]|[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Kk][Ee][Yy]))=[^ &"]+#\1=<redacted>#g'
+}
+json_str() { # json_str <text>: a JSON string literal (redacted; control characters other than \t \n \r dropped)
+  local s; s=$(printf '%s' "$1" | redact | LC_ALL=C tr -d '\000-\010\013\014\016-\037')
+  s=${s//\\/\\\\}; s=${s//\"/\\\"}; s=${s//$'\t'/\\t}; s=${s//$'\r'/\\r}; s=${s//$'\n'/\\n}
+  printf '"%s"' "$s"
+}
+json_num() { [[ "${1:-}" =~ ^-?[0-9]+$ ]] && printf '%s' "$1" || printf null; }
+json_opt() { [ -n "${1:-}" ] && json_str "$1" || printf null; }
+
+event() { # event <event> <label> <reason> [key=text | key:=json]...: append one line; never fails the caller
+  local name=$1 label=$2 reason=$3; shift 3
+  local live sha="" fb="" level swap _ batt pct ac=false kv key extra=""
+  live=$(live_dir 2>/dev/null) && [ -d "$live" ] && sha=$(git -C "$live" rev-parse HEAD 2>/dev/null) || true
+  ready_record && fb=$READY_SHA || true
+  read -r level swap _ < <(memory_stats)
+  batt=$(pmset -g batt 2>/dev/null || true); pct=$(grep -Eo '[0-9]+%' <<<"$batt" | head -1 | tr -d % || true)
+  [[ "$batt" == *"'AC Power'"* ]] && ac=true
+  for kv in "$@"; do
+    key=${kv%%=*}
+    if [[ "$key" == *: ]]; then extra+=",$(json_str "${key%:}"):${kv#*=}"; else extra+=",$(json_str "$key"):$(json_str "${kv#*=}")"; fi
+  done
+  local line; line=$(printf '{"ts":"%s","host":%s,"event":%s,"label":%s,"reason":%s,"live_sha":%s,"fallback_sha":%s,"pressure":%s,"swap_mb":%s,"battery":%s,"on_ac":%s%s}' \
+    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$(json_str "$(hostname -s 2>/dev/null || true)")" "$(json_str "$name")" "$(json_str "$label")" \
+    "$(json_str "$reason")" "$(json_opt "$sha")" "$(json_opt "$fb")" "$(json_num "$level")" "$(json_num "$swap")" "$(json_num "$pct")" "$ac" "$extra")
+  mkdir -p "$(dirname "$EVENTS")" 2>/dev/null || return 0
+  if [ $(( $(stat -f %z "$EVENTS" 2>/dev/null || echo 0) / 1024 )) -ge "$EVENTS_MAX_KB" ]; then mv -f "$EVENTS" "$EVENTS.1" 2>/dev/null || true; fi
+  printf '%s\n' "$line" >>"$EVENTS" 2>/dev/null || true
+  return 0
+}
+
+# The guard re-sends an alert every minute while it holds and argo rate-limits the texts;
+# log it as an event once per key per its own interval, not every minute.
+alert_event() { # alert_event <key> <every: 30m|1h> <title> <message>
+  local stamp="$WATCH_DIR/alerts/$1" mins
+  case "$2" in *m) mins=${2%m} ;; *h) mins=$(( ${2%h} * 60 )) ;; *) mins=60 ;; esac
+  [[ "$mins" =~ ^[0-9]+$ ]] || mins=60
+  [ -n "$(find "$stamp" -mmin -"$mins" 2>/dev/null)" ] && return 0
+  mkdir -p "$WATCH_DIR/alerts" 2>/dev/null && touch "$stamp" 2>/dev/null || true
+  event alert "$1" "$3: $4"
+}
+
+boot_epoch() { sysctl -n kern.boottime 2>/dev/null | sed -nE 's/^[{] sec = ([0-9]+),.*/\1/p'; }
+iso_utc() { date -u -r "$1" +%Y-%m-%dT%H:%M:%SZ; }
+
+# Boot breadcrumb. The 2026-10-21 reset left no panic report, an empty unified log and nothing
+# in `last`. So on the first guard run after kern.boottime changes, record what we still know:
+# the last signs of life (the guard's minutely heartbeat, the last event, the last memory.tsv
+# row), any panic or JetsamEvent report since the previous boot, and pmset's shutdown cause.
+boot_check() {
+  local now prev; now=$(boot_epoch); [ -n "$now" ] || return 0
+  prev=$(cat "$BOOT_STATE" 2>/dev/null || true)
+  [ "$now" = "$prev" ] && return 0
+  mkdir -p "$WATCH_DIR" && echo "$now" >"$BOOT_STATE"
+  [[ "$prev" =~ ^[0-9]+$ ]] || return 0 # first run ever: nothing to compare with
+  # Runs before watch_peers touches the heartbeat, so its mtime is the last minute the old boot was alive.
+  local seen="" seen_hm="?" last_ev="" mem="" mem_level="" mem_swap="" reports="" cause="" ref d f
+  if [ -e "$GUARD_HEARTBEAT" ]; then seen=$(iso_utc "$(stat -f %m "$GUARD_HEARTBEAT")"); seen_hm=$(date -r "$(stat -f %m "$GUARD_HEARTBEAT")" +%H:%M); fi
+  last_ev=$(tail -1 "$EVENTS" 2>/dev/null | sed -nE 's/^[{]"ts":"([^"]+)".*/\1/p' || true)
+  mem=$(tail -1 "$MEMORY_TSV" 2>/dev/null | grep -v '^ts' || true)
+  if [ -n "$mem" ]; then
+    mem_level=$(cut -f2 <<<"$mem"); mem_swap=$(cut -f9 <<<"$mem")
+    mem="$(cut -f1 <<<"$mem") pressure $(pressure_name "$mem_level"), swap ${mem_swap} GB"
+  fi
+  ref=$(mktemp) && touch -t "$(date -r "$prev" +%Y%m%d%H%M.%S)" "$ref"
+  local IFS=:
+  for d in $DIAG_DIRS; do
+    for f in $(find "$d" -maxdepth 1 \( -name '*.panic' -o -name 'JetsamEvent*' \) -newer "$ref" 2>/dev/null | tr '\n' ':'); do
+      reports+="${reports:+ }${f##*/}"
+    done
+  done
+  unset IFS; rm -f "$ref"
+  cause=$(pmset -g log 2>/dev/null | grep 'Shutdown Cause' | tail -1 | sed -nE 's/.*Cause: *(-?[0-9]+).*/\1/p' || true)
+  local summary="restarted at ~$(date -r "$now" +%H:%M) (last seen ${seen_hm}"
+  [ -n "$mem_level" ] && summary+=", pressure $(pressure_name "$mem_level"), swap ${mem_swap} GB"
+  summary+="; reports: ${reports:-none}; shutdown cause: ${cause:-unknown})"
+  event boot "" "$summary" prev_boot="$(iso_utc "$prev")" boot="$(iso_utc "$now")" last_seen="$seen" \
+    last_event="$last_ev" last_memory="$mem" reports="$reports" shutdown_cause="$cause"
+  phone -key boot -every 10m "Gauss: $(hostname -s 2>/dev/null || echo Mac) $summary" \
+    "If nobody restarted it, the timeline is in: gauss-services.sh events --since 6h"
+}
+
+# memory.tsv is sampled every 10 min by gauss-tpm-watch. While memory is short, sample it every
+# minute as well, so the minutes before a crash are on record. mem-guard lives outside this repo.
+memory_sample() { # memory_sample <pressure level> <swap MB>
+  { [ "$1" -ge "$MEM_SHED_LEVEL" ] || swap_high "$2"; } || return 0
+  [ -x "$MEM_GUARD" ] && [ -z "$(find "$MEMORY_TSV" -mmin -1 2>/dev/null)" ] || return 0
+  "$MEM_GUARD" sample >/dev/null 2>&1 || true
+}
+
+events_show() { # events [--since 30m|2h|1d] [--json]: timeline from events.jsonl (and its rotated file)
+  local since=24h json=0
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --since) since=${2:-24h}; shift ;;
+      --json) json=1 ;;
+      "") ;;
+      *) echo "usage: $0 events [--since 30m|2h|1d] [--json]" >&2; return 2 ;;
+    esac
+    shift
+  done
+  [[ "$since" =~ ^[0-9]+[mhd]$ ]] || { echo "--since takes e.g. 30m, 2h or 1d" >&2; return 2; }
+  python3 -Ic '
+import json, sys
+from datetime import datetime, timedelta, timezone
+n, unit = int(sys.argv[1][:-1]), sys.argv[1][-1]
+cut = datetime.now(timezone.utc) - timedelta(minutes=n * {"m": 1, "h": 60, "d": 1440}[unit])
+raw, bad, shown = sys.argv[2] == "1", 0, 0
+for path in sys.argv[3:]:
+    try:
+        lines = open(path, encoding="utf-8", errors="replace").read().splitlines()
+    except OSError:
+        continue
+    for line in lines:
+        try:
+            e = json.loads(line)
+            ts = datetime.strptime(e["ts"][:19], "%Y-%m-%dT%H:%M:%S").replace(tzinfo=timezone.utc)
+        except Exception:
+            bad += 1
+            continue
+        if ts < cut:
+            continue
+        shown += 1
+        if raw:
+            print(line)
+            continue
+        sha = lambda k: (e.get(k) or "-")[:7]
+        lvl = {1: "normal", 2: "warn", 4: "critical"}.get(e.get("pressure"), "?")
+        swap = "%.1f GB" % (e["swap_mb"] / 1024) if isinstance(e.get("swap_mb"), (int, float)) else "?"
+        power = "%s%% %s" % (e.get("battery", "?"), "AC" if e.get("on_ac") else "battery") if e.get("battery") is not None else ("AC" if e.get("on_ac") else "?")
+        print("%s  %-17s %-28s %s  [live %s, fallback %s | %s, swap %s | %s]" % (
+            ts.astimezone().strftime("%m-%d %H:%M:%S"), e.get("event", "?"), e.get("label") or "-",
+            e.get("reason", ""), sha("live_sha"), sha("fallback_sha"), lvl, swap, power))
+if not raw and not shown:
+    print("no events in the last %s" % sys.argv[1])
+if bad:
+    print("(%d unreadable lines skipped)" % bad, file=sys.stderr)
+' "$since" "$json" "$EVENTS.1" "$EVENTS"
+}
 
 battery_alerts() { # battery_alerts <pmset batt output> <pct>
   local batt=$1 pct=$2
@@ -237,6 +397,7 @@ kick() { # kick <label> <reason>: rate-limited launchctl kickstart, logged and a
   awk -v n="$now" 'n-$2<86400' "$WATCH_KICKS" >"$WATCH_KICKS.tmp" 2>/dev/null && mv "$WATCH_KICKS.tmp" "$WATCH_KICKS"
   if launchctl kickstart -k "$UID_DOMAIN/$label" >/dev/null 2>&1; then
     echo "$(date '+%F %T') watchdog restarted $label: $reason"
+    event watchdog_kick "$label" "$reason"
   else
     phone -key "watch-$label" -every 1h "Gauss: can't restart $label" "$reason; launchctl kickstart failed."
   fi
@@ -308,6 +469,7 @@ fallback_on() { # fallback_on <reason>: swap live for the fallback on the same p
   for l in "${FALLBACK_LABELS[@]}"; do reload "$l" "$FALLBACK_STATE/$l.plist"; done
   echo "$(date '+%F %T') $1" >"$FALLBACK_STATE/active"
   echo "$(date '+%F %T') failover to fallback ${sha:0:7} ($dir): $1"
+  event failover fallback "$1" to="$sha"
   phone -key fallback -every 1h "Gauss: on fallback" \
     "$1. Serving last known-good ${sha:0:7} on the same URLs. Fix live, then: gauss-services.sh fallback off"
 }
@@ -320,6 +482,7 @@ fallback_off() { # back to live; the guard gets a fresh set of restarts for it
   done
   [ -f "$WATCH_KICKS" ] && { grep -Ev '^uk\.lightbound\.gauss-(backend|frontend) ' "$WATCH_KICKS" >"$WATCH_KICKS.tmp" || true; mv "$WATCH_KICKS.tmp" "$WATCH_KICKS"; }
   rm -f "$FALLBACK_STATE/active"
+  event failback fallback "back on live"
   echo "Back on live. If it fails again, the guard fails over again after $WATCH_MAX_KICKS restarts."
 }
 
@@ -369,6 +532,7 @@ fallback_prepare() { # fallback_prepare <dir> [sha]: check out, install, build, 
     >"$FALLBACK_STATE/${FALLBACK_LABELS[1]}.plist"
   plutil -lint -s "$FALLBACK_STATE/${FALLBACK_LABELS[0]}.plist" "$FALLBACK_STATE/${FALLBACK_LABELS[1]}.plist" || return 1
   echo "$sha $dir $(date +%s)" >"$FALLBACK_STATE/ready"
+  event fallback_prepared "${sha:0:7}" "fallback prepared at $dir"
   echo "Fallback ready: ${sha:0:7} at $dir (cold: not running, no memory used)."
 }
 
@@ -456,19 +620,23 @@ deploy() { # deploy <commit> [fallback-dir]
     || { echo "Checkout refused (a local data file conflicts with ${sha:0:7}?): nothing changed." >&2; return 1; }
   if switch_live "$live" "$prev" "$sha" && deploy_ready "$live" "$DEPLOY_WAIT"; then
     echo "$(date '+%F %T') deployed ${sha:0:7} (was ${prev:0:7})" >>"$LOGS/deploy.log"
+    event deploy "${sha:0:7}" "deployed ${sha:0:7} (was ${prev:0:7})" from="$prev" to="$sha" result=ok
     echo "Deployed ${sha:0:7}. Full checklist (for information; only the services decide a rollback):"
     check || true
     return 0
   fi
   echo "${sha:0:7} didn't come up within ${DEPLOY_WAIT}s: rolling back to ${prev:0:7} ..." >&2
+  event deploy "${sha:0:7}" "${sha:0:7} didn't come up within ${DEPLOY_WAIT}s" from="$prev" to="$sha" result=failed
   if switch_live "$live" "$sha" "$prev" && deploy_ready "$live" "$DEPLOY_WAIT"; then
     echo "$(date '+%F %T') ${sha:0:7} failed, rolled back to ${prev:0:7}" >>"$LOGS/deploy.log"
+    event rollback "${prev:0:7}" "${sha:0:7} failed, rolled back to ${prev:0:7}" from="$sha" to="$prev" result=ok
     phone -key deploy -every 10m "Gauss: deploy rolled back" \
       "${sha:0:7} didn't come up; live is back on ${prev:0:7}. Logs: ~/Library/Logs/gauss/backend.log"
     echo "Rolled back: live is on ${prev:0:7} again." >&2
     return 1
   fi
   echo "$(date '+%F %T') ${sha:0:7} failed and rollback to ${prev:0:7} failed" >>"$LOGS/deploy.log"
+  event rollback "${prev:0:7}" "${sha:0:7} failed and rollback to ${prev:0:7} failed" from="$sha" to="$prev" result=failed
   fallback_on "deploy of ${sha:0:7} failed and rolling back to ${prev:0:7} failed too" \
     || phone -key deploy -every 10m "Gauss: down after a deploy" "${sha:0:7} failed, rollback failed and there is no fallback. Needs a person."
   return 1
@@ -507,12 +675,14 @@ dev_run() { # dev_run <checkout-dir>
 }
 
 awake_guard() { # run every minute by the awake agent
+  boot_check || true # first, before watch_peers refreshes the heartbeat it reads
   watch_peers
   local batt pct
   batt=$(pmset -g batt); pct=$(grep -Eo '[0-9]+%' <<<"$batt" | head -1 | tr -d % || true)
   battery_alerts "$batt" "$pct"
   local level swap free; read -r level swap free < <(memory_stats)
   memory_alerts "$level" "$swap"
+  memory_sample "$level" "$swap"
   disk_alerts "$(disk_free_gb)"
   balance || true
   [ -f "$SUDOERS" ] || return 0 # not set up; status and check say so
@@ -589,6 +759,7 @@ balance() { # balance [--dry-run]
   local summary; summary=$(IFS=';'; echo "${all[*]}" | sed 's/;/; /g')
   if [ $dry = 1 ]; then echo "would report: $summary ($state)"; return 0; fi
   mkdir -p "$LOGS"; echo "$(date '+%F %T') balance: $summary ($state)" >>"$LOGS/balance.log"
+  event balance "" "$summary ($state)"
   if [ ${#notify[@]} -gt 0 ]; then
     local extra=""; [ $mem_short = 1 ] && extra=" Biggest: $(top_memory)."
     phone -key balance -every 1h "Gauss: rebalanced" "$(IFS=';'; echo "${notify[*]}" | sed 's/;/; /g') ($state).$extra"
@@ -822,6 +993,9 @@ case "${1:-}" in
   deploy)
     deploy "${2:-}" "${3:-}"
     ;;
+  events)
+    events_show "${2:-}" "${3:-}" "${4:-}"
+    ;;
   fallback)
     case "${2:-}" in
       prepare) fallback_prepare "${3:-}" "${4:-}" ;;
@@ -840,7 +1014,7 @@ case "${1:-}" in
     echo "Gauss services removed. Logs kept in $LOGS."
     ;;
   *)
-    sed -n '2,17p' "$0"
+    sed -n '2,18p' "$0"
     exit 2
     ;;
 esac
