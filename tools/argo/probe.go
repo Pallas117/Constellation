@@ -10,6 +10,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/http/httptrace"
 	"net/url"
 	"os"
 	"os/exec"
@@ -38,12 +39,16 @@ var proxyVars = []string{"HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy
 // SystemProber probes the real machine. Every external command has a timeout
 // and nothing is fetched or executed from the network.
 type SystemProber struct {
-	ExitNodes map[string]string // tailscale hostname → country, from config
+	ExitNodes   map[string]string // tailscale hostname → country, from config
+	SignalCache string            // file caching the Wi-Fi signal reading; "" reads every probe
 }
 
 func (p SystemProber) Probe(ctx context.Context) Snapshot {
 	s := Snapshot{Time: time.Now().UTC()}
 	hostProbe(ctx, &s) // OS-specific: route, gateway MAC, Wi-Fi, system proxies (host_*.go)
+	if s.Online && s.WiFiSec != "" {
+		s.Signal = cachedSignal(p.SignalCache, s.GatewayMAC, time.Now(), func() *WiFiSignal { return parseSignal(wifiSignalInfo(ctx)) })
+	}
 	for _, v := range proxyVars {
 		if u := os.Getenv(v); u != "" {
 			s.Proxies = append(s.Proxies, Proxy{Source: "env:" + v, URL: maskURL(u), Alive: dialAlive(u)})
@@ -88,7 +93,17 @@ func directClient() *http.Client {
 }
 
 func httpGet(ctx context.Context, u string) (Result, string) {
-	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	var connStart time.Time
+	var connMs int
+	trace := &httptrace.ClientTrace{
+		ConnectStart: func(string, string) { connStart = time.Now() },
+		ConnectDone: func(_, _ string, err error) {
+			if err == nil && !connStart.IsZero() {
+				connMs = max(1, int(time.Since(connStart).Milliseconds()))
+			}
+		},
+	}
+	req, _ := http.NewRequestWithContext(httptrace.WithClientTrace(ctx, trace), http.MethodGet, u, nil)
 	req.Header.Set("User-Agent", "argo/"+version)
 	resp, err := directClient().Do(req)
 	if err != nil {
@@ -97,7 +112,7 @@ func httpGet(ctx context.Context, u string) (Result, string) {
 	}
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
-	return Result{OK: true, Status: resp.StatusCode}, string(body)
+	return Result{OK: true, Status: resp.StatusCode, ConnectMs: connMs}, string(body)
 }
 
 func httpProbe(ctx context.Context, u string) Result {
