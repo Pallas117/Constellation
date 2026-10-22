@@ -1,7 +1,27 @@
-import { defineConfig } from "vite";
+import { defineConfig, type Plugin } from "vite";
 import react from "@vitejs/plugin-react-swc";
+import { readFileSync } from "fs";
+import { createRequire } from "module";
 import path from "path";
 import { componentTagger } from "lovable-tagger";
+
+const require = createRequire(import.meta.url);
+
+// The self-hosted fonts (src/main.tsx) are SIL OFL 1.1, which asks that the
+// licence travel with the font files: ship each family's licence beside them.
+const fontLicences = (): Plugin => ({
+  name: "font-licences",
+  apply: "build",
+  generateBundle() {
+    for (const family of ["ibm-plex-sans", "jetbrains-mono"]) {
+      this.emitFile({
+        type: "asset",
+        fileName: `assets/${family}-OFL.txt`,
+        source: readFileSync(require.resolve(`@fontsource/${family}/LICENSE`)),
+      });
+    }
+  },
+});
 
 // `gauss-services.sh dev` runs a dev checkout beside the live install: it moves the
 // dev server off :8080 (GAUSS_DEV_WEB_PORT) and points /api and /ws at the dev
@@ -39,7 +59,7 @@ export default defineConfig(({ mode }) => ({
       "/ws": { target: "ws://127.0.0.1:3001", ws: true, changeOrigin: false },
     },
   },
-  plugins: [react(), mode === "development" && componentTagger()].filter(Boolean),
+  plugins: [react(), fontLicences(), mode === "development" && componentTagger()].filter(Boolean),
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),
