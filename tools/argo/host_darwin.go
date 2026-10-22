@@ -32,6 +32,11 @@ func hostProbe(ctx context.Context, s *Snapshot) {
 	}
 }
 
+// wifiSignalInfo is slow (~5 s), so the prober caches what it parses from it.
+func wifiSignalInfo(ctx context.Context) string {
+	return run(ctx, "system_profiler", "SPAirPortDataType")
+}
+
 func staleProcs(ctx context.Context) []StaleProc {
 	return findStaleProcs(run(ctx, "ps", "-E", "-ww", "-x", "-o", "pid=,command="), dialAlive)
 }

@@ -44,6 +44,7 @@ type State struct {
 	Tailscale     Tailscale      `json:"tailscale"`
 	Gateway       string         `json:"gateway,omitempty"`
 	GatewayMAC    string         `json:"gateway_mac,omitempty"`
+	Net           NetScore       `json:"net"` // privacy, speed and signal at the last check (netscore.go)
 }
 
 // Net remembers which fix resolved each class on one network.

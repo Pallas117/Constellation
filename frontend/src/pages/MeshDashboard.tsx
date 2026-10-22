@@ -4,7 +4,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { useMesh, type MeshDevice, WARNING_CLASSES } from "@/hooks/useMesh";
+import { useMesh, type MeshDevice, type MeshNet, WARNING_CLASSES } from "@/hooks/useMesh";
 import { useDocumentTitle } from "@/hooks/useDocumentTitle";
 
 const STALE_MS = 15 * 60 * 1000;
@@ -38,6 +38,32 @@ function statusOf(d: MeshDevice): { label: string; variant: "default" | "seconda
   if (d.last.class === "OK") return { label: "OK", variant: "default" };
   if (WARNING_CLASSES.has(d.last.class)) return { label: d.last.class, variant: "secondary" };
   return { label: d.last.class, variant: "destructive" };
+}
+
+// Scores come from Argo's own measurements (tools/argo/netscore.go); every lost privacy point is listed.
+function NetCell({ net }: { net: MeshNet }) {
+  const privacyVariant = net.privacy < 0 ? "outline" : net.privacy >= 80 ? "default" : net.privacy >= 50 ? "secondary" : "destructive";
+  const snr = net.rssi !== undefined && net.noise !== undefined ? ` (SNR ${net.rssi - net.noise} dB)` : "";
+  return (
+    <div className="space-y-1 text-xs">
+      <Badge variant={privacyVariant}>{net.privacy < 0 ? "Privacy not measured" : `Privacy ${net.privacy}/100`}</Badge>
+      {net.privacyWhy.length > 0 && (
+        <ul className="max-w-xs text-muted-foreground">
+          {net.privacyWhy.map((w) => (
+            <li key={w}>{w}</li>
+          ))}
+        </ul>
+      )}
+      <p>
+        Speed {net.speed}
+        {net.rttMs >= 0 ? ` (${net.rttMs} ms)` : ""}
+      </p>
+      <p>
+        Signal {net.signal}
+        {snr}
+      </p>
+    </div>
+  );
 }
 
 function ago(iso?: string) {
@@ -121,6 +147,7 @@ const MeshDashboard = () => {
                       <th className="py-2 pr-4">Status</th>
                       <th className="py-2 pr-4">Exit</th>
                       <th className="py-2 pr-4">Tailscale</th>
+                      <th className="py-2 pr-4">Network</th>
                       <th className="py-2 pr-4">Can host</th>
                       <th className="py-2 pr-4">Last report</th>
                       <th className="py-2" />
@@ -151,6 +178,9 @@ const MeshDashboard = () => {
                           </td>
                           <td className="py-3 pr-4">{d.last?.loc || "—"}</td>
                           <td className="py-3 pr-4">{d.last ? (d.last.tailscale ? d.last.exitNode || "on" : "off") : "—"}</td>
+                          <td className="py-3 pr-4">
+                            {d.last?.net ? <NetCell net={d.last.net} /> : <span className="text-muted-foreground">—</span>}
+                          </td>
                           <td className="py-3 pr-4">
                             <Badge variant={d.hosting === "agents" ? "default" : d.hosting === "light" ? "secondary" : "outline"}>
                               {d.last?.platform === "ios" || d.last?.platform === "android" ? "Phone: status only" : HOSTING_LABEL[d.hosting ?? "unknown"]}
