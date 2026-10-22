@@ -113,7 +113,9 @@ test("the real inference server serves the promoted Kp model, honestly (GAU-113)
   });
   t.after(() => server.kill());
   const port = await new Promise<number>((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error("inference server did not start")), 10_000);
+    // Startup is about 1 s alone, but under the full suite at memory pressure a cold Python import
+    // overran 10 s (2026-10-21). This test is about serving honestly, not startup speed.
+    const timer = setTimeout(() => reject(new Error("inference server did not start within 30 s")), 30_000);
     server.stdout!.on("data", (chunk: Buffer) => {
       const m = /listening on [\d.]+:(\d+)/.exec(chunk.toString());
       if (m) {
