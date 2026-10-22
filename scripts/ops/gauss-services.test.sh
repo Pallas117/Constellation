@@ -310,11 +310,13 @@ boots() { python3 -Ic 'import json,sys; print(sum(json.loads(l)["event"]=="boot"
 n0=$(boots); BOOT=1000 run awake guard
 [ "$(boots)" = "$n0" ]; expect "boot: same boottime, no boot event" $?
 touch -t 202001010000 "$WD/guard.heartbeat"; touch "$T/diag/Kernel-2026-10-21.panic" "$T/diag/JetsamEvent-2026-10-21.ips"
-touch -t 196901010000 "$T/diag/old.panic" # before the previous boot: not this crash
+touch -t 202501010000 "$T/diag/old.panic" # before the previous boot: not this crash
+echo 1760000000 >"$WD/boottime" # previous boot 2025-10-09
 BOOT=1761000000 run awake guard
 [ "$(boots)" = $((n0 + 1)) ] && [[ "$(alerts)" == *boot* ]] && grep -q "last seen 00:00, pressure warn, swap 5.30 GB" "$T/log"
 expect "boot: simulated reboot gives one boot event and a phone text with the last-seen window" $?
-ev 'b=[e for e in E if e["event"]=="boot"][-1]; b["prev_boot"]=="1970-01-01T00:16:40Z" and "2019-12-31" <= b["last_seen"] < "2020-01-02" and b["last_memory"].startswith("2026-10-21 23:56:00 pressure warn") and b["shutdown_cause"]=="-128" and sorted(b["reports"].split())==["JetsamEvent-2026-10-21.ips","Kernel-2026-10-21.panic"]'
+ev '(b:=[e for e in E if e["event"]=="boot"][-1])["prev_boot"]=="2025-10-09T08:53:20Z" and "2019-12-31" <= b["last_seen"] < "2020-01-02" and b["last_memory"].startswith("2026-10-21 23:56:00 pressure warn") and b["shutdown_cause"]=="-128" and sorted(b["reports"].split())==["JetsamEvent-2026-10-21.ips","Kernel-2026-10-21.panic"]'
+r=$?; [ $r = 0 ] || grep '"event":"boot"' "$EV" | tail -1 | sed 's/^/    boot event: /'; (exit $r)
 expect "boot: the event has the previous boot, last seen, last memory row, reports since then and the shutdown cause" $?
 BOOT=1761000000 run awake guard
 [ "$(boots)" = $((n0 + 1)) ]; expect "boot: only the first run after a boot writes it" $?
