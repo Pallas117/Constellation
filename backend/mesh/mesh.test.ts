@@ -5,7 +5,7 @@ import { readFileSync } from "node:fs";
 import express from "express";
 import type { AuthenticatedRequest, AuthRole } from "../auth.js";
 import { createMeshRouters, exitNodesFromEnv, onboardingSteps } from "./router.js";
-import { MESH_CLASSES, MeshStore, hostingVerdict, parseBattery, parseHost, parseReport, type MeshHost } from "./store.js";
+import { MESH_CLASSES, MeshStore, hostingVerdict, parseBattery, parseHost, parseNet, parseReport, type MeshHost } from "./store.js";
 
 async function withApp(fn: (base: string, store: MeshStore) => Promise<void>) {
   const store = new MeshStore(null);
@@ -136,6 +136,34 @@ test("battery is range-checked; Shortcuts fractions become percent", () => {
   for (const bad of [{ level: 101, charging: false }, { level: -5, charging: false }, { level: "83", charging: false }, { level: 50 }, { level: 50, charging: "yes" }, null, 7]) {
     assert.equal(parseBattery(bad), undefined, JSON.stringify(bad));
   }
+});
+
+test("network scores are allowlisted; nothing unmeasured is invented", () => {
+  const net = {
+    privacy: 70,
+    privacyWhy: ["Remote Login (SSH) reachable on this network -10", "<script>alert(1)</script>"],
+    rttMs: 29,
+    speed: "excellent",
+    signal: "fair",
+    rssi: -70,
+    noise: -92,
+    ssid: "HomeNet",
+  };
+  assert.deepEqual(parseReport({ ...okReport, net })!.net, {
+    privacy: 70,
+    privacyWhy: ["Remote Login (SSH) reachable on this network -10"],
+    rttMs: 29,
+    speed: "excellent",
+    signal: "fair",
+    rssi: -70,
+    noise: -92,
+  });
+  const wired = parseNet({ privacy: 100, privacyWhy: [], rttMs: -1, speed: "not measured", signal: "n/a", rssi: -50, noise: -90 });
+  assert.equal(wired!.rssi, undefined, "no signal numbers for a link Argo didn't grade");
+  for (const bad of [{ ...net, privacy: 101 }, { ...net, privacy: 50.5 }, { ...net, speed: "blazing" }, { ...net, signal: undefined }, { ...net, rttMs: "29" }, null]) {
+    assert.equal(parseNet(bad), undefined, JSON.stringify(bad));
+  }
+  assert.equal(parseReport(okReport)!.net, undefined, "older Argo: no block");
 });
 
 test("platform is allowlisted and phones never host", () => {

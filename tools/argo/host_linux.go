@@ -36,6 +36,8 @@ func hostProbe(_ context.Context, s *Snapshot) {
 	s.Exposed = exposedServices(ifaceIPv4(iface), dialQuick)
 }
 
+func wifiSignalInfo(context.Context) string { return "" } // Linux never sets WiFiSec, so this is not called
+
 func staleProcs(context.Context) []StaleProc { return nil } // Claude Code daemons are a desktop concern
 
 func localGateway(context.Context) (string, string) {

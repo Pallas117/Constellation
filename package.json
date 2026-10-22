@@ -63,7 +63,12 @@
     "deploy": "node --import tsx scripts/release/deploy.ts",
     "rollback": "node --import tsx scripts/release/deploy.ts --rollback",
     "perf:check": "npm run build && du -sh frontend/dist",
-    "release:prepare": "npm run quality:full && npm run security:full && npm test"
+    "release:prepare": "npm run quality:full && npm run security:full && npm test",
+    "test:website": "node --test website/test/site.test.mjs website/test/worker.test.mjs",
+    "site:dev": "node website/dev.mjs",
+    "site:dev:offline": "node website/dev.mjs --offline",
+    "site:forms": "node website/tools/sync_forms.mjs",
+    "audit:website": "node website/tools/audit.mjs"
   },
   "dependencies": {
     "@radix-ui/react-dialog": "^1.1.14",

@@ -132,6 +132,7 @@ func (l Loop) Tick(ctx context.Context) State {
 	prev := st.Class
 	st.Fingerprint, st.Loc, st.CheckedAt, st.Tailscale = fp, snap.Loc, now, snap.Tailscale
 	st.Gateway, st.GatewayMAC = snap.Gateway, snap.GatewayMAC
+	st.Net = ScoreNet(snap)
 	l.say("%s  %s", class, reason)
 
 	if !class.Blocking() {
@@ -139,7 +140,7 @@ func (l Loop) Tick(ctx context.Context) State {
 			l.resolve(&st, prev, now, "")
 		}
 		if class != prev && !prev.Blocking() && prev != "" { // recoveries are notified by resolve
-			l.Fx.Notify("Argo: "+string(class), reason)
+			l.Fx.Notify("Argo: "+string(class), reason+"\n"+st.Net.Line())
 		}
 		st.Class, st.Reason = class, reason
 		l.finish(st)
@@ -153,7 +154,7 @@ func (l Loop) Tick(ctx context.Context) State {
 		st.IncidentAt, st.Attempts, st.LastFix = now, 0, ""
 		_ = l.Store.Append(Incident{Time: now, Event: "open", Class: class, Fingerprint: fp, Detail: reason})
 		if class != Offline { // a Mac with no network can't send it; it would arrive stale
-			l.Fx.Notify("Argo: "+string(class), reason) // rate limit: only on class change
+			l.Fx.Notify("Argo: "+string(class), reason+"\n"+st.Net.Line()) // rate limit: only on class change
 		}
 	}
 	st.Class, st.Reason = class, reason
@@ -232,7 +233,7 @@ func (l Loop) resolve(st *State, c Class, now time.Time, fix string) {
 		st.Networks[st.Fingerprint] = n
 	}
 	_ = l.Store.Append(Incident{Time: now, Event: "resolved", Class: c, Fingerprint: st.Fingerprint, Fix: fix})
-	l.Fx.Notify("Argo: recovered", fmt.Sprintf("%s resolved", c))
+	l.Fx.Notify("Argo: recovered", fmt.Sprintf("%s resolved\n%s", c, st.Net.Line()))
 	st.Attempts, st.BreakerUntil, st.LastFixAt, st.LastFix = 0, time.Time{}, time.Time{}, ""
 }
 

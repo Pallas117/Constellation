@@ -64,7 +64,7 @@ func maybeSendWeekly(s Store, phone *Phone, now time.Time) {
 	case st.LastSummaryAt.IsZero():
 		st.LastSummaryAt = now
 	case now.Sub(st.LastSummaryAt) >= summaryEvery:
-		phone.Send("Argo weekly", weeklySummary(s.Incidents(), st.Networks, st.LastSummaryAt, now), now)
+		phone.Send("Argo weekly", weeklySummary(s.Incidents(), st.Networks, st.LastSummaryAt, now)+"\nNow: "+st.Net.Line(), now)
 		st.LastSummaryAt = now
 	default:
 		return

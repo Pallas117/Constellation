@@ -42,6 +42,8 @@ type Result struct {
 	Status int    `json:"status,omitempty"`
 	Err    string `json:"err,omitempty"`
 	Detail string `json:"detail,omitempty"`
+	// ConnectMs is the TCP connect time on a direct request: one network round trip.
+	ConnectMs int `json:"connect_ms,omitempty"`
 }
 
 // Proxy is one proxy setting found in the environment or system config.
@@ -86,6 +88,7 @@ type Snapshot struct {
 	Proxies    []Proxy     `json:"proxies,omitempty"`
 	StaleProcs []StaleProc `json:"stale_procs,omitempty"`
 	Tailscale  Tailscale   `json:"tailscale"`
+	Signal     *WiFiSignal `json:"signal,omitempty"` // Wi-Fi only; read at most every signalEvery
 }
 
 // Classify picks the most fundamental failure first: there is no point
