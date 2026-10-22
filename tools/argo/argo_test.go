@@ -53,6 +53,21 @@ func TestClassifyEveryFailureClass(t *testing.T) {
 	}
 }
 
+// The web check is no longer probed, so doctor must not print it as a failure ("web": {"ok": false}).
+// Legacy fixtures that recorded it still load.
+func TestDoctorOmitsTheUnprobedWebCheck(t *testing.T) {
+	b, err := json.Marshal(Snapshot{Online: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(b), `"web"`) {
+		t.Fatalf("snapshot JSON shows the unprobed web check: %s", b)
+	}
+	if s := fixture(t, "my_sim_ok.json"); s.Web == nil {
+		t.Fatal("a legacy fixture's recorded web result no longer loads")
+	}
+}
+
 func TestRegionByLocWithoutA403(t *testing.T) {
 	s := fixture(t, "my_sim_ok.json")
 	s.Loc = "HK"
