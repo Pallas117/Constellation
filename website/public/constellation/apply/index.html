@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; img-src 'self'; media-src 'self'; font-src 'self'; base-uri 'none'; form-action 'self'">
+<meta name="theme-color" content="#050505">
+<meta name="referrer" content="strict-origin-when-cross-origin">
+<meta name="description" content="Request an invitation to Constellation, a free space community group.">
+<meta property="og:title" content="Request an invitation · Constellation">
+<meta property="og:description" content="Request an invitation to Constellation, a free space community group.">
+<meta property="og:url" content="https://lightbound.uk/constellation/apply/">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Lightbound">
+<meta property="og:image" content="https://lightbound.uk/assets/media/blackhole-poster.jpg">
+<meta property="og:image:alt" content="A black hole&rsquo;s ring of light, from the Lightbound brand film">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="canonical" href="https://lightbound.uk/constellation/apply/">
+<title>Request an invitation · Constellation</title>
+<link rel="preload" href="/assets/fonts/plex-sans-600.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/assets/site.css">
+<link rel="icon" href="/assets/marks/constellation-icon-colour-dark.svg" type="image/svg+xml">
+</head>
+<body class="page brand-constellation">
+<a class="skip" href="#main">Skip to content</a>
+<header class="top">
+  <div class="wrap bar">
+  <a class="brand" href="/" aria-label="Lightbound, home"><picture><source media="(max-width: 560px)" srcset="/assets/marks/lightbound-mark-colour-dark.svg"><img src="/assets/marks/lightbound-horizontal-colour-dark.svg" alt="Lightbound" width="188" height="40"></picture></a>
+  <nav aria-label="Main">
+    <a href="/gauss/">Gauss</a>
+    <a href="/constellation/" aria-current="page">Constellation</a>
+    <a href="/turnstone/" class="opt">Turnstone</a>
+    <a href="/app/" class="signin">Sign in</a>
+  </nav>
+  </div>
+</header>
+
+<main id="main">
+<section class="page-hero tight" aria-labelledby="hero-h">
+  <div class="wrap narrow">
+    <p class="k">02_CONSTELLATION · INVITATION</p>
+    <h1 id="hero-h">Request an invitation.</h1>
+    <p class="lead">Constellation is free and invite-only. If a member referred you, say who; a person reads every request.</p>
+    <!--live:apply--><form class="form" method="post" action="/api/apply"><input type="hidden" name="kind" value="constellation"><div class="field"><label for="f-name">Name</label><input id="f-name" name="name" required type="text" maxlength="100" autocomplete="name" value=""></div><div class="field"><label for="f-email">Email</label><input id="f-email" name="email" required type="email" maxlength="254" autocomplete="email" value=""></div><div class="field"><label for="f-role">What you work on</label><input id="f-role" name="role" required type="text" maxlength="120" autocomplete="organization-title" value=""></div><div class="field"><label for="f-referrer">Who invited or referred you (optional)</label><input id="f-referrer" name="referrer" type="text" maxlength="120" autocomplete="off" value=""></div><div class="field"><label for="f-link">A link about your work (optional)</label><input id="f-link" name="link" type="url" maxlength="300" autocomplete="url" value=""></div><div class="field"><label for="f-message">Why you&#39;d like to join</label><textarea id="f-message" name="message" required rows="6" minlength="20" maxlength="2000"></textarea></div><div class="hp" aria-hidden="true"><label for="f-website">Leave this empty</label><input id="f-website" name="website" tabindex="-1" autocomplete="off"></div><label class="check"><input type="checkbox" name="consent" value="yes" required> <span>Lightbound may keep this for up to 180 days to review it. <a href="/privacy/">Privacy</a></span></label><p class="actions"><button class="btn" type="submit">Request an invitation</button></p></form><!--/live:apply-->
+  </div>
+</section>
+</main>
+<footer class="wrap">
+  <div class="cols">
+    <div>
+      <p>Lightbound Limited · registered in England and Wales, company no. 14573199 · 30A Commercial Street, Harrogate, HG1 1AX</p>
+    </div>
+    <nav aria-label="Footer"><a href="/gauss/">Gauss</a><a href="/constellation/">Constellation</a><a href="/turnstone/">Turnstone</a><a href="mailto:jzwnathan@lightbound.uk">Contact</a><a href="/privacy/">Privacy</a><a href="/terms/">Terms</a></nav>
+  </div>
+</footer>
+</body>
+</html>
