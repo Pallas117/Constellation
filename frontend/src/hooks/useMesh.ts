@@ -160,11 +160,10 @@ export function useMesh() {
 
   useEffect(() => {
     let cancelled = false;
-    let timer: ReturnType<typeof setInterval> | undefined;
-    const poll = async () => {
+    const poll = async (initial = false) => {
       // A hidden tab has nobody to show it to; an expired session in a forgotten tab
       // was the way this page could get a teammate's address blocked.
-      if (stoppedRef.current || (timer !== undefined && document.visibilityState === "hidden")) return;
+      if (stoppedRef.current || (!initial && document.visibilityState === "hidden")) return;
       const { update, stopped } = await loadMesh();
       if (cancelled) return;
       if (stopped) {
@@ -173,8 +172,8 @@ export function useMesh() {
       }
       setState(update);
     };
-    void poll();
-    timer = setInterval(() => void poll(), POLL_INTERVAL_MS);
+    const timer = setInterval(() => void poll(), POLL_INTERVAL_MS);
+    void poll(true);
     return () => {
       cancelled = true;
       clearInterval(timer);

@@ -6,6 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { useMesh, type MeshDevice, type MeshNet, WARNING_CLASSES } from "@/hooks/useMesh";
 import { useDocumentTitle } from "@/hooks/useDocumentTitle";
+import { useNow } from "@/hooks/useNow";
 import { batteryLabel, copyText, deviceStage, enrollCommand, guardLine, STAGE_HELP, STALE_MS } from "@/lib/mesh-onboarding";
 const PLATFORM_LABEL: Record<string, string> = { macos: "macOS", linux: "Linux", windows: "Windows", ios: "iPhone", android: "Android" };
 // Mirrors hostingVerdict in backend/mesh/store.ts.
@@ -31,11 +32,11 @@ const CLASS_HELP: Record<string, string> = {
   REGION: "Unsupported exit country",
 };
 
-function statusOf(d: MeshDevice): { label: string; variant: "default" | "secondary" | "destructive" | "outline" } {
-  const stage = deviceStage(d, Date.now());
+function statusOf(d: MeshDevice, now: number): { label: string; variant: "default" | "secondary" | "destructive" | "outline" } {
+  const stage = deviceStage(d, now);
   if (stage === "rejected") return { label: "Report refused", variant: "destructive" };
   if (!d.last) return { label: stage === "silent" ? "No report yet" : "Waiting for first report", variant: "outline" };
-  if (Date.now() - Date.parse(d.last.receivedAt) > STALE_MS) return { label: `${d.last.class} (stale)`, variant: "outline" };
+  if (now - Date.parse(d.last.receivedAt) > STALE_MS) return { label: `${d.last.class} (stale)`, variant: "outline" };
   if (d.last.class === "OK") return { label: "OK", variant: "default" };
   if (WARNING_CLASSES.has(d.last.class)) return { label: d.last.class, variant: "secondary" };
   return { label: d.last.class, variant: "destructive" };
@@ -77,6 +78,7 @@ const MeshDashboard = () => {
   useDocumentTitle("Mesh");
 
   const { steps, devices, me, canEnroll, canSeeTeam, canRevokeAny, error, stopped, enroll, revoke } = useMesh();
+  const now = useNow(30_000);
   const [name, setName] = useState("");
   const [issued, setIssued] = useState<{ name: string; token: string } | null>(null);
   const [enrollError, setEnrollError] = useState<string | null>(null);
@@ -177,7 +179,7 @@ const MeshDashboard = () => {
                   </thead>
                   <tbody>
                     {devices.map((d) => {
-                      const s = statusOf(d);
+                      const s = statusOf(d, now);
                       return (
                         <tr key={d.name} className="border-t border-border/60 align-top">
                           <td className="py-3 pr-4">
@@ -191,9 +193,9 @@ const MeshDashboard = () => {
                           </td>
                           <td className="py-3 pr-4">
                             <Badge variant={s.variant}>{s.label}</Badge>
-                            {(!d.last || deviceStage(d, Date.now()) === "rejected") && (
+                            {(!d.last || deviceStage(d, now) === "rejected") && (
                               <p className="mt-1 max-w-xs text-xs text-muted-foreground">
-                                {STAGE_HELP[deviceStage(d, Date.now()) as keyof typeof STAGE_HELP]}
+                                {STAGE_HELP[deviceStage(d, now) as keyof typeof STAGE_HELP]}
                               </p>
                             )}
                             {d.last && d.last.class !== "OK" && (
@@ -280,9 +282,9 @@ const MeshDashboard = () => {
                     )}
                     <p role="status" className="text-xs">
                       {issuedDevice?.last
-                        ? `First report received: ${statusOf(issuedDevice).label}, can host: ${HOSTING_LABEL[issuedDevice.hosting ?? "unknown"]}. You can close this.`
-                        : issuedDevice && deviceStage(issuedDevice, Date.now()) !== "waiting"
-                          ? STAGE_HELP[deviceStage(issuedDevice, Date.now()) as keyof typeof STAGE_HELP]
+                        ? `First report received: ${statusOf(issuedDevice, now).label}, can host: ${HOSTING_LABEL[issuedDevice.hosting ?? "unknown"]}. You can close this.`
+                        : issuedDevice && deviceStage(issuedDevice, now) !== "waiting"
+                          ? STAGE_HELP[deviceStage(issuedDevice, now) as keyof typeof STAGE_HELP]
                           : "Waiting for the first report from the device…"}
                     </p>
                   </div>
