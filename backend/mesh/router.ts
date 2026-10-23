@@ -39,7 +39,7 @@ export function onboardingSteps(exitNodes = exitNodesFromEnv()) {
       title: "Send files that survive drop-outs",
       command: "argo send <device> <file>",
       detail:
-        "Signed and end-to-end encrypted (post-quantum hybrid); Gauss holds only ciphertext until the other device collects it, and you get a signed receipt. Devices enrolled before this step run `argo keys` once. Compare fingerprints (`argo keys list`) with the owner before trusting a device.",
+        "Signed and end-to-end encrypted (HPKE); Gauss holds only ciphertext until the other device collects it, and you get a signed receipt. Devices enrolled before this step run `argo keys` once. Compare fingerprints (`argo keys list`) with the owner before trusting a device.",
     },
   ];
 }

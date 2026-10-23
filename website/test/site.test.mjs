@@ -306,6 +306,11 @@ test("Gauss Argo: included for operators and staff, no price, not promoted, no g
   assert.match(html["/argo/"], /It isn&rsquo;t available yet\./, "the private relay is not built");
   assert.match(argo, /TLS verification is never disabled\./);
   assert.match(argo, /Windows/, "says what it doesn't run on yet");
+  // Store and forward (GAU-193): what it is built on, what the hub can see, and that the claim is a simulation.
+  const deliver = text(html["/argo/"].match(/<section id="deliver"[\s\S]*?<\/section>/)[0]);
+  for (const want of [/Bundle Protocol \(RFC&nbsp;9171\)/, /encrypted end to end to the receiving one \(HPKE, RFC&nbsp;9180\)/, /only ciphertext it can&rsquo;t read/, /signed receipt/, /five-day simulation/, /carry it there/])
+    assert.match(deliver, want);
+  assert.deepEqual([...html["/argo/"].matchAll(/<p class="label">(\d\d)_/g)].map((m) => Number(m[1])), [1, 2, 3, 4, 5, 6, 7, 8], "section numbers run in order");
   assert.match(argo, /included for operators, meaning teams with a paid Gauss plan, and for the Lightbound team/);
   assert.match(html["/argo/"], /<a class="btn" href="\/app\/">Operators: sign in to set it up<\/a>/);
   assert.match(html["/argo/"], /<meta name="robots" content="noindex">/, "reachable, not promoted");

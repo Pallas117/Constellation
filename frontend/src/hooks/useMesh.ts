@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { getAuthHeaders } from "@/lib/api/auth";
 import { apiBase } from "@/lib/api/base-url";
 import { describeHttpFailure, HttpFailure } from "@/lib/api/http-error";
+import type { LinkReport } from "@/lib/link-stability";
 
 const POLL_INTERVAL_MS = 30_000;
 
@@ -23,6 +24,7 @@ export interface MeshReport {
   platform?: "macos" | "linux" | "windows" | "ios" | "android";
   battery?: { level: number; charging: boolean; lowPower: boolean };
   net?: MeshNet;
+  link?: LinkReport;
 }
 
 /** Argo's measured network scores (backend/mesh/store.ts MeshNet); -1 / "not measured" is never a guess. */
@@ -53,6 +55,10 @@ export interface MeshDevice {
   owner?: string;
   last?: MeshReport;
   hosting?: HostingVerdict;
+  /** Bundles waiting at the Gauss hub for this device: counts and sizes only. */
+  relay?: { queued: number; bytes: number };
+  /** Fingerprint of the device's published keys, to compare with `argo keys` on the device. */
+  keyFingerprint?: string;
 }
 
 export interface OnboardingStep {
