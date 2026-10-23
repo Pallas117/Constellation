@@ -12,7 +12,9 @@ import (
 
 // `argo notify` lets other local tools (mesh-heal, the gauss-awake battery
 // guard, Claude Code hooks) reach the phone through Argo's iMessage channel,
-// so every alert shares one handle, one mask and one offline queue.
+// so every alert shares one handle, one mask and one offline queue. It is the
+// one alert router (GAU-197): levels pick SMS and/or Slack, and a shared topic
+// gate stops several watchers texting about the same battery/disk/memory event.
 
 const maxNotifyLen = 600 // an iMessage alert should read at a glance
 
@@ -72,11 +74,16 @@ func notifyCmd(args []string, phone *Phone, s Store, now time.Time) error {
 	fs := flag.NewFlagSet("notify", flag.ContinueOnError)
 	key := fs.String("key", "", "rate-limit key (lowercase, e.g. battery-low)")
 	every := fs.Duration("every", 0, "send at most once per this interval for -key")
+	levelFlag := fs.String("level", "warn", "urgent|warn text the phone (and Slack); info goes to Slack only")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if fs.NArg() != 2 {
-		return errors.New("usage: argo notify [-key K -every 30m] TITLE MESSAGE")
+		return errors.New("usage: argo notify [-key K -every 30m] [-level urgent|warn|info] TITLE MESSAGE")
+	}
+	level, err := parseLevel(*levelFlag)
+	if err != nil {
+		return err
 	}
 	if *key != "" && !notifyKeyRe.MatchString(*key) {
 		return errors.New("-key must be lowercase letters, digits, '.', '_' or '-'")
@@ -91,6 +98,6 @@ func notifyCmd(args []string, phone *Phone, s Store, now time.Time) error {
 	if !shouldNotify(s, *key, *every, now) {
 		return nil
 	}
-	phone.Send(title, msg, now) // queued if offline; the next tick delivers it
+	phone.SendLevel(level, title, msg, now) // queued if offline; the next tick delivers it
 	return nil
 }
