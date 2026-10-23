@@ -38,8 +38,9 @@ type Config struct {
 	PhoneTo   string            `json:"phone_to,omitempty"`   // your own iMessage handle for phone alerts
 	// "sms" sends SMS first: iMessages to your own number arrive silently, with no banner.
 	PhoneService string   `json:"phone_service,omitempty"`
-	Watch        []Peer   `json:"watch,omitempty"`   // LaunchAgents Argo keeps alive; default: awake guard + mesh-heal
-	Devices      []string `json:"devices,omitempty"` // tailnet hostnames to watch; default: this user's phones
+	Watch        []Peer   `json:"watch,omitempty"`         // LaunchAgents Argo keeps alive; default: awake guard + mesh-heal
+	Devices      []string `json:"devices,omitempty"`       // tailnet hostnames to watch; default: this user's phones
+	GuardSlotGB  float64  `json:"guard_slot_gb,omitempty"` // RAM one mesh agent slot reserves (default 2)
 }
 
 func (c Config) peers() []Peer {
@@ -105,6 +106,7 @@ func main() {
 			return nil
 		}
 		_ = withLock(store, func() { watchPeers(cfg.peers(), store, realWatchFx(phone, store), time.Now()) })
+		_ = withLock(store, func() { guardTick(ctx, store, cfg, phone, time.Now()) })
 		if gw, mac := localGateway(ctx); skipTick(store.Load(), gw, mac, time.Now()) {
 			return nil
 		}
@@ -119,7 +121,7 @@ func main() {
 	var err error
 	switch cmd {
 	case "status":
-		fmt.Println(statusLine(store.Load(), time.Now()))
+		fmt.Println(statusLine(store.Load(), time.Now()) + guardStatus(store.loadGuard(), time.Now()))
 	case "doctor":
 		err = doctor(ctx, loop.Prober)
 	case "fix":
@@ -187,6 +189,11 @@ func main() {
 		if len(lines) == 0 {
 			fmt.Println("devices: all watched devices are on the tailnet (or this Mac is off it)")
 		}
+	case "guard": // resource guard: deep analysis, admission, guarded runs (GAU-195)
+		var code int
+		if code, err = guardCmd(os.Args[2:], store, cfg, os.Stdout); err == nil && code != 0 {
+			os.Exit(code)
+		}
 	case "notify": // for mesh-heal, the awake guard and Claude Code hooks
 		err = notifyCmd(os.Args[2:], phone, store, time.Now())
 	case "phone":
@@ -200,7 +207,7 @@ func main() {
 	case "version":
 		fmt.Println("argo", version)
 	default:
-		fmt.Fprintln(os.Stderr, "usage: argo [status|doctor|fix|report|on|off|preflight|run -- cmd|phone <handle>|test|off|notify TITLE MSG|watch|summary [--send]|enroll URL DEVICE|install|uninstall|version]")
+		fmt.Fprintln(os.Stderr, "usage: argo [status|doctor|fix|report|on|off|preflight|run -- cmd|phone <handle>|test|off|notify TITLE MSG|guard [admit|run]|watch|summary [--send]|enroll URL DEVICE|install|uninstall|version]")
 		os.Exit(2)
 	}
 	if err != nil {
@@ -411,14 +418,16 @@ func pushToGauss(cfg Config, st State) {
 	if err != nil {
 		return
 	}
-	body, _ := json.Marshal(map[string]any{
+	report := map[string]any{
 		"device": cfg.Device, "class": st.Class, "reason": Mask(st.Reason), "loc": st.Loc,
 		"network": st.Fingerprint, "tailscale": st.Tailscale.Running, "exitNode": st.Tailscale.ExitNode,
 		"breakerOpen": time.Now().Before(st.BreakerUntil), "argoVersion": version, "checkedAt": st.CheckedAt,
 		"host":     hostCapacityNow(), // sizes and pressure only, so Gauss can tell which devices can host agents
 		"platform": platformName(runtime.GOOS),
 		"net":      netReport(st.Net), // scores and their reasons; no SSID, BSSID or IP
-	})
+	}
+	addGuard(report, DefaultStore().loadGuard(), time.Now())
+	body, _ := json.Marshal(report)
 	u.Path = "/api/mesh/report"
 	req, _ := http.NewRequest(http.MethodPost, u.String(), bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
