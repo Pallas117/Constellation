@@ -272,6 +272,7 @@ func (r guardRunner) waitAdmit(memGB float64, wait time.Duration) (bool, string)
 }
 
 func (r guardRunner) log(name, outcome string) {
+	_ = os.MkdirAll(r.store.Dir, 0o700) // `argo guard run` can come before the first tick
 	f, err := os.OpenFile(r.store.path("guard.log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
 	if err != nil {
 		return

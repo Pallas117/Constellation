@@ -243,11 +243,11 @@ func assess(hist []Sample, cur Sample) Assessment {
 	switch {
 	case cur.DiskGB <= 0:
 	case cur.DiskGB < diskBlockGB:
-		a.add("disk", "disk-critical", LevelBlock, "%.1f GB free: too little for swap", cur.DiskGB)
+		a.add("disk", "disk-critical", LevelBlock, "%.1f GB free on disk: too little for swap", cur.DiskGB)
 	case cur.DiskGB < diskMinGB:
-		a.add("disk", "disk-low", LevelRisk, "%.1f GB free (keep %.0f GB)", cur.DiskGB, diskMinGB)
+		a.add("disk", "disk-low", LevelRisk, "%.1f GB free on disk (keep %.0f GB)", cur.DiskGB, diskMinGB)
 	case cur.DiskGB < diskWatchGB:
-		a.add("disk", "disk-tight", LevelWatch, "%.1f GB free", cur.DiskGB)
+		a.add("disk", "disk-tight", LevelWatch, "%.1f GB free on disk", cur.DiskGB)
 	}
 
 	// CPU: the OS's throttle signal, then the run queue per core.

@@ -512,7 +512,7 @@ func TestGuardText(t *testing.T) {
 func fakeRunner(t *testing.T, levels ...Assessment) guardRunner {
 	i := 0
 	return guardRunner{
-		store: Store{Dir: t.TempDir()}, out: io.Discard, every: 20 * time.Millisecond, retry: 10 * time.Millisecond,
+		store: Store{Dir: filepath.Join(t.TempDir(), "not-yet-created")}, out: io.Discard, every: 20 * time.Millisecond, retry: 10 * time.Millisecond,
 		grace: 2 * time.Second, strikes: 2,
 		assess: func() (Sample, Assessment) {
 			a := levels[min(i, len(levels)-1)]
