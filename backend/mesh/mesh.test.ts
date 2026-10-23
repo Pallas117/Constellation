@@ -346,3 +346,23 @@ test("Gauss knows every guard code, level and admission Argo can send", () => {
   assert.deepEqual([...GUARD_LEVELS], ["ok", "watch", "risk", "block"]);
   for (const a of GUARD_ADMISSIONS) assert.ok(go.includes(`next.Admission = "${a}"`), `Argo never sends admission ${a}`);
 });
+
+test("a refused report is remembered (at most once a minute) so the page can say why a device looks silent", async () => {
+  await withApp(async (base, store) => {
+    const { token } = (await (await fetch(`${base}/devices`, json({ name: "talos" }, { "x-test-role": "staff" }))).json()) as { token: string };
+    const auth = { authorization: `Bearer ${token}` };
+    assert.equal((await fetch(`${base}/report`, json({ ...okReport, class: "NEW_CLASS" }, auth))).status, 400);
+    const first = store.list()[0].rejectedAt;
+    assert.ok(first && !store.list()[0].last, "rejection recorded, nothing else stored");
+    assert.equal((await fetch(`${base}/report`, json({ ...okReport, class: "NEW_CLASS" }, auth))).status, 400);
+    assert.equal(store.list()[0].rejectedAt, first, "no second write within the minute");
+    assert.equal((await fetch(`${base}/report`, json(okReport, auth))).status, 200);
+    assert.equal(store.list()[0].rejectedAt, undefined, "an accepted report clears it");
+  });
+});
+
+test("onboarding points new devices at argo guard", () => {
+  const steps = onboardingSteps([]);
+  assert.ok(steps.find((s) => s.id === "guard")?.command === "argo guard");
+  assert.match(steps.find((s) => s.id === "enroll")!.detail, /first report/);
+});

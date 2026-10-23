@@ -4,20 +4,17 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	_ "embed"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
-	"net/http"
 	"net/url"
 	"os"
 	"os/exec"
 	"os/signal"
 	"path/filepath"
-	"runtime"
 	"sort"
 	"strings"
 	"syscall"
@@ -121,7 +118,7 @@ func main() {
 	var err error
 	switch cmd {
 	case "status":
-		fmt.Println(statusLine(store.Load(), time.Now()) + guardStatus(store.loadGuard(), time.Now()))
+		fmt.Println(statusLine(store.Load(), time.Now()) + guardStatus(store.loadGuard(), time.Now()) + gaussStatus(store, time.Now()))
 	case "doctor":
 		err = doctor(ctx, loop.Prober)
 	case "fix":
@@ -199,7 +196,9 @@ func main() {
 	case "phone":
 		err = phoneSetup(os.Args[2:], cfg)
 	case "enroll":
-		err = enroll(os.Args[2:])
+		if err = enroll(os.Args[2:]); err == nil {
+			err = verifyEnroll(ctx, loadConfig(), store, loop.Prober)
+		}
 	case "install":
 		err = install()
 	case "uninstall":
@@ -406,41 +405,6 @@ func hostCapacityNow() HostCapacity {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	return hostCapacity(ctx)
-}
-
-// pushToGauss sends a minimal record: no public IP, no MAC, no SSID, no env.
-func pushToGauss(cfg Config, st State) {
-	u, err := tailnetOnly(cfg.GaussURL)
-	if err != nil {
-		return
-	}
-	tok, err := os.ReadFile(filepath.Join(configDir(), "token"))
-	if err != nil {
-		return
-	}
-	report := map[string]any{
-		"device": cfg.Device, "class": st.Class, "reason": Mask(st.Reason), "loc": st.Loc,
-		"network": st.Fingerprint, "tailscale": st.Tailscale.Running, "exitNode": st.Tailscale.ExitNode,
-		"breakerOpen": time.Now().Before(st.BreakerUntil), "argoVersion": version, "checkedAt": st.CheckedAt,
-		"host":     hostCapacityNow(), // sizes and pressure only, so Gauss can tell which devices can host agents
-		"platform": platformName(runtime.GOOS),
-		"net":      netReport(st.Net), // scores and their reasons; no SSID, BSSID or IP
-	}
-	addGuard(report, DefaultStore().loadGuard(), time.Now())
-	body, _ := json.Marshal(report)
-	u.Path = "/api/mesh/report"
-	req, _ := http.NewRequest(http.MethodPost, u.String(), bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(string(tok)))
-	c := &http.Client{Timeout: 5 * time.Second, Transport: &http.Transport{Proxy: nil}}
-	resp, err := c.Do(req)
-	if err != nil {
-		return // offline or Gauss down: the next tick reports again
-	}
-	resp.Body.Close()
-	if resp.StatusCode >= 300 { // e.g. a class Gauss doesn't know yet: say so instead of failing silently
-		fmt.Fprintf(os.Stderr, "%s argo: Gauss rejected the report for class %s: HTTP %d\n", time.Now().UTC().Format(time.RFC3339), st.Class, resp.StatusCode)
-	}
 }
 
 // enroll stores the Gauss URL and reads the device token from stdin so it

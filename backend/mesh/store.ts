@@ -148,7 +148,7 @@ export function assessHosting(host?: MeshHost, platform?: MeshPlatform, ctx: Hos
   const now = ctx.now ?? new Date();
   const age = ctx.receivedAt ? now.getTime() - Date.parse(ctx.receivedAt) : 0;
   if (age > MESH_STALE_MS) return { verdict: "unknown", why: [`no report for ${Math.round(age / 60_000)} min`] };
-  if (!host || !host.pressure) return { verdict: "unknown", why: ["no capacity reading (Argo before 0.1.0 or not running)"] };
+  if (!host || !host.pressure) return { verdict: "unknown", why: ["no capacity reading yet: update Argo on the device"] };
   const why: string[] = [];
   let verdict: HostingVerdict = "no";
   if (host.ramGB >= 16 && host.diskFreeGB >= 20) verdict = "agents";
@@ -188,6 +188,8 @@ export interface MeshDevice {
   tokenHash: string;
   enrolledAt: string;
   last?: MeshReport;
+  /** When Gauss last refused a report from this device as invalid (e.g. a class it doesn't know yet). */
+  rejectedAt?: string;
 }
 
 const NAME_RE = /^[a-z0-9][a-z0-9-]{0,62}$/;
@@ -350,6 +352,18 @@ export class MeshStore {
 
   record(device: MeshDevice, report: MeshReport): void {
     device.last = report;
+    delete device.rejectedAt;
+    this.persist();
+  }
+
+  /**
+   * Remember that a report from this device was refused, so the page can say
+   * why it looks silent. At most one write a minute per device: a broken
+   * agent must not turn into a write loop.
+   */
+  reject(device: MeshDevice, now = new Date()): void {
+    if (device.rejectedAt && now.getTime() - Date.parse(device.rejectedAt) < 60_000) return;
+    device.rejectedAt = now.toISOString();
     this.persist();
   }
 
