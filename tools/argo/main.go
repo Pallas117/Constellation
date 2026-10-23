@@ -4,20 +4,17 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	_ "embed"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
-	"net/http"
 	"net/url"
 	"os"
 	"os/exec"
 	"os/signal"
 	"path/filepath"
-	"runtime"
 	"sort"
 	"strings"
 	"syscall"
@@ -38,8 +35,9 @@ type Config struct {
 	PhoneTo   string            `json:"phone_to,omitempty"`   // your own iMessage handle for phone alerts
 	// "sms" sends SMS first: iMessages to your own number arrive silently, with no banner.
 	PhoneService string   `json:"phone_service,omitempty"`
-	Watch        []Peer   `json:"watch,omitempty"`   // LaunchAgents Argo keeps alive; default: awake guard + mesh-heal
-	Devices      []string `json:"devices,omitempty"` // tailnet hostnames to watch; default: this user's phones
+	Watch        []Peer   `json:"watch,omitempty"`         // LaunchAgents Argo keeps alive; default: awake guard + mesh-heal
+	Devices      []string `json:"devices,omitempty"`       // tailnet hostnames to watch; default: this user's phones
+	GuardSlotGB  float64  `json:"guard_slot_gb,omitempty"` // RAM one mesh agent slot reserves (default 2)
 }
 
 func (c Config) peers() []Peer {
@@ -105,6 +103,7 @@ func main() {
 			return nil
 		}
 		_ = withLock(store, func() { watchPeers(cfg.peers(), store, realWatchFx(phone, store), time.Now()) })
+		_ = withLock(store, func() { guardTick(ctx, store, cfg, phone, time.Now()) })
 		if gw, mac := localGateway(ctx); skipTick(store.Load(), gw, mac, time.Now()) {
 			return nil
 		}
@@ -119,7 +118,7 @@ func main() {
 	var err error
 	switch cmd {
 	case "status":
-		fmt.Println(statusLine(store.Load(), time.Now()))
+		fmt.Println(statusLine(store.Load(), time.Now()) + guardStatus(store.loadGuard(), time.Now()) + gaussStatus(store, time.Now()))
 	case "doctor":
 		err = doctor(ctx, loop.Prober)
 	case "fix":
@@ -187,12 +186,19 @@ func main() {
 		if len(lines) == 0 {
 			fmt.Println("devices: all watched devices are on the tailnet (or this Mac is off it)")
 		}
+	case "guard": // resource guard: deep analysis, admission, guarded runs (GAU-195)
+		var code int
+		if code, err = guardCmd(os.Args[2:], store, cfg, os.Stdout); err == nil && code != 0 {
+			os.Exit(code)
+		}
 	case "notify": // for mesh-heal, the awake guard and Claude Code hooks
 		err = notifyCmd(os.Args[2:], phone, store, time.Now())
 	case "phone":
 		err = phoneSetup(os.Args[2:], cfg)
 	case "enroll":
-		err = enroll(os.Args[2:])
+		if err = enroll(os.Args[2:]); err == nil {
+			err = verifyEnroll(ctx, loadConfig(), store, loop.Prober)
+		}
 	case "install":
 		err = install()
 	case "uninstall":
@@ -200,7 +206,7 @@ func main() {
 	case "version":
 		fmt.Println("argo", version)
 	default:
-		fmt.Fprintln(os.Stderr, "usage: argo [status|doctor|fix|report|on|off|preflight|run -- cmd|phone <handle>|test|off|notify TITLE MSG|watch|summary [--send]|enroll URL DEVICE|install|uninstall|version]")
+		fmt.Fprintln(os.Stderr, "usage: argo [status|doctor|fix|report|on|off|preflight|run -- cmd|phone <handle>|test|off|notify TITLE MSG|guard [admit|run]|watch|summary [--send]|enroll URL DEVICE|install|uninstall|version]")
 		os.Exit(2)
 	}
 	if err != nil {
@@ -399,39 +405,6 @@ func hostCapacityNow() HostCapacity {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	return hostCapacity(ctx)
-}
-
-// pushToGauss sends a minimal record: no public IP, no MAC, no SSID, no env.
-func pushToGauss(cfg Config, st State) {
-	u, err := tailnetOnly(cfg.GaussURL)
-	if err != nil {
-		return
-	}
-	tok, err := os.ReadFile(filepath.Join(configDir(), "token"))
-	if err != nil {
-		return
-	}
-	body, _ := json.Marshal(map[string]any{
-		"device": cfg.Device, "class": st.Class, "reason": Mask(st.Reason), "loc": st.Loc,
-		"network": st.Fingerprint, "tailscale": st.Tailscale.Running, "exitNode": st.Tailscale.ExitNode,
-		"breakerOpen": time.Now().Before(st.BreakerUntil), "argoVersion": version, "checkedAt": st.CheckedAt,
-		"host":     hostCapacityNow(), // sizes and pressure only, so Gauss can tell which devices can host agents
-		"platform": platformName(runtime.GOOS),
-		"net":      netReport(st.Net), // scores and their reasons; no SSID, BSSID or IP
-	})
-	u.Path = "/api/mesh/report"
-	req, _ := http.NewRequest(http.MethodPost, u.String(), bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(string(tok)))
-	c := &http.Client{Timeout: 5 * time.Second, Transport: &http.Transport{Proxy: nil}}
-	resp, err := c.Do(req)
-	if err != nil {
-		return // offline or Gauss down: the next tick reports again
-	}
-	resp.Body.Close()
-	if resp.StatusCode >= 300 { // e.g. a class Gauss doesn't know yet: say so instead of failing silently
-		fmt.Fprintf(os.Stderr, "%s argo: Gauss rejected the report for class %s: HTTP %d\n", time.Now().UTC().Format(time.RFC3339), st.Class, resp.StatusCode)
-	}
 }
 
 // enroll stores the Gauss URL and reads the device token from stdin so it

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -6,15 +6,15 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { useMesh, type MeshDevice, type MeshNet, WARNING_CLASSES } from "@/hooks/useMesh";
 import { useDocumentTitle } from "@/hooks/useDocumentTitle";
-
-const STALE_MS = 15 * 60 * 1000;
+import { useNow } from "@/hooks/useNow";
+import { batteryLabel, copyText, deviceStage, enrollCommand, guardLine, STAGE_HELP, STALE_MS } from "@/lib/mesh-onboarding";
 const PLATFORM_LABEL: Record<string, string> = { macos: "macOS", linux: "Linux", windows: "Windows", ios: "iPhone", android: "Android" };
 // Mirrors hostingVerdict in backend/mesh/store.ts.
 const HOSTING_LABEL: Record<string, string> = {
   agents: "Agents + memory",
   light: "Light work",
   no: "No spare capacity",
-  unknown: "Unknown (update Argo)",
+  unknown: "Unknown",
 };
 
 // What each Argo class means for the person reading the table.
@@ -32,9 +32,11 @@ const CLASS_HELP: Record<string, string> = {
   REGION: "Unsupported exit country",
 };
 
-function statusOf(d: MeshDevice): { label: string; variant: "default" | "secondary" | "destructive" | "outline" } {
-  if (!d.last) return { label: "Never reported", variant: "outline" };
-  if (Date.now() - Date.parse(d.last.receivedAt) > STALE_MS) return { label: `${d.last.class} (stale)`, variant: "outline" };
+function statusOf(d: MeshDevice, now: number): { label: string; variant: "default" | "secondary" | "destructive" | "outline" } {
+  const stage = deviceStage(d, now);
+  if (stage === "rejected") return { label: "Report refused", variant: "destructive" };
+  if (!d.last) return { label: stage === "silent" ? "No report yet" : "Waiting for first report", variant: "outline" };
+  if (now - Date.parse(d.last.receivedAt) > STALE_MS) return { label: `${d.last.class} (stale)`, variant: "outline" };
   if (d.last.class === "OK") return { label: "OK", variant: "default" };
   if (WARNING_CLASSES.has(d.last.class)) return { label: d.last.class, variant: "secondary" };
   return { label: d.last.class, variant: "destructive" };
@@ -75,16 +77,33 @@ function ago(iso?: string) {
 const MeshDashboard = () => {
   useDocumentTitle("Mesh");
 
-  const { steps, devices, me, canEnroll, canSeeTeam, canRevokeAny, error, enroll, revoke } = useMesh();
+  const { steps, devices, me, canEnroll, canSeeTeam, canRevokeAny, error, stopped, enroll, revoke } = useMesh();
+  const now = useNow(30_000);
   const [name, setName] = useState("");
   const [issued, setIssued] = useState<{ name: string; token: string } | null>(null);
   const [enrollError, setEnrollError] = useState<string | null>(null);
+  const [copyNote, setCopyNote] = useState<string | null>(null);
+  const tokenRef = useRef<HTMLInputElement>(null);
+  const issuedDevice = issued ? devices?.find((d) => d.name === issued.name) : undefined;
+  const command = issued ? enrollCommand(window.location, issued.name) : null;
+
+  const onCopy = async (token: string) => {
+    if ((await copyText(token, navigator.clipboard)) === "copied") {
+      setCopyNote("Copied.");
+      return;
+    }
+    // Plain-http tailnet pages have no clipboard API: select it for the person to copy.
+    tokenRef.current?.focus();
+    tokenRef.current?.select();
+    setCopyNote("Selected: press ⌘C (or Ctrl+C) to copy.");
+  };
 
   const onEnroll = async () => {
     setEnrollError(null);
     try {
       const token = await enroll(name.trim().toLowerCase());
       setIssued({ name: name.trim().toLowerCase(), token });
+      setCopyNote(null);
       setName("");
     } catch (err) {
       setEnrollError(err instanceof Error ? err.message : "Enrollment failed");
@@ -129,7 +148,12 @@ const MeshDashboard = () => {
             {canEnroll && !canSeeTeam && (
               <p className="text-sm text-muted-foreground">You see the devices you enrolled. Operators see the whole team.</p>
             )}
-            {error && <p className="text-sm text-destructive">{error}</p>}
+            {error && (
+              <p className="text-sm text-destructive">
+                {error}
+                {stopped && " Updates are paused so the security monitor doesn't block your address; reload after signing in."}
+              </p>
+            )}
             {revokeError && (
               <p role="alert" className="text-sm text-destructive">
                 {revokeError}
@@ -155,7 +179,7 @@ const MeshDashboard = () => {
                   </thead>
                   <tbody>
                     {devices.map((d) => {
-                      const s = statusOf(d);
+                      const s = statusOf(d, now);
                       return (
                         <tr key={d.name} className="border-t border-border/60 align-top">
                           <td className="py-3 pr-4">
@@ -163,14 +187,17 @@ const MeshDashboard = () => {
                             {(d.last?.platform || d.last?.battery) && (
                               <p className="mt-1 text-xs text-muted-foreground">
                                 {d.last.platform ? PLATFORM_LABEL[d.last.platform] : ""}
-                                {d.last.battery
-                                  ? `${d.last.platform ? " · " : ""}${d.last.battery.level}%${d.last.battery.charging ? " charging" : ""}${d.last.battery.lowPower ? " · low power" : ""}`
-                                  : ""}
+                                {d.last.battery ? `${d.last.platform ? " · " : ""}${batteryLabel(d.last.battery)}` : ""}
                               </p>
                             )}
                           </td>
                           <td className="py-3 pr-4">
                             <Badge variant={s.variant}>{s.label}</Badge>
+                            {(!d.last || deviceStage(d, now) === "rejected") && (
+                              <p className="mt-1 max-w-xs text-xs text-muted-foreground">
+                                {STAGE_HELP[deviceStage(d, now) as keyof typeof STAGE_HELP]}
+                              </p>
+                            )}
                             {d.last && d.last.class !== "OK" && (
                               <p className="mt-1 max-w-xs text-xs text-muted-foreground">{CLASS_HELP[d.last.class] ?? d.last.reason}</p>
                             )}
@@ -190,6 +217,14 @@ const MeshDashboard = () => {
                                 {d.last.host.ramGB} GB RAM · {d.last.host.diskFreeGB} GB free
                                 {d.last.host.pressure && d.last.host.pressure !== "normal" ? ` · memory ${d.last.host.pressure}` : ""}
                               </p>
+                            )}
+                            {d.last?.guard && <p className="mt-1 text-xs text-muted-foreground">{guardLine(d.last.guard)}</p>}
+                            {d.hostingWhy && d.hostingWhy.length > 0 && d.hosting !== "agents" && (
+                              <ul className="mt-1 max-w-xs list-disc pl-4 text-xs text-muted-foreground">
+                                {d.hostingWhy.map((w) => (
+                                  <li key={w}>{w}</li>
+                                ))}
+                              </ul>
                             )}
                           </td>
                           <td className="py-3 pr-4 text-muted-foreground">{ago(d.last?.receivedAt)}</td>
@@ -224,16 +259,34 @@ const MeshDashboard = () => {
                       Token for <span className="font-mono">{issued.name}</span>. It is shown once. On that laptop run the command below and
                       paste the token when asked:
                     </p>
-                    <pre className="overflow-x-auto rounded bg-muted p-2 text-xs">argo enroll {window.location.protocol}//&lt;gauss-tailnet-host&gt;:3001 {issued.name}</pre>
+                    <pre className="overflow-x-auto rounded bg-muted p-2 text-xs">{command?.command}</pre>
+                    {command && !command.exact && (
+                      <p className="text-xs text-muted-foreground">
+                        Use this Gauss's tailnet name (open this page over the tailnet and the command fills it in). Argo refuses any other
+                        address.
+                      </p>
+                    )}
                     <div className="flex flex-col gap-2 sm:flex-row">
-                      <Input readOnly value={issued.token} className="font-mono text-xs" />
-                      <Button variant="outline" onClick={() => void navigator.clipboard.writeText(issued.token)}>
+                      <Input ref={tokenRef} readOnly value={issued.token} aria-label="Device token" className="font-mono text-xs" />
+                      <Button variant="outline" onClick={() => void onCopy(issued.token)}>
                         Copy
                       </Button>
                       <Button variant="ghost" onClick={() => setIssued(null)}>
                         Done
                       </Button>
                     </div>
+                    {copyNote && (
+                      <p role="status" className="text-xs text-muted-foreground">
+                        {copyNote}
+                      </p>
+                    )}
+                    <p role="status" className="text-xs">
+                      {issuedDevice?.last
+                        ? `First report received: ${statusOf(issuedDevice, now).label}, can host: ${HOSTING_LABEL[issuedDevice.hosting ?? "unknown"]}. You can close this.`
+                        : issuedDevice && deviceStage(issuedDevice, now) !== "waiting"
+                          ? STAGE_HELP[deviceStage(issuedDevice, now) as keyof typeof STAGE_HELP]
+                          : "Waiting for the first report from the device…"}
+                    </p>
                   </div>
                 )}
               </div>
