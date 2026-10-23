@@ -50,6 +50,30 @@ export interface MeshNet {
   signal: NetGrade | "n/a";
   rssi?: number;
   noise?: number;
+  radio?: MeshRadio;
+}
+
+/**
+ * Argo's radio profile and link quality (GAU-188): counts and grades only, never a
+ * network name. "path" says where loss comes from: the Wi-Fi hop ("local") or past it.
+ */
+export const RADIO_BANDS = ["2.4", "5", "6"] as const;
+export const LINK_PATHS = ["ok", "local", "upstream", "not measured"] as const;
+export interface MeshRadio {
+  band?: (typeof RADIO_BANDS)[number];
+  channel?: number;
+  widthMHz?: number;
+  phy?: string;
+  mcs?: number;
+  txMbps?: number;
+  coChannel?: number;
+  overlapping?: number;
+  gwLossPct?: number;
+  gwJitterMs?: number;
+  netLossPct?: number;
+  netJitterMs?: number;
+  netRttMs?: number;
+  path?: (typeof LINK_PATHS)[number];
 }
 
 /** Reported by Argo (macOS, Linux) or by a phone Shortcut/automation (iOS, Android). */
@@ -137,7 +161,47 @@ export function parseNet(value: unknown): MeshNet | undefined {
   const rssi = int(n.rssi, -120, 0);
   const noise = int(n.noise, -120, 0);
   const measured = signal !== "n/a" && signal !== "not measured" && rssi !== null && noise !== null;
-  return { privacy, privacyWhy, rttMs, speed, signal, ...(measured ? { rssi, noise } : {}) };
+  const radio = parseRadio(n.radio);
+  return { privacy, privacyWhy, rttMs, speed, signal, ...(measured ? { rssi, noise } : {}), ...(radio ? { radio } : {}) };
+}
+
+const WIDTHS: ReadonlySet<number> = new Set([20, 40, 80, 160, 320]);
+
+/**
+ * The optional radio block: every field allowlisted or range-checked. A bad field drops
+ * the whole block (never the report), so a confused probe can't half-describe a link.
+ */
+export function parseRadio(value: unknown): MeshRadio | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const r = value as Record<string, unknown>;
+  const out: MeshRadio = {};
+  const nums: [keyof MeshRadio, number, number][] = [
+    ["channel", 1, 233], ["mcs", 0, 15], ["txMbps", 1, 10_000], ["coChannel", 0, 500], ["overlapping", 0, 500],
+    ["gwLossPct", 0, 100], ["gwJitterMs", 0, 60_000], ["netLossPct", 0, 100], ["netJitterMs", 0, 60_000], ["netRttMs", 0, 60_000],
+  ];
+  for (const [key, min, max] of nums) {
+    if (r[key] === undefined) continue;
+    const v = int(r[key], min, max);
+    if (v === null) return undefined;
+    (out as Record<string, number>)[key] = v;
+  }
+  if (r.widthMHz !== undefined) {
+    if (typeof r.widthMHz !== "number" || !WIDTHS.has(r.widthMHz)) return undefined;
+    out.widthMHz = r.widthMHz;
+  }
+  if (r.band !== undefined) {
+    if (!RADIO_BANDS.includes(r.band as MeshRadio["band"] & string)) return undefined;
+    out.band = r.band as MeshRadio["band"];
+  }
+  if (r.phy !== undefined) {
+    if (typeof r.phy !== "string" || !/^[a-z]{1,3}$/.test(r.phy)) return undefined;
+    out.phy = r.phy;
+  }
+  if (r.path !== undefined) {
+    if (!LINK_PATHS.includes(r.path as MeshRadio["path"] & string)) return undefined;
+    out.path = r.path as MeshRadio["path"];
+  }
+  return Object.keys(out).length ? out : undefined;
 }
 
 /** Allowlisted, range-checked host capacity; anything outside the ranges drops the whole block. */

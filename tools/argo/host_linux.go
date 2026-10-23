@@ -38,6 +38,10 @@ func hostProbe(_ context.Context, s *Snapshot) {
 
 func wifiSignalInfo(context.Context) string { return "" } // Linux never sets WiFiSec, so this is not called
 
+// pingArgs: iputils ping; 0.2 s is its unprivileged minimum interval. Images without
+// ping (distroless) just get no link-quality reading.
+func pingArgs(host string) []string { return []string{"-n", "-c", "5", "-i", "0.2", "-w", "4", host} }
+
 func staleProcs(context.Context) []StaleProc { return nil } // Claude Code daemons are a desktop concern
 
 func localGateway(context.Context) (string, string) {

@@ -27,19 +27,23 @@ const notMeasured = "not measured"
 
 // WiFiSignal is the current network's received signal and noise floor in dBm.
 type WiFiSignal struct {
-	RSSI  int `json:"rssi"`
-	Noise int `json:"noise"`
+	RSSI  int    `json:"rssi"`
+	Noise int    `json:"noise"`
+	Radio *Radio `json:"radio,omitempty"` // band, channel, congestion (radio.go); same source and cache
 }
 
 // NetScore is what a text or Gauss shows about the network right now.
 type NetScore struct {
-	Privacy    int      `json:"privacy"` // 0-100; -1 not measured (offline)
-	PrivacyWhy []string `json:"privacy_why,omitempty"`
-	RTTMs      int      `json:"rtt_ms"` // -1 not measured
-	Speed      string   `json:"speed"`
-	RSSI       int      `json:"rssi,omitempty"`
-	Noise      int      `json:"noise,omitempty"`
-	Signal     string   `json:"signal"` // a grade, "n/a" off Wi-Fi, or notMeasured
+	Privacy    int          `json:"privacy"` // 0-100; -1 not measured (offline)
+	PrivacyWhy []string     `json:"privacy_why,omitempty"`
+	RTTMs      int          `json:"rtt_ms"` // -1 not measured
+	Speed      string       `json:"speed"`
+	RSSI       int          `json:"rssi,omitempty"`
+	Noise      int          `json:"noise,omitempty"`
+	Signal     string       `json:"signal"` // a grade, "n/a" off Wi-Fi, or notMeasured
+	Radio      *Radio       `json:"radio,omitempty"`
+	Link       *LinkQuality `json:"link,omitempty"`
+	Advice     []string     `json:"advice,omitempty"` // RadioAdvice: what to change, most useful first
 }
 
 func ScoreNet(s Snapshot) NetScore {
@@ -95,7 +99,9 @@ func ScoreNet(s Snapshot) NetScore {
 		n.Signal = "n/a"
 	case s.Signal != nil:
 		n.RSSI, n.Noise, n.Signal = s.Signal.RSSI, s.Signal.Noise, signalGrade(s.Signal.RSSI-s.Signal.Noise)
+		n.Radio = s.Signal.Radio
 	}
+	n.Link, n.Advice = s.Link, RadioAdvice(s)
 	return n
 }
 
@@ -144,7 +150,11 @@ func (n NetScore) Line() string {
 	if n.Signal != "n/a" && n.Signal != notMeasured {
 		signal += fmt.Sprintf(" (SNR %d dB)", n.RSSI-n.Noise)
 	}
-	return privacy + " · " + speed + " · " + signal
+	line := privacy + " · " + speed + " · " + signal
+	if r := radioLine(n.Radio, n.Link); r != "" {
+		line += " · " + r
+	}
+	return line
 }
 
 var reSignal = regexp.MustCompile(`Signal / Noise:\s*(-?\d+) dBm / (-?\d+) dBm`)
@@ -170,7 +180,7 @@ func parseSignal(out string) *WiFiSignal {
 	if rssi < -120 || rssi > 0 || noise < -120 || noise > 0 {
 		return nil
 	}
-	return &WiFiSignal{RSSI: rssi, Noise: noise}
+	return &WiFiSignal{RSSI: rssi, Noise: noise, Radio: parseRadio(out)}
 }
 
 const signalEvery = 5 * time.Minute // system_profiler takes ~5 s; signal is re-read on a new network at once
@@ -206,6 +216,9 @@ func netReport(n NetScore) map[string]any {
 	r := map[string]any{"privacy": n.Privacy, "privacyWhy": n.PrivacyWhy, "rttMs": n.RTTMs, "speed": n.Speed, "signal": n.Signal}
 	if n.Signal != "n/a" && n.Signal != notMeasured {
 		r["rssi"], r["noise"] = n.RSSI, n.Noise
+	}
+	if radio := radioReport(n.Radio, n.Link); radio != nil {
+		r["radio"] = radio
 	}
 	return r
 }
