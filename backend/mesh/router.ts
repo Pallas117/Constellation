@@ -1,10 +1,13 @@
 import express from "express";
 import path from "node:path";
 import { requireRole, roleSatisfies, type AuthenticatedRequest } from "../auth.js";
-import { MeshStore, parseReport } from "./store.js";
+import { BUNDLE_ID_RE, BundleStore, MAX_BUNDLE_BYTES, parseKeys } from "./bundles.js";
+import { MeshStore, parseReport, type MeshDevice } from "./store.js";
 
 const ALLOWED_EXIT_COUNTRIES = new Set(["MY", "SG"]);
 const MIN_REPORT_INTERVAL_MS = 10_000;
+const BUNDLE_UPLOADS_PER_MINUTE = 120;
+const MAX_STATUS_IDS = 512;
 
 /** MESH_EXIT_NODES="exit-sg-1:SG,exit-my-1:MY"; anything outside MY/SG is ignored. */
 export function exitNodesFromEnv(raw = process.env.MESH_EXIT_NODES ?? "") {
@@ -31,6 +34,13 @@ export function onboardingSteps(exitNodes = exitNodesFromEnv()) {
       pending: exitNodes.length === 0,
     },
     { id: "stale-daemon", title: "If Claude agents fail with ECONNREFUSED", command: "claude daemon stop --any", detail: "A background daemon can keep a dead proxy from an old shell. Argo reports this as STALE_DAEMON." },
+    {
+      id: "relay",
+      title: "Send files that survive drop-outs",
+      command: "argo send <device> <file>",
+      detail:
+        "Signed and end-to-end encrypted (post-quantum hybrid); Gauss holds only ciphertext until the other device collects it, and you get a signed receipt. Devices enrolled before this step run `argo keys` once. Compare fingerprints (`argo keys list`) with the owner before trusting a device.",
+    },
   ];
 }
 
@@ -39,16 +49,24 @@ function bearer(req: express.Request): string | null {
   return h.toLowerCase().startsWith("bearer ") ? h.slice(7).trim() || null : null;
 }
 
-export function createMeshRouters(store = new MeshStore(path.resolve(process.env.MESH_STORE_PATH ?? "data/mesh/devices.json"))) {
+export function createMeshRouters(
+  store = new MeshStore(path.resolve(process.env.MESH_STORE_PATH ?? "data/mesh/devices.json")),
+  bundles = new BundleStore(path.resolve(process.env.MESH_BUNDLE_PATH ?? "data/mesh/bundles")),
+) {
   /** Mounted before session auth: Argo agents authenticate with a device token. */
   const agent = express.Router();
-  agent.post("/report", (req, res) => {
+
+  /** The enrolled device behind the bearer token, or a 401 already sent. */
+  const deviceFor = (req: express.Request, res: express.Response): MeshDevice | undefined => {
     const token = bearer(req);
     const device = token ? store.byToken(token) : undefined;
-    if (!device) {
-      res.status(401).json({ ok: false, error: "Unknown device token" });
-      return;
-    }
+    if (!device) res.status(401).json({ ok: false, error: "Unknown device token" });
+    return device;
+  };
+
+  agent.post("/report", (req, res) => {
+    const device = deviceFor(req, res);
+    if (!device) return;
     const last = device.last ? Date.parse(device.last.receivedAt) : 0;
     if (Date.now() - last < MIN_REPORT_INTERVAL_MS) {
       res.status(429).json({ ok: false, error: "Reporting too often" });
@@ -61,6 +79,85 @@ export function createMeshRouters(store = new MeshStore(path.resolve(process.env
     }
     store.record(device, report);
     res.json({ ok: true });
+  });
+
+  // ---- store-and-forward relay (bundles.ts): ciphertext and public keys only ----
+
+  const uploads = new Map<string, number[]>(); // device → upload times in the last minute
+  agent.post("/bundles", express.raw({ type: "application/octet-stream", limit: MAX_BUNDLE_BYTES }), (req, res) => {
+    const device = deviceFor(req, res);
+    if (!device) return;
+    if (!Buffer.isBuffer(req.body) || req.body.length === 0) {
+      res.status(400).json({ ok: false, error: "Send the bundle as application/octet-stream" });
+      return;
+    }
+    const now = Date.now();
+    const recent = (uploads.get(device.name) ?? []).filter((t) => now - t < 60_000);
+    if (recent.length >= BUNDLE_UPLOADS_PER_MINUTE) {
+      res.status(429).json({ ok: false, error: "Uploading too often" });
+      return;
+    }
+    uploads.set(device.name, [...recent, now]);
+    const result = bundles.put(device.name, req.body, (name) => store.has(name));
+    if (!result.ok) {
+      res.status(result.status).json({ ok: false, error: result.error });
+      return;
+    }
+    res.status(result.status).json({ ok: true, id: result.id, duplicate: result.duplicate });
+  });
+  agent.get("/bundles", (req, res) => {
+    const device = deviceFor(req, res);
+    if (!device) return;
+    res.json({ ok: true, bundles: bundles.list(device.name).map(({ id, from, size, receivedAt, expiresAt }) => ({ id, from, size, receivedAt, expiresAt })) });
+  });
+  // Before /bundles/:id so "status" is never read as an id.
+  agent.post("/bundles/status", (req, res) => {
+    const device = deviceFor(req, res);
+    if (!device) return;
+    const ids = Array.isArray(req.body?.ids) ? (req.body.ids as unknown[]) : null;
+    if (!ids || ids.length > MAX_STATUS_IDS || !ids.every((id) => typeof id === "string" && BUNDLE_ID_RE.test(id))) {
+      res.status(400).json({ ok: false, error: `ids must be up to ${MAX_STATUS_IDS} bundle ids` });
+      return;
+    }
+    res.json({ ok: true, status: bundles.status(device.name, ids as string[]) });
+  });
+  agent.get("/bundles/:id", (req, res) => {
+    const device = deviceFor(req, res);
+    if (!device) return;
+    const raw = BUNDLE_ID_RE.test(req.params.id) ? bundles.get(device.name, req.params.id) : null;
+    if (!raw) {
+      res.status(404).json({ ok: false, error: "No such bundle for this device" });
+      return;
+    }
+    res.type("application/octet-stream").send(raw);
+  });
+  agent.delete("/bundles/:id", (req, res) => {
+    const device = deviceFor(req, res);
+    if (!device) return;
+    if (!BUNDLE_ID_RE.test(req.params.id) || !bundles.ack(device.name, req.params.id)) {
+      res.status(404).json({ ok: false, error: "No such bundle for this device" });
+      return;
+    }
+    res.status(204).end();
+  });
+  agent.get("/directory", (req, res) => {
+    if (!deviceFor(req, res)) return;
+    res.json({ ok: true, keys: store.directory() });
+  });
+  agent.post("/keys", (req, res) => {
+    const device = deviceFor(req, res);
+    if (!device) return;
+    const keys = parseKeys(req.body);
+    if (!keys || (req.body.node !== undefined && req.body.node !== device.name)) {
+      res.status(400).json({ ok: false, error: "Invalid keys" });
+      return;
+    }
+    const result = store.setKeys(device, keys);
+    if (result === "conflict") {
+      res.status(409).json({ ok: false, error: "This device already published different keys; revoke and re-enroll it to replace them" });
+      return;
+    }
+    res.status(result === "created" ? 201 : 200).json({ ok: true });
   });
 
   /**
@@ -85,7 +182,9 @@ export function createMeshRouters(store = new MeshStore(path.resolve(process.env
     });
   });
   ui.get("/devices", requireRole("staff"), (req: AuthenticatedRequest, res) => {
-    const devices = store.list();
+    bundles.sweep();
+    const waiting = bundles.queueStats(); // counts and sizes only: never who sent what
+    const devices = store.list().map((d) => ({ ...d, relay: waiting.get(d.name) ?? { queued: 0, bytes: 0 } }));
     res.json({ ok: true, devices: isOperator(req) ? devices : devices.filter((d) => d.owner === req.auth!.userId) });
   });
   ui.post("/devices", requireRole("staff"), (req: AuthenticatedRequest, res) => {
@@ -106,6 +205,7 @@ export function createMeshRouters(store = new MeshStore(path.resolve(process.env
       return;
     }
     store.revoke(name);
+    bundles.purge(name);
     res.status(204).end();
   });
 

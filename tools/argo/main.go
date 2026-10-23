@@ -38,8 +38,9 @@ type Config struct {
 	PhoneTo   string            `json:"phone_to,omitempty"`   // your own iMessage handle for phone alerts
 	// "sms" sends SMS first: iMessages to your own number arrive silently, with no banner.
 	PhoneService string   `json:"phone_service,omitempty"`
-	Watch        []Peer   `json:"watch,omitempty"`   // LaunchAgents Argo keeps alive; default: awake guard + mesh-heal
-	Devices      []string `json:"devices,omitempty"` // tailnet hostnames to watch; default: this user's phones
+	Watch        []Peer   `json:"watch,omitempty"`     // LaunchAgents Argo keeps alive; default: awake guard + mesh-heal
+	Devices      []string `json:"devices,omitempty"`   // tailnet hostnames to watch; default: this user's phones
+	InboxDir     string   `json:"inbox_dir,omitempty"` // where received files land; default ~/Downloads/Argo
 }
 
 func (c Config) peers() []Peer {
@@ -105,6 +106,7 @@ func main() {
 			return nil
 		}
 		_ = withLock(store, func() { watchPeers(cfg.peers(), store, realWatchFx(phone, store), time.Now()) })
+		relayTick(ctx, cfg, store, phone) // store-and-forward (relay.go); takes its own lock
 		if gw, mac := localGateway(ctx); skipTick(store.Load(), gw, mac, time.Now()) {
 			return nil
 		}
@@ -197,10 +199,12 @@ func main() {
 		err = install()
 	case "uninstall":
 		err = uninstall(store)
+	case "send", "outbox", "inbox", "sync", "keys", "mule", "link":
+		err = relayMain(cmd, os.Args[2:], cfg, store, phone, os.Stdout)
 	case "version":
 		fmt.Println("argo", version)
 	default:
-		fmt.Fprintln(os.Stderr, "usage: argo [status|doctor|fix|report|on|off|preflight|run -- cmd|phone <handle>|test|off|notify TITLE MSG|watch|summary [--send]|enroll URL DEVICE|install|uninstall|version]")
+		fmt.Fprintln(os.Stderr, "usage: argo [status|doctor|fix|report|on|off|preflight|run -- cmd|phone <handle>|test|off|notify TITLE MSG|watch|summary [--send]|enroll URL DEVICE|install|uninstall|version]\n       argo [send [-ttl D] DEVICE FILE|outbox|inbox|sync|keys [list|publish|trust DEVICE]|mule export|import DIR|link]")
 		os.Exit(2)
 	}
 	if err != nil {
@@ -417,7 +421,8 @@ func pushToGauss(cfg Config, st State) {
 		"breakerOpen": time.Now().Before(st.BreakerUntil), "argoVersion": version, "checkedAt": st.CheckedAt,
 		"host":     hostCapacityNow(), // sizes and pressure only, so Gauss can tell which devices can host agents
 		"platform": platformName(runtime.GOOS),
-		"net":      netReport(st.Net), // scores and their reasons; no SSID, BSSID or IP
+		"net":      netReport(st.Net),                                      // scores and their reasons; no SSID, BSSID or IP
+		"link":     linkReport(DefaultStore().Incidents(), st, time.Now()), // availability from the local incident log
 	})
 	u.Path = "/api/mesh/report"
 	req, _ := http.NewRequest(http.MethodPost, u.String(), bytes.NewReader(body))
@@ -457,7 +462,21 @@ func enroll(args []string) error {
 	cfg := loadConfig()
 	cfg.GaussURL, cfg.Device = args[0], args[1]
 	fmt.Println("enrolled; status will be reported to", args[0])
-	return saveConfig(cfg)
+	if err := saveConfig(cfg); err != nil {
+		return err
+	}
+	// Node keys for store-and-forward delivery; the public half is published
+	// now (or on the next tick) so other devices can send to this one.
+	return withRelayLock(DefaultStore(), time.Minute, func() {
+		if r, _, err := relayFor(cfg, DefaultStore(), nil); err == nil {
+			fmt.Println("this device's key fingerprint:", r.Keys.Public().Fingerprint())
+			if r.Hub != nil {
+				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+				defer cancel()
+				r.Sync(ctx)
+			}
+		}
+	})
 }
 
 // ---- install / uninstall ----

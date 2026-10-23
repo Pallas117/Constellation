@@ -1,6 +1,7 @@
 import { createHash, randomBytes } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { keyFingerprint, type DeviceKeys } from "./bundles.js";
 
 // Mirrors Argo's classes (tools/argo/classify.go).
 export const MESH_CLASSES = [
@@ -33,6 +34,56 @@ export interface MeshReport {
   platform?: MeshPlatform;
   battery?: MeshBattery;
   net?: MeshNet;
+  link?: MeshLink;
+}
+
+/**
+ * Link stability from Argo's incident log (tools/argo/linkstats.go), for the
+ * last 24 h and 7 days. availability is 0-1; -1 anywhere means not measured.
+ */
+export interface MeshLinkWindow {
+  observedSec: number;
+  availability: number;
+  outages: number;
+  downSec: number;
+  mttrP50Sec: number;
+  mttrP95Sec: number;
+  mtbfSec: number;
+}
+export interface MeshLink {
+  d1: MeshLinkWindow;
+  d7: MeshLinkWindow;
+}
+
+const WEEK_SEC = 7 * 24 * 3600;
+
+function parseLinkWindow(value: unknown): MeshLinkWindow | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const w = value as Record<string, unknown>;
+  const secs = (v: unknown) => int(v, -1, WEEK_SEC);
+  const availability =
+    typeof w.availability === "number" && Number.isFinite(w.availability) && (w.availability === -1 || (w.availability >= 0 && w.availability <= 1))
+      ? Math.round(w.availability * 10_000) / 10_000
+      : null;
+  const out = {
+    observedSec: secs(w.observedSec),
+    availability,
+    outages: int(w.outages, 0, 100_000),
+    downSec: secs(w.downSec),
+    mttrP50Sec: secs(w.mttrP50Sec),
+    mttrP95Sec: secs(w.mttrP95Sec),
+    mtbfSec: secs(w.mtbfSec),
+  };
+  return Object.values(out).some((v) => v === null) ? undefined : (out as MeshLinkWindow);
+}
+
+/** Both windows or nothing; any field out of range drops the block. */
+export function parseLink(value: unknown): MeshLink | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const l = value as Record<string, unknown>;
+  const d1 = parseLinkWindow(l.d1);
+  const d7 = parseLinkWindow(l.d7);
+  return d1 && d7 ? { d1, d7 } : undefined;
 }
 
 /**
@@ -95,7 +146,10 @@ export interface MeshDevice {
   tokenHash: string;
   enrolledAt: string;
   last?: MeshReport;
+  keys?: DeviceKeys; // public keys for end-to-end encrypted delivery (bundles.ts)
 }
+
+export type MeshDeviceView = Omit<MeshDevice, "tokenHash" | "keys"> & { hosting: HostingVerdict; keyFingerprint?: string };
 
 const NAME_RE = /^[a-z0-9][a-z0-9-]{0,62}$/;
 const MAX_TEXT = 200;
@@ -178,6 +232,7 @@ export function parseReport(body: unknown, now = new Date()): MeshReport | null 
     ...(MESH_PLATFORMS.includes(b.platform as MeshPlatform) ? { platform: b.platform as MeshPlatform } : {}),
     ...(parseBattery(b.battery) ? { battery: parseBattery(b.battery) } : {}),
     ...(parseNet(b.net) ? { net: parseNet(b.net) } : {}),
+    ...(parseLink(b.link) ? { link: parseLink(b.link) } : {}),
   };
 }
 
@@ -238,11 +293,43 @@ export class MeshStore {
     this.persist();
   }
 
-  list(): Array<Omit<MeshDevice, "tokenHash"> & { hosting: HostingVerdict }> {
+  list(): MeshDeviceView[] {
     this.reloadIfChanged();
     return [...this.devices.values()]
-      .map(({ tokenHash: _hidden, ...rest }) => ({ ...rest, hosting: hostingVerdict(rest.last?.host, rest.last?.platform) }))
+      .map(({ tokenHash: _hidden, keys, ...rest }) => ({
+        ...rest,
+        hosting: hostingVerdict(rest.last?.host, rest.last?.platform),
+        ...(keys ? { keyFingerprint: keyFingerprint(keys) } : {}),
+      }))
       .sort((a, b) => a.name.localeCompare(b.name));
+  }
+
+  has(name: string): boolean {
+    this.reloadIfChanged();
+    return this.devices.has(name);
+  }
+
+  /**
+   * The first key set a device publishes is kept. A different one later is
+   * refused: replacing it would let whoever holds the token read files meant
+   * for the old key. An admin revokes and re-enrolls the device instead.
+   */
+  setKeys(device: MeshDevice, keys: DeviceKeys): "created" | "same" | "conflict" {
+    this.reloadIfChanged();
+    const d = this.devices.get(device.name);
+    if (!d) return "conflict";
+    if (d.keys) return keyFingerprint(d.keys) === keyFingerprint(keys) ? "same" : "conflict";
+    d.keys = keys;
+    this.persist();
+    return "created";
+  }
+
+  directory(): Array<{ node: string; sign: string; kem_id: number; kem: string }> {
+    this.reloadIfChanged();
+    return [...this.devices.values()]
+      .filter((d) => d.keys)
+      .map((d) => ({ node: d.name, sign: d.keys!.sign, kem_id: d.keys!.kem_id, kem: d.keys!.kem }))
+      .sort((a, b) => a.node.localeCompare(b.node));
   }
 
   private persist(): void {
