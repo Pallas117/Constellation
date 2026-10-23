@@ -19,8 +19,9 @@ export function onboardingSteps(exitNodes = exitNodesFromEnv()) {
   return [
     { id: "tailscale", title: "Install Tailscale and join the tailnet", command: "brew install --cask tailscale", detail: "Open Tailscale and sign in with your Lightbound Google Workspace account; an admin approves new devices in the Tailscale admin console." },
     { id: "argo", title: "Build and install Argo", command: "cd tools/argo && go build -o ~/.local/bin/argo . && argo install", detail: "argo install only writes the LaunchAgent plist; it prints the launchctl command for you to run." },
-    { id: "enroll", title: "Connect Argo to Gauss", command: "argo enroll <gauss-tailnet-url> <device-name>", detail: "Create a device token on this page (Enroll this laptop). Paste it when prompted; it is never put on the command line." },
+    { id: "enroll", title: "Connect Argo to Gauss", command: "argo enroll <gauss-tailnet-url> <device-name>", detail: "Create a device token on this page (Enroll a device). Paste it when prompted; it is never put on the command line. Argo sends a first report straight away and says whether Gauss accepted it." },
     { id: "verify", title: "Check your exit country", command: "argo doctor", detail: "class must be OK and loc must be MY or SG. A Hong Kong eSIM shows REGION: switch to a Malaysian SIM." },
+    { id: "guard", title: "See what this device can take on", command: "argo guard", detail: "Memory, battery, disk and CPU now and over the last day, and what to fix first. A new device takes mesh work after 10 calm minutes; on battery it takes light work only. The Can host column shows the same reasons." },
     {
       id: "exit-node",
       title: "Use the MY/SG exit node when a network blocks you",
@@ -56,6 +57,7 @@ export function createMeshRouters(store = new MeshStore(path.resolve(process.env
     }
     const report = parseReport(req.body);
     if (!report) {
+      store.reject(device); // the page shows it, instead of "Never reported" with no reason
       res.status(400).json({ ok: false, error: "Invalid report" });
       return;
     }
