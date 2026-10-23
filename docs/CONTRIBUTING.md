@@ -1,108 +1,78 @@
-# Contributing to Lovable
+# Contributing to Gauss Aurora
 
-Thank you for contributing to this project. This guide explains how to get started, how contributions are reviewed, and the developer score system that keeps roadmap work rigorous.
+How the team shares work in this repository: the Gauss app (`frontend/`, `backend/`), the lightbound.uk site
+(`website/`) and the Argo agent (`tools/argo/`). Work is planned in Linear (team GAU) and lands here as pull requests.
 
-## Quick start for new contributors
+**This repository is public.** Anything pushed, including branches and PR text, can be read by anyone. Never push
+secrets, `.env*` files, `.auth.db`, `data/mesh/`, customer or partner data, or internal documents. Team-only code
+lives in separate private repositories; ask Josh for access.
 
-1. Clone the repository.
-2. Install dependencies:
+## Set up
+
+1. Use Node 22 (`.nvmrc`; `nvm use`). Native modules such as better-sqlite3 must be built by the Node that runs them.
+2. Clone, then install from the lockfile:
    ```bash
-   npm install
+   npm ci
    ```
-3. Start the app locally:
+3. Run the app: `npm run dev` (frontend, port 8080) and `npm run dev:proxy` (backend, port 3001).
+   Accounts need `npm run auth:migrate` once; see the root `README.md`.
+4. The website runs on its own: `node website/dev.mjs --offline` (see `website/README.md`).
+5. Argo is a separate Go module: `cd tools/argo && go test ./...`.
+
+## Make a change
+
+1. Pick or create a Linear issue in team GAU. Use its branch name (Linear's "Copy git branch name", for example
+   `<user>/gau-123-short-title`) so the PR links to the issue. Without an issue, use `<type>/<name>`, for example
+   `fix/website-fonts`.
+2. Branch from the latest `origin/main`, ideally in your own worktree, so other work in progress isn't disturbed:
    ```bash
-   npm run dev
+   git fetch origin
+   npm run wt:create -- <branch>
    ```
-4. Run quality checks before pushing:
-   ```bash
-   npm run quality:full
-   npm run test:all
-   ```
-5. Read these docs before your first PR:
-   - `docs/CONTRIBUTING.md`
-   - `docs/DEVELOPER_SCORING_AND_ONBOARDING.md`
-   - `docs/QUALITY_AND_TESTING_QUICK_REF.md`
-   - `docs/QA_TEST_PLAN.md`
+   See `docs/WORKTREE_ARCHITECTURE.md`.
+3. Push early and open a **draft** PR, so nothing exists on only one machine. Keep it small and on one topic.
+4. Fill in the PR template (`.github/pull_request_template.md`), including the `## Developer Score` section
+   (`docs/DEVELOPER_SCORING_AND_ONBOARDING.md`).
 
-## Local setup checklist
+## Test before review: GitHub Actions are off
 
-- Node.js and npm installed
-- Repository cloned
-- `npm install` successful
-- `npm run dev` opens the app
-- `npm run quality:full` passes locally
-- `npm run test:all` passes locally
+The CI workflows are currently disabled, so a PR shows no checks. **Run the gates locally on the exact commit
+you push, and paste the results into the PR** (counts, not just "passed"):
 
-## What to work on first
+| Change touches | Run |
+| --- | --- |
+| anything in the app | `npm test`, `npm run quality:types` (must stay at 0 errors), `npm run build` |
+| `website/` | `npm run test:website`, and `RELEASE=public npm run audit:website` for visible changes |
+| `tools/argo/` | `go test ./...` and `gofmt -l .` in `tools/argo` |
+| dependencies or config | `npm run security:secrets` too |
 
-- Start with issues tagged `good first issue`, `documentation`, or `bugfix`.
-- Smaller, focused PRs are easier to review.
-- If you need help, ask for a quick architecture review before implementation.
+The full app gate is `npm run audit:adherence`. On a machine with 8 GB of memory, run one heavy job
+(build, Playwright, full test suite) at a time.
 
-## Developer Score requirement
+Say what you didn't run and why. A PR that says "not tested" is fine. A PR that claims tests it didn't run is not.
 
-All PRs must include a `Developer Score` section in the PR description. The score helps ensure roadmap changes do not land too early.
+## Review and merge
 
-Example:
+- Mark the PR ready when the gates pass, and ask for review.
+- Josh reviews and merges pull requests from the team. Changes to sign-in, roles (RBAC), cryptography or TLS,
+  secrets, security monitoring (CyberTiger), anything newly exposed to the public, or data deletion always need
+  his review.
+- Merge with a merge commit, never a force push, and only when the PR's head already contains the latest `main`.
+  After someone else's PR merges, update yours from `main` and run the gates again.
 
-```
-### Developer Score
-- Code Quality: 24/25
-- Testing & Coverage: 22/25
-- Architecture & Fit: 18/20
-- Documentation & Communication: 13/15
-- Security & Compliance: 10/10
-- Release Readiness: 5/5
+## Rules that keep the project safe
 
-**Total: 92/100**
-```
+- Never weaken TLS or certificate checks, and never put tokens or secrets in URLs, logs or commits.
+- Public API routes are an explicit allowlist (`PUBLIC_READ_PATHS` in `backend/server.ts`). Don't let the UI poll a
+  route the signed-in role can't use: CyberTiger counts 401/403 responses and blocks the IP.
+- Public claims about Gauss must match the evidence. Don't call it compliant, certified, space-qualified or
+  flight-ready, and label simulated and demonstration data as such.
+- Fix lint and type findings instead of silencing them. If a fix is too big for your PR, open a Linear issue.
 
-For alpha and roadmap-impact PRs, target `95+`.
+## More
 
-> The developer-score workflow now enforces:
-> - minimum `90/100` for standard PRs
-> - minimum `95/100` for PRs labeled `alpha` or `roadmap`
-
-See also: `docs/DEVELOPER_SCORING_AND_ONBOARDING.md`
-
-## PR workflow
-
-1. Open an issue or link to an existing one.
-2. Create a feature branch from `main`.
-3. Keep scope narrow and avoid unrelated churn.
-4. Include a clear test plan, docs impact, and the developer score.
-5. Run CI commands locally before pushing.
-6. Request a review and mark the PR ready once checks pass.
-
-## GitHub checks and quality gates
-
-- `npm run quality:full` must pass.
-- `npm run test:all` should pass.
-- `npm run perf:check` is recommended for feature-heavy changes.
-- Security and compliance checks are required for any dependency or config change.
-
-## Making developer life easier
-
-- Use the docs as your first navigation aid.
-- Prefer small PRs over large refactor bundles.
-- Document non-obvious architecture decisions in the PR.
-- If you add new APIs, update docs and tests together.
-- Ask for help early if the change touches shared infrastructure.
-
-## What blocks a PR from merging
-
-- Type or lint failures.
-- Failing tests.
-- Missing or weak developer score.
-- Large feature bundles without an architecture note.
-- Unknown side effects or missing documentation.
-
-## Onboarding resources
-
-- `README.md` for repository structure and quick setup.
-- `docs/ARCHITECTURE.md` for system architecture and data flow.
-- `docs/QUALITY_AND_TESTING_QUICK_REF.md` for developer commands and release gates.
-- `docs/QA_TEST_PLAN.md` for test expectations.
-- `docs/DEVELOPER_SCORING_AND_ONBOARDING.md` for scoring rules.
-- New GitHub issue templates in `.github/ISSUE_TEMPLATE/` for bugs and feature requests.
-- New GitHub Action in `.github/workflows/developer-score-check.yml` validates the PR score section.
+- `README.md`: repository layout and setup
+- `docs/ARCHITECTURE.md`: system architecture and data flow
+- `docs/QUALITY_AND_TESTING_QUICK_REF.md` and `docs/QA_TEST_PLAN.md`: commands and test expectations
+- `docs/DEVELOPER_SCORING_AND_ONBOARDING.md`: the Developer Score rubric
+- `website/README.md`: the lightbound.uk site, its release modes and its deploy steps
