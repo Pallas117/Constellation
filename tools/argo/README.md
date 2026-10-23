@@ -70,6 +70,9 @@ Then remove the `statusLine` and `claude()` lines above if you added them, and r
 | `argo notify [-key K -every D] TITLE MSG` | Send an alert to your iPhone (masked, queued offline, rate-limited per key) |
 | `argo watch` | Run the peer watchdog once (also every tick): restarts the gauss-awake guard or mesh-heal when their heartbeat is stale, max 3 restarts/hour each, then alerts. Override the list with `"watch"` in config.json |
 | `argo devices` | Which watched tailnet devices are offline. Every tick, a phone of yours that has been off the tailnet for 30 min or more gets a text (SMS over its own cellular link) with the fix: open Tailscale, turn on Connect On Demand. At most every 6 h per device. Override the list with `"devices": ["hostname", ...]` in config.json |
+| `argo guard` | Resource guard (below): memory, battery, disk and CPU now and over the last 24 h, who uses memory, what to do. `--json` for scripts |
+| `argo guard admit [-mem GB] [-wait 10m]` | Exit 0 if a job needing GB may start now, 75 (with the reason) if not |
+| `argo guard run [-mem GB] [-max GB] [-wait 10m] -- cmd` | Runs `cmd` only when admitted, and stops its whole process group if the host reaches **block** or the job holds more than `-max` GB. Exit 75 when refused or stopped, otherwise `cmd`'s own code |
 | `argo off` / `argo on` | Pauses or resumes the LaunchAgent ticks |
 | `argo preflight` | Fast local check for dead proxies and stuck Claude daemons (exit 1 if found) |
 | `argo run -- cmd` | Runs `cmd` with dead proxy variables removed |
@@ -158,6 +161,39 @@ Anything Argo couldn't measure says `not measured` (signal says `n/a` off Wi-Fi)
 - **Signal** is Wi-Fi signal-to-noise from `system_profiler SPAirPortDataType` (no sudo).
   Bands: ≥40 dB excellent, ≥25 good, ≥15 fair, below that poor. Only the current network is read.
   The reading is cached for 5 minutes per network, because the command takes about 5 seconds.
+
+## Resource guard (memory, battery, disk, CPU)
+
+Every tick (once a minute) Argo takes one cheap reading of the host and keeps the last 24 h in
+`~/.local/state/argo/guard.jsonl` (about 400 KB, never sent anywhere). Each resource is rated, and the worst
+rating is the host's level:
+
+| Level | Means | Examples |
+|---|---|---|
+| ok | takes work | |
+| watch | light work only (jobs up to 1 GB, one mesh slot) | memory at warn, on battery, disk under 20 GB, load ≥ 1 per core, charger rated below the machine's draw |
+| risk | no new work; running work continues | memory at warn for 30 of the last 60 min, swap +1 GB in an hour at warn, swap ≥ 4 GB, battery ≤ 20% (or ≤ 25% with memory at warn, or under an hour to the floor), plugged in but still losing charge, disk under 8 GB, CPU throttled by the OS |
+| block | no work; guarded jobs are stopped | memory pressure critical, battery at the 10% floor on battery power, disk under 3 GB (swap lives on the boot volume) |
+
+The floors are the ones `gauss-services.sh` already uses (battery 10% / 20%, swap 4 GB, disk 8 GB); the trend rules are GAU-165's.
+Memory pressure is the kernel's own level on macOS; on Linux it is PSI (`/proc/pressure/memory`, our thresholds:
+some ≥ 10% of a minute = warn, full ≥ 10% or some ≥ 40% = critical) or, without PSI, available memory.
+
+**Autoscaler.** Free RAM after a 1.5 GB reserve, divided by `guard_slot_gb` (config.json, default 2 GB), capped at
+cores − 1, is how many agent slots the host offers. It scales down at once, and up one slot at a time, only after
+10 minutes without risk and at most every 5 minutes, so a new or recovered host takes no work until it has been calm
+for 10 minutes. The decision (level, admission open/full/limited/closed, slots, free GB, finding codes) and the
+battery level go to Gauss with each report; Gauss lowers its "Can host" verdict to match and shows why on `/mesh`.
+
+**Phone texts** (rate-limited per key) cover what the gauss-services guard doesn't: memory at warn for 30 of the last
+60 min, swap climbing at warn (naming the three biggest memory users by group), and low battery with memory at warn.
+Replaying the evening before the 2026-10-21 hard reset (`testdata/gau165-replay.tsv`), the first text would have come at 21:35,
+90 minutes before swap crossed 5 GB.
+
+**Guarded jobs.** Use `argo guard run` for anything heavy, e.g. `argo guard run -mem 2 -max 4 -wait 30m -- npm ci`.
+The job runs in its own process group (Ctrl-C is passed on). Two bad readings in a row, 5 s apart, stop it with
+SIGTERM, then SIGKILL after 15 s. `~/.local/state/argo/guard.log` records each run by command name only (never its
+arguments).
 
 ## Linux and containers
 
