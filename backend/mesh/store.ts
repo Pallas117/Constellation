@@ -35,6 +35,7 @@ export interface MeshReport {
   battery?: MeshBattery;
   net?: MeshNet;
   link?: MeshLink;
+  guard?: MeshGuard;
 }
 
 /**
@@ -112,7 +113,54 @@ export interface MeshBattery {
   level: number; // percent, 0-100
   charging: boolean;
   lowPower: boolean;
+  external?: boolean; // on mains power (Argo sends it; phones don't)
 }
+
+/**
+ * Argo's resource guard (tools/argo/guard.go, GAU-195): the host's own risk
+ * level, whether it admits new work, how many agent slots it offers after
+ * its autoscaler's cool-down, and finding codes. The codes are an allowlist
+ * with the plain words the page shows; unknown codes are dropped.
+ */
+export const GUARD_CODE_TEXT = {
+  "mem-critical": "memory pressure critical",
+  "mem-warn-sustained": "memory at warn for 30+ of the last 60 min",
+  "mem-warn": "memory pressure at warn",
+  "pressure-unknown": "memory pressure unknown",
+  "swap-rising": "swap climbing at warn",
+  "swap-high": "swap over 4 GB",
+  "no-headroom": "no spare RAM",
+  "battery-floor": "battery at the 10% floor",
+  "battery-low": "battery low",
+  "battery-draining": "under an hour to the battery floor",
+  "battery-low-pressure": "low battery with memory at warn",
+  "on-battery": "on battery power",
+  "charger-behind": "charger can't keep up",
+  "charger-weak": "charger weaker than the draw",
+  "disk-critical": "disk nearly full",
+  "disk-low": "disk low",
+  "disk-tight": "disk under 20 GB free",
+  "cpu-throttled": "CPU throttled",
+  "cpu-saturated": "CPU saturated",
+  "cpu-busy": "CPU busy",
+} as const;
+export type GuardCode = keyof typeof GUARD_CODE_TEXT;
+export const GUARD_LEVELS = ["ok", "watch", "risk", "block"] as const;
+export const GUARD_ADMISSIONS = ["open", "full", "limited", "closed"] as const;
+export interface MeshGuard {
+  at: string;
+  level: (typeof GUARD_LEVELS)[number];
+  admission: (typeof GUARD_ADMISSIONS)[number];
+  slots: number;
+  headroomGB: number;
+  reasons: GuardCode[];
+  warnMin: number;
+  swapRiseGB: number;
+  minToFloor: number; // -1 unknown or on mains
+}
+
+/** Reports older than this say nothing about the device now (the page marks them stale too). */
+export const MESH_STALE_MS = 15 * 60_000;
 
 /** Host capacity from Argo (tools/argo/capacity.go): sizes and kernel pressure only. */
 export interface MeshHost {
@@ -127,17 +175,62 @@ export interface MeshHost {
 /**
  * Where a device can take mesh work. agents: room for agent runtimes and a
  * shared-memory replica; light: Argo, monitoring and small local models;
- * no: already under pressure or short of RAM/disk; unknown: older Argo.
+ * no: already under pressure or short of RAM/disk; unknown: older Argo or no
+ * recent report.
  */
 export type HostingVerdict = "agents" | "light" | "no" | "unknown";
+const VERDICT_RANK: Record<HostingVerdict, number> = { unknown: -1, no: 0, light: 1, agents: 2 };
 
-export function hostingVerdict(host?: MeshHost, platform?: MeshPlatform): HostingVerdict {
-  if (platform && PHONES.has(platform)) return "no"; // phones report status; they never host mesh work
-  if (!host || !host.pressure) return "unknown";
-  if (host.pressure !== "normal") return "no";
-  if (host.ramGB >= 16 && host.diskFreeGB >= 20) return "agents";
-  if (host.ramGB >= 8 && host.diskFreeGB >= 10) return "light";
-  return "no";
+export interface HostingContext {
+  battery?: MeshBattery;
+  guard?: MeshGuard;
+  receivedAt?: string;
+  now?: Date;
+}
+
+/**
+ * The verdict and the plain reasons behind it, for the device list. The
+ * hardware floor comes first, then each newer signal can only lower it:
+ * a stale report, battery power, swap, and Argo's own guard (which also
+ * holds a new or recovered host back for its 10-minute cool-down).
+ */
+export function assessHosting(host?: MeshHost, platform?: MeshPlatform, ctx: HostingContext = {}): { verdict: HostingVerdict; why: string[] } {
+  if (platform && PHONES.has(platform)) return { verdict: "no", why: ["phones report status only"] }; // they never host mesh work
+  const now = ctx.now ?? new Date();
+  const age = ctx.receivedAt ? now.getTime() - Date.parse(ctx.receivedAt) : 0;
+  if (age > MESH_STALE_MS) return { verdict: "unknown", why: [`no report for ${Math.round(age / 60_000)} min`] };
+  if (!host || !host.pressure) return { verdict: "unknown", why: ["no capacity reading yet: update Argo on the device"] };
+  const why: string[] = [];
+  let verdict: HostingVerdict = "no";
+  if (host.ramGB >= 16 && host.diskFreeGB >= 20) verdict = "agents";
+  else if (host.ramGB >= 8 && host.diskFreeGB >= 10) verdict = "light";
+  else why.push(`needs 8 GB RAM and 10 GB free disk (has ${host.ramGB} GB, ${host.diskFreeGB} GB free)`);
+  const cap = (max: HostingVerdict, reason: string) => {
+    if (VERDICT_RANK[max] < VERDICT_RANK[verdict]) verdict = max;
+    if (VERDICT_RANK[max] < VERDICT_RANK.agents) why.push(reason);
+  };
+  if (host.pressure !== "normal") cap("no", `memory pressure ${host.pressure}`);
+  if (host.swapUsedGB >= 4) cap("no", `${host.swapUsedGB} GB of swap in use`);
+  const b = ctx.battery;
+  const onBattery = b ? (b.external ?? b.charging) === false : false;
+  if (b && onBattery && b.level <= 20) cap("no", `battery ${b.level}% on battery power`);
+  else if (b && onBattery) cap("light", "on battery power: light work only");
+  const g = ctx.guard;
+  const guardFresh = g && ctx.receivedAt && Math.abs(Date.parse(ctx.receivedAt) - Date.parse(g.at)) <= MESH_STALE_MS;
+  if (g && guardFresh) {
+    const codes = g.reasons.filter((c) => c !== "no-headroom" || g.admission === "full").map((c) => GUARD_CODE_TEXT[c]);
+    const detail = codes.length ? `: ${codes.join(", ")}` : "";
+    if (g.admission === "closed") cap("no", `Argo guard closed to new work${detail}`);
+    else if (g.admission === "full") cap("no", "Argo guard: no spare RAM for new work");
+    else if (g.admission === "limited") cap("light", `Argo guard: light work only${detail}`);
+    else if (g.slots === 0) cap("light", "Argo guard: cooling down (10 calm minutes before taking work)");
+    else if (g.slots === 1) cap("light", "Argo guard: 1 agent slot free");
+  }
+  return { verdict, why: [...new Set(why)] };
+}
+
+export function hostingVerdict(host?: MeshHost, platform?: MeshPlatform, ctx: HostingContext = {}): HostingVerdict {
+  return assessHosting(host, platform, ctx).verdict;
 }
 
 export interface MeshDevice {
@@ -147,9 +240,11 @@ export interface MeshDevice {
   enrolledAt: string;
   last?: MeshReport;
   keys?: DeviceKeys; // public keys for end-to-end encrypted delivery (bundles.ts)
+  /** When Gauss last refused a report from this device as invalid (e.g. a class it doesn't know yet). */
+  rejectedAt?: string;
 }
 
-export type MeshDeviceView = Omit<MeshDevice, "tokenHash" | "keys"> & { hosting: HostingVerdict; keyFingerprint?: string };
+export type MeshDeviceView = Omit<MeshDevice, "tokenHash" | "keys"> & { hosting: HostingVerdict; hostingWhy: string[]; keyFingerprint?: string };
 
 const NAME_RE = /^[a-z0-9][a-z0-9-]{0,62}$/;
 const MAX_TEXT = 200;
@@ -170,7 +265,28 @@ export function parseBattery(value: unknown): MeshBattery | undefined {
   const level = raw > 0 && raw <= 1 && !Number.isInteger(raw) ? Math.round(raw * 100) : Math.round(raw);
   if (!(level >= 0 && level <= 100)) return undefined;
   if (typeof b.charging !== "boolean") return undefined;
-  return { level, charging: b.charging, lowPower: b.lowPower === true };
+  return { level, charging: b.charging, lowPower: b.lowPower === true, ...(typeof b.external === "boolean" ? { external: b.external } : {}) };
+}
+
+const isGuardCode = (c: unknown): c is GuardCode => typeof c === "string" && Object.hasOwn(GUARD_CODE_TEXT, c);
+
+/** Argo's guard decision; a bad level, admission or number drops the block, unknown codes are dropped alone. */
+export function parseGuard(value: unknown): MeshGuard | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const g = value as Record<string, unknown>;
+  const level = GUARD_LEVELS.includes(g.level as MeshGuard["level"]) ? (g.level as MeshGuard["level"]) : null;
+  const admission = GUARD_ADMISSIONS.includes(g.admission as MeshGuard["admission"]) ? (g.admission as MeshGuard["admission"]) : null;
+  const slots = int(g.slots, 0, 1024);
+  const headroomGB = num(g.headroomGB, 4096);
+  const warnMin = int(g.warnMin, 0, 60);
+  const swapRiseGB = num(g.swapRiseGB, 4096);
+  const minToFloor = int(g.minToFloor, -1, 100_000);
+  const at = text(g.at, 40);
+  if (level === null || admission === null || slots === null || headroomGB === null || warnMin === null || swapRiseGB === null || minToFloor === null || Number.isNaN(Date.parse(at))) {
+    return undefined;
+  }
+  const reasons = (Array.isArray(g.reasons) ? g.reasons : []).filter(isGuardCode).slice(0, 6);
+  return { at, level, admission, slots, headroomGB, reasons, warnMin, swapRiseGB, minToFloor };
 }
 
 const WHY_RE = /^[A-Za-z0-9 ()/,.-]{1,80}$/;
@@ -233,6 +349,7 @@ export function parseReport(body: unknown, now = new Date()): MeshReport | null 
     ...(parseBattery(b.battery) ? { battery: parseBattery(b.battery) } : {}),
     ...(parseNet(b.net) ? { net: parseNet(b.net) } : {}),
     ...(parseLink(b.link) ? { link: parseLink(b.link) } : {}),
+    ...(parseGuard(b.guard) ? { guard: parseGuard(b.guard) } : {}),
   };
 }
 
@@ -290,17 +407,29 @@ export class MeshStore {
 
   record(device: MeshDevice, report: MeshReport): void {
     device.last = report;
+    delete device.rejectedAt;
     this.persist();
   }
 
-  list(): MeshDeviceView[] {
+  /**
+   * Remember that a report from this device was refused, so the page can say
+   * why it looks silent. At most one write a minute per device: a broken
+   * agent must not turn into a write loop.
+   */
+  reject(device: MeshDevice, now = new Date()): void {
+    if (device.rejectedAt && now.getTime() - Date.parse(device.rejectedAt) < 60_000) return;
+    device.rejectedAt = now.toISOString();
+    this.persist();
+  }
+
+  list(now = new Date()): MeshDeviceView[] {
     this.reloadIfChanged();
     return [...this.devices.values()]
-      .map(({ tokenHash: _hidden, keys, ...rest }) => ({
-        ...rest,
-        hosting: hostingVerdict(rest.last?.host, rest.last?.platform),
-        ...(keys ? { keyFingerprint: keyFingerprint(keys) } : {}),
-      }))
+      .map(({ tokenHash: _hidden, keys, ...rest }) => {
+        const l = rest.last;
+        const { verdict, why } = assessHosting(l?.host, l?.platform, { battery: l?.battery, guard: l?.guard, receivedAt: l?.receivedAt, now });
+        return { ...rest, hosting: verdict, hostingWhy: why, ...(keys ? { keyFingerprint: keyFingerprint(keys) } : {}) };
+      })
       .sort((a, b) => a.name.localeCompare(b.name));
   }
 

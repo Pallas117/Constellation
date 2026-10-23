@@ -58,7 +58,7 @@ func outages(in []Incident, now time.Time) []outage {
 	return out
 }
 
-func percentile(sorted []int64, p float64) int64 {
+func nearestRank(sorted []int64, p float64) int64 {
 	if len(sorted) == 0 {
 		return -1
 	}
@@ -107,7 +107,7 @@ func linkStats(in []Incident, since, now time.Time, window time.Duration) LinkSt
 		s.Availability = max(0, 1-float64(s.DownSec)/float64(s.ObservedSec))
 	}
 	sort.Slice(mttr, func(i, j int) bool { return mttr[i] < mttr[j] })
-	s.MTTRP50Sec, s.MTTRP95Sec = percentile(mttr, 0.5), percentile(mttr, 0.95)
+	s.MTTRP50Sec, s.MTTRP95Sec = nearestRank(mttr, 0.5), nearestRank(mttr, 0.95)
 	s.MTBFSec = -1
 	if s.Outages > 0 {
 		s.MTBFSec = (s.ObservedSec - s.DownSec) / int64(s.Outages)
