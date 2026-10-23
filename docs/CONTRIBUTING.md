@@ -57,7 +57,8 @@ Say what you didn't run and why. A PR that says "not tested" is fine. A PR that 
 - Josh reviews and merges pull requests from the team. Changes to sign-in, roles (RBAC), cryptography or TLS,
   secrets, security monitoring (CyberTiger), anything newly exposed to the public, or data deletion always need
   his review.
-- Merge with a merge commit, never a force push, and only when the PR's head already contains the latest `main`.
+- `main` only accepts pull requests: a repository ruleset blocks direct pushes, force-pushes and deleting it.
+- Merge with a merge commit, and only when the PR's head already contains the latest `main`.
   After someone else's PR merges, update yours from `main` and run the gates again.
 
 ## Rules that keep the project safe
