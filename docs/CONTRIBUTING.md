@@ -53,7 +53,7 @@ Say what you didn't run and why. A PR that says "not tested" is fine. A PR that 
 
 ## Review and merge
 
-- Mark the PR ready when the gates pass, and ask for review.
+- Mark the PR ready when the gates pass. GitHub then asks Josh to review it (`.github/CODEOWNERS`).
 - Josh reviews and merges pull requests from the team. Changes to sign-in, roles (RBAC), cryptography or TLS,
   secrets, security monitoring (CyberTiger), anything newly exposed to the public, or data deletion always need
   his review.
