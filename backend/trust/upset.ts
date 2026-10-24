@@ -34,18 +34,20 @@ import { citedProtonCampaigns, findProfile, PROFILE_LIBRARY_VERSION, PROFILES, p
 
 /*
  * Solar-proton access thresholds, on the record's centred-dipole L. Observed cutoffs for ~16 MeV
- * protons sit at about 63–66.5° corrected geomagnetic latitude in quiet times, with storm floors
- * of 56–58° (Nesse Tyssøy & Stadsnes, JGR 120, 553 (2015), doi:10.1002/2014JA020508). So on a
- * true L, 4 (60°) as "open" and 2 (45°) as "shielded" are conservative. The centred-dipole L
- * reads up to 0.96 low near L 4 and up to 0.41 low near L 2 against an IGRF-14 field-line apex L
- * at 300–450 km (Gauss grid check, 2.5° × 10°, |lat| 30–62.5°, 2026-10-25: centred 3.04 vs
- * IGRF 4.01; centred 1.59 vs IGRF 2.01), so the thresholds applied to it are lowered by that
- * margin. Replace with an IGRF-traced L when the record has one.
+ * protons sit at about 63–66.5° corrected geomagnetic latitude in quiet times, and the authors'
+ * fits bottom out at 56–58° (lower limits set from six events; Nesse Tyssøy & Stadsnes, JGR 120,
+ * 553 (2015), doi:10.1002/2014JA020508). So on a true L, 4 (60°) as "open" and 2 (45°) as
+ * "shielded" are conservative. Against an IGRF-14 field-line apex L at 300–450 km the record's
+ * centred-dipole L reads low by up to about 1.0 near L 4 and 0.4 near L 2 (Gauss grid checks,
+ * 2026-10-25, internal field only: on a 1° × 2.5° grid up to 72° the lowest centred L where the
+ * IGRF L reaches 4 was 3.01, and where it reaches 2 was 1.58). The thresholds applied to it are
+ * lowered below those with some slack for points between the grid nodes. Replace them with an
+ * IGRF-traced L when the record has one.
  */
 /** At or above this centred-dipole L, solar protons are taken to reach the orbit. */
-export const SEP_OPEN_L = 3.0;
+export const SEP_OPEN_L = 2.9;
 /** Below this centred-dipole L, the field is taken to shield the orbit from solar protons. */
-export const SEP_SHIELDED_L = 1.55;
+export const SEP_SHIELDED_L = 1.5;
 
 export type UpsetBand = "baseline" | "elevated" | "high";
 

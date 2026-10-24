@@ -341,7 +341,7 @@
           },
           "upsetRisk": {
             "$ref": "#/components/schemas/Field",
-            "description": "Modelled upset-risk band relative to the same orbit's quiet-time average (PR-02). `value` is an UpsetRisk, or null without a cited processor profile or when the SAA tier, S-level or (when needed) G-level is unknown.",
+            "description": "Modelled upset-rate band relative to the same orbit's quiet-time average (PR-02). `value` is an UpsetRisk, or null without a cited processor profile or when the SAA tier, S-level or (when needed) G-level is unknown.",
             "properties": { "value": { "oneOf": [{ "$ref": "#/components/schemas/UpsetRisk" }, { "type": "null" }] } }
           },
           "checks": {

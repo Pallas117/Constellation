@@ -508,7 +508,7 @@ export const RECORD_LIMITATIONS = [
  * error, a device's fitness for a mission, or absorbed radiation.
  */
 const BANNED =
-  /\b(doses?|damag(?:e|ed|es|ing)|failure probability|probability of failure|qualif(?:y|ied|ication)|flight[- ]ready|mission[- ]ready|space[- ]qualified|certif(?:ied|ication)|complian(?:t|ce)|rad[- ]hard|radiation[- ](?:hardened|tolerant)|suitab(?:le|ility)|surviv(?:e|es|al)|gy|sv|krad|rad ?\(si\))(?![\w])/i;
+  /(?<![\w])(doses?|damag(?:e|ed|es|ing)|failure probability|probability of failure|qualif(?:y|ied|ication)|flight[- ]ready|mission[- ]ready|space[- ]qualified|certif(?:y|ied|ication)|complian(?:t|ce)|rad[- ]hard(?:ened)?|radiation[- ](?:hardened|tolerant)|(?:un)?suitab(?:le|ility)|surviv(?:e|es|ed|al|ing)|[mµμck]?gy|[mµμ]?sv|krad|rad ?\(si\))(?![\w])/i;
 
 /** Banned words in the Gauss-authored text of a record (the customer's own output is not scanned). */
 export function bannedWording(record: Omit<TrustRecord, "hash">): string[] {

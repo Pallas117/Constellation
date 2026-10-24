@@ -1,6 +1,6 @@
 /**
  * Processor radiation profiles (PR-02, GAU-58): published single-event-effect (SEE) test results
- * for onboard processors, so a trust record can say on what data its upset-risk band rests.
+ * for onboard processors, so a trust record can say on what data its upset-rate band rests.
  *
  * Every profile cites the test it came from (DOI or test report), the facility, the particle and
  * its energy, and states its units (cm² per device or per bit). Effect classes stay separate and
@@ -87,7 +87,8 @@ const ORIN_2024 =
   "Rodriguez-Ferrandez, Kosmidis, Tali, Steenari, Hands & Bélanger-Champagne, \"Proton Evaluation of Single Event Effects in the NVIDIA GPU Orin SoM: Understanding Radiation Vulnerabilities Beyond the SoC\", IEEE IOLTS 2024";
 /**
  * The bounds Orin's Tables II–V print. The paper doesn't name them. Gauss check: σ × fluence is
- * within 0.04 of a whole event count in every row, and the bounds equal the exact 95% Poisson
+ * within 0.1 of a whole event count in every row (σ is printed to 3 significant figures), and the
+ * bounds equal the exact 95% Poisson
  * (Garwood) interval on that count, except Table V CPU SEFI (see that row).
  */
 const orinRange = (low: number, high: number, table: string) => ({
@@ -134,7 +135,7 @@ export const PROFILES: readonly ProcessorProfile[] = [
         notes: [
           "Only SEFIs are reported; no SEU or SDC figures. The per-run values span a factor of about 17.",
           "Gauss check: pooled over all runs, 11 events / 2.024e10 p/cm² = 5.4e-10 cm² (95% interval 2.7e-10 to 9.7e-10). The printed average is 1.9 times higher and above that bound, because averaging 1/fluence over runs that stop at the first event is biased high.",
-          "Table 1 gives the SoC as 20 nm; public sources give the TX2 SoC as 16 nm FinFET.",
+          "Table 1 gives the SoC as 20 nm; AnandTech gives the TX2's Parker SoC as 16 nm FinFET (https://www.anandtech.com/show/11185).",
           "The cover gives the test date as 2 June 2019 and the text as 2 June 2018.",
           "Of the two parts, the second stopped working for good in its first run; the report gives no root cause yet.",
         ],

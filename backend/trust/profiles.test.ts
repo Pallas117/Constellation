@@ -111,8 +111,8 @@ test("profiles: an unknown profile id gives unknown with the known ids, not an e
 });
 
 test("upset band: trapped protons by SAA tier, solar protons by S-level where the L-shell lets them in (GAU-58)", () => {
-  assert.equal(SEP_OPEN_L, 3);
-  assert.equal(SEP_SHIELDED_L, 1.55);
+  assert.equal(SEP_OPEN_L, 2.9);
+  assert.equal(SEP_SHIELDED_L, 1.5);
   const band = (c: Partial<UpsetContext>) => {
     const r = upsetBand({ ...quiet, ...c });
     return "unknown" in r ? `unknown: ${r.unknown}` : r.band;
@@ -225,10 +225,10 @@ test("banned wording: the wider list catches fitness, absorbed-radiation and com
   const T = Date.parse("2026-01-19T18:30:00Z");
   const base = buildTrustRecord({ time: new Date(T).toISOString(), spacecraftId: "sc-1", modelId: "m-1" }, new EnvironmentHistory([], "empty"), { nowMs: T });
   assert.deepEqual(bannedWording(base), [], "RECORD_LIMITATIONS (\"No regulatory or compliance claim is made.\") is allowed");
-  for (const phrase of ["suitable for LEO", "rad-hard part", "12 krad", "0.5 Gy", "1 rad(Si)", "certification pending", "will survive", "damaging"]) {
+  for (const phrase of ["suitable for LEO", "unsuitable", "rad-hard part", "rad-hardened", "12 krad", "0.5 Gy", "2 mSv/h", "3 µSv", "1 cGy", "1 rad(Si)", "certify", "certification pending", "will survive", "it survived", "damaging"]) {
     assert.equal(bannedWording({ ...base, limitations: [phrase] }).length, 1, phrase);
   }
-  for (const phrase of ["radiation storm S2", "Gauss nowcast", "SoC under a collimated beam"]) {
+  for (const phrase of ["radiation storm S2", "Gauss nowcast", "SoC under a collimated beam", "SVG export", "CSV log", "energy 200 MeV", "Gyro"]) {
     assert.deepEqual(bannedWording({ ...base, limitations: [phrase] }), [], phrase);
   }
 });
