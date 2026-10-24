@@ -62,54 +62,8 @@ jobs:
         if: steps.compliance.outcome == 'failure'
         run: exit 1
 
-  rbac-smoke-test:
-    name: RBAC Smoke Tests
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-          cache: "npm"
-
-      - name: Install dependencies
-        run: |
-          if [ -f package-lock.json ]; then
-            npm ci
-          else
-            npm install
-          fi
-
-      - name: Run RBAC smoke tests
-        id: rbac
-        run: npm run test:rbac
-        env:
-          AUTH_REQUIRED: "true"
-          CYBERTIGER_ENABLED: "true"
-          RBAC_SKIP_HEALTH_CHECK: "true"
-        continue-on-error: true
-
-      - name: Comment PR with RBAC results
-        if: github.event_name == 'pull_request'
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const rbac = `${{ steps.rbac.outcome }}`;
-            const icon = rbac === 'success' ? '✅' : '⚠️';
-            
-            github.rest.issues.createComment({
-              issue_number: context.issue.number,
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              body: `${icon} **RBAC Tests**: ${rbac === 'success' ? 'PASSED' : 'FAILED - Review required'}`
-            });
-
-      - name: Fail if RBAC tests failed on main
-        if: steps.rbac.outcome == 'failure' && github.ref == 'refs/heads/main'
-        run: exit 1
+  # RBAC (role matrix, 401/403 enforcement) runs in process in `npm test`, via
+  # `npm run audit:adherence` in ci-tests.yml.
 
   headers-validation:
     name: Security Headers Validation
@@ -169,7 +123,7 @@ jobs:
   status-check:
     name: All Security Gates Passed
     runs-on: ubuntu-latest
-    needs: [security-compliance, rbac-smoke-test, headers-validation, rate-limit-config]
+    needs: [security-compliance, headers-validation, rate-limit-config]
     if: always()
     steps:
       - name: Check job status

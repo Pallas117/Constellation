@@ -137,7 +137,7 @@ npm run security:audit                   # npm audit for dependencies
 npm run security:secrets                 # TruffleHog scan for secrets
 npm run security:full                    # All checks together
 npm run check:security-compliance        # Compliance validation
-npm run test:rbac                        # RBAC smoke tests
+npm test                                 # Unit/integration tests, including RBAC
 ```
 
 **Documentation**:
