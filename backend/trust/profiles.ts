@@ -3,10 +3,10 @@
  * for onboard processors, so a trust record can say on what data its upset-risk band rests.
  *
  * Every profile cites the test it came from (DOI or test report), the facility, the particle and
- * its energy, and states its units (cm² per device or per bit). Effect classes stay separate:
- * SEU (a bit flipped and was corrected, e.g. by cache ECC), SEFI (the device or a subsystem stopped
- * until a reset, reboot or power cycle) and SDC (a wrong output with no error raised) are never
- * added together. Values are as printed in the source, with the spread it prints, and were read
+ * its energy, and states its units (cm² per device or per bit). Effect classes stay separate and
+ * follow how these sources classify events: SEU (an upset the device corrected, e.g. by cache ECC),
+ * SEFI (the device or a subsystem stopped until a reset, reboot or power cycle) and SDC (a wrong
+ * output with no error raised) are never added together. Values are as printed in the source, with the spread it prints, and were read
  * twice against the source text (2026-10-24). Anything Gauss worked out itself is labelled so.
  *
  * Bump a profile's `version` whenever any of its values change, and PROFILE_LIBRARY_VERSION
@@ -32,6 +32,8 @@ export interface CrossSection {
   unit: "cm²/device" | "cm²/bit";
   /** The spread the source prints with the value, or null when it prints none. */
   range: { low: number; high: number; basis: string } | null;
+  /** Fluence behind the value as printed, p/cm², or null when the source prints none for it. */
+  fluence: number | null;
   /** How many events the value rests on. */
   events: string;
 }
@@ -72,24 +74,30 @@ const XAVIER_2022 = {
   energyMeV: 200,
 } as const;
 
-const XAVIER_SEU = "cache error corrected by ECC and reported by the ARM RAS unit";
-const XAVIER_SEFI = "uncorrectable error reported by RAS, then kernel panic and reboot";
+const XAVIER_SEU = "correctable cache error reported by the ARM RAS unit (mostly ECC-corrected; a few parity errors)";
+const XAVIER_SEFI = "uncorrectable error, then kernel panic and reboot";
 const XAVIER_NOTES = [
   "SoC only: 9 cm² beam through the back of the board, cooling left on; 3 power modes × idle/CPU/GPU workloads.",
-  "Values are the paper's summary (§VI). It does not show how they follow from the per-configuration Tables II–III.",
+  "Values are the paper's summary (§VI), taken as printed. They can't be reproduced from the per-configuration Tables II–IV: pooling the tables gives SEFI cross-sections about 4 times lower, and three table rows don't equal events / fluence.",
   "No wrong matrix-multiplication outputs, no GPU errors and no destructive latch-up were seen, so there is no SDC figure.",
 ];
+const SOC_ONLY = "The data cover the SoC under a collimated beam, not the module's memory, power or I/O.";
 
 const ORIN_2024 =
   "Rodriguez-Ferrandez, Kosmidis, Tali, Steenari, Hands & Bélanger-Champagne, \"Proton Evaluation of Single Event Effects in the NVIDIA GPU Orin SoM: Understanding Radiation Vulnerabilities Beyond the SoC\", IEEE IOLTS 2024";
-/** The bounds Orin's tables print (Gauss check: they match 95% Poisson intervals on σ × fluence events). */
+/**
+ * The bounds Orin's Tables II–V print. The paper doesn't name them. Gauss check: σ × fluence is
+ * within 0.04 of a whole event count in every row, and the bounds equal the exact 95% Poisson
+ * (Garwood) interval on that count, except Table V CPU SEFI (see that row).
+ */
 const orinRange = (low: number, high: number, table: string) => ({
   low,
   high,
-  basis: `lower and upper cross-section as printed (${table}); the paper doesn't name them, but they match 95% Poisson intervals on the event count`,
+  basis: `lower and upper cross-section as printed (${table}); they equal the exact 95% Poisson interval on the event count (Gauss check)`,
 });
-const ORIN_SOC_SEU = "error corrected by the SoC and reported by the ARM RAS unit, execution continued";
-const ORIN_SOC_SEFI = "kernel panic and reboot";
+const orinEvents = (n: number) => `not printed; Gauss check: σ × fluence = ${n} events`;
+const ORIN_SOC_SEU = "error the SoC corrected and execution continued (RAS reports, and GPU error dumps for GPU errors)";
+const ORIN_SOC_SEFI = "CPU fault forcing a kernel panic and reboot, or a GPU driver failure or CUDA-kernel restart that did not reboot the CPU";
 
 export const PROFILES: readonly ProcessorProfile[] = [
   {
@@ -105,20 +113,28 @@ export const PROFILES: readonly ProcessorProfile[] = [
         facility: "Massachusetts General Hospital, Francis H. Burr Proton Therapy Center",
         particle: "proton",
         energyMeV: 200,
-        dut: "Jetson TX2 module (Tegra SoC, 20 nm), 2 parts, beam through the carrier board and heat sink onto the SoC; CUDA sample workloads",
+        dut: "Jetson TX2 module, 2 parts, beam through the carrier board and heat sink onto the SoC; CUDA sample workloads",
         results: [
           {
             effect: "SEFI",
             condition: "whole SoC",
-            observed: "functional interrupt that needed a power cycle (Table 2 heads the column \"SEU cross section\"; the text says every event was such a SEFI)",
+            observed:
+              "functional interrupt (Table 2 heads the column \"SEU cross section\"). The text says each SEFI needed a power cycle, but run 13 was the second part's only run, in which it stopped working for good",
             value: 1.02e-9,
             unit: "cm²/device",
-            range: { low: 2.5e-10, high: 4.17e-9, basis: "minimum and maximum of the per-run values (Table 2)" },
-            events: "11 runs, one SEFI each, so each run's value is 1/fluence; the printed value is their average",
+            range: {
+              low: 2.5e-10,
+              high: 4.17e-9,
+              basis: "minimum and maximum of the per-run values (Table 2); with one event per run this is counting scatter, not a measured spread of the device",
+            },
+            fluence: null,
+            events: "11 runs, one event each (Gauss check: σ × fluence = 1.00 for every run); the printed value is the average of the per-run 1/fluence",
           },
         ],
         notes: [
-          "Only SEFIs were counted; no SEU or SDC figures. The per-run values span a factor of about 17.",
+          "Only SEFIs are reported; no SEU or SDC figures. The per-run values span a factor of about 17.",
+          "Gauss check: pooled over all runs, 11 events / 2.024e10 p/cm² = 5.4e-10 cm² (95% interval 2.7e-10 to 9.7e-10). The printed average is 1.9 times higher and above that bound, because averaging 1/fluence over runs that stop at the first event is biased high.",
+          "Table 1 gives the SoC as 20 nm; public sources give the TX2 SoC as 16 nm FinFET.",
           "The cover gives the test date as 2 June 2019 and the text as 2 June 2018.",
           "Of the two parts, the second stopped working for good in its first run; the report gives no root cause yet.",
         ],
@@ -135,13 +151,31 @@ export const PROFILES: readonly ProcessorProfile[] = [
         ...XAVIER_2022,
         dut: "Jetson Xavier NX (commercial module)",
         results: [
-          { effect: "SEU", condition: "SoC, all power modes and workloads", observed: XAVIER_SEU, value: 2.91e-8, unit: "cm²/device", range: null, events: "17 (Gauss count: 19 SEEs over 9 configurations in Table III, less the 2 SEFIs in Table IV)" },
-          { effect: "SEFI", condition: "SoC, all power modes and workloads", observed: XAVIER_SEFI, value: 1.3e-8, unit: "cm²/device", range: null, events: "2 SEFIs (Table IV)" },
+          {
+            effect: "SEU",
+            condition: "SoC, all power modes and workloads",
+            observed: XAVIER_SEU,
+            value: 2.91e-8,
+            unit: "cm²/device",
+            range: null,
+            fluence: null,
+            events: "not stated for the summary value; Tables III–IV list 19 events in all, 2 of them SEFIs (Gauss check: 19 / 6.548e8 p/cm² = 2.90e-8, so the printed SEU value may include the SEFIs)",
+          },
+          {
+            effect: "SEFI",
+            condition: "SoC, all power modes and workloads",
+            observed: XAVIER_SEFI,
+            value: 1.3e-8,
+            unit: "cm²/device",
+            range: null,
+            fluence: null,
+            events: "not stated for the summary value; Table IV lists 2 SEFIs (Gauss check: 2 / 6.548e8 p/cm² = 3.1e-9, 95% 3.7e-10 to 1.1e-8)",
+          },
         ],
         notes: XAVIER_NOTES,
       },
     ],
-    limitations: [SINGLE_ENERGY(200)],
+    limitations: [SINGLE_ENERGY(200), SOC_ONLY],
   },
   {
     id: "nvidia-jetson-agx-xavier-industrial",
@@ -152,13 +186,31 @@ export const PROFILES: readonly ProcessorProfile[] = [
         ...XAVIER_2022,
         dut: "Jetson AGX Xavier Industrial",
         results: [
-          { effect: "SEU", condition: "SoC, all power modes and workloads", observed: XAVIER_SEU, value: 3.61e-8, unit: "cm²/device", range: null, events: "51 (Gauss count: 58 SEEs over 9 configurations in Table II, less the 7 SEFIs in Table IV)" },
-          { effect: "SEFI", condition: "SoC, all power modes and workloads", observed: XAVIER_SEFI, value: 1.52e-8, unit: "cm²/device", range: null, events: "7 SEFIs (Table IV)" },
+          {
+            effect: "SEU",
+            condition: "SoC, all power modes and workloads",
+            observed: XAVIER_SEU,
+            value: 3.61e-8,
+            unit: "cm²/device",
+            range: null,
+            fluence: null,
+            events: "not stated for the summary value; Tables II and IV list 58 events in all, 7 of them SEFIs (Gauss check: 51 / 1.831e9 p/cm² = 2.8e-8)",
+          },
+          {
+            effect: "SEFI",
+            condition: "SoC, all power modes and workloads",
+            observed: `${XAVIER_SEFI}; RAS reported the error for 6 of the 7`,
+            value: 1.52e-8,
+            unit: "cm²/device",
+            range: null,
+            fluence: null,
+            events: "not stated for the summary value; Table IV lists 7 SEFIs (Gauss check: 7 / 1.831e9 p/cm² = 3.8e-9, 95% 1.5e-9 to 7.9e-9, below the printed value)",
+          },
         ],
         notes: XAVIER_NOTES,
       },
     ],
-    limitations: [SINGLE_ENERGY(200)],
+    limitations: [SINGLE_ENERGY(200), SOC_ONLY],
   },
   {
     id: "nvidia-jetson-orin-nx",
@@ -174,25 +226,49 @@ export const PROFILES: readonly ProcessorProfile[] = [
         energyMeV: 480,
         dut: "Jetson Orin NX system-on-module; 3 × 3 cm beam on the SoC through the back of the board, then 1.5 × 3 cm on parts of the module; GPU matrix multiplication with a verification kernel",
         results: [
-          { effect: "SEU", condition: "SoC, 15 W mode", observed: ORIN_SOC_SEU, value: 3.9e-9, unit: "cm²/device", range: orinRange(2.44e-9, 5.9e-9, "Table II"), events: "not printed; fluence 5.65e9 p/cm²" },
-          { effect: "SEU", condition: "SoC, 10 W mode", observed: ORIN_SOC_SEU, value: 4.43e-9, unit: "cm²/device", range: orinRange(3.13e-9, 6.08e-9, "Table II"), events: "not printed; fluence 8.58e9 p/cm²" },
-          { effect: "SEU", condition: "SoC, sub-10 W mode", observed: ORIN_SOC_SEU, value: 2.5e-9, unit: "cm²/device", range: orinRange(1.25e-9, 4.47e-9, "Table II"), events: "not printed; fluence 4.41e9 p/cm²" },
-          { effect: "SEFI", condition: "SoC, 15 W mode", observed: ORIN_SOC_SEFI, value: 1.59e-9, unit: "cm²/device", range: orinRange(7.29e-10, 3.03e-9, "Table III"), events: "not printed; fluence 5.65e9 p/cm²" },
-          { effect: "SEFI", condition: "SoC, 10 W mode", observed: ORIN_SOC_SEFI, value: 1.51e-9, unit: "cm²/device", range: orinRange(8.07e-10, 2.59e-9, "Table III"), events: "not printed; fluence 8.58e9 p/cm²" },
-          { effect: "SEFI", condition: "SoC, sub-10 W mode", observed: ORIN_SOC_SEFI, value: 6.81e-10, unit: "cm²/device", range: orinRange(1.4e-10, 1.99e-9, "Table III"), events: "not printed; fluence 4.41e9 p/cm²" },
-          { effect: "SEU", condition: "CPU complex, all modes", observed: "error corrected and reported by RAS", value: 3.22e-9, unit: "cm²/device", range: orinRange(2.48e-9, 4.11e-9, "Table IV"), events: "not printed; fluence 1.99e10 p/cm²" },
-          { effect: "SEU", condition: "GPU complex, all modes", observed: "error corrected by the GPU, execution continued", value: 3.52e-10, unit: "cm²/device", range: orinRange(1.42e-10, 7.26e-10, "Table IV"), events: "not printed; fluence 1.99e10 p/cm²" },
-          { effect: "SEFI", condition: "CPU complex, all modes", observed: "CPU fault forcing a reboot", value: 6.04e-10, unit: "cm²/device", range: orinRange(3.85e-10, 1.18e-9, "Table V"), events: "not printed; fluence 1.99e10 p/cm²" },
-          { effect: "SEFI", condition: "GPU complex, all modes", observed: "GPU driver failure or kernel restart; never restarted the CPU", value: 6.54e-10, unit: "cm²/device", range: orinRange(3.48e-10, 1.12e-9, "Table V"), events: "not printed; fluence 1.99e10 p/cm²" },
+          { effect: "SEU", condition: "SoC, 15 W mode", observed: ORIN_SOC_SEU, value: 3.9e-9, unit: "cm²/device", range: orinRange(2.44e-9, 5.9e-9, "Table II"), fluence: 5.65e9, events: orinEvents(22) },
+          { effect: "SEU", condition: "SoC, 10 W mode", observed: ORIN_SOC_SEU, value: 4.43e-9, unit: "cm²/device", range: orinRange(3.13e-9, 6.08e-9, "Table II"), fluence: 8.58e9, events: orinEvents(38) },
+          { effect: "SEU", condition: "SoC, sub-10 W mode", observed: ORIN_SOC_SEU, value: 2.5e-9, unit: "cm²/device", range: orinRange(1.25e-9, 4.47e-9, "Table II"), fluence: 4.41e9, events: orinEvents(11) },
+          { effect: "SEFI", condition: "SoC, 15 W mode", observed: ORIN_SOC_SEFI, value: 1.59e-9, unit: "cm²/device", range: orinRange(7.29e-10, 3.03e-9, "Table III"), fluence: 5.65e9, events: orinEvents(9) },
+          { effect: "SEFI", condition: "SoC, 10 W mode", observed: ORIN_SOC_SEFI, value: 1.51e-9, unit: "cm²/device", range: orinRange(8.07e-10, 2.59e-9, "Table III"), fluence: 8.58e9, events: orinEvents(13) },
+          { effect: "SEFI", condition: "SoC, sub-10 W mode", observed: ORIN_SOC_SEFI, value: 6.81e-10, unit: "cm²/device", range: orinRange(1.4e-10, 1.99e-9, "Table III"), fluence: 4.41e9, events: orinEvents(3) },
+          { effect: "SEU", condition: "CPU complex, all modes", observed: "error corrected and reported by RAS", value: 3.22e-9, unit: "cm²/device", range: orinRange(2.48e-9, 4.11e-9, "Table IV"), fluence: 1.99e10, events: orinEvents(64) },
+          { effect: "SEU", condition: "GPU complex, all modes", observed: "error corrected by the GPU, execution continued", value: 3.52e-10, unit: "cm²/device", range: orinRange(1.42e-10, 7.26e-10, "Table IV"), fluence: 1.99e10, events: orinEvents(7) },
+          {
+            effect: "SEFI",
+            condition: "CPU complex, all modes",
+            observed: "CPU fault forcing a kernel panic and reboot",
+            value: 6.04e-10,
+            unit: "cm²/device",
+            range: {
+              low: 3.85e-10,
+              high: 1.18e-9,
+              basis: "lower and upper cross-section as printed (Table V). Gauss check: the value is 12 events, but the bounds are the exact 95% Poisson interval for 14; for 12 it would be 3.12e-10 to 1.05e-9",
+            },
+            fluence: 1.99e10,
+            events: orinEvents(12),
+          },
+          {
+            effect: "SEFI",
+            condition: "GPU complex, all modes",
+            observed: "GPU driver failure or CUDA-kernel restart; none restarted the CPU",
+            value: 6.54e-10,
+            unit: "cm²/device",
+            range: orinRange(3.48e-10, 1.12e-9, "Table V"),
+            fluence: 1.99e10,
+            events: orinEvents(13),
+          },
         ],
         notes: [
           "The verification kernel never saw a wrong output, so there is no SDC figure.",
-          "The paper saw no significant power-mode effect; the sub-10 W mode had the least fluence.",
+          "The SoC rows (Tables II–III) and the CPU/GPU rows (Tables IV–V) split the same 71 SEU and 25 SEFI events two ways: never add them.",
+          "The paper reports a noticeable sub-10 W SEFI difference still to be confirmed (that mode had the least fluence), and concludes no significant power-mode effect overall.",
+          "Day-2 figures for the module's memory, I/O and power areas (Tables VI–VII) are not included.",
           "Three current jumps that cut the power supply while the beam was on a power-delivery area, possibly latch-up; the board ran normally after power was restored, and the source (module or carrier-board regulator) was not determined.",
         ],
       },
     ],
-    limitations: [SINGLE_ENERGY(480)],
+    limitations: [SINGLE_ENERGY(480), SOC_ONLY],
   },
 ];
 

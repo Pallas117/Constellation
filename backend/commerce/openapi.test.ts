@@ -87,7 +87,8 @@ test("openapi: trust-record limits and shape match the code", () => {
   assert.deepEqual([...props.environment.required].sort(), keys(record.environment));
   assert.deepEqual([...props.orbit.required].sort(), keys(record.orbit));
   assert.deepEqual([...schemas.Field.required].sort(), keys(record.upsetRisk));
-  const band = upsetRiskField(PROFILES[0].id, { saaTier: "outside", saaWhy: "", sLevel: 0, sWhy: "", gLevel: 0, gWhy: "", lShell: 1.2 }, { time: record.inference.time, fetchedAt: null });
+  const quiet = { level: 0, why: "", observedAt: record.inference.time, ageSeconds: 0 };
+  const band = upsetRiskField(PROFILES[0].id, { saaTier: "outside", saaWhy: "", s: quiet, g: quiet, lShell: 1.2 }, null);
   assert.deepEqual([...schemas.UpsetRisk.required].sort(), keys(band.value!));
   const profileIds: string = schemas.TrustRecordRequest.properties.processorProfileId.description;
   assert.ok(profileIds.includes(PROFILE_LIBRARY_VERSION), "the spec names the profile library version");

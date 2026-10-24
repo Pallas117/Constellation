@@ -135,7 +135,7 @@ export interface TrustRecord {
     fieldStrength: Field<number>;
     lShell: Field<number>;
   };
-  /** Modelled upset-risk band relative to the quiet orbit average; needs a cited processor profile (PR-02, upset.ts). */
+  /** Modelled upset-rate band relative to the quiet orbit average; needs a cited processor profile (PR-02, upset.ts). */
   upsetRisk: Field<UpsetRiskValue>;
   checks: Array<{ id: SenseCheck["id"]; status: SenseCheck["status"]; reason: string }>;
   verdict: { value: Verdict; reasons: string[]; policy: TrustPolicy };
@@ -503,14 +503,20 @@ export const RECORD_LIMITATIONS = [
   "No regulatory or compliance claim is made.",
 ];
 
-/** Words a record must never use: it describes the environment, not harm to hardware or odds of error. */
-const BANNED = /\b(doses?|damaged?|failure probability|probability of failure|qualified|qualification|flight[- ]ready|space[- ]qualified|certified|compliant)\b/i;
+/**
+ * Words a record must never use: it describes the environment, not harm to hardware, odds of
+ * error, a device's fitness for a mission, or absorbed radiation.
+ */
+const BANNED =
+  /\b(doses?|damag(?:e|ed|es|ing)|failure probability|probability of failure|qualif(?:y|ied|ication)|flight[- ]ready|mission[- ]ready|space[- ]qualified|certif(?:ied|ication)|complian(?:t|ce)|rad[- ]hard|radiation[- ](?:hardened|tolerant)|suitab(?:le|ility)|surviv(?:e|es|al)|gy|sv|krad|rad ?\(si\))(?![\w])/i;
 
 /** Banned words in the Gauss-authored text of a record (the customer's own output is not scanned). */
 export function bannedWording(record: Omit<TrustRecord, "hash">): string[] {
   const { inference: _inference, ...authored } = record;
   const hits: string[] = [];
   const walk = (v: unknown) => {
+    // The record's own disclaimers deny those claims ("No regulatory or compliance claim is made").
+    if (typeof v === "string" && RECORD_LIMITATIONS.includes(v)) return;
     if (typeof v === "string") {
       const m = BANNED.exec(v);
       if (m) hits.push(m[0]);
@@ -562,18 +568,22 @@ export function buildTrustRecord(
     };
   }
   const { orbit, saaTier } = orbitFields(req);
+  const scaleInput = (f: Field<{ level: number; label: string }>) => ({
+    level: f.value?.level ?? null,
+    why: f.limitations[0] ?? "No reading",
+    observedAt: f.observedAt,
+    ageSeconds: f.ageSeconds,
+  });
   const upsetRisk = upsetRiskField(
     req.processorProfileId,
     {
       saaTier,
       saaWhy: orbit.saa.limitations[0] ?? "Not assessed",
-      sLevel: env.radiation.value?.level ?? null,
-      sWhy: env.radiation.limitations[0] ?? "No reading",
-      gLevel: env.geomagnetic.value?.level ?? null,
-      gWhy: env.geomagnetic.limitations[0] ?? "No reading",
+      s: scaleInput(env.radiation),
+      g: scaleInput(env.geomagnetic),
       lShell: orbit.lShell.value,
     },
-    { time: req.time, fetchedAt: env.radiation.fetchedAt },
+    env.radiation.fetchedAt,
   );
   const verdict = verdictFor(env, orbit, checks, policy, envReason);
 
