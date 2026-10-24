@@ -258,7 +258,9 @@ argo inbox                           # on ground-1: 2026-10-23 09:41  judith  ~/
   Seeds 7 and 424242 also give 60/60 and 60/60 with no duplicates.
 - **Not yet.**
   - Direct device-to-device transfer (TCPCLv4, [RFC 9174](https://www.rfc-editor.org/rfc/rfc9174)).
-  - The RFC 9173 security contexts that ION and HDTN speak; interoperability with them is untested.
+  - Using the RFC 9173 security contexts that HDTN, dtn7-rs and ION speak. `bpsec9173.go` implements them
+    (BIB-HMAC-SHA2, BCB-AES-GCM, AES key wrap) and reproduces all four RFC 9173 Appendix A examples byte for
+    byte, but no command uses them yet, and live interoperability with those nodes is untested.
   - Resuming a chunk part-way.
   - Phones.
 

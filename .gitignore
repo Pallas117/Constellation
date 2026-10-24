@@ -43,3 +43,6 @@ data/mesh/
 
 # Organisations, API keys (hashed) and usage metering
 data/commerce/
+
+# A plain `go build` in tools/argo leaves the binary here; it is never shipped from the repo.
+tools/argo/argo
