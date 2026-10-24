@@ -41,7 +41,7 @@ jobs:
     steps:
       - name: Send failure email
         # NOTE: review this third‑party action before enabling in a high‑trust environment.
-        uses: dawidd6/action-send-mail@v3
+        uses: dawidd6/action-send-mail@v18
         with:
           server_address: ${{ secrets.SMTP_SERVER }}
           server_port: ${{ secrets.SMTP_PORT }}
