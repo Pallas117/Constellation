@@ -259,6 +259,15 @@ out=$(run deploy "$Bc" 2>&1); [[ "$out" == *"The fallback is serving now"* ]]; e
 run fallback off >/dev/null
 out=$(run deploy deadbeef 2>&1); [[ "$out" == *"Unknown commit 'deadbeef'"* ]]; expect "deploy refuses an unknown commit" $?
 out=$(run deploy "$D" 2>&1); [[ "$out" == *"already at ${D:0:7}"* ]]; expect "deploy: already there is a no-op" $?
+# Re-pointing the fallback checks it out first. If its install then fails, the checkout has
+# changed under the old ready record: the deploy stops and the record goes, so status says
+# "none prepared" rather than vouching for a fallback that isn't what it describes.
+stub npm 'echo "npm $*" >>"$ACTIONS"; exit 1'
+out=$(run deploy "$Bc" 2>&1); rc=$?
+[ $rc = 1 ] && head_is "$D" && [[ "$out" == *"Couldn't refresh the fallback; not deploying."* ]] && [ ! -e "$FB/ready" ] \
+  && [[ "$(run fallback)" == *"none prepared (warning"* ]] && [ ! -d "$WD/deploying" ]
+expect "deploy: a fallback that fails to rebuild stops the deploy and is not left marked ready" $?
+stub npm 'echo "npm $*" >>"$ACTIONS"; mkdir -p node_modules'
 out=$(LEVEL=2 run deploy "$Bc" 2>&1); [[ "$out" == *"Memory pressure is warn"* ]] && head_is "$D"; expect "deploy refuses at memory pressure warn" $?
 echo local >>"$LIVE/backend/server.ts"
 out=$(run deploy "$Bc" 2>&1); [[ "$out" == *"local code changes"*"backend/server.ts"* ]] && head_is "$D"; expect "deploy refuses over local code changes in live" $?
