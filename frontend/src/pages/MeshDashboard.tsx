@@ -8,6 +8,7 @@ import { useMesh, type MeshDevice, type MeshNet, WARNING_CLASSES } from "@/hooks
 import { useDocumentTitle } from "@/hooks/useDocumentTitle";
 import { useNow } from "@/hooks/useNow";
 import { batteryLabel, copyText, deviceStage, enrollCommand, guardLine, STAGE_HELP, STALE_MS } from "@/lib/mesh-onboarding";
+import { bytesLabel, stabilityScore, stabilityTone, windowLine } from "@/lib/link-stability";
 const PLATFORM_LABEL: Record<string, string> = { macos: "macOS", linux: "Linux", windows: "Windows", ios: "iPhone", android: "Android" };
 // Mirrors hostingVerdict in backend/mesh/store.ts.
 const HOSTING_LABEL: Record<string, string> = {
@@ -64,6 +65,29 @@ function NetCell({ net }: { net: MeshNet }) {
         Signal {net.signal}
         {snr}
       </p>
+    </div>
+  );
+}
+
+const STABILITY_VARIANT = { good: "default", fair: "secondary", poor: "destructive", unknown: "outline" } as const;
+
+// Availability from the device's own incident log (tools/argo/linkstats.go), plus what waits for it at the hub.
+function LinkCell({ d }: { d: MeshDevice }) {
+  const score = stabilityScore(d.last?.link);
+  return (
+    <div className="space-y-1 text-xs">
+      <Badge variant={STABILITY_VARIANT[stabilityTone(score)]}>{score === null ? "Stability not measured" : `Stability ${score}/100`}</Badge>
+      {d.last?.link && <p className="max-w-xs text-muted-foreground">24 h: {windowLine(d.last.link.d1)}</p>}
+      {d.relay && d.relay.queued > 0 && (
+        <p>
+          {d.relay.queued} waiting at the hub ({bytesLabel(d.relay.bytes)})
+        </p>
+      )}
+      {d.keyFingerprint && (
+        <p className="font-mono text-muted-foreground" title="Compare with `argo keys` on the device before trusting it">
+          Key {d.keyFingerprint}
+        </p>
+      )}
     </div>
   );
 }
@@ -172,6 +196,7 @@ const MeshDashboard = () => {
                       <th className="py-2 pr-4">Exit</th>
                       <th className="py-2 pr-4">Tailscale</th>
                       <th className="py-2 pr-4">Network</th>
+                      <th className="py-2 pr-4">Link &amp; relay</th>
                       <th className="py-2 pr-4">Can host</th>
                       <th className="py-2 pr-4">Last report</th>
                       <th className="py-2" />
@@ -207,6 +232,9 @@ const MeshDashboard = () => {
                           <td className="py-3 pr-4">{d.last ? (d.last.tailscale ? d.last.exitNode || "on" : "off") : "—"}</td>
                           <td className="py-3 pr-4">
                             {d.last?.net ? <NetCell net={d.last.net} /> : <span className="text-muted-foreground">—</span>}
+                          </td>
+                          <td className="py-3 pr-4">
+                            <LinkCell d={d} />
                           </td>
                           <td className="py-3 pr-4">
                             <Badge variant={d.hosting === "agents" ? "default" : d.hosting === "light" ? "secondary" : "outline"}>
