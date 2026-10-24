@@ -1,8 +1,7 @@
 // Usage: npm run auth:set-role -- <email> <user|staff|operator|admin>
 // Roles live only in the local better-auth DB; users cannot set their own.
 import Database from "better-sqlite3";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { authDbPath } from "../auth-db.js";
 
 const ROLES = new Set(["user", "staff", "operator", "admin"]);
 const [email, role] = process.argv.slice(2);
@@ -12,8 +11,7 @@ if (!email || !role || !ROLES.has(role)) {
   process.exit(2);
 }
 
-const dbPath = path.join(path.dirname(fileURLToPath(import.meta.url)), "../../.auth.db");
-const db = new Database(dbPath);
+const db = new Database(authDbPath());
 const result = db.prepare("UPDATE user SET role = ? WHERE lower(email) = lower(?)").run(role, email);
 if (result.changes !== 1) {
   console.error(`No user with email ${email}. They must sign up first.`);
