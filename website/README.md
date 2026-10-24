@@ -297,7 +297,9 @@ renewal and cancellation. No real keys are used.
 
 The Lightbound Brand Book (15 Oct 2026, with 16 and 18 Oct updates) and the Design System tokens (v3) are the rules:
 
-- **Shared:** black ground, warm white, IBM Plex Sans and JetBrains Mono. Status colours always come with their
+- **Shared:** black ground, warm white, IBM Plex Sans and JetBrains Mono. The site serves Plex as "Lightbound Sans":
+  our subset is a modified copy, and the OFL reserves the name "Plex" (`tools/build_assets.py`; the licences sit
+  beside the fonts in `public/assets/fonts/OFL-*.txt`). Status colours always come with their
   word: LIVE green #4E972F, STALE amber, SIMULATED blue #318ADA (the replay's "synthetic" chips), danger #D4673B.
   Controls have 4 px corners, cards 10 px. There are no shadows or glows outside the marks and photos.
 - **Lightbound and Gauss:** lime is the accent. Both use the refined flat symbols (no blur), and Gauss keeps the two-tone "GAUSS AURORA" lockup.
@@ -433,6 +435,9 @@ once; after that the cron runs every 15 minutes.
    - Add no Zero Trust Access application for `/app` yet. With one, visitors would get a sign-in page
      instead of the Worker's 404.
    - Security > WAF: one rate-limiting rule on `/api/*` (the free plan's allowance is UNVERIFIED).
+   - `www.lightbound.uk` has no DNS record today. Add a proxied one (DNS > Add record: AAAA `www` `100::`), then
+     Rules > Redirect Rules > the "Redirect from WWW to root" template (301 to `https://lightbound.uk`, keep the
+     path and query). The smoke check doesn't cover www, so try `curl -sI https://www.lightbound.uk/gauss/`.
 3. `BASE=https://lightbound.uk RELEASE=public npm run audit:website` for a last look at the real pages.
 
 **Rollback:** `npx wrangler@4 deployments list`, then `npx wrangler@4 rollback <version-id>`. To take the
