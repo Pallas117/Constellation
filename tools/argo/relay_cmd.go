@@ -25,7 +25,8 @@ func inboxDir(cfg Config) string {
 
 // relayFor builds this device's bundle agent; it creates the node keys the
 // first time. Received files only raise a desktop notification; problems
-// (refused bundles, key changes, expiry) also go to the phone.
+// (refused bundles, key changes, expiry) also go to the phone. ARGO_NO_DESKTOP=1
+// prints them on stderr instead.
 func relayFor(cfg Config, store Store, phone *Phone) (*Relay, bool, error) {
 	if !deviceRE.MatchString(cfg.Device) {
 		return nil, false, errors.New(`this device has no name yet: run "argo enroll <gauss-url> <name>" (or set "device" in ~/.config/argo/config.json)`)
@@ -36,6 +37,10 @@ func relayFor(cfg Config, store Store, phone *Phone) (*Relay, bool, error) {
 	}
 	r := &Relay{Dir: filepath.Join(store.Dir, "dtn"), Keys: keys, InboxDir: inboxDir(cfg),
 		Notify: func(title, msg string) {
+			if os.Getenv("ARGO_NO_DESKTOP") != "" { // scripts, SSH sessions, tests: print instead
+				fmt.Fprintf(os.Stderr, "argo alert: %s: %s\n", title, Mask(msg))
+				return
+			}
 			if title == "Argo: file received" {
 				desktopNotify(title, msg)
 				return
