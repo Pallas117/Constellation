@@ -71,8 +71,8 @@ Then remove the `statusLine` and `claude()` lines above if you added them, and r
 | `argo watch` | Run the peer watchdog once (also every tick): restarts the gauss-awake guard or mesh-heal when their heartbeat is stale, max 3 restarts/hour each, then alerts. Override the list with `"watch"` in config.json |
 | `argo devices` | Which watched tailnet devices are offline. Every tick, a phone of yours that has been off the tailnet for 30 min or more gets a text (SMS over its own cellular link) with the fix: open Tailscale, turn on Connect On Demand. At most every 6 h per device. Override the list with `"devices": ["hostname", ...]` in config.json |
 | `argo guard` | Resource guard (below): memory, battery, disk and CPU now and over the last 24 h, who uses memory, what to do. `--json` for scripts |
-| `argo guard admit [-mem GB] [-wait 10m]` | Exit 0 if a job needing GB may start now, 75 (with the reason) if not |
-| `argo guard run [-mem GB] [-max GB] [-wait 10m] -- cmd` | Runs `cmd` only when admitted, and stops its whole process group if the host reaches **block** or the job holds more than `-max` GB. Exit 75 when refused or stopped, otherwise `cmd`'s own code |
+| `argo guard admit [-mem GB] [-name JOB] [-wait 10m]` | Exit 0 if a job needing GB may start now, 75 (with the reason) if not. With `-name`, what that job measured replaces `-mem` (below) |
+| `argo guard run [-mem GB] [-max GB] [-name JOB] [-wait 10m] -- cmd` | Runs `cmd` only when admitted, and stops its whole process group if the host reaches **block** or the job holds more than `-max` GB. Measures the job's peak and passes `ARGO_WORKERS` (below). Exit 75 when refused or stopped, otherwise `cmd`'s own code |
 | `argo send [-ttl 72h] DEVICE FILE` | Queue a file for another enrolled device (below): signed, encrypted to that device, kept until it confirms. Works offline |
 | `argo outbox` / `argo inbox` | What you sent and how far it got (queued, at hub, picked up, confirmed); what you received and where it was saved |
 | `argo sync` | Forward and fetch now (every tick does this too) |
@@ -210,6 +210,22 @@ Replaying the evening before the 2026-10-21 hard reset (`testdata/gau165-replay.
 The job runs in its own process group (Ctrl-C is passed on). Two bad readings in a row, 5 s apart, stop it with
 SIGTERM, then SIGKILL after 15 s. `~/.local/state/argo/guard.log` records each run by command name only (never its
 arguments).
+
+**Learned job sizing (GAU-200).** A guess like `-mem 1` is wrong both ways: on 2026-10-24 a 0.3 GB check waited
+10 minutes for 1 GB, while a build can need several. So `guard run` reads the job's process-group RSS 1 s after it
+starts and at every check, and on exit appends `{at, name, peak_gb, secs, outcome}` to
+`~/.local/state/argo/jobs.jsonl` (this device only; the name is `-name` or the command's base name, never its
+arguments). Once a job has 3 successful (exit 0), measured runs, admission uses the p95 of its last 10 peaks × 1.25 instead
+of `-mem`, rounded up to 0.1 GB and never under 0.2 GB. The margin is there because RSS leaves out compressed pages
+and misses spikes between checks. Stopped, interrupted or failed runs don't count: they may have ended before their peak. `argo guard` lists
+what each job has learned. Give gate jobs a stable `-name` (e.g. `gates`, `npm-test`): a label carrying a commit
+hash never repeats, so it never learns.
+
+**Workers sized to the host.** The job gets `ARGO_WORKERS` and `ARGO_HEADROOM_GB` (a value the caller already set
+wins). `ARGO_WORKERS` is 1 at watch, otherwise headroom ÷ `guard_worker_gb` (config.json, default 0.5 GB), capped at
+cores − 1. The repo's `npm test` passes it to `--test-concurrency` and Playwright uses it for `workers`. Without it
+both keep their defaults: about 7 test processes and 4 browsers on an 8-core Mac. Node refuses
+`--test-concurrency` in `NODE_OPTIONS`, so the flag lives in the script.
 
 ## Store and forward (delay-tolerant delivery)
 

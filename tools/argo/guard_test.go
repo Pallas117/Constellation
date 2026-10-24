@@ -513,7 +513,7 @@ func fakeRunner(t *testing.T, levels ...Assessment) guardRunner {
 	i := 0
 	return guardRunner{
 		store: Store{Dir: filepath.Join(t.TempDir(), "not-yet-created")}, out: io.Discard, every: 20 * time.Millisecond, retry: 10 * time.Millisecond,
-		grace: 2 * time.Second, strikes: 2,
+		grace: 2 * time.Second, strikes: 2, first: 10 * time.Millisecond,
 		assess: func() (Sample, Assessment) {
 			a := levels[min(i, len(levels)-1)]
 			i++
@@ -570,7 +570,7 @@ func TestGuardRun(t *testing.T) {
 	}
 
 	// Waiting: refused at first, admitted once the host recovers.
-	if yes, why := fakeRunner(t, block, block, ok).waitAdmit(0, time.Second); !yes {
+	if yes, why, _, _ := fakeRunner(t, block, block, ok).waitAdmit("", 0, time.Second); !yes {
 		t.Errorf("waitAdmit gave up: %s", why)
 	}
 }
