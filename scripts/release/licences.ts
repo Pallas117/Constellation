@@ -22,7 +22,9 @@ const PERMISSIVE = new Set(
     "CC0-1.0", "ISC", "MIT", "MIT-0", "Python-2.0", "Unlicense", "WTFPL", "Zlib",
   ].map((id) => id.toLowerCase()),
 );
-const WEAK = /^(LGPL|MPL|EPL|CDDL|CPL|MS-RL)-/i;
+// OFL (SIL Open Font License, the self-hosted fonts): copyleft on the font files only; the software
+// they ship with may use any licence.
+const WEAK = /^(LGPL|MPL|EPL|CDDL|CPL|MS-RL|OFL)-/i;
 const STRONG = /^(GPL|AGPL|SSPL|EUPL|OSL|RPL|CPAL)-/i;
 
 export function classifyId(id: string): LicenceClass {
