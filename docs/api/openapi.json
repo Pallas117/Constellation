@@ -243,7 +243,7 @@
             "type": ["string", "null"],
             "minLength": 1,
             "maxLength": 128,
-            "description": "A processor radiation profile from backend/trust/profiles.ts (gauss.processor-profiles/0.1): nvidia-jetson-tx2, nvidia-jetson-xavier-nx, nvidia-jetson-agx-xavier-industrial. Any other id gives an unknown upsetRisk, not an error."
+            "description": "A processor radiation profile from backend/trust/profiles.ts (gauss.processor-profiles/0.1): nvidia-jetson-tx2, nvidia-jetson-xavier-nx, nvidia-jetson-agx-xavier-industrial, nvidia-jetson-orin-nx. Any other id gives an unknown upsetRisk, not an error."
           },
           "output": { "description": "The model output, any JSON of at most 4096 bytes (UTF-8)" },
           "confidence": { "type": ["number", "null"], "minimum": 0, "maximum": 1 },

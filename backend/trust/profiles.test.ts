@@ -27,10 +27,10 @@ test("profiles: every profile is cited, with facility, particle, energy, units a
         assert.ok(r.unit === "cm²/device" || r.unit === "cm²/bit", `${p.id} unit stated`);
         assert.ok(Number.isFinite(r.value) && r.value > 0 && r.value < 1, `${p.id} ${r.effect} is a cross-section in cm²`);
         if (r.range) assert.ok(r.range.low <= r.value && r.value <= r.range.high && r.range.basis.length > 0, `${p.id} ${r.effect} range holds the value`);
-        assert.ok(r.observed.length > 5, `${p.id} ${r.effect} says what was counted`);
+        assert.ok(r.observed.length > 5 && r.condition.length > 3 && r.events.length > 0, `${p.id} ${r.effect} says what was counted, where, and on how many events`);
       }
-      const effects = c.results.map((r) => r.effect);
-      assert.equal(new Set(effects).size, effects.length, `${p.id}: one figure per effect class per campaign, never merged`);
+      const keys = c.results.map((r) => `${r.effect} @ ${r.condition}`);
+      assert.equal(new Set(keys).size, keys.length, `${p.id}: one figure per effect class and condition, never merged`);
     }
   }
 });

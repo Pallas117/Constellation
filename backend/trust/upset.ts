@@ -23,7 +23,7 @@
  */
 import type { Field } from "./record.js";
 import type { SaaTier } from "./saa.js";
-import { findProfile, PROFILE_LIBRARY_VERSION, PROFILES, profileProblem, type EffectClass, type ProcessorProfile } from "./profiles.js";
+import { citedProtonCampaigns, findProfile, PROFILE_LIBRARY_VERSION, PROFILES, profileProblem, type EffectClass, type ProcessorProfile } from "./profiles.js";
 
 /** At or above this centred-dipole L (invariant latitude 60°) solar protons reach the orbit. */
 export const SEP_OPEN_L = 4;
@@ -126,7 +126,7 @@ export function upsetRiskField(
   const problem = profileProblem(profile);
   if (problem) return unknown(source, problem);
 
-  const proton = profile.campaigns.filter((c) => c.particle === "proton" && c.results.length > 0);
+  const proton = citedProtonCampaigns(profile);
   const result = upsetBand(context);
   if ("unknown" in result) return unknown(source, result.unknown, { sourceUrl: proton[0].url });
 
