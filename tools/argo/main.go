@@ -276,7 +276,11 @@ func doctor(ctx context.Context, p Prober) error {
 	b, _ := json.MarshalIndent(s, "", "  ")
 	fmt.Println(Mask(string(b)))
 	fmt.Printf("\nclass: %s — %s\n", class, reason)
-	fmt.Printf("network: %s\n", ScoreNet(s).Line())
+	n := ScoreNet(s)
+	fmt.Printf("network: %s\n", n.Line())
+	for _, a := range n.Advice {
+		fmt.Println("radio →", a)
+	}
 	for _, a := range Plan(class, s, "") {
 		fmt.Println("→", a.Say)
 		if a.Command != "" {

@@ -32,6 +32,9 @@ func hostProbe(ctx context.Context, s *Snapshot) {
 	}
 }
 
+// pingArgs: five pings 0.2 s apart (allowed without root), whole run capped at 4 s.
+func pingArgs(host string) []string { return []string{"-n", "-c", "5", "-i", "0.2", "-t", "4", host} }
+
 // wifiSignalInfo is slow (~5 s), so the prober caches what it parses from it.
 func wifiSignalInfo(ctx context.Context) string {
 	return run(ctx, "system_profiler", "SPAirPortDataType")
