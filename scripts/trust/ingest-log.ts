@@ -1,7 +1,7 @@
 /**
  * Ingest a customer inference log and build its trust records (PR-03a, GAU-66):
  *   npm run trust:ingest -- <log.csv|.json|.jsonl> <mapping.json> --replay <event> [--out records.jsonl] [--report report.json]
- *     [--pack pack.json [--pdf pack.pdf] [--from <ISO> --to <ISO>] [--previous-pack previous.json]]
+ *     [--pack pack.json [--pdf pack.pdf] [--from <ISO> --to <ISO>] [--previous-pack previous.json] [--sign-key <key file> [--keyring <file>]]]
  *
  * The report lists every rejected row with its reasons; nothing is dropped silently. Records
  * carry each row's provenance (file SHA-256, row number, mapping id and version). The
@@ -11,7 +11,8 @@
  * `--pack` also writes the evidence pack for the analysis window (PR-04, GAU-60; default: the
  * replayed event's window) and `--pdf` its PDF. Accepted rows outside the window are listed in
  * the pack as not used, with the reason. `--previous-pack` chains it to the last pack, after
- * checking that one. Check a pack with `npm run trust:verify -- pack.json`.
+ * checking that one (and its signature, if it has one). `--sign-key` signs the pack with a Gauss
+ * key (GAU-67, see `trust:sign`). Check a pack with `npm run trust:verify -- pack.json`.
  */
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -24,6 +25,7 @@ import { buildEvidencePack, verifyEvidencePack, type EvidencePack } from "../../
 import { renderEvidencePdf } from "../../backend/trust/evidence-pdf.js";
 import { ingestLog, type LogMapping } from "../../backend/trust/ingest.js";
 import { buildTrustRecord, DEFAULT_POLICY, TRUST_RECORD_SCHEMA } from "../../backend/trust/record.js";
+import { loadKeyring, loadSigningKey, PUBLISHED_KEYRING_PATH, signPack, verifyPackSignature } from "../../backend/trust/signing.js";
 import type { CanonicalSpaceWeatherPoint } from "../../backend/types.js";
 
 const args = process.argv.slice(2);
@@ -77,6 +79,7 @@ if (packPath) {
   if (previous) {
     const prior = JSON.parse(readFileSync(previous, "utf8")) as EvidencePack;
     const problems = verifyEvidencePack(prior);
+    if (prior.signature) problems.push(...verifyPackSignature(prior, loadKeyring(opt("--keyring") ?? PUBLISHED_KEYRING_PATH)).problems);
     if (problems.length) {
       console.error(`${previous} does not verify, so it can't start a chain: ${problems.join("; ")}`);
       process.exit(1);
@@ -91,7 +94,7 @@ if (packPath) {
     // not a git checkout: the pack says so
   }
   const sha = (b: Buffer) => createHash("sha256").update(b).digest("hex");
-  const pack = buildEvidencePack(
+  const built = buildEvidencePack(
     records.filter((r) => inWindow(r.inference.time)),
     {
       window,
@@ -120,8 +123,11 @@ if (packPath) {
       },
     },
   );
+  const signKey = opt("--sign-key");
+  const pack = signKey ? signPack(built, loadSigningKey(signKey, root), loadKeyring(opt("--keyring") ?? PUBLISHED_KEYRING_PATH)) : built;
   writeFileSync(packPath, JSON.stringify(pack, null, 2) + "\n");
   const pdfPath = opt("--pdf");
   if (pdfPath) writeFileSync(pdfPath, renderEvidencePdf(pack));
-  console.error(`evidence pack ${pack.packId}: ${pack.records.length} records, pack hash ${pack.packHash}${pdfPath ? `; PDF ${pdfPath}` : ""}`);
+  const signed = pack.signature ? `, signed by key ${pack.signature.keyId}` : ", not signed";
+  console.error(`evidence pack ${pack.packId}: ${pack.records.length} records, pack hash ${pack.packHash}${signed}${pdfPath ? `; PDF ${pdfPath}` : ""}`);
 }

@@ -23,6 +23,10 @@ bun.lockb
 .env.*
 !.env.example
 
+# Signing keys (GAU-67) live outside the repository; never commit a private key
+*.pem
+*.key
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

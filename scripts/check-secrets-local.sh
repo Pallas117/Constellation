@@ -39,6 +39,7 @@ patterns=(
   "API_KEY="
   "SECRET_KEY="
   "PRIVATE_KEY="
+  "PRIVATE KEY-----"
   "PASSWORD="
   "passwd"
 )
