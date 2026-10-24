@@ -345,6 +345,9 @@ fallback_prepare() { # fallback_prepare <dir> [sha]: check out, install, build, 
     local prev=""; ready_record && prev=$READY_DIR
     # Only ever re-point a directory this command made: never someone's working checkout.
     [ "$dir" = "$prev" ] || { echo "$dir exists and is not the current fallback; pick a new path." >&2; return 1; }
+    # The checkout changes under the old record from here: drop it, so a failed install or
+    # build leaves "none prepared", never a ready record describing a different checkout.
+    rm -f "$FALLBACK_STATE/ready"
     git -C "$dir" checkout -q --detach "$sha" || return 1
   else
     git -C "$live" worktree add -q --detach "$dir" "$sha" || return 1; dir=$(cd "$dir" && pwd)
