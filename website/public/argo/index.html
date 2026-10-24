@@ -38,7 +38,7 @@
     <p class="lead">Gauss watches your mission data. Gauss Argo looks after the machines your team works from: it runs each one the way a spacecraft runs itself. When the network breaks, it works out why, applies the smallest fix, checks that the fix worked, and remembers what worked on each network.</p>
     <p class="who">We built it for our own team, who work from phone hotspots and public Wi&#8209;Fi, and <strong>now include it for Gauss operators</strong>: teams with a paid Gauss plan.</p>
     <p class="actions"><a class="btn" href="/app/">Operators: sign in to set it up</a> <a class="btn ghost" href="#how">How it works</a></p>
-    <nav class="subnav" aria-label="On this page"><a href="#catches">What it catches</a><a href="#how">How it works</a><a href="#trust">Rules</a><a href="#where">Where it runs</a><a href="#relay">Private relay</a><a href="#plan">Access</a></nav>
+    <nav class="subnav" aria-label="On this page"><a href="#catches">What it catches</a><a href="#how">How it works</a><a href="#deliver">Store and forward</a><a href="#trust">Rules</a><a href="#where">Where it runs</a><a href="#relay">Private relay</a><a href="#plan">Access</a></nav>
   </div>
 </section>
 
@@ -77,15 +77,37 @@
   </div>
 </section>
 
+<section id="deliver" aria-labelledby="deliver-h">
+  <div class="wrap">
+    <p class="label">03_STORE_AND_FORWARD</p>
+    <h2 id="deliver-h">Files that arrive, however patchy the link.</h2>
+    <p class="lead">Gauss Argo sends files between your team&rsquo;s devices the way spacecraft send data home: each one is held, forwarded when a path opens and confirmed when it lands. A dropped hotspot, a laptop asleep overnight or a machine that is only reachable in short windows delays a file; it doesn&rsquo;t lose it.</p>
+    <div class="two">
+      <ul class="ticks">
+        <li>Built on the IETF Bundle Protocol (RFC&nbsp;9171), the standard for delay-tolerant networking.</li>
+        <li>Signed by the sending device and encrypted end to end to the receiving one (HPKE, RFC&nbsp;9180). The Gauss hub holds only ciphertext it can&rsquo;t read.</li>
+        <li>Each file is confirmed by a signed receipt from the device that received it. The sender keeps it until then, and sends it again if the hub ever loses it.</li>
+      </ul>
+      <ul class="ticks">
+        <li>No internet at the far end? Copy the queue to a drive and carry it there. Whoever carries it can neither read nor change it.</li>
+        <li>Each device shows its link stability: how much of the week it was connected, how often it dropped and how long it took to come back.</li>
+        <li>Keys are checked on first contact and shown as a short code, so two people can compare them before trusting each other&rsquo;s files.</li>
+      </ul>
+    </div>
+    <p class="note">Tested in a five-day simulation built from our own hotspot&rsquo;s drop-outs, with a laptop asleep each night, a machine reachable only in ten-minute passes and a hub that lost its data three times: every file arrived exactly once, with a receipt.</p>
+  </div>
+</section>
+
 <section id="trust" aria-labelledby="trust-h">
   <div class="wrap">
-    <p class="label">03_BUILT_TO_BE_TRUSTED</p>
+    <p class="label">04_BUILT_TO_BE_TRUSTED</p>
     <h2 id="trust-h">Rules it can&rsquo;t break, enforced in code and tests.</h2>
     <div class="two">
       <ul class="ticks">
         <li>TLS verification is never disabled.</li>
         <li>No administrator action runs automatically.</li>
         <li>No secrets are written or sent; reports mask anything that looks like one.</li>
+        <li>Files it carries are encrypted before they leave the device; private keys never leave it.</li>
       </ul>
       <ul class="ticks">
         <li>No code is fetched at runtime: one program, Go&rsquo;s standard library only.</li>
@@ -98,27 +120,27 @@
 
 <section id="where" aria-labelledby="where-h">
   <div class="wrap">
-    <p class="label">04_WHERE_IT_RUNS</p>
+    <p class="label">05_WHERE_IT_RUNS</p>
     <h2 id="where-h">Mac today, Linux in a container.</h2>
     <div class="two">
       <div><h3>Now</h3><ul class="ticks"><li>macOS, as your own background agent</li><li>Linux, as a 9.5&nbsp;MB container (non-root, read-only) for ground stations and edge machines</li></ul></div>
-      <div><h3>Not yet</h3><ul class="crosses"><li>Windows</li><li>iPhone and Android (phones are watched today, not healed)</li></ul></div>
+      <div><h3>Not yet</h3><ul class="crosses"><li>Windows</li><li>iPhone and Android (phones are watched today, not healed)</li><li>Direct device-to-device transfers (files go through the Gauss hub or a carried drive today)</li></ul></div>
     </div>
   </div>
 </section>
 
 <section id="relay" aria-labelledby="relay-h">
   <div class="wrap">
-    <p class="label">05_IN_DEVELOPMENT</p>
+    <p class="label">06_IN_DEVELOPMENT</p>
     <h2 id="relay-h">Next: a private relay.</h2>
-    <p class="lead">We&rsquo;re designing a two-hop relay: two relays run by different organisations, so that no single company, us included, can link you to your traffic. Gauss Argo would pick the route that gets through on each network.</p>
+    <p class="lead">We&rsquo;re designing a two-hop relay for internet access: two relays run by different organisations, so that no single company, us included, can link you to your traffic. Gauss Argo would choose the path on each network the way it already does for files: direct first, then your own exit point, then the relay.</p>
     <p class="note"><strong>It isn&rsquo;t available yet.</strong> It launches only after an outside security review and legal checks. Operators will hear first when it&rsquo;s ready.</p>
   </div>
 </section>
 
 <section id="plan" aria-labelledby="price-h">
   <div class="wrap">
-    <p class="label">06_ACCESS</p>
+    <p class="label">07_ACCESS</p>
     <h2 id="price-h">Included with Gauss.</h2>
     <p class="lead">Gauss Argo is included for operators, meaning teams with a paid Gauss plan, and for the Lightbound team. There&rsquo;s nothing extra to buy. Sign in, request setup from your workspace, and we&rsquo;ll email your install link and setup steps. For an operations team, <a href="mailto:jzwnathan@lightbound.uk?subject=Assured%20Connectivity%20pilot">ask about an Assured Connectivity pilot</a>: it adds guards that shed optional load when a Mac runs short of power, memory or disk, and team status in the Gauss console.</p><p class="actions"><a class="btn" href="/app/">Sign in</a> <a class="btn ghost" href="/gauss/#plans">See the Gauss plans</a></p>
   </div>
@@ -126,7 +148,7 @@
 
 <section class="tight" aria-labelledby="more-h">
   <div class="wrap">
-    <p class="label">07_KEEP_GOING</p>
+    <p class="label">08_KEEP_GOING</p>
     <h2 id="more-h">Keep exploring.</h2>
     <ul class="doors">
       <li><a class="door" href="/gauss/">

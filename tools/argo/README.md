@@ -82,6 +82,12 @@ Then remove the `statusLine` and `claude()` lines above if you added them, and r
 | `argo guard` | Resource guard (below): memory, battery, disk and CPU now and over the last 24 h, who uses memory, what to do. `--json` for scripts |
 | `argo guard admit [-mem GB] [-wait 10m]` | Exit 0 if a job needing GB may start now, 75 (with the reason) if not |
 | `argo guard run [-mem GB] [-max GB] [-wait 10m] -- cmd` | Runs `cmd` only when admitted, and stops its whole process group if the host reaches **block** or the job holds more than `-max` GB. Exit 75 when refused or stopped, otherwise `cmd`'s own code |
+| `argo send [-ttl 72h] DEVICE FILE` | Queue a file for another enrolled device (below): signed, encrypted to that device, kept until it confirms. Works offline |
+| `argo outbox` / `argo inbox` | What you sent and how far it got (queued, at hub, picked up, confirmed); what you received and where it was saved |
+| `argo sync` | Forward and fetch now (every tick does this too) |
+| `argo keys [list\|publish\|trust DEVICE]` | This device's key fingerprint; devices you trust and theirs; accept a device's new key after checking it |
+| `argo mule export\|import DIR` | Carry bundles on a drive to or from a device with no network |
+| `argo link` | Link stability: availability, drops and recovery times over 24 h and 7 days |
 | `argo off` / `argo on` | Pauses or resumes the LaunchAgent ticks |
 | `argo preflight` | Fast local check for dead proxies and stuck Claude daemons (exit 1 if found) |
 | `argo run -- cmd` | Runs `cmd` with dead proxy variables removed |
@@ -122,8 +128,18 @@ probe ──► classify ──► remediate ──► verify ──► remember
 - **Notifications fire only when the class changes**, so you won't get a ping every 5 minutes for the
   same problem.
 - **Memory.** Each network is fingerprinted as `sha256(gateway MAC | public IP prefix)[:12]`, using the
-  first 3 IPv4 octets or IPv6 hextets. The fix that resolved a class on a network is tried first next time.
-  The raw IP and MAC are never stored or reported.
+  first 3 IPv4 octets or IPv6 hextets. The raw IP and MAC are never stored or reported. An incident that starts
+  while the link is down belongs to the network the Mac was on, not to an empty fingerprint.
+- **Learning, honestly.** A fix is remembered for a network only with evidence that it worked: it ran and the
+  re-probe passed, the network changed (for "switch network"), an exit node is now in use, or it was a local
+  setting (proxy, daemon) that never clears by itself. "Wait" and DNS advice nobody can confirm are never
+  credited. Otherwise the incident cleared by itself, and Argo keeps how long that took (last 20 per network
+  and class).
+- **Usual blips stay quiet.** After 3 such recoveries, a new incident of that class on that network is announced
+  only if it lasts longer than the network usually needs (its 90th percentile, at most 30 min). The advice says
+  so, and the breaker waits as long. A recovery is announced only if its incident was, or lasted 15 min or
+  more. On the 2026-10-23 hostel hotspot this would have cut about 20 alerts for blips of 0.3-5 min to the one
+  75-minute outage, once each class had been seen three times.
 
 ### Tailscale: Argo defers to mesh-heal
 
@@ -203,6 +219,65 @@ Replaying the evening before the 2026-10-21 hard reset (`testdata/gau165-replay.
 The job runs in its own process group (Ctrl-C is passed on). Two bad readings in a row, 5 s apart, stop it with
 SIGTERM, then SIGKILL after 15 s. `~/.local/state/argo/guard.log` records each run by command name only (never its
 arguments).
+
+## Store and forward (delay-tolerant delivery)
+
+Files move between enrolled devices the way spacecraft send data home: held, forwarded when a path opens,
+confirmed when they land. A hotspot drop, a sleeping laptop or a machine that is only reachable in short windows
+delays a file; it doesn't lose it. Design, sources and threat model: [`docs/ARGO_DTN.md`](../../docs/ARGO_DTN.md).
+
+```bash
+argo send ground-1 pass-plan.csv     # queued even offline; prints the first sync
+argo outbox                          # pass-plan.csv → ground-1: 1/1 confirmed (1 delivered)
+argo inbox                           # on ground-1: 2026-10-23 09:41  judith  ~/Downloads/Argo/judith/pass-plan.csv
+```
+
+- **Format.** Each file is split into 1 MiB chunks; each chunk is one Bundle Protocol v7 bundle
+  ([RFC 9171](https://www.rfc-editor.org/rfc/rfc9171)): CBOR, CRC-32C on every block, a lifetime (7 days by
+  default, 30 at most), never fragmented. The sender asks for a "delivered" status report.
+- **Security.** The sender signs the primary block and payload with Ed25519 and encrypts the payload and the
+  signature to the destination's key with HPKE ([RFC 9180](https://www.rfc-editor.org/rfc/rfc9180)): ML-KEM-768 +
+  X25519 hybrid KEM, HKDF-SHA256, AES-256-GCM. The HPKE context binds the primary block, so a ciphertext can't be
+  moved to another bundle. Both blocks follow BPSec's layout ([RFC 9172](https://www.rfc-editor.org/rfc/rfc9172))
+  but use RFC 9171's private block types 192 and 193, because RFC 9172 has no private range for security
+  context IDs and HPKE is not a standard BPSec context yet. Go standard library only (`crypto/hpke`,
+  `crypto/ed25519`); no new cryptography.
+- **Keys.** `argo enroll` creates `~/.config/argo/node.key` (0600; never leaves the device) and publishes the
+  public half to Gauss. Other devices pin a key the first time they see it; a different key later is reported and
+  not used until someone runs `argo keys trust DEVICE`. Compare fingerprints (`argo keys`, the Key line on
+  `/mesh`) with the other person before relying on a new device.
+- **Paths.** The Gauss hub (`/api/mesh/bundles`, device token, tailnet only) holds ciphertext until the
+  destination collects it, and keeps a tombstone so the sender can tell "picked up" from "lost". `argo mule`
+  writes the queue plus this device's public key to a folder for someone to carry; the far side imports it.
+- **Reliability is end to end.** BPv7 has no custody transfer, so the sender keeps every bundle until the signed
+  receipt arrives. It re-checks bundles the hub should hold every 10 min and uploads again any the hub lost. A
+  receiver answers a duplicate with a fresh receipt, so a lost receipt never strands a sender. Every state change is
+  written to disk (fsync, then rename) before the hub is told it can forget a bundle.
+- **Proven in a simulation.** `sim_test.go` runs the real relay code for 5 days. Its links are calibrated on this
+  Mac's own hotspot history (24 drops a day, typical outage 3 min, p95 about an hour). It includes a laptop asleep
+  each night, an onboard computer reachable only in 8-12 minute passes, and a hub that loses its data every 36 h.
+  Seed 20261023, 60 files:
+
+  | Variant | Delivered | Receipts | p95 latency |
+  |---|---|---|---|
+  | Direct only (both ends online at once; optimistic) | 60/60 | n/a | 10 h 50 min |
+  | Relay that trusts the hub | 59/60 | 57/60 | 7 h 24 min |
+  | Relay, end to end (Argo) | 60/60 | 60/60 | 7 h 24 min |
+
+  Seeds 7 and 424242 also give 60/60 and 60/60 with no duplicates.
+- **Not yet.**
+  - Direct device-to-device transfer (TCPCLv4, [RFC 9174](https://www.rfc-editor.org/rfc/rfc9174)).
+  - The RFC 9173 security contexts that ION and HDTN speak; interoperability with them is untested.
+  - Resuming a chunk part-way.
+  - Phones.
+
+## Link stability
+
+`argo link` and every report to Gauss carry availability over the last 24 h and 7 days, from Argo's own incident
+log: A = MTBF / (MTBF + MTTR), computed as 1 − down/observed. They also carry the number of drops, the median and
+95th-percentile outage, and the time between drops. Time asleep counts as observed and up unless an incident was
+open. The 7-day figure is the stability score on `/mesh`. Example from this Mac on 2026-10-23:
+`Link stability 83/100 · 24 h: 84.3% up over 24.0 h, 24 drops, typical outage 3 min (p95 63 min)`.
 
 ## Linux and containers
 
