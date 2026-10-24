@@ -1,6 +1,6 @@
 {
   "$comment": "Constellation requirements baseline (GAU-120). NASA SP-2016-6105 Rev 2 §6.2/§5.3. Methods: T test, A analysis, I inspection, D demonstration. T evidence = exact test names; A/I/D evidence = repo paths. Verified by `npm run verify`.",
-  "version": "1.10.0",
+  "version": "1.11.0",
   "requirements": [
     {
       "id": "REQ-ING-001",
@@ -545,6 +545,22 @@
         "evidence pack: refuses records outside the window, from another log or policy, or rows not accounted for (GAU-60)",
         "evidence pack: packs chain, each starting from the previous pack's hash (GAU-60)",
         "evidence pack PDF: a valid PDF (cross-reference offsets, pages) carrying the pack hash and limitations (GAU-60)"
+      ]
+    },
+    {
+      "id": "REQ-TR-006",
+      "title": "Evidence and release signing",
+      "statement": "The system shall sign each evidence pack (its pack hash and chain head) and each release file with an Ed25519 key whose public half is published in a keyring, with the key id and signing time in the signed statement; a customer shall be able to check a pack and its PDF offline with one documented command; changing any record, the signature, the key id or the signing time shall fail that check; a pack signed before its key was retired shall pass with a note saying the key is retired, and one signed after retirement or by a revoked key shall fail; a private key file inside the repository or readable by other users shall be refused, and the keyring shall refuse private key material. The scope is signing, authentication and their key management only, with no confidentiality encryption.",
+      "rationale": "PR-04a (GAU-67): REQ-TR-004 gives integrity only; customers, insurers and regulators also need to know Gauss made the pack, and releases need the same. Export control (REG-04) keeps it to signing so Cat 5 Pt 2 stays out of scope.",
+      "parent": "GAU-67",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "signing: a signed pack verifies against the keyring without changing its pack hash; changing a record, the signature, the key id or the signing time fails (GAU-67)",
+        "signing: key rotation: a pack signed before its key was retired verifies and says the key is retired; after retirement, or by a revoked key, it fails (GAU-67)",
+        "signing: release files get a detached signature; a changed byte fails, and pack and release keys and signatures can't stand in for each other (GAU-67)",
+        "signing keys: the keyring refuses private key material, a key id that is not its key's fingerprint and bad dates; a key file must be outside the repository and readable only by its owner (GAU-67)",
+        "trust CLI: make a key, publish it, sign a pack and PDF, and check both offline with one command; a rewritten pack, a missing signature or a revoked key exits 1, a retired key passes with a note (GAU-67)"
       ]
     }
   ]

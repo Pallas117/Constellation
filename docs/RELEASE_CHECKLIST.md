@@ -34,6 +34,9 @@ Pre-release builds:
 6. Secrets:
    - no secrets in tracked files.
    - keys rotated if previously exposed.
+7. Signing (GAU-67, `docs/EVIDENCE_SIGNING.md`):
+   - `npm run trust:keys -- check` passes (the release check runs it) and lists a current key for each purpose.
+   - after tagging, sign the release files with the release key: `npm run trust:sign -- --file <archive> --sign-key <key file>`.
 
 ## Release Commands
 
