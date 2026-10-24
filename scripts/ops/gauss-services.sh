@@ -78,7 +78,7 @@ DEPLOY_WAIT="${GAUSS_DEPLOY_WAIT:-90}" # seconds a deploy waits for the services
 # balance: safe, reversible load shedding (GAU-126). GAUSS_BALANCE=0 turns it off.
 BALANCE="${GAUSS_BALANCE:-1}"
 LOCAL_CODER="${GAUSS_LOCAL_CODER:-$HOME/.local/bin/local-coder}"   # optional on-device model server
-LOCAL_CODER_PORT="${LOCAL_CODER_PORT:-8089}"   # local-coder's server; Gauss's memory answer model (:3032) is not optional load
+LOCAL_CODER_PORT="${LOCAL_CODER_PORT:-8089}"   # local-coder's server; Gauss's memory answer model (:3032, opt-in since GAU-184) is never shed
 CLEANUP_STAMP="$WATCH_DIR/balance-cleanup"     # balance runs disk-cleanup at most hourly
 DISK_CLEANUP="${GAUSS_DISK_CLEANUP:-$HOME/.local/bin/disk-cleanup}" # allowlisted cache cleanup
 LEARNING_PAUSED="$WATCH_DIR/learning-paused"      # ml/train/nightly.py skips while this exists
@@ -913,7 +913,7 @@ except Exception:
     print("no no learning run recorded yet (runs nightly at 03:00)")
 ' "$dir/ml/models/registry.json" 2>/dev/null || echo "no no learning run recorded yet")
   item "${learned%% *}" "${learned#* }"
-  # Memory service (gauss-brain, LaunchAgents from its scripts/memory-services.sh) and its local answer model.
+  # Memory service (gauss-brain, LaunchAgents from its scripts/memory-services.sh).
   # The backend reads GAUSS_MEMORY_URL from its checkout's .env (e.g. :3022 for the operator instance);
   # probe the same address. Only that one key is read from .env, never the rest of the file.
   local memory_url="${GAUSS_MEMORY_URL:-}"
@@ -928,8 +928,13 @@ except Exception:
     print("no memory service not running at %s (gauss-brain: scripts/memory-services.sh install)" % sys.argv[1])
 ' "$memory_url")
   item "${memory%% *}" "${memory#* }"
-  [ "$(code "${GAUSS_BRAIN_URL:-http://127.0.0.1:3032}/v1/models")" = 200 ] && ok=ok || ok=no
-  item $ok "answer model up (${GAUSS_BRAIN_URL:-http://127.0.0.1:3032})"
+  # The chatbot answer model was retired on 2026-10-22 (gauss-brain GAU-184; memory search returns
+  # sources). It is opt-in for experiments, so it is reported but never fails the check.
+  if [ "$(code "${GAUSS_BRAIN_URL:-http://127.0.0.1:3032}/v1/models")" = 200 ]; then
+    item ok "answer model up (${GAUSS_BRAIN_URL:-http://127.0.0.1:3032}; opt-in)"
+  else
+    item ok "answer model off (retired 2026-10-22, GAU-184; opt-in with GAUSS_BRAIN_MODEL_SERVICE=1)"
+  fi
   local fb; fb=$(fallback_state); item "${fb%% *}" "${fb#* }"
   [ $fail = 0 ] && echo "Ready to demo." || echo "Not ready: fix the ✗ items above."
   return $fail
