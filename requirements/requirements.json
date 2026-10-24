@@ -1,6 +1,6 @@
 {
   "$comment": "Constellation requirements baseline (GAU-120). NASA SP-2016-6105 Rev 2 §6.2/§5.3. Methods: T test, A analysis, I inspection, D demonstration. T evidence = exact test names; A/I/D evidence = repo paths. Verified by `npm run verify`.",
-  "version": "1.9.0",
+  "version": "1.10.0",
   "requirements": [
     {
       "id": "REQ-ING-001",
@@ -528,6 +528,23 @@
         "SAA: along six days of an ISS orbit, NICER's SAA lies inside the extended tier and the core inside NICER's (GAU-141)",
         "SAA: the thresholds and the altitude band are applied as published (GAU-141)",
         "trust record: an inference inside the SAA is degraded context, with |B| and the tier (GAU-141)"
+      ]
+    },
+    {
+      "id": "REQ-TR-004",
+      "title": "Evidence packs",
+      "statement": "For an analysis window the system shall produce an evidence pack holding the trust records, the hashes of the stored inputs, the software and policy versions, every unused log row with its reason, a verdict summary and limitations; the records shall be hash-chained and the pack hashed so that a changed, reordered or missing record is detected; the same stored inputs and code shall give the same pack and PDF byte for byte; and the limitations shall always state that the pack describes the environment, not the spacecraft, with no regulatory claim in Gauss-authored text.",
+      "rationale": "PR-04 Evidence pack export, ICP-1 P0 (GAU-60): customer QA, insurers and regulators need one reproducible, tamper-evident report per window; signing the pack hash follows in GAU-67.",
+      "parent": "GAU-60",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "evidence pack: from a log and a replayed storm, every row accounted for, and the same stored inputs give the same pack and PDF (GAU-60)",
+        "evidence pack: any change is detected: a record, its hash, the chain, the order, a dropped record (GAU-60)",
+        "evidence pack: the wording rules hold even when the hashes are recomputed (GAU-60)",
+        "evidence pack: refuses records outside the window, from another log or policy, or rows not accounted for (GAU-60)",
+        "evidence pack: packs chain, each starting from the previous pack's hash (GAU-60)",
+        "evidence pack PDF: a valid PDF (cross-reference offsets, pages) carrying the pack hash and limitations (GAU-60)"
       ]
     }
   ]
