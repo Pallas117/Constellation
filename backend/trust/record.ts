@@ -12,8 +12,9 @@ import { createHash } from "node:crypto";
 import type { CanonicalSpaceWeatherPoint, ScaleReading, SenseCheck } from "../types.js";
 import { MAX_READING_LAG_MS, type EnvironmentHistory } from "./environment.js";
 import { IGRF_LABEL } from "../physics/igrf.js";
-import { SAA_CORE_NT, SAA_EXTENDED_NT, saaContext } from "./saa.js";
+import { SAA_CORE_NT, SAA_EXTENDED_NT, saaContext, type SaaTier } from "./saa.js";
 import { dipoleLShell, distanceKm, EPHEMERIS_TLE_CONFLICT_KM, ephemerisProblem, propagateTle, tleProblem, type Ephemeris } from "./orbit.js";
+import { upsetRiskField, type UpsetRiskValue } from "./upset.js";
 
 export const TRUST_RECORD_SCHEMA = "gauss.trust-record/0.1";
 
@@ -134,8 +135,8 @@ export interface TrustRecord {
     fieldStrength: Field<number>;
     lShell: Field<number>;
   };
-  /** Modelled upset-risk band; needs a cited processor profile (PR-02). */
-  upsetRisk: Field<{ band: string; uncertainty: string }>;
+  /** Modelled upset-risk band relative to the quiet orbit average; needs a cited processor profile (PR-02, upset.ts). */
+  upsetRisk: Field<UpsetRiskValue>;
   checks: Array<{ id: SenseCheck["id"]; status: SenseCheck["status"]; reason: string }>;
   verdict: { value: Verdict; reasons: string[]; policy: TrustPolicy };
   limitations: string[];
@@ -347,13 +348,17 @@ function environmentFields(p: CanonicalSpaceWeatherPoint, atMs: number, fetchedA
   return { radiation, geomagnetic, radioBlackout, particleFlux, kp, dst };
 }
 
-function orbitFields(req: TrustRecordRequest): TrustRecord["orbit"] {
+/** The orbit fields, plus the SAA tier the upset-risk band reads (null when not assessed). */
+function orbitFields(req: TrustRecordRequest): { orbit: TrustRecord["orbit"]; saaTier: SaaTier | null } {
   const atMs = Date.parse(req.time);
-  const noPosition = (why: string): TrustRecord["orbit"] => ({
-    position: unknownField("Spacecraft position", why),
-    saa: unknownField("South Atlantic Anomaly", why),
-    fieldStrength: unknownField(IGRF_LABEL, why),
-    lShell: unknownField("L-shell", why),
+  const noPosition = (why: string) => ({
+    orbit: {
+      position: unknownField<Ephemeris>("Spacecraft position", why),
+      saa: unknownField<boolean>("South Atlantic Anomaly", why),
+      fieldStrength: unknownField<number>(IGRF_LABEL, why),
+      lShell: unknownField<number>("L-shell", why),
+    },
+    saaTier: null,
   });
   const fromTle = req.tle ? propagateTle(req.tle, atMs) : null;
   const tleOk = fromTle && !("error" in fromTle) ? fromTle : null;
@@ -440,7 +445,7 @@ function orbitFields(req: TrustRecordRequest): TrustRecord["orbit"] {
           ],
         };
 
-  return {
+  const orbit: TrustRecord["orbit"] = {
     position,
     saa,
     fieldStrength,
@@ -456,6 +461,7 @@ function orbitFields(req: TrustRecordRequest): TrustRecord["orbit"] {
       limitations: ["Centred-dipole approximation: differs most from the full-field L where the field is least dipolar, including the South Atlantic Anomaly."],
     },
   };
+  return { orbit, saaTier: ctx.tier };
 }
 
 // ---------------------------------------------------------------------------------------
@@ -555,12 +561,19 @@ export function buildTrustRecord(
       dst: unknownField("Dst", why),
     };
   }
-  const orbit = orbitFields(req);
-  const upsetRisk = unknownField<{ band: string; uncertainty: string }>(
-    "Processor radiation profile",
-    req.processorProfileId
-      ? `No cited radiation profile for processor "${req.processorProfileId}" yet (PR-02, GAU-58).`
-      : "No processor profile given; an upset-risk band needs a cited profile (PR-02, GAU-58).",
+  const { orbit, saaTier } = orbitFields(req);
+  const upsetRisk = upsetRiskField(
+    req.processorProfileId,
+    {
+      saaTier,
+      saaWhy: orbit.saa.limitations[0] ?? "Not assessed",
+      sLevel: env.radiation.value?.level ?? null,
+      sWhy: env.radiation.limitations[0] ?? "No reading",
+      gLevel: env.geomagnetic.value?.level ?? null,
+      gWhy: env.geomagnetic.limitations[0] ?? "No reading",
+      lShell: orbit.lShell.value,
+    },
+    { time: req.time, fetchedAt: env.radiation.fetchedAt },
   );
   const verdict = verdictFor(env, orbit, checks, policy, envReason);
 

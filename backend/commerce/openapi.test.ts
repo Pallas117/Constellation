@@ -3,7 +3,9 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { EnvironmentHistory } from "../trust/environment.js";
+import { PROFILE_LIBRARY_VERSION, PROFILES } from "../trust/profiles.js";
 import { buildTrustRecord, MAX_OUTPUT_BYTES, TRUST_RECORD_SCHEMA } from "../trust/record.js";
+import { upsetRiskField } from "../trust/upset.js";
 import { createDataApiRouter, MAX_TRUST_BATCH, type DataProvider } from "./routers.js";
 import type { CommerceStore } from "./store.js";
 
@@ -85,6 +87,11 @@ test("openapi: trust-record limits and shape match the code", () => {
   assert.deepEqual([...props.environment.required].sort(), keys(record.environment));
   assert.deepEqual([...props.orbit.required].sort(), keys(record.orbit));
   assert.deepEqual([...schemas.Field.required].sort(), keys(record.upsetRisk));
+  const band = upsetRiskField(PROFILES[0].id, { saaTier: "outside", saaWhy: "", sLevel: 0, sWhy: "", gLevel: 0, gWhy: "", lShell: 1.2 }, { time: record.inference.time, fetchedAt: null });
+  assert.deepEqual([...schemas.UpsetRisk.required].sort(), keys(band.value!));
+  const profileIds: string = schemas.TrustRecordRequest.properties.processorProfileId.description;
+  assert.ok(profileIds.includes(PROFILE_LIBRARY_VERSION), "the spec names the profile library version");
+  for (const p of PROFILES) assert.ok(profileIds.includes(p.id), `the spec lists profile ${p.id}`);
   assert.deepEqual([...props.verdict.properties.policy.required].sort(), keys(record.verdict.policy));
   assert.match(record.recordId, new RegExp(props.recordId.pattern));
   assert.match(record.hash, new RegExp(props.hash.pattern));
