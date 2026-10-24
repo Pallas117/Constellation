@@ -10,9 +10,12 @@
  *   GAUSS_RESTART_CMD  (default: bash scripts/ops/gauss-services.sh restart)
  *   GAUSS_HEALTH_CMD   (default: npm run --silent tpm). Exit 0/1 healthy (green/amber); 2 red or 3 unreachable fail.
  *   GAUSS_HEALTH_WAIT_MS (default 20000) before the health check.
+ *   GAUSS_EVENTS_LOG   (default ~/Library/Logs/gauss/events.jsonl): deploy/rollback events in the
+ *                      same format as scripts/ops/gauss-services.sh's event() (GAU-164).
  */
 import { execFileSync, spawnSync } from "node:child_process";
-import { appendFileSync, existsSync, readFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, statSync } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 
 export interface DeployOptions {
@@ -23,6 +26,8 @@ export interface DeployOptions {
   healthWaitMs: number;
   dryRun?: boolean;
   log?: (msg: string) => void;
+  /** events.jsonl to append deploy/rollback events to; none when unset (tests). */
+  eventsLog?: string;
 }
 
 export interface HistoryEntry {
@@ -41,6 +46,7 @@ export function defaultOptions(checkout: string): DeployOptions {
     restartCmd: process.env.GAUSS_RESTART_CMD ?? "bash scripts/ops/gauss-services.sh restart",
     healthCmd: process.env.GAUSS_HEALTH_CMD ?? "npm run --silent tpm",
     healthWaitMs: Number(process.env.GAUSS_HEALTH_WAIT_MS ?? 20_000),
+    eventsLog: process.env.GAUSS_EVENTS_LOG ?? path.join(os.homedir(), "Library/Logs/gauss/events.jsonl"),
   };
 }
 
@@ -60,8 +66,60 @@ export function readHistory(checkout: string): HistoryEntry[] {
   return readFileSync(p, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l) as HistoryEntry);
 }
 
-function record(checkout: string, e: HistoryEntry) {
-  appendFileSync(historyPath(checkout), JSON.stringify(e) + "\n");
+function record(o: DeployOptions, e: HistoryEntry) {
+  appendFileSync(historyPath(o.checkout), JSON.stringify(e) + "\n");
+  if (!o.eventsLog) return;
+  const event = e.action === "deploy" ? "deploy" : "rollback";
+  appendEvent(o.eventsLog, o.checkout, {
+    event, label: e.ref, reason: `${e.action} ${e.from} -> ${e.ref}: ${e.result}`,
+    from: e.from, to: e.commit, result: e.result, via: "npm run deploy",
+  });
+}
+
+const out = (cmd: string, ...args: string[]) => {
+  const r = spawnSync(cmd, args, { encoding: "utf8", timeout: 5_000 });
+  return r.status === 0 ? r.stdout : "";
+};
+const int = (s: string | undefined) => (s !== undefined && /^-?\d+$/.test(s) ? Number(s) : null);
+/** Same rule as the shell's redact(): no credentials in URLs, query strings or key=/token= values in a log. */
+export const redact = (s: string) =>
+  s.replace(/(:\/\/)[^/@ ]+@/g, "$1")
+    .replace(/(https?:\/\/[^ ?"]*)\?[^ "]*/g, "$1?<redacted>")
+    .replace(/([A-Za-z_]*(token|secret|password|key))=[^ &"]+/gi, "$1=<redacted>");
+
+export interface OpsEvent {
+  event: "deploy" | "rollback";
+  label: string;
+  reason: string;
+  [extra: string]: string | number | boolean | null;
+}
+
+/** Append one line to events.jsonl in gauss-services.sh's format; never throws (a log must not fail a deploy). */
+export function appendEvent(file: string, checkout: string, e: OpsEvent, maxKb = Number(process.env.GAUSS_EVENTS_MAX_KB ?? 5120)) {
+  try {
+    const live = spawnSync("git", ["rev-parse", "HEAD"], { cwd: checkout, encoding: "utf8" });
+    const ready = path.join(os.homedir(), "Library/Application Support/Gauss/fallback/ready");
+    const fb = existsSync(ready) ? readFileSync(ready, "utf8").split(" ")[0] : "";
+    const batt = out("pmset", "-g", "batt");
+    const swap = /used = ([\d.]+)M/.exec(out("sysctl", "-n", "vm.swapusage"))?.[1];
+    const fields: Record<string, unknown> = {
+      ts: new Date().toISOString().slice(0, 19) + "Z",
+      host: os.hostname().split(".")[0],
+      event: e.event, label: e.label, reason: redact(e.reason),
+      live_sha: live.status === 0 ? live.stdout.trim() : null,
+      fallback_sha: /^[0-9a-f]{7,40}$/.test(fb) ? fb : null,
+      pressure: int(out("sysctl", "-n", "kern.memorystatus_vm_pressure_level").trim()),
+      swap_mb: swap ? Math.trunc(Number(swap)) : null,
+      battery: int(/(\d+)%/.exec(batt)?.[1]),
+      on_ac: batt.includes("'AC Power'"),
+    };
+    for (const [k, v] of Object.entries(e)) if (!(k in fields)) fields[k] = typeof v === "string" ? redact(v) : v;
+    mkdirSync(path.dirname(file), { recursive: true });
+    if (existsSync(file) && statSync(file).size >= maxKb * 1024) renameSync(file, `${file}.1`);
+    appendFileSync(file, JSON.stringify(fields) + "\n");
+  } catch {
+    /* best effort */
+  }
 }
 
 /** Reasons a tag may not be deployed to this checkout; empty when it may. */
@@ -110,14 +168,14 @@ export function deploy(o: DeployOptions, tag: string): { ok: boolean; problems: 
   }
   const commit = git(o.checkout, "rev-parse", `${tag}^{commit}`);
   const healthy = activate(o, tag);
-  record(o.checkout, { action: "deploy", ref: tag, commit, from: from.ref, at: new Date().toISOString(), result: healthy ? "ok" : "failed" });
+  record(o, { action: "deploy", ref: tag, commit, from: from.ref, at: new Date().toISOString(), result: healthy ? "ok" : "failed" });
   if (healthy) {
     log(`deployed ${tag}`);
     return { ok: true, problems: [] };
   }
   log(`${tag} unhealthy: rolling back to ${from.ref}`);
   const back = activate(o, from.commit);
-  record(o.checkout, { action: "auto-rollback", ref: from.ref, commit: from.commit, from: tag, at: new Date().toISOString(), result: back ? "ok" : "failed" });
+  record(o, { action: "auto-rollback", ref: from.ref, commit: from.commit, from: tag, at: new Date().toISOString(), result: back ? "ok" : "failed" });
   return { ok: false, problems: [`${tag} failed its health check; rolled back to ${from.ref}${back ? "" : " (rollback ALSO unhealthy)"}`] };
 }
 
@@ -133,7 +191,7 @@ export function rollback(o: DeployOptions): { ok: boolean; problems: string[] } 
     return { ok: true, problems: [] };
   }
   const healthy = activate(o, target.commit);
-  record(o.checkout, { action: "rollback", ref: target.ref, commit: target.commit, from: now.ref, at: new Date().toISOString(), result: healthy ? "ok" : "failed" });
+  record(o, { action: "rollback", ref: target.ref, commit: target.commit, from: now.ref, at: new Date().toISOString(), result: healthy ? "ok" : "failed" });
   return healthy ? { ok: true, problems: [] } : { ok: false, problems: [`rolled back to ${target.ref} but it is unhealthy`] };
 }
 
