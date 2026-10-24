@@ -4,6 +4,7 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 import { buildMatrix, mergeOutcomes, parseJunit, renderMarkdown, validateBaseline, type Baseline } from "../../scripts/verify/vcrm.ts";
 
 const junit = `<?xml version="1.0"?><testsuites>
@@ -91,7 +92,7 @@ test("VCRM: an unescaped '>' in a test name does not swallow later test cases (G
 });
 
 test("VCRM: the bash ops JUnit report keeps exact names, with & < > \" ' escaped, and its failures (GAU-163)", () => {
-  const helper = path.resolve(import.meta.dirname, "../../scripts/ops/junit.sh");
+  const helper = fileURLToPath(new URL("../../scripts/ops/junit.sh", import.meta.url));
   const dir = mkdtempSync(path.join(os.tmpdir(), "vcrm-ops-junit-"));
   const names = [`dev refuses live's ports`, `a & b <c> "d" -> e`, "replayed 57→2% drain: warn from 20%, critical from 10%"];
   try {
@@ -103,7 +104,7 @@ test("VCRM: the bash ops JUnit report keeps exact names, with & < > \" ' escaped
     assert.equal(r.status, 0, r.stderr);
     const xml = readFileSync(out, "utf8");
     assert.match(xml, /tests="4" failures="1"/);
-    assert.doesNotMatch(xml, /\x1b/, "control characters are dropped: XML 1.0 forbids them");
+    assert.ok(!xml.includes("\u001b"), "control characters are dropped: XML 1.0 forbids them");
     const o = parseJunit(xml);
     assert.deepEqual([...o], [...names.map((n) => [n, "pass"]), ["breaks", "fail"]]);
   } finally {
