@@ -3,8 +3,11 @@
 # `resilience` checklist. System tools are stubbed on PATH and HOME is a temp
 # dir, so nothing touches real power settings or sends a real alert.
 #   bash scripts/ops/gauss-services.test.sh      (npm run test:ops)
+#   GAUSS_OPS_JUNIT=<file> also writes a JUnit report, one test case per expect, named
+#   exactly as the expect: `npm run verify` matches REQ-OPS and FMEA evidence by name.
 set -uo pipefail
 SCRIPT="$(cd "$(dirname "$0")" && pwd)/gauss-services.sh"
+JUNIT="${GAUSS_OPS_JUNIT:-}"; [ -z "$JUNIT" ] || . "$(dirname "$SCRIPT")/junit.sh"
 T=$(mktemp -d); trap 'rm -rf "$T"' EXIT
 mkdir -p "$T/bin" "$T/home/.config/argo" "$T/home/.claude" "$T/home/.local/share/mesh-heal"
 pass=0; failed=0
@@ -54,6 +57,7 @@ run() { # run <args...>: gauss-services.sh with the stubs; alerts land in $LOG
 }
 expect() { # expect <name> <condition-exit-code>
   if [ "$2" = 0 ]; then pass=$((pass + 1)); else failed=$((failed + 1)); echo "FAIL: $1"; sed 's/^/    alerts: /' "$T/log"; fi
+  [ -z "$JUNIT" ] || junit_case "$1" "$2" "$(sed 's/^/alerts: /' "$T/log")"
 }
 alerts() { cut -d' ' -f2 "$T/log" | tr '\n' ' ' | sed 's/ $//'; } # the -key of each alert sent
 plain() { sed $'s/\033\\[[0-9;]*m//g'; }                          # drop the ✓/✗ colours
@@ -282,5 +286,6 @@ out=$(ARGOSTATUS="● WIFI_RISK MY ts:on" run resilience | plain)
 [[ "$out" == *"✓ network: ● WIFI_RISK MY ts:on (warning:"* ]]; expect "WIFI_RISK is a warning, not a failure" $?
 out=$(ARGOSTATUS="● REGION HK ts:on" run resilience | plain)
 [[ "$out" == *"✗ network: ● REGION HK"* ]]; expect "REGION still fails the network item" $?
+[ -z "$JUNIT" ] || junit_write gauss-services "$JUNIT"
 echo "gauss-services: $pass passed, $failed failed"
 [ "$failed" = 0 ]
