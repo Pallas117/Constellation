@@ -67,7 +67,9 @@ ARGO="${ARGO:-$HOME/.local/bin/argo}"
 MEM_ALERT_LEVEL="${GAUSS_MEM_ALERT_LEVEL:-4}" # phone alert at or above this pressure level
 MEM_SHED_LEVEL="${GAUSS_MEM_SHED_LEVEL:-2}"   # balance sheds optional load at or above this level
 SWAP_MAX_GB="${GAUSS_SWAP_MAX_GB:-4}"         # ... or at or above this many GB of swap in use
-DISK_MIN_GB="${GAUSS_DISK_MIN_GB:-8}"   # ... or below this many GB free on the boot volume
+# ... or below this many GB free on the boot volume. Swap files grow on this disk: the 2026-10-22
+# 01:00 kernel panic logged "LOW swap space" with 12-13 GB free, so clean up well before that.
+DISK_MIN_GB="${GAUSS_DISK_MIN_GB:-15}"
 WATCH_DIR="$HOME/Library/Application Support/Gauss"
 GUARD_HEARTBEAT="$WATCH_DIR/guard.heartbeat" # Argo restarts the guard if this goes stale
 WATCH_KICKS="$WATCH_DIR/watch-kicks"         # "<label> <epoch>" per watchdog restart
@@ -78,6 +80,11 @@ DEPLOY_WAIT="${GAUSS_DEPLOY_WAIT:-90}" # seconds a deploy waits for the services
 BALANCE="${GAUSS_BALANCE:-1}"
 LOCAL_CODER="${GAUSS_LOCAL_CODER:-$HOME/.local/bin/local-coder}"   # optional on-device model server
 LOCAL_CODER_PORT="${LOCAL_CODER_PORT:-8089}"   # local-coder's server; Gauss's memory answer model (:3032, opt-in since GAU-184) is never shed
+# macOS helpers that leak and that macOS relaunches on demand, holding no user data: balance
+# restarts one once its footprint passes LEAK_MB. CursorUIViewService (the text-cursor helper) had
+# grown to 3.7 GB before the 2026-10-22 01:00 kernel panic (GAU-183). Never apps or Claude sessions.
+LEAKY_HELPERS="${GAUSS_LEAKY_HELPERS-CursorUIViewService}"
+LEAK_MB="${GAUSS_LEAK_MB:-1024}"
 CLEANUP_STAMP="$WATCH_DIR/balance-cleanup"     # balance runs disk-cleanup at most hourly
 DISK_CLEANUP="${GAUSS_DISK_CLEANUP:-$HOME/.local/bin/disk-cleanup}" # allowlisted cache cleanup
 LEARNING_PAUSED="$WATCH_DIR/learning-paused"      # ml/train/nightly.py skips while this exists
@@ -203,6 +210,13 @@ disk_alerts() { # disk_alerts <free GB>
   return 0
 }
 top_memory() { ps -Acmo rss=,comm= 2>/dev/null | awk 'NR==1{printf "%s %.1f GB", $2, $1/1048576}'; }
+# phys_footprint in MB, as Activity Monitor shows it. RSS leaves out compressed pages, which is
+# where a leaking helper's memory ends up (CursorUIViewService: RSS 4 MB vs footprint 12 MB idle).
+footprint_mb() { # footprint_mb <pid>
+  footprint -p "$1" 2>/dev/null | awk '$1 == "phys_footprint:" {v = $2; u = $3
+    if (u == "GB") v *= 1024; else if (u == "KB") v /= 1024; else if (u == "B" || u == "bytes") v /= 1048576
+    printf "%d", v; exit}'
+}
 
 memory_alerts() { # memory_alerts <pressure level> <swap used MB>
   local level=$1 swap=$2
@@ -561,6 +575,16 @@ balance() { # balance [--dry-run]
   if { [ $mem_short = 1 ] || [ $batt_low = 1 ]; } && pgrep -f "$coder" >/dev/null 2>&1; then
     act pkill -f "$coder"; notify+=("stopped the local model server")
   fi
+  # A leak grows whatever the pressure, so this one doesn't wait for memory to run short.
+  local h p mb
+  for h in $LEAKY_HELPERS; do
+    for p in $(pgrep -x "$h" 2>/dev/null); do
+      mb=$(footprint_mb "$p")
+      if [ "${mb:-0}" -ge "$LEAK_MB" ]; then
+        act pkill -x "$h"; notify+=("restarted $h (${mb} MB; a macOS helper that leaks, macOS starts it again)"); break
+      fi
+    done
+  done
   if [ $batt_low = 1 ]; then
     if [ ! -f "$LEARNING_PAUSED" ]; then act mkdir -p "$WATCH_DIR"; act touch "$LEARNING_PAUSED"; quiet+=("paused nightly learning"); fi
     if [ "$(lowpower_on)" = 0 ] && sudo -n -l /usr/bin/pmset -a lowpowermode 1 >/dev/null 2>&1; then
