@@ -14,6 +14,7 @@ stub pmset 'if [ "$1 $2" = "-g batt" ]; then printf "Now drawing from '"'"'%s'"'
 stub memory_pressure 'echo "System-wide memory free percentage: ${FREE:-50}%"'
 stub sysctl 'case "$*" in
   *pressure_level*) echo "${LEVEL:-1}" ;;
+  *memorystatus_level*) echo "${AVAIL:-50}" ;;
   *) echo "total = 6144.00M  used = ${SWAPUSED:-1000}.00M  free = 0.00M  (encrypted)" ;;
 esac'
 stub ps 'case "$*" in *comm=*) echo "/opt/homebrew/bin/node" ;; *) echo "2097152 node" ;; esac'
@@ -54,7 +55,7 @@ run() { # run <args...>: gauss-services.sh with the stubs; alerts land in $LOG
     LOADED="${LOADED:-}" HEALTH="${HEALTH:-200}" HEALTH_FILE="${HEALTH_FILE:-}" GAUSS_DEPLOY_WAIT=0 DISKGB="${DISKGB:-50}" \
     GAUSS_DEV_DRY="${GAUSS_DEV_DRY:-0}" GAUSS_DEV_API_PORT="${GAUSS_DEV_API_PORT:-3101}" \
     SRC="${SRC:-AC Power}" BATT="${BATT:-80%; charging; present: true}" SD="${SD:-0}" \
-    LEAKY="${LEAKY:-}" LEAKFP="${LEAKFP:-12 MB}" \
+    LEAKY="${LEAKY:-}" LEAKFP="${LEAKFP:-12 MB}" AVAIL="${AVAIL:-50}" GAUSS_SWAP_LAST="${SWAPLAST:-/dev/null}" \
     ARGOSTATUS="${ARGOSTATUS:-}" LEVEL="${LEVEL:-1}" FREE="${FREE:-50}" SWAPUSED="${SWAPUSED:-1000}" OLD_ARGO="${OLD_ARGO:-}" bash "$SCRIPT" "$@"
 }
 expect() { # expect <name> <condition-exit-code>
@@ -90,10 +91,47 @@ run awake guard
 [ -z "$(alerts)" ]; expect "2.8 of 3 GB swap (91%; macOS adds swap files on demand): no alert" $?
 stub sysctl 'case "$*" in
   *pressure_level*) echo "${LEVEL:-1}" ;;
+  *memorystatus_level*) echo "${AVAIL:-50}" ;;
   *) echo "total = 6144.00M  used = ${SWAPUSED:-1000}.00M  free = 0.00M  (encrypted)" ;;
 esac'
 LEVEL=1 SWAPUSED=3000 run awake guard
 [ -z "$(alerts)" ]; expect "healthy memory: no alerts" $?
+AVAIL=8 run awake guard
+[ "$(alerts)" = "memory-low" ] && grep -q "memory almost out (8% left)" "$T/log"
+expect "8% available at a 'normal' pressure level (the level lags swap death): alert" $?
+AVAIL=12 run awake guard
+[ -z "$(alerts)" ]; expect "12% available: no alert" $?
+# Runaway: swap grows 1 GB+ between two readings at most 150 s apart
+rm -f "$T/swaplast"
+SWAPLAST="$T/swaplast" SWAPUSED=1000 run awake guard
+[ -z "$(alerts)" ]; expect "first swap reading: nothing to compare, no alert" $?
+SWAPLAST="$T/swaplast" SWAPUSED=2200 run awake guard
+[ "$(alerts)" = "swap-fast" ] && grep -q "Biggest: node 2.0 GB" "$T/log"; expect "swap +1.2 GB in a minute: runaway alert naming the biggest process" $?
+echo "$(( $(date +%s) - 600 )) 1000" >"$T/swaplast"
+SWAPLAST="$T/swaplast" SWAPUSED=2200 run awake guard
+[ -z "$(alerts)" ]; expect "the same rise over 10 minutes is not a runaway" $?
+
+# mem-guard's samples: what to close, and pressure that lasts with swap growing
+M="$T/home/Library/Logs/gauss/memory.tsv"; mkdir -p "${M%/*}"
+sample() { printf '%s\t%s\t40\t1.3\t1.8\t1.1\t2.8\t6\t%s\t15\t9.4\t8\t40\t2.2\t1.3\t1.2\t0.4\t0.1\t0.4\t0.4\t4.7\t5.5\t0.1\n' "$(date -v-"$1"M '+%F %T')" "$2" "$3"; }
+{ printf 'ts\tlevel\tfree_pct\twired\tanon\tfile\tcmp_occ\tcmp_data\tswap\tdisk\tdemand\tram\tswapped_pct\tclaude_app\tcowork_vm\tclaude_code\tgauss_live\tdev\tvpn\twhatsapp\tbrowser\tmacos\tapps\n'
+  sample 32 2 2.0; sample 21 2 2.4; sample 11 2 2.8; sample 1 2 3.2; } >"$M"
+SWAPUSED=3300 run awake guard
+[ "$(alerts)" = "swap-high" ] && grep -q "memory tight for 30+ min" "$T/log" \
+  && grep -q "Close: browser tabs 4.7 GB, Cowork 1.3 GB, idle Claude sessions 1.2 GB" "$T/log"
+expect "warn for 30 min with swap +1.2 GB: one text naming what to close, biggest first" $?
+SWAPUSED=4300 run awake guard
+grep -q "Gauss: swap 4.2 GB" "$T/log" && grep -q "Close: browser tabs 4.7 GB" "$T/log"; expect "high swap: the text says what to close" $?
+{ head -1 "$M"; sample 32 2 2.0; sample 21 1 2.4; sample 11 2 2.8; sample 1 2 3.2; } >"$M.t" && mv "$M.t" "$M"
+SWAPUSED=3300 run awake guard
+[ -z "$(alerts)" ]; expect "one normal sample in the window: not tight" $?
+{ head -1 "$M"; sample 32 2 3.0; sample 21 2 3.1; sample 11 2 3.0; sample 1 2 3.2; } >"$M.t" && mv "$M.t" "$M"
+SWAPUSED=3300 run awake guard
+[ -z "$(alerts)" ]; expect "warn with flat swap (this Mac's normal day): no text" $?
+touch -t "$(date -v-2H '+%Y%m%d%H%M')" "$M"
+SWAPUSED=4300 run awake guard
+grep -q "Close: node 2.0 GB" "$T/log"; expect "a stale sample (2 h old) is not used; falls back to the biggest process" $?
+rm -f "$M"
 
 # Disk (seen on the dev Mac: 5 GB free with 5 GB of swap)
 DISKGB=5 run awake guard
@@ -110,11 +148,11 @@ DISKGB=13 SWAPUSED=4300 run awake guard
 grep -q "disk 13 GB free, swap 4.2 GB" "$T/log" && grep -q "Swap is growing on a short disk" "$T/log"
 expect "13 GB free with 4.2 GB swap (the 2026-10-22 panic's combination): a text that says why" $?
 DISKGB=9 run awake guard
-[ "$(alerts)" = "disk-low" ] && grep -q "below 10 GB" "$T/log"; expect "9 GB free: a text whatever the swap" $?
+[ "$(alerts)" = "disk-low" ] && grep -q "below 12 GB" "$T/log"; expect "9 GB free: a text whatever the swap" $?
 out=$(DISKGB=13 run resilience 2>&1 | plain)
 [[ "$out" == *"✓ disk 13 GB free"* ]]; expect "resilience: 13 GB free with little swap passes" $?
 out=$(DISKGB=13 SWAPUSED=4300 run resilience 2>&1 | plain)
-[[ "$out" == *"✗ disk 13 GB free (need 10+, or 15+ while swap is over 4 GB)"* ]]; expect "resilience: 13 GB with high swap fails and says why" $?
+[[ "$out" == *"✗ disk 13 GB free (need 12+, or 15+ while swap is over 4 GB)"* ]]; expect "resilience: 13 GB with high swap fails and says why" $?
 
 # Replay: a real overnight drain from the dev Mac's pmset log (57% down to 2%,
 # lid closed, on battery). Alert keys per reading; argo rate-limits repeats.
@@ -287,8 +325,8 @@ LEAKY=CursorUIViewService LEAKFP="3.7 GB" run awake guard
 [ "$(acts)" = "pkill -x CursorUIViewService" ] && [ "$(alerts)" = "balance" ]
 expect "a 3.7 GB CursorUIViewService is restarted at normal pressure, with one balance text" $?
 grep -q "restarted CursorUIViewService (3788 MB" "$T/home/Library/Logs/gauss/balance.log"; expect "the restart is logged with its size" $?
-LEAKY=CursorUIViewService LEAKFP="900 MB" run awake guard
-[ -z "$(acts)" ]; expect "a 900 MB helper is left alone" $?
+LEAKY=CursorUIViewService LEAKFP="400 MB" run awake guard
+[ -z "$(acts)" ]; expect "a 400 MB helper is left alone (limit 512 MB)" $?
 LEAKY=CursorUIViewService LEAKFP="512 KB" run awake guard
 [ -z "$(acts)" ]; expect "footprint in KB parses (left alone)" $?
 LEAKY=Safari LEAKFP="6 GB" run awake guard

@@ -73,11 +73,17 @@ SWAP_MAX_GB="${GAUSS_SWAP_MAX_GB:-4}"         # ... or at or above this many GB 
 # the 2026-10-17..25 samples, so a text there would arrive all day. The text (and a failing check)
 # comes below DISK_ALERT_GB, or below DISK_MIN_GB while swap is high: the panic's combination.
 DISK_MIN_GB="${GAUSS_DISK_MIN_GB:-15}"
-DISK_ALERT_GB="${GAUSS_DISK_ALERT_GB:-10}"
+DISK_ALERT_GB="${GAUSS_DISK_ALERT_GB:-12}"   # 8% of samples were under 12 GB; 4% under 8
 # mem-guard writes one sample every 10 min (gauss-tpm-watch): pressure, swap and footprint GB per
 # owner. Alerts read it to say what to close and whether pressure has lasted.
 MEM_LOG="${GAUSS_MEM_LOG:-$HOME/Library/Logs/gauss/memory.tsv}"
 TIGHT_MIN="${GAUSS_TIGHT_MIN:-30}"   # warn for this many minutes with swap growing = short of memory
+# macOS's pressure level can still say normal while swap runs away (fl4p/macos-oom-guard, 2026), so
+# two faster signals: kern.memorystatus_level (% of memory available) under AVAIL_MIN, and swap
+# growing SWAP_FAST_GB within 2.5 min (the 2026-10-17..25 log's biggest rise was 2.7 GB in 10 min).
+AVAIL_MIN="${GAUSS_MEM_AVAIL_MIN:-10}"
+SWAP_FAST_GB="${GAUSS_SWAP_FAST_GB:-1}"
+SWAP_LAST="${GAUSS_SWAP_LAST:-$HOME/Library/Application Support/Gauss/swap-last}" # "<epoch> <swap MB>"
 WATCH_DIR="$HOME/Library/Application Support/Gauss"
 GUARD_HEARTBEAT="$WATCH_DIR/guard.heartbeat" # Argo restarts the guard if this goes stale
 WATCH_KICKS="$WATCH_DIR/watch-kicks"         # "<label> <epoch>" per watchdog restart
@@ -92,7 +98,7 @@ LOCAL_CODER_PORT="${LOCAL_CODER_PORT:-8089}"   # local-coder's server; Gauss's m
 # restarts one once its footprint passes LEAK_MB. CursorUIViewService (the text-cursor helper) had
 # grown to 3.7 GB before the 2026-10-22 01:00 kernel panic (GAU-183). Never apps or Claude sessions.
 LEAKY_HELPERS="${GAUSS_LEAKY_HELPERS-CursorUIViewService}"
-LEAK_MB="${GAUSS_LEAK_MB:-1024}"
+LEAK_MB="${GAUSS_LEAK_MB:-512}"   # it idles at 12-170 MB; reported leaks reach 3.7-4.9 GB
 CLEANUP_STAMP="$WATCH_DIR/balance-cleanup"     # balance runs disk-cleanup at most hourly
 DISK_CLEANUP="${GAUSS_DISK_CLEANUP:-$HOME/.local/bin/disk-cleanup}" # allowlisted cache cleanup
 LEARNING_PAUSED="$WATCH_DIR/learning-paused"      # ml/train/nightly.py skips while this exists
@@ -268,11 +274,26 @@ footprint_mb() { # footprint_mb <pid>
     printf "%d", v; exit}'
 }
 
+mem_available() { # kern.memorystatus_level: % of memory available (100 when unreadable)
+  local a; a=$(sysctl -n kern.memorystatus_level 2>/dev/null)
+  case "$a" in ''|*[!0-9]*) echo 100 ;; *) echo "$a" ;; esac
+}
+swap_fast() { # swap_fast <swap MB>: swap grew SWAP_FAST_GB+ since a reading <= 150 s ago; records this one
+  local now prev_t="" prev_s=""; now=$(date +%s)
+  read -r prev_t prev_s 2>/dev/null <"$SWAP_LAST" || true
+  mkdir -p "$(dirname "$SWAP_LAST")" 2>/dev/null; echo "$now $1" >"$SWAP_LAST" 2>/dev/null || true
+  [ -n "$prev_t" ] && [ $((now - prev_t)) -le 150 ] && [ $(($1 - ${prev_s:-0})) -ge $((SWAP_FAST_GB * 1024)) ]
+}
+
 memory_alerts() { # memory_alerts <pressure level> <swap used MB>
-  local level=$1 swap=$2
-  if [ "$level" -ge "$MEM_ALERT_LEVEL" ]; then
-    phone -key memory-low -every 30m "Gauss: memory pressure $(pressure_name "$level")" \
+  local level=$1 swap=$2 avail; avail=$(mem_available)
+  if [ "$level" -ge "$MEM_ALERT_LEVEL" ] || [ "$avail" -lt "$AVAIL_MIN" ]; then
+    phone -key memory-low -every 30m "Gauss: memory $([ "$level" -ge "$MEM_ALERT_LEVEL" ] && echo "pressure $(pressure_name "$level")" || echo "almost out (${avail}% left)")" \
       "Background work may be killed. Biggest: $(top_memory). Close: $(memory_hint)."
+  fi
+  if swap_fast "$swap"; then
+    phone -key swap-fast -every 30m "Gauss: swap growing fast" \
+      "Swap jumped ${SWAP_FAST_GB}+ GB in a minute or two (now $(gb "$swap") GB): something is running away. Biggest: $(top_memory). Quit it if you can."
   fi
   # Swap stays until the work holding it ends, so this won't clear by itself; every 3 h, not hourly.
   if swap_high "$swap"; then
