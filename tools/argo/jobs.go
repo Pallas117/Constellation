@@ -84,14 +84,14 @@ func (s Store) jobRuns() []JobRun {
 	return out
 }
 
-// appendJob adds one run and, once the file holds twice jobsKeep, rewrites it
+// appendJob adds one run and, once that makes twice jobsKeep, rewrites the file
 // with the newest jobsKeep.
 func (s Store) appendJob(j JobRun) error {
 	if err := os.MkdirAll(s.Dir, 0o700); err != nil {
 		return err
 	}
 	b, _ := json.Marshal(j)
-	if runs := s.jobRuns(); len(runs) >= 2*jobsKeep {
+	if runs := s.jobRuns(); len(runs)+1 >= 2*jobsKeep {
 		var buf strings.Builder
 		for _, r := range append(runs[len(runs)-jobsKeep+1:], j) {
 			rb, _ := json.Marshal(r)
