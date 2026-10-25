@@ -16,7 +16,8 @@ stub sysctl 'case "$*" in
   *pressure_level*) echo "${LEVEL:-1}" ;;
   *) echo "total = 6144.00M  used = ${SWAPUSED:-1000}.00M  free = 0.00M  (encrypted)" ;;
 esac'
-stub ps 'echo "2097152 node"'
+stub ps 'case "$*" in *comm=*) echo "/opt/homebrew/bin/node" ;; *) echo "2097152 node" ;; esac'
+stub top 'printf "Processes: 600 total\nPID    MEM\n${TOPPID:-1177}  ${TOPMEM:-2048M}\n"'
 stub ioreg 'echo "\"AppleClamshellState\" = No"'
 # bootout/bootstrap flip a label in $KICKS.state (over $LOADED) and are logged in $KICKS
 stub launchctl 'S="$KICKS.state"; case "$1" in
@@ -101,8 +102,19 @@ DISKGB=20 run awake guard
 [ -z "$(alerts)" ]; expect "20 GB free disk: no alert" $?
 rm -f "$T/home/Library/Application Support/Gauss/balance-cleanup"
 DISKGB=13 run awake guard
-[ "$(alerts)" = "disk-low" ] && grep -qx "disk-cleanup --apply --if-below 15" "$T/actions"
-expect "13 GB free (the 2026-10-22 panic had 12-13 GB and LOW swap space): cleanup and a text, not silence" $?
+[ -z "$(alerts)" ] && grep -qx "disk-cleanup --apply --if-below 15" "$T/actions"
+expect "13 GB free with little swap (54% of the dev Mac's samples): quiet cleanup, no text" $?
+grep -q "balance: cleared\|disk-cleanup" "$T/actions"; expect "the quiet cleanup still runs" $?
+rm -f "$T/home/Library/Application Support/Gauss/balance-cleanup"
+DISKGB=13 SWAPUSED=4300 run awake guard
+grep -q "disk 13 GB free, swap 4.2 GB" "$T/log" && grep -q "Swap is growing on a short disk" "$T/log"
+expect "13 GB free with 4.2 GB swap (the 2026-10-22 panic's combination): a text that says why" $?
+DISKGB=9 run awake guard
+[ "$(alerts)" = "disk-low" ] && grep -q "below 10 GB" "$T/log"; expect "9 GB free: a text whatever the swap" $?
+out=$(DISKGB=13 run resilience 2>&1 | plain)
+[[ "$out" == *"✓ disk 13 GB free"* ]]; expect "resilience: 13 GB free with little swap passes" $?
+out=$(DISKGB=13 SWAPUSED=4300 run resilience 2>&1 | plain)
+[[ "$out" == *"✗ disk 13 GB free (need 10+, or 15+ while swap is over 4 GB)"* ]]; expect "resilience: 13 GB with high swap fails and says why" $?
 
 # Replay: a real overnight drain from the dev Mac's pmset log (57% down to 2%,
 # lid closed, on battery). Alert keys per reading; argo rate-limits repeats.
