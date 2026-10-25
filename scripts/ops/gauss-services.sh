@@ -74,10 +74,10 @@ SWAP_MAX_GB="${GAUSS_SWAP_MAX_GB:-4}"         # ... or at or above this many GB 
 # comes below DISK_ALERT_GB, or below DISK_MIN_GB while swap is high: the panic's combination.
 DISK_MIN_GB="${GAUSS_DISK_MIN_GB:-15}"
 DISK_ALERT_GB="${GAUSS_DISK_ALERT_GB:-12}"   # 8% of samples were under 12 GB; 4% under 8
-# mem-guard writes one sample every 10 min (gauss-tpm-watch): pressure, swap and footprint GB per
-# owner. Alerts read it to say what to close and whether pressure has lasted.
+# mem-guard writes one sample every 10 min (gauss-tpm-watch): footprint GB per owner, which the
+# alerts use to say what to close. Sustained warn and swap climbing over an hour are Argo's guard
+# texts (GAU-165: guard-memory, guard-swap), so this script doesn't repeat them.
 MEM_LOG="${GAUSS_MEM_LOG:-$HOME/Library/Logs/gauss/memory.tsv}"
-TIGHT_MIN="${GAUSS_TIGHT_MIN:-30}"   # warn for this many minutes with swap growing = short of memory
 # macOS's pressure level can still say normal while swap runs away (fl4p/macos-oom-guard, 2026), so
 # two faster signals: kern.memorystatus_level (% of memory available) under AVAIL_MIN, and swap
 # growing SWAP_FAST_GB within 2.5 min (the 2026-10-17..25 log's biggest rise was 2.7 GB in 10 min).
@@ -257,15 +257,6 @@ memory_hint() {
   fi
   echo "${hint:-$(top_memory)}"
 }
-# memory_tight: the last TIGHT_MIN minutes of samples were all at warn or worse and swap grew by
-# 1 GB or more. Warn alone is this Mac's normal state (49% of samples), so it is not the signal.
-memory_tight() {
-  [ -r "$MEM_LOG" ] || return 1
-  local since; since=$(date -v-"$((TIGHT_MIN + 5))"M '+%F %T' 2>/dev/null) || return 1
-  awk -F'\t' -v since="$since" -v need="$((TIGHT_MIN / 10))" 'NR == 1 {for (i = 1; i <= NF; i++) col[$i] = i; next}
-    $1 >= since {n++; if ($(col["level"]) < 2) calm = 1; if (n == 1) first = $(col["swap"]); last = $(col["swap"])}
-    END {exit !(n >= need && !calm && last - first >= 1)}' "$MEM_LOG"
-}
 # phys_footprint in MB, as Activity Monitor shows it. RSS leaves out compressed pages, which is
 # where a leaking helper's memory ends up (CursorUIViewService: RSS 4 MB vs footprint 12 MB idle).
 footprint_mb() { # footprint_mb <pid>
@@ -299,9 +290,6 @@ memory_alerts() { # memory_alerts <pressure level> <swap used MB>
   if swap_high "$swap"; then
     phone -key swap-high -every 3h "Gauss: swap $(gb "$swap") GB" \
       "The Mac is short of memory and won't recover by itself. Close: $(memory_hint)."
-  elif memory_tight; then
-    phone -key swap-high -every 3h "Gauss: memory tight for ${TIGHT_MIN}+ min" \
-      "Swap is growing ($(gb "$swap") GB). Close: $(memory_hint)."
   fi
 }
 

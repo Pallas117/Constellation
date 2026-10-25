@@ -111,23 +111,13 @@ echo "$(( $(date +%s) - 600 )) 1000" >"$T/swaplast"
 SWAPLAST="$T/swaplast" SWAPUSED=2200 run awake guard
 [ -z "$(alerts)" ]; expect "the same rise over 10 minutes is not a runaway" $?
 
-# mem-guard's samples: what to close, and pressure that lasts with swap growing
+# mem-guard's samples: what to close (sustained warn and swap climbing are Argo's guard texts, GAU-165)
 M="$T/home/Library/Logs/gauss/memory.tsv"; mkdir -p "${M%/*}"
 sample() { printf '%s\t%s\t40\t1.3\t1.8\t1.1\t2.8\t6\t%s\t15\t9.4\t8\t40\t2.2\t1.3\t1.2\t0.4\t0.1\t0.4\t0.4\t4.7\t5.5\t0.1\n' "$(date -v-"$1"M '+%F %T')" "$2" "$3"; }
 { printf 'ts\tlevel\tfree_pct\twired\tanon\tfile\tcmp_occ\tcmp_data\tswap\tdisk\tdemand\tram\tswapped_pct\tclaude_app\tcowork_vm\tclaude_code\tgauss_live\tdev\tvpn\twhatsapp\tbrowser\tmacos\tapps\n'
   sample 32 2 2.0; sample 21 2 2.4; sample 11 2 2.8; sample 1 2 3.2; } >"$M"
-SWAPUSED=3300 run awake guard
-[ "$(alerts)" = "swap-high" ] && grep -q "memory tight for 30+ min" "$T/log" \
-  && grep -q "Close: browser tabs 4.7 GB, Cowork 1.3 GB, idle Claude sessions 1.2 GB" "$T/log"
-expect "warn for 30 min with swap +1.2 GB: one text naming what to close, biggest first" $?
 SWAPUSED=4300 run awake guard
 grep -q "Gauss: swap 4.2 GB" "$T/log" && grep -q "Close: browser tabs 4.7 GB" "$T/log"; expect "high swap: the text says what to close" $?
-{ head -1 "$M"; sample 32 2 2.0; sample 21 1 2.4; sample 11 2 2.8; sample 1 2 3.2; } >"$M.t" && mv "$M.t" "$M"
-SWAPUSED=3300 run awake guard
-[ -z "$(alerts)" ]; expect "one normal sample in the window: not tight" $?
-{ head -1 "$M"; sample 32 2 3.0; sample 21 2 3.1; sample 11 2 3.0; sample 1 2 3.2; } >"$M.t" && mv "$M.t" "$M"
-SWAPUSED=3300 run awake guard
-[ -z "$(alerts)" ]; expect "warn with flat swap (this Mac's normal day): no text" $?
 touch -t "$(date -v-2H '+%Y%m%d%H%M')" "$M"
 SWAPUSED=4300 run awake guard
 grep -q "Close: node 2.0 GB" "$T/log"; expect "a stale sample (2 h old) is not used; falls back to the biggest process" $?
