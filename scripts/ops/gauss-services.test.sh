@@ -35,8 +35,11 @@ stub argo 'case "$1" in
   status) echo "${ARGOSTATUS:-● OK MY ts:on}" ;;
 esac'
 
-# balance stubs: the local model server is "running" when MLX=1; actions land in $ACTIONS
-stub pgrep '[ "${MLX:-0}" = 1 ] && [[ "$*" == *mlx_lm.server* && "$*" == *"--port ${MLXPORT:-8089}"* ]]'
+# balance stubs: the local model server is "running" when MLX=1; a helper named $LEAKY runs as
+# pid 4242 with footprint $LEAKFP; actions land in $ACTIONS
+stub pgrep 'if [ "$1" = -x ]; then [ -n "${LEAKY:-}" ] && [ "$2" = "$LEAKY" ] && echo 4242; exit; fi
+[ "${MLX:-0}" = 1 ] && [[ "$*" == *mlx_lm.server* && "$*" == *"--port ${MLXPORT:-8089}"* ]]'
+stub footprint '[ "$*" = "-p 4242" ] && printf "Gauss\n    phys_footprint: %s\n    phys_footprint_peak: 9 GB\n" "${LEAKFP:-12 MB}"'
 stub pkill 'echo "pkill $*" >>"$ACTIONS"'
 mkdir -p "$T/home/.local/bin"
 printf '#!/bin/bash\necho "local-coder $*" >>"$ACTIONS"\n' >"$T/home/.local/bin/local-coder"
@@ -50,6 +53,7 @@ run() { # run <args...>: gauss-services.sh with the stubs; alerts land in $LOG
     LOADED="${LOADED:-}" HEALTH="${HEALTH:-200}" HEALTH_FILE="${HEALTH_FILE:-}" GAUSS_DEPLOY_WAIT=0 DISKGB="${DISKGB:-50}" \
     GAUSS_DEV_DRY="${GAUSS_DEV_DRY:-0}" GAUSS_DEV_API_PORT="${GAUSS_DEV_API_PORT:-3101}" \
     SRC="${SRC:-AC Power}" BATT="${BATT:-80%; charging; present: true}" SD="${SD:-0}" \
+    LEAKY="${LEAKY:-}" LEAKFP="${LEAKFP:-12 MB}" \
     ARGOSTATUS="${ARGOSTATUS:-}" LEVEL="${LEVEL:-1}" FREE="${FREE:-50}" SWAPUSED="${SWAPUSED:-1000}" OLD_ARGO="${OLD_ARGO:-}" bash "$SCRIPT" "$@"
 }
 expect() { # expect <name> <condition-exit-code>
@@ -95,6 +99,10 @@ DISKGB=5 run awake guard
 [ "$(alerts)" = "disk-low" ]; expect "5 GB free disk: alert; a cleanup that frees nothing is not claimed" $?
 DISKGB=20 run awake guard
 [ -z "$(alerts)" ]; expect "20 GB free disk: no alert" $?
+rm -f "$T/home/Library/Application Support/Gauss/balance-cleanup"
+DISKGB=13 run awake guard
+[ "$(alerts)" = "disk-low" ] && grep -qx "disk-cleanup --apply --if-below 15" "$T/actions"
+expect "13 GB free (the 2026-10-22 panic had 12-13 GB and LOW swap space): cleanup and a text, not silence" $?
 
 # Replay: a real overnight drain from the dev Mac's pmset log (57% down to 2%,
 # lid closed, on battery). Alert keys per reading; argo rate-limits repeats.
@@ -254,13 +262,27 @@ DISKGB=5 run awake guard
 [ -z "$(acts)" ] && [ "$(alerts)" = "disk-low" ]; expect "disk 5 GB again within the hour: no second cleanup" $?
 rm -f "$T/home/Library/Application Support/Gauss/balance-cleanup"
 DISKGB=5 run awake guard
-[ "$(acts)" = "disk-cleanup --apply --if-below 8" ]; expect "disk 5 GB, an hour later: allowlisted cleanup runs" $?
+[ "$(acts)" = "disk-cleanup --apply --if-below 15" ]; expect "disk 5 GB, an hour later: allowlisted cleanup runs" $?
 MLX=1 LEVEL=4 GAUSS_BALANCE=0 run awake guard
 [ -z "$(acts)" ]; expect "GAUSS_BALANCE=0: balance does nothing" $?
 out=$(MLX=1 LEVEL=4 run balance --dry-run)
 [ -z "$(acts)" ] && [[ "$out" == *"would: pkill -f mlx_lm.server.*--port 8089"* ]]; expect "balance --dry-run only reports" $?
 out=$(run balance --dry-run)
 [[ "$out" == "balanced: nothing to do"* ]]; expect "healthy machine: nothing to do" $?
+
+# Leaking macOS helpers (GAU-183): restarted by name once past GAUSS_LEAK_MB (1024), whatever the pressure
+LEAKY=CursorUIViewService LEAKFP="3.7 GB" run awake guard
+[ "$(acts)" = "pkill -x CursorUIViewService" ] && [ "$(alerts)" = "balance" ]
+expect "a 3.7 GB CursorUIViewService is restarted at normal pressure, with one balance text" $?
+grep -q "restarted CursorUIViewService (3788 MB" "$T/home/Library/Logs/gauss/balance.log"; expect "the restart is logged with its size" $?
+LEAKY=CursorUIViewService LEAKFP="900 MB" run awake guard
+[ -z "$(acts)" ]; expect "a 900 MB helper is left alone" $?
+LEAKY=CursorUIViewService LEAKFP="512 KB" run awake guard
+[ -z "$(acts)" ]; expect "footprint in KB parses (left alone)" $?
+LEAKY=Safari LEAKFP="6 GB" run awake guard
+[ -z "$(acts)" ]; expect "an app that isn't on the leaky-helper list is never touched" $?
+out=$(LEAKY=CursorUIViewService LEAKFP="2 GB" run balance --dry-run)
+[ -z "$(acts)" ] && [[ "$out" == *"would: pkill -x CursorUIViewService"* ]]; expect "--dry-run only reports the restart" $?
 
 # resilience checklist
 echo '{"phone_to":"+60123456789"}' >"$T/home/.config/argo/config.json"
@@ -282,5 +304,15 @@ out=$(ARGOSTATUS="● WIFI_RISK MY ts:on" run resilience | plain)
 [[ "$out" == *"✓ network: ● WIFI_RISK MY ts:on (warning:"* ]]; expect "WIFI_RISK is a warning, not a failure" $?
 out=$(ARGOSTATUS="● REGION HK ts:on" run resilience | plain)
 [[ "$out" == *"✗ network: ● REGION HK"* ]]; expect "REGION still fails the network item" $?
+
+# check: the chatbot answer model is retired (GAU-184) unless its agent is installed again
+mkdir -p "$T/home/Library/LaunchAgents"; rm -f "$T/home/Library/LaunchAgents/uk.lightbound.gauss-model.plist"
+out=$(LOADED=uk.lightbound.gauss-backend run check 2>&1 | plain) # check reads the backend's working dir from launchd
+[[ "$out" == *"✓ answer model retired (GAU-184)"* ]] && [[ "$out" != *"answer model up"* ]]
+expect "check: no model agent installed reads as retired, not as a failure" $?
+touch "$T/home/Library/LaunchAgents/uk.lightbound.gauss-model.plist"
+out=$(LOADED=uk.lightbound.gauss-backend HEALTH_FILE= HEALTH=500 run check 2>&1 | plain)
+[[ "$out" == *"✗ answer model up"* ]]; expect "check: an installed model agent that doesn't answer still fails" $?
+rm -f "$T/home/Library/LaunchAgents/uk.lightbound.gauss-model.plist"
 echo "gauss-services: $pass passed, $failed failed"
 [ "$failed" = 0 ]
