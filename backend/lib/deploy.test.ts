@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { deploy, readHistory, rollback, type DeployOptions } from "../../scripts/release/deploy.ts";
+import { appendEvent, deploy, readHistory, redact, rollback, type DeployOptions } from "../../scripts/release/deploy.ts";
 
 const git = (cwd: string, ...a: string[]) => execFileSync("git", a, { cwd, encoding: "utf8" }).trim();
 
@@ -82,4 +82,33 @@ test("rollback: returns to the previous healthy release (GAU-123)", () => {
   assert.equal(rollback(f.o).ok, true);
   assert.equal(git(f.live, "describe", "--tags", "--exact-match"), "v1.1.0");
   assert.equal(readHistory(f.live).at(-1)!.action, "rollback");
+});
+
+test("deploy: deploy and rollback are events in events.jsonl with live_sha (GAU-164)", () => {
+  const f = fixture();
+  const eventsLog = path.join(mkdtempSync(path.join(os.tmpdir(), "events-")), "events.jsonl");
+  const o = { ...f.o, eventsLog };
+  f.release("v1.1.0", true);
+  assert.equal(deploy(o, "v1.1.0").ok, true);
+  f.release("v1.2.0", true);
+  f.setHealth(2);
+  assert.equal(deploy(o, "v1.2.0").ok, false);
+  const lines = readFileSync(eventsLog, "utf8").trim().split("\n").map((l) => JSON.parse(l) as Record<string, unknown>);
+  const want = ["ts", "host", "event", "label", "reason", "live_sha", "fallback_sha", "pressure", "swap_mb", "battery", "on_ac"];
+  for (const l of lines) assert.deepEqual(want.filter((k) => !(k in l)), [], "every line has the shell's fields");
+  assert.deepEqual(lines.map((l) => [l.event, l.label, l.result]), [["deploy", "v1.1.0", "ok"], ["deploy", "v1.2.0", "failed"], ["rollback", "v1.1.0", "failed"]], "health stays red in this fixture, so the rollback is recorded as failed");
+  const v110 = git(f.live, "rev-parse", "v1.1.0^{commit}");
+  assert.equal(lines[0].live_sha, v110);
+  assert.equal(lines[2].live_sha, v110, "after the rollback live is on v1.1.0 again");
+});
+
+test("events: secrets redacted and the log rotates by size (GAU-164)", () => {
+  assert.equal(redact("https://u:pw@h.example/p?token=abc api_key=s3cr3t"), "https://h.example/p?<redacted> api_key=<redacted>");
+  const f = fixture();
+  const file = path.join(mkdtempSync(path.join(os.tmpdir(), "events-")), "events.jsonl");
+  writeFileSync(file, "x".repeat(2048) + "\n");
+  appendEvent(file, f.live, { event: "deploy", label: "v1", reason: "see https://h/x?token=t" }, 1);
+  assert.ok(statSync(`${file}.1`).size > 2048, "the full file moved aside");
+  const e = JSON.parse(readFileSync(file, "utf8")) as Record<string, unknown>;
+  assert.equal(e.reason, "see https://h/x?<redacted>");
 });
