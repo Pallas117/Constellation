@@ -8,37 +8,47 @@
 //   /education/             Gauss for Education; its buttons follow EDU_SALES and EDU_STAFF_PRICE
 //   /constellation/workshops/  ask for an ethics, resilience or tech-leadership workshop for a team
 //   /app/*                  signed-in workspace and admin (Cloudflare Access in front; see app.js)
+//   /argo/                  Gauss Argo, for operators and staff
 //   /api/*                  launches.json, launches.ics, space-weather.json, health, POST apply,
 //                           POST stripe/webhook (signed by Stripe; unlocks paid plans)
 // and on the cron trigger, which refreshes the feeds into KV. Nothing here needs a secret.
+// RELEASE (release.js) decides how much of this is open: a public release answers 404 for /app/*, /argo/, POST apply
+// and the webhook, and its apply pages show an email route.
 import { FEEDS, configured, feedState, readFeed, refreshFeeds } from "./feeds.js";
 import { renderEduActions, renderEduPlans, renderEvents, renderConstellationDoor, renderEventIcs, renderGaussDoor, renderIcs, renderLaunches, renderPlans, renderSupport, renderWeather } from "./render.js";
 import { eduMode, eduStaffLabel } from "./tiers.js";
 import { plannerParams, renderPlanner } from "./timezones.js";
-import { handleApply, renderApplyForm, renderSent } from "./forms.js";
+import { handleApply, renderApplyForm, renderContact, renderSent } from "./forms.js";
 import { handleApp } from "./app.js";
 import { handleWebhook } from "./stripe.js";
 import { withSecurity } from "./headers.js";
+import { forRelease, isFull } from "./release.js";
 
 const applyPage = (kind) => () => ({
-  apply: (f, t, url) => (url.searchParams.get("sent") === "1" ? renderSent(kind) : renderApplyForm(kind, { plan: url.searchParams.get("plan") ?? "" })),
+  apply: (f, t, url, env) => {
+    const plan = url.searchParams.get("plan") ?? "";
+    if (!isFull(env)) return renderContact(kind, { plan });
+    return url.searchParams.get("sent") === "1" ? renderSent(kind) : renderApplyForm(kind, { plan });
+  },
 });
 const LIVE_PAGES = {
   "/": () => ({ "gauss-door": (f, t) => renderGaussDoor(f.weather, t), "constellation-door": (f, t) => renderConstellationDoor(f.launches, t) }),
-  "/gauss/": () => ({ plans: () => renderPlans(), "constellation-door": (f, t) => renderConstellationDoor(f.launches, t) }),
+  "/gauss/": () => ({ plans: (f, t, url, env) => renderPlans(isFull(env)), "constellation-door": (f, t) => renderConstellationDoor(f.launches, t) }),
   "/constellation/": () => ({
     launches: (f, t) => renderLaunches(f.launches, t),
     weather: (f, t) => renderWeather(f.weather, t),
     "gauss-door": (f, t) => renderGaussDoor(f.weather, t),
     events: (f, t) => renderEvents(f.events, t),
-    support: (f, t, url, env) => renderSupport(env.SUPPORT_URL),
+    support: (f, t, url, env) => renderSupport(isFull(env) ? env.SUPPORT_URL : ""),
   }),
   "/constellation/time/": () => ({ planner: (f, t, url) => renderPlanner(plannerParams(url, t)) }),
   "/gauss/apply/": applyPage("gauss"),
   "/constellation/apply/": applyPage("constellation"),
   "/education/apply/": applyPage("edu"),
   "/constellation/workshops/": applyPage("workshop"),
-  "/education/": () => ({ "edu-actions": (f, t, url, env) => renderEduActions(eduMode(env)), "edu-plans": (f, t, url, env) => renderEduPlans(eduMode(env), eduStaffLabel(env)) }),
+  // Gauss for Education stays "opening soon" in a public release: starting needs a sign-in.
+  "/education/": () => ({ "edu-actions": (f, t, url, env) => renderEduActions(eduMode(isFull(env) ? env : {})),
+    "edu-plans": (f, t, url, env) => renderEduPlans(eduMode(isFull(env) ? env : {}), eduStaffLabel(env)) }),
 };
 const NEEDS_FEEDS = new Set(["/", "/gauss/", "/constellation/"]);
 const ATTRIBUTION = {
@@ -76,11 +86,20 @@ function pageFiller(request, env) {
     if (!asset.ok || !(asset.headers.get("content-type") ?? "").includes("text/html")) return asset;
     let html = await asset.text();
     for (const [name, render] of Object.entries(renders)) html = fill(html, name, render);
+    html = forRelease(html, env);
     return respond(request.method === "HEAD" ? null : html, status, "text/html; charset=utf-8", extra);
   };
 }
 
+/** Shut in a public release: the site's ordinary 404 page, as for any path that doesn't exist. */
+async function closed(request, env) {
+  const page = await env.ASSETS.fetch(new Request(new URL("/404-closed/", request.url)));
+  return respond(request.method === "HEAD" ? null : await page.text(), 404, "text/html; charset=utf-8", { "cache-control": "no-store" });
+}
+const FULL_ONLY_API = new Set(["/api/stripe/webhook", "/api/apply"]);
+
 async function api(request, url, env, ctx) {
+  if (FULL_ONLY_API.has(url.pathname) && !isFull(env)) return json({ error: "not found" }, 404, "no-store");
   if (url.pathname === "/api/stripe/webhook") {
     if (request.method !== "POST") return respond("Method not allowed\n", 405, "text/plain; charset=utf-8", { allow: "POST" });
     return handleWebhook(request, env, respond);
@@ -112,12 +131,15 @@ async function api(request, url, env, ctx) {
     case "/api/space-weather":
       return json({ ...envelope("weather"), data: feeds.weather?.data ?? null });
     case "/api/health": {
-      // Pages read only the feeds they show; health reads the rest too, and says which wait on a setting.
-      const rest = await Promise.all(Object.keys(FEEDS).filter((n) => !(n in feeds)).map(async (n) => [n, await readFeed(env, n)]));
+      // Pages read only the feeds they show; health reads the rest this release uses too, and says which wait on a
+      // setting. source is the commit deployed (wrangler deploy --var SOURCE_SHA:...), so a URL can be matched to its code.
+      const names = Object.keys(FEEDS).filter((n) => !FEEDS[n].members || isFull(env));
+      const rest = await Promise.all(names.filter((n) => !(n in feeds)).map(async (n) => [n, await readFeed(env, n)]));
       const all = { ...feeds, ...Object.fromEntries(rest) };
-      const status = Object.fromEntries(Object.keys(FEEDS).map((n) => [n, configured(env, n) ? feedState(n, all[n], now) : { state: "not configured" }]));
+      const status = Object.fromEntries(names.map((n) => [n, configured(env, n) ? feedState(n, all[n], now) : { state: "not configured" }]));
       const ok = Object.entries(status).every(([n, s]) => FEEDS[n].optional || s.state === "live");
-      return json({ ok, feeds: status, checkedAt: new Date(now).toISOString() }, ok ? 200 : 503, "no-store");
+      const source = /^[0-9a-f]{40}$/.test(env.SOURCE_SHA ?? "") ? env.SOURCE_SHA : null;
+      return json({ ok, release: isFull(env) ? "full" : "public", source, feeds: status, checkedAt: new Date(now).toISOString() }, ok ? 200 : 503, "no-store");
     }
     default:
       return json({ error: "not found" }, 404, "no-store");
@@ -133,6 +155,10 @@ export default {
     if (pathname.startsWith("/api/")) {
       if (!ALLOWED.has(request.method)) return respond("Method not allowed\n", 405, "text/plain; charset=utf-8", { allow: "GET, HEAD, POST" });
       return api(request, url, env, ctx);
+    }
+    if (pathname === "/app" || pathname.startsWith("/app/") || pathname === "/argo/") {
+      if (!isFull(env)) return closed(request, env);
+      if (pathname === "/argo/") return env.ASSETS.fetch(request);
     }
     if (pathname === "/app" || pathname.startsWith("/app/")) {
       if (!ALLOWED.has(request.method)) return respond("Method not allowed\n", 405, "text/plain; charset=utf-8", { allow: "GET, HEAD, POST" });

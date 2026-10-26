@@ -238,20 +238,22 @@ export function renderEduPlans(mode, staffLabel) {
     plan("Students", "Student", "Free", "With your university email, for a year at a time. Renew with the same check.", start("Start free", false), true) +
     plan("Staff and research", "Staff and research", staffLabel, "Month to month: cancel any time, and a full refund if you're not satisfied. For lecturers, teaching assistants and research groups.", staffLabel === "Price TBC" ? `<span class="btn ghost" aria-disabled="true">Price TBC</span>` : start("Start")) +
     plan("Departments", "Department licence", "Quoted per year", "Every course in a department. Paid by invoice, 30 days to pay.", `<a class="btn ghost" href="/education/apply/">Ask for a quote</a>`) +
-    `</ol><p class="note">For teaching and non-commercial research. Gauss is advisory: it shows evidence and never commands a spacecraft. Already signed up? <a href="/app/">Sign in</a>.</p>`;
+    `</ol><p class="note">For teaching and non-commercial research. Gauss is advisory: it shows evidence and never commands a spacecraft.<!--full--> Already signed up? <a href="/app/">Sign in</a>.<!--/full--></p>`;
 }
 
-export function renderPlans() {
+// The public release (release.js) offers pilots only: the later plans are shown, with prices, as in development.
+export function renderPlans(full = true) {
   const cards = TIERS.map((t) => {
     const first = t.id === "pilot";
-    const cta = first ? "Start with a pilot" : t.billing === "invoice" ? `Scope ${t.name.toLowerCase()}` : `Apply for ${t.name}`;
-    return `<li class="plan${first ? " now" : ""}"><span class="label">${esc(t.stage)}</span><h3>${esc(t.name)}</h3>` +
+    const cta = first ? "Start with a pilot" : !full ? `Ask about ${t.name}` : t.billing === "invoice" ? `Scope ${t.name.toLowerCase()}` : `Apply for ${t.name}`;
+    return `<li class="plan${first ? " now" : ""}"><span class="label">${esc(first || full ? t.stage : "In development")}</span><h3>${esc(t.name)}</h3>` +
       `<p class="price">${esc(priceLabel(t))}</p><p>${esc(t.outcome)}</p>` +
       `<ul class="ticks">${t.features.map((id) => `<li>${esc(FEATURES[id])}</li>`).join("")}</ul><p class="m">${esc(t.entry)}</p>` +
       `<p class="actions"><a class="btn${first ? "" : " ghost"}" href="/gauss/apply/?plan=${esc(t.id)}">${esc(cta)}</a></p></li>`;
   }).join("");
   return `<ol class="plans">${cards}</ol>` +
     `<p class="note">Your price is a fixed quote inside the range, agreed from your scope before you pay. Project work is billed by milestone. ` +
-    `Every plan is advisory: Gauss shows evidence and never commands a spacecraft. Already a customer? <a href="/app/">Sign in</a>.</p>` +
+    `Every plan is advisory: Gauss shows evidence and never commands a spacecraft. ` +
+    (full ? `Already a customer? <a href="/app/">Sign in</a>.</p>` : `Today we take on design-partner pilots; the later plans are in development and follow a pilot.</p>`) +
     `<p class="note"><strong>Later, a strategic option:</strong> Federated Bridge Node, a hosted-payload or in-orbit demonstration, considered only after the stages before it. Future work, not on sale.</p>`;
 }

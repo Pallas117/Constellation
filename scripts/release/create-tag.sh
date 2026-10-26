@@ -42,6 +42,12 @@ if git ls-remote --tags origin "refs/tags/${TAG}" | grep -q "${TAG}"; then
   exit 1
 fi
 
+# Release records (GAU-69): every tag has its CHANGELOG entry, and its SBOM passes the licence check.
+if ! awk -v h="## [${TAG#v}]" 'index($0, h) == 1 {f = 1} END {exit !f}' CHANGELOG.md 2>/dev/null; then
+  echo "Error: CHANGELOG.md has no '## [${TAG#v}]' entry. Add one (move the Unreleased entries under it) before tagging." >&2
+  exit 1
+fi
+
 # Configuration management (GAU-123): only verified commits are tagged. The verify summary goes into
 # the annotated tag, and `npm run deploy` refuses tags without it.
 echo "Running the verification gate (npm run verify)..."
@@ -58,6 +64,12 @@ if ! grep -q "VERIFY PASSED at ${HEAD_SHORT}" <<<"${SUMMARY}"; then
   exit 1
 fi
 
+echo "Writing the SBOM and checking third-party licences (npm run release:sbom)..."
+if ! npm run -s release:sbom; then
+  echo "Error: the licence check failed; not tagging ${TAG}." >&2
+  exit 1
+fi
+
 MESSAGE="Release ${TAG}
 
 Verification (npm run verify):
@@ -67,3 +79,4 @@ git tag -a "${TAG}" -m "${MESSAGE}"
 git push origin "${TAG}"
 
 echo "Created and pushed tag: ${TAG}"
+echo "Attach the release records: gh release create ${TAG} --verify-tag --notes-from-tag build/sbom/*"
