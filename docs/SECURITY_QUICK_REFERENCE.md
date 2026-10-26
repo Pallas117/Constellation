@@ -48,7 +48,7 @@ npm run check:security-compliance # Compliance check
 | Command | Purpose |
 |---------|---------|
 | `npm run check:security-compliance` | Validate security settings |
-| `npm run test:rbac` | Test RBAC access (requires Supabase) |
+| `npm test` | Unit/integration tests, including RBAC (in process) |
 | `npm run audit:adherence` | Full code adherence audit |
 
 ### Release
