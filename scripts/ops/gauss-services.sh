@@ -14,7 +14,8 @@
 #   scripts/ops/gauss-services.sh uninstall                unload + remove agents
 #   scripts/ops/gauss-services.sh dev <checkout-dir>        run a dev/R&D checkout beside live (:3101 API, :5174 site)
 #   scripts/ops/gauss-services.sh fallback prepare <dir> [sha]|on|off|status   cold-standby last-known-good build
-#   scripts/ops/gauss-services.sh deploy <commit> [fallback-dir]   switch live to <commit>; rolls back by itself if it doesn't come up
+#   scripts/ops/gauss-services.sh deploy <commit> [fallback-dir] [--emergency <reason>]   switch live to <commit>; rolls back by itself if it doesn't come up
+#   scripts/ops/gauss-services.sh gates record <checkout-dir>|list   run the five gates on a clean checkout; deploy needs a passing record
 #   scripts/ops/gauss-services.sh events [--since 2h] [--json]     timeline: watchdog, failover, deploys, alerts, boots (events.jsonl)
 #
 # Three layers (GAU-158): dev (any other checkout, foreground, own ports and data,
@@ -26,7 +27,11 @@
 # switches, so the standby is always the previous version (by hand:
 # `fallback prepare <dir>`, default sha: the live checkout's HEAD).
 #
-# deploy (run the gates on the commit first): refuses under memory pressure or over
+# deploy (GAU-162) refuses a commit that isn't on origin/main or whose exact tree has no
+# passing gate record (`gates record`), unless `--emergency <reason>`, which texts the phone.
+# Each deploy and rollback is a line in deploy-history.jsonl (by, from, to, tree, gates,
+# fallback, result) and an event; `check` says whether live is a recorded deploy.
+# It also refuses under memory pressure or over
 # local code changes in live (live's data files are kept), refreshes the fallback,
 # checks out the commit, runs npm ci only if package-lock.json changed, reinstalls and
 # waits for what a deploy can break (backend, site, site -> API, same-origin build).
@@ -75,6 +80,13 @@ WATCH_KICKS="$WATCH_DIR/watch-kicks"         # "<label> <epoch>" per watchdog re
 WATCH_MAX_KICKS=3
 DEPLOY_LOCK="$WATCH_DIR/deploying" # held by deploy; the guard leaves the services alone meanwhile
 DEPLOY_WAIT="${GAUSS_DEPLOY_WAIT:-90}" # seconds a deploy waits for the services to come up
+DEPLOY_HISTORY="$WATCH_DIR/deploy-history.jsonl" # every deploy and rollback; never rotated (a line per deploy)
+DEPLOY_EMERGENCY="" # set by `deploy --emergency <reason>`
+# Gate records (GAU-162), keyed by tree hash: what was tested is exactly what is deployed, even
+# after a merge commit or a rebase that leaves the tree unchanged (GAU-161 finding 4).
+GATES_DIR="$WATCH_DIR/gates"
+GATE_LOCK="${GAUSS_GATE_LOCK:-$HOME/.local/state/gauss-gate.lock}" # shared with agents running gates by hand
+GATES=(test:ops test build quality:full verify)
 # balance: safe, reversible load shedding (GAU-126). GAUSS_BALANCE=0 turns it off.
 BALANCE="${GAUSS_BALANCE:-1}"
 LOCAL_CODER="${GAUSS_LOCAL_CODER:-$HOME/.local/bin/local-coder}"   # optional on-device model server
@@ -557,6 +569,122 @@ install_agents() { # install_agents <checkout-dir>: build the site, write and (r
   done
 }
 
+# Who ran it: GAUSS_BY if set, else the user, marked when it ran inside a Claude Code session.
+deployer() { if [ -n "${GAUSS_BY:-}" ]; then echo "$GAUSS_BY"; elif [ -n "${CLAUDECODE:-}" ]; then echo "claude-code ($(id -un))"; else id -un; fi; }
+
+# The gates are heavy for an 8 GB Mac (a hard reset on 2026-10-21 under memory pressure), so
+# each waits for normal pressure and takes the lock other agents use for the same gates.
+gate_lock() {
+  local level _; mkdir -p "$(dirname "$GATE_LOCK")"
+  until read -r level _ < <(memory_stats) && [ "$level" = 1 ] && mkdir "$GATE_LOCK" 2>/dev/null; do sleep 20; done
+}
+
+gates_record() { # gates_record <checkout-dir>: run the gates on a clean checkout and record the result by tree
+  local dir sha tree g rc
+  dir=$(cd "${1:?usage: $0 gates record <checkout-dir>}" && pwd) || return 1
+  [ -f "$dir/backend/server.ts" ] && [ -d "$dir/node_modules" ] || { echo "$dir is not a Gauss checkout with node_modules" >&2; return 1; }
+  # A record vouches for a tree, so nothing uncommitted may be in it.
+  [ -z "$(git -C "$dir" status --porcelain)" ] || { echo "$dir has uncommitted or untracked files: commit or stash them first." >&2; return 1; }
+  sha=$(git -C "$dir" rev-parse HEAD) && tree=$(git -C "$dir" rev-parse 'HEAD^{tree}') || return 1
+  GATES_TMP=$(mktemp -d); local tmp=$GATES_TMP # global: the EXIT trap runs after this function's locals are gone
+  # Release the lock on exit only while holding it: an interrupted wait must not free another agent's lock.
+  trap '[ "${GATES_HOLD:-0}" = 1 ] && rmdir "$GATE_LOCK" 2>/dev/null; rm -rf "$GATES_TMP"' EXIT
+  for g in "${GATES[@]}"; do
+    gate_lock; GATES_HOLD=1
+    echo "gate $g ..."
+    rc=0; (cd "$dir" && PATH="$(dirname "$NODE"):$PATH" npm run "$g" >"$tmp/$g.log" 2>&1) || rc=$?
+    rmdir "$GATE_LOCK" 2>/dev/null || true; GATES_HOLD=0
+    echo "$rc" >"$tmp/$g.rc"
+  done
+  [ "$(git -C "$dir" rev-parse HEAD)" = "$sha" ] && [ -z "$(git -C "$dir" status --porcelain)" ] \
+    || { echo "$dir changed while the gates ran; not recording." >&2; return 1; }
+  local json; json=$(python3 -Ic '
+import json, os, re, sys
+d, sha, tree, by, at = sys.argv[1:6]
+log = lambda g: open(os.path.join(d, g + ".log"), encoding="utf-8", errors="replace").read()
+rc = lambda g: int(open(os.path.join(d, g + ".rc")).read())
+def last(pat, text, conv=int):
+    m = re.findall(pat, text, re.M)
+    return conv(m[-1]) if m else None
+ops, t, v = log("test:ops"), log("test"), log("verify")
+r = {"sha": sha, "tree": tree, "by": by, "at": at,
+     "test_ops": {"exit": rc("test:ops"), "pass": last(r"gauss-services: (\d+) passed", ops), "fail": last(r"gauss-services: \d+ passed, (\d+) failed", ops), "go_ok": len(re.findall(r"^ok\s", ops, re.M))},
+     "test": {"exit": rc("test"), "tests": last(r"^\S* ?tests (\d+)$", t), "pass": last(r"^\S* ?pass (\d+)$", t), "fail": last(r"^\S* ?fail (\d+)$", t)},
+     "build": {"exit": rc("build")},
+     "quality": {"exit": rc("quality:full")},
+     "verify": {"exit": rc("verify"), "vcrm": last(r"VCRM: (\d+/\d+)", v, str), "fmea": last(r"FMEA: (\d+/\d+)", v, str), "passed_at": last(r"VERIFY PASSED at (\w+)", v, str)}}
+r["passed"] = all(r[k]["exit"] == 0 for k in ("test_ops", "test", "build", "quality", "verify")) \
+    and r["test"]["fail"] == 0 and r["test_ops"]["fail"] == 0 and sha.startswith(r["verify"]["passed_at"] or "-")
+print(json.dumps(r, ensure_ascii=False))
+' "$tmp" "$sha" "$tree" "$(deployer)" "$(date -u +%Y-%m-%dT%H:%M:%SZ)") || return 1
+  mkdir -p "$GATES_DIR"; printf '%s\n' "$json" >"$GATES_DIR/$tree.json"
+  gates_summary "$GATES_DIR/$tree.json"
+  gate_record "$tree" >/dev/null
+}
+
+gates_summary() { # gates_summary <record file>: one line
+  python3 -Ic '
+import json, sys
+r = json.load(open(sys.argv[1]))
+t, o, v = r.get("test") or {}, r.get("test_ops") or {}, r.get("verify") or {}
+fails = [k for k in ("test_ops", "test", "build", "quality", "verify") if (r.get(k) or {}).get("exit") not in (0, None)]
+print("%s %s (tree %s) by %s at %s: npm test %s/%s, test:ops %s passed, build %s, quality %s, VCRM %s, FMEA %s" % (
+    "PASSED" if r.get("passed") else "FAILED (" + ", ".join(fails or ["counts"]) + ")", r["sha"][:7], r["tree"][:7], r.get("by"), r.get("at"),
+    t.get("pass"), t.get("tests"), o.get("pass"), "ok" if (r.get("build") or {}).get("exit") == 0 else "failed",
+    "ok" if (r.get("quality") or {}).get("exit") == 0 else "failed", v.get("vcrm"), v.get("fmea")))
+' "$1"
+}
+
+gate_record() { # gate_record <tree>: print the passing record for this exact tree as one JSON line, or fail
+  [ -f "$GATES_DIR/$1.json" ] || return 1
+  python3 -Ic '
+import json, sys
+r = json.load(open(sys.argv[1]))
+if r.get("passed") is not True or r.get("tree") != sys.argv[2]:
+    sys.exit(1)
+print(json.dumps(r, ensure_ascii=False))
+' "$GATES_DIR/$1.json" "$1"
+}
+
+record_deploy() { # record_deploy <deploy|rollback> <ok|failed> <from> <to> <tree> <gates json|""> <reason>
+  local ev=$1 result=$2 from=$3 to=$4 tree=$5 gates=${6:-null} reason=$7 fb="" by; by=$(deployer)
+  ready_record && fb=$READY_SHA || true
+  mkdir -p "$WATCH_DIR"
+  printf '{"ts":"%s","action":%s,"by":%s,"from":%s,"to":%s,"tree":%s,"gates":%s,"fallback":%s,"result":%s,"emergency":%s}\n' \
+    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$(json_str "$ev")" "$(json_str "$by")" "$(json_str "$from")" "$(json_str "$to")" \
+    "$(json_str "$tree")" "$gates" "$(json_opt "$fb")" "$(json_str "$result")" "$(json_opt "$DEPLOY_EMERGENCY")" >>"$DEPLOY_HISTORY"
+  event "$ev" "${to:0:7}" "$reason" by="$by" from="$from" to="$to" tree="$tree" gates:="$gates" \
+    fallback="$fb" result="$result" emergency="$DEPLOY_EMERGENCY"
+}
+
+deploy_state() { # "ok|no <description>" for status and check: is what runs in live a recorded deploy?
+  local live head; live=$(live_dir) && [ -d "$live" ] && head=$(git -C "$live" rev-parse HEAD 2>/dev/null) \
+    || { echo "no live: not installed"; return 0; }
+  python3 -Ic '
+import json, sys
+from datetime import datetime, timezone
+head, rows = sys.argv[2], []
+try:
+    rows = [json.loads(l) for l in open(sys.argv[1]) if l.strip()]
+except (OSError, ValueError):
+    pass
+ok = [r for r in rows if r.get("to") == head and r.get("result") == "ok"]
+if not ok:
+    print("no live = %s has no deploy record (switched by hand?): deploy it with gauss-services.sh deploy" % head[:7]); sys.exit()
+r = ok[-1]
+when = datetime.strptime(r["ts"], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc).astimezone().strftime("%Y-%m-%d %H:%M")
+what = "rolled back to" if r.get("action") == "rollback" else "deployed"
+if r.get("emergency"):
+    print("no live = %s, %s %s by %s in an EMERGENCY (%s): no gate record" % (head[:7], what, when, r.get("by"), r["emergency"]))
+elif r.get("gates"):
+    g = r["gates"]
+    print("ok live = %s, %s %s by %s, gates recorded (npm test %s, test:ops %s, VCRM %s)" % (head[:7], what, when, r.get("by"),
+          (g.get("test") or {}).get("pass"), (g.get("test_ops") or {}).get("pass"), (g.get("verify") or {}).get("vcrm")))
+else:
+    print("no live = %s, %s %s by %s, no gate record" % (head[:7], what, when, r.get("by")))
+' "$DEPLOY_HISTORY" "$head"
+}
+
 # What a deploy can break, and so what decides a rollback. The rest of `check`
 # (network, space weather, memory service, Argo) can be off for reasons a rollback
 # wouldn't fix, so it is reported after a deploy, never acted on.
@@ -588,6 +716,16 @@ deploy() { # deploy <commit> [fallback-dir]
     || { echo "Unknown commit '$1' in $live." >&2; return 1; }
   prev=$(git -C "$live" rev-parse HEAD) || return 1
   [ "$sha" != "$prev" ] || { echo "Live is already at ${sha:0:7}."; return 0; }
+  # Only merged code with gates recorded for its exact tree, unless a person says why not.
+  local tree gates="" prev_tree prev_gates=""
+  tree=$(git -C "$live" rev-parse "$sha^{tree}") && prev_tree=$(git -C "$live" rev-parse "$prev^{tree}") || return 1
+  gates=$(gate_record "$tree") || gates=""
+  prev_gates=$(gate_record "$prev_tree") || prev_gates=""
+  if [ -z "$DEPLOY_EMERGENCY" ]; then
+    git -C "$live" merge-base --is-ancestor "$sha" origin/main 2>/dev/null \
+      || { echo "${sha:0:7} is not on origin/main: merge it first (or --emergency <reason>)." >&2; return 1; }
+    [ -n "$gates" ] || { echo "No passing gate record for ${sha:0:7} (tree ${tree:0:7}): run '$0 gates record <checkout at ${sha:0:7}>' first (or --emergency <reason>)." >&2; return 1; }
+  fi
   read -r level _ < <(memory_stats)
   if [ "$level" -ge "$MEM_SHED_LEVEL" ]; then
     echo "Memory pressure is $(pressure_name "$level"): not deploying now (npm ci and the build need headroom). Retry when normal." >&2; return 1
@@ -601,6 +739,11 @@ deploy() { # deploy <commit> [fallback-dir]
     touch "$DEPLOY_LOCK" # left by a deploy that died
   fi
   trap 'rmdir "$DEPLOY_LOCK" 2>/dev/null || true' EXIT
+  if [ -n "$DEPLOY_EMERGENCY" ]; then
+    echo "EMERGENCY deploy of ${sha:0:7} by $(deployer): $DEPLOY_EMERGENCY (origin/main and gate checks skipped)"
+    phone -key emergency-deploy -every 10m "Gauss: emergency deploy" \
+      "${sha:0:7} by $(deployer) without the usual checks: $DEPLOY_EMERGENCY"
+  fi
 
   # The standby becomes what runs now, if it is healthy: never swap a good fallback for a broken live.
   [ -z "$fbdir" ] && ready_record && fbdir=$READY_DIR
@@ -620,23 +763,23 @@ deploy() { # deploy <commit> [fallback-dir]
     || { echo "Checkout refused (a local data file conflicts with ${sha:0:7}?): nothing changed." >&2; return 1; }
   if switch_live "$live" "$prev" "$sha" && deploy_ready "$live" "$DEPLOY_WAIT"; then
     echo "$(date '+%F %T') deployed ${sha:0:7} (was ${prev:0:7})" >>"$LOGS/deploy.log"
-    event deploy "${sha:0:7}" "deployed ${sha:0:7} (was ${prev:0:7})" from="$prev" to="$sha" result=ok
+    record_deploy deploy ok "$prev" "$sha" "$tree" "$gates" "deployed ${sha:0:7} (was ${prev:0:7})"
     echo "Deployed ${sha:0:7}. Full checklist (for information; only the services decide a rollback):"
     check || true
     return 0
   fi
   echo "${sha:0:7} didn't come up within ${DEPLOY_WAIT}s: rolling back to ${prev:0:7} ..." >&2
-  event deploy "${sha:0:7}" "${sha:0:7} didn't come up within ${DEPLOY_WAIT}s" from="$prev" to="$sha" result=failed
+  record_deploy deploy failed "$prev" "$sha" "$tree" "$gates" "${sha:0:7} didn't come up within ${DEPLOY_WAIT}s"
   if switch_live "$live" "$sha" "$prev" && deploy_ready "$live" "$DEPLOY_WAIT"; then
     echo "$(date '+%F %T') ${sha:0:7} failed, rolled back to ${prev:0:7}" >>"$LOGS/deploy.log"
-    event rollback "${prev:0:7}" "${sha:0:7} failed, rolled back to ${prev:0:7}" from="$sha" to="$prev" result=ok
+    record_deploy rollback ok "$sha" "$prev" "$prev_tree" "$prev_gates" "${sha:0:7} failed, rolled back to ${prev:0:7}"
     phone -key deploy -every 10m "Gauss: deploy rolled back" \
       "${sha:0:7} didn't come up; live is back on ${prev:0:7}. Logs: ~/Library/Logs/gauss/backend.log"
     echo "Rolled back: live is on ${prev:0:7} again." >&2
     return 1
   fi
   echo "$(date '+%F %T') ${sha:0:7} failed and rollback to ${prev:0:7} failed" >>"$LOGS/deploy.log"
-  event rollback "${prev:0:7}" "${sha:0:7} failed and rollback to ${prev:0:7} failed" from="$sha" to="$prev" result=failed
+  record_deploy rollback failed "$sha" "$prev" "$prev_tree" "$prev_gates" "${sha:0:7} failed and rollback to ${prev:0:7} failed"
   fallback_on "deploy of ${sha:0:7} failed and rolling back to ${prev:0:7} failed too" \
     || phone -key deploy -every 10m "Gauss: down after a deploy" "${sha:0:7} failed, rollback failed and there is no fallback. Needs a person."
   return 1
@@ -890,7 +1033,8 @@ except Exception:
     print("no space-weather data unavailable")
 ' 2>/dev/null || echo "no space-weather data unavailable")
   item "${fresh%% *}" "${fresh#* }"
-  local dir; dir=$(launchctl print "$UID_DOMAIN/uk.lightbound.gauss-backend" 2>/dev/null | awk -F'= ' '/working directory =/{print $2; exit}')
+  # || true: with the backend not loaded, launchctl fails and pipefail + set -e would end the checklist here.
+  local dir; dir=$(launchctl print "$UID_DOMAIN/uk.lightbound.gauss-backend" 2>/dev/null | awk -F'= ' '/working directory =/{print $2; exit}' || true)
   local report; report=$(python3 -Ic '
 import json, sys
 from datetime import datetime, timezone
@@ -936,6 +1080,7 @@ except Exception:
     item ok "answer model off (retired 2026-10-22, GAU-184; opt-in with GAUSS_BRAIN_MODEL_SERVICE=1)"
   fi
   local fb; fb=$(fallback_state); item "${fb%% *}" "${fb#* }"
+  local dep; dep=$(deploy_state); item "${dep%% *}" "${dep#* }"
   [ $fail = 0 ] && echo "Ready to demo." || echo "Not ready: fix the ✗ items above."
   return $fail
 }
@@ -986,6 +1131,7 @@ case "${1:-}" in
     health
     printf 'awake    %s\n' "$(awake_state | cut -d' ' -f2-)"
     printf 'fallback %s\n' "$(fallback_state | cut -d' ' -f2-)"
+    printf 'deploy   %s\n' "$(deploy_state | cut -d' ' -f2-)"
     ;;
   restart)
     for l in "${SERVICES[@]}"; do launchctl kickstart -k "$UID_DOMAIN/$l"; done
@@ -996,7 +1142,21 @@ case "${1:-}" in
     dev_run "${2:-}"
     ;;
   deploy)
-    deploy "${2:-}" "${3:-}"
+    shift; args=()
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --emergency) DEPLOY_EMERGENCY=${2:-}; [ -n "$DEPLOY_EMERGENCY" ] || { echo "--emergency needs a reason" >&2; exit 2; }; shift ;;
+        *) args+=("$1") ;;
+      esac
+      shift
+    done
+    deploy "${args[0]:-}" "${args[1]:-}"
+    ;;
+  gates)
+    case "${2:-}" in
+      record) gates_record "${3:-}" ;;
+      *) for f in "$GATES_DIR"/*.json; do [ -f "$f" ] && gates_summary "$f"; done; true ;;
+    esac
     ;;
   events)
     events_show "${2:-}" "${3:-}" "${4:-}"
@@ -1019,7 +1179,7 @@ case "${1:-}" in
     echo "Gauss services removed. Logs kept in $LOGS."
     ;;
   *)
-    sed -n '2,18p' "$0"
+    sed -n '2,19p' "$0"
     exit 2
     ;;
 esac
