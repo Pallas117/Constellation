@@ -3,8 +3,11 @@
 # `resilience` checklist. System tools are stubbed on PATH and HOME is a temp
 # dir, so nothing touches real power settings or sends a real alert.
 #   bash scripts/ops/gauss-services.test.sh      (npm run test:ops)
+#   GAUSS_OPS_JUNIT=<file> also writes a JUnit report, one test case per expect, named
+#   exactly as the expect: `npm run verify` matches REQ-OPS and FMEA evidence by name.
 set -uo pipefail
 SCRIPT="$(cd "$(dirname "$0")" && pwd)/gauss-services.sh"
+JUNIT="${GAUSS_OPS_JUNIT:-}"; [ -z "$JUNIT" ] || . "$(dirname "$SCRIPT")/junit.sh"
 T=$(mktemp -d); trap 'rm -rf "$T"' EXIT
 mkdir -p "$T/bin" "$T/home/.config/argo" "$T/home/.claude" "$T/home/.local/share/mesh-heal"
 pass=0; failed=0
@@ -59,6 +62,7 @@ run() { # run <args...>: gauss-services.sh with the stubs; alerts land in $LOG
 }
 expect() { # expect <name> <condition-exit-code>
   if [ "$2" = 0 ]; then pass=$((pass + 1)); else failed=$((failed + 1)); echo "FAIL: $1"; sed 's/^/    alerts: /' "$T/log"; fi
+  [ -z "$JUNIT" ] || junit_case "$1" "$2" "$(sed 's/^/alerts: /' "$T/log")"
 }
 alerts() { cut -d' ' -f2 "$T/log" | tr '\n' ' ' | sed 's/ $//'; } # the -key of each alert sent
 plain() { sed $'s/\033\\[[0-9;]*m//g'; }                          # drop the ✓/✗ colours
@@ -146,6 +150,10 @@ HEALTH=000 LOADED="uk.lightbound.gauss-backend" run awake guard
 HEALTH=200 LOADED="uk.lightbound.gauss-backend" run awake guard
 HEALTH=000 LOADED="uk.lightbound.gauss-backend" run awake guard
 [ -z "$(kicked)" ]; expect "a recovery resets the strike count" $?
+old=$(( $(date +%s) - 3700 )); : >"$WD/watch-kicks"; rm -f "$WD"/*.strikes # 3 restarts, all over an hour ago
+for _ in 1 2 3; do echo "uk.lightbound.gauss-backend $old" >>"$WD/watch-kicks"; done
+for _ in 1 2; do HEALTH=000 LOADED="uk.lightbound.gauss-backend" run awake guard; done
+[ "$(kicked)" = "uk.lightbound.gauss-backend" ] && [ -z "$(alerts)" ]; expect "restarts over an hour old don't count: restarted again, no alert" $?
 
 # Fallback (GAU-158): when live is out of restarts and still down, swap in the cold standby
 # A space in the fallback path, like the real "Gauss Aurora.worktrees/fallback": the ready
@@ -163,6 +171,17 @@ for _ in 1 2; do HEALTH=000 LOADED="$B" run awake guard; done
 echo "abc1234def $FBDIR $(date +%s)" >"$FB/ready"
 touch "$FB/uk.lightbound.gauss-fallback-backend.plist" "$FB/uk.lightbound.gauss-fallback-frontend.plist"
 out=$(run fallback); [[ "$out" == *"fallback ready: abc1234"* ]]; expect "fallback status: ready although its path has a space" $?
+# A record that is corrupt, cut short, or names a checkout that is gone is no fallback: never a
+# half failover (live booted out with nothing in its place), and the phone still hears.
+good=$(cat "$FB/ready"); bad=0
+for rec in "abc1234def" "not a ready record" "abc1234def $T/gone checkout $(date +%s)"; do
+  echo "$rec" >"$FB/ready"
+  [[ "$(run fallback)" == *"none prepared (warning"* ]] || bad=1
+  for _ in 1 2; do HEALTH=000 LOADED="$B" run awake guard; done
+  [ -z "$(kicked)" ] && [ ! -e "$T/kicks.state" ] && grep -q "gauss-backend keeps failing" "$T/log" || bad=1
+done
+echo "$good" >"$FB/ready"
+[ $bad = 0 ]; expect "a corrupt, cut-short or orphaned fallback record reads as none prepared: no half failover, still alerts" $?
 out=$(run dev "$FBDIR" 2>&1); [[ "$out" == *"is the fallback checkout"* ]]; expect "dev refuses the fallback checkout (path with a space)" $?
 for _ in 1 2; do HEALTH=000 LOADED="$B uk.lightbound.gauss-frontend" run awake guard; done
 [ "$(kicked)" = "bootout $B bootout uk.lightbound.gauss-frontend bootout uk.lightbound.gauss-fallback-backend bootstrap uk.lightbound.gauss-fallback-backend bootout uk.lightbound.gauss-fallback-frontend bootstrap uk.lightbound.gauss-fallback-frontend" ] \
@@ -171,6 +190,10 @@ expect "out of restarts and still down: fails over to the fallback and texts the
 out=$(LOADED="$B" run status); [[ "$out" == *"fallback serving from fallback since"* ]]; expect "status shows the fallback is serving" $?
 for _ in 1 2; do HEALTH=000 LOADED="$B" run awake guard; done
 [ "$(kicked)" = "uk.lightbound.gauss-fallback-backend uk.lightbound.gauss-fallback-frontend" ]; expect "on fallback: the guard restarts the fallback, never fails over again" $?
+n=$(date +%s); for l in uk.lightbound.gauss-fallback-backend uk.lightbound.gauss-fallback-frontend; do printf '%s %s\n' "$l" "$n" "$l" "$n" >>"$WD/watch-kicks"; done # 3 each this hour
+for _ in 1 2; do HEALTH=000 LOADED="$B" run awake guard; done
+[ -z "$(kicked)" ] && [ "$(alerts)" = "watch-uk.lightbound.gauss-fallback-backend watch-uk.lightbound.gauss-fallback-frontend" ] && [ -f "$FB/active" ]
+expect "on fallback and out of restarts: alerts only, no restart loop, no flip back to live" $?
 LOADED="$B" run fallback off >/dev/null
 [ "$(kicked)" = "bootout uk.lightbound.gauss-fallback-backend bootout uk.lightbound.gauss-fallback-frontend bootout $B bootstrap $B bootout uk.lightbound.gauss-frontend bootstrap uk.lightbound.gauss-frontend" ] \
   && [ ! -f "$FB/active" ] && ! grep -q "^$B " "$WD/watch-kicks"
@@ -185,6 +208,18 @@ out=$(LEVEL=2 run dev "$DEV" 2>&1); [[ "$out" == *"Memory pressure is warn"* ]];
 out=$(HEALTH=000 GAUSS_DEV_DRY=1 run dev "$DEV" 2>&1); [[ "$out" == *"dev ok: $DEV site http://127.0.0.1:5174 api :3101"* ]]; expect "dev runs on :5174 and :3101" $?
 out=$(GAUSS_DEV_DRY=1 run dev "$DEV" 2>&1); [[ "$out" == *"Port 3101 is in use"* ]]; expect "dev refuses a busy dev port" $?
 out=$(HEALTH=000 GAUSS_DEV_DRY=1 GAUSS_DEV_API_PORT=3001 run dev "$DEV" 2>&1); [[ "$out" == *"belong to live"* ]]; expect "dev refuses live's ports" $?
+# A real start, node stubbed to record what each server is given. Unset, the backend takes
+# :3001 and the dev site proxies /api to :3001 (frontend/vite.config.ts), so dev must set them;
+# explicit env also beats a checkout's .env under node --env-file, so a .env copied from live
+# can't point dev back at live.
+stub node 'if [[ "$*" == *vite.js* ]]; then for _ in $(seq 1 50); do grep -q "^api" "$ACTIONS" && break; sleep 0.1; done
+  echo "web|$(pwd -P)|$GAUSS_DEV_WEB_PORT|$GAUSS_API_TARGET" >>"$ACTIONS"
+else echo "api|$(pwd -P)|$PROXY_PORT|$GAUSS_PUBLIC_URL|$BETTER_AUTH_URL|$GAUSS_BEDROCK_DIR|$MESH_STORE_PATH|$COMMERCE_DB_PATH|$*" >>"$ACTIONS"; fi'
+HEALTH=000 run dev "$DEV" >/dev/null 2>&1; P=$(cd "$DEV" && pwd -P)
+[ "$(sed -n 1p "$T/actions")" = "api|$P|3101|http://127.0.0.1:5174|http://127.0.0.1:5174|$DEV/data/bedrock|$DEV/data/mesh/devices.json|$DEV/data/commerce/commerce.db|--env-file-if-exists=.env --import tsx backend/server.ts" ] \
+  && [ "$(sed -n 2p "$T/actions")" = "web|$P|5174|http://127.0.0.1:3101" ] && [ "$(wc -l <"$T/actions" | tr -d ' ')" = 2 ]
+expect "dev start: its own ports, data and API target, set explicitly, never live's" $?
+rm -f "$T/bin/node"
 
 # fallback prepare: only a fresh path or the previous fallback dir, never under memory pressure
 git -C "$LIVE" init -q && git -C "$LIVE" -c user.email=t@t -c user.name=t commit -q --allow-empty -m t
@@ -226,6 +261,16 @@ out=$(run deploy "$Bc" "$FB2" 2>&1); rc=$?
 expect "deploy: live switched, its local data kept, lock released" $?
 [[ "$(cat "$FB/ready")" == "$A $FB2 "* ]] && [ "$(grep -c '^npm ci' "$T/actions")" = 1 ]
 expect "deploy: fallback refreshed to the previous version; npm ci only for the new fallback (live's lockfile unchanged)" $?
+pl() { plutil -extract "$2" "${3:-raw}" -o - "$1" 2>/dev/null; } # pl <plist> <key path> [raw|json]
+LA="$T/home/Library/LaunchAgents"; fbp="$FB/uk.lightbound.gauss-fallback-backend.plist"; fwp="$FB/uk.lightbound.gauss-fallback-frontend.plist"
+[ "$(pl "$fwp" ProgramArguments json)" = "$(pl "$LA/uk.lightbound.gauss-frontend.plist" ProgramArguments json)" ] \
+  && [[ "$(pl "$fwp" ProgramArguments json)" == *'"--port","8080","--strictPort"'* ]] \
+  && [ "$(pl "$fbp" ProgramArguments.1)" = "--env-file-if-exists=$LIVE/.env" ] && ! pl "$fbp" EnvironmentVariables.PROXY_PORT >/dev/null \
+  && [ "$(pl "$fbp" EnvironmentVariables.GAUSS_PUBLIC_URL)" = "$(pl "$LA/$B.plist" EnvironmentVariables.GAUSS_PUBLIC_URL)" ] \
+  && [ "$(pl "$fbp" EnvironmentVariables.GAUSS_BEDROCK_DIR)" = "$LIVE/data/bedrock" ] \
+  && [ "$(pl "$fbp" EnvironmentVariables.MESH_STORE_PATH)" = "$LIVE/data/mesh/devices.json" ] \
+  && ! grep -q "bootstrap uk.lightbound.gauss-fallback" "$T/kicks"
+expect "fallback plists: live's ports, URLs, data and .env; prepare never loads them" $?
 out=$(run deploy "$C" 2>&1); rc=$?
 [ $rc = 1 ] && head_is "$Bc" && [[ "$out" == *"Rolled back: live is on ${Bc:0:7}"* ]] && [ "$(alerts)" = "deploy" ] && [[ "$(cat "$FB/ready")" == "$Bc $FB2 "* ]]
 expect "deploy of a bad commit: rolls back by itself and texts the phone; fallback is the last good one" $?
@@ -248,6 +293,16 @@ out=$(run deploy "$Bc" 2>&1); [[ "$out" == *"The fallback is serving now"* ]]; e
 run fallback off >/dev/null
 out=$(run deploy deadbeef 2>&1); [[ "$out" == *"Unknown commit 'deadbeef'"* ]]; expect "deploy refuses an unknown commit" $?
 out=$(run deploy "$D" 2>&1); [[ "$out" == *"already at ${D:0:7}"* ]]; expect "deploy: already there is a no-op" $?
+# Re-pointing the fallback checks it out first. If its install then fails, the checkout has
+# changed under the old ready record: the deploy stops and the record goes, so status says
+# "none prepared" rather than vouching for a fallback that isn't what it describes.
+cp "$T/bin/npm" "$T/npm.saved" # the gate-aware stub above: put back as it was, later tests read its counts
+stub npm 'echo "npm $*" >>"$ACTIONS"; exit 1'
+out=$(run deploy "$Bc" 2>&1); rc=$?
+[ $rc = 1 ] && head_is "$D" && [[ "$out" == *"Couldn't refresh the fallback; not deploying."* ]] && [ ! -e "$FB/ready" ] \
+  && [[ "$(run fallback)" == *"none prepared (warning"* ]] && [ ! -d "$WD/deploying" ]
+expect "deploy: a fallback that fails to rebuild stops the deploy and is not left marked ready" $?
+mv "$T/npm.saved" "$T/bin/npm"
 out=$(LEVEL=2 run deploy "$Bc" 2>&1); [[ "$out" == *"Memory pressure is warn"* ]] && head_is "$D"; expect "deploy refuses at memory pressure warn" $?
 echo local >>"$LIVE/backend/server.ts"
 out=$(run deploy "$Bc" 2>&1); [[ "$out" == *"local code changes"*"backend/server.ts"* ]] && head_is "$D"; expect "deploy refuses over local code changes in live" $?
@@ -261,6 +316,11 @@ touch -t 202001010000 "$WD/deploying"
 HEALTH=000 LOADED="$B" run awake guard; HEALTH=000 LOADED="$B" run awake guard
 [ "$(kicked)" = "$B" ]; expect "a deploy lock older than 30 min no longer silences the guard" $?
 rmdir "$WD/deploying"; rm -f "$WD/watch-kicks" "$WD"/*.strikes "$T/kicks.state"
+rm -f "$FB/ready" # nothing prepared and no path given: the deploy goes ahead, says so, and leaves no standby
+out=$(run deploy "$Bc" 2>&1); rc=$?
+[ $rc = 0 ] && head_is "$Bc" && [[ "$out" == *"warning: no fallback to refresh"* ]] && [ ! -e "$FB/ready" ]
+expect "deploy with no fallback prepared or given: warns, deploys, leaves none" $?
+main_at "$D"; run deploy "$D" >/dev/null 2>&1; head_is "$D"; expect "deploy back to D, the gated tree the GAU-162 checks below start from" $?
 
 # GAU-162: every deploy and rollback is recorded; only merged, gated trees go live without --emergency
 H="$WD/deploy-history.jsonl"
@@ -412,5 +472,6 @@ GAUSS_EVENTS_MAX_KB=1 run awake guard >/dev/null; LEVEL=4 GAUSS_EVENTS_MAX_KB=1 
 [ "$(wc -l <"$EV.1" | tr -d ' ')" -ge "$lines" ] && [ "$(wc -l <"$EV" | tr -d ' ')" = 1 ]; expect "events.jsonl rotates by size into events.jsonl.1" $?
 out=$(run events --json --since 1d); [ "$(printf '%s\n' "$out" | wc -l | tr -d ' ')" -gt 1 ]; expect "events reads the rotated file too" $?
 
+[ -z "$JUNIT" ] || junit_write gauss-services "$JUNIT"
 echo "gauss-services: $pass passed, $failed failed"
 [ "$failed" = 0 ]

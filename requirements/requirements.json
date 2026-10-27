@@ -433,6 +433,74 @@
       ]
     },
     {
+      "id": "REQ-OPS-004",
+      "title": "Watchdog restart budget",
+      "statement": "The awake guard shall restart a watched job (Argo, mesh-heal, or a live service after two failed health checks in a row) at most 3 times per job in any rolling hour, and shall then send a phone alert instead of restarting it.",
+      "rationale": "A job that dies on start needs a person: unbounded restarts hide the fault and churn the 8 GB host (GAU-158).",
+      "parent": "GAU-158",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "stale Argo and mesh-heal: both restarted",
+        "backend down once: wait for a second failure",
+        "backend down twice: restarted",
+        "a recovery resets the strike count",
+        "4th restart in an hour: alert instead of kicking",
+        "restarts over an hour old don't count: restarted again, no alert",
+        "no fallback prepared: out of restarts only alerts"
+      ]
+    },
+    {
+      "id": "REQ-OPS-005",
+      "title": "Failover to the prepared fallback",
+      "statement": "When a live service still fails its health check after its 3 restarts in an hour and a valid fallback is prepared, the awake guard shall replace live with the fallback on the same ports (:3001, :8080), URLs, data and .env, and send a phone alert; while the fallback serves, the guard shall restart only the fallback and shall not fail over again; `fallback off` shall restore live with a fresh restart budget.",
+      "rationale": "A cold standby of the last known-good build keeps the operator URLs serving when live can't restart itself; failback stays a person's decision so live and fallback can't flap (GAU-158).",
+      "parent": "GAU-158",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "fallback status: ready although its path has a space",
+        "a corrupt, cut-short or orphaned fallback record reads as none prepared: no half failover, still alerts",
+        "out of restarts and still down: fails over to the fallback and texts the phone",
+        "status shows the fallback is serving",
+        "on fallback: the guard restarts the fallback, never fails over again",
+        "on fallback and out of restarts: alerts only, no restart loop, no flip back to live",
+        "fallback off: live back, fresh restarts for it",
+        "fallback plists: live's ports, URLs, data and .env; prepare never loads them"
+      ]
+    },
+    {
+      "id": "REQ-OPS-006",
+      "title": "Dev layer isolated from live",
+      "statement": "The dev layer shall refuse the live and fallback checkouts and live's ports (:3001, :8080), and shall start its backend and site with their own ports, data directory, public URL and API target set explicitly, so that it cannot bind live's ports, write live's data or send its API calls to live.",
+      "rationale": "R&D runs on the same host as live; a dev server must never take live's ports, data or API (GAU-158).",
+      "parent": "GAU-158",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "dev refuses the live checkout",
+        "dev refuses the fallback checkout",
+        "dev refuses the fallback checkout (path with a space)",
+        "dev refuses live's ports",
+        "dev runs on :5174 and :3101",
+        "dev start: its own ports, data and API target, set explicitly, never live's"
+      ]
+    },
+    {
+      "id": "REQ-OPS-007",
+      "title": "No heavy installs under memory pressure",
+      "statement": "`fallback prepare`, `deploy` and `dev` shall refuse, before installing, building or starting anything, when the kernel memory pressure level is warn or higher.",
+      "rationale": "npm ci was killed under memory pressure on 2026-10-19 (scripts/ops/gauss-services.sh); on the 8 GB host an install or a dev server at warn puts the live services at risk (GAU-158).",
+      "parent": "GAU-158",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "prepare refuses at memory pressure warn",
+        "deploy refuses at memory pressure warn",
+        "dev refuses at memory pressure warn"
+      ]
+    },
+    {
       "id": "REQ-WM-001",
       "title": "Deterministic, tamper-evident world records",
       "statement": "Every world-state record shall have a deterministic id and a SHA-256 checksum over its canonical content, and validation shall reject records whose content, id or schema do not match.",
