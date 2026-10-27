@@ -510,21 +510,26 @@ export const RECORD_LIMITATIONS = [
 const BANNED =
   /(?<![\w])(doses?|damag(?:e|ed|es|ing)|failure probability|probability of failure|qualif(?:y|ied|ication)|flight[- ]ready|mission[- ]ready|space[- ]qualified|certif(?:y|ied|ication)|complian(?:t|ce)|rad[- ]hard(?:ened)?|radiation[- ](?:hardened|tolerant)|(?:un)?suitab(?:le|ility)|surviv(?:e|es|ed|al|ing)|[mµμck]?gy|[mµμ]?sv|krad|rad ?\(si\))(?![\w])/i;
 
-/** Banned words in the Gauss-authored text of a record (the customer's own output is not scanned). */
-export function bannedWording(record: Omit<TrustRecord, "hash">): string[] {
-  const { inference: _inference, ...authored } = record;
+/** Matches of `pattern` in every string inside `value` (arrays and objects walked). */
+export function wordingHits(value: unknown, pattern: RegExp = BANNED): string[] {
   const hits: string[] = [];
   const walk = (v: unknown) => {
     // The record's own disclaimers deny those claims ("No regulatory or compliance claim is made").
     if (typeof v === "string" && RECORD_LIMITATIONS.includes(v)) return;
     if (typeof v === "string") {
-      const m = BANNED.exec(v);
+      const m = pattern.exec(v);
       if (m) hits.push(m[0]);
     } else if (Array.isArray(v)) v.forEach(walk);
     else if (v && typeof v === "object") Object.values(v).forEach(walk);
   };
-  walk(authored);
+  walk(value);
   return hits;
+}
+
+/** Banned words in the Gauss-authored text of a record (the customer's own output is not scanned). */
+export function bannedWording(record: Omit<TrustRecord, "hash">): string[] {
+  const { inference: _inference, ...authored } = record;
+  return wordingHits(authored);
 }
 
 /** Canonical JSON: keys sorted, so the same record always hashes the same. */
