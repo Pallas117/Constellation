@@ -146,12 +146,21 @@ const SIGNATURE_PATTERNS: Array<{ name: string; pattern: RegExp; severity: Cyber
   { name: "cmd-injection", pattern: /(;|\|\||&&)\s*(cat|bash|sh|curl|wget)\b/i, severity: "critical" },
 ];
 
+/** Expired rate/auth-failure windows are swept at most this often. */
+const WINDOW_SWEEP_INTERVAL_MS = 10_000;
+/**
+ * Hard cap on tracked addresses per map. Only reached by more distinct live
+ * addresses than this inside one window; the oldest windows are dropped first.
+ */
+export const MAX_TRACKED_IPS = 50_000;
+
 export class CyberTigerDaemon {
   private readonly config: CyberTigerConfig;
   private readonly rateByIp = new Map<string, RateBucket>();
   private readonly authFailuresByIp = new Map<string, AuthFailureWindow>();
   private readonly blocklist = new Map<string, BlockRecord>();
   private readonly events: CyberTigerEvent[] = [];
+  private lastWindowSweepMs = 0;
   private counters = {
     totalInspected: 0,
     blocked: 0,
@@ -427,6 +436,11 @@ export class CyberTigerDaemon {
     }
   }
 
+  /** Addresses currently tracked by the rate-limit and auth-failure windows. */
+  trackedWindowCounts(): { rate: number; authFailures: number } {
+    return { rate: this.rateByIp.size, authFailures: this.authFailuresByIp.size };
+  }
+
   private cleanupExpiredBlocks(): void {
     const now = Date.now();
     for (const [ip, info] of this.blocklist.entries()) {
@@ -434,13 +448,36 @@ export class CyberTigerDaemon {
         this.blocklist.delete(ip);
       }
     }
+    if (now - this.lastWindowSweepMs < WINDOW_SWEEP_INTERVAL_MS) return;
+    this.lastWindowSweepMs = now;
+    // An expired window is reset on the address's next request anyway, so
+    // forgetting it changes nothing but memory.
+    for (const [ip, bucket] of this.rateByIp.entries()) {
+      if (now - bucket.windowStartMs >= this.config.rateLimitWindowMs) this.rateByIp.delete(ip);
+    }
+    for (const [ip, window] of this.authFailuresByIp.entries()) {
+      if (now - window.windowStartMs >= this.config.authFailureWindowMs) this.authFailuresByIp.delete(ip);
+    }
+  }
+
+  /**
+   * Start a fresh window for `ip`, keeping the map ordered by window start
+   * (re-inserted at the end), then drop the oldest beyond MAX_TRACKED_IPS.
+   */
+  private startWindow<T>(windows: Map<string, T>, ip: string, window: T): void {
+    windows.delete(ip);
+    windows.set(ip, window);
+    for (const oldest of windows.keys()) {
+      if (windows.size <= MAX_TRACKED_IPS) break;
+      windows.delete(oldest);
+    }
   }
 
   private applyRateLimit(ip: string): boolean {
     const now = Date.now();
     const existing = this.rateByIp.get(ip);
     if (!existing || now - existing.windowStartMs >= this.config.rateLimitWindowMs) {
-      this.rateByIp.set(ip, {
+      this.startWindow(this.rateByIp, ip, {
         windowStartMs: now,
         count: 1,
       });
@@ -454,7 +491,7 @@ export class CyberTigerDaemon {
     const now = Date.now();
     const existing = this.authFailuresByIp.get(ip);
     if (!existing || now - existing.windowStartMs >= this.config.authFailureWindowMs) {
-      this.authFailuresByIp.set(ip, {
+      this.startWindow(this.authFailuresByIp, ip, {
         windowStartMs: now,
         failures: 1,
       });
