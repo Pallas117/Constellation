@@ -4,31 +4,36 @@
  * GitHub Actions is billing-locked, so this is the gate a commit must pass before merge or deploy:
  *   1. baseline is well-formed (requirements/requirements.json)
  *   2. full test suite, with a JUnit report
- *   3. production build
- *   4. VCRM: every requirement verified (no failing, skipped or missing evidence)
- * Writes test-results/verification/{junit.xml,vcrm.json,vcrm.md}. Exits non-zero on any failure.
+ *   3. ops tests (scripts/ops/gauss-services.test.sh), with their own JUnit report (GAU-163)
+ *   4. production build
+ *   5. VCRM: every requirement verified (no failing, skipped or missing evidence), by exact test
+ *      name across both reports
+ * Writes test-results/verification/{junit.xml,ops-junit.xml,vcrm.json,vcrm.md}. Exits non-zero on any failure.
  *
  *   npm run verify               full gate
  *   npm run verify -- --no-build skip the build (faster while iterating)
  */
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import {
   buildFmea,
   buildMatrix,
   HIGH_RESIDUAL_RISK,
+  mergeOutcomes,
   parseJunit,
   renderFmeaMarkdown,
   renderMarkdown,
   validateBaseline,
   type Baseline,
   type FmeaRow,
+  type TestOutcome,
 } from "./vcrm.ts";
 
 const root = path.resolve(import.meta.dirname, "../..");
 const outDir = path.join(root, "test-results", "verification");
 const junitPath = path.join(outDir, "junit.xml");
+const opsJunitPath = path.join(outDir, "ops-junit.xml");
 const skipBuild = process.argv.includes("--no-build");
 
 function step(name: string, cmd: string, args: string[], extraEnv: Record<string, string> = {}): boolean {
@@ -40,6 +45,8 @@ function step(name: string, cmd: string, args: string[], extraEnv: Record<string
 }
 
 mkdirSync(outDir, { recursive: true });
+// A report left by an earlier run must never stand in for a run that died before writing one.
+for (const p of [junitPath, opsJunitPath]) rmSync(p, { force: true });
 const baseline = JSON.parse(readFileSync(path.join(root, "requirements/requirements.json"), "utf8")) as Baseline;
 const results: Record<string, boolean> = {};
 
@@ -65,10 +72,15 @@ results.tests = step("Test suite", process.execPath, [
   "backend/**/*.test.ts", "frontend/src/lib/**/*.test.ts",
 ], testEnv);
 
+// Ops behaviour (watchdog, failover, dev isolation; REQ-OPS-004..007, FMEA FM-20..24). Hermetic:
+// launchctl, curl, pmset and friends are stubbed and HOME is a temp dir. macOS only (plutil).
+results.opsTests = step("Ops tests (bash)", "bash", ["scripts/ops/gauss-services.test.sh"], { GAUSS_OPS_JUNIT: opsJunitPath });
+
 results.build = skipBuild ? true : step("Production build", "npm", ["run", "build", "--silent"]);
 
 const commit = spawnSync("git", ["rev-parse", "--short", "HEAD"], { cwd: root, encoding: "utf8" }).stdout.trim() || "unknown";
-const outcomes = existsSync(junitPath) ? parseJunit(readFileSync(junitPath, "utf8")) : new Map();
+const readJunit = (p: string): Map<string, TestOutcome> => (existsSync(p) ? parseJunit(readFileSync(p, "utf8")) : new Map());
+const outcomes = mergeOutcomes(readJunit(junitPath), readJunit(opsJunitPath));
 const rows = buildMatrix(baseline, outcomes, (p) => existsSync(path.join(root, p)));
 const meta = { version: baseline.version, commit, generatedAt: new Date().toISOString() };
 const fmeaPath = path.join(root, "requirements/fmea.json");
