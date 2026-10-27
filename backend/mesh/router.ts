@@ -208,6 +208,7 @@ export function createMeshRouters(
     }
     store.revoke(name);
     bundles.purge(name);
+    uploads.delete(name); // its upload-rate window goes too (GAU-208)
     res.status(204).end();
   });
 

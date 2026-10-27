@@ -3,7 +3,7 @@ import type { CanonicalSpaceWeatherPoint } from "@/lib/types/space-weather";
 import { getAccessToken } from "@/lib/api/auth";
 import { useFeedSession, usePolledFeed, type FeedStatus } from "@/hooks/usePolledFeed";
 import { wsOrigin } from "@/lib/api/base-url";
-import { lookbackSince, mergeSeries, SERIES_MAX_POINTS, SERIES_WINDOW_MS } from "@/lib/api/feed-series";
+import { lookbackSince, mergeSeries, pendingAfter, SERIES_MAX_POINTS, SERIES_WINDOW_MS } from "@/lib/api/feed-series";
 import { isCanonicalPoint } from "@/lib/dataProcessing";
 
 // Signed in: the 24 h, 5 s feed (`user` role). Signed out: only the public
@@ -70,6 +70,10 @@ export function useSolarWind5s({ history = true, backfillMs = SERIES_WINDOW_MS }
     () => (pushed.length > 0 ? mergeSeries(feed.data, pushed) : feed.data ?? NO_POINTS),
     [feed.data, pushed],
   );
+  // Each poll catches up with what was pushed: keep only the points it doesn't hold yet.
+  useEffect(() => {
+    setPushed((prev) => pendingAfter(prev, feed.data));
+  }, [feed.data]);
 
   useEffect(() => {
     const wsEnabled = String(import.meta.env.VITE_HELIO_WS_ENABLED ?? "false") === "true";

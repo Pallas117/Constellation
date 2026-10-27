@@ -31,6 +31,7 @@ import type {
   NowcastInferenceRequest,
 } from "./types.js";
 import { withFreshness } from "./lib/freshness.js";
+import { canSend, sweepDeadSockets, trackLiveness, WS_HEARTBEAT_MS } from "./lib/socket-keepalive.js";
 import { IngestionWorker } from "./worker/ingest-loop.js";
 import { MAX_QUERY_CHARS, memoryQuery, memoryStatus } from "./memory/client.js";
 import { worldStateFromFeed } from "./world/build.js";
@@ -616,6 +617,8 @@ const server = http.createServer(app);
 
 const wsSpaceWeather = new WebSocketServer({ server, path: "/ws/feed/space-weather" });
 const wsMmsRecon = new WebSocketServer({ server, path: "/ws/feed/mms-reconnection" });
+trackLiveness(wsSpaceWeather);
+trackLiveness(wsMmsRecon);
 
 type AuthedSocket = WebSocket & { auth?: AuthContext };
 
@@ -633,7 +636,8 @@ function broadcast(wss: WebSocketServer, topic: string, payload: unknown): void 
   const body = JSON.stringify({ topic, payload, timestamp: new Date().toISOString() });
   for (const client of wss.clients) {
     const socket = client as AuthedSocket;
-    if (socket.readyState === 1 && socket.auth) {
+    // A backed-up socket skips this tick rather than queueing it (GAU-208).
+    if (socket.auth && canSend(socket)) {
       client.send(body);
     }
   }
@@ -725,6 +729,7 @@ selfHealer.register({
 
 const swapIntervalMs = Number(process.env.SWAP_BALANCE_INTERVAL_MS ?? 45_000);
 let swapInterval: NodeJS.Timeout | null = null;
+let heartbeatInterval: NodeJS.Timeout | null = null;
 let backendStarted = false;
 
 export async function startBackend(options?: { host?: string; port?: number }): Promise<{ app: express.Express; server: http.Server; host: string; port: number }> {
@@ -755,6 +760,10 @@ export async function startBackend(options?: { host?: string; port?: number }): 
           console.warn("[SwapManager] critical device health detected; rebalance suggested", result.plan.summary);
         }
       }, swapIntervalMs);
+      heartbeatInterval = setInterval(() => {
+        sweepDeadSockets(wsSpaceWeather);
+        sweepDeadSockets(wsMmsRecon);
+      }, WS_HEARTBEAT_MS);
 
       selfHealer.start();
       worker.start();
@@ -785,6 +794,10 @@ export async function stopBackend(): Promise<void> {
   if (swapInterval) {
     clearInterval(swapInterval);
     swapInterval = null;
+  }
+  if (heartbeatInterval) {
+    clearInterval(heartbeatInterval);
+    heartbeatInterval = null;
   }
 
   await new Promise<void>((resolve, reject) => {
