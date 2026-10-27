@@ -1,15 +1,15 @@
 /* Lightbound site. Tokens from the Lightbound Brand Room (9 Oct 2026): black ground, warm-white type,
-   one lime signal per view, amber for caution, Plex Sans + JetBrains Mono labels. No JS. */
-@font-face{font-family:"IBM Plex Sans";font-weight:400;font-display:swap;src:url(fonts/plex-sans-400.woff2) format("woff2")}
-@font-face{font-family:"IBM Plex Sans";font-weight:500;font-display:swap;src:url(fonts/plex-sans-500.woff2) format("woff2")}
-@font-face{font-family:"IBM Plex Sans";font-weight:600;font-display:swap;src:url(fonts/plex-sans-600.woff2) format("woff2")}
+   one lime signal per view, amber for caution, Lightbound Sans (IBM Plex Sans, renamed: assets/fonts/OFL-*.txt) + JetBrains Mono labels. No JS. */
+@font-face{font-family:"Lightbound Sans";font-weight:400;font-display:swap;src:url(fonts/plex-sans-400.woff2) format("woff2")}
+@font-face{font-family:"Lightbound Sans";font-weight:500;font-display:swap;src:url(fonts/plex-sans-500.woff2) format("woff2")}
+@font-face{font-family:"Lightbound Sans";font-weight:600;font-display:swap;src:url(fonts/plex-sans-600.woff2) format("woff2")}
 @font-face{font-family:"JetBrains Mono";font-weight:700;font-display:swap;src:url(fonts/jetbrains-mono-700.woff2) format("woff2")}
 
 /* Shared foundations (Lightbound Brand Book, 15-18 Oct 2026): one ground, one warm white, two typefaces;
    only the accent changes per brand. Status colours always travel with their word. */
 :root{--black:#050505;--panel:#0D1010;--char:#252A2A;--warm:#F3F0E8;--muted:#87938E;--lime:#CCFF00;--amber:#E7B14A;
   --live:#4E972F;--sim:#318ADA;--danger:#D4673B;--accent:var(--lime);--accent2:var(--lime);
-  --sans:"IBM Plex Sans",Arial,sans-serif;--mono:"JetBrains Mono","Courier New",monospace;--radius:10px;color-scheme:dark}
+  --sans:"Lightbound Sans",Arial,sans-serif;--mono:"JetBrains Mono","Courier New",monospace;--radius:10px;color-scheme:dark}
 *,*::before,*::after{box-sizing:border-box}
 html{-webkit-text-size-adjust:100%;scroll-behavior:smooth;scroll-padding-top:76px}
 ::selection{background:var(--accent);color:var(--black)}

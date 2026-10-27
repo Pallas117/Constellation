@@ -500,19 +500,24 @@ export const RECORD_LIMITATIONS = [
 /** Words a record must never use: it describes the environment, not harm to hardware or odds of error. */
 const BANNED = /\b(doses?|damaged?|failure probability|probability of failure|qualified|qualification|flight[- ]ready|space[- ]qualified|certified|compliant)\b/i;
 
-/** Banned words in the Gauss-authored text of a record (the customer's own output is not scanned). */
-export function bannedWording(record: Omit<TrustRecord, "hash">): string[] {
-  const { inference: _inference, ...authored } = record;
+/** Matches of `pattern` in every string inside `value` (arrays and objects walked). */
+export function wordingHits(value: unknown, pattern: RegExp = BANNED): string[] {
   const hits: string[] = [];
   const walk = (v: unknown) => {
     if (typeof v === "string") {
-      const m = BANNED.exec(v);
+      const m = pattern.exec(v);
       if (m) hits.push(m[0]);
     } else if (Array.isArray(v)) v.forEach(walk);
     else if (v && typeof v === "object") Object.values(v).forEach(walk);
   };
-  walk(authored);
+  walk(value);
   return hits;
+}
+
+/** Banned words in the Gauss-authored text of a record (the customer's own output is not scanned). */
+export function bannedWording(record: Omit<TrustRecord, "hash">): string[] {
+  const { inference: _inference, ...authored } = record;
+  return wordingHits(authored);
 }
 
 /** Canonical JSON: keys sorted, so the same record always hashes the same. */

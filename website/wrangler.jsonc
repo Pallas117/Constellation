@@ -1,4 +1,6 @@
 // lightbound.uk: one Cloudflare Worker with static assets. Deploy: see website/README.md.
+// This is the public release (GAU-178): only what the public pages need. Opening accounts, forms and payments later
+// (RELEASE "full") adds the DATA namespace, Access, secrets and vars listed in the README, "Opening accounts".
 {
   "name": "lightbound-site",
   "main": "worker/index.js",
@@ -8,39 +10,26 @@
     "binding": "ASSETS",
     "html_handling": "auto-trailing-slash",
     "not_found_handling": "404-page",
-    // Everything else is a static file: free, and never runs the Worker.
-    "run_worker_first": ["/", "/gauss/", "/constellation/", "/gauss/apply/", "/constellation/apply/", "/constellation/workshops/", "/education/", "/education/apply/", "/constellation/time/", "/app", "/app/*", "/api/*"]
+    // Everything else is a static file: free, and never runs the Worker. /app/* and /argo/ stay listed in a public
+    // release, so the Worker can answer 404 for them instead of the static files being served.
+    "run_worker_first": ["/", "/gauss/", "/constellation/", "/gauss/apply/", "/constellation/apply/", "/constellation/workshops/", "/education/", "/education/apply/", "/constellation/time/", "/argo/", "/app", "/app/*", "/api/*"]
   },
-  // Refresh launches and space weather into KV. Free plan: 5 cron triggers per account.
+  // Refresh launches, space weather and events into KV. Free plan: 5 cron triggers per account.
   "triggers": { "crons": ["*/15 * * * *"] },
-  // Create once each with `npx wrangler@4 kv namespace create LIVE` / `... create DATA` and paste the
-  // ids here (they are not secrets). LIVE = feed cache; DATA = applications and accounts.
+  // The feed cache, created 23 Oct 2026 with `npx wrangler@4 kv namespace create LIVE` (ids are not secrets).
   "kv_namespaces": [
-    { "binding": "LIVE", "id": "REPLACE_WITH_LIVE_NAMESPACE_ID" },
-    { "binding": "DATA", "id": "REPLACE_WITH_DATA_NAMESPACE_ID" }
+    { "binding": "LIVE", "id": "1322d2fae0a345c18f94862eebbd1572" }
   ],
-  // Not secrets. ACCESS_* come from the Cloudflare Access application protecting lightbound.uk/app
-  // (Zero Trust > Access > Applications: the team domain and the application's AUD tag).
   "vars": {
-    "ACCESS_TEAM_DOMAIN": "REPLACE_TEAM.cloudflareaccess.com",
-    "ACCESS_AUD": "REPLACE_WITH_ACCESS_APPLICATION_AUD",
-    "ADMIN_EMAILS": "jzwnathan@lightbound.uk",
-    "GAUSS_APP_URL": "",
-    // The staff operations and training site (its own Worker and Access application); the staff card stays hidden while empty.
-    "OPS_URL": "",
-    // A Stripe Payment Link (https://buy.stripe.com/...) for "Support Constellation"; the block stays hidden while empty.
-    "SUPPORT_URL": "",
-    // Gauss for Education: "off" (register interest only) or "open". Staff price in US cents (e.g. "500"); empty = "Price TBC", no checkout.
+    // "public": pages, feeds and an email route; sign-in, forms, payments and members' pages answer 404 (worker/release.js).
+    "RELEASE": "public",
+    // Gauss for Education: "off" (opening soon) or "open" (needs RELEASE "full"). Staff price in US cents; empty = "Price TBC".
     "EDU_SALES": "off",
-    "EDU_STAFF_PRICE": "",
-    // New self-serve sign-ups stop at this many accounts (Zero Trust's free plan covers up to 50 users).
-    "USER_CAP": "50"
+    "EDU_STAFF_PRICE": ""
   },
-  // Secrets, never in this file: STRIPE_SECRET_KEY and STRIPE_WEBHOOK_SECRET (npx wrangler@4 secret put ...).
-  // Also set as secrets, so they stay out of this public repo: STAFF_EMAILS (comma-separated team addresses) and
-  // PROGRAMMES_CSV_URL (the Funding Tracker's published "Public programmes" tab, as CSV).
+  // No secrets in a public release. SOURCE_SHA is set at deploy time (README, "Launch"), so /api/health names the commit.
   "observability": { "enabled": true }
-  // When the workers.dev preview looks right, uncomment to serve lightbound.uk (adds proxied A/AAAA
-  // records only; the Google Workspace MX records are not touched):
+  // When the workers.dev preview passes the smoke check, uncomment to serve lightbound.uk (adds proxied A/AAAA
+  // records only; the Google Workspace MX records are not touched). Needs Josh's go-ahead: it's the DNS change.
   // ,"routes": [{ "pattern": "lightbound.uk", "custom_domain": true }]
 }

@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 )
@@ -45,12 +46,51 @@ type State struct {
 	Gateway       string         `json:"gateway,omitempty"`
 	GatewayMAC    string         `json:"gateway_mac,omitempty"`
 	Net           NetScore       `json:"net"` // privacy, speed and signal at the last check (netscore.go)
+	// IncidentFP is the network the open incident belongs to; Notified says whether
+	// it was announced yet, NotifyDue when it will be if this network's usual
+	// recovery time passes first (loop.go).
+	IncidentFP string    `json:"incident_fp,omitempty"`
+	Notified   bool      `json:"notified,omitempty"`
+	NotifyDue  time.Time `json:"notify_due,omitempty"`
 }
 
-// Net remembers which fix resolved each class on one network.
+// Net remembers which fix resolved each class on one network, and how long
+// that class took to clear by itself there (seconds, newest last), so Argo
+// can tell a blip this network always has from something new.
 type Net struct {
 	FirstSeen time.Time        `json:"first_seen"`
 	Fixes     map[Class]string `json:"fixes,omitempty"`
+	Recover   map[Class][]int  `json:"recover,omitempty"`
+}
+
+const (
+	keepRecoveries    = 20
+	minRecoverSamples = 3
+	quietMax          = 30 * time.Minute // never stay quiet longer than this, however slow a network usually is
+)
+
+// usualRecovery is the median and 90th percentile of how long class c took
+// to clear by itself on this network, and how many times that was seen.
+func (n Net) usualRecovery(c Class) (p50, p90 time.Duration, samples int) {
+	v := append([]int(nil), n.Recover[c]...)
+	if len(v) == 0 {
+		return 0, 0, 0
+	}
+	sort.Ints(v)
+	at := func(q float64) time.Duration {
+		i := int(q*float64(len(v))+0.999999) - 1
+		return time.Duration(v[min(max(i, 0), len(v)-1)]) * time.Second
+	}
+	return at(0.5), at(0.9), len(v)
+}
+
+// quietFor is how long a new incident of class c can go unannounced on this
+// network: its usual recovery time, when it has recovered by itself often enough.
+func (n Net) quietFor(c Class) time.Duration {
+	if _, p90, k := n.usualRecovery(c); k >= minRecoverSamples && p90 <= quietMax {
+		return p90
+	}
+	return 0
 }
 
 const (

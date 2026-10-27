@@ -4,6 +4,10 @@ The Lightbound site: a black-hole landing ("Carry hope, go beyond.") with three 
 Constellation and Turnstone. It is one Cloudflare Worker with static assets. There is no client-side
 JavaScript, no third-party requests, and no secrets.
 
+**It launches as the public release** (GAU-178, `RELEASE: "public"`): the pages and live feeds, with an email
+route instead of forms. Sign-in, payments and the members' and operators' pages below are built and tested, but
+closed until `RELEASE: "full"`. See "Launch" and "Opening accounts later".
+
 | Page | What it is |
 |---|---|
 | `/` | Hero: the brand kit's ray-traced black-hole film, then the descent (below). Doors show live data: Gauss shows space weather now, Constellation shows the next launch, Turnstone is classified. Three projects only (Josh, 2026-10-22); Gauss for Education is a line pointing to Constellation's outreach. |
@@ -13,7 +17,7 @@ JavaScript, no third-party requests, and no secrets.
 | `/turnstone/` | Mark, "Classified." and a "Request a briefing" link to Josh's 30-minute Cal.com call; nothing about what it does (secret project; `noindex`). |
 | `/gauss/apply/` | Pilot brief in the sales plan's three steps (fit, readiness, pilot brief). Plan links preselect the package. |
 | `/constellation/apply/` | Request an invitation. Constellation is free and invite-only; there is no payment anywhere on its side. |
-| `/argo/` | Gauss Argo, the self-healing connectivity agent, "built like a spacecraft": what it catches, how it works, its security rules, where it runs, the private relay (in development, not available). Included for operators and staff, no price, `noindex`, linked only from the workspace. |
+| `/argo/` | Gauss Argo, the self-healing connectivity agent, "built like a spacecraft": what it catches, how it works, its security rules, where it runs, store and forward (files between your devices through drop-outs: Bundle Protocol, signed, end-to-end encrypted, receipts; the claim is a simulation), the private relay (in development, not available). Included for operators and staff, no price, `noindex`, linked only from the workspace. |
 | `/education/` | Gauss for Education (prototype), part of Constellation's outreach (nav shows Constellation): what a class gets (four labs), the three plans (student free, staff and research monthly, department yearly), and who can join. Buttons follow `EDU_SALES`; the staff price is "Price TBC" until `EDU_STAFF_PRICE` is set. |
 | `/education/apply/` | A department licence request, or a review for people without a university email. |
 | `/app/` | Signed-in workspace: quote and payment (card, or an invoice where you allow it), billing state, pilot progress, space weather, Constellation membership, members' opportunities, and the staff link for the team. |
@@ -293,7 +297,9 @@ renewal and cancellation. No real keys are used.
 
 The Lightbound Brand Book (15 Oct 2026, with 16 and 18 Oct updates) and the Design System tokens (v3) are the rules:
 
-- **Shared:** black ground, warm white, IBM Plex Sans and JetBrains Mono. Status colours always come with their
+- **Shared:** black ground, warm white, IBM Plex Sans and JetBrains Mono. The site serves Plex as "Lightbound Sans":
+  our subset is a modified copy, and the OFL reserves the name "Plex" (`tools/build_assets.py`; the licences sit
+  beside the fonts in `public/assets/fonts/OFL-*.txt`). Status colours always come with their
   word: LIVE green #4E972F, STALE amber, SIMULATED blue #318ADA (the replay's "synthetic" chips), danger #D4673B.
   Controls have 4 px corners, cards 10 px. There are no shadows or glows outside the marks and photos.
 - **Lightbound and Gauss:** lime is the accent. Both use the refined flat symbols (no blur), and Gauss keeps the two-tone "GAUSS AURORA" lockup.
@@ -341,6 +347,9 @@ Around Earth", image 78985).
 npm run site:dev            # http://127.0.0.1:8788, live feeds, the real Worker code
 npm run site:dev:offline    # same, with recorded feed data (no network)
 npm run test:website        # pages, claims, Turnstone secrecy, headers, budgets, feeds, routes
+RELEASE=public npm run site:dev:offline      # the launch: no sign-in, email routes, closed pages answer 404
+RELEASE=public npm run audit:website         # contrast, tap targets, overflow, headings on the launch pages
+npm run smoke:website -- http://127.0.0.1:8788   # the deployed-site smoke check, against a public preview
 ```
 
 `dev.mjs` emulates Cloudflare: assets with `_headers`, trailing slashes, the 404 page and byte
@@ -383,17 +392,77 @@ Cloudflare Access application (a staff-only email policy). Set `STAFF_EMAILS` as
 `OPS_URL` in `wrangler.jsonc` once the staff site is live (https only; the card stays hidden while it's empty).
 Keep the same addresses in the staff site's Access policy and its own `STAFF_EMAILS`.
 
-## Deploy (Pallas runs these; they need your Cloudflare login)
+## Launch: the public release (GAU-178; Pallas runs these, they need your Cloudflare login)
+
+lightbound.uk launches as the reduced public release Josh approved on 21 Oct 2026 (`RELEASE: "public"` in
+`wrangler.jsonc`, see `worker/release.js`):
+
+- **Open:** every public page, the live feeds, the time planner, the launch calendar and `/api/health`.
+- **Email instead of forms:** the four apply pages list their questions and open a pre-filled email to
+  jzwnathan@lightbound.uk. Nothing is stored. The header's pill is **Contact**.
+- **Closed by the Worker (404):** `/app/*`, `/argo/`, `POST /api/apply` and `/api/stripe/webhook`. The Gauss page
+  offers pilots, and shows the later plans, with their prices, as in development. Gauss for Education stays
+  "opening soon", and there's no Support link. The members-only feeds aren't fetched.
+- **Config:** only the LIVE namespace. No DATA, Access settings, Stripe keys or other secrets. `"full"` without a
+  DATA binding stays public.
 
 One time:
 
 ```bash
 cd website
-npx wrangler@4 login
-npx wrangler@4 kv namespace create LIVE    # feed cache: paste the id into wrangler.jsonc
-npx wrangler@4 kv namespace create DATA    # applications and accounts: paste the id too
-npx wrangler@4 deploy                      # live at https://lightbound-site.<account>.workers.dev
+npx wrangler@4 login                       # opens Cloudflare in your browser
+npx wrangler@4 kv namespace create LIVE    # done 23 Oct 2026: its id is in wrangler.jsonc (not a secret)
 ```
+
+Each deploy, from a clean checkout of the exact commit whose gates passed (`npm run test:website`, and
+`RELEASE=public npm run audit:website`):
+
+```bash
+cd website
+npx wrangler@4 deploy --var SOURCE_SHA:$(git rev-parse HEAD)
+npm run smoke:website -- https://lightbound-site.<account>.workers.dev $(git rev-parse HEAD)
+```
+
+`smoke:website` checks every public page and its security headers, the 404s, the email routes, the feeds,
+and that `/api/health` names the commit you meant to deploy. The first visit after a deploy fetches the feeds
+once; after that the cron runs every 15 minutes.
+
+**Then lightbound.uk** (the DNS change, so only with Josh's go-ahead):
+1. Uncomment `routes` in `wrangler.jsonc`, deploy again, and run the smoke check against `https://lightbound.uk`.
+   This adds proxied A/AAAA records only; the Google Workspace MX records stay as they are.
+2. In the dashboard:
+   - SSL/TLS > Edge Certificates: **Always Use HTTPS** on. The smoke check tests the redirect.
+   - Add no Zero Trust Access application for `/app` yet. With one, visitors would get a sign-in page
+     instead of the Worker's 404.
+   - Security > WAF: one rate-limiting rule on `/api/*` (the free plan's allowance is UNVERIFIED).
+   - `www.lightbound.uk` has no DNS record today. Add a proxied one (DNS > Add record: AAAA `www` `100::`), then
+     Rules > Redirect Rules > the "Redirect from WWW to root" template (301 to `https://lightbound.uk`, keep the
+     path and query). The smoke check doesn't cover www, so try `curl -sI https://www.lightbound.uk/gauss/`.
+3. `BASE=https://lightbound.uk RELEASE=public npm run audit:website` for a last look at the real pages.
+
+**Rollback:** `npx wrangler@4 deployments list`, then `npx wrangler@4 rollback <version-id>`. To take the
+site off lightbound.uk entirely, remove the custom domain under Workers & Pages > lightbound-site >
+Settings > Domains & Routes.
+
+**Still open before go-live (GAU-178):**
+- Privacy and terms are drafts written for the full site. In the public release the site itself collects
+  nothing (email goes straight to Google Workspace), but they still need a lawyer's read.
+- lightbound.uk has no SPF and no DKIM (GAU-177), so replies from jzwnathan@lightbound.uk may land in spam. Add
+  them before sharing the link widely.
+
+After launch, every change is `npm run test:website`, then the deploy and smoke check above.
+
+## Opening accounts later (`RELEASE: "full"`)
+
+All of it is still in the code, and the tests run it with `RELEASE: "full"`. To open it:
+1. In `wrangler.jsonc`, set `RELEASE` to `"full"`.
+   - Add the DATA namespace: `npx wrangler@4 kv namespace create DATA`, then a `{ "binding": "DATA", "id": … }` entry.
+   - Add these vars: `ACCESS_TEAM_DOMAIN`, `ACCESS_AUD`, `ADMIN_EMAILS` (`jzwnathan@lightbound.uk`),
+     `GAUSS_APP_URL`, `OPS_URL`, `SUPPORT_URL`, `USER_CAP` (`"50"`).
+2. Set up Stripe and sign-in as below, plus the secrets in "Members' opportunities and the staff link".
+3. Put **Sign in** back in the page headers. The public release shows Contact there; Worker-run pages bring
+   back their own `<!--full-->` parts by themselves.
+4. Work through "Before going live, in dashboards" under "Plans, payment and sign-in".
 
 Stripe, once (do it in test mode first, then repeat with live keys):
 1. In the Dashboard, under Settings > Payment methods, enable the methods you accept. For amounts
@@ -419,12 +488,8 @@ Sign-in, once (Cloudflare dashboard > Zero Trust):
 3. Copy the team domain (`<team>.cloudflareaccess.com`) and the application's **AUD tag** into
    `vars` in `wrangler.jsonc`. Neither is a secret.
 
-When the workers.dev preview looks right, uncomment `routes` in `wrangler.jsonc` and deploy again
-to serve `lightbound.uk`. This adds proxied A/AAAA records only; the Google Workspace MX records
-stay as they are. The first visit after a deploy fetches the feeds once; after that the cron runs
-every 15 minutes.
-
-After that, every change is `npm run test:website`, then `npx wrangler@4 deploy` from `website/`.
+Preview the full site locally with `npm run site:dev` (the preview defaults to `"full"`); `RELEASE=public npm run
+site:dev` previews the launch.
 
 ## Not yet verified
 
