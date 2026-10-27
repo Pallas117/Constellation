@@ -81,7 +81,8 @@ func sendReport(cfg Config, st State) (int, error) {
 		"breakerOpen": time.Now().Before(st.BreakerUntil), "argoVersion": version, "checkedAt": st.CheckedAt,
 		"host":     hostCapacityNow(), // sizes and pressure only, so Gauss can tell which devices can host agents
 		"platform": platformName(runtime.GOOS),
-		"net":      netReport(st.Net), // scores and their reasons; no SSID, BSSID or IP
+		"net":      netReport(st.Net),                                      // scores and their reasons; no SSID, BSSID or IP
+		"link":     linkReport(DefaultStore().Incidents(), st, time.Now()), // availability from the local incident log
 	}
 	addGuard(report, DefaultStore().loadGuard(), time.Now())
 	body, _ := json.Marshal(report)
