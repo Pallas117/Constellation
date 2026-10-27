@@ -1,7 +1,9 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { getAuthHeaders } from "@/lib/api/auth";
 import { apiBase } from "@/lib/api/base-url";
 import { describeHttpFailure, HttpFailure } from "@/lib/api/http-error";
+import { stopsPolling, type BatteryReading, type GuardReading } from "@/lib/mesh-onboarding";
+import type { LinkReport } from "@/lib/link-stability";
 
 const POLL_INTERVAL_MS = 30_000;
 
@@ -21,8 +23,20 @@ export interface MeshReport {
   receivedAt: string;
   host?: MeshHost;
   platform?: "macos" | "linux" | "windows" | "ios" | "android";
-  battery?: { level: number; charging: boolean; lowPower: boolean };
+  battery?: BatteryReading;
   net?: MeshNet;
+  link?: LinkReport;
+  guard?: MeshGuard;
+}
+
+/** Argo's resource guard decision (backend/mesh/store.ts MeshGuard, GAU-195). */
+export interface MeshGuard extends GuardReading {
+  at: string;
+  level: "ok" | "watch" | "risk" | "block";
+  reasons: string[];
+  warnMin: number;
+  swapRiseGB: number;
+  minToFloor: number;
 }
 
 /** Argo's measured network scores (backend/mesh/store.ts MeshNet); -1 / "not measured" is never a guess. */
@@ -52,7 +66,13 @@ export interface MeshDevice {
   enrolledAt: string;
   owner?: string;
   last?: MeshReport;
+  rejectedAt?: string;
   hosting?: HostingVerdict;
+  hostingWhy?: string[];
+  /** Bundles waiting at the Gauss hub for this device: counts and sizes only. */
+  relay?: { queued: number; bytes: number };
+  /** Fingerprint of the device's published keys, to compare with `argo keys` on the device. */
+  keyFingerprint?: string;
 }
 
 export interface OnboardingStep {
@@ -79,6 +99,8 @@ interface MeshState {
   canRevokeAny: boolean;
   me: string | null;
   error: string | null;
+  /** Set after a 401/403: polling has stopped until the page is reloaded (CyberTiger counts them). */
+  stopped: boolean;
 }
 
 const INITIAL_MESH_STATE: MeshState = {
@@ -89,12 +111,16 @@ const INITIAL_MESH_STATE: MeshState = {
   canRevokeAny: false,
   me: null,
   error: null,
+  stopped: false,
 };
 
 const errorMessage = (err: unknown) => (err instanceof Error ? err.message : "Mesh request failed");
+const stoppedBy = (err: unknown) => err instanceof HttpFailure && stopsPolling(err.status);
+
+type Update = (prev: MeshState) => MeshState;
 
 /** One poll of the onboarding info (and the device list when allowed), as an update to the held state. */
-async function loadMesh(): Promise<(prev: MeshState) => MeshState> {
+async function loadMesh(): Promise<{ update: Update; stopped: boolean }> {
   let info;
   try {
     const onboarding = await api("/onboarding");
@@ -102,7 +128,8 @@ async function loadMesh(): Promise<(prev: MeshState) => MeshState> {
     info = await onboarding.json();
   } catch (err) {
     const error = errorMessage(err);
-    return (prev) => ({ ...prev, error });
+    const stopped = stoppedBy(err);
+    return { update: (prev) => ({ ...prev, error, stopped }), stopped };
   }
   const next = {
     steps: info.steps,
@@ -114,33 +141,45 @@ async function loadMesh(): Promise<(prev: MeshState) => MeshState> {
   };
   // Only call /devices when allowed: 403s count as auth failures in CyberTiger.
   // Staff get their own devices back; operators get the whole team.
-  if (info.canEnroll !== true) return (prev) => ({ ...prev, ...next });
+  if (info.canEnroll !== true) return { update: (prev) => ({ ...prev, ...next }), stopped: false };
   try {
     const res = await api("/devices");
     if (!res.ok) throw new HttpFailure("Couldn't load your devices", res.status);
     const devices: MeshDevice[] = (await res.json()).devices;
-    return (prev) => ({ ...prev, ...next, devices });
+    return { update: (prev) => ({ ...prev, ...next, devices }), stopped: false };
   } catch (err) {
     const error = errorMessage(err);
-    return (prev) => ({ ...prev, ...next, error });
+    const stopped = stoppedBy(err);
+    return { update: (prev) => ({ ...prev, ...next, error, stopped }), stopped };
   }
 }
 
 export function useMesh() {
   const [state, setState] = useState<MeshState>(INITIAL_MESH_STATE);
+  const stoppedRef = useRef(false);
 
   const refresh = useCallback(async () => {
-    setState(await loadMesh());
+    const { update, stopped } = await loadMesh();
+    stoppedRef.current ||= stopped;
+    setState(update);
   }, []);
 
   useEffect(() => {
     let cancelled = false;
-    const poll = async () => {
-      const update = await loadMesh();
-      if (!cancelled) setState(update);
+    const poll = async (initial = false) => {
+      // A hidden tab has nobody to show it to; an expired session in a forgotten tab
+      // was the way this page could get a teammate's address blocked.
+      if (stoppedRef.current || (!initial && document.visibilityState === "hidden")) return;
+      const { update, stopped } = await loadMesh();
+      if (cancelled) return;
+      if (stopped) {
+        stoppedRef.current = true;
+        clearInterval(timer);
+      }
+      setState(update);
     };
-    void poll();
     const timer = setInterval(() => void poll(), POLL_INTERVAL_MS);
+    void poll(true);
     return () => {
       cancelled = true;
       clearInterval(timer);
@@ -151,7 +190,8 @@ export function useMesh() {
   const enroll = useCallback(
     async (name: string): Promise<string> => {
       const res = await api("/devices", { method: "POST", body: JSON.stringify({ name }) });
-      const body = await res.json();
+      // An error page or empty body must still read as a message, not a JSON parse error.
+      const body = (await res.json().catch(() => ({}))) as { error?: string; token?: string };
       if (!res.ok) throw new Error(body.error ?? describeHttpFailure("Couldn't enrol the device", res.status));
       void refresh();
       return body.token as string;
@@ -169,8 +209,8 @@ export function useMesh() {
     [refresh],
   );
 
-  const { steps, devices, me, canEnroll, canSeeTeam, canRevokeAny, error } = state;
-  return { steps, devices, me, canEnroll, canSeeTeam, canRevokeAny, error, enroll, revoke };
+  const { steps, devices, me, canEnroll, canSeeTeam, canRevokeAny, error, stopped } = state;
+  return { steps, devices, me, canEnroll, canSeeTeam, canRevokeAny, error, stopped, enroll, revoke };
 }
 
 /** Argo's non-blocking warnings: the device works, but someone should look. */

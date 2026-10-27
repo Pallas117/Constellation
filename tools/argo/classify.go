@@ -78,8 +78,8 @@ type Snapshot struct {
 	PublicIP   string      `json:"public_ip,omitempty"`
 	Loc        string      `json:"loc,omitempty"`
 	DNS        Result      `json:"dns"`
-	API        Result      `json:"api"` // api.anthropic.com, direct (no proxy)
-	Web        Result      `json:"web"` // legacy fixtures only; claude.ai 403s non-browsers so it is not probed
+	API        Result      `json:"api"`           // api.anthropic.com, direct (no proxy)
+	Web        *Result     `json:"web,omitempty"` // legacy fixtures only; claude.ai 403s non-browsers so it is not probed (omitted, so doctor never shows a failed web check)
 	Captive    Result      `json:"captive"`
 	WPAD       bool        `json:"wpad"`
 	WiFiSec    string      `json:"wifi_security,omitempty"` // ipconfig's Security, e.g. WPA2_PSK; "" when not on Wi-Fi

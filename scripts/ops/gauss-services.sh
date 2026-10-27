@@ -14,7 +14,9 @@
 #   scripts/ops/gauss-services.sh uninstall                unload + remove agents
 #   scripts/ops/gauss-services.sh dev <checkout-dir>        run a dev/R&D checkout beside live (:3101 API, :5174 site)
 #   scripts/ops/gauss-services.sh fallback prepare <dir> [sha]|on|off|status   cold-standby last-known-good build
-#   scripts/ops/gauss-services.sh deploy <commit> [fallback-dir]   switch live to <commit>; rolls back by itself if it doesn't come up
+#   scripts/ops/gauss-services.sh deploy <commit> [fallback-dir] [--emergency <reason>]   switch live to <commit>; rolls back by itself if it doesn't come up
+#   scripts/ops/gauss-services.sh gates record <checkout-dir>|list   run the five gates on a clean checkout; deploy needs a passing record
+#   scripts/ops/gauss-services.sh events [--since 2h] [--json]     timeline: watchdog, failover, deploys, alerts, boots (events.jsonl)
 #
 # Three layers (GAU-158): dev (any other checkout, foreground, own ports and data,
 # never the live API), production (this install), and fallback: a built, not running,
@@ -25,7 +27,11 @@
 # switches, so the standby is always the previous version (by hand:
 # `fallback prepare <dir>`, default sha: the live checkout's HEAD).
 #
-# deploy (run the gates on the commit first): refuses under memory pressure or over
+# deploy (GAU-162) refuses a commit that isn't on origin/main or whose exact tree has no
+# passing gate record (`gates record`), unless `--emergency <reason>`, which texts the phone.
+# Each deploy and rollback is a line in deploy-history.jsonl (by, from, to, tree, gates,
+# fallback, result) and an event; `check` says whether live is a recorded deploy.
+# It also refuses under memory pressure or over
 # local code changes in live (live's data files are kept), refreshes the fallback,
 # checks out the commit, runs npm ci only if package-lock.json changed, reinstalls and
 # waits for what a deploy can break (backend, site, site -> API, same-origin build).
@@ -74,10 +80,17 @@ WATCH_KICKS="$WATCH_DIR/watch-kicks"         # "<label> <epoch>" per watchdog re
 WATCH_MAX_KICKS=3
 DEPLOY_LOCK="$WATCH_DIR/deploying" # held by deploy; the guard leaves the services alone meanwhile
 DEPLOY_WAIT="${GAUSS_DEPLOY_WAIT:-90}" # seconds a deploy waits for the services to come up
+DEPLOY_HISTORY="$WATCH_DIR/deploy-history.jsonl" # every deploy and rollback; never rotated (a line per deploy)
+DEPLOY_EMERGENCY="" # set by `deploy --emergency <reason>`
+# Gate records (GAU-162), keyed by tree hash: what was tested is exactly what is deployed, even
+# after a merge commit or a rebase that leaves the tree unchanged (GAU-161 finding 4).
+GATES_DIR="$WATCH_DIR/gates"
+GATE_LOCK="${GAUSS_GATE_LOCK:-$HOME/.local/state/gauss-gate.lock}" # shared with agents running gates by hand
+GATES=(test:ops test build quality:full verify)
 # balance: safe, reversible load shedding (GAU-126). GAUSS_BALANCE=0 turns it off.
 BALANCE="${GAUSS_BALANCE:-1}"
 LOCAL_CODER="${GAUSS_LOCAL_CODER:-$HOME/.local/bin/local-coder}"   # optional on-device model server
-LOCAL_CODER_PORT="${LOCAL_CODER_PORT:-8089}"   # local-coder's server; Gauss's memory answer model (:3032) is not optional load
+LOCAL_CODER_PORT="${LOCAL_CODER_PORT:-8089}"   # local-coder's server; Gauss's memory answer model (:3032, opt-in since GAU-184) is never shed
 CLEANUP_STAMP="$WATCH_DIR/balance-cleanup"     # balance runs disk-cleanup at most hourly
 DISK_CLEANUP="${GAUSS_DISK_CLEANUP:-$HOME/.local/bin/disk-cleanup}" # allowlisted cache cleanup
 LEARNING_PAUSED="$WATCH_DIR/learning-paused"      # ml/train/nightly.py skips while this exists
@@ -154,7 +167,166 @@ awake_set() { # awake_set 0|1 <reason>
 
 # Phone alerts go through Argo's iMessage channel (masked, queued while
 # offline, rate-limited per key); silently skipped if Argo isn't installed.
-phone() { [ -x "$ARGO" ] && "$ARGO" notify "$@" >/dev/null 2>&1 || true; }
+# Every call is `phone -key K -every N <title> <message>`; a new alert is also an event.
+phone() {
+  [ "${1:-}" = -key ] && alert_event "${2:-}" "${4:-1h}" "${5:-}" "${6:-}"
+  [ -x "$ARGO" ] && "$ARGO" notify "$@" >/dev/null 2>&1 || true
+}
+
+# Events (GAU-164): one JSON object per line in events.jsonl, so the timeline before a crash
+# is one file instead of four free-text logs. Every line carries the SHAs live and the
+# fallback were on and the memory and power state at that moment. deploy.ts writes the same
+# format. Rotated by size, one old file kept.
+EVENTS="${GAUSS_EVENTS_LOG:-$LOGS/events.jsonl}"
+EVENTS_MAX_KB="${GAUSS_EVENTS_MAX_KB:-5120}"
+BOOT_STATE="$WATCH_DIR/boottime"
+MEMORY_TSV="${MEM_GUARD_LOG:-$LOGS/memory.tsv}"       # written by ~/.local/bin/mem-guard, not this repo
+MEM_GUARD="${GAUSS_MEM_GUARD:-$HOME/.local/bin/mem-guard}"
+DIAG_DIRS="${GAUSS_DIAG_DIRS:-/Library/Logs/DiagnosticReports:$HOME/Library/Logs/DiagnosticReports}"
+
+# Reasons are free text (alert bodies, paths, git output): drop credentials in URLs, query
+# strings and token=/secret=/password=/key= values before they reach a log.
+redact() {
+  sed -E -e 's#(://)[^/@ ]+@#\1#g' -e 's#(https?://[^ ?"]*)\?[^ "]*#\1?<redacted>#g' \
+    -e 's#([A-Za-z_]*([Tt][Oo][Kk][Ee][Nn]|[Ss][Ee][Cc][Rr][Ee][Tt]|[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Kk][Ee][Yy]))=[^ &"]+#\1=<redacted>#g'
+}
+json_str() { # json_str <text>: a JSON string literal (redacted; control characters other than \t \n \r dropped)
+  local s; s=$(printf '%s' "$1" | redact | LC_ALL=C tr -d '\000-\010\013\014\016-\037')
+  s=${s//\\/\\\\}; s=${s//\"/\\\"}; s=${s//$'\t'/\\t}; s=${s//$'\r'/\\r}; s=${s//$'\n'/\\n}
+  printf '"%s"' "$s"
+}
+json_num() { [[ "${1:-}" =~ ^-?[0-9]+$ ]] && printf '%s' "$1" || printf null; }
+json_opt() { [ -n "${1:-}" ] && json_str "$1" || printf null; }
+
+event() { # event <event> <label> <reason> [key=text | key:=json]...: append one line; never fails the caller
+  local name=$1 label=$2 reason=$3; shift 3
+  local live sha="" fb="" level swap _ batt pct ac=false kv key extra=""
+  live=$(live_dir 2>/dev/null) && [ -d "$live" ] && sha=$(git -C "$live" rev-parse HEAD 2>/dev/null) || true
+  ready_record && fb=$READY_SHA || true
+  read -r level swap _ < <(memory_stats)
+  batt=$(pmset -g batt 2>/dev/null || true); pct=$(grep -Eo '[0-9]+%' <<<"$batt" | head -1 | tr -d % || true)
+  [[ "$batt" == *"'AC Power'"* ]] && ac=true
+  for kv in "$@"; do
+    key=${kv%%=*}
+    if [[ "$key" == *: ]]; then extra+=",$(json_str "${key%:}"):${kv#*=}"; else extra+=",$(json_str "$key"):$(json_str "${kv#*=}")"; fi
+  done
+  local line; line=$(printf '{"ts":"%s","host":%s,"event":%s,"label":%s,"reason":%s,"live_sha":%s,"fallback_sha":%s,"pressure":%s,"swap_mb":%s,"battery":%s,"on_ac":%s%s}' \
+    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$(json_str "$(hostname -s 2>/dev/null || true)")" "$(json_str "$name")" "$(json_str "$label")" \
+    "$(json_str "$reason")" "$(json_opt "$sha")" "$(json_opt "$fb")" "$(json_num "$level")" "$(json_num "$swap")" "$(json_num "$pct")" "$ac" "$extra")
+  mkdir -p "$(dirname "$EVENTS")" 2>/dev/null || return 0
+  if [ $(( $(stat -f %z "$EVENTS" 2>/dev/null || echo 0) / 1024 )) -ge "$EVENTS_MAX_KB" ]; then mv -f "$EVENTS" "$EVENTS.1" 2>/dev/null || true; fi
+  printf '%s\n' "$line" >>"$EVENTS" 2>/dev/null || true
+  return 0
+}
+
+# The guard re-sends an alert every minute while it holds and argo rate-limits the texts;
+# log it as an event once per key per its own interval, not every minute.
+alert_event() { # alert_event <key> <every: 30m|1h> <title> <message>
+  local stamp="$WATCH_DIR/alerts/$1" mins
+  case "$2" in *m) mins=${2%m} ;; *h) mins=$(( ${2%h} * 60 )) ;; *) mins=60 ;; esac
+  [[ "$mins" =~ ^[0-9]+$ ]] || mins=60
+  [ -n "$(find "$stamp" -mmin -"$mins" 2>/dev/null)" ] && return 0
+  mkdir -p "$WATCH_DIR/alerts" 2>/dev/null && touch "$stamp" 2>/dev/null || true
+  event alert "$1" "$3: $4"
+}
+
+boot_epoch() { sysctl -n kern.boottime 2>/dev/null | sed -nE 's/^[{] sec = ([0-9]+),.*/\1/p'; }
+iso_utc() { date -u -r "$1" +%Y-%m-%dT%H:%M:%SZ; }
+
+# Boot breadcrumb. The 2026-10-21 reset left no panic report, an empty unified log and nothing
+# in `last`. So on the first guard run after kern.boottime changes, record what we still know:
+# the last signs of life (the guard's minutely heartbeat, the last event, the last memory.tsv
+# row), any panic or JetsamEvent report since the previous boot, and pmset's shutdown cause.
+boot_check() {
+  local now prev; now=$(boot_epoch); [ -n "$now" ] || return 0
+  prev=$(cat "$BOOT_STATE" 2>/dev/null || true)
+  [ "$now" = "$prev" ] && return 0
+  mkdir -p "$WATCH_DIR" && echo "$now" >"$BOOT_STATE"
+  [[ "$prev" =~ ^[0-9]+$ ]] || return 0 # first run ever: nothing to compare with
+  # Runs before watch_peers touches the heartbeat, so its mtime is the last minute the old boot was alive.
+  local seen="" seen_hm="?" last_ev="" mem="" mem_level="" mem_swap="" reports="" cause="" ref d f
+  if [ -e "$GUARD_HEARTBEAT" ]; then seen=$(iso_utc "$(stat -f %m "$GUARD_HEARTBEAT")"); seen_hm=$(date -r "$(stat -f %m "$GUARD_HEARTBEAT")" +%H:%M); fi
+  last_ev=$(tail -1 "$EVENTS" 2>/dev/null | sed -nE 's/^[{]"ts":"([^"]+)".*/\1/p' || true)
+  mem=$(tail -1 "$MEMORY_TSV" 2>/dev/null | grep -v '^ts' || true)
+  if [ -n "$mem" ]; then
+    mem_level=$(cut -f2 <<<"$mem"); mem_swap=$(cut -f9 <<<"$mem")
+    mem="$(cut -f1 <<<"$mem") pressure $(pressure_name "$mem_level"), swap ${mem_swap} GB"
+  fi
+  ref=$(mktemp) && touch -t "$(date -r "$prev" +%Y%m%d%H%M.%S)" "$ref"
+  local IFS=:
+  for d in $DIAG_DIRS; do
+    for f in $(find "$d" -maxdepth 1 \( -name '*.panic' -o -name 'JetsamEvent*' \) -newer "$ref" 2>/dev/null | tr '\n' ':'); do
+      reports+="${reports:+ }${f##*/}"
+    done
+  done
+  unset IFS; rm -f "$ref"
+  cause=$(pmset -g log 2>/dev/null | grep 'Shutdown Cause' | tail -1 | sed -nE 's/.*Cause: *(-?[0-9]+).*/\1/p' || true)
+  local summary="restarted at ~$(date -r "$now" +%H:%M) (last seen ${seen_hm}"
+  [ -n "$mem_level" ] && summary+=", pressure $(pressure_name "$mem_level"), swap ${mem_swap} GB"
+  summary+="; reports: ${reports:-none}; shutdown cause: ${cause:-unknown})"
+  event boot "" "$summary" prev_boot="$(iso_utc "$prev")" boot="$(iso_utc "$now")" last_seen="$seen" \
+    last_event="$last_ev" last_memory="$mem" reports="$reports" shutdown_cause="$cause"
+  phone -key boot -every 10m "Gauss: $(hostname -s 2>/dev/null || echo Mac) $summary" \
+    "If nobody restarted it, the timeline is in: gauss-services.sh events --since 6h"
+}
+
+# memory.tsv is sampled every 10 min by gauss-tpm-watch. While memory is short, sample it every
+# minute as well, so the minutes before a crash are on record. mem-guard lives outside this repo.
+memory_sample() { # memory_sample <pressure level> <swap MB>
+  { [ "$1" -ge "$MEM_SHED_LEVEL" ] || swap_high "$2"; } || return 0
+  [ -x "$MEM_GUARD" ] && [ -z "$(find "$MEMORY_TSV" -mmin -1 2>/dev/null)" ] || return 0
+  "$MEM_GUARD" sample >/dev/null 2>&1 || true
+}
+
+events_show() { # events [--since 30m|2h|1d] [--json]: timeline from events.jsonl (and its rotated file)
+  local since=24h json=0
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --since) since=${2:-24h}; shift ;;
+      --json) json=1 ;;
+      "") ;;
+      *) echo "usage: $0 events [--since 30m|2h|1d] [--json]" >&2; return 2 ;;
+    esac
+    shift
+  done
+  [[ "$since" =~ ^[0-9]+[mhd]$ ]] || { echo "--since takes e.g. 30m, 2h or 1d" >&2; return 2; }
+  python3 -Ic '
+import json, sys
+from datetime import datetime, timedelta, timezone
+n, unit = int(sys.argv[1][:-1]), sys.argv[1][-1]
+cut = datetime.now(timezone.utc) - timedelta(minutes=n * {"m": 1, "h": 60, "d": 1440}[unit])
+raw, bad, shown = sys.argv[2] == "1", 0, 0
+for path in sys.argv[3:]:
+    try:
+        lines = open(path, encoding="utf-8", errors="replace").read().splitlines()
+    except OSError:
+        continue
+    for line in lines:
+        try:
+            e = json.loads(line)
+            ts = datetime.strptime(e["ts"][:19], "%Y-%m-%dT%H:%M:%S").replace(tzinfo=timezone.utc)
+        except Exception:
+            bad += 1
+            continue
+        if ts < cut:
+            continue
+        shown += 1
+        if raw:
+            print(line)
+            continue
+        sha = lambda k: (e.get(k) or "-")[:7]
+        lvl = {1: "normal", 2: "warn", 4: "critical"}.get(e.get("pressure"), "?")
+        swap = "%.1f GB" % (e["swap_mb"] / 1024) if isinstance(e.get("swap_mb"), (int, float)) else "?"
+        power = "%s%% %s" % (e.get("battery", "?"), "AC" if e.get("on_ac") else "battery") if e.get("battery") is not None else ("AC" if e.get("on_ac") else "?")
+        print("%s  %-17s %-28s %s  [live %s, fallback %s | %s, swap %s | %s]" % (
+            ts.astimezone().strftime("%m-%d %H:%M:%S"), e.get("event", "?"), e.get("label") or "-",
+            e.get("reason", ""), sha("live_sha"), sha("fallback_sha"), lvl, swap, power))
+if not raw and not shown:
+    print("no events in the last %s" % sys.argv[1])
+if bad:
+    print("(%d unreadable lines skipped)" % bad, file=sys.stderr)
+' "$since" "$json" "$EVENTS.1" "$EVENTS"
+}
 
 battery_alerts() { # battery_alerts <pmset batt output> <pct>
   local batt=$1 pct=$2
@@ -237,6 +409,7 @@ kick() { # kick <label> <reason>: rate-limited launchctl kickstart, logged and a
   awk -v n="$now" 'n-$2<86400' "$WATCH_KICKS" >"$WATCH_KICKS.tmp" 2>/dev/null && mv "$WATCH_KICKS.tmp" "$WATCH_KICKS"
   if launchctl kickstart -k "$UID_DOMAIN/$label" >/dev/null 2>&1; then
     echo "$(date '+%F %T') watchdog restarted $label: $reason"
+    event watchdog_kick "$label" "$reason"
   else
     phone -key "watch-$label" -every 1h "Gauss: can't restart $label" "$reason; launchctl kickstart failed."
   fi
@@ -308,6 +481,7 @@ fallback_on() { # fallback_on <reason>: swap live for the fallback on the same p
   for l in "${FALLBACK_LABELS[@]}"; do reload "$l" "$FALLBACK_STATE/$l.plist"; done
   echo "$(date '+%F %T') $1" >"$FALLBACK_STATE/active"
   echo "$(date '+%F %T') failover to fallback ${sha:0:7} ($dir): $1"
+  event failover fallback "$1" to="$sha"
   phone -key fallback -every 1h "Gauss: on fallback" \
     "$1. Serving last known-good ${sha:0:7} on the same URLs. Fix live, then: gauss-services.sh fallback off"
 }
@@ -320,6 +494,7 @@ fallback_off() { # back to live; the guard gets a fresh set of restarts for it
   done
   [ -f "$WATCH_KICKS" ] && { grep -Ev '^uk\.lightbound\.gauss-(backend|frontend) ' "$WATCH_KICKS" >"$WATCH_KICKS.tmp" || true; mv "$WATCH_KICKS.tmp" "$WATCH_KICKS"; }
   rm -f "$FALLBACK_STATE/active"
+  event failback fallback "back on live"
   echo "Back on live. If it fails again, the guard fails over again after $WATCH_MAX_KICKS restarts."
 }
 
@@ -345,6 +520,9 @@ fallback_prepare() { # fallback_prepare <dir> [sha]: check out, install, build, 
     local prev=""; ready_record && prev=$READY_DIR
     # Only ever re-point a directory this command made: never someone's working checkout.
     [ "$dir" = "$prev" ] || { echo "$dir exists and is not the current fallback; pick a new path." >&2; return 1; }
+    # The checkout changes under the old record from here: drop it, so a failed install or
+    # build leaves "none prepared", never a ready record describing a different checkout.
+    rm -f "$FALLBACK_STATE/ready"
     git -C "$dir" checkout -q --detach "$sha" || return 1
   else
     git -C "$live" worktree add -q --detach "$dir" "$sha" || return 1; dir=$(cd "$dir" && pwd)
@@ -369,6 +547,7 @@ fallback_prepare() { # fallback_prepare <dir> [sha]: check out, install, build, 
     >"$FALLBACK_STATE/${FALLBACK_LABELS[1]}.plist"
   plutil -lint -s "$FALLBACK_STATE/${FALLBACK_LABELS[0]}.plist" "$FALLBACK_STATE/${FALLBACK_LABELS[1]}.plist" || return 1
   echo "$sha $dir $(date +%s)" >"$FALLBACK_STATE/ready"
+  event fallback_prepared "${sha:0:7}" "fallback prepared at $dir"
   echo "Fallback ready: ${sha:0:7} at $dir (cold: not running, no memory used)."
 }
 
@@ -391,6 +570,122 @@ install_agents() { # install_agents <checkout-dir>: build the site, write and (r
     plutil -lint -s "$AGENTS/$l.plist" || return 1
     reload "$l" "$AGENTS/$l.plist" || return 1
   done
+}
+
+# Who ran it: GAUSS_BY if set, else the user, marked when it ran inside a Claude Code session.
+deployer() { if [ -n "${GAUSS_BY:-}" ]; then echo "$GAUSS_BY"; elif [ -n "${CLAUDECODE:-}" ]; then echo "claude-code ($(id -un))"; else id -un; fi; }
+
+# The gates are heavy for an 8 GB Mac (a hard reset on 2026-10-21 under memory pressure), so
+# each waits for normal pressure and takes the lock other agents use for the same gates.
+gate_lock() {
+  local level _; mkdir -p "$(dirname "$GATE_LOCK")"
+  until read -r level _ < <(memory_stats) && [ "$level" = 1 ] && mkdir "$GATE_LOCK" 2>/dev/null; do sleep 20; done
+}
+
+gates_record() { # gates_record <checkout-dir>: run the gates on a clean checkout and record the result by tree
+  local dir sha tree g rc
+  dir=$(cd "${1:?usage: $0 gates record <checkout-dir>}" && pwd) || return 1
+  [ -f "$dir/backend/server.ts" ] && [ -d "$dir/node_modules" ] || { echo "$dir is not a Gauss checkout with node_modules" >&2; return 1; }
+  # A record vouches for a tree, so nothing uncommitted may be in it.
+  [ -z "$(git -C "$dir" status --porcelain)" ] || { echo "$dir has uncommitted or untracked files: commit or stash them first." >&2; return 1; }
+  sha=$(git -C "$dir" rev-parse HEAD) && tree=$(git -C "$dir" rev-parse 'HEAD^{tree}') || return 1
+  GATES_TMP=$(mktemp -d); local tmp=$GATES_TMP # global: the EXIT trap runs after this function's locals are gone
+  # Release the lock on exit only while holding it: an interrupted wait must not free another agent's lock.
+  trap '[ "${GATES_HOLD:-0}" = 1 ] && rmdir "$GATE_LOCK" 2>/dev/null; rm -rf "$GATES_TMP"' EXIT
+  for g in "${GATES[@]}"; do
+    gate_lock; GATES_HOLD=1
+    echo "gate $g ..."
+    rc=0; (cd "$dir" && PATH="$(dirname "$NODE"):$PATH" npm run "$g" >"$tmp/$g.log" 2>&1) || rc=$?
+    rmdir "$GATE_LOCK" 2>/dev/null || true; GATES_HOLD=0
+    echo "$rc" >"$tmp/$g.rc"
+  done
+  [ "$(git -C "$dir" rev-parse HEAD)" = "$sha" ] && [ -z "$(git -C "$dir" status --porcelain)" ] \
+    || { echo "$dir changed while the gates ran; not recording." >&2; return 1; }
+  local json; json=$(python3 -Ic '
+import json, os, re, sys
+d, sha, tree, by, at = sys.argv[1:6]
+log = lambda g: open(os.path.join(d, g + ".log"), encoding="utf-8", errors="replace").read()
+rc = lambda g: int(open(os.path.join(d, g + ".rc")).read())
+def last(pat, text, conv=int):
+    m = re.findall(pat, text, re.M)
+    return conv(m[-1]) if m else None
+ops, t, v = log("test:ops"), log("test"), log("verify")
+r = {"sha": sha, "tree": tree, "by": by, "at": at,
+     "test_ops": {"exit": rc("test:ops"), "pass": last(r"gauss-services: (\d+) passed", ops), "fail": last(r"gauss-services: \d+ passed, (\d+) failed", ops), "go_ok": len(re.findall(r"^ok\s", ops, re.M))},
+     "test": {"exit": rc("test"), "tests": last(r"^\S* ?tests (\d+)$", t), "pass": last(r"^\S* ?pass (\d+)$", t), "fail": last(r"^\S* ?fail (\d+)$", t)},
+     "build": {"exit": rc("build")},
+     "quality": {"exit": rc("quality:full")},
+     "verify": {"exit": rc("verify"), "vcrm": last(r"VCRM: (\d+/\d+)", v, str), "fmea": last(r"FMEA: (\d+/\d+)", v, str), "passed_at": last(r"VERIFY PASSED at (\w+)", v, str)}}
+r["passed"] = all(r[k]["exit"] == 0 for k in ("test_ops", "test", "build", "quality", "verify")) \
+    and r["test"]["fail"] == 0 and r["test_ops"]["fail"] == 0 and sha.startswith(r["verify"]["passed_at"] or "-")
+print(json.dumps(r, ensure_ascii=False))
+' "$tmp" "$sha" "$tree" "$(deployer)" "$(date -u +%Y-%m-%dT%H:%M:%SZ)") || return 1
+  mkdir -p "$GATES_DIR"; printf '%s\n' "$json" >"$GATES_DIR/$tree.json"
+  gates_summary "$GATES_DIR/$tree.json"
+  gate_record "$tree" >/dev/null
+}
+
+gates_summary() { # gates_summary <record file>: one line
+  python3 -Ic '
+import json, sys
+r = json.load(open(sys.argv[1]))
+t, o, v = r.get("test") or {}, r.get("test_ops") or {}, r.get("verify") or {}
+fails = [k for k in ("test_ops", "test", "build", "quality", "verify") if (r.get(k) or {}).get("exit") not in (0, None)]
+print("%s %s (tree %s) by %s at %s: npm test %s/%s, test:ops %s passed, build %s, quality %s, VCRM %s, FMEA %s" % (
+    "PASSED" if r.get("passed") else "FAILED (" + ", ".join(fails or ["counts"]) + ")", r["sha"][:7], r["tree"][:7], r.get("by"), r.get("at"),
+    t.get("pass"), t.get("tests"), o.get("pass"), "ok" if (r.get("build") or {}).get("exit") == 0 else "failed",
+    "ok" if (r.get("quality") or {}).get("exit") == 0 else "failed", v.get("vcrm"), v.get("fmea")))
+' "$1"
+}
+
+gate_record() { # gate_record <tree>: print the passing record for this exact tree as one JSON line, or fail
+  [ -f "$GATES_DIR/$1.json" ] || return 1
+  python3 -Ic '
+import json, sys
+r = json.load(open(sys.argv[1]))
+if r.get("passed") is not True or r.get("tree") != sys.argv[2]:
+    sys.exit(1)
+print(json.dumps(r, ensure_ascii=False))
+' "$GATES_DIR/$1.json" "$1"
+}
+
+record_deploy() { # record_deploy <deploy|rollback> <ok|failed> <from> <to> <tree> <gates json|""> <reason>
+  local ev=$1 result=$2 from=$3 to=$4 tree=$5 gates=${6:-null} reason=$7 fb="" by; by=$(deployer)
+  ready_record && fb=$READY_SHA || true
+  mkdir -p "$WATCH_DIR"
+  printf '{"ts":"%s","action":%s,"by":%s,"from":%s,"to":%s,"tree":%s,"gates":%s,"fallback":%s,"result":%s,"emergency":%s}\n' \
+    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$(json_str "$ev")" "$(json_str "$by")" "$(json_str "$from")" "$(json_str "$to")" \
+    "$(json_str "$tree")" "$gates" "$(json_opt "$fb")" "$(json_str "$result")" "$(json_opt "$DEPLOY_EMERGENCY")" >>"$DEPLOY_HISTORY"
+  event "$ev" "${to:0:7}" "$reason" by="$by" from="$from" to="$to" tree="$tree" gates:="$gates" \
+    fallback="$fb" result="$result" emergency="$DEPLOY_EMERGENCY"
+}
+
+deploy_state() { # "ok|no <description>" for status and check: is what runs in live a recorded deploy?
+  local live head; live=$(live_dir) && [ -d "$live" ] && head=$(git -C "$live" rev-parse HEAD 2>/dev/null) \
+    || { echo "no live: not installed"; return 0; }
+  python3 -Ic '
+import json, sys
+from datetime import datetime, timezone
+head, rows = sys.argv[2], []
+try:
+    rows = [json.loads(l) for l in open(sys.argv[1]) if l.strip()]
+except (OSError, ValueError):
+    pass
+ok = [r for r in rows if r.get("to") == head and r.get("result") == "ok"]
+if not ok:
+    print("no live = %s has no deploy record (switched by hand?): deploy it with gauss-services.sh deploy" % head[:7]); sys.exit()
+r = ok[-1]
+when = datetime.strptime(r["ts"], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc).astimezone().strftime("%Y-%m-%d %H:%M")
+what = "rolled back to" if r.get("action") == "rollback" else "deployed"
+if r.get("emergency"):
+    print("no live = %s, %s %s by %s in an EMERGENCY (%s): no gate record" % (head[:7], what, when, r.get("by"), r["emergency"]))
+elif r.get("gates"):
+    g = r["gates"]
+    print("ok live = %s, %s %s by %s, gates recorded (npm test %s, test:ops %s, VCRM %s)" % (head[:7], what, when, r.get("by"),
+          (g.get("test") or {}).get("pass"), (g.get("test_ops") or {}).get("pass"), (g.get("verify") or {}).get("vcrm")))
+else:
+    print("no live = %s, %s %s by %s, no gate record" % (head[:7], what, when, r.get("by")))
+' "$DEPLOY_HISTORY" "$head"
 }
 
 # What a deploy can break, and so what decides a rollback. The rest of `check`
@@ -424,6 +719,16 @@ deploy() { # deploy <commit> [fallback-dir]
     || { echo "Unknown commit '$1' in $live." >&2; return 1; }
   prev=$(git -C "$live" rev-parse HEAD) || return 1
   [ "$sha" != "$prev" ] || { echo "Live is already at ${sha:0:7}."; return 0; }
+  # Only merged code with gates recorded for its exact tree, unless a person says why not.
+  local tree gates="" prev_tree prev_gates=""
+  tree=$(git -C "$live" rev-parse "$sha^{tree}") && prev_tree=$(git -C "$live" rev-parse "$prev^{tree}") || return 1
+  gates=$(gate_record "$tree") || gates=""
+  prev_gates=$(gate_record "$prev_tree") || prev_gates=""
+  if [ -z "$DEPLOY_EMERGENCY" ]; then
+    git -C "$live" merge-base --is-ancestor "$sha" origin/main 2>/dev/null \
+      || { echo "${sha:0:7} is not on origin/main: merge it first (or --emergency <reason>)." >&2; return 1; }
+    [ -n "$gates" ] || { echo "No passing gate record for ${sha:0:7} (tree ${tree:0:7}): run '$0 gates record <checkout at ${sha:0:7}>' first (or --emergency <reason>)." >&2; return 1; }
+  fi
   read -r level _ < <(memory_stats)
   if [ "$level" -ge "$MEM_SHED_LEVEL" ]; then
     echo "Memory pressure is $(pressure_name "$level"): not deploying now (npm ci and the build need headroom). Retry when normal." >&2; return 1
@@ -437,6 +742,11 @@ deploy() { # deploy <commit> [fallback-dir]
     touch "$DEPLOY_LOCK" # left by a deploy that died
   fi
   trap 'rmdir "$DEPLOY_LOCK" 2>/dev/null || true' EXIT
+  if [ -n "$DEPLOY_EMERGENCY" ]; then
+    echo "EMERGENCY deploy of ${sha:0:7} by $(deployer): $DEPLOY_EMERGENCY (origin/main and gate checks skipped)"
+    phone -key emergency-deploy -every 10m "Gauss: emergency deploy" \
+      "${sha:0:7} by $(deployer) without the usual checks: $DEPLOY_EMERGENCY"
+  fi
 
   # The standby becomes what runs now, if it is healthy: never swap a good fallback for a broken live.
   [ -z "$fbdir" ] && ready_record && fbdir=$READY_DIR
@@ -456,19 +766,23 @@ deploy() { # deploy <commit> [fallback-dir]
     || { echo "Checkout refused (a local data file conflicts with ${sha:0:7}?): nothing changed." >&2; return 1; }
   if switch_live "$live" "$prev" "$sha" && deploy_ready "$live" "$DEPLOY_WAIT"; then
     echo "$(date '+%F %T') deployed ${sha:0:7} (was ${prev:0:7})" >>"$LOGS/deploy.log"
+    record_deploy deploy ok "$prev" "$sha" "$tree" "$gates" "deployed ${sha:0:7} (was ${prev:0:7})"
     echo "Deployed ${sha:0:7}. Full checklist (for information; only the services decide a rollback):"
     check || true
     return 0
   fi
   echo "${sha:0:7} didn't come up within ${DEPLOY_WAIT}s: rolling back to ${prev:0:7} ..." >&2
+  record_deploy deploy failed "$prev" "$sha" "$tree" "$gates" "${sha:0:7} didn't come up within ${DEPLOY_WAIT}s"
   if switch_live "$live" "$sha" "$prev" && deploy_ready "$live" "$DEPLOY_WAIT"; then
     echo "$(date '+%F %T') ${sha:0:7} failed, rolled back to ${prev:0:7}" >>"$LOGS/deploy.log"
+    record_deploy rollback ok "$sha" "$prev" "$prev_tree" "$prev_gates" "${sha:0:7} failed, rolled back to ${prev:0:7}"
     phone -key deploy -every 10m "Gauss: deploy rolled back" \
       "${sha:0:7} didn't come up; live is back on ${prev:0:7}. Logs: ~/Library/Logs/gauss/backend.log"
     echo "Rolled back: live is on ${prev:0:7} again." >&2
     return 1
   fi
   echo "$(date '+%F %T') ${sha:0:7} failed and rollback to ${prev:0:7} failed" >>"$LOGS/deploy.log"
+  record_deploy rollback failed "$sha" "$prev" "$prev_tree" "$prev_gates" "${sha:0:7} failed and rollback to ${prev:0:7} failed"
   fallback_on "deploy of ${sha:0:7} failed and rolling back to ${prev:0:7} failed too" \
     || phone -key deploy -every 10m "Gauss: down after a deploy" "${sha:0:7} failed, rollback failed and there is no fallback. Needs a person."
   return 1
@@ -507,12 +821,14 @@ dev_run() { # dev_run <checkout-dir>
 }
 
 awake_guard() { # run every minute by the awake agent
+  boot_check || true # first, before watch_peers refreshes the heartbeat it reads
   watch_peers
   local batt pct
   batt=$(pmset -g batt); pct=$(grep -Eo '[0-9]+%' <<<"$batt" | head -1 | tr -d % || true)
   battery_alerts "$batt" "$pct"
   local level swap free; read -r level swap free < <(memory_stats)
   memory_alerts "$level" "$swap"
+  memory_sample "$level" "$swap"
   disk_alerts "$(disk_free_gb)"
   balance || true
   [ -f "$SUDOERS" ] || return 0 # not set up; status and check say so
@@ -589,6 +905,7 @@ balance() { # balance [--dry-run]
   local summary; summary=$(IFS=';'; echo "${all[*]}" | sed 's/;/; /g')
   if [ $dry = 1 ]; then echo "would report: $summary ($state)"; return 0; fi
   mkdir -p "$LOGS"; echo "$(date '+%F %T') balance: $summary ($state)" >>"$LOGS/balance.log"
+  event balance "" "$summary ($state)"
   if [ ${#notify[@]} -gt 0 ]; then
     local extra=""; [ $mem_short = 1 ] && extra=" Biggest: $(top_memory)."
     phone -key balance -every 1h "Gauss: rebalanced" "$(IFS=';'; echo "${notify[*]}" | sed 's/;/; /g') ($state).$extra"
@@ -719,7 +1036,8 @@ except Exception:
     print("no space-weather data unavailable")
 ' 2>/dev/null || echo "no space-weather data unavailable")
   item "${fresh%% *}" "${fresh#* }"
-  local dir; dir=$(launchctl print "$UID_DOMAIN/uk.lightbound.gauss-backend" 2>/dev/null | awk -F'= ' '/working directory =/{print $2; exit}')
+  # || true: with the backend not loaded, launchctl fails and pipefail + set -e would end the checklist here.
+  local dir; dir=$(launchctl print "$UID_DOMAIN/uk.lightbound.gauss-backend" 2>/dev/null | awk -F'= ' '/working directory =/{print $2; exit}' || true)
   local report; report=$(python3 -Ic '
 import json, sys
 from datetime import datetime, timezone
@@ -742,7 +1060,7 @@ except Exception:
     print("no no learning run recorded yet (runs nightly at 03:00)")
 ' "$dir/ml/models/registry.json" 2>/dev/null || echo "no no learning run recorded yet")
   item "${learned%% *}" "${learned#* }"
-  # Memory service (gauss-brain, LaunchAgents from its scripts/memory-services.sh) and its local answer model.
+  # Memory service (gauss-brain, LaunchAgents from its scripts/memory-services.sh).
   # The backend reads GAUSS_MEMORY_URL from its checkout's .env (e.g. :3022 for the operator instance);
   # probe the same address. Only that one key is read from .env, never the rest of the file.
   local memory_url="${GAUSS_MEMORY_URL:-}"
@@ -757,9 +1075,15 @@ except Exception:
     print("no memory service not running at %s (gauss-brain: scripts/memory-services.sh install)" % sys.argv[1])
 ' "$memory_url")
   item "${memory%% *}" "${memory#* }"
-  [ "$(code "${GAUSS_BRAIN_URL:-http://127.0.0.1:3032}/v1/models")" = 200 ] && ok=ok || ok=no
-  item $ok "answer model up (${GAUSS_BRAIN_URL:-http://127.0.0.1:3032})"
+  # The chatbot answer model was retired on 2026-10-22 (gauss-brain GAU-184; memory search returns
+  # sources). It is opt-in for experiments, so it is reported but never fails the check.
+  if [ "$(code "${GAUSS_BRAIN_URL:-http://127.0.0.1:3032}/v1/models")" = 200 ]; then
+    item ok "answer model up (${GAUSS_BRAIN_URL:-http://127.0.0.1:3032}; opt-in)"
+  else
+    item ok "answer model off (retired 2026-10-22, GAU-184; opt-in with GAUSS_BRAIN_MODEL_SERVICE=1)"
+  fi
   local fb; fb=$(fallback_state); item "${fb%% *}" "${fb#* }"
+  local dep; dep=$(deploy_state); item "${dep%% *}" "${dep#* }"
   [ $fail = 0 ] && echo "Ready to demo." || echo "Not ready: fix the ✗ items above."
   return $fail
 }
@@ -810,6 +1134,7 @@ case "${1:-}" in
     health
     printf 'awake    %s\n' "$(awake_state | cut -d' ' -f2-)"
     printf 'fallback %s\n' "$(fallback_state | cut -d' ' -f2-)"
+    printf 'deploy   %s\n' "$(deploy_state | cut -d' ' -f2-)"
     ;;
   restart)
     for l in "${SERVICES[@]}"; do launchctl kickstart -k "$UID_DOMAIN/$l"; done
@@ -820,7 +1145,24 @@ case "${1:-}" in
     dev_run "${2:-}"
     ;;
   deploy)
-    deploy "${2:-}" "${3:-}"
+    shift; args=()
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --emergency) DEPLOY_EMERGENCY=${2:-}; [ -n "$DEPLOY_EMERGENCY" ] || { echo "--emergency needs a reason" >&2; exit 2; }; shift ;;
+        *) args+=("$1") ;;
+      esac
+      shift
+    done
+    deploy "${args[0]:-}" "${args[1]:-}"
+    ;;
+  gates)
+    case "${2:-}" in
+      record) gates_record "${3:-}" ;;
+      *) for f in "$GATES_DIR"/*.json; do [ -f "$f" ] && gates_summary "$f"; done; true ;;
+    esac
+    ;;
+  events)
+    events_show "${2:-}" "${3:-}" "${4:-}"
     ;;
   fallback)
     case "${2:-}" in
@@ -840,7 +1182,7 @@ case "${1:-}" in
     echo "Gauss services removed. Logs kept in $LOGS."
     ;;
   *)
-    sed -n '2,17p' "$0"
+    sed -n '2,19p' "$0"
     exit 2
     ;;
 esac

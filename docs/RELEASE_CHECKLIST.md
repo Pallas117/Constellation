@@ -34,9 +34,16 @@ Pre-release builds:
 6. Secrets:
    - no secrets in tracked files.
    - keys rotated if previously exposed.
-7. Signing (GAU-67, `docs/EVIDENCE_SIGNING.md`):
+7. Release records (GAU-69):
+   - `CHANGELOG.md` has a `## [X.Y.Z]` entry for the tag (`release:tag` refuses otherwise).
+   - `npm run release:sbom` passes: it writes `build/sbom/` (CycloneDX SBOMs for the runtime npm
+     dependencies and Gauss Argo, `THIRD_PARTY_NOTICES.md`, `licences.md`) and fails on a copyleft or
+     unrecognised licence. Record a licence a person has confirmed in `scripts/release/licence-review.json`.
+   - The project's own `LICENSE` is a founder decision (GAU-65); none is applied yet.
+8. Signing (GAU-67, `docs/EVIDENCE_SIGNING.md`):
    - `npm run trust:keys -- check` passes (the release check runs it) and lists a current key for each purpose.
-   - after tagging, sign the release files with the release key: `npm run trust:sign -- --file <archive> --sign-key <key file>`.
+   - after tagging, sign each release file (the archive and `build/sbom/*`) with the release key:
+     `npm run trust:sign -- --file <file> --sign-key <key file>`, and attach the `.sig.json` files.
 
 ## Release Commands
 
@@ -47,8 +54,11 @@ npm run release:check
 # Run comprehensive release preparation (quality + security + tests)
 npm run release:prepare
 
-# Create and push an annotated tag
+# Create and push an annotated tag (needs the CHANGELOG entry; runs verify and release:sbom)
 npm run release:tag -- v0.1.0
+
+# Publish the release with its SBOMs and notices attached
+gh release create v0.1.0 --verify-tag --notes-from-tag build/sbom/*
 ```
 
 ## Post-Release Verification

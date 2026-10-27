@@ -1,0 +1,379 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Gauss data API",
+    "version": "0.1.0",
+    "summary": "Organisation-key machine API for refined space-weather data and PR-01 trust records.",
+    "description": "Mounted at /api/v1 (backend/commerce/routers.ts, createDataApiRouter). Every call needs an organisation API key. The organisation's plan must include API access; each key has a per-minute limit and each organisation a daily quota. Successful calls (status < 400) are metered by route template for invoicing. backend/openapi.test.ts fails if a route here and a route in the router drift apart."
+  },
+  "servers": [{ "url": "/api/v1", "description": "Relative to the Gauss backend origin" }],
+  "security": [{ "apiKey": [] }],
+  "paths": {
+    "/data/space-weather/latest": {
+      "get": {
+        "operationId": "getLatestSpaceWeather",
+        "summary": "Most recent refined space-weather point",
+        "responses": {
+          "200": {
+            "description": "The latest point",
+            "headers": { "X-Quota-Limit": { "$ref": "#/components/headers/QuotaLimit" }, "X-Quota-Remaining": { "$ref": "#/components/headers/QuotaRemaining" } },
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/PointResponse" } } }
+          },
+          "404": { "$ref": "#/components/responses/NoData" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/PlanForbidden" },
+          "429": { "$ref": "#/components/responses/RateLimited" }
+        }
+      }
+    },
+    "/data/space-weather/history": {
+      "get": {
+        "operationId": "getSpaceWeatherHistory",
+        "summary": "Refined space-weather points over a lookback window",
+        "parameters": [
+          {
+            "name": "lookback",
+            "in": "query",
+            "description": "ISO 8601 duration with days, hours and minutes only (e.g. PT30M, PT6H, P1D). Defaults to PT1H; capped at the plan's maximum lookback. An unparseable value falls back to the default.",
+            "schema": { "type": "string", "pattern": "^P(?:\\d+D)?(?:T(?:\\d+H)?(?:\\d+M)?)?$", "default": "PT1H" }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Maximum points returned, clamped to 1..17280 (24 h at 5 s cadence).",
+            "schema": { "type": "integer", "minimum": 1, "maximum": 17280, "default": 720 }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Points, oldest first as provided by the history source",
+            "headers": { "X-Quota-Limit": { "$ref": "#/components/headers/QuotaLimit" }, "X-Quota-Remaining": { "$ref": "#/components/headers/QuotaRemaining" } },
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HistoryResponse" } } }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/PlanForbidden" },
+          "429": { "$ref": "#/components/responses/RateLimited" }
+        }
+      }
+    },
+    "/data/sources/status": {
+      "get": {
+        "operationId": "getSourceStatus",
+        "summary": "Health of each upstream data source",
+        "responses": {
+          "200": {
+            "description": "Source status list",
+            "headers": { "X-Quota-Limit": { "$ref": "#/components/headers/QuotaLimit" }, "X-Quota-Remaining": { "$ref": "#/components/headers/QuotaRemaining" } },
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SourcesResponse" } } }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/PlanForbidden" },
+          "429": { "$ref": "#/components/responses/RateLimited" }
+        }
+      }
+    },
+    "/data/trust/records": {
+      "post": {
+        "operationId": "createTrustRecords",
+        "summary": "PR-01: a trust record for one inference, or a batch",
+        "description": "Send one inference object, or {\"inferences\": [...]} with 1 to 100 items. Each item is validated on its own: in a batch, invalid items come back in `rejected` with their errors and are never guessed. Inference times older than the plan's lookback are refused (older windows are a replay pilot, PR-03). The environment is read from Gauss's held history at the inference time; records state their sources, ages, confidence and limitations.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "oneOf": [
+                  { "$ref": "#/components/schemas/TrustRecordRequest" },
+                  { "$ref": "#/components/schemas/TrustRecordBatchRequest" }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "A single record (single request) or records plus rejected items (batch request)",
+            "headers": { "X-Quota-Limit": { "$ref": "#/components/headers/QuotaLimit" }, "X-Quota-Remaining": { "$ref": "#/components/headers/QuotaRemaining" } },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    { "$ref": "#/components/schemas/TrustRecordResponse" },
+                    { "$ref": "#/components/schemas/TrustRecordBatchResponse" }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid single inference, or a batch outside 1..100 items",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          },
+          "503": {
+            "description": "This server does not offer trust records (no environment history)",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/PlanForbidden" },
+          "429": { "$ref": "#/components/responses/RateLimited" }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "apiKey": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "gk_…",
+        "description": "Organisation API key, sent as `Authorization: Bearer gk_…`. Keys are created by organisation admins; never put a key in a URL."
+      }
+    },
+    "headers": {
+      "QuotaLimit": { "description": "The organisation's daily request quota", "schema": { "type": "integer" } },
+      "QuotaRemaining": { "description": "Requests left today after this one", "schema": { "type": "integer" } }
+    },
+    "responses": {
+      "Unauthorized": {
+        "description": "Missing or invalid API key",
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+      },
+      "PlanForbidden": {
+        "description": "The organisation's plan does not include API access",
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+      },
+      "RateLimited": {
+        "description": "Per-key per-minute limit (with Retry-After) or the organisation's daily quota reached",
+        "headers": { "Retry-After": { "description": "Seconds until the minute window resets (minute limit only)", "schema": { "type": "integer" } } },
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+      },
+      "NoData": {
+        "description": "No data has been ingested yet",
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+      }
+    },
+    "schemas": {
+      "Error": {
+        "type": "object",
+        "required": ["error"],
+        "properties": {
+          "error": { "type": "string" },
+          "errors": { "type": "array", "items": { "type": "string" }, "description": "Validation errors for a single trust-record request" }
+        }
+      },
+      "Meta": {
+        "type": "object",
+        "required": ["org", "plan", "generatedAt"],
+        "properties": {
+          "org": { "type": "string", "description": "Organisation name" },
+          "plan": { "type": "string" },
+          "generatedAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "SpaceWeatherPoint": {
+        "type": "object",
+        "description": "A canonical refined space-weather point (backend/types.ts CanonicalSpaceWeatherPoint).",
+        "additionalProperties": true
+      },
+      "PointResponse": {
+        "type": "object",
+        "required": ["data", "meta"],
+        "properties": { "data": { "$ref": "#/components/schemas/SpaceWeatherPoint" }, "meta": { "$ref": "#/components/schemas/Meta" } }
+      },
+      "HistoryResponse": {
+        "type": "object",
+        "required": ["data", "meta"],
+        "properties": {
+          "data": { "type": "array", "items": { "$ref": "#/components/schemas/SpaceWeatherPoint" } },
+          "meta": {
+            "allOf": [
+              { "$ref": "#/components/schemas/Meta" },
+              {
+                "type": "object",
+                "required": ["source", "lookbackMs", "count"],
+                "properties": {
+                  "source": { "type": "string", "description": "Which history served the points" },
+                  "lookbackMs": { "type": "integer", "description": "Lookback actually applied, after the plan cap" },
+                  "count": { "type": "integer" }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "SourcesResponse": {
+        "type": "object",
+        "required": ["data", "meta"],
+        "properties": {
+          "data": { "description": "Per-source status as reported by the ingest pipeline" },
+          "meta": { "$ref": "#/components/schemas/Meta" }
+        }
+      },
+      "Ephemeris": {
+        "type": "object",
+        "required": ["latDeg", "lonDeg", "altKm"],
+        "properties": {
+          "latDeg": { "type": "number", "minimum": -90, "maximum": 90 },
+          "lonDeg": { "type": "number" },
+          "altKm": { "type": "number", "description": "Altitude above the reference ellipsoid, km" }
+        }
+      },
+      "TrustRecordRequest": {
+        "type": "object",
+        "required": ["time", "spacecraftId", "modelId"],
+        "properties": {
+          "time": { "type": "string", "format": "date-time", "description": "Inference time (ISO 8601)" },
+          "spacecraftId": { "type": "string", "minLength": 1, "maxLength": 128 },
+          "modelId": { "type": "string", "minLength": 1, "maxLength": 128 },
+          "processorProfileId": { "type": ["string", "null"], "minLength": 1, "maxLength": 128 },
+          "output": { "description": "The model output, any JSON of at most 4096 bytes (UTF-8)" },
+          "confidence": { "type": ["number", "null"], "minimum": 0, "maximum": 1 },
+          "ephemeris": { "oneOf": [{ "$ref": "#/components/schemas/Ephemeris" }, { "type": "null" }] },
+          "tle": {
+            "type": ["array", "null"],
+            "description": "Two-line element set; the spacecraft position is propagated with SGP4 when no ephemeris is given",
+            "items": { "type": "string" },
+            "minItems": 2,
+            "maxItems": 2
+          }
+        }
+      },
+      "TrustRecordBatchRequest": {
+        "type": "object",
+        "required": ["inferences"],
+        "properties": {
+          "inferences": { "type": "array", "minItems": 1, "maxItems": 100, "items": { "$ref": "#/components/schemas/TrustRecordRequest" } }
+        }
+      },
+      "Field": {
+        "type": "object",
+        "description": "One context value with its provenance. `value` is null when unknown and `limitations` says why.",
+        "required": ["value", "source", "sourceUrl", "observedAt", "fetchedAt", "ageSeconds", "confidence", "method", "limitations"],
+        "properties": {
+          "value": {},
+          "source": { "type": "string" },
+          "sourceUrl": { "type": ["string", "null"] },
+          "observedAt": { "type": ["string", "null"], "format": "date-time", "description": "When it was measured (UTC)" },
+          "fetchedAt": { "type": ["string", "null"], "format": "date-time", "description": "Issue time of the reading Gauss held" },
+          "ageSeconds": { "type": ["number", "null"], "description": "Age at the inference time" },
+          "confidence": { "enum": ["high", "medium", "low", "none"] },
+          "method": { "type": "string", "description": "\"measured\", or how it was derived" },
+          "limitations": { "type": "array", "items": { "type": "string" } }
+        }
+      },
+      "TrustRecord": {
+        "type": "object",
+        "description": "backend/trust/record.ts TrustRecord. `hash` is the SHA-256 of the canonical JSON of the record without `hash`.",
+        "required": ["schema", "recordId", "generatedAt", "inference", "environmentSource", "environment", "orbit", "upsetRisk", "checks", "verdict", "limitations", "hash"],
+        "properties": {
+          "schema": { "const": "gauss.trust-record/0.1" },
+          "recordId": { "type": "string", "pattern": "^tr_[0-9a-f]{20}$" },
+          "generatedAt": { "type": "string", "format": "date-time" },
+          "inference": {
+            "type": "object",
+            "required": ["time", "spacecraftId", "modelId", "processorProfileId", "output", "confidence", "ingest"],
+            "properties": {
+              "time": { "type": "string", "format": "date-time" },
+              "spacecraftId": { "type": "string" },
+              "modelId": { "type": "string" },
+              "processorProfileId": { "type": ["string", "null"] },
+              "output": {},
+              "confidence": { "type": ["number", "null"] },
+              "ingest": {
+                "description": "Present when the inference came from an ingested customer log (PR-03); null over the API",
+                "oneOf": [
+                  {
+                    "type": "object",
+                    "required": ["fileSha256", "row", "mappingId", "mappingVersion"],
+                    "properties": {
+                      "fileSha256": { "type": "string" },
+                      "row": { "type": "integer" },
+                      "mappingId": { "type": "string" },
+                      "mappingVersion": { "type": "string" }
+                    }
+                  },
+                  { "type": "null" }
+                ]
+              }
+            }
+          },
+          "environmentSource": { "type": "string", "description": "Which history the environment was read from" },
+          "environment": {
+            "type": "object",
+            "required": ["radiation", "geomagnetic", "radioBlackout", "particleFlux", "kp", "dst"],
+            "properties": {
+              "radiation": { "$ref": "#/components/schemas/Field" },
+              "geomagnetic": { "$ref": "#/components/schemas/Field" },
+              "radioBlackout": { "$ref": "#/components/schemas/Field" },
+              "particleFlux": { "$ref": "#/components/schemas/Field", "description": "Nearest-available proxy: GOES ≥10 MeV integral protons, pfu" },
+              "kp": { "$ref": "#/components/schemas/Field" },
+              "dst": { "$ref": "#/components/schemas/Field" }
+            }
+          },
+          "orbit": {
+            "type": "object",
+            "required": ["position", "saa", "fieldStrength", "lShell"],
+            "properties": {
+              "position": { "$ref": "#/components/schemas/Field" },
+              "saa": { "$ref": "#/components/schemas/Field" },
+              "fieldStrength": { "$ref": "#/components/schemas/Field", "description": "IGRF-14 total field intensity at the position, nT" },
+              "lShell": { "$ref": "#/components/schemas/Field" }
+            }
+          },
+          "upsetRisk": { "$ref": "#/components/schemas/Field", "description": "Modelled upset-risk band; unknown without a cited processor profile (PR-02)" },
+          "checks": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["id", "status", "reason"],
+              "properties": { "id": { "type": "string" }, "status": { "type": "string" }, "reason": { "type": "string" } }
+            }
+          },
+          "verdict": {
+            "type": "object",
+            "required": ["value", "reasons", "policy"],
+            "properties": {
+              "value": { "enum": ["consistent", "degraded-context", "unknown"] },
+              "reasons": { "type": "array", "items": { "type": "string" } },
+              "policy": {
+                "type": "object",
+                "required": ["id", "degradedAtRadiation", "degradedAtGeomagnetic", "requireOrbitContext"],
+                "properties": {
+                  "id": { "type": "string" },
+                  "degradedAtRadiation": { "type": "number" },
+                  "degradedAtGeomagnetic": { "type": "number" },
+                  "requireOrbitContext": { "type": "boolean" }
+                }
+              }
+            }
+          },
+          "limitations": { "type": "array", "items": { "type": "string" } },
+          "hash": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+        }
+      },
+      "TrustRecordResponse": {
+        "type": "object",
+        "required": ["data", "meta"],
+        "properties": { "data": { "$ref": "#/components/schemas/TrustRecord" }, "meta": { "$ref": "#/components/schemas/Meta" } }
+      },
+      "TrustRecordBatchResponse": {
+        "type": "object",
+        "required": ["data", "rejected", "meta"],
+        "properties": {
+          "data": { "type": "array", "items": { "$ref": "#/components/schemas/TrustRecord" } },
+          "rejected": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["index", "errors"],
+              "properties": { "index": { "type": "integer", "description": "Position in `inferences`" }, "errors": { "type": "array", "items": { "type": "string" } } }
+            }
+          },
+          "meta": {
+            "allOf": [{ "$ref": "#/components/schemas/Meta" }, { "type": "object", "required": ["count"], "properties": { "count": { "type": "integer" } } }]
+          }
+        }
+      }
+    }
+  }
+}

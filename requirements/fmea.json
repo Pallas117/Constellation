@@ -1,6 +1,6 @@
 {
-  "$comment": "Ingest pipeline FMEA (GAU-121). NASA SP-2016-6105 Rev 2 §6.4. Severity/likelihood 1-5; risk = S x L. residualLikelihood is after the mitigation. verifiedBy = exact test names proving the mitigation; gap = what is still missing. Checked by `npm run verify`.",
-  "version": "1.2.0",
+  "$comment": "Ingest pipeline and operations FMEA (GAU-121; operations rows GAU-163). NASA SP-2016-6105 Rev 2 §6.4. Severity/likelihood 1-5; risk = S x L. residualLikelihood is after the mitigation. verifiedBy = exact test names proving the mitigation; gap = what is still missing. Checked by `npm run verify`.",
+  "version": "1.3.0",
   "rows": [
     {
       "id": "FM-01",
@@ -182,16 +182,18 @@
       "id": "FM-13",
       "item": "Host (Judith laptop)",
       "failureMode": "Sleeps, loses power or fails",
-      "effect": "Whole service down: single point of failure",
-      "detection": "Pipeline verdict 'stalled' after 3 missed ticks; HUD shows STALLED",
-      "mitigation": "Auto-restart on wake; no standby host",
+      "effect": "Whole service down, fallback included: single point of failure",
+      "detection": "Pipeline verdict 'stalled' after 3 missed ticks; HUD shows STALLED; the awake guard texts the phone at 20% and 10% battery",
+      "mitigation": "Auto-restart on wake; the awake guard keeps the host running with the lid closed down to 10% battery; a process or release failure on this host fails over to the cold-standby fallback (FM-20 to FM-24). No standby host",
       "severity": 5,
       "likelihood": 4,
-      "residualLikelihood": 4,
+      "residualLikelihood": 3,
       "verifiedBy": [
-        "pipeline timer: status follows data age and loop liveness"
+        "pipeline timer: status follows data age and loop liveness",
+        "replayed 57→2% drain: warn from 20%, critical from 10%",
+        "out of restarts and still down: fails over to the fallback and texts the phone"
       ],
-      "gap": "Warm standby host with data replication (stability plan step 5)"
+      "gap": "Host loss (power, hardware, OS) is unmitigated: the fallback runs on the same host, so it goes down too. Needs a second node with at least 16 GB RAM as a warm standby, with data replication and Tailscale failover (docs/STABILITY.md)"
     },
     {
       "id": "FM-14",
@@ -283,6 +285,98 @@
         "deploy: an unhealthy release rolls back automatically (GAU-123)",
         "rollback: returns to the previous healthy release (GAU-123)"
       ]
+    },
+    {
+      "id": "FM-20",
+      "item": "Awake guard (minutely LaunchAgent)",
+      "failureMode": "Stops running (crashes, unloaded, launchd stops scheduling it)",
+      "effect": "Nothing watches live: a hung service is not restarted, no failover happens, no battery or memory alerts; launchd KeepAlive still restarts a crashed process",
+      "detection": "The guard touches guard.heartbeat every run; Argo restarts uk.lightbound.gauss-awake when it is over 5 min old, at most 3 times an hour, then alerts (tools/argo/watch.go)",
+      "mitigation": "Mutual watch: the guard restarts Argo and mesh-heal when their state goes stale, and Argo restarts the guard",
+      "severity": 4,
+      "likelihood": 2,
+      "residualLikelihood": 2,
+      "verifiedBy": [
+        "fresh peers: no restarts, guard heartbeat written",
+        "stale Argo and mesh-heal: both restarted"
+      ],
+      "gap": "Argo's side (restart a stale guard, stop after 3 an hour) is tested only in Go (tools/argo/watch_test.go: TestWatchRestartsStaleAndMissingButSkipsUnloaded, TestWatchStopsKickingACrashLoopAndAlerts), which `npm run verify` does not ingest yet; if Argo and the guard both stop, or the host does (FM-13), nothing watches"
+    },
+    {
+      "id": "FM-21",
+      "item": "Fallback ready record",
+      "failureMode": "Corrupt, cut short, or stale: names a checkout that is gone or has changed since it was prepared (PR #129: a path with a space was cut at the space)",
+      "effect": "Failover silently can't happen, or starts a fallback that is not what the record says",
+      "detection": "The record's sha, path and time are validated, and a ready fallback also needs both plists and a built site; `status` and `check` show 'none prepared (warning)'",
+      "mitigation": "An invalid record reads as no fallback: out of restarts the guard only alerts and never boots live out with nothing in its place; re-pointing the fallback drops the record before the checkout changes",
+      "severity": 4,
+      "likelihood": 3,
+      "residualLikelihood": 2,
+      "verifiedBy": [
+        "fallback status: ready although its path has a space",
+        "dev refuses the fallback checkout (path with a space)",
+        "a corrupt, cut-short or orphaned fallback record reads as none prepared: no half failover, still alerts",
+        "deploy: a fallback that fails to rebuild stops the deploy and is not left marked ready"
+      ],
+      "gap": "Nothing texts when the standby goes bad: it shows in status and check, or as a 'keeps failing' alert only once the failover is needed"
+    },
+    {
+      "id": "FM-22",
+      "item": "Fallback release vs live data",
+      "failureMode": "Fallback code too old for what live has written to the data, .env and accounts it shares",
+      "effect": "Failover serves errors: the fallback starts and answers /health but fails on data a newer release wrote",
+      "detection": "The guard keeps health-checking the fallback (backend /health, site root) with capped restarts and a phone alert",
+      "mitigation": "Each deploy refreshes the fallback to the release live was just running, so it is one release behind when live was healthy at deploy time",
+      "severity": 3,
+      "likelihood": 2,
+      "residualLikelihood": 2,
+      "verifiedBy": [
+        "deploy: fallback refreshed to the previous version; npm ci only for the new fallback (live's lockfile unchanged)",
+        "fallback plists: live's ports, URLs, data and .env; prepare never loads them",
+        "on fallback: the guard restarts the fallback, never fails over again"
+      ],
+      "gap": "No check that the previous release reads data the current one wrote (no data schema version), and /health does not read data; when live was unhealthy at deploy time the fallback is kept and can be several releases behind"
+    },
+    {
+      "id": "FM-23",
+      "item": "Watchdog and failover",
+      "failureMode": "Restart loop, or flapping between live and fallback",
+      "effect": "Services restarted over and over, the phone flooded, memory churn on the 8 GB host; live and fallback swapping back and forth",
+      "detection": "Restart log (watch-kicks) and the 'keeps failing' phone alert, sent with argo notify -every 1h",
+      "mitigation": "Two failed health checks in a row before any restart; at most 3 restarts per job in a rolling hour, then alert only; failover is one-way (on the fallback the guard only restarts the fallback; failback is a person running `fallback off`); the guard stands aside during a deploy, and a lock older than 30 min stops counting",
+      "severity": 3,
+      "likelihood": 3,
+      "residualLikelihood": 1,
+      "verifiedBy": [
+        "backend down once: wait for a second failure",
+        "a recovery resets the strike count",
+        "4th restart in an hour: alert instead of kicking",
+        "restarts over an hour old don't count: restarted again, no alert",
+        "on fallback: the guard restarts the fallback, never fails over again",
+        "on fallback and out of restarts: alerts only, no restart loop, no flip back to live",
+        "the guard leaves the services alone during a deploy",
+        "a deploy lock older than 30 min no longer silences the guard"
+      ]
+    },
+    {
+      "id": "FM-24",
+      "item": "Deploy",
+      "failureMode": "Leaves no fallback",
+      "effect": "The next live failure has no standby: out of restarts the guard can only alert",
+      "detection": "Deploy prints a warning when there is no fallback to refresh; `status` and `check` show 'none prepared (warning)'",
+      "mitigation": "Deploy refreshes the fallback to the outgoing healthy release before switching, and stops if it can't; when the release and the rollback both fail it fails over and keeps the fallback rather than replacing it with an unhealthy live",
+      "severity": 4,
+      "likelihood": 2,
+      "residualLikelihood": 2,
+      "verifiedBy": [
+        "deploy: fallback refreshed to the previous version; npm ci only for the new fallback (live's lockfile unchanged)",
+        "deploy of a bad commit: rolls back by itself and texts the phone; fallback is the last good one",
+        "deploy and rollback both fail: switches to the fallback (kept, not replaced by an unhealthy live)",
+        "deploy: a fallback that fails to rebuild stops the deploy and is not left marked ready",
+        "deploy with no fallback prepared or given: warns, deploys, leaves none",
+        "fallback status: none prepared is a warning"
+      ],
+      "gap": "With no fallback prepared and no path given, deploy warns and goes ahead, leaving none; a failed refresh of the current fallback stops the deploy but leaves no fallback until `fallback prepare` succeeds"
     }
   ]
 }

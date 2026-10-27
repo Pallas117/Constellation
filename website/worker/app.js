@@ -60,7 +60,7 @@ export function argoCard(account, { staff = false, now = Date.now() } = {}) {
   const state = a.sentAt ? "Setup sent" : a.requestedAt ? "Setup requested" : "Ready to set up";
   const body = a.sentAt ? `<p class="m">We emailed your install link and setup steps on ${esc(day(a.sentAt))}. Need them again? <a href="mailto:jzwnathan@lightbound.uk?subject=Gauss%20Argo%20setup">Email us</a>.</p>`
     : a.requestedAt ? `<p class="m">Requested on ${esc(day(a.requestedAt))}. We'll email your install link and setup steps.</p>`
-    : `<p class="m">Finds and fixes Wi-Fi sign-in pages, DNS, proxy and blocked-port faults on your Mac or Linux machines, and tells you what it changed.</p>` +
+    : `<p class="m">Finds and fixes Wi-Fi sign-in pages, DNS, proxy and blocked-port faults on your Mac or Linux machines, and tells you what it changed. It also carries files between your devices through drop-outs, encrypted end to end.</p>` +
       `<div class="pay">${postButton("/app/argo/setup", "Request setup")}</div>`;
   return `<article class="tile"><h2 class="label">${esc(ARGO.name)}</h2><p class="big">Included</p><p class="t">${esc(state)}</p>` +
     `<p class="m">${staff && !isOperator(account, now) ? "For the Lightbound team." : "Included with your Gauss plan: nothing extra to pay."}</p>${body}` +
