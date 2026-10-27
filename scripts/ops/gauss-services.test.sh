@@ -296,12 +296,13 @@ out=$(run deploy "$D" 2>&1); [[ "$out" == *"already at ${D:0:7}"* ]]; expect "de
 # Re-pointing the fallback checks it out first. If its install then fails, the checkout has
 # changed under the old ready record: the deploy stops and the record goes, so status says
 # "none prepared" rather than vouching for a fallback that isn't what it describes.
+cp "$T/bin/npm" "$T/npm.saved" # the gate-aware stub above: put back as it was, later tests read its counts
 stub npm 'echo "npm $*" >>"$ACTIONS"; exit 1'
 out=$(run deploy "$Bc" 2>&1); rc=$?
 [ $rc = 1 ] && head_is "$D" && [[ "$out" == *"Couldn't refresh the fallback; not deploying."* ]] && [ ! -e "$FB/ready" ] \
   && [[ "$(run fallback)" == *"none prepared (warning"* ]] && [ ! -d "$WD/deploying" ]
 expect "deploy: a fallback that fails to rebuild stops the deploy and is not left marked ready" $?
-stub npm 'echo "npm $*" >>"$ACTIONS"; mkdir -p node_modules'
+mv "$T/npm.saved" "$T/bin/npm"
 out=$(LEVEL=2 run deploy "$Bc" 2>&1); [[ "$out" == *"Memory pressure is warn"* ]] && head_is "$D"; expect "deploy refuses at memory pressure warn" $?
 echo local >>"$LIVE/backend/server.ts"
 out=$(run deploy "$Bc" 2>&1); [[ "$out" == *"local code changes"*"backend/server.ts"* ]] && head_is "$D"; expect "deploy refuses over local code changes in live" $?
@@ -319,6 +320,7 @@ rm -f "$FB/ready" # nothing prepared and no path given: the deploy goes ahead, s
 out=$(run deploy "$Bc" 2>&1); rc=$?
 [ $rc = 0 ] && head_is "$Bc" && [[ "$out" == *"warning: no fallback to refresh"* ]] && [ ! -e "$FB/ready" ]
 expect "deploy with no fallback prepared or given: warns, deploys, leaves none" $?
+main_at "$D"; run deploy "$D" >/dev/null 2>&1; head_is "$D"; expect "deploy back to D, the gated tree the GAU-162 checks below start from" $?
 
 # GAU-162: every deploy and rollback is recorded; only merged, gated trees go live without --emergency
 H="$WD/deploy-history.jsonl"
