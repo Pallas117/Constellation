@@ -82,6 +82,9 @@ const XAVIER_NOTES = [
   "No wrong matrix-multiplication outputs, no GPU errors and no destructive latch-up were seen, so there is no SDC figure.",
 ];
 const SOC_ONLY = "The data cover the SoC under a collimated beam, not the module's memory, power or I/O.";
+/** The power modes a campaign was beam-tested in (each paper's Table I); higher-power modes were not. */
+const MODES_TESTED = (modes: string) =>
+  `Beam-tested in the ${modes} power modes only; the module's higher-power modes were not tested, so these data say nothing about them.`;
 
 const ORIN_2024 =
   "Rodriguez-Ferrandez, Kosmidis, Tali, Steenari, Hands & Bélanger-Champagne, \"Proton Evaluation of Single Event Effects in the NVIDIA GPU Orin SoM: Understanding Radiation Vulnerabilities Beyond the SoC\", IEEE IOLTS 2024";
@@ -176,7 +179,7 @@ export const PROFILES: readonly ProcessorProfile[] = [
         notes: XAVIER_NOTES,
       },
     ],
-    limitations: [SINGLE_ENERGY(200), SOC_ONLY],
+    limitations: [SINGLE_ENERGY(200), SOC_ONLY, MODES_TESTED("10 W, 15 W and a custom sub-10 W")],
   },
   {
     id: "nvidia-jetson-agx-xavier-industrial",
@@ -211,7 +214,7 @@ export const PROFILES: readonly ProcessorProfile[] = [
         notes: XAVIER_NOTES,
       },
     ],
-    limitations: [SINGLE_ENERGY(200), SOC_ONLY],
+    limitations: [SINGLE_ENERGY(200), SOC_ONLY, MODES_TESTED("10 W, 15 W and a custom sub-10 W")],
   },
   {
     id: "nvidia-jetson-orin-nx",
@@ -269,7 +272,7 @@ export const PROFILES: readonly ProcessorProfile[] = [
         ],
       },
     ],
-    limitations: [SINGLE_ENERGY(480), SOC_ONLY],
+    limitations: [SINGLE_ENERGY(480), SOC_ONLY, MODES_TESTED("15 W, 10 W and a custom sub-10 W")],
   },
 ];
 

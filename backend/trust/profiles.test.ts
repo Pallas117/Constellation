@@ -167,6 +167,11 @@ test("upset band: a cited profile gives a low-confidence band with its citation,
   assert.deepEqual(xavier.value?.effects, ["SEU", "SEFI"]);
   assert.equal(xavier.value?.band, "baseline");
   assert.match(xavier.value!.uncertainty, /SoC under a collimated beam/);
+  // Each paper beam-tested three power modes (its Table I); the modules' higher-power modes were never tested.
+  for (const id of ["nvidia-jetson-xavier-nx", "nvidia-jetson-agx-xavier-industrial", "nvidia-jetson-orin-nx"]) {
+    assert.ok(findProfile(id)!.limitations.some((l) => /higher-power modes were not tested/.test(l)), `${id} says which power modes were tested`);
+  }
+  assert.match(upsetRiskField("nvidia-jetson-orin-nx", quiet, FETCHED).value!.uncertainty, /15 W, 10 W and a custom sub-10 W power modes only/);
 });
 
 test("upset band in the trust record: SAA core, an ISS-type pass south of Australia, no banned wording for any profile (GAU-58)", () => {
