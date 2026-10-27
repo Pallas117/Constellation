@@ -77,14 +77,17 @@ const satNumber = (s: string) => {
  * i.e. only intervals that had ended. Binary search, since the replay asks every minute.
  */
 export function publishedRows<T extends [string, ...unknown[]]>(rows: T[], nowMs: number, spanMs: number, cadenceMs: number): T[] {
-  const lo = nowMs - spanMs;
-  const hi = nowMs - cadenceMs;
-  const first = lowerBound(rows, (t) => t > lo);
-  const last = lowerBound(rows, (t) => t > hi);
-  return rows.slice(first, last);
+  return rows.slice(...publishedRange(rows, nowMs, spanMs, cadenceMs));
 }
 
-function lowerBound<T extends [string, ...unknown[]]>(rows: T[], after: (t: number) => boolean): number {
+/** Index range [first, last) of the rows `publishedRows` returns. */
+function publishedRange(rows: [string, ...unknown[]][], nowMs: number, spanMs: number, cadenceMs: number): [number, number] {
+  const lo = nowMs - spanMs;
+  const hi = nowMs - cadenceMs;
+  return [lowerBound(rows, (t) => t > lo), lowerBound(rows, (t) => t > hi)];
+}
+
+function lowerBound(rows: [string, ...unknown[]][], after: (t: number) => boolean): number {
   let a = 0;
   let b = rows.length;
   while (a < b) {
@@ -95,40 +98,69 @@ function lowerBound<T extends [string, ...unknown[]]>(rows: T[], after: (t: numb
   return a;
 }
 
+/** Each archived row as the live JSON row(s) it stands for: the same at any replay clock. */
+function render(archive: ReplayArchive) {
+  return {
+    mag: archive.mag.map(([t, bx, by, bz, bt, source]) => {
+      const gsm = [fill(bx, -999.9), fill(by, -999.9), fill(bz, -999.9)];
+      const ok = gsm.every((v) => v !== null);
+      const gse = ok ? gsmToGse(vec(gsm[0]!, gsm[1]!, gsm[2]!), t) : null;
+      return {
+        time_tag: swpcTag(t),
+        active: true,
+        source,
+        bt: fill(bt, -999.9),
+        bx_gse: gse?.x ?? null,
+        by_gse: gse?.y ?? null,
+        bz_gse: gse?.z ?? null,
+        bx_gsm: gsm[0],
+        by_gsm: gsm[1],
+        bz_gsm: gsm[2],
+      };
+    }),
+    plasma: archive.plasma.map(([t, density, speed, source, temperature]) => ({
+      time_tag: swpcTag(t),
+      active: true,
+      source,
+      proton_density: fill(density, -9999),
+      proton_speed: fill(speed, -9999),
+      ...(temperature === undefined ? {} : { proton_temperature: fill(temperature, -9999) }),
+    })),
+    protons: archive.protons.map(([t, p10, p50, p100, sat]) =>
+      ([[">=10 MeV", p10], [">=50 MeV", p50], [">=100 MeV", p100]] as const).map(([energy, flux]) => ({
+        time_tag: t,
+        satellite: satNumber(sat),
+        flux,
+        energy,
+      })),
+    ),
+    electrons: archive.electrons.map(([t, flux, sat]) => ({
+      time_tag: t,
+      satellite: satNumber(sat),
+      flux,
+      energy: ">=2 MeV",
+    })),
+    xrays: archive.xrays.map(([t, long, short, sat]) => [
+      { time_tag: t, satellite: satNumber(sat), flux: short, energy: "0.05-0.4nm" },
+      { time_tag: t, satellite: satNumber(sat), flux: long, energy: "0.1-0.8nm" },
+    ]),
+  };
+}
+
+/** Rendered once per archive, as the replay asks for every stream each minute. Archives aren't changed once loaded. */
+const rendered = new WeakMap<ReplayArchive, ReturnType<typeof render>>();
+
 /** The body the live adapter would have received for `pathname` at `nowMs`, or undefined (404). */
 export function archiveBody(archive: ReplayArchive, pathname: string, nowMs: number): unknown {
+  let live = rendered.get(archive);
+  if (!live) rendered.set(archive, (live = render(archive)));
+  const published = <T>(out: T[], rows: [string, ...unknown[]][], spanMs: number, cadenceMs: number) =>
+    out.slice(...publishedRange(rows, nowMs, spanMs, cadenceMs));
   switch (pathname) {
     case "/json/rtsw/rtsw_mag_1m.json":
-      return publishedRows(archive.mag, nowMs, RTSW_SPAN_MS, MIN)
-        .reverse() // newest first, as SWPC serves it
-        .map(([t, bx, by, bz, bt, source]) => {
-          const gsm = [fill(bx, -999.9), fill(by, -999.9), fill(bz, -999.9)];
-          const ok = gsm.every((v) => v !== null);
-          const gse = ok ? gsmToGse(vec(gsm[0]!, gsm[1]!, gsm[2]!), t) : null;
-          return {
-            time_tag: swpcTag(t),
-            active: true,
-            source,
-            bt: fill(bt, -999.9),
-            bx_gse: gse?.x ?? null,
-            by_gse: gse?.y ?? null,
-            bz_gse: gse?.z ?? null,
-            bx_gsm: gsm[0],
-            by_gsm: gsm[1],
-            bz_gsm: gsm[2],
-          };
-        });
+      return published(live.mag, archive.mag, RTSW_SPAN_MS, MIN).reverse(); // newest first, as SWPC serves it
     case "/json/rtsw/rtsw_wind_1m.json":
-      return publishedRows(archive.plasma, nowMs, RTSW_SPAN_MS, MIN)
-        .reverse()
-        .map(([t, density, speed, source, temperature]) => ({
-          time_tag: swpcTag(t),
-          active: true,
-          source,
-          proton_density: fill(density, -9999),
-          proton_speed: fill(speed, -9999),
-          ...(temperature === undefined ? {} : { proton_temperature: fill(temperature, -9999) }),
-        }));
+      return published(live.plasma, archive.plasma, RTSW_SPAN_MS, MIN).reverse();
     case "/json/planetary_k_index_1m.json":
       return []; // not archived: Kp comes from completed intervals only
     case "/products/noaa-planetary-k-index.json":
@@ -136,26 +168,11 @@ export function archiveBody(archive: ReplayArchive, pathname: string, nowMs: num
         .filter(([, end, kp]) => ms(end) <= nowMs && kp >= 0)
         .map(([start, , kp]) => ({ time_tag: swpcTag(start), Kp: kp }));
     case "/json/goes/primary/integral-protons-6-hour.json":
-      return publishedRows(archive.protons, nowMs, GOES_SPAN_MS, 5 * MIN).flatMap(([t, p10, p50, p100, sat]) =>
-        ([[">=10 MeV", p10], [">=50 MeV", p50], [">=100 MeV", p100]] as const).map(([energy, flux]) => ({
-          time_tag: t,
-          satellite: satNumber(sat),
-          flux,
-          energy,
-        })),
-      );
+      return published(live.protons, archive.protons, GOES_SPAN_MS, 5 * MIN).flat();
     case "/json/goes/primary/integral-electrons-6-hour.json":
-      return publishedRows(archive.electrons, nowMs, GOES_SPAN_MS, 5 * MIN).map(([t, flux, sat]) => ({
-        time_tag: t,
-        satellite: satNumber(sat),
-        flux,
-        energy: ">=2 MeV",
-      }));
+      return published(live.electrons, archive.electrons, GOES_SPAN_MS, 5 * MIN);
     case "/json/goes/primary/xrays-6-hour.json":
-      return publishedRows(archive.xrays, nowMs, GOES_SPAN_MS, MIN).flatMap(([t, long, short, sat]) => [
-        { time_tag: t, satellite: satNumber(sat), flux: short, energy: "0.05-0.4nm" },
-        { time_tag: t, satellite: satNumber(sat), flux: long, energy: "0.1-0.8nm" },
-      ]);
+      return published(live.xrays, archive.xrays, GOES_SPAN_MS, MIN).flat();
     default:
       return undefined;
   }
