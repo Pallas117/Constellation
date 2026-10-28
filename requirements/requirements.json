@@ -1,6 +1,6 @@
 {
   "$comment": "Constellation requirements baseline (GAU-120). NASA SP-2016-6105 Rev 2 §6.2/§5.3. Methods: T test, A analysis, I inspection, D demonstration. T evidence = exact test names; A/I/D evidence = repo paths. Verified by `npm run verify`.",
-  "version": "1.11.0",
+  "version": "1.12.0",
   "requirements": [
     {
       "id": "REQ-ING-001",
@@ -613,6 +613,21 @@
         "evidence pack: refuses records outside the window, from another log or policy, or rows not accounted for (GAU-60)",
         "evidence pack: packs chain, each starting from the previous pack's hash (GAU-60)",
         "evidence pack PDF: a valid PDF (cross-reference offsets, pages) carrying the pack hash and limitations (GAU-60)"
+      ]
+    },
+    {
+      "id": "REQ-TR-005",
+      "title": "Trust-record usage metering",
+      "statement": "The system shall log every trust record it returns to a customer, once, with the issuing API key, spacecraft and UTC month, in an append-only log that refuses updates and deletes; shall return no records when that log cannot be written; and shall export per-spacecraft, per-month counts as CSV that adds up to the records returned, with fields safe to open in a spreadsheet.",
+      "rationale": "GAU-70: pilots are invoiced per spacecraft-month and per 1,000 trust records (ICP commercial hooks); per-call metering counts a 100-record batch as one call, so it can't support that, and the invoice must reconcile with what was issued.",
+      "parent": "GAU-70",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "trust metering: every record returned is logged once, by spacecraft and month; rejected items are not (GAU-70)",
+        "trust metering: the log is append-only; the database refuses updates and deletes (GAU-70)",
+        "trust metering: if the usage log can't be written, no records are returned (GAU-70)",
+        "trust metering: the CSV export reconciles with the records issued and is safe to open in a spreadsheet (GAU-70)"
       ]
     },
     {
