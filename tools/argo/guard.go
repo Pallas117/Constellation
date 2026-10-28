@@ -143,6 +143,21 @@ func warnWithin(hist []Sample, cur Sample, window time.Duration) time.Duration {
 	return d
 }
 
+// calmHour is true when unbroken readings cover the last hour (to within one
+// history gap) and none of them, nor now, was at warn or worse.
+func calmHour(hist []Sample, cur Sample) bool {
+	pts := append(recent(hist, cur.At, time.Hour), cur)
+	if atWarn(cur.Pressure) || cur.Pressure == "" || cur.At.Sub(pts[0].At) < time.Hour-historyGap {
+		return false
+	}
+	for i := 0; i+1 < len(pts); i++ {
+		if atWarn(pts[i].Pressure) || pts[i].Pressure == "" || pts[i+1].At.Sub(pts[i].At) > historyGap {
+			return false
+		}
+	}
+	return true
+}
+
 // swapRise is the swap growth from the lowest point in the last hour to now.
 func swapRise(hist []Sample, cur Sample) float64 {
 	lo := cur.SwapGB
@@ -197,12 +212,13 @@ func assess(hist []Sample, cur Sample) Assessment {
 		a.add("memory", "swap-rising", LevelRisk, "swap grew %.1f GB in the last hour while at warn", a.SwapRiseGB)
 	}
 	// macOS only frees swap when the swapped pages are touched or their process
-	// exits, so "used" stays high long after pressure is back to normal. A high
-	// but idle figure is a watch; it is a risk while memory is short or swap is
-	// still growing. (2026-10-28: a stale 4.6 GB held five gate runs at pressure
-	// normal on AC for 12 h until they gave up.)
+	// exits, so "used" stays high long after pressure is back to normal. High
+	// swap is a watch only after a calm hour on record (normal throughout, swap
+	// not growing); otherwise a risk. The GAU-165 crash began at normal with
+	// 4.2 GB and no history, so "normal right now" is not enough. (2026-10-28: a
+	// stale 4.6 GB held five gate runs at normal on AC for 12 h until they gave up.)
 	if cur.SwapGB >= swapMaxGB {
-		if atWarn(cur.Pressure) || a.SwapRiseGB >= swapGrowingGB {
+		if !calmHour(hist, cur) || a.SwapRiseGB >= swapGrowingGB {
 			a.add("memory", "swap-high", LevelRisk, "%.1f GB of swap in use (limit %.0f GB)", cur.SwapGB, swapMaxGB)
 		} else {
 			a.add("memory", "swap-high", LevelWatch, "%.1f GB of swap in use (limit %.0f GB) but not growing and pressure is normal", cur.SwapGB, swapMaxGB)
