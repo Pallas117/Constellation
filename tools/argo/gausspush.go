@@ -41,6 +41,8 @@ func gaussStatus(s Store, now time.Time) string {
 	return ""
 }
 
+const minReportGap = 15 * time.Second
+
 // pushToGauss reports once per check, pausing after a refused token.
 func pushToGauss(cfg Config, st State) { pushAt(cfg, st, DefaultStore(), time.Now()) }
 
@@ -48,10 +50,25 @@ func pushAt(cfg Config, st State, s Store, now time.Time) {
 	if r, ok := s.loadRefused(); ok && now.Sub(r.At) < refusedPause {
 		return
 	}
+	// Gauss takes one report per device every 10 s. Runs from the minute timer
+	// and from network-change events can land closer than that; skip instead
+	// of collecting a 429 (launchd.log 2026-10-24/25).
+	last := s.path("gauss-last-report")
+	if b, err := os.ReadFile(last); err == nil {
+		if t, perr := time.Parse(time.RFC3339Nano, strings.TrimSpace(string(b))); perr == nil && now.Sub(t) >= 0 && now.Sub(t) < minReportGap {
+			return
+		}
+	}
 	code, err := sendReport(cfg, st)
+	if err == nil {
+		_ = os.MkdirAll(s.Dir, 0o700)
+		_ = os.WriteFile(last, []byte(now.Format(time.RFC3339Nano)), 0o600)
+	}
 	switch {
 	case err != nil:
 		return // offline or Gauss down: the next check reports again
+	case code == http.StatusTooManyRequests:
+		return // a newer report is due within the minute
 	case code == http.StatusUnauthorized || code == http.StatusForbidden:
 		b, _ := json.Marshal(gaussRefused{At: now, Status: code})
 		_ = os.MkdirAll(s.Dir, 0o700)

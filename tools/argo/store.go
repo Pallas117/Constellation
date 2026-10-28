@@ -13,7 +13,9 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -178,7 +180,25 @@ func (s Store) Incidents() []Incident {
 	return out
 }
 
-// Lock is an O_EXCL lock file; a lock older than 10 minutes is from a killed run.
+// lockHolderDead is true when the lock file names a process that no longer
+// exists. A run killed by launchd or the awake guard (`kickstart -k`) never
+// removes its lock; without this check every run for the next 10 minutes
+// failed with "another argo run is in progress", the heartbeat went stale and
+// the guard kicked Argo again (awake.log 2026-10-27 11:51-11:54).
+func lockHolderDead(p string) bool {
+	b, err := os.ReadFile(p)
+	if err != nil {
+		return false
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(b)))
+	if err != nil || pid <= 0 {
+		return false
+	}
+	return errors.Is(syscall.Kill(pid, 0), syscall.ESRCH)
+}
+
+// Lock is an O_EXCL lock file; a lock from a dead process, or older than 10
+// minutes, is from a killed run.
 func (s Store) Lock() (func(), error) {
 	if err := os.MkdirAll(s.Dir, 0o700); err != nil {
 		return nil, err
@@ -191,7 +211,7 @@ func (s Store) Lock() (func(), error) {
 			f.Close()
 			return func() { os.Remove(p) }, nil
 		}
-		if fi, serr := os.Stat(p); serr == nil && time.Since(fi.ModTime()) > 10*time.Minute {
+		if fi, serr := os.Stat(p); serr == nil && (time.Since(fi.ModTime()) > 10*time.Minute || lockHolderDead(p)) {
 			os.Remove(p)
 			continue
 		}

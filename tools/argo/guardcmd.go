@@ -228,7 +228,7 @@ type guardRunner struct {
 
 func newGuardRunner(s Store, out io.Writer) guardRunner {
 	return guardRunner{
-		store: s, out: out, every: 5 * time.Second, retry: 15 * time.Second, grace: 15 * time.Second, strikes: 2,
+		store: s, out: out, every: 10 * time.Second, retry: 15 * time.Second, grace: 15 * time.Second, strikes: 2,
 		assess: func() (Sample, Assessment) {
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
