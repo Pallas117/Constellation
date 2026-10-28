@@ -384,6 +384,8 @@ SRC="Battery Power" BATT="45%; discharging; present: true" run awake guard
 grep -q "paused nightly learning" "$T/home/Library/Logs/gauss/balance.log"; expect "balance logs what it did" $?
 SRC="Battery Power" BATT="55%; discharging; present: true" run awake guard
 [ -f "$PAUSED" ]; expect "battery 55%: still paused (hysteresis to warn+10)" $?
+SRC="AC Power" BATT="14%; AC attached; not charging present: true" run awake guard
+[ -f "$PAUSED" ]; expect "14% on a charger that isn't keeping up: still paused" $?
 SRC="AC Power" BATT="26%; charging; present: true" run awake guard
 [ ! -f "$PAUSED" ]; expect "back on AC: learning resumed" $?
 DISKGB=5 run awake guard

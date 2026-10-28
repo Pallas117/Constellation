@@ -867,7 +867,10 @@ balance() { # balance [--dry-run]
   read -r level swap free < <(memory_stats); disk=$(disk_free_gb)
   { [ "$level" -ge "$MEM_SHED_LEVEL" ] || swap_high "$swap"; } && mem_short=1
   [ $on_battery = 1 ] && [ "$pct" -le "$AWAKE_WARN_BATTERY" ] && batt_low=1
-  { [ $on_battery = 0 ] || [ "${pct:-0}" -gt $((AWAKE_WARN_BATTERY + 10)) ]; } && recovered=1
+  # On AC only counts when it is gaining: a weak charger losing ground flapped learning and Low Power
+  # Mode on and off at 10-14% (balance.log 27-28 Oct).
+  local gaining=0; [ $on_battery = 0 ] && [[ "$batt" != *"discharging"* && "$batt" != *"not charging"* ]] && gaining=1
+  { [ $gaining = 1 ] || [ "${pct:-0}" -gt $((AWAKE_WARN_BATTERY + 10)) ]; } && recovered=1
   local notify=() quiet=()
   act() { if [ $dry = 1 ]; then echo "would: $*"; else "$@" >/dev/null 2>&1 || true; fi; }
 
