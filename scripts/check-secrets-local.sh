@@ -10,8 +10,15 @@ set -euo pipefail
 
 echo "🔍 Scanning for secrets locally..."
 
-version=$(trufflehog --version 2>&1 | head -1 || true)
-if [[ ! "$version" =~ trufflehog\ 3\. ]]; then
+# Use the first trufflehog on PATH that is v3: a pip-installed v2 can shadow
+# Homebrew's (seen on this Mac: Python.framework/bin comes first).
+th="" version=""
+while IFS= read -r cand; do
+  v=$("$cand" --version 2>&1 | head -1 || true)
+  if [[ "$v" =~ trufflehog\ 3\. ]]; then th=$cand; break; fi
+  version=${version:-$v}
+done < <(type -ap trufflehog; echo /opt/homebrew/bin/trufflehog; echo /usr/local/bin/trufflehog)
+if [ -z "$th" ]; then
   echo "❌ TruffleHog v3 is required (found: ${version:-none}). Install it: brew install trufflehog" >&2
   exit 2
 fi
@@ -23,7 +30,7 @@ printf '%s\n' '(^|/)node_modules/' '(^|/)\.git/' '(^|/)dist/' '(^|/)coverage/' '
 
 echo "Running TruffleHog scan..."
 rc=0
-trufflehog filesystem . --only-verified --fail --no-update --exclude-paths "$exclude" || rc=$?
+"$th" filesystem . --only-verified --fail --no-update --exclude-paths "$exclude" || rc=$?
 case $rc in
   0) echo "✅ No verified secrets found" ;;
   183)
