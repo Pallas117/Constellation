@@ -46,7 +46,7 @@ double dynamicPressureNpa(double densityCm3, double speedKmS) {
 
 double newellCoupling(double speedKmS, double btNt, double byNt, double bzNt) {
     double thetaClock = std::atan2(byNt, bzNt);
-    double sinTerm = std::sin(thetaClock / 2.0);
+    double sinTerm = std::fabs(std::sin(thetaClock / 2.0)); // |sin(θc/2)|: θc is negative when By < 0
     double speedTerm = std::pow(std::max(speedKmS, 0.0), 4.0 / 3.0);
     double btTerm = std::pow(std::max(btNt, 0.0), 2.0 / 3.0);
     return speedTerm * btTerm * std::pow(std::max(sinTerm, 0.0), 8.0 / 3.0);

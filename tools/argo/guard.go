@@ -50,7 +50,8 @@ const (
 	sustainedWarn = 30 * time.Minute
 	swapRiseGB    = 1.0 // GAU-165: +1 GB of swap within 60 min while at warn
 	swapRiseOver  = 60 * time.Minute
-	minToFloor    = 60 // minutes of battery left before the floor that still count as safe
+	swapGrowingGB = 0.3 // over swapRiseOver: high swap that is still climbing stays a risk
+	minToFloor    = 60  // minutes of battery left before the floor that still count as safe
 	historyGap    = 15 * time.Minute
 )
 
@@ -195,8 +196,17 @@ func assess(hist []Sample, cur Sample) Assessment {
 	if atWarn(cur.Pressure) && a.SwapRiseGB >= swapRiseGB {
 		a.add("memory", "swap-rising", LevelRisk, "swap grew %.1f GB in the last hour while at warn", a.SwapRiseGB)
 	}
+	// macOS only frees swap when the swapped pages are touched or their process
+	// exits, so "used" stays high long after pressure is back to normal. A high
+	// but idle figure is a watch; it is a risk while memory is short or swap is
+	// still growing. (2026-10-28: a stale 4.6 GB held five gate runs at pressure
+	// normal on AC for 12 h until they gave up.)
 	if cur.SwapGB >= swapMaxGB {
-		a.add("memory", "swap-high", LevelRisk, "%.1f GB of swap in use (limit %.0f GB)", cur.SwapGB, swapMaxGB)
+		if atWarn(cur.Pressure) || a.SwapRiseGB >= swapGrowingGB {
+			a.add("memory", "swap-high", LevelRisk, "%.1f GB of swap in use (limit %.0f GB)", cur.SwapGB, swapMaxGB)
+		} else {
+			a.add("memory", "swap-high", LevelWatch, "%.1f GB of swap in use (limit %.0f GB) but not growing and pressure is normal", cur.SwapGB, swapMaxGB)
+		}
 	}
 	if cur.RAMGB > 0 && a.HeadroomGB == 0 && cur.Pressure == "normal" {
 		a.add("memory", "no-headroom", LevelOK, "no spare RAM after the %.1f GB reserve (%.1f of %.0f GB held by work)", reserveGB, cur.InRAMGB, cur.RAMGB)
