@@ -40,7 +40,7 @@ import { linkGuardian } from "./lib/connectivity.js";
 import { bedrock } from "./lib/local-db.js";
 import { diskFreeBytes, overall, readTpms } from "./lib/tpm.js";
 import { SPACE_OBJECT_CATALOG } from "./lib/space-object-catalog.js";
-import { auth, ssoAllowedDomain, ssoGithubEnabled, ssoGoogleEnabled } from "./better-auth.js";
+import { auth, CLIENT_IP_HEADER, ssoAllowedDomain, ssoGithubEnabled, ssoGoogleEnabled } from "./better-auth.js";
 import { toNodeHandler } from "better-auth/node";
 import { SelfHealerAgent } from "./cybertiger/self-healer.js";
 import deviceRegistryRouter from "./device-registry.js";
@@ -122,7 +122,12 @@ app.use(
   }),
 );
 
-// Better-Auth handler
+// Better-Auth handler. It rate-limits by CLIENT_IP_HEADER; set it here from the
+// address CyberTiger trusts so a client can't pick its own bucket.
+app.use("/api/auth", (req, _res, next) => {
+  req.headers[CLIENT_IP_HEADER] = cyberTiger.extractClientIp(req);
+  next();
+});
 app.all("/api/auth/*", toNodeHandler(auth));
 
 function withAsyncMiddleware(
