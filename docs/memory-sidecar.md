@@ -44,6 +44,25 @@ A document reaches the public catalog only when a person approves it as `public`
 checksum they approved (`scripts/memory/corpus_manifest.py approve …`). Apply GAU-12 before
 approving: no unsupported flight, qualification, dose, damage, customer or QPIN claims.
 
+## Cosmic Garden (staff portal)
+
+`/garden` (staff and up) draws the brain's markdown export as a graph of linked notes.
+gauss-brain's `scripts/memory/export-garden.sh` rebuilds the vault hourly; set
+`GAUSS_GARDEN_DIR` (absolute path) in the live checkout's `.env` to show it. The backend
+(`backend/memory/garden.ts`) reads only the exporter's `Cosmic Brain/` folder, never follows
+symlinks, and filters every note by audience, like the brain's separate catalogs:
+
+| Notes | Who sees them |
+|---|---|
+| `Corpus/member/` and its map | staff and up |
+| `Corpus/operator/` and its map | operator and up |
+| `Memory/`, the memory maps, `Home` | admin only |
+| anything else | nobody |
+
+Links to notes above the caller's role are dropped from the graph and shown as plain text
+in a note, without the hidden note's name. The page loads on open and on Refresh; it never
+polls.
+
 ## Not yet
 
 - The service is evidence-only: `GAUSS_BRAIN_URL` (a local model) is unset, so answers

@@ -33,6 +33,7 @@ import type {
 import { withFreshness } from "./lib/freshness.js";
 import { IngestionWorker } from "./worker/ingest-loop.js";
 import { MAX_QUERY_CHARS, memoryQuery, memoryStatus } from "./memory/client.js";
+import { gardenIndex, graphFor, noteFor } from "./memory/garden.js";
 import { worldStateFromFeed } from "./world/build.js";
 import { createSwapPlan, rebalanceDeviceNetwork } from "./services/device-swap-manager.js";
 import { encodeCanonicalPoint } from "./lib/proto.js";
@@ -319,6 +320,42 @@ app.post("/api/rag/query", async (req: express.Request, res: express.Response) =
     return;
   }
   res.json({ ok: true, answer: result.answer, sources: result.sources });
+});
+
+// Cosmic Garden (GAU-222): the brain's markdown export as a graph, filtered by role in
+// backend/memory/garden.ts (member notes for staff, + operator corpus, memories for admin only).
+app.get("/api/garden/graph", (req: express.Request, res: express.Response) => {
+  const role = (req as AuthenticatedRequest).auth?.role;
+  const index = gardenIndex();
+  if (!role) {
+    res.status(401).json({ ok: false, error: "Sign in required" });
+    return;
+  }
+  if ("error" in index) {
+    res.status(503).json({ ok: false, error: index.error });
+    return;
+  }
+  res.json({ ok: true, ...graphFor(index.notes, role, index.builtAt) });
+});
+
+app.get("/api/garden/note", (req: express.Request, res: express.Response) => {
+  const role = (req as AuthenticatedRequest).auth?.role;
+  const id = typeof req.query.id === "string" ? req.query.id : "";
+  const index = gardenIndex();
+  if (!role) {
+    res.status(401).json({ ok: false, error: "Sign in required" });
+    return;
+  }
+  if ("error" in index) {
+    res.status(503).json({ ok: false, error: index.error });
+    return;
+  }
+  const note = id.length <= 300 ? noteFor(index.notes, role, id) : null;
+  if (!note) {
+    res.status(404).json({ ok: false, error: "No such note" }); // also for notes above the caller's role
+    return;
+  }
+  res.json({ ok: true, ...note });
 });
 
 // Device lifecycle endpoints (requires operator session)
