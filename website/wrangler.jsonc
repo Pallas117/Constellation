@@ -27,7 +27,8 @@
     "EDU_SALES": "off",
     "EDU_STAFF_PRICE": ""
   },
-  // No secrets in a public release. SOURCE_SHA is set at deploy time (README, "Launch"), so /api/health names the commit.
+  // One optional secret in a public release: LL2_API_KEY (`npx wrangler@4 secret put LL2_API_KEY`; README, "Launch").
+  // SOURCE_SHA is set at deploy time (README, "Launch"), so /api/health names the commit.
   "observability": { "enabled": true }
   // When the workers.dev preview passes the smoke check, uncomment to serve lightbound.uk (adds proxied A/AAAA
   // records only; the Google Workspace MX records are not touched). Needs Josh's go-ahead: it's the DNS change.

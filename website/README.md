@@ -403,8 +403,8 @@ lightbound.uk launches as the reduced public release Josh approved on 21 Oct 202
 - **Closed by the Worker (404):** `/app/*`, `/argo/`, `POST /api/apply` and `/api/stripe/webhook`. The Gauss page
   offers pilots, and shows the later plans, with their prices, as in development. Gauss for Education stays
   "opening soon", and there's no Support link. The members-only feeds aren't fetched.
-- **Config:** only the LIVE namespace. No DATA, Access settings, Stripe keys or other secrets. `"full"` without a
-  DATA binding stays public.
+- **Config:** only the LIVE namespace, plus one optional secret, `LL2_API_KEY` (below). No DATA, Access settings,
+  Stripe keys or other secrets. `"full"` without a DATA binding stays public.
 
 One time:
 
@@ -412,7 +412,16 @@ One time:
 cd website
 npx wrangler@4 login                       # opens Cloudflare in your browser
 npx wrangler@4 kv namespace create LIVE    # done 23 Oct 2026: its id is in wrangler.jsonc (not a secret)
+npx wrangler@4 secret put LL2_API_KEY      # optional: paste the Launch Library 2 key when asked
 ```
+
+**The launch feed needs an LL2 key in practice.** Launch Library 2 allows 15 anonymous calls an hour, and the
+Worker shares Cloudflare's outbound IPs with other users who use them up: the first preview (24 Oct 2026) got
+HTTP 429 on every refresh, while the same URL answered from a home connection. With `LL2_API_KEY` set (a key from
+The Space Devs' Patreon), the Worker sends `Authorization: Token <key>` to `ll.thespacedevs.com` and to no other
+host, never follows a redirect with it, and ignores a value that isn't a plain token. The key is never stored or
+logged. Setting the secret takes effect at once; the next cron run (within 15 minutes) retries the feed, and
+`/api/launches` turns `live`. Without the key, the page says the launch data is offline.
 
 Each deploy, from a clean checkout of the exact commit whose gates passed (`npm run test:website`, and
 `RELEASE=public npm run audit:website`):
@@ -512,7 +521,8 @@ site:dev` previews the launch.
 
 - The Space Devs' page lists no terms for caching or redistribution. The site attributes them on
   every view; ask them before any commercial reuse.
-- Launch Library 2 rate-limits by IP, and Cloudflare Workers share outbound IPs. If refreshes fail
-  with HTTP 429, `/api/health` will show it. The fix is an LL2 API key (Patreon tier, costs money).
+- That an LL2 key lifts the 429s. Observed 24 Oct 2026: anonymous refreshes from the Worker got HTTP 429
+  (02:00, 02:15 and 02:30 UTC) while the same URL answered 200 from a home connection. The Worker sends the key
+  when `LL2_API_KEY` is set (Launch, above); check `/api/launches` turns `live` after setting it.
 - Cloudflare's default `Cache-Control` for `site.css` and the pages (expected: revalidate every
   time). Check with `curl -I` after the first deploy.

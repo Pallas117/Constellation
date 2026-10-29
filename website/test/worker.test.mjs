@@ -6,7 +6,7 @@ import { existsSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import worker from "../worker/index.js";
-import { FEEDS, feedState, normaliseEvents, normaliseLaunches, normaliseNews, normaliseProgrammes, normaliseUkri, normaliseUksa, normaliseWeather, parseCsv, programmesUrl, readFeed, refreshFeeds } from "../worker/feeds.js";
+import { FEEDS, feedState, ll2Auth, normaliseEvents, normaliseLaunches, normaliseNews, normaliseProgrammes, normaliseUkri, normaliseUksa, normaliseWeather, parseCsv, programmesUrl, readFeed, refreshFeeds } from "../worker/feeds.js";
 import { countdown, esc, renderConstellationDoor, renderEventIcs, renderEvents, renderGaussDoor, renderIcs, renderLaunches, renderWeather, whenText } from "../worker/render.js";
 import { SECURITY_HEADERS } from "../worker/headers.js";
 import { RECORDED_AT, fixture, makeFetch } from "./fixtures/fetch.mjs";
@@ -120,6 +120,40 @@ test("refresh: an upstream failure keeps the last good data and records the erro
   const ok = await refreshFeeds(env, { fetchImpl: makeFetch({ wind: 500, mag: 500 }), now: RECORDED_AT + 61 * MIN });
   assert.equal(ok.weather, "updated");
   assert.equal((await readFeed(env, "weather")).data.wind, null);
+});
+
+test("refresh: the optional LL2 key goes to LL2 only, in its Token header, and never follows a redirect", async () => {
+  const key = "9944b09199c62bcf9418ad846dd0e4bbdfc6ee4b"; // the example in LL2's 2.3.0 schema, not a real key
+  const isLl2 = (r) => new URL(r.url).host === "ll.thespacedevs.com";
+  const f = makeFetch();
+  assert.equal((await refreshFeeds({ LIVE: memoryKV(), LL2_API_KEY: ` ${key}\n` }, { fetchImpl: f, now: RECORDED_AT })).launches, "updated");
+  const [ll2, ...more] = f.requests.filter(isLl2);
+  assert.equal(more.length, 0);
+  assert.equal(ll2.headers.authorization, `Token ${key}`, "trimmed, with LL2's required prefix");
+  assert.equal(ll2.redirect, "manual");
+  const others = f.requests.filter((r) => !isLl2(r));
+  assert.equal(others.length, 5, "NOAA x4 and Luma");
+  assert.ok(others.every((r) => !("authorization" in r.headers) && r.redirect === "follow"), "no other upstream sees the key");
+
+  // No key, or anything that isn't a plain token: LL2 is called anonymously, as before.
+  for (const LL2_API_KEY of [undefined, "", "short", `${key}\r\nx-evil: 1`, `Token ${key}`, 42]) {
+    const g = makeFetch();
+    await refreshFeeds({ LIVE: memoryKV(), LL2_API_KEY }, { fetchImpl: g, now: RECORDED_AT });
+    const [anon] = g.requests.filter(isLl2);
+    assert.deepEqual(Object.keys(anon.headers).sort(), ["accept", "user-agent"], `ignored: ${JSON.stringify(LL2_API_KEY)}`);
+    assert.equal(anon.redirect, "follow");
+  }
+  assert.equal(ll2Auth({ LL2_API_KEY: key }, "https://evil.example/2.3.0/launches/"), null, "only ever for LL2's host");
+  assert.equal(ll2Auth({ LL2_API_KEY: key }, "https://ll.thespacedevs.com.evil.example/"), null);
+  assert.equal(ll2Auth({ LL2_API_KEY: key }, "https://lldev.thespacedevs.com/"), null);
+
+  // Failures (a 429, or a redirect it refused to follow) are recorded without the key.
+  for (const [status, why] of [[429, "rate limited"], [301, "redirect not followed"]]) {
+    const env = { LIVE: memoryKV(), LL2_API_KEY: key };
+    const r = await refreshFeeds(env, { fetchImpl: makeFetch({ launches: status }), now: RECORDED_AT });
+    assert.equal(r.launches, `failed: ll.thespacedevs.com HTTP ${status}`, why);
+    assert.ok(!JSON.stringify([r, await readFeed(env, "launches")]).includes(key), `${why}: the key is never stored or logged`);
+  }
 });
 
 test("feed state: live, then stale (still shown, labelled), offline when there is nothing", () => {

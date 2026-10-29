@@ -1,6 +1,6 @@
 // Live feeds for lightbound.uk: upcoming launches (The Space Devs Launch Library 2), space weather
 // (NOAA SWPC) and Constellation's events (its public Luma calendar). A cron trigger refreshes them into KV every 15 minutes. Pages and the API only ever read
-// KV, so visitor traffic never reaches the upstream services (LL2 allows 15 anonymous calls an hour).
+// KV, so visitor traffic never reaches the upstream services (LL2 allows 15 anonymous calls an hour; see ll2Auth).
 // A failed refresh keeps the last good data and records the error; /api/health reports both.
 //
 // For Constellation members (signed in): space news (Spaceflight News API, also run by The Space Devs), UKRI's
@@ -260,16 +260,31 @@ export function normaliseProgrammes(csv) {
 // (the body is read through a byte cap, so a reply without a Content-Length can't get past it either).
 const MAX_FEED_BYTES = 2 * 1024 * 1024;
 
-async function fetchText(url, fetchImpl, timeoutMs = 10_000, accept = "text/calendar") {
-  const res = await fetchImpl(url, { headers: { accept, "user-agent": UA }, signal: AbortSignal.timeout(timeoutMs) });
+// LL2 allows 15 anonymous calls an hour, and the Worker shares Cloudflare's outbound IPs with other users, who can
+// use them up first (HTTP 429 on every refresh, seen 24 Oct 2026). An API key (The Space Devs' Patreon) lifts that.
+// It's the optional Worker secret LL2_API_KEY, sent only to LL2, in its documented header `Authorization: Token <key>`
+// (the 2.3.0 OpenAPI schema). Anything that isn't a plain token is ignored, so a pasted newline can't add a header.
+const LL2_HOST = "ll.thespacedevs.com";
+export function ll2Auth(env, url) {
+  const key = typeof env?.LL2_API_KEY === "string" ? env.LL2_API_KEY.trim() : "";
+  if (!/^[A-Za-z0-9]{20,100}$/.test(key) || new URL(url).host !== LL2_HOST) return null;
+  return { authorization: `Token ${key}` };
+}
+
+// auth: extra headers for this one upstream. Such a request never follows a redirect, so the key can't reach
+// another host; a redirect fails like any other non-2xx answer.
+async function fetchText(url, fetchImpl, timeoutMs = 10_000, accept = "text/calendar", auth = null) {
+  const init = { headers: { accept, "user-agent": UA, ...auth }, signal: AbortSignal.timeout(timeoutMs) };
+  if (auth) init.redirect = "manual";
+  const res = await fetchImpl(url, init);
   if (!res.ok) throw new Error(`${new URL(url).host} HTTP ${res.status}`);
   const text = await readCapped(res, MAX_FEED_BYTES);
   if (text === null) throw new Error(`${new URL(url).host} response too large`);
   return text;
 }
 
-async function fetchJson(url, fetchImpl, timeoutMs = 10_000) {
-  return JSON.parse(await fetchText(url, fetchImpl, timeoutMs, "application/json"));
+async function fetchJson(url, fetchImpl, timeoutMs = 10_000, auth = null) {
+  return JSON.parse(await fetchText(url, fetchImpl, timeoutMs, "application/json", auth));
 }
 
 const LOADERS = {
@@ -279,7 +294,7 @@ const LOADERS = {
   uksa: async (f, env, prev, now) => normaliseUksa(await fetchText(SOURCES.uksa, f, 15_000, "application/atom+xml"), prev, now),
   programmes: async (f, env) => normaliseProgrammes(await fetchText(programmesUrl(env), f, 15_000, "text/csv")),
   // LL2's full-detail query can take ~20 s (measured 18 s on 2026-10-18); the cron can afford to wait.
-  launches: async (f) => normaliseLaunches(await fetchJson(SOURCES.launches, f, 30_000)),
+  launches: async (f, env) => normaliseLaunches(await fetchJson(SOURCES.launches, f, 30_000, ll2Auth(env, SOURCES.launches))),
   weather: async (f) => {
     // The storm scales are required; Kp and solar wind are extras that may be missing.
     const [scales, kp, wind, mag] = await Promise.allSettled(["scales", "kp", "wind", "mag"].map((k) => fetchJson(SOURCES[k], f)));
