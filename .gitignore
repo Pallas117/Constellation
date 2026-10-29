@@ -43,3 +43,5 @@ data/mesh/
 
 # Organisations, API keys (hashed) and usage metering
 data/commerce/
+# Telemetry archives written by the retention job (gzip + manifest; GAU-157). Never commit them.
+data/bedrock/archive/
