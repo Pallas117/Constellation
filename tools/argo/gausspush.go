@@ -124,7 +124,7 @@ func verifyEnroll(ctx context.Context, cfg Config, s Store, p Prober) error {
 	_ = withLock(s, func() { guardStep(s, cfg, sampleHost(ctx, false)) })
 	snap := p.Probe(ctx)
 	class, reason := Classify(snap)
-	st := State{Class: class, Reason: reason, Fingerprint: Fingerprint(snap.GatewayMAC, snap.PublicIP), Loc: snap.Loc,
+	st := State{Class: class, Reason: reason, Fingerprint: netFingerprint(snap), Loc: snap.Loc,
 		CheckedAt: time.Now(), Tailscale: snap.Tailscale, Net: ScoreNet(snap)}
 	return enrollOutcome(sendReport(cfg, st))
 }

@@ -153,7 +153,11 @@ func (s Store) Append(in Incident) error {
 		return err
 	}
 	in.Detail = Mask(in.Detail)
-	f, err := os.OpenFile(s.path("incidents.jsonl"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+	p := s.path("incidents.jsonl")
+	if fi, err := os.Stat(p); err == nil && fi.Size() >= incidentsMaxBytes {
+		_ = os.Rename(p, p+".1") // replaces the older half: history stays bounded at ~2x the cap
+	}
+	f, err := os.OpenFile(p, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 	if err != nil {
 		return err
 	}
@@ -163,19 +167,26 @@ func (s Store) Append(in Incident) error {
 	return err
 }
 
+// incidentsMaxBytes caps incidents.jsonl; it was never rotated and every report
+// parses it. At the cap it moves to incidents.jsonl.1 (one old file kept).
+const incidentsMaxBytes = 2 << 20
+
+// Incidents returns the rotated file's events, then the current file's, oldest first.
 func (s Store) Incidents() []Incident {
-	f, err := os.Open(s.path("incidents.jsonl"))
-	if err != nil {
-		return nil
-	}
-	defer f.Close()
 	var out []Incident
-	sc := bufio.NewScanner(f)
-	for sc.Scan() {
-		var in Incident
-		if json.Unmarshal(sc.Bytes(), &in) == nil {
-			out = append(out, in)
+	for _, p := range []string{s.path("incidents.jsonl.1"), s.path("incidents.jsonl")} {
+		f, err := os.Open(p)
+		if err != nil {
+			continue
 		}
+		sc := bufio.NewScanner(f)
+		for sc.Scan() {
+			var in Incident
+			if json.Unmarshal(sc.Bytes(), &in) == nil {
+				out = append(out, in)
+			}
+		}
+		f.Close()
 	}
 	return out
 }
@@ -228,6 +239,18 @@ func (s Store) Disabled() bool {
 // Fingerprint identifies a network by gateway MAC plus the public IP prefix
 // (first three IPv4 octets or IPv6 hextets), hashed so the raw IP and MAC are
 // never stored or reported.
+// netFingerprint is the network key Argo learns under. The iPhone hotspot has no
+// gateway MAC and a carrier IP whose /24 changes on every reconnect, which made
+// 30 "networks" out of one phone and kept recovery learning from ever reaching
+// its sample minimum. It is keyed by the country it exits in instead, so a MY
+// SIM and an HK eSIM (which Anthropic does not serve) stay apart.
+func netFingerprint(s Snapshot) string {
+	if isIPhoneHotspot(s.Gateway) && s.Loc != "" {
+		return Fingerprint("iphone-hotspot", s.Loc)
+	}
+	return Fingerprint(s.GatewayMAC, s.PublicIP)
+}
+
 func Fingerprint(gatewayMAC, publicIP string) string {
 	if gatewayMAC == "" && publicIP == "" {
 		return ""
