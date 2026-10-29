@@ -86,7 +86,10 @@ DEPLOY_EMERGENCY="" # set by `deploy --emergency <reason>`
 # after a merge commit or a rebase that leaves the tree unchanged (GAU-161 finding 4).
 GATES_DIR="$WATCH_DIR/gates"
 GATE_LOCK="${GAUSS_GATE_LOCK:-$HOME/.local/state/gauss-gate.lock}" # shared with agents running gates by hand
-GATES=(test:ops test build quality:full verify)
+# `verify` already runs the full test suite, the ops tests and the production build
+# (scripts/verify/verify.ts), so `test` and `build` are not run again as gates of
+# their own; their record fields come from verify's log. Halves a gate run.
+GATES=(test:ops quality:full verify)
 # balance: safe, reversible load shedding (GAU-126). GAUSS_BALANCE=0 turns it off.
 BALANCE="${GAUSS_BALANCE:-1}"
 LOCAL_CODER="${GAUSS_LOCAL_CODER:-$HOME/.local/bin/local-coder}"   # optional on-device model server
@@ -609,11 +612,15 @@ rc = lambda g: int(open(os.path.join(d, g + ".rc")).read())
 def last(pat, text, conv=int):
     m = re.findall(pat, text, re.M)
     return conv(m[-1]) if m else None
-ops, t, v = log("test:ops"), log("test"), log("verify")
+ops, v = log("test:ops"), log("verify")
+def step(name): # verify prints "✔ <step>" or "✖ <step> (exit N)"; no line: verify died first
+    if re.search(r"^✔ " + name + r"$", v, re.M): return 0
+    m = re.search(r"^✖ " + name + r" \(exit (-?\d+|null)\)", v, re.M)
+    return (int(m.group(1)) if m and m.group(1) != "null" else 1) if m else max(rc("verify"), 1)
 r = {"sha": sha, "tree": tree, "by": by, "at": at,
      "test_ops": {"exit": rc("test:ops"), "pass": last(r"gauss-services: (\d+) passed", ops), "fail": last(r"gauss-services: \d+ passed, (\d+) failed", ops), "go_ok": len(re.findall(r"^ok\s", ops, re.M))},
-     "test": {"exit": rc("test"), "tests": last(r"^\S* ?tests (\d+)$", t), "pass": last(r"^\S* ?pass (\d+)$", t), "fail": last(r"^\S* ?fail (\d+)$", t)},
-     "build": {"exit": rc("build")},
+     "test": {"exit": step("Test suite"), "tests": last(r"^\S* ?tests (\d+)$", v), "pass": last(r"^\S* ?pass (\d+)$", v), "fail": last(r"^\S* ?fail (\d+)$", v), "via": "verify"},
+     "build": {"exit": step("Production build"), "via": "verify"},
      "quality": {"exit": rc("quality:full")},
      "verify": {"exit": rc("verify"), "vcrm": last(r"VCRM: (\d+/\d+)", v, str), "fmea": last(r"FMEA: (\d+/\d+)", v, str), "passed_at": last(r"VERIFY PASSED at (\w+)", v, str)}}
 r["passed"] = all(r[k]["exit"] == 0 for k in ("test_ops", "test", "build", "quality", "verify")) \

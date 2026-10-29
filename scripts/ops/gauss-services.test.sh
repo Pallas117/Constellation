@@ -234,8 +234,13 @@ stub node 'if [[ " $* " == *" build "* ]]; then mkdir -p frontend/dist && touch 
 stub npm 'if [ "$1" = run ]; then
   case "$2" in
     test:ops) echo "gauss-services: 99 passed, 0 failed"; echo "ok  	argo	1.0s" ;;
-    test) if [ "$GATEFAIL" = test ]; then printf "ℹ tests 5\nℹ pass 4\nℹ fail 1\n"; else printf "ℹ tests 5\nℹ pass 5\nℹ fail 0\n"; fi ;;
-    verify) echo "▶ VCRM: 40/40 requirements verified"; echo "▶ FMEA: 12/14 failure modes mitigated"; echo "✅ VERIFY PASSED at $(git rev-parse --short HEAD)" ;;
+    test|build) echo "$2 is not a gate: verify runs it" >&2; exit 9 ;;
+    verify) echo "▶ Test suite"
+      if [ "$GATEFAIL" = test ]; then printf "ℹ tests 5\nℹ pass 4\nℹ fail 1\n✖ Test suite (exit 1)\n"; else printf "ℹ tests 5\nℹ pass 5\nℹ fail 0\n✔ Test suite\n"; fi
+      printf "▶ Production build\n✔ Production build\n"
+      echo "▶ VCRM: 40/40 requirements verified"; echo "▶ FMEA: 12/14 failure modes mitigated"
+      if [ "$GATEFAIL" = test ]; then echo "❌ VERIFY FAILED"; exit 1; fi
+      echo "✅ VERIFY PASSED at $(git rev-parse --short HEAD)" ;;
   esac
   [ "$GATEFAIL" != "$2" ]; exit
 fi
@@ -355,11 +360,11 @@ rec="$WD/gates/$(g rev-parse "$D^{tree}").json"; rm -f "$rec"
 out=$(run gates record "$GW" 2>&1); rc=$?
 [ $rc = 0 ] && [[ "$out" == *"PASSED ${D:0:7}"*"npm test 5/5, test:ops 99 passed, build ok, quality ok, VCRM 40/40, FMEA 12/14"* ]] \
   && python3 -Ic 'import json,sys; r=json.load(open(sys.argv[1])); sys.exit(0 if r["passed"] and r["sha"]==sys.argv[2] and r["by"]=="test-user" and r["test_ops"]["go_ok"]==1 else 1)' "$rec" "$D"
-expect "gates record: runs the five gates and records the counts by tree" $?
+expect "gates record: runs the gates (test and build inside verify) and records the counts by tree" $?
 [ ! -d "$T/home/.local/state/gauss-gate.lock" ]; expect "gates record releases the shared gate lock" $?
 out=$(run gates); [[ "$out" == *"PASSED ${D:0:7}"* ]]; expect "gates lists the records" $?
 out=$(GATEFAIL=test run gates record "$GW" 2>&1); rc=$?
-[ $rc != 0 ] && [[ "$out" == *"FAILED (test) ${D:0:7}"* ]] && ! python3 -Ic 'import json,sys; sys.exit(0 if json.load(open(sys.argv[1]))["passed"] else 1)' "$rec"
+[ $rc != 0 ] && [[ "$out" == *"FAILED (test, verify) ${D:0:7}"* ]] && ! python3 -Ic 'import json,sys; sys.exit(0 if json.load(open(sys.argv[1]))["passed"] else 1)' "$rec"
 expect "gates record: a failing gate is recorded as FAILED, so the tree can't be deployed" $?
 touch "$GW/stray"; out=$(run gates record "$GW" 2>&1); [[ "$out" == *"uncommitted or untracked"* ]]; expect "gates record refuses a dirty checkout" $?
 rm -f "$GW/stray"
