@@ -18,10 +18,12 @@ elif [ "$1 $2" = "-g batt" ]; then printf "Now drawing from '"'"'%s'"'"'\n -Inte
 stub memory_pressure 'echo "System-wide memory free percentage: ${FREE:-50}%"'
 stub sysctl 'case "$*" in
   *pressure_level*) echo "${LEVEL:-1}" ;;
+  *memorystatus_level*) echo "${AVAIL:-50}" ;;
   *boottime*) echo "{ sec = ${BOOT:-1000}, usec = 5 } Thu Oct 22 01:01:27 2026" ;;
   *) echo "total = 6144.00M  used = ${SWAPUSED:-1000}.00M  free = 0.00M  (encrypted)" ;;
 esac'
-stub ps 'echo "2097152 node"'
+stub ps 'case "$*" in *comm=*) echo "/opt/homebrew/bin/node" ;; *) echo "2097152 node" ;; esac'
+stub top 'printf "Processes: 600 total\nPID    MEM\n${TOPPID:-1177}  ${TOPMEM:-2048M}\n"'
 stub ioreg 'echo "\"AppleClamshellState\" = No"'
 # bootout/bootstrap flip a label in $KICKS.state (over $LOADED) and are logged in $KICKS
 stub launchctl 'S="$KICKS.state"; case "$1" in
@@ -40,8 +42,11 @@ stub argo 'case "$1" in
   status) echo "${ARGOSTATUS:-● OK MY ts:on}" ;;
 esac'
 
-# balance stubs: the local model server is "running" when MLX=1; actions land in $ACTIONS
-stub pgrep '[ "${MLX:-0}" = 1 ] && [[ "$*" == *mlx_lm.server* && "$*" == *"--port ${MLXPORT:-8089}"* ]]'
+# balance stubs: the local model server is "running" when MLX=1; a helper named $LEAKY runs as
+# pid 4242 with footprint $LEAKFP; actions land in $ACTIONS
+stub pgrep 'if [ "$1" = -x ]; then [ -n "${LEAKY:-}" ] && [ "$2" = "$LEAKY" ] && echo 4242; exit; fi
+[ "${MLX:-0}" = 1 ] && [[ "$*" == *mlx_lm.server* && "$*" == *"--port ${MLXPORT:-8089}"* ]]'
+stub footprint '[ "$*" = "-p 4242" ] && printf "Gauss\n    phys_footprint: %s\n    phys_footprint_peak: 9 GB\n" "${LEAKFP:-12 MB}"'
 stub pkill 'echo "pkill $*" >>"$ACTIONS"'
 mkdir -p "$T/home/.local/bin"
 printf '#!/bin/bash\necho "local-coder $*" >>"$ACTIONS"\n' >"$T/home/.local/bin/local-coder"
@@ -58,6 +63,7 @@ run() { # run <args...>: gauss-services.sh with the stubs; alerts land in $LOG
     GATEFAIL="${GATEFAIL:-}" GAUSS_BY=test-user BOOT="${BOOT:-1000}" GAUSS_DIAG_DIRS="$T/diag" GAUSS_EVENTS_MAX_KB="${GAUSS_EVENTS_MAX_KB:-5120}" \
     GAUSS_DEV_DRY="${GAUSS_DEV_DRY:-0}" GAUSS_DEV_API_PORT="${GAUSS_DEV_API_PORT:-3101}" \
     SRC="${SRC:-AC Power}" BATT="${BATT:-80%; charging; present: true}" SD="${SD:-0}" \
+    LEAKY="${LEAKY:-}" LEAKFP="${LEAKFP:-12 MB}" AVAIL="${AVAIL:-50}" GAUSS_SWAP_LAST="${SWAPLAST:-/dev/null}" \
     ARGOSTATUS="${ARGOSTATUS:-}" LEVEL="${LEVEL:-1}" FREE="${FREE:-50}" SWAPUSED="${SWAPUSED:-1000}" OLD_ARGO="${OLD_ARGO:-}" bash "$SCRIPT" "$@"
 }
 expect() { # expect <name> <condition-exit-code>
@@ -94,17 +100,59 @@ run awake guard
 [ -z "$(alerts)" ]; expect "2.8 of 3 GB swap (91%; macOS adds swap files on demand): no alert" $?
 stub sysctl 'case "$*" in
   *pressure_level*) echo "${LEVEL:-1}" ;;
+  *memorystatus_level*) echo "${AVAIL:-50}" ;;
   *boottime*) echo "{ sec = ${BOOT:-1000}, usec = 5 } Thu Oct 22 01:01:27 2026" ;;
   *) echo "total = 6144.00M  used = ${SWAPUSED:-1000}.00M  free = 0.00M  (encrypted)" ;;
 esac'
 LEVEL=1 SWAPUSED=3000 run awake guard
 [ -z "$(alerts)" ]; expect "healthy memory: no alerts" $?
+AVAIL=8 run awake guard
+[ "$(alerts)" = "memory-low" ] && grep -q "memory almost out (8% left)" "$T/log"
+expect "8% available at a 'normal' pressure level (the level lags swap death): alert" $?
+AVAIL=12 run awake guard
+[ -z "$(alerts)" ]; expect "12% available: no alert" $?
+# Runaway: swap grows 1 GB+ between two readings at most 150 s apart
+rm -f "$T/swaplast"
+SWAPLAST="$T/swaplast" SWAPUSED=1000 run awake guard
+[ -z "$(alerts)" ]; expect "first swap reading: nothing to compare, no alert" $?
+SWAPLAST="$T/swaplast" SWAPUSED=2200 run awake guard
+[ "$(alerts)" = "swap-fast" ] && grep -q "Biggest: node 2.0 GB" "$T/log"; expect "swap +1.2 GB in a minute: runaway alert naming the biggest process" $?
+echo "$(( $(date +%s) - 600 )) 1000" >"$T/swaplast"
+SWAPLAST="$T/swaplast" SWAPUSED=2200 run awake guard
+[ -z "$(alerts)" ]; expect "the same rise over 10 minutes is not a runaway" $?
+
+# mem-guard's samples: what to close (sustained warn and swap climbing are Argo's guard texts, GAU-165)
+M="$T/home/Library/Logs/gauss/memory.tsv"; mkdir -p "${M%/*}"
+sample() { printf '%s\t%s\t40\t1.3\t1.8\t1.1\t2.8\t6\t%s\t15\t9.4\t8\t40\t2.2\t1.3\t1.2\t0.4\t0.1\t0.4\t0.4\t4.7\t5.5\t0.1\n' "$(date -v-"$1"M '+%F %T')" "$2" "$3"; }
+{ printf 'ts\tlevel\tfree_pct\twired\tanon\tfile\tcmp_occ\tcmp_data\tswap\tdisk\tdemand\tram\tswapped_pct\tclaude_app\tcowork_vm\tclaude_code\tgauss_live\tdev\tvpn\twhatsapp\tbrowser\tmacos\tapps\n'
+  sample 32 2 2.0; sample 21 2 2.4; sample 11 2 2.8; sample 1 2 3.2; } >"$M"
+SWAPUSED=4300 run awake guard
+grep -q "Gauss: swap 4.2 GB" "$T/log" && grep -q "Close: browser tabs 4.7 GB" "$T/log"; expect "high swap: the text says what to close" $?
+touch -t "$(date -v-2H '+%Y%m%d%H%M')" "$M"
+SWAPUSED=4300 run awake guard
+grep -q "Close: node 2.0 GB" "$T/log"; expect "a stale sample (2 h old) is not used; falls back to the biggest process" $?
+rm -f "$M"
 
 # Disk (seen on the dev Mac: 5 GB free with 5 GB of swap)
 DISKGB=5 run awake guard
 [ "$(alerts)" = "disk-low" ]; expect "5 GB free disk: alert; a cleanup that frees nothing is not claimed" $?
 DISKGB=20 run awake guard
 [ -z "$(alerts)" ]; expect "20 GB free disk: no alert" $?
+rm -f "$T/home/Library/Application Support/Gauss/balance-cleanup"
+DISKGB=13 run awake guard
+[ -z "$(alerts)" ] && grep -qx "disk-cleanup --apply --if-below 15" "$T/actions"
+expect "13 GB free with little swap (54% of the dev Mac's samples): quiet cleanup, no text" $?
+grep -q "balance: cleared\|disk-cleanup" "$T/actions"; expect "the quiet cleanup still runs" $?
+rm -f "$T/home/Library/Application Support/Gauss/balance-cleanup"
+DISKGB=13 SWAPUSED=4300 run awake guard
+grep -q "disk 13 GB free, swap 4.2 GB" "$T/log" && grep -q "Swap is growing on a short disk" "$T/log"
+expect "13 GB free with 4.2 GB swap (the 2026-10-22 panic's combination): a text that says why" $?
+DISKGB=9 run awake guard
+[ "$(alerts)" = "disk-low" ] && grep -q "below 12 GB" "$T/log"; expect "9 GB free: a text whatever the swap" $?
+out=$(DISKGB=13 run resilience 2>&1 | plain)
+[[ "$out" == *"✓ disk 13 GB free"* ]]; expect "resilience: 13 GB free with little swap passes" $?
+out=$(DISKGB=13 SWAPUSED=4300 run resilience 2>&1 | plain)
+[[ "$out" == *"✗ disk 13 GB free (need 12+, or 15+ while swap is over 4 GB)"* ]]; expect "resilience: 13 GB with high swap fails and says why" $?
 
 # Replay: a real overnight drain from the dev Mac's pmset log (57% down to 2%,
 # lid closed, on battery). Alert keys per reading; argo rate-limits repeats.
@@ -390,13 +438,27 @@ DISKGB=5 run awake guard
 [ -z "$(acts)" ] && [ "$(alerts)" = "disk-low" ]; expect "disk 5 GB again within the hour: no second cleanup" $?
 rm -f "$T/home/Library/Application Support/Gauss/balance-cleanup"
 DISKGB=5 run awake guard
-[ "$(acts)" = "disk-cleanup --apply --if-below 8" ]; expect "disk 5 GB, an hour later: allowlisted cleanup runs" $?
+[ "$(acts)" = "disk-cleanup --apply --if-below 15" ]; expect "disk 5 GB, an hour later: allowlisted cleanup runs" $?
 MLX=1 LEVEL=4 GAUSS_BALANCE=0 run awake guard
 [ -z "$(acts)" ]; expect "GAUSS_BALANCE=0: balance does nothing" $?
 out=$(MLX=1 LEVEL=4 run balance --dry-run)
 [ -z "$(acts)" ] && [[ "$out" == *"would: pkill -f mlx_lm.server.*--port 8089"* ]]; expect "balance --dry-run only reports" $?
 out=$(run balance --dry-run)
 [[ "$out" == "balanced: nothing to do"* ]]; expect "healthy machine: nothing to do" $?
+
+# Leaking macOS helpers (GAU-183): restarted by name once past GAUSS_LEAK_MB (1024), whatever the pressure
+LEAKY=CursorUIViewService LEAKFP="3.7 GB" run awake guard
+[ "$(acts)" = "pkill -x CursorUIViewService" ] && [ "$(alerts)" = "balance" ]
+expect "a 3.7 GB CursorUIViewService is restarted at normal pressure, with one balance text" $?
+grep -q "restarted CursorUIViewService (3788 MB" "$T/home/Library/Logs/gauss/balance.log"; expect "the restart is logged with its size" $?
+LEAKY=CursorUIViewService LEAKFP="400 MB" run awake guard
+[ -z "$(acts)" ]; expect "a 400 MB helper is left alone (limit 512 MB)" $?
+LEAKY=CursorUIViewService LEAKFP="512 KB" run awake guard
+[ -z "$(acts)" ]; expect "footprint in KB parses (left alone)" $?
+LEAKY=Safari LEAKFP="6 GB" run awake guard
+[ -z "$(acts)" ]; expect "an app that isn't on the leaky-helper list is never touched" $?
+out=$(LEAKY=CursorUIViewService LEAKFP="2 GB" run balance --dry-run)
+[ -z "$(acts)" ] && [[ "$out" == *"would: pkill -x CursorUIViewService"* ]]; expect "--dry-run only reports the restart" $?
 
 # resilience checklist
 echo '{"phone_to":"+60123456789"}' >"$T/home/.config/argo/config.json"

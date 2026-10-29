@@ -73,7 +73,23 @@ ARGO="${ARGO:-$HOME/.local/bin/argo}"
 MEM_ALERT_LEVEL="${GAUSS_MEM_ALERT_LEVEL:-4}" # phone alert at or above this pressure level
 MEM_SHED_LEVEL="${GAUSS_MEM_SHED_LEVEL:-2}"   # balance sheds optional load at or above this level
 SWAP_MAX_GB="${GAUSS_SWAP_MAX_GB:-4}"         # ... or at or above this many GB of swap in use
-DISK_MIN_GB="${GAUSS_DISK_MIN_GB:-8}"   # ... or below this many GB free on the boot volume
+# ... or below this many GB free on the boot volume. Swap files grow on this disk: the 2026-10-22
+# 01:00 kernel panic logged "LOW swap space" with 12-13 GB free, so clean up well before that.
+# Below DISK_MIN_GB balance clears rebuildable caches quietly: the dev Mac sat under 15 GB in 54% of
+# the 2026-10-17..25 samples, so a text there would arrive all day. The text (and a failing check)
+# comes below DISK_ALERT_GB, or below DISK_MIN_GB while swap is high: the panic's combination.
+DISK_MIN_GB="${GAUSS_DISK_MIN_GB:-15}"
+DISK_ALERT_GB="${GAUSS_DISK_ALERT_GB:-12}"   # 8% of samples were under 12 GB; 4% under 8
+# mem-guard writes one sample every 10 min (gauss-tpm-watch): footprint GB per owner, which the
+# alerts use to say what to close. Sustained warn and swap climbing over an hour are Argo's guard
+# texts (GAU-165: guard-memory, guard-swap), so this script doesn't repeat them.
+MEM_LOG="${GAUSS_MEM_LOG:-$HOME/Library/Logs/gauss/memory.tsv}"
+# macOS's pressure level can still say normal while swap runs away (fl4p/macos-oom-guard, 2026), so
+# two faster signals: kern.memorystatus_level (% of memory available) under AVAIL_MIN, and swap
+# growing SWAP_FAST_GB within 2.5 min (the 2026-10-17..25 log's biggest rise was 2.7 GB in 10 min).
+AVAIL_MIN="${GAUSS_MEM_AVAIL_MIN:-10}"
+SWAP_FAST_GB="${GAUSS_SWAP_FAST_GB:-1}"
+SWAP_LAST="${GAUSS_SWAP_LAST:-$HOME/Library/Application Support/Gauss/swap-last}" # "<epoch> <swap MB>"
 WATCH_DIR="$HOME/Library/Application Support/Gauss"
 GUARD_HEARTBEAT="$WATCH_DIR/guard.heartbeat" # Argo restarts the guard if this goes stale
 WATCH_KICKS="$WATCH_DIR/watch-kicks"         # "<label> <epoch>" per watchdog restart
@@ -91,6 +107,11 @@ GATES=(test:ops test build quality:full verify)
 BALANCE="${GAUSS_BALANCE:-1}"
 LOCAL_CODER="${GAUSS_LOCAL_CODER:-$HOME/.local/bin/local-coder}"   # optional on-device model server
 LOCAL_CODER_PORT="${LOCAL_CODER_PORT:-8089}"   # local-coder's server; Gauss's memory answer model (:3032, opt-in since GAU-184) is never shed
+# macOS helpers that leak and that macOS relaunches on demand, holding no user data: balance
+# restarts one once its footprint passes LEAK_MB. CursorUIViewService (the text-cursor helper) had
+# grown to 3.7 GB before the 2026-10-22 01:00 kernel panic (GAU-183). Never apps or Claude sessions.
+LEAKY_HELPERS="${GAUSS_LEAKY_HELPERS-CursorUIViewService}"
+LEAK_MB="${GAUSS_LEAK_MB:-512}"   # it idles at 12-170 MB; reported leaks reach 3.7-4.9 GB
 CLEANUP_STAMP="$WATCH_DIR/balance-cleanup"     # balance runs disk-cleanup at most hourly
 DISK_CLEANUP="${GAUSS_DISK_CLEANUP:-$HOME/.local/bin/disk-cleanup}" # allowlisted cache cleanup
 LEARNING_PAUSED="$WATCH_DIR/learning-paused"      # ml/train/nightly.py skips while this exists
@@ -369,22 +390,78 @@ swap_high() { [ "$1" -ge $((SWAP_MAX_GB * 1024)) ]; }  # swap_high <swap MB>
 # Disk: swap files live on the boot volume, so a near-full disk turns memory
 # pressure into killed apps and failed builds (seen: 5 GB free with 5 GB swap).
 disk_free_gb() { df -g / 2>/dev/null | awk 'NR==2{print $4+0}'; }
-disk_alerts() { # disk_alerts <free GB>
-  [ "${1:-999}" -lt "$DISK_MIN_GB" ] && phone -key disk-low -every 6h "Gauss: disk ${1} GB free" \
-    "Swap and builds need room; below ${DISK_MIN_GB} GB macOS may kill apps. Clear caches or old builds."
+disk_short() { # disk_short <free GB> <swap MB>: too little room for swap to keep growing
+  [ "${1:-999}" -lt "$DISK_ALERT_GB" ] || { [ "${1:-999}" -lt "$DISK_MIN_GB" ] && swap_high "${2:-0}"; }
+}
+disk_alerts() { # disk_alerts <free GB> <swap MB>
+  disk_short "$1" "${2:-0}" || return 0
+  if [ "${1:-999}" -lt "$DISK_ALERT_GB" ]; then
+    phone -key disk-low -every 6h "Gauss: disk ${1} GB free" \
+      "Swap needs room; below ${DISK_ALERT_GB} GB macOS may kill apps. Caches are cleared for you; delete old builds or downloads."
+  else
+    phone -key disk-low -every 6h "Gauss: disk ${1} GB free, swap $(gb "$2") GB" \
+      "Swap is growing on a short disk, as before the 22 Oct crash. Close: $(memory_hint)."
+  fi
   return 0
 }
-top_memory() { ps -Acmo rss=,comm= 2>/dev/null | awk 'NR==1{printf "%s %.1f GB", $2, $1/1048576}'; }
+# Biggest process by footprint (top's MEM is phys_footprint, as Activity Monitor shows). RSS leaves
+# out compressed pages, which held 7.5 GB on 2026-10-25, so it named the wrong process.
+top_memory() {
+  local pid mem name
+  read -r pid mem < <(top -l 1 -o mem -n 1 -stats pid,mem 2>/dev/null | tail -1)
+  name=$(ps -o comm= -p "${pid:-0}" 2>/dev/null); name=${name##*/}
+  awk -v n="${name:-?}" -v m="${mem:-0}" 'BEGIN{v=m+0; u=substr(m,length(m)); if (u=="+"||u=="-") u=substr(m,length(m)-1,1)
+    if (u=="G") v*=1024; else if (u=="K") v/=1024; else if (u=="B") v/=1048576; printf "%s %.1f GB", n, v/1024}'
+}
+# memory_hint: what Josh can close, biggest first, from mem-guard's newest sample (owners of 0.5 GB+
+# that are his to close; never macOS, Gauss or the Claude app). Falls back to the biggest process.
+memory_hint() {
+  local hint=""
+  if [ -r "$MEM_LOG" ] && [ -n "$(find "$MEM_LOG" -mmin -30 2>/dev/null)" ]; then
+    hint=$(awk -F'\t' 'NR == 1 {for (i = 1; i <= NF; i++) col[$i] = i; next} {last = $0}
+      END {
+        split("browser cowork_vm claude_code whatsapp apps", k, " ")
+        lab["browser"] = "browser tabs"; lab["cowork_vm"] = "Cowork"; lab["claude_code"] = "idle Claude sessions"
+        lab["whatsapp"] = "WhatsApp"; lab["apps"] = "unused apps"
+        n = split(last, v, "\t")
+        for (i = 1; i <= 5; i++) if (col[k[i]] && v[col[k[i]]] + 0 >= 0.5) printf "%.1f\t%s %.1f GB\n", v[col[k[i]]], lab[k[i]], v[col[k[i]]]
+      }' "$MEM_LOG" | sort -rn | head -3 | cut -f2 | paste -sd ',' - | sed 's/,/, /g')
+  fi
+  echo "${hint:-$(top_memory)}"
+}
+# phys_footprint in MB, as Activity Monitor shows it. RSS leaves out compressed pages, which is
+# where a leaking helper's memory ends up (CursorUIViewService: RSS 4 MB vs footprint 12 MB idle).
+footprint_mb() { # footprint_mb <pid>
+  footprint -p "$1" 2>/dev/null | awk '$1 == "phys_footprint:" {v = $2; u = $3
+    if (u == "GB") v *= 1024; else if (u == "KB") v /= 1024; else if (u == "B" || u == "bytes") v /= 1048576
+    printf "%d", v; exit}'
+}
+
+mem_available() { # kern.memorystatus_level: % of memory available (100 when unreadable)
+  local a; a=$(sysctl -n kern.memorystatus_level 2>/dev/null)
+  case "$a" in ''|*[!0-9]*) echo 100 ;; *) echo "$a" ;; esac
+}
+swap_fast() { # swap_fast <swap MB>: swap grew SWAP_FAST_GB+ since a reading <= 150 s ago; records this one
+  local now prev_t="" prev_s=""; now=$(date +%s)
+  read -r prev_t prev_s 2>/dev/null <"$SWAP_LAST" || true
+  mkdir -p "$(dirname "$SWAP_LAST")" 2>/dev/null; echo "$now $1" >"$SWAP_LAST" 2>/dev/null || true
+  [ -n "$prev_t" ] && [ $((now - prev_t)) -le 150 ] && [ $(($1 - ${prev_s:-0})) -ge $((SWAP_FAST_GB * 1024)) ]
+}
 
 memory_alerts() { # memory_alerts <pressure level> <swap used MB>
-  local level=$1 swap=$2
-  if [ "$level" -ge "$MEM_ALERT_LEVEL" ]; then
-    phone -key memory-low -every 30m "Gauss: memory pressure $(pressure_name "$level")" \
-      "Background work may be killed. Biggest: $(top_memory). Close apps or stop a build."
+  local level=$1 swap=$2 avail; avail=$(mem_available)
+  if [ "$level" -ge "$MEM_ALERT_LEVEL" ] || [ "$avail" -lt "$AVAIL_MIN" ]; then
+    phone -key memory-low -every 30m "Gauss: memory $([ "$level" -ge "$MEM_ALERT_LEVEL" ] && echo "pressure $(pressure_name "$level")" || echo "almost out (${avail}% left)")" \
+      "Background work may be killed. Biggest: $(top_memory). Close: $(memory_hint)."
   fi
+  if swap_fast "$swap"; then
+    phone -key swap-fast -every 30m "Gauss: swap growing fast" \
+      "Swap jumped ${SWAP_FAST_GB}+ GB in a minute or two (now $(gb "$swap") GB): something is running away. Biggest: $(top_memory). Quit it if you can."
+  fi
+  # Swap stays until the work holding it ends, so this won't clear by itself; every 3 h, not hourly.
   if swap_high "$swap"; then
-    phone -key swap-high -every 1h "Gauss: swap $(gb "$swap") GB" \
-      "The Mac is short of memory and slowing down, and swap fills the disk. Biggest: $(top_memory)."
+    phone -key swap-high -every 3h "Gauss: swap $(gb "$swap") GB" \
+      "The Mac is short of memory and won't recover by itself. Close: $(memory_hint)."
   fi
 }
 
@@ -829,7 +906,7 @@ awake_guard() { # run every minute by the awake agent
   local level swap free; read -r level swap free < <(memory_stats)
   memory_alerts "$level" "$swap"
   memory_sample "$level" "$swap"
-  disk_alerts "$(disk_free_gb)"
+  disk_alerts "$(disk_free_gb)" "$swap"
   balance || true
   [ -f "$SUDOERS" ] || return 0 # not set up; status and check say so
   if [ -f "$AWAKE_OFF" ]; then
@@ -877,6 +954,16 @@ balance() { # balance [--dry-run]
   if { [ $mem_short = 1 ] || [ $batt_low = 1 ]; } && pgrep -f "$coder" >/dev/null 2>&1; then
     act pkill -f "$coder"; notify+=("stopped the local model server")
   fi
+  # A leak grows whatever the pressure, so this one doesn't wait for memory to run short.
+  local h p mb
+  for h in $LEAKY_HELPERS; do
+    for p in $(pgrep -x "$h" 2>/dev/null); do
+      mb=$(footprint_mb "$p")
+      if [ "${mb:-0}" -ge "$LEAK_MB" ]; then
+        act pkill -x "$h"; notify+=("restarted $h (${mb} MB; a macOS helper that leaks, macOS starts it again)"); break
+      fi
+    done
+  done
   if [ $batt_low = 1 ]; then
     if [ ! -f "$LEARNING_PAUSED" ]; then act mkdir -p "$WATCH_DIR"; act touch "$LEARNING_PAUSED"; quiet+=("paused nightly learning"); fi
     if [ "$(lowpower_on)" = 0 ] && sudo -n -l /usr/bin/pmset -a lowpowermode 1 >/dev/null 2>&1; then
@@ -895,7 +982,11 @@ balance() { # balance [--dry-run]
     act "$DISK_CLEANUP" --apply --if-below "$DISK_MIN_GB"
     if [ $dry = 0 ]; then
       local after; after=$(disk_free_gb)
-      [ "${after:-0}" -gt "$disk" ] && notify+=("cleared rebuildable caches (${disk} to ${after} GB free)")
+      # A text only when the disk was short; routine clearing between 10 and 15 GB is logged quietly.
+      if [ "${after:-0}" -gt "$disk" ]; then
+        if disk_short "$disk" "$swap"; then notify+=("cleared rebuildable caches (${disk} to ${after} GB free)")
+        else quiet+=("cleared rebuildable caches (${disk} to ${after} GB free)"); fi
+      fi
     fi
   fi
 
@@ -976,8 +1067,8 @@ resilience() { # can background work survive the lid closed, the battery, memory
   [ "$level" -lt "$MEM_ALERT_LEVEL" ] && ! swap_high "$swap" && ok=ok || ok=no
   item $ok "memory pressure $(pressure_name "$level"), swap $(gb "$swap") GB$([ $ok = no ] && echo "; biggest: $(top_memory)")"
   local disk; disk=$(disk_free_gb)
-  [ "${disk:-0}" -ge "$DISK_MIN_GB" ] && ok=ok || ok=no
-  item $ok "disk ${disk:-?} GB free$([ $ok = no ] && echo " (need ${DISK_MIN_GB}+ for swap and builds)")"
+  disk_short "${disk:-0}" "$swap" && ok=no || ok=ok
+  item $ok "disk ${disk:-?} GB free$([ $ok = no ] && echo " (need ${DISK_ALERT_GB}+, or ${DISK_MIN_GB}+ while swap is over ${SWAP_MAX_GB} GB)")"
   network_item
   local heal="$HOME/.local/share/mesh-heal/state"
   [ -n "$(find "$heal" -mmin -5 2>/dev/null)" ] && ok=ok || ok=no
