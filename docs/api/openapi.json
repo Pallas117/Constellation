@@ -109,6 +109,10 @@
             "description": "Invalid single inference, or a batch outside 1..100 items",
             "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
           },
+          "500": {
+            "description": "The usage log for invoicing could not be written, so no records were issued. Safe to retry.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          },
           "503": {
             "description": "This server does not offer trust records (no environment history)",
             "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }

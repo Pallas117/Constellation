@@ -1,6 +1,6 @@
 # Argo delay-tolerant networking (GAU-193)
 
-Status: implemented in `tools/argo` and the Gauss hub (`backend/mesh/bundles.ts`); draft PR for review.
+Status: shipped in PR #153 (main 417eece, 2026-10-24); the hub routes reach live with the next deploy. RFC 9173 interop is in review as PR #158.
 Decisions (Josh, 2026-10-23):
 - Argo stays "Included" for operators and staff, with no price (the 22 Oct decision).
 - The shared internet relay is designed here and shows as "in development" on the site until counsel signs off
