@@ -8,6 +8,14 @@ import { componentTagger } from "lovable-tagger";
 // backend (GAUSS_API_TARGET), so development never reaches the live backend.
 const API_TARGET = process.env.GAUSS_API_TARGET || "http://127.0.0.1:3001";
 
+// GitHub Codespaces forwards the dev server as https://<codespace>-8080.app.github.dev
+// (private: only the codespace's owner can open it). Vite refuses Host names it
+// doesn't know, so allow that domain, and only inside a codespace.
+const CODESPACES_HOSTS =
+  process.env.CODESPACES === "true"
+    ? [`.${process.env.GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN || "app.github.dev"}`]
+    : undefined;
+
 // https://vitejs.dev/config/
 export default defineConfig(({ mode }) => ({
   root: __dirname,
@@ -17,6 +25,7 @@ export default defineConfig(({ mode }) => ({
     port: Number(process.env.GAUSS_DEV_WEB_PORT || 8080),
     strictPort: true,
     cors: false,
+    allowedHosts: CODESPACES_HOSTS,
     proxy: {
       "/api": { target: API_TARGET, changeOrigin: false },
       "/ws": { target: API_TARGET.replace(/^http/, "ws"), ws: true, changeOrigin: false },

@@ -84,19 +84,19 @@ npm run security:secrets
 
 #### Run TruffleHog Directly
 ```bash
-# Install TruffleHog
-pip install trufflehog
+# Install TruffleHog 3 (`pip install trufflehog` is TruffleHog 2, a different tool)
+brew install trufflehog
 
-# Scan current directory
-trufflehog filesystem . --json --only-verified
+# Scan files; exit 183 means it found secrets
+trufflehog filesystem --results=verified,unknown --fail path/to/file
 
-# Scan git history for the last 10 commits
-trufflehog git . --since-commit HEAD~10
+# Scan this branch's commits
+trufflehog git file://. --since-commit origin/main --results=verified,unknown --fail
 ```
 
 #### What Triggers Secret Scans
 - **Local (Pre-commit)**: Every `git commit` if hooks installed
-- **CI (GitHub Actions)**: Every push + pull request + nightly at 2 AM UTC
+- **CI (GitHub Actions)**: Every push + pull request + nightly at 2 AM UTC (workflows are off while Actions are billing-locked; GitHub's own secret scanning with push protection still runs)
 - **Manual**: Run `bash scripts/check-secrets-local.sh` anytime
 
 #### If a Secret Is Detected
@@ -107,7 +107,7 @@ trufflehog git . --since-commit HEAD~10
    git reset HEAD~1 --soft
    git add -p  # Stage only safe changes
    git commit -m "Remove secrets"
-   
+
    # If already pushed, rotate the secret and create new commit
    git commit --allow-empty -m "chore: rotate secrets after exposure"
    ```
@@ -156,10 +156,10 @@ trufflehog git . --since-commit HEAD~10
    # Download from release page
    wget https://github.com/YOUR_ORG/gauss-aurora/releases/download/v1.0.0/sbom.json
    wget https://github.com/YOUR_ORG/gauss-aurora/releases/download/v1.0.0/sbom.json.sig
-   
+
    # Verify signature (requires Cosign installed)
    cosign verify-blob --signature sbom.json.sig sbom.json
-   
+
    # Verify checksums
    wget https://github.com/YOUR_ORG/gauss-aurora/releases/download/v1.0.0/checksums.txt
    sha256sum -c checksums.txt
@@ -478,4 +478,3 @@ npm run lint && npm run security:full
 - [Cosign Documentation](https://docs.sigstore.dev/cosign/overview)
 - [SLSA Framework](https://slsa.dev/)
 - [GitHub CodeQL](https://codeql.github.com/)
-
