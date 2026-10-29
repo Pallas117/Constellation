@@ -48,3 +48,5 @@ Before tagging, move these entries under `## [0.1.0] - <date>`.
   each proof once (#41).
 - Graph client input validation, safer Neo4j defaults and inference request limits (#72).
 - Dependencies with known vulnerabilities updated; Gauss Argo built with Go 1.26.10 (#135).
+- Fonts are served by the site, not Google: no visitor's address goes to a third party and no outside request can
+  stall a page load. Their OFL-1.1 licence ships beside them and the release licence check recognises it (#142).
