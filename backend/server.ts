@@ -38,6 +38,7 @@ import { createSwapPlan, rebalanceDeviceNetwork } from "./services/device-swap-m
 import { encodeCanonicalPoint } from "./lib/proto.js";
 import { linkGuardian } from "./lib/connectivity.js";
 import { bedrock } from "./lib/local-db.js";
+import { retentionFromEnv, startTelemetryRetention } from "./lib/telemetry-retention.js";
 import { diskFreeBytes, overall, readTpms } from "./lib/tpm.js";
 import { SPACE_OBJECT_CATALOG } from "./lib/space-object-catalog.js";
 import { auth, CLIENT_IP_HEADER, ssoAllowedDomain, ssoGithubEnabled, ssoGoogleEnabled } from "./better-auth.js";
@@ -730,6 +731,7 @@ selfHealer.register({
 
 const swapIntervalMs = Number(process.env.SWAP_BALANCE_INTERVAL_MS ?? 45_000);
 let swapInterval: NodeJS.Timeout | null = null;
+let stopRetention: (() => void) | null = null;
 let backendStarted = false;
 
 export async function startBackend(options?: { host?: string; port?: number }): Promise<{ app: express.Express; server: http.Server; host: string; port: number }> {
@@ -763,6 +765,8 @@ export async function startBackend(options?: { host?: string; port?: number }): 
 
       selfHealer.start();
       worker.start();
+      // Telemetry retention: 3 days live, every archive kept (Josh 2026-10-29; telemetry-retention.ts).
+      stopRetention = startTelemetryRetention(bedrock, retentionFromEnv());
 
       const address = server.address();
       const actualPort = typeof address === "object" && address?.port ? address.port : port;
@@ -791,6 +795,8 @@ export async function stopBackend(): Promise<void> {
     clearInterval(swapInterval);
     swapInterval = null;
   }
+  stopRetention?.();
+  stopRetention = null;
 
   await new Promise<void>((resolve, reject) => {
     server.close((error) => {
