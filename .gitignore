@@ -23,6 +23,9 @@ bun.lockb
 .env.*
 !.env.example
 
+# Wrangler's local state (website deploys): its cache holds the Cloudflare account id and name
+.wrangler/
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
