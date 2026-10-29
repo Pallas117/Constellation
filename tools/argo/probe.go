@@ -60,6 +60,7 @@ func (p SystemProber) Probe(ctx context.Context) Snapshot {
 	if !s.Online {
 		return s
 	}
+	s.Link = measureLink(ctx, s.Gateway) // ~1-2 s: five pings each to the gateway and 1.1.1.1
 
 	dctx, cancel := context.WithTimeout(ctx, 4*time.Second)
 	_, err := net.DefaultResolver.LookupHost(dctx, "api.anthropic.com")
