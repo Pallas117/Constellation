@@ -14,6 +14,9 @@ Before tagging, move these entries under `## [0.1.0] - <date>`.
 
 - Inference trust records: the record engine (#115), `POST /api/v1/data/trust/records` on the metered data API (#116),
   SGP4 orbit context from TLEs (#122), and a South Atlantic Anomaly flag from IGRF-14 |B| (#128).
+- Processor radiation profiles with cited proton test data (Jetson TX2, Xavier NX, AGX Xavier Industrial, Orin NX) and a
+  modelled upset-risk band in trust records, relative to the orbit's quiet-time average; unknown without a cited
+  profile (#160).
 - Customer inference-log ingest (CSV, JSON, JSONL) with per-row provenance; every row is accepted or rejected with a
   reason (#126).
 - Space weather: separate radiation (S) and geomagnetic (G) storm streams (#101), a sense-check layer with a NOAA

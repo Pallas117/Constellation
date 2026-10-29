@@ -213,6 +213,20 @@
           "meta": { "$ref": "#/components/schemas/Meta" }
         }
       },
+      "UpsetRisk": {
+        "type": "object",
+        "description": "backend/trust/upset.ts UpsetRiskValue: an ordinal band from the SAA tier and the NOAA S-level where the L-shell lets solar protons in; not a computed rate.",
+        "required": ["band", "uncertainty", "profileId", "profileVersion", "profileLibrary", "effects", "drivers"],
+        "properties": {
+          "band": { "enum": ["baseline", "elevated", "high"] },
+          "uncertainty": { "type": "string" },
+          "profileId": { "type": "string" },
+          "profileVersion": { "type": "integer", "minimum": 1 },
+          "profileLibrary": { "type": "string", "description": "Version of the profile library the band used" },
+          "effects": { "type": "array", "items": { "enum": ["SEU", "SEFI", "SDC"] }, "description": "Effect classes the profile has cited proton data for" },
+          "drivers": { "type": "array", "items": { "type": "string" }, "description": "What raised the band; empty at baseline" }
+        }
+      },
       "Ephemeris": {
         "type": "object",
         "required": ["latDeg", "lonDeg", "altKm"],
@@ -229,7 +243,12 @@
           "time": { "type": "string", "format": "date-time", "description": "Inference time (ISO 8601)" },
           "spacecraftId": { "type": "string", "minLength": 1, "maxLength": 128 },
           "modelId": { "type": "string", "minLength": 1, "maxLength": 128 },
-          "processorProfileId": { "type": ["string", "null"], "minLength": 1, "maxLength": 128 },
+          "processorProfileId": {
+            "type": ["string", "null"],
+            "minLength": 1,
+            "maxLength": 128,
+            "description": "A processor radiation profile from backend/trust/profiles.ts (gauss.processor-profiles/0.1): nvidia-jetson-tx2, nvidia-jetson-xavier-nx, nvidia-jetson-agx-xavier-industrial, nvidia-jetson-orin-nx. Any other id gives an unknown upsetRisk, not an error."
+          },
           "output": { "description": "The model output, any JSON of at most 4096 bytes (UTF-8)" },
           "confidence": { "type": ["number", "null"], "minimum": 0, "maximum": 1 },
           "ephemeris": { "oneOf": [{ "$ref": "#/components/schemas/Ephemeris" }, { "type": "null" }] },
@@ -324,7 +343,11 @@
               "lShell": { "$ref": "#/components/schemas/Field" }
             }
           },
-          "upsetRisk": { "$ref": "#/components/schemas/Field", "description": "Modelled upset-risk band; unknown without a cited processor profile (PR-02)" },
+          "upsetRisk": {
+            "$ref": "#/components/schemas/Field",
+            "description": "Modelled upset-rate band relative to the same orbit's quiet-time average (PR-02). `value` is an UpsetRisk, or null without a cited processor profile or when the SAA tier, S-level or (when needed) G-level is unknown.",
+            "properties": { "value": { "oneOf": [{ "$ref": "#/components/schemas/UpsetRisk" }, { "type": "null" }] } }
+          },
           "checks": {
             "type": "array",
             "items": {

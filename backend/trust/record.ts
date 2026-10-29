@@ -12,8 +12,9 @@ import { createHash } from "node:crypto";
 import type { CanonicalSpaceWeatherPoint, ScaleReading, SenseCheck } from "../types.js";
 import { MAX_READING_LAG_MS, type EnvironmentHistory } from "./environment.js";
 import { IGRF_LABEL } from "../physics/igrf.js";
-import { SAA_CORE_NT, SAA_EXTENDED_NT, saaContext } from "./saa.js";
+import { SAA_CORE_NT, SAA_EXTENDED_NT, saaContext, type SaaTier } from "./saa.js";
 import { dipoleLShell, distanceKm, EPHEMERIS_TLE_CONFLICT_KM, ephemerisProblem, propagateTle, tleProblem, type Ephemeris } from "./orbit.js";
+import { upsetRiskField, type UpsetRiskValue } from "./upset.js";
 
 export const TRUST_RECORD_SCHEMA = "gauss.trust-record/0.1";
 
@@ -134,8 +135,8 @@ export interface TrustRecord {
     fieldStrength: Field<number>;
     lShell: Field<number>;
   };
-  /** Modelled upset-risk band; needs a cited processor profile (PR-02). */
-  upsetRisk: Field<{ band: string; uncertainty: string }>;
+  /** Modelled upset-rate band relative to the quiet orbit average; needs a cited processor profile (PR-02, upset.ts). */
+  upsetRisk: Field<UpsetRiskValue>;
   checks: Array<{ id: SenseCheck["id"]; status: SenseCheck["status"]; reason: string }>;
   verdict: { value: Verdict; reasons: string[]; policy: TrustPolicy };
   limitations: string[];
@@ -347,13 +348,17 @@ function environmentFields(p: CanonicalSpaceWeatherPoint, atMs: number, fetchedA
   return { radiation, geomagnetic, radioBlackout, particleFlux, kp, dst };
 }
 
-function orbitFields(req: TrustRecordRequest): TrustRecord["orbit"] {
+/** The orbit fields, plus the SAA tier the upset-risk band reads (null when not assessed). */
+function orbitFields(req: TrustRecordRequest): { orbit: TrustRecord["orbit"]; saaTier: SaaTier | null } {
   const atMs = Date.parse(req.time);
-  const noPosition = (why: string): TrustRecord["orbit"] => ({
-    position: unknownField("Spacecraft position", why),
-    saa: unknownField("South Atlantic Anomaly", why),
-    fieldStrength: unknownField(IGRF_LABEL, why),
-    lShell: unknownField("L-shell", why),
+  const noPosition = (why: string) => ({
+    orbit: {
+      position: unknownField<Ephemeris>("Spacecraft position", why),
+      saa: unknownField<boolean>("South Atlantic Anomaly", why),
+      fieldStrength: unknownField<number>(IGRF_LABEL, why),
+      lShell: unknownField<number>("L-shell", why),
+    },
+    saaTier: null,
   });
   const fromTle = req.tle ? propagateTle(req.tle, atMs) : null;
   const tleOk = fromTle && !("error" in fromTle) ? fromTle : null;
@@ -440,7 +445,7 @@ function orbitFields(req: TrustRecordRequest): TrustRecord["orbit"] {
           ],
         };
 
-  return {
+  const orbit: TrustRecord["orbit"] = {
     position,
     saa,
     fieldStrength,
@@ -456,6 +461,7 @@ function orbitFields(req: TrustRecordRequest): TrustRecord["orbit"] {
       limitations: ["Centred-dipole approximation: differs most from the full-field L where the field is least dipolar, including the South Atlantic Anomaly."],
     },
   };
+  return { orbit, saaTier: ctx.tier };
 }
 
 // ---------------------------------------------------------------------------------------
@@ -497,13 +503,19 @@ export const RECORD_LIMITATIONS = [
   "No regulatory or compliance claim is made.",
 ];
 
-/** Words a record must never use: it describes the environment, not harm to hardware or odds of error. */
-const BANNED = /\b(doses?|damaged?|failure probability|probability of failure|qualified|qualification|flight[- ]ready|space[- ]qualified|certified|compliant)\b/i;
+/**
+ * Words a record must never use: it describes the environment, not harm to hardware, odds of
+ * error, a device's fitness for a mission, or absorbed radiation.
+ */
+const BANNED =
+  /(?<![\w])(doses?|damag(?:e|ed|es|ing)|failure probability|probability of failure|qualif(?:y|ied|ication)|flight[- ]ready|mission[- ]ready|space[- ]qualified|certif(?:y|ied|ication)|complian(?:t|ce)|rad[- ]hard(?:ened)?|radiation[- ](?:hardened|tolerant)|(?:un)?suitab(?:le|ility)|surviv(?:e|es|ed|al|ing)|[mµμck]?gy|[mµμ]?sv|krad|rad ?\(si\))(?![\w])/i;
 
 /** Matches of `pattern` in every string inside `value` (arrays and objects walked). */
 export function wordingHits(value: unknown, pattern: RegExp = BANNED): string[] {
   const hits: string[] = [];
   const walk = (v: unknown) => {
+    // The record's own disclaimers deny those claims ("No regulatory or compliance claim is made").
+    if (typeof v === "string" && RECORD_LIMITATIONS.includes(v)) return;
     if (typeof v === "string") {
       const m = pattern.exec(v);
       if (m) hits.push(m[0]);
@@ -560,12 +572,23 @@ export function buildTrustRecord(
       dst: unknownField("Dst", why),
     };
   }
-  const orbit = orbitFields(req);
-  const upsetRisk = unknownField<{ band: string; uncertainty: string }>(
-    "Processor radiation profile",
-    req.processorProfileId
-      ? `No cited radiation profile for processor "${req.processorProfileId}" yet (PR-02, GAU-58).`
-      : "No processor profile given; an upset-risk band needs a cited profile (PR-02, GAU-58).",
+  const { orbit, saaTier } = orbitFields(req);
+  const scaleInput = (f: Field<{ level: number; label: string }>) => ({
+    level: f.value?.level ?? null,
+    why: f.limitations[0] ?? "No reading",
+    observedAt: f.observedAt,
+    ageSeconds: f.ageSeconds,
+  });
+  const upsetRisk = upsetRiskField(
+    req.processorProfileId,
+    {
+      saaTier,
+      saaWhy: orbit.saa.limitations[0] ?? "Not assessed",
+      s: scaleInput(env.radiation),
+      g: scaleInput(env.geomagnetic),
+      lShell: orbit.lShell.value,
+    },
+    env.radiation.fetchedAt,
   );
   const verdict = verdictFor(env, orbit, checks, policy, envReason);
 
