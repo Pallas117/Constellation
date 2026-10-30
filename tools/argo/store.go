@@ -246,7 +246,7 @@ func (s Store) Disabled() bool {
 // SIM and an HK eSIM (which Anthropic does not serve) stay apart.
 func netFingerprint(s Snapshot) string {
 	if isIPhoneHotspot(s.Gateway) && s.Loc != "" {
-		return Fingerprint("iphone-hotspot", s.Loc)
+		return Fingerprint("iphone-hotspot:"+s.Loc, "") // the country goes in the key, not through ipPrefix
 	}
 	return Fingerprint(s.GatewayMAC, s.PublicIP)
 }
