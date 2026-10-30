@@ -29,8 +29,11 @@ func Plan(c Class, s Snapshot, remembered string) []Action {
 	case Captive:
 		a = append(a, Action{ID: "open-portal", Say: "Wi-Fi login page detected; opening it.", Command: "open http://captive.apple.com", Auto: true})
 	case DNS:
+		if s.DNSDirectOK && s.Tailscale.Running { // the network answers; Tailscale's resolver doesn't
+			a = append(a, Action{ID: "check-magicdns", Say: "Tailscale's DNS is stuck while the network's DNS works. Toggle Tailscale off and on, or for now:", Command: "tailscale set --accept-dns=false"})
+		}
 		a = append(a, Action{ID: "flush-dns", Say: "DNS is failing. Flush the resolver cache:", Command: "sudo dscacheutil -flushcache; sudo killall -HUP mDNSResponder", Admin: true})
-		if s.Tailscale.Running {
+		if s.Tailscale.Running && !s.DNSDirectOK {
 			a = append(a, Action{ID: "check-magicdns", Say: "If it persists, MagicDNS may be stuck:", Command: "tailscale set --accept-dns=false"})
 		}
 	case DeadProxy:

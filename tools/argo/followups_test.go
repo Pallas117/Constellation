@@ -81,3 +81,30 @@ func TestIncidentsRotateAndStayReadable(t *testing.T) {
 		t.Fatalf("incidents across rotation: %+v", got)
 	}
 }
+
+func TestDNSFailureBlamesTailscaleWhenTheNetworkAnswers(t *testing.T) {
+	s := fixture(t, "dns_fail.json")
+	s.Tailscale.Running = true
+	s.DNSDirectOK = true
+	class, reason := Classify(s)
+	if class != DNS || !strings.Contains(reason, "MagicDNS") {
+		t.Fatalf("%s: %s", class, reason)
+	}
+	plan := Plan(class, s, "")
+	if len(plan) == 0 || plan[0].ID != "check-magicdns" {
+		t.Fatalf("plan should lead with Tailscale's resolver: %v", ids(plan))
+	}
+	n := 0
+	for _, a := range plan {
+		if a.ID == "check-magicdns" {
+			n++
+		}
+	}
+	if n != 1 {
+		t.Fatalf("check-magicdns offered %d times", n)
+	}
+	s.DNSDirectOK = false
+	if _, reason := Classify(s); strings.Contains(reason, "MagicDNS") {
+		t.Fatal("without the direct check, don't blame Tailscale")
+	}
+}
