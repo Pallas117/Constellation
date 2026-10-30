@@ -2,7 +2,7 @@
 
 Each cryptographic primitive in the Gauss code and what it is for. Written for GAU-67 (REG-04: keep evidence and release signing to signing, authentication and their key management) and as input to the export classification (REG-01, GAU-65). It is not a classification: that needs counsel.
 
-Source: a sweep of the code for crypto calls (`createHash`, `createHmac`, `randomBytes`, `sign`/`verify`, WebCrypto `subtle`, `getRandomValues`, Go `crypto/*` imports) on main 1e9087b plus this branch, 2026-10-24. Third-party libraries were not swept and are marked UNVERIFIED.
+Source: a sweep of the code for crypto calls (`createHash`, `createHmac`, `randomBytes`, `sign`/`verify`, WebCrypto `subtle`, `getRandomValues`, Go `crypto/*` imports) on main 1e9087b plus this branch, 2026-10-24; main's later changes up to 6963a00 re-checked 2026-10-30. Third-party libraries were not swept and are marked UNVERIFIED.
 
 ## Evidence and release signing (GAU-67, this change)
 
@@ -29,6 +29,7 @@ No encryption, key exchange or key wrapping. The private key file has no passphr
 | Random bytes (CSPRNG) and SHA-256 | `backend/commerce/store.ts` | Make customer API keys; only their SHA-256 is stored | Authentication (secret generation, hashed storage) |
 | Random bytes (CSPRNG) and SHA-256 | `backend/mesh/store.ts` | Make Argo device tokens; only their SHA-256 is stored | Authentication |
 | SHA-256 | `backend/world/ids.ts`, `backend/replay/replay.ts` | Content checksums and ids; replay archive hash | Integrity, identification |
+| SHA-256 | `backend/lib/local-db.ts` | Checksums of each telemetry archive (raw and gzip) in its manifest, checked before rows are trimmed (GAU-157, #121) | Integrity |
 | SHA-256 (WebCrypto) | `frontend/src/lib/operator-fingerprint.ts` | Hash of browser signals for device recognition | Identification |
 | RSASSA-PKCS1-v1_5 with SHA-256 (RS256), WebCrypto verify | `website/worker/auth.js` | Check sign-in tokens from the identity provider | Authentication |
 | HMAC-SHA-256 (WebCrypto) and constant-time compare | `website/worker/stripe.js` | Check payment-provider webhook signatures | Authentication |
