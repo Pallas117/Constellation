@@ -17,6 +17,7 @@ const ProtectionDashboard = lazy(() => import("./pages/ProtectionDashboard"));
 const NotFound = lazy(() => import("./pages/NotFound"));
 const HeliophysicsDashboard = lazy(() => import("./pages/HeliophysicsDashboard"));
 const MeshDashboard = lazy(() => import("./pages/MeshDashboard"));
+const GardenGraph = lazy(() => import("./pages/GardenGraph"));
 const ApiKeys = lazy(() => import("./pages/ApiKeys"));
 
 const queryClient = new QueryClient();
@@ -63,6 +64,14 @@ const App = () => (
                     element={
                       <ProtectedRoute minRole="staff">
                         <MeshDashboard />
+                      </ProtectedRoute>
+                    }
+                  />
+                  <Route
+                    path="/garden"
+                    element={
+                      <ProtectedRoute minRole="staff">
+                        <GardenGraph />
                       </ProtectedRoute>
                     }
                   />
