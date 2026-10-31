@@ -118,8 +118,13 @@ export function renderEvidencePdf(pack: EvidencePack): Buffer {
   keyValue("Pack hash (SHA-256)", pack.packHash, "Courier");
   keyValue("Chain head", pack.chain.head, "Courier");
   keyValue("Previous pack", pack.inputs.previousPackHash ?? "none (first pack in this series)", pack.inputs.previousPackHash ? "Courier" : "Helvetica");
-  keyValue("Signature", "Not signed yet. Compare the pack hash with a copy you trust.");
-  keyValue("Verify", "npm run trust:verify -- <pack.json>", "Courier");
+  if (pack.signature) {
+    keyValue("Signature", `Ed25519, signed ${utc(pack.signature.signedAt)} UTC`);
+    keyValue("Signing key", pack.signature.keyId, "Courier");
+  } else {
+    keyValue("Signature", "Not signed. Compare the pack hash with a copy you trust.");
+  }
+  keyValue("Verify", "npm run trust:verify -- <pack.json> --pdf <pack.pdf>", "Courier");
 
   heading("Inputs");
   const log = pack.inputs.log;

@@ -29,15 +29,19 @@ if [[ -n "$(git status --porcelain)" ]]; then
 fi
 
 echo ""
-echo "[1/3] Running adherence audit..."
+echo "[1/4] Running adherence audit..."
 npm run audit:adherence
 
 echo ""
-echo "[2/3] Running security compliance check..."
+echo "[2/4] Running security compliance check..."
 npm run check:security-compliance
 
 echo ""
-echo "[3/3] Verifying backend runtime health endpoint..."
+echo "[3/4] Checking the published signing keyring (GAU-67)..."
+npm run trust:keys -- check
+
+echo ""
+echo "[4/4] Verifying backend runtime health endpoint..."
 HEALTH_PORT=3002
 HEALTH_HOST=127.0.0.1
 HEALTH_URL="http://${HEALTH_HOST}:${HEALTH_PORT}/health"
@@ -74,3 +78,4 @@ cleanup
 echo ""
 echo "Release preflight completed."
 echo "Next: npm run release:tag -- vX.Y.Z"
+echo "Then sign the release files: npm run trust:sign -- --file <archive> --sign-key <release key> (docs/EVIDENCE_SIGNING.md)"

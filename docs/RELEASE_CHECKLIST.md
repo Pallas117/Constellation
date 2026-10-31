@@ -40,6 +40,10 @@ Pre-release builds:
      dependencies and Gauss Argo, `THIRD_PARTY_NOTICES.md`, `licences.md`) and fails on a copyleft or
      unrecognised licence. Record a licence a person has confirmed in `scripts/release/licence-review.json`.
    - The project's own `LICENSE` is a founder decision (GAU-65); none is applied yet.
+8. Signing (GAU-67, `docs/EVIDENCE_SIGNING.md`):
+   - `npm run trust:keys -- check` passes (the release check runs it) and lists a current key for each purpose.
+   - after tagging, sign each release file (the archive and `build/sbom/*`) with the release key:
+     `npm run trust:sign -- --file <file> --sign-key <key file>`, and attach the `.sig.json` files.
 
 ## Release Commands
 
