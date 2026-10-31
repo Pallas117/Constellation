@@ -179,3 +179,18 @@ func TestGuardRunLearns(t *testing.T) {
 		t.Errorf("jobs text:\n%s", txt)
 	}
 }
+
+func TestLongJob(t *testing.T) {
+	run := func(secs int, outcome string) JobRun { return JobRun{Name: "gates", PeakGB: 1, Secs: secs, Outcome: outcome} }
+	short := []JobRun{run(120, "exit 0"), run(180, "exit 0"), run(150, "exit 0")}
+	if longJob(short, "gates") {
+		t.Error("2-3 minute gate runs counted as long")
+	}
+	long := []JobRun{run(1200, "exit 0"), run(1300, "exit 0"), run(1250, "exit 0"), run(5000, "stopped")}
+	if !longJob(long, "gates") {
+		t.Error("20 minute runs not counted as long")
+	}
+	if longJob(long[:2], "gates") {
+		t.Error("long after only 2 runs (needs 3)")
+	}
+}

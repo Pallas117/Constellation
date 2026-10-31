@@ -169,7 +169,9 @@ const guardUsage = `usage:
                                   or the job grows past -max GB; exit 75 when refused or stopped
   Each run's peak memory is measured; after 3 runs of a JOB (default: the command's name) admission
   uses what it really needed instead of -mem. The job gets ARGO_WORKERS (parallel workers this host
-  can afford now) and ARGO_HEADROOM_GB.`
+  can afford now) and ARGO_HEADROOM_GB.
+  At memory warn a job still starts while the host is coping (swapping out under 64 MB/min, with
+  available memory after the reserve covering the job; 1.5x for a job that usually runs 15 min+).`
 
 // guardCmd returns the process exit code.
 func guardCmd(args []string, s Store, cfg Config, out io.Writer) (int, error) {
@@ -295,10 +297,15 @@ func (r guardRunner) waitAdmit(name string, memGB float64, wait time.Duration) (
 		}
 		memGB = need
 	}
+	long := name != "" && longJob(r.store.jobRuns(), name)
 	deadline := time.Now().Add(wait)
 	for {
 		cur, a = r.assess()
-		ok, why = admit(a, memGB)
+		ask := memGB
+		if long && a.Coping {
+			ask = ceil1(memGB * longJobExtra) // a long job at warn outlasts the reading it started on
+		}
+		ok, why = admit(a, ask)
 		if ok || !time.Now().Add(r.retry).Before(deadline.Add(time.Millisecond)) {
 			return ok, why, cur, a
 		}
@@ -418,6 +425,8 @@ func exitCode(err error) int {
 
 var guardAdvice = map[string]string{
 	"mem-critical":         "Close the biggest app below now. Guarded jobs are being stopped.",
+	"mem-paging":           "The Mac is swapping out fast: close the biggest app below. Jobs wait until it stops.",
+	"mem-warn-coping":      "Memory is at warn but not paging: jobs that fit in the available memory still start.",
 	"mem-warn-sustained":   "Close the biggest app below. Mesh work stays paused until memory has been calm for 10 min.",
 	"swap-rising":          "Swap is climbing at warn, the pattern before the last crash: close the biggest app below.",
 	"swap-high":            "Swap is high: close apps or restart the browser to give it back.",

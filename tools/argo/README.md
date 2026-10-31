@@ -221,6 +221,21 @@ and misses spikes between checks. Stopped, interrupted or failed runs don't coun
 what each job has learned. Give gate jobs a stable `-name` (e.g. `gates`, `npm-test`): a label carrying a commit
 hash never repeats, so it never learns.
 
+**Coping at warn (2026-10-31).** This 8 GB Mac sits at the kernel's "warn" about half the time while
+barely paging (24-31 Oct: swap 2.25 GB at warn vs 1.94 GB at normal; no critical sample all week), and a
+full gate run takes 1.5-3 min, yet jobs waited 12 h for "normal". So the guard now also reads what the
+kernel counts as available (`kern.memorystatus_level` × RAM, the "free percentage" `memory_pressure`
+prints) and the swap-out rate (vm_stat `Swapouts` between readings). At warn the host is **coping** when
+it swaps out under 64 MB/min, swap hasn't grown 1 GB in the hour, and available memory beats the 1.5 GB
+reserve: a job then starts if available-after-reserve covers its need (×1.5 for a job whose runs take
+15 min+), instead of the 1 GB light-job cap, and the sustained-warn alert stays quiet. Swapping out
+64 MB/min or more is `mem-paging` (risk) whatever the flag says. Without a paging reading (no earlier
+sample, an old history, a reboot) nothing changes. A running job is still stopped at block.
+`claude-heavy` hands warn to Argo when `argo guard help` mentions coping, and runs `mem-guard trim`
+once before it waits. Replayed on the week's `memory.tsv`: a 1 GB job could start in 95% of samples
+(51% today); 9 of the 349 newly admitted samples were followed within 20 min by +1 GB swap, none by
+critical pressure.
+
 **Workers sized to the host.** The job gets `ARGO_WORKERS` and `ARGO_HEADROOM_GB` (a value the caller already set
 wins). `ARGO_WORKERS` is 1 at watch, otherwise headroom ÷ `guard_worker_gb` (config.json, default 0.5 GB), capped at
 cores − 1. The repo's `npm test` passes it to `--test-concurrency` and Playwright uses it for `workers`. Without it

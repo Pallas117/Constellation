@@ -144,6 +144,18 @@ func ceil1(v float64) float64 {
 	return float64(n) / 10
 }
 
+// longJob reports whether the job's recent successful runs took longer than
+// longJobSecs at the 95th percentile (false until learnMin of them).
+func longJob(runs []JobRun, name string) bool {
+	var secs []float64
+	for i := len(runs) - 1; i >= 0 && len(secs) < learnWindow; i-- {
+		if r := runs[i]; r.Name == name && r.Outcome == "exit 0" && r.Secs > 0 {
+			secs = append(secs, float64(r.Secs))
+		}
+	}
+	return len(secs) >= learnMin && percentile(secs, 0.95) > longJobSecs
+}
+
 // jobNeed is what admission uses for a job: the measurement once there is
 // enough of it, else the caller's guess. note says which, for the output.
 func jobNeed(asked float64, runs []JobRun, name string) (need float64, note string) {

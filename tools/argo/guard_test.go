@@ -574,3 +574,82 @@ func TestGuardRun(t *testing.T) {
 		t.Errorf("waitAdmit gave up: %s", why)
 	}
 }
+
+// ---- coping at warn (2026-10-31) ----
+
+func TestAvailAndSwapOut(t *testing.T) {
+	if got := availGB("43\n", 8); got != 3.4 {
+		t.Errorf("availGB(43%%, 8 GB) = %v, want 3.4", got)
+	}
+	for _, bad := range []string{"", "x", "0", "101"} {
+		if got := availGB(bad, 8); got != 0 {
+			t.Errorf("availGB(%q) = %v, want 0 (unknown)", bad, got)
+		}
+	}
+	vm := "Mach Virtual Memory Statistics: (page size of 16384 bytes)\nSwapouts:                                      65536.\n"
+	if got := swapOutGB(vm); got != 1 {
+		t.Errorf("swapOutGB = %v, want 1 (65536 pages of 16 KB)", got)
+	}
+}
+
+// warnHost is this 8 GB Mac on a typical afternoon: warn for the whole hour,
+// swap flat, the kernel counting avail GB as available, swapping out mbMin MB a
+// minute between one-minute readings.
+func warnHost(avail, mbMin float64) ([]Sample, Sample) {
+	var hist []Sample
+	for i := 40; i >= 0; i-- {
+		s := Sample{At: t0.Add(-time.Duration(i) * time.Minute), Pressure: "warn", RAMGB: 8, InRAMGB: 7.5,
+			SwapGB: 2, DiskGB: 200, CPUs: 8, Load1: 2, SpeedPct: 100, AvailGB: avail,
+			SwapOutGB: 10 + float64(40-i)*mbMin/1024}
+		hist = append(hist, s)
+	}
+	return hist[:len(hist)-1], hist[len(hist)-1]
+}
+
+func TestCopingAtWarn(t *testing.T) {
+	hist, cur := warnHost(3.4, 1)
+	a := assess(hist, cur)
+	if !a.Coping || a.Level != LevelWatch || !strings.Contains(codes(a), "mem-warn-coping") || strings.Contains(codes(a), "mem-warn-sustained") {
+		t.Fatalf("40 min of warn, 1 MB/min paging, 3.4 GB available: %s [%s] coping=%v paging=%v", a.Level, codes(a), a.Coping, a.PagingMBMin)
+	}
+	if a.PagingMBMin != 1 || a.AvailRoomGB != 1.9 {
+		t.Errorf("paging %v MB/min, room %v GB; want 1, 1.9", a.PagingMBMin, a.AvailRoomGB)
+	}
+	if yes, why := admit(a, 1.5); !yes || !strings.Contains(why, "coping") {
+		t.Errorf("coping host refused a 1.5 GB job (the old light-job cap is 1 GB): %s", why)
+	}
+	if yes, why := admit(a, 2.5); yes || !strings.Contains(why, "available") {
+		t.Errorf("coping host admitted 2.5 GB with 1.9 GB of room: %s", why)
+	}
+
+	// Paging fast: short, whatever the flag says, and nothing starts.
+	hist, cur = warnHost(3.4, 200)
+	if a := assess(hist, cur); a.Coping || a.Level != LevelRisk || !strings.Contains(codes(a), "mem-paging") {
+		t.Errorf("200 MB/min swap-out: %s [%s] coping=%v", a.Level, codes(a), a.Coping)
+	} else if yes, _ := admit(a, 0.3); yes {
+		t.Error("admitted a job while the host swaps out 200 MB/min")
+	}
+
+	// No earlier reading (or an old Argo's history without counters): unknown
+	// paging is not coping, so the old sustained-warn rule still applies.
+	hist, cur = warnHost(3.4, 1)
+	for i := range hist {
+		hist[i].SwapOutGB = 0
+	}
+	if a := assess(hist, cur); a.Coping || a.PagingMBMin != -1 || !strings.Contains(codes(a), "mem-warn-sustained") {
+		t.Errorf("unknown paging: coping=%v paging=%v [%s]", a.Coping, a.PagingMBMin, codes(a))
+	}
+
+	// Nothing available after the reserve: not coping.
+	hist, cur = warnHost(1.2, 1)
+	if a := assess(hist, cur); a.Coping {
+		t.Errorf("1.2 GB available (under the 1.5 GB reserve) counted as coping")
+	}
+
+	// A reboot resets the counter: unknown, not negative.
+	hist, cur = warnHost(3.4, 1)
+	cur.SwapOutGB = 0.01
+	if p := paging(hist, cur); p != -1 {
+		t.Errorf("counter went back: paging %v, want -1", p)
+	}
+}
