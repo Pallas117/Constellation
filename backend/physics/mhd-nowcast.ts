@@ -75,7 +75,8 @@ export function newellCoupling(speedKmS: number, btNt: number, byNt: number, bzN
     return nativeMhd.newellCoupling(speedKmS, btNt, byNt, bzNt);
   }
   const thetaClock = Math.atan2(byNt, bzNt);
-  const sinTerm = Math.sin(thetaClock / 2);
+  // Newell et al. (2007) use |sin(θc/2)|: atan2 gives θc in (−π, π], so By < 0 would flip the sign.
+  const sinTerm = Math.abs(Math.sin(thetaClock / 2));
   const speedTerm = Math.pow(Math.max(speedKmS, 0), 4 / 3);
   const btTerm = Math.pow(Math.max(btNt, 0), 2 / 3);
   return speedTerm * btTerm * Math.pow(Math.max(sinTerm, 0), 8 / 3);
