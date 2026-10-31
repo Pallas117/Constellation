@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -32,6 +33,7 @@ func defaultPeers() []Peer {
 type watchFx struct {
 	modTime func(path string) (time.Time, bool) // false: missing
 	loaded  func(label string) bool
+	running func(label string) bool // mid-run now: leave it be (nil: never)
 	kick    func(label string) error
 	notify  func(key, title, msg string)
 }
@@ -47,7 +49,14 @@ func realWatchFx(phone *Phone, s Store) watchFx {
 			return fi.ModTime(), true
 		},
 		loaded: func(l string) bool { return exec.Command("launchctl", "print", domain+"/"+l).Run() == nil },
-		kick:   func(l string) error { return exec.Command("launchctl", "kickstart", "-k", domain+"/"+l).Run() },
+		running: func(l string) bool {
+			out, _ := exec.Command("launchctl", "print", domain+"/"+l).Output()
+			return strings.Contains(string(out), "state = running")
+		},
+		// No -k: a stale heartbeat with the job not running only needs a start.
+		// -k killed mesh-heal mid-heal (between Wi-Fi off and on) right after
+		// wake, when every heartbeat is stale (watch.json 2026-10-28 11:14-11:17).
+		kick: func(l string) error { return exec.Command("launchctl", "kickstart", domain+"/"+l).Run() },
 		notify: func(key, title, msg string) {
 			if phone != nil && shouldNotify(s, key, time.Hour, time.Now()) {
 				phone.Send(title, msg, time.Now())
@@ -77,6 +86,9 @@ func watchPeers(peers []Peer, s Store, fx watchFx, now time.Time) []string {
 		max, err := time.ParseDuration(p.MaxAge)
 		if err != nil || p.Label == "" || !fx.loaded(p.Label) {
 			continue // not installed (or misconfigured): nothing to keep alive
+		}
+		if fx.running != nil && fx.running(p.Label) {
+			continue // a run in progress will write its heartbeat when it ends
 		}
 		mt, ok := fx.modTime(expandHome(p.Heartbeat))
 		age := now.Sub(mt)

@@ -95,7 +95,7 @@ func main() {
 	if cfg.GaussURL != "" {
 		loop.Pushers = append(loop.Pushers, func(st State) { pushToGauss(cfg, st) })
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 
 	// One scheduled check: the peer watchdog every time (cheap file stats), the
@@ -104,15 +104,28 @@ func main() {
 		if store.Disabled() {
 			return nil
 		}
+		// Each phase has its own deadline. With one shared 90 s budget, slow texts
+		// (up to 2x30 s), the guard and the relay used it up, `route` then returned
+		// nothing and a working link was logged as OFFLINE "no default route".
+		phase := func(d time.Duration, f func(context.Context)) {
+			c, cancel := context.WithTimeout(ctx, d)
+			defer cancel()
+			f(c)
+		}
 		_ = withLock(store, func() { watchPeers(cfg.peers(), store, realWatchFx(phone, store), time.Now()) })
-		_ = withLock(store, func() { guardTick(ctx, store, cfg, phone, time.Now()) })
-		relayTick(ctx, cfg, store, phone) // store-and-forward (relay.go); takes its own lock
-		if gw, mac := localGateway(ctx); skipTick(store.Load(), gw, mac, time.Now()) {
+		_ = withLock(store, func() { phase(20*time.Second, func(c context.Context) { guardTick(c, store, cfg, phone, time.Now()) }) })
+		phase(30*time.Second, func(c context.Context) { relayTick(c, cfg, store, phone) }) // store-and-forward (relay.go); takes its own lock
+		var skip bool
+		phase(10*time.Second, func(c context.Context) {
+			gw, mac := localGateway(c)
+			skip = skipTick(store.Load(), gw, mac, time.Now(), onBattery(store.loadGuard()))
+		})
+		if skip {
 			return nil
 		}
 		return withLock(store, func() {
 			flush()
-			loop.Tick(ctx)
+			phase(60*time.Second, func(c context.Context) { loop.Tick(c) })
 			watchDevices(ctx, cfg.Devices, store, phone, time.Now())
 			maybeSendWeekly(store, phone, time.Now())
 		})
@@ -228,14 +241,28 @@ const fullCheckEvery = 290 * time.Second
 
 func isIPhoneHotspot(gw string) bool { return gw == "172.20.10.1" } // Personal Hotspot always uses 172.20.10.0/28
 
-func skipTick(st State, gw, mac string, now time.Time) bool {
+// hotspotBatteryEvery: on the hotspot a full probe (about 30 processes and 4
+// requests) ran every minute even on battery. While the link is healthy and
+// the Mac is on battery, every 2.5 minutes is enough; a network change still
+// triggers a run through the LaunchAgent's WatchPaths.
+const hotspotBatteryEvery = 150 * time.Second
+
+func skipTick(st State, gw, mac string, now time.Time, battery bool) bool {
 	switch {
-	case st.CheckedAt.IsZero(), st.Class.Blocking(), isIPhoneHotspot(gw):
+	case st.CheckedAt.IsZero(), st.Class.Blocking():
 		return false
 	case gw != st.Gateway || mac != st.GatewayMAC:
 		return false
+	case isIPhoneHotspot(gw):
+		return battery && now.Sub(st.CheckedAt) < hotspotBatteryEvery
 	}
 	return now.Sub(st.CheckedAt) < fullCheckEvery
+}
+
+// onBattery reads the guard's last sample (written every tick); unknown counts as AC.
+func onBattery(g GuardState) bool {
+	b := g.Batt
+	return b != nil && b.Present && !b.OnAC
 }
 
 // localGateway is the cheap, local-only part of a probe (no network traffic).
