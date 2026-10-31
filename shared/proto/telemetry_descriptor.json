@@ -1,3 +1,1325 @@
-Need to install the following packages:
-pbjs@0.0.14
-Ok to proceed? (y) 
+{
+  "nested": {
+    "space": {
+      "nested": {
+        "telemetry": {
+          "nested": {
+            "Vector3": {
+              "oneofs": {
+                "_x": {
+                  "oneof": [
+                    "x"
+                  ]
+                },
+                "_y": {
+                  "oneof": [
+                    "y"
+                  ]
+                },
+                "_z": {
+                  "oneof": [
+                    "z"
+                  ]
+                }
+              },
+              "fields": {
+                "x": {
+                  "type": "double",
+                  "id": 1,
+                  "options": {
+                    "proto3_optional": true
+                  }
+                },
+                "y": {
+                  "type": "double",
+                  "id": 2,
+                  "options": {
+                    "proto3_optional": true
+                  }
+                },
+                "z": {
+                  "type": "double",
+                  "id": 3,
+                  "options": {
+                    "proto3_optional": true
+                  }
+                }
+              }
+            },
+            "Vector3WithMag": {
+              "oneofs": {
+                "_x": {
+                  "oneof": [
+                    "x"
+                  ]
+                },
+                "_y": {
+                  "oneof": [
+                    "y"
+                  ]
+                },
+                "_z": {
+                  "oneof": [
+                    "z"
+                  ]
+                },
+                "_magnitude": {
+                  "oneof": [
+                    "magnitude"
+                  ]
+                }
+              },
+              "fields": {
+                "x": {
+                  "type": "double",
+                  "id": 1,
+                  "options": {
+                    "proto3_optional": true
+                  }
+                },
+                "y": {
+                  "type": "double",
+                  "id": 2,
+                  "options": {
+                    "proto3_optional": true
+                  }
+                },
+                "z": {
+                  "type": "double",
+                  "id": 3,
+                  "options": {
+                    "proto3_optional": true
+                  }
+                },
+                "magnitude": {
+                  "type": "double",
+                  "id": 4,
+                  "options": {
+                    "proto3_optional": true
+                  }
+                }
+              }
+            },
+            "UncertaintyEnvelope": {
+              "oneofs": {
+                "_lower": {
+                  "oneof": [
+                    "lower"
+                  ]
+                },
+                "_upper": {
+                  "oneof": [
+                    "upper"
+                  ]
+                },
+                "_sigma": {
+                  "oneof": [
+                    "sigma"
+                  ]
+                }
+              },
+              "fields": {
+                "lower": {
+                  "type": "double",
+                  "id": 1,
+                  "options": {
+                    "proto3_optional": true
+                  }
+                },
+                "upper": {
+                  "type": "double",
+                  "id": 2,
+                  "options": {
+                    "proto3_optional": true
+                  }
+                },
+                "sigma": {
+                  "type": "double",
+                  "id": 3,
+                  "options": {
+                    "proto3_optional": true
+                  }
+                }
+              }
+            },
+            "QualityFlags": {
+              "oneofs": {
+                "_outlier": {
+                  "oneof": [
+                    "outlier"
+                  ]
+                },
+                "_stale": {
+                  "oneof": [
+                    "stale"
+                  ]
+                },
+                "_interpolated": {
+                  "oneof": [
+                    "interpolated"
+                  ]
+                },
+                "_extrapolated": {
+                  "oneof": [
+                    "extrapolated"
+                  ]
+                },
+                "_lowConfidence": {
+                  "oneof": [
+                    "lowConfidence"
+                  ]
+                },
+                "_tier": {
+                  "oneof": [
+                    "tier"
+                  ]
+                }
+              },
+              "fields": {
+                "outlier": {
+                  "type": "bool",
+                  "id": 1,
+                  "options": {
+                    "proto3_optional": true
+                  }
+                },
+                "stale": {
+                  "type": "bool",
+                  "id": 2,
+                  "options": {
+                    "proto3_optional": true
+                  }
+                },
+                "interpolated": {
+                  "type": "bool",
+                  "id": 3,
+                  "options": {
+                    "proto3_optional": true
+                  }
+                },
+                "extrapolated": {
+                  "type": "bool",
+                  "id": 4,
+                  "options": {
+                    "proto3_optional": true
+                  }
+                },
+                "lowConfidence": {
+                  "type": "bool",
+                  "id": 5,
+                  "options": {
+                    "proto3_optional": true
+                  }
+                },
+                "tier": {
+                  "type": "int32",
+                  "id": 6,
+                  "options": {
+                    "proto3_optional": true
+                  }
+                }
+              }
+            },
+            "ScaleReading": {
+              "oneofs": {
+                "_level": {
+                  "oneof": [
+                    "level"
+                  ]
+                },
+                "_label": {
+                  "oneof": [
+                    "label"
+                  ]
+                },
+                "_basis": {
+                  "oneof": [
+                    "basis"
+                  ]
+                },
+                "_observedAt": {
+                  "oneof": [
+                    "observedAt"
+                  ]
+                }
+              },
+              "fields": {
+                "level": {
+                  "type": "int32",
+                  "id": 1,
+                  "options": {
+                    "proto3_optional": true
+                  }
+                },
+                "label": {
+                  "type": "string",
+                  "id": 2,
+                  "options": {
+                    "proto3_optional": true
+                  }
+                },
+                "basis": {
+                  "type": "string",
+                  "id": 3,
+                  "options": {
+                    "proto3_optional": true
+                  }
+                },
+                "observedAt": {
+                  "type": "string",
+                  "id": 4,
+                  "options": {
+                    "proto3_optional": true
+                  }
+                }
+              }
+            },
+            "DerivedField": {
+              "oneofs": {
+                "_field": {
+                  "oneof": [
+                    "field"
+                  ]
+                },
+                "_method": {
+                  "oneof": [
+                    "method"
+                  ]
+                }
+              },
+              "fields": {
+                "field": {
+                  "type": "string",
+                  "id": 1,
+                  "options": {
+                    "proto3_optional": true
+                  }
+                },
+                "method": {
+                  "type": "string",
+                  "id": 2,
+                  "options": {
+                    "proto3_optional": true
+                  }
+                },
+                "derivedFrom": {
+                  "rule": "repeated",
+                  "type": "string",
+                  "id": 3
+                }
+              }
+            },
+            "DerivedFields": {
+              "fields": {
+                "fields": {
+                  "rule": "repeated",
+                  "type": "DerivedField",
+                  "id": 1
+                }
+              }
+            },
+            "SenseCheck": {
+              "oneofs": {
+                "_id": {
+                  "oneof": [
+                    "id"
+                  ]
+                },
+                "_status": {
+                  "oneof": [
+                    "status"
+                  ]
+                },
+                "_reason": {
+                  "oneof": [
+                    "reason"
+                  ]
+                },
+                "_observedAt": {
+                  "oneof": [
+                    "observedAt"
+                  ]
+                },
+                "_checked": {
+                  "oneof": [
+                    "checked"
+                  ]
+                },
+                "_flagged": {
+                  "oneof": [
+                    "flagged"
+                  ]
+                }
+              },
+              "fields": {
+                "id": {
+                  "type": "string",
+                  "id": 1,
+                  "options": {
+                    "proto3_optional": true
+                  }
+                },
+                "status": {
+                  "type": "string",
+                  "id": 2,
+                  "options": {
+                    "proto3_optional": true
+                  }
+                },
+                "reason": {
+                  "type": "string",
+                  "id": 3,
+                  "options": {
+                    "proto3_optional": true
+                  }
+                },
+                "observedAt": {
+                  "type": "string",
+                  "id": 4,
+                  "options": {
+                    "proto3_optional": true
+                  }
+                },
+                "checked": {
+                  "type": "int32",
+                  "id": 5,
+                  "options": {
+                    "proto3_optional": true
+                  }
+                },
+                "flagged": {
+                  "type": "int32",
+                  "id": 6,
+                  "options": {
+                    "proto3_optional": true
+                  }
+                }
+              }
+            },
+            "SenseChecks": {
+              "fields": {
+                "checks": {
+                  "rule": "repeated",
+                  "type": "SenseCheck",
+                  "id": 1
+                }
+              }
+            },
+            "XrayReading": {
+              "oneofs": {
+                "_value": {
+                  "oneof": [
+                    "value"
+                  ]
+                },
+                "_band": {
+                  "oneof": [
+                    "band"
+                  ]
+                },
+                "_flareClass": {
+                  "oneof": [
+                    "flareClass"
+                  ]
+                },
+                "_satellite": {
+                  "oneof": [
+                    "satellite"
+                  ]
+                },
+                "_timestamp": {
+                  "oneof": [
+                    "timestamp"
+                  ]
+                }
+              },
+              "fields": {
+                "value": {
+                  "type": "double",
+                  "id": 1,
+                  "options": {
+                    "proto3_optional": true
+                  }
+                },
+                "band": {
+                  "type": "string",
+                  "id": 2,
+                  "options": {
+                    "proto3_optional": true
+                  }
+                },
+                "flareClass": {
+                  "type": "string",
+                  "id": 3,
+                  "options": {
+                    "proto3_optional": true
+                  }
+                },
+                "satellite": {
+                  "type": "string",
+                  "id": 4,
+                  "options": {
+                    "proto3_optional": true
+                  }
+                },
+                "timestamp": {
+                  "type": "string",
+                  "id": 5,
+                  "options": {
+                    "proto3_optional": true
+                  }
+                }
+              }
+            },
+            "ParticleReading": {
+              "oneofs": {
+                "_value": {
+                  "oneof": [
+                    "value"
+                  ]
+                },
+                "_energy": {
+                  "oneof": [
+                    "energy"
+                  ]
+                },
+                "_satellite": {
+                  "oneof": [
+                    "satellite"
+                  ]
+                },
+                "_timestamp": {
+                  "oneof": [
+                    "timestamp"
+                  ]
+                }
+              },
+              "fields": {
+                "value": {
+                  "type": "double",
+                  "id": 1,
+                  "options": {
+                    "proto3_optional": true
+                  }
+                },
+                "energy": {
+                  "type": "string",
+                  "id": 2,
+                  "options": {
+                    "proto3_optional": true
+                  }
+                },
+                "satellite": {
+                  "type": "string",
+                  "id": 3,
+                  "options": {
+                    "proto3_optional": true
+                  }
+                },
+                "timestamp": {
+                  "type": "string",
+                  "id": 4,
+                  "options": {
+                    "proto3_optional": true
+                  }
+                }
+              }
+            },
+            "NoaaAlert": {
+              "oneofs": {
+                "_productId": {
+                  "oneof": [
+                    "productId"
+                  ]
+                },
+                "_issuedAt": {
+                  "oneof": [
+                    "issuedAt"
+                  ]
+                },
+                "_headline": {
+                  "oneof": [
+                    "headline"
+                  ]
+                }
+              },
+              "fields": {
+                "productId": {
+                  "type": "string",
+                  "id": 1,
+                  "options": {
+                    "proto3_optional": true
+                  }
+                },
+                "issuedAt": {
+                  "type": "string",
+                  "id": 2,
+                  "options": {
+                    "proto3_optional": true
+                  }
+                },
+                "headline": {
+                  "type": "string",
+                  "id": 3,
+                  "options": {
+                    "proto3_optional": true
+                  }
+                }
+              }
+            },
+            "NoaaAlerts": {
+              "fields": {
+                "alerts": {
+                  "rule": "repeated",
+                  "type": "NoaaAlert",
+                  "id": 1
+                }
+              }
+            },
+            "ArrivingSolarWind": {
+              "oneofs": {
+                "_observedAt": {
+                  "oneof": [
+                    "observedAt"
+                  ]
+                },
+                "_arrivedAt": {
+                  "oneof": [
+                    "arrivedAt"
+                  ]
+                },
+                "_travelSeconds": {
+                  "oneof": [
+                    "travelSeconds"
+                  ]
+                },
+                "_spacecraft": {
+                  "oneof": [
+                    "spacecraft"
+                  ]
+                },
+                "_samples": {
+                  "oneof": [
+                    "samples"
+                  ]
+                },
+                "_bz": {
+                  "oneof": [
+                    "bz"
+                  ]
+                },
+                "_by": {
+                  "oneof": [
+                    "by"
+                  ]
+                },
+                "_density": {
+                  "oneof": [
+                    "density"
+                  ]
+                },
+                "_speed": {
+                  "oneof": [
+                    "speed"
+                  ]
+                },
+                "_dynamicPressure": {
+                  "oneof": [
+                    "dynamicPressure"
+                  ]
+                }
+              },
+              "fields": {
+                "observedAt": {
+                  "type": "string",
+                  "id": 1,
+                  "options": {
+                    "proto3_optional": true
+                  }
+                },
+                "arrivedAt": {
+                  "type": "string",
+                  "id": 2,
+                  "options": {
+                    "proto3_optional": true
+                  }
+                },
+                "travelSeconds": {
+                  "type": "double",
+                  "id": 3,
+                  "options": {
+                    "proto3_optional": true
+                  }
+                },
+                "spacecraft": {
+                  "type": "string",
+                  "id": 4,
+                  "options": {
+                    "proto3_optional": true
+                  }
+                },
+                "samples": {
+                  "type": "int32",
+                  "id": 5,
+                  "options": {
+                    "proto3_optional": true
+                  }
+                },
+                "bz": {
+                  "type": "double",
+                  "id": 6,
+                  "options": {
+                    "proto3_optional": true
+                  }
+                },
+                "by": {
+                  "type": "double",
+                  "id": 7,
+                  "options": {
+                    "proto3_optional": true
+                  }
+                },
+                "density": {
+                  "type": "double",
+                  "id": 8,
+                  "options": {
+                    "proto3_optional": true
+                  }
+                },
+                "speed": {
+                  "type": "double",
+                  "id": 9,
+                  "options": {
+                    "proto3_optional": true
+                  }
+                },
+                "dynamicPressure": {
+                  "type": "double",
+                  "id": 10,
+                  "options": {
+                    "proto3_optional": true
+                  }
+                }
+              }
+            },
+            "DensityDisagreement": {
+              "oneofs": {
+                "_spacecraft": {
+                  "oneof": [
+                    "spacecraft"
+                  ]
+                },
+                "_density": {
+                  "oneof": [
+                    "density"
+                  ]
+                },
+                "_reference": {
+                  "oneof": [
+                    "reference"
+                  ]
+                },
+                "_referenceDensity": {
+                  "oneof": [
+                    "referenceDensity"
+                  ]
+                },
+                "_ratio": {
+                  "oneof": [
+                    "ratio"
+                  ]
+                },
+                "_minutes": {
+                  "oneof": [
+                    "minutes"
+                  ]
+                }
+              },
+              "fields": {
+                "spacecraft": {
+                  "type": "string",
+                  "id": 1,
+                  "options": {
+                    "proto3_optional": true
+                  }
+                },
+                "density": {
+                  "type": "double",
+                  "id": 2,
+                  "options": {
+                    "proto3_optional": true
+                  }
+                },
+                "reference": {
+                  "type": "string",
+                  "id": 3,
+                  "options": {
+                    "proto3_optional": true
+                  }
+                },
+                "referenceDensity": {
+                  "type": "double",
+                  "id": 4,
+                  "options": {
+                    "proto3_optional": true
+                  }
+                },
+                "ratio": {
+                  "type": "double",
+                  "id": 5,
+                  "options": {
+                    "proto3_optional": true
+                  }
+                },
+                "minutes": {
+                  "type": "double",
+                  "id": 6,
+                  "options": {
+                    "proto3_optional": true
+                  }
+                }
+              }
+            },
+            "CanonicalPoint": {
+              "oneofs": {
+                "_timestamp": {
+                  "oneof": [
+                    "timestamp"
+                  ]
+                },
+                "_source": {
+                  "oneof": [
+                    "source"
+                  ]
+                },
+                "_rho": {
+                  "oneof": [
+                    "rho"
+                  ]
+                },
+                "_observedAt": {
+                  "oneof": [
+                    "observedAt"
+                  ]
+                },
+                "_spacecraft": {
+                  "oneof": [
+                    "spacecraft"
+                  ]
+                },
+                "_schema": {
+                  "oneof": [
+                    "schema"
+                  ]
+                }
+              },
+              "fields": {
+                "timestamp": {
+                  "type": "string",
+                  "id": 1,
+                  "options": {
+                    "proto3_optional": true
+                  }
+                },
+                "source": {
+                  "type": "string",
+                  "id": 2,
+                  "options": {
+                    "proto3_optional": true
+                  }
+                },
+                "rho": {
+                  "type": "double",
+                  "id": 3,
+                  "options": {
+                    "proto3_optional": true
+                  }
+                },
+                "velocity": {
+                  "type": "Vector3WithMag",
+                  "id": 4
+                },
+                "magneticField": {
+                  "type": "MagneticField",
+                  "id": 5
+                },
+                "electricField": {
+                  "type": "ElectricField",
+                  "id": 6
+                },
+                "solarWind": {
+                  "type": "SolarWind",
+                  "id": 7
+                },
+                "indices": {
+                  "type": "Indices",
+                  "id": 8
+                },
+                "coupling": {
+                  "type": "Coupling",
+                  "id": 9
+                },
+                "propagation": {
+                  "type": "Propagation",
+                  "id": 10
+                },
+                "alerts": {
+                  "type": "Alerts",
+                  "id": 11
+                },
+                "quality": {
+                  "type": "QualityFlags",
+                  "id": 12
+                },
+                "uncertainty": {
+                  "type": "Uncertainty",
+                  "id": 13
+                },
+                "observedAt": {
+                  "type": "string",
+                  "id": 14,
+                  "options": {
+                    "proto3_optional": true
+                  }
+                },
+                "spacecraft": {
+                  "type": "string",
+                  "id": 15,
+                  "options": {
+                    "proto3_optional": true
+                  }
+                },
+                "arriving": {
+                  "type": "ArrivingSolarWind",
+                  "id": 16
+                },
+                "densityCheck": {
+                  "type": "DensityDisagreement",
+                  "id": 17
+                },
+                "derived": {
+                  "type": "DerivedFields",
+                  "id": 18
+                },
+                "xray": {
+                  "type": "XrayReading",
+                  "id": 19
+                },
+                "senseChecks": {
+                  "type": "SenseChecks",
+                  "id": 20
+                },
+                "noaaAlerts": {
+                  "type": "NoaaAlerts",
+                  "id": 21
+                },
+                "particles": {
+                  "type": "Particles",
+                  "id": 22
+                },
+                "schema": {
+                  "type": "string",
+                  "id": 23,
+                  "options": {
+                    "proto3_optional": true
+                  }
+                }
+              },
+              "nested": {
+                "MagneticField": {
+                  "oneofs": {
+                    "_x": {
+                      "oneof": [
+                        "x"
+                      ]
+                    },
+                    "_y": {
+                      "oneof": [
+                        "y"
+                      ]
+                    },
+                    "_z": {
+                      "oneof": [
+                        "z"
+                      ]
+                    },
+                    "_bt": {
+                      "oneof": [
+                        "bt"
+                      ]
+                    }
+                  },
+                  "fields": {
+                    "x": {
+                      "type": "double",
+                      "id": 1,
+                      "options": {
+                        "proto3_optional": true
+                      }
+                    },
+                    "y": {
+                      "type": "double",
+                      "id": 2,
+                      "options": {
+                        "proto3_optional": true
+                      }
+                    },
+                    "z": {
+                      "type": "double",
+                      "id": 3,
+                      "options": {
+                        "proto3_optional": true
+                      }
+                    },
+                    "bt": {
+                      "type": "double",
+                      "id": 4,
+                      "options": {
+                        "proto3_optional": true
+                      }
+                    }
+                  }
+                },
+                "ElectricField": {
+                  "oneofs": {
+                    "_x": {
+                      "oneof": [
+                        "x"
+                      ]
+                    },
+                    "_y": {
+                      "oneof": [
+                        "y"
+                      ]
+                    },
+                    "_z": {
+                      "oneof": [
+                        "z"
+                      ]
+                    },
+                    "_ey": {
+                      "oneof": [
+                        "ey"
+                      ]
+                    }
+                  },
+                  "fields": {
+                    "x": {
+                      "type": "double",
+                      "id": 1,
+                      "options": {
+                        "proto3_optional": true
+                      }
+                    },
+                    "y": {
+                      "type": "double",
+                      "id": 2,
+                      "options": {
+                        "proto3_optional": true
+                      }
+                    },
+                    "z": {
+                      "type": "double",
+                      "id": 3,
+                      "options": {
+                        "proto3_optional": true
+                      }
+                    },
+                    "ey": {
+                      "type": "double",
+                      "id": 4,
+                      "options": {
+                        "proto3_optional": true
+                      }
+                    }
+                  }
+                },
+                "SolarWind": {
+                  "oneofs": {
+                    "_speed": {
+                      "oneof": [
+                        "speed"
+                      ]
+                    },
+                    "_density": {
+                      "oneof": [
+                        "density"
+                      ]
+                    },
+                    "_dynamicPressure": {
+                      "oneof": [
+                        "dynamicPressure"
+                      ]
+                    }
+                  },
+                  "fields": {
+                    "speed": {
+                      "type": "double",
+                      "id": 1,
+                      "options": {
+                        "proto3_optional": true
+                      }
+                    },
+                    "density": {
+                      "type": "double",
+                      "id": 2,
+                      "options": {
+                        "proto3_optional": true
+                      }
+                    },
+                    "dynamicPressure": {
+                      "type": "double",
+                      "id": 3,
+                      "options": {
+                        "proto3_optional": true
+                      }
+                    }
+                  }
+                },
+                "Indices": {
+                  "oneofs": {
+                    "_kp": {
+                      "oneof": [
+                        "kp"
+                      ]
+                    },
+                    "_dst": {
+                      "oneof": [
+                        "dst"
+                      ]
+                    },
+                    "_dstMethod": {
+                      "oneof": [
+                        "dstMethod"
+                      ]
+                    },
+                    "_kpKind": {
+                      "oneof": [
+                        "kpKind"
+                      ]
+                    },
+                    "_kpObservedAt": {
+                      "oneof": [
+                        "kpObservedAt"
+                      ]
+                    },
+                    "_dstObservedAt": {
+                      "oneof": [
+                        "dstObservedAt"
+                      ]
+                    }
+                  },
+                  "fields": {
+                    "kp": {
+                      "type": "double",
+                      "id": 1,
+                      "options": {
+                        "proto3_optional": true
+                      }
+                    },
+                    "dst": {
+                      "type": "double",
+                      "id": 2,
+                      "options": {
+                        "proto3_optional": true
+                      }
+                    },
+                    "dstMethod": {
+                      "type": "string",
+                      "id": 3,
+                      "options": {
+                        "proto3_optional": true
+                      }
+                    },
+                    "dstDerivedFrom": {
+                      "rule": "repeated",
+                      "type": "string",
+                      "id": 4
+                    },
+                    "kpKind": {
+                      "type": "string",
+                      "id": 5,
+                      "options": {
+                        "proto3_optional": true
+                      }
+                    },
+                    "kpObservedAt": {
+                      "type": "string",
+                      "id": 6,
+                      "options": {
+                        "proto3_optional": true
+                      }
+                    },
+                    "dstObservedAt": {
+                      "type": "string",
+                      "id": 7,
+                      "options": {
+                        "proto3_optional": true
+                      }
+                    }
+                  }
+                },
+                "Coupling": {
+                  "oneofs": {
+                    "_newell": {
+                      "oneof": [
+                        "newell"
+                      ]
+                    },
+                    "_epsilon": {
+                      "oneof": [
+                        "epsilon"
+                      ]
+                    }
+                  },
+                  "fields": {
+                    "newell": {
+                      "type": "double",
+                      "id": 1,
+                      "options": {
+                        "proto3_optional": true
+                      }
+                    },
+                    "epsilon": {
+                      "type": "double",
+                      "id": 2,
+                      "options": {
+                        "proto3_optional": true
+                      }
+                    }
+                  }
+                },
+                "Propagation": {
+                  "oneofs": {
+                    "_l1DelaySeconds": {
+                      "oneof": [
+                        "l1DelaySeconds"
+                      ]
+                    },
+                    "_etaEarthArrival": {
+                      "oneof": [
+                        "etaEarthArrival"
+                      ]
+                    }
+                  },
+                  "fields": {
+                    "l1DelaySeconds": {
+                      "type": "double",
+                      "id": 1,
+                      "options": {
+                        "proto3_optional": true
+                      }
+                    },
+                    "etaEarthArrival": {
+                      "type": "string",
+                      "id": 2,
+                      "options": {
+                        "proto3_optional": true
+                      }
+                    }
+                  }
+                },
+                "Alerts": {
+                  "oneofs": {
+                    "_stormTier": {
+                      "oneof": [
+                        "stormTier"
+                      ]
+                    },
+                    "_reason": {
+                      "oneof": [
+                        "reason"
+                      ]
+                    }
+                  },
+                  "fields": {
+                    "stormTier": {
+                      "type": "string",
+                      "id": 1,
+                      "options": {
+                        "proto3_optional": true
+                      }
+                    },
+                    "reason": {
+                      "type": "string",
+                      "id": 2,
+                      "options": {
+                        "proto3_optional": true
+                      }
+                    },
+                    "radiation": {
+                      "type": "ScaleReading",
+                      "id": 3
+                    },
+                    "geomagnetic": {
+                      "type": "ScaleReading",
+                      "id": 4
+                    },
+                    "radioBlackout": {
+                      "type": "ScaleReading",
+                      "id": 5
+                    }
+                  }
+                },
+                "Uncertainty": {
+                  "fields": {
+                    "speed": {
+                      "type": "UncertaintyEnvelope",
+                      "id": 1
+                    },
+                    "density": {
+                      "type": "UncertaintyEnvelope",
+                      "id": 2
+                    },
+                    "bz": {
+                      "type": "UncertaintyEnvelope",
+                      "id": 3
+                    }
+                  }
+                },
+                "Particles": {
+                  "fields": {
+                    "protons": {
+                      "type": "ParticleReading",
+                      "id": 1
+                    },
+                    "electrons": {
+                      "type": "ParticleReading",
+                      "id": 2
+                    }
+                  }
+                }
+              }
+            },
+            "MhdState": {
+              "oneofs": {
+                "_rho": {
+                  "oneof": [
+                    "rho"
+                  ]
+                }
+              },
+              "fields": {
+                "rho": {
+                  "type": "double",
+                  "id": 1,
+                  "options": {
+                    "proto3_optional": true
+                  }
+                },
+                "velocity": {
+                  "type": "Vector3",
+                  "id": 2
+                },
+                "magneticField": {
+                  "type": "Vector3",
+                  "id": 3
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
