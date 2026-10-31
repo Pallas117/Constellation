@@ -8,7 +8,7 @@
 
 'use client'; // Mark as client component (for Next.js compatibility, if migrated)
 
-import { useMemo, useRef } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import { useFrame, useThree, type ThreeEvent } from '@react-three/fiber';
 import * as THREE from 'three';
 import type { RadiationDataPoint } from '@/lib/types/radiation';
@@ -241,6 +241,9 @@ export const RadiationDataOverlay = ({
 
   // Create material
   const material = useMemo(() => createGlowMaterial(), []);
+  // Free the GPU buffers of a replaced or unmounted geometry and material (GAU-208).
+  useEffect(() => () => geometry?.dispose(), [geometry]);
+  useEffect(() => () => material.dispose(), [material]);
 
   // Animate glow
   useFrame((state) => {

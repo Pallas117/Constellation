@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { bucketMeans, lookbackSince, mergeSeries, SERIES_WINDOW_MS } from "./feed-series.ts";
+import { bucketMeans, lookbackSince, mergeSeries, pendingAfter, SERIES_WINDOW_MS } from "./feed-series.ts";
 
 const T0 = Date.parse("2026-10-12T00:00:00Z");
 const at = (offsetS: number, v = offsetS) => ({ timestamp: new Date(T0 + offsetS * 1000).toISOString(), v });
@@ -88,5 +88,23 @@ describe("bucketMeans", () => {
 
   it("handles an empty series", () => {
     assert.deepEqual(bucketMeans([], () => ({})).buckets, []);
+  });
+});
+
+describe("pendingAfter (GAU-208)", () => {
+  it("drops pushed points a poll already holds, keeps the newer ones", () => {
+    const pushed = series(0, 20);
+    assert.deepEqual(pendingAfter(pushed, series(0, 10)), series(15, 20));
+  });
+
+  it("empties once the poll has caught up", () => {
+    assert.deepEqual(pendingAfter(series(0, 10), series(0, 10)), []);
+  });
+
+  it("returns the same array when nothing changes, so React state stays put", () => {
+    const pushed = series(15, 20);
+    assert.equal(pendingAfter(pushed, series(0, 10)), pushed);
+    assert.equal(pendingAfter(pushed, null), pushed);
+    assert.equal(pendingAfter(pushed, []), pushed);
   });
 });
