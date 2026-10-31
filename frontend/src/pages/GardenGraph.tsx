@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -53,24 +53,32 @@ export default function GardenGraph() {
   const [noteError, setNoteError] = useState<string | null>(null);
   const [filter, setFilter] = useState("");
 
-  const load = useCallback(async () => {
-    setError(null);
-    try {
-      setGraph(await get<Graph>("/graph", "Loading the garden"));
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Couldn't load the garden");
-    }
-  }, []);
+  // Loads on open and on each Refresh (reloads bumps). State changes only when a request
+  // settles, or from the click that starts one, never synchronously inside the effect.
+  const [reloads, setReloads] = useState(0);
   useEffect(() => {
-    void load();
-  }, [load]);
+    let live = true;
+    get<Graph>("/graph", "Loading the garden")
+      .then((g) => {
+        if (!live) return;
+        setGraph(g);
+        setError(null);
+      })
+      .catch((err) => live && setError(err instanceof Error ? err.message : "Couldn't load the garden"));
+    return () => {
+      live = false;
+    };
+  }, [reloads]);
 
   useEffect(() => {
     if (!selected) return;
     let live = true;
-    setNoteError(null);
     get<Note>(`/note?id=${encodeURIComponent(selected)}`, "Opening the note")
-      .then((n) => live && setNote(n))
+      .then((n) => {
+        if (!live) return;
+        setNote(n);
+        setNoteError(null);
+      })
       .catch((err) => live && setNoteError(err instanceof Error ? err.message : "Couldn't open the note"));
     return () => {
       live = false;
@@ -82,6 +90,10 @@ export default function GardenGraph() {
   const ids = useMemo(() => graph?.nodes.map((n) => n.id) ?? [], [graph]);
   const groups = useMemo(() => [...new Set(graph?.nodes.map((n) => n.group) ?? [])], [graph]);
   const match = filter.trim().toLowerCase();
+  const open = (id: string) => {
+    setNoteError(null);
+    setSelected(id);
+  };
   const neighbours = useMemo(() => {
     const s = new Set<string>();
     for (const l of graph?.links ?? []) {
@@ -104,7 +116,13 @@ export default function GardenGraph() {
             </p>
           </div>
           <div className="flex gap-2">
-            <Button variant="outline" onClick={() => void load()}>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setError(null);
+                setReloads((n) => n + 1);
+              }}
+            >
               Refresh
             </Button>
             <Button asChild variant="outline">
@@ -161,7 +179,7 @@ export default function GardenGraph() {
                       <g
                         key={n.id}
                         transform={`translate(${p.x * W} ${p.y * H})`}
-                        onClick={() => setSelected(n.id)}
+                        onClick={() => open(n.id)}
                         className="cursor-pointer"
                         opacity={dim ? 0.25 : 1}
                       >
@@ -205,7 +223,7 @@ export default function GardenGraph() {
                   if ("text" in part) return <span key={i}>{part.text}</span>;
                   const target = resolveLink(part.link, ids);
                   return target ? (
-                    <button key={i} type="button" onClick={() => setSelected(target)} className="text-primary underline underline-offset-2">
+                    <button key={i} type="button" onClick={() => open(target)} className="text-primary underline underline-offset-2">
                       {part.label}
                     </button>
                   ) : (
