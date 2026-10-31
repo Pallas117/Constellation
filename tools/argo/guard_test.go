@@ -396,6 +396,15 @@ func TestAdmit(t *testing.T) {
 	if yes, why := admit(watch, 2); yes || !strings.Contains(why, "light work only") {
 		t.Errorf("watch admitted 2 GB: %s", why)
 	}
+	d := calm()
+	d.DiskGB = 16
+	if yes, why := admit(assess(nil, d), 1.4); !yes {
+		t.Errorf("a tight disk alone capped a 1.4 GB job: %s", why)
+	}
+	d.Batt = &Battery{Present: true, Pct: 80}
+	if yes, _ := admit(assess(nil, d), 1.4); yes {
+		t.Error("tight disk plus another watch finding should keep the light-job cap")
+	}
 	r := calm()
 	r.Pressure = "critical"
 	if yes, why := admit(assess(nil, r), 0); yes || !strings.Contains(why, "block") {

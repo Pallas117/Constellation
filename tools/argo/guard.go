@@ -431,7 +431,7 @@ func admit(a Assessment, memGB float64) (bool, string) {
 			return false, fmt.Sprintf("needs %.1f GB, %.1f GB available after the %.1f GB reserve (memory at warn)", memGB, a.AvailRoomGB, reserveGB)
 		}
 		return true, fmt.Sprintf("ok at warn: coping, %.1f GB available after the reserve", a.AvailRoomGB)
-	case a.Level == LevelWatch && memGB > lightJobGB:
+	case a.Level == LevelWatch && memGB > lightJobGB && watchLimitsRAM(a):
 		return false, fmt.Sprintf("light work only (%s); this job asks for %.1f GB, the limit is %.1f GB", worst(a), memGB, lightJobGB)
 	case memGB > roomFor(a) && memGB > 0:
 		return false, fmt.Sprintf("needs %.1f GB, %.1f GB free after the %.1f GB reserve", memGB, roomFor(a), reserveGB)
@@ -448,6 +448,18 @@ func roomFor(a Assessment) float64 {
 		return a.AvailRoomGB
 	}
 	return a.HeadroomGB
+}
+
+// watchLimitsRAM is false when every watch finding is about disk: 8-20 GB free on disk
+// says nothing about RAM (2026-10-31: a 16 GB-free disk held a 1.4 GB gate to the 1 GB
+// light-job cap for hours), and RAM is still checked against the headroom below.
+func watchLimitsRAM(a Assessment) bool {
+	for _, f := range a.Findings {
+		if f.Level >= LevelWatch && f.Resource != "disk" {
+			return true
+		}
+	}
+	return false
 }
 
 // worst is the text of the most severe finding.
