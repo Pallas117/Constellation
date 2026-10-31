@@ -256,6 +256,9 @@ gated() { local t; t=$(g rev-parse "$1^{tree}"); mkdir -p "$WD/gates"
   printf '{"sha":"%s","tree":"%s","passed":true,"by":"test-user","at":"2026-10-22T00:00:00Z","test":{"pass":5}}\n' "$1" "$t" >"$WD/gates/$t.json"; }
 main_at "$C"; for x in "$A" "$Bc" "$C" "$D"; do gated "$x"; done
 FB2="$T/Gauss Aurora.worktrees/fb2"; rm -f "$FB/ready" "$T/kicks.state"; export HEALTH_FILE="$LIVE/health"
+out=$(run deploy "$Bc" --dry-run 2>&1); rc=$?
+[ $rc = 2 ] && head_is "$A" && [[ "$out" == *"unknown option --dry-run"* ]] && [ ! -d "$WD/deploying" ]
+expect "deploy: an unknown flag stops before anything changes (not taken as the fallback dir)" $?
 out=$(run deploy "$Bc" "$FB2" 2>&1); rc=$?
 [ $rc = 0 ] && head_is "$Bc" && [[ "$out" == *"Deployed ${Bc:0:7}"* ]] && grep -q t1 "$LIVE/data/bedrock/telemetry.jsonl" && [ ! -d "$WD/deploying" ]
 expect "deploy: live switched, its local data kept, lock released" $?

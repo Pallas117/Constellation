@@ -197,7 +197,7 @@ func TestAssessLevels(t *testing.T) {
 		{"pressure critical", func(s *Sample) { s.Pressure = "critical" }, LevelBlock, "mem-critical"},
 		{"pressure warn, just started", func(s *Sample) { s.Pressure = "warn" }, LevelWatch, "mem-warn"},
 		{"pressure unknown", func(s *Sample) { s.Pressure = "" }, LevelWatch, "pressure-unknown"},
-		{"swap at the balance limit", func(s *Sample) { s.SwapGB = 4.2 }, LevelRisk, "swap-high"},
+		{"swap at the balance limit, no calm hour on record", func(s *Sample) { s.SwapGB = 4.2 }, LevelRisk, "swap-high"},
 		{"no headroom is information, not risk", func(s *Sample) { s.RAMGB, s.InRAMGB = 8, 7.5 }, LevelOK, "no-headroom"},
 		{"battery at the floor", func(s *Sample) { s.Batt = battery(9, false) }, LevelBlock, "battery-floor"},
 		{"battery low", func(s *Sample) { s.Batt = battery(18, false) }, LevelRisk, "battery-low"},
@@ -239,6 +239,43 @@ func TestAssessTrends(t *testing.T) {
 	}
 	if a.WarnMin != 40 || a.SwapRiseGB != 1.2 {
 		t.Errorf("warn %d min, swap +%v GB; want 40, 1.2", a.WarnMin, a.SwapRiseGB)
+	}
+
+	// High swap after a calm hour is stale (macOS keeps it allocated): watch, not risk.
+	// A warn reading, a gap or growth within the hour keeps it a risk.
+	hour := func(edit func(i int, s *Sample)) []Sample {
+		var h []Sample
+		for i := 60; i > 0; i -= 5 {
+			s := calm()
+			s.At, s.SwapGB = t0.Add(-time.Duration(i)*time.Minute), 4.6
+			edit(i, &s)
+			h = append(h, s)
+		}
+		return h
+	}
+	stale := calm()
+	stale.SwapGB = 4.6
+	for _, c := range []struct {
+		name  string
+		edit  func(i int, s *Sample)
+		level Level
+	}{
+		{"calm hour, swap flat", func(int, *Sample) {}, LevelWatch},
+		{"warn 30 min ago", func(i int, s *Sample) {
+			if i == 30 {
+				s.Pressure = "warn"
+			}
+		}, LevelRisk},
+		{"swap still climbing", func(i int, s *Sample) { s.SwapGB = 4.6 - float64(i)*0.01 }, LevelRisk},
+		{"readings only for the last 30 min", func(i int, s *Sample) {
+			if i > 30 {
+				s.At = s.At.Add(-2 * time.Hour)
+			}
+		}, LevelRisk},
+	} {
+		if as := assess(hour(c.edit), stale); as.Level != c.level || !strings.Contains(codes(as), "swap-high") {
+			t.Errorf("%s: %s [%s], want %s", c.name, as.Level, codes(as), c.level)
+		}
 	}
 
 	// A 20 min gap (lid shut, Argo off) is not time at warn.
