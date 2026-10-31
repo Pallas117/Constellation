@@ -13,7 +13,9 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -151,7 +153,11 @@ func (s Store) Append(in Incident) error {
 		return err
 	}
 	in.Detail = Mask(in.Detail)
-	f, err := os.OpenFile(s.path("incidents.jsonl"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+	p := s.path("incidents.jsonl")
+	if fi, err := os.Stat(p); err == nil && fi.Size() >= incidentsMaxBytes {
+		_ = os.Rename(p, p+".1") // replaces the older half: history stays bounded at ~2x the cap
+	}
+	f, err := os.OpenFile(p, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 	if err != nil {
 		return err
 	}
@@ -161,24 +167,49 @@ func (s Store) Append(in Incident) error {
 	return err
 }
 
+// incidentsMaxBytes caps incidents.jsonl; it was never rotated and every report
+// parses it. At the cap it moves to incidents.jsonl.1 (one old file kept).
+const incidentsMaxBytes = 2 << 20
+
+// Incidents returns the rotated file's events, then the current file's, oldest first.
 func (s Store) Incidents() []Incident {
-	f, err := os.Open(s.path("incidents.jsonl"))
-	if err != nil {
-		return nil
-	}
-	defer f.Close()
 	var out []Incident
-	sc := bufio.NewScanner(f)
-	for sc.Scan() {
-		var in Incident
-		if json.Unmarshal(sc.Bytes(), &in) == nil {
-			out = append(out, in)
+	for _, p := range []string{s.path("incidents.jsonl.1"), s.path("incidents.jsonl")} {
+		f, err := os.Open(p)
+		if err != nil {
+			continue
 		}
+		sc := bufio.NewScanner(f)
+		for sc.Scan() {
+			var in Incident
+			if json.Unmarshal(sc.Bytes(), &in) == nil {
+				out = append(out, in)
+			}
+		}
+		f.Close()
 	}
 	return out
 }
 
-// Lock is an O_EXCL lock file; a lock older than 10 minutes is from a killed run.
+// lockHolderDead is true when the lock file names a process that no longer
+// exists. A run killed by launchd or the awake guard (`kickstart -k`) never
+// removes its lock; without this check every run for the next 10 minutes
+// failed with "another argo run is in progress", the heartbeat went stale and
+// the guard kicked Argo again (awake.log 2026-10-27 11:51-11:54).
+func lockHolderDead(p string) bool {
+	b, err := os.ReadFile(p)
+	if err != nil {
+		return false
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(b)))
+	if err != nil || pid <= 0 {
+		return false
+	}
+	return errors.Is(syscall.Kill(pid, 0), syscall.ESRCH)
+}
+
+// Lock is an O_EXCL lock file; a lock from a dead process, or older than 10
+// minutes, is from a killed run.
 func (s Store) Lock() (func(), error) {
 	if err := os.MkdirAll(s.Dir, 0o700); err != nil {
 		return nil, err
@@ -191,7 +222,7 @@ func (s Store) Lock() (func(), error) {
 			f.Close()
 			return func() { os.Remove(p) }, nil
 		}
-		if fi, serr := os.Stat(p); serr == nil && time.Since(fi.ModTime()) > 10*time.Minute {
+		if fi, serr := os.Stat(p); serr == nil && (time.Since(fi.ModTime()) > 10*time.Minute || lockHolderDead(p)) {
 			os.Remove(p)
 			continue
 		}
@@ -208,6 +239,18 @@ func (s Store) Disabled() bool {
 // Fingerprint identifies a network by gateway MAC plus the public IP prefix
 // (first three IPv4 octets or IPv6 hextets), hashed so the raw IP and MAC are
 // never stored or reported.
+// netFingerprint is the network key Argo learns under. The iPhone hotspot has no
+// gateway MAC and a carrier IP whose /24 changes on every reconnect, which made
+// 30 "networks" out of one phone and kept recovery learning from ever reaching
+// its sample minimum. It is keyed by the country it exits in instead, so a MY
+// SIM and an HK eSIM (which Anthropic does not serve) stay apart.
+func netFingerprint(s Snapshot) string {
+	if isIPhoneHotspot(s.Gateway) && s.Loc != "" {
+		return Fingerprint("iphone-hotspot:"+s.Loc, "") // the country goes in the key, not through ipPrefix
+	}
+	return Fingerprint(s.GatewayMAC, s.PublicIP)
+}
+
 func Fingerprint(gatewayMAC, publicIP string) string {
 	if gatewayMAC == "" && publicIP == "" {
 		return ""
