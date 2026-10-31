@@ -406,6 +406,8 @@ out=$(HEAVYGIVEUP=1 run gates run --once 2>&1); [[ "$out" == *"still waiting"* ]
   && [ "$(tail -1 "$GR" | cut -d' ' -f2)" != "$F" ]; expect "gates run: when claude-heavy gives up, the request stays queued" $?
 GAUSS_GATES_EXPIRE_H=0 run gates run >/dev/null 2>&1
 [ "$(tail -1 "$GR" | cut -d' ' -f2,4)" = "$F EXPIRED" ] && [ -z "$(ls "$GQ")" ]; expect "gates run: a request waiting past GAUSS_GATES_EXPIRE_H expires" $?
+n=$(wc -l <"$GR"); out=$(run gates run-one "$GQ/withdrawn.req" 2>&1); [ $? = 0 ] && [[ "$out" == *"withdrawn"* ]] && [ "$(wc -l <"$GR")" = "$n" ]
+expect "gates run-one: a request withdrawn while waiting is skipped, with no result line" $?
 touch "$SW/stray"; out=$(run gates enqueue "$SW" 2>&1); [ $? != 0 ] && [[ "$out" == *"uncommitted or untracked"* ]]; expect "gates enqueue refuses a dirty checkout" $?
 rm -f "$SW/stray"
 out=$(run gates result status); [[ "$out" == *"runner: not running"*"queue: empty"* ]]; expect "gates result status: runner, queue and recent results" $?

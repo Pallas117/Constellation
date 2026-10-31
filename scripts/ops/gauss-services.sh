@@ -778,6 +778,8 @@ gates_run() { # gates_run [--once]: work through the queue, oldest first, then e
 
 gates_run_one() { # gates_run_one <request>: check out, install if the lockfile changed, gates_record, write the result
   local req=$1 sha tree repo node by co lock out rc=0 line status
+  # Withdrawn while claude-heavy waited (a session re-queued a new head): nothing to run.
+  [ -f "$req" ] || { echo "Request $(basename "$req") was withdrawn; skipping."; return 0; }
   sha=$(req_get "$req" sha); tree=$(req_get "$req" tree); repo=$(req_get "$req" repo); node=$(req_get "$req" node); by=$(req_get "$req" by)
   [ -n "$node" ] && [ -x "$node" ] && NODE=$node # the Node the session queued with (Node 22)
   co=${GAUSS_GATES_CHECKOUT:-$(dirname "$repo").worktrees/gates}
