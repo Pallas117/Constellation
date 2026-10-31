@@ -135,6 +135,40 @@ test("interval never stacks a tick on one still running", async () => {
   }
 });
 
+test("stop() cancels a pending start-up retry, so it never ticks after a restart (GAU-208)", async () => {
+  const worker = new IngestionWorker() as unknown as TimedWorker;
+  const realSetTimeout = globalThis.setTimeout;
+  const realSetInterval = globalThis.setInterval;
+  const retries: Array<() => void> = [];
+  globalThis.setTimeout = ((fn: () => void) => {
+    retries.push(fn);
+    return realSetTimeout(() => undefined, 1_000_000);
+  }) as typeof setTimeout;
+  globalThis.setInterval = (() => realSetInterval(() => undefined, 1_000_000)) as typeof setInterval;
+  let ticks = 0;
+  worker.tick = async () => {
+    ticks++;
+    throw new Error("upstream down");
+  };
+  const realError = console.error;
+  console.error = () => undefined;
+  try {
+    worker.start();
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(ticks, 1);
+    assert.equal(retries.length, 1, "a retry was scheduled");
+    worker.stop();
+    retries[0]!(); // even if the timer still fired, a stopped worker must not tick
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(ticks, 1);
+  } finally {
+    worker.stop();
+    globalThis.setTimeout = realSetTimeout;
+    globalThis.setInterval = realSetInterval;
+    console.error = realError;
+  }
+});
+
 test("tick attaches only current GOES particle readings to the canonical point (GAU-112)", async () => {
   const worker = new IngestionWorker() as unknown as TimedWorker & { goes: unknown };
   const now = Date.now();
