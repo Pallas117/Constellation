@@ -653,3 +653,31 @@ func TestCopingAtWarn(t *testing.T) {
 		t.Errorf("counter went back: paging %v, want -1", p)
 	}
 }
+
+func TestAdmitUsesAvailableAtNormal(t *testing.T) {
+	// 31 Oct 12:41: pressure normal, 6.0 of 8 GB held by work (0.5 GB after the reserve), but the
+	// kernel counted ~3.4 GB available and nothing was paging. A 1 GB job was refused at normal
+	// that would have started at warn.
+	hist, cur := warnHost(3.4, 1)
+	for i := range hist {
+		hist[i].Pressure = "normal"
+	}
+	cur.Pressure, cur.InRAMGB = "normal", 6.0
+	a := assess(hist, cur)
+	if a.HeadroomGB != 0.5 || a.AvailRoomGB != 1.9 {
+		t.Fatalf("headroom %v, room %v; want 0.5, 1.9", a.HeadroomGB, a.AvailRoomGB)
+	}
+	if yes, why := admit(a, 1); !yes {
+		t.Errorf("normal pressure, 1.9 GB available after the reserve, refused 1 GB: %s", why)
+	}
+	if yes, _ := admit(a, 2.5); yes {
+		t.Error("admitted 2.5 GB with 1.9 GB available")
+	}
+	// Paging unknown: only RAM not held by work counts, as before.
+	for i := range hist {
+		hist[i].SwapOutGB = 0
+	}
+	if yes, _ := admit(assess(hist, cur), 1); yes {
+		t.Error("admitted 1 GB on 0.5 GB headroom with paging unknown")
+	}
+}

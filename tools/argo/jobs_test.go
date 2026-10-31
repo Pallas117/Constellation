@@ -138,6 +138,12 @@ func TestAppendJobTrims(t *testing.T) {
 // TestGuardRunLearns: a real guarded run records its peak, the job sees
 // ARGO_WORKERS, and after three runs the measurement decides admission.
 func TestGuardRunLearns(t *testing.T) {
+	// Run under `argo guard run` (claude-heavy), the test itself inherits ARGO_WORKERS and
+	// ARGO_HEADROOM_GB, and a caller's value rightly wins over the computed one.
+	for _, k := range []string{"ARGO_WORKERS", "ARGO_HEADROOM_GB"} {
+		t.Setenv(k, "")
+		os.Unsetenv(k)
+	}
 	ok := assess(nil, calm())
 	out := filepath.Join(t.TempDir(), "workers")
 	st := Store{Dir: t.TempDir()}
@@ -181,7 +187,9 @@ func TestGuardRunLearns(t *testing.T) {
 }
 
 func TestLongJob(t *testing.T) {
-	run := func(secs int, outcome string) JobRun { return JobRun{Name: "gates", PeakGB: 1, Secs: secs, Outcome: outcome} }
+	run := func(secs int, outcome string) JobRun {
+		return JobRun{Name: "gates", PeakGB: 1, Secs: secs, Outcome: outcome}
+	}
 	short := []JobRun{run(120, "exit 0"), run(180, "exit 0"), run(150, "exit 0")}
 	if longJob(short, "gates") {
 		t.Error("2-3 minute gate runs counted as long")
