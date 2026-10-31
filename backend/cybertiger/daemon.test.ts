@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
-import test from "node:test";
+import test, { mock } from "node:test";
 import type { Request } from "express";
-import { CyberTigerDaemon } from "./daemon.js";
+import { CyberTigerDaemon, MAX_TRACKED_IPS } from "./daemon.js";
 
 function mockRequest(input: {
   method?: string;
@@ -113,4 +113,61 @@ test("direct local requests are never auto-blocked; proxied tailnet clients stil
   }
   assert.equal(daemon.inspectRequest(viaProxy).allowed, false, "tailnet client blocked under its own address");
   assert.equal(daemon.inspectRequest(local).allowed, true, "and that block does not affect this machine");
+});
+
+function authFailure(daemon: CyberTigerDaemon, ip: string) {
+  daemon.recordResponse({ requestId: "r", ip, method: "GET", path: "/api/admin", status: 401 });
+}
+
+test("expired rate and auth-failure windows are forgotten; live ones keep counting (GAU-209)", () => {
+  mock.timers.enable({ apis: ["Date"], now: Date.parse("2026-10-27T12:00:00Z") });
+  try {
+    const daemon = new CyberTigerDaemon({
+      rateLimitWindowMs: 60_000,
+      rateLimitMax: 2,
+      authFailureWindowMs: 300_000,
+      authFailureThreshold: 3,
+      autoBlockSeconds: 60,
+      maxEvents: 1000,
+    });
+    for (let i = 0; i < 200; i += 1) {
+      daemon.inspectRequest(mockRequest({ ip: `10.1.${Math.floor(i / 250)}.${i % 250}` }));
+      authFailure(daemon, `10.1.${Math.floor(i / 250)}.${i % 250}`);
+    }
+    assert.deepEqual(daemon.trackedWindowCounts(), { rate: 200, authFailures: 200 });
+
+    // A live address mid-window: two requests and two auth failures.
+    const live = mockRequest({ ip: "10.9.9.9" });
+    mock.timers.tick(290_000);
+    assert.equal(daemon.inspectRequest(live).allowed, true);
+    authFailure(daemon, "10.9.9.9");
+    authFailure(daemon, "10.9.9.9");
+
+    // Past the rate window the sweep drops the 200 stale buckets; their
+    // auth-failure windows (5 min) are still live and kept.
+    assert.deepEqual(daemon.trackedWindowCounts(), { rate: 1, authFailures: 201 });
+    assert.equal(daemon.inspectRequest(live).allowed, true);
+    assert.equal(daemon.inspectRequest(live).allowed, false, "rate limit unchanged across a sweep");
+
+    mock.timers.tick(20_000);
+    daemon.inspectRequest(mockRequest({ ip: "10.8.8.8" }));
+    assert.equal(daemon.trackedWindowCounts().authFailures, 1, "only the live auth window survives");
+    authFailure(daemon, "10.9.9.9");
+    assert.equal(daemon.getStatus().counters.activeBlocks, 1, "third failure in the window still auto-blocks");
+  } finally {
+    mock.timers.reset();
+  }
+});
+
+test("rate windows are capped at MAX_TRACKED_IPS, dropping the oldest first (GAU-209)", () => {
+  const daemon = new CyberTigerDaemon({ rateLimitWindowMs: 60_000, rateLimitMax: 1000, maxEvents: 10 });
+  const ipFor = (i: number) => `10.${(i >> 16) & 255}.${(i >> 8) & 255}.${i & 255}`;
+  for (let i = 0; i <= MAX_TRACKED_IPS; i += 1) {
+    daemon.inspectRequest(mockRequest({ ip: ipFor(i) }));
+  }
+  assert.equal(daemon.trackedWindowCounts().rate, MAX_TRACKED_IPS);
+  // The newest address kept its window; the oldest one starts a new window.
+  const newest = mockRequest({ ip: ipFor(MAX_TRACKED_IPS) });
+  for (let i = 0; i < 999; i += 1) daemon.inspectRequest(newest);
+  assert.equal(daemon.inspectRequest(newest).allowed, false, "newest window kept its count");
 });

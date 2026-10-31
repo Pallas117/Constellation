@@ -175,10 +175,20 @@ const INTERESTS = new Set(["data-api", "connectivity", "both"]);
  */
 export function createPilotRequestHandler(store: CommerceStore, now: () => number = Date.now) {
   const recent = new Map<string, number[]>();
-  return (req: express.Request, res: express.Response) => {
+  let lastSweep = 0;
+  const handler = (req: express.Request, res: express.Response) => {
     const ip = req.ip ?? "unknown";
     const hourAgo = now() - 60 * 60 * 1000;
+    // Forget addresses with nothing in the last hour (at most once a minute).
+    if (now() - lastSweep >= 60 * 1000) {
+      lastSweep = now();
+      for (const [key, list] of recent) {
+        if (!list.some((t) => t > hourAgo)) recent.delete(key);
+      }
+    }
     const times = (recent.get(ip) ?? []).filter((t) => t > hourAgo);
+    if (times.length) recent.set(ip, times);
+    else recent.delete(ip);
     if (times.length >= 3) {
       res.status(429).json({ error: "Too many requests. Please try again later." });
       return;
@@ -206,6 +216,8 @@ export function createPilotRequestHandler(store: CommerceStore, now: () => numbe
     store.addPilotRequest(lead, ip);
     res.status(201).json({ ok: true });
   };
+  /** Addresses currently rate-tracked (for tests). */
+  return Object.assign(handler, { trackedIps: () => recent.size });
 }
 
 /**
