@@ -7,7 +7,7 @@ cd "<your checkout>"   # on the dev Mac: cd "$(gauss-where constellation)"
 npm run dev:all
 ```
 
-Wait 5 seconds, then open: **http://localhost:5173**
+Wait 5 seconds, then open: **http://127.0.0.1:8080**
 
 That's it. App will:
 - ✅ Render 3D globe

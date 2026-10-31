@@ -57,6 +57,9 @@ This repository is organized to keep the web app, backend services, and machine 
 
 **New contributors**: Start with `docs/CONTRIBUTING.md` for setup, the PR score rubric, and workflow expectations.
 
+**Working remotely** (GitHub Codespaces, the dev container, or your own machine): `docs/REMOTE_DEVELOPMENT.md`.
+One-command setup: `npm run dev:setup`, then `npm run dev:doctor`.
+
 **Development workflow** is documented in `docs/WORKTREE_ARCHITECTURE.md`.
 
 **Edit a file directly in GitHub**
@@ -127,8 +130,8 @@ Gauss Aurora includes automated security scanning, compliance gating, and releas
 
 **Setup (One-Time)**:
 ```sh
-# Install local pre-commit hooks for secret scanning
-bash scripts/setup-pre-commit.sh
+# Install local pre-commit hooks for secret scanning (needs TruffleHog 3: brew install trufflehog)
+npm run security:setup-hooks
 ```
 
 **Common Commands**:
