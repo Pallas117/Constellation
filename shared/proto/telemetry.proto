@@ -1,88 +1,195 @@
 syntax = "proto3";
 
+// Wire schema of GET /api/feed/space-weather/latest/proto, version sw.point/2.0.0 (GAU-210).
+// Hand-written until the schema registry generates it (GAU-214). backend/lib/proto.test.ts
+// round-trips a point with every field of CanonicalSpaceWeatherPoint (backend/types.ts) set,
+// so a field added there and not here fails the tests.
+//
+// Truth state (GAU-63):
+// - Every scalar is `optional`: a value the producer did not have decodes as absent, never 0.
+// - Physics values are double; float32 rounded a Newell coupling of 6,123,456.789 to 6,123,457.
+// - An absent message or list means unknown. The list wrappers (DerivedFields, SenseChecks,
+//   NoaaAlerts) keep "known to be empty" apart from "unknown".
+//
+// telemetry_descriptor.json is this file as protobufjs JSON (the input ADR 0001 plans for XTCE).
+// Regenerate it after any change:
+//   node -e "require('protobufjs').load('shared/proto/telemetry.proto').then(r => console.log(JSON.stringify(r.toJSON(), null, 2)))" > shared/proto/telemetry_descriptor.json
+
 package space.telemetry;
 
 message Vector3 {
-  float x = 1;
-  float y = 2;
-  float z = 3;
+  optional double x = 1;
+  optional double y = 2;
+  optional double z = 3;
 }
 
 message Vector3WithMag {
-  float x = 1;
-  float y = 2;
-  float z = 3;
-  float magnitude = 4;
+  optional double x = 1;
+  optional double y = 2;
+  optional double z = 3;
+  optional double magnitude = 4;
 }
 
 message UncertaintyEnvelope {
-  float lower = 1;
-  float upper = 2;
-  float sigma = 3;
+  optional double lower = 1;
+  optional double upper = 2;
+  optional double sigma = 3;
 }
 
 message QualityFlags {
-  bool outlier = 1;
-  bool stale = 2;
-  bool interpolated = 3;
-  bool extrapolated = 4;
-  bool low_confidence = 5;
-  int32 tier = 6;
+  optional bool outlier = 1;
+  optional bool stale = 2;
+  optional bool interpolated = 3;
+  optional bool extrapolated = 4;
+  optional bool low_confidence = 5;
+  // 0 live, 1 buffered, 2 synthetic, 3 emergency or stale.
+  optional int32 tier = 6;
+}
+
+// A level on a NOAA space-weather scale. An absent level is unknown, never "no storm".
+message ScaleReading {
+  optional int32 level = 1;
+  optional string label = 2;
+  optional string basis = 3;
+  optional string observed_at = 4;
+}
+
+// A value not measured as published, with the method and the inputs it came from.
+message DerivedField {
+  optional string field = 1;
+  optional string method = 2;
+  repeated string derived_from = 3;
+}
+
+message DerivedFields {
+  repeated DerivedField fields = 1;
+}
+
+message SenseCheck {
+  optional string id = 1;
+  // "pass", "flag", or "unknown" when there was nothing current to check.
+  optional string status = 2;
+  optional string reason = 3;
+  optional string observed_at = 4;
+  optional int32 checked = 5;
+  optional int32 flagged = 6;
+}
+
+message SenseChecks {
+  repeated SenseCheck checks = 1;
+}
+
+// GOES 0.1-0.8 nm irradiance, W m^-2.
+message XrayReading {
+  optional double value = 1;
+  optional string band = 2;
+  optional string flare_class = 3;
+  optional string satellite = 4;
+  optional string timestamp = 5;
+}
+
+// Integral flux, particles cm^-2 s^-1 sr^-1 (pfu for protons).
+message ParticleReading {
+  optional double value = 1;
+  optional string energy = 2;
+  optional string satellite = 3;
+  optional string timestamp = 4;
+}
+
+message NoaaAlert {
+  optional string product_id = 1;
+  optional string issued_at = 2;
+  optional string headline = 3;
+}
+
+// Present and empty: NOAA issued nothing in 24 h. Absent: the alerts were unreadable.
+message NoaaAlerts {
+  repeated NoaaAlert alerts = 1;
+}
+
+// The solar wind reaching Earth now: L1 values one ballistic travel time ago, 5-min mean, GSM.
+message ArrivingSolarWind {
+  optional string observed_at = 1;
+  optional string arrived_at = 2;
+  optional double travel_seconds = 3;
+  optional string spacecraft = 4;
+  optional int32 samples = 5;
+  optional double bz = 6;
+  optional double by = 7;
+  optional double density = 8;
+  optional double speed = 9;
+  optional double dynamic_pressure = 10;
+}
+
+message DensityDisagreement {
+  optional string spacecraft = 1;
+  optional double density = 2;
+  optional string reference = 3;
+  optional double reference_density = 4;
+  optional double ratio = 5;
+  optional double minutes = 6;
 }
 
 message CanonicalPoint {
-  string timestamp = 1;
-  string source = 2;
-  float rho = 3;
+  optional string timestamp = 1;
+  optional string source = 2;
+  optional double rho = 3;
   Vector3WithMag velocity = 4;
-  
+
   message MagneticField {
-    float x = 1;
-    float y = 2;
-    float z = 3;
-    float bt = 4;
+    optional double x = 1;
+    optional double y = 2;
+    optional double z = 3;
+    optional double bt = 4;
   }
   MagneticField magnetic_field = 5;
 
   message ElectricField {
-    float x = 1;
-    float y = 2;
-    float z = 3;
-    float ey = 4;
+    optional double x = 1;
+    optional double y = 2;
+    optional double z = 3;
+    optional double ey = 4;
   }
   ElectricField electric_field = 6;
 
   message SolarWind {
-    float speed = 1;
-    float density = 2;
-    float dynamic_pressure = 3;
+    optional double speed = 1;
+    optional double density = 2;
+    optional double dynamic_pressure = 3;
   }
   SolarWind solar_wind = 7;
 
   message Indices {
-    float kp = 1;
-    float dst = 2;
+    optional double kp = 1;
+    optional double dst = 2;
     // "measured", or the model that derived dst.
-    string dst_method = 3;
+    optional string dst_method = 3;
     repeated string dst_derived_from = 4;
+    // "estimated-1m" or "planetary-3h".
+    optional string kp_kind = 5;
+    optional string kp_observed_at = 6;
+    optional string dst_observed_at = 7;
   }
   Indices indices = 8;
 
   message Coupling {
-    float newell = 1;
-    float epsilon = 2;
+    optional double newell = 1;
+    optional double epsilon = 2;
   }
   Coupling coupling = 9;
 
   message Propagation {
-    float l1_delay_seconds = 1;
-    string eta_earth_arrival = 2;
+    optional double l1_delay_seconds = 1;
+    optional string eta_earth_arrival = 2;
   }
   Propagation propagation = 10;
 
   message Alerts {
-    string storm_tier = 1;
-    string reason = 2;
+    optional string storm_tier = 1;
+    optional string reason = 2;
+    ScaleReading radiation = 3;
+    ScaleReading geomagnetic = 4;
+    ScaleReading radio_blackout = 5;
   }
   Alerts alerts = 11;
 
@@ -94,10 +201,29 @@ message CanonicalPoint {
     UncertaintyEnvelope bz = 3;
   }
   Uncertainty uncertainty = 13;
+
+  // When the L1 values were measured; freshness is judged from this, not from timestamp.
+  optional string observed_at = 14;
+  optional string spacecraft = 15;
+  ArrivingSolarWind arriving = 16;
+  DensityDisagreement density_check = 17;
+  DerivedFields derived = 18;
+  XrayReading xray = 19;
+  SenseChecks sense_checks = 20;
+  NoaaAlerts noaa_alerts = 21;
+
+  message Particles {
+    ParticleReading protons = 1;
+    ParticleReading electrons = 2;
+  }
+  Particles particles = 22;
+
+  // Wire schema version, "sw.point/2.0.0".
+  optional string schema = 23;
 }
 
 message MhdState {
-  float rho = 1;
+  optional double rho = 1;
   Vector3 velocity = 2;
   Vector3 magnetic_field = 3;
 }
