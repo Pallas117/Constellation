@@ -16,6 +16,8 @@
 #   scripts/ops/gauss-services.sh fallback prepare <dir> [sha]|on|off|status   cold-standby last-known-good build
 #   scripts/ops/gauss-services.sh deploy <commit> [fallback-dir] [--emergency <reason>]   switch live to <commit>; rolls back by itself if it doesn't come up
 #   scripts/ops/gauss-services.sh gates record <checkout-dir>|list   run the five gates on a clean checkout; deploy needs a passing record
+#   scripts/ops/gauss-services.sh gates enqueue <checkout-dir>|<commit>   hand a gate run to the queue; the session can then be archived
+#   scripts/ops/gauss-services.sh gates result <checkout-dir>|<commit>|status   the queue's one-line result (exit 0 passed, 1 failed, 3 queued)
 #   scripts/ops/gauss-services.sh events [--since 2h] [--json]     timeline: watchdog, failover, deploys, alerts, boots (events.jsonl)
 #
 # Three layers (GAU-158): dev (any other checkout, foreground, own ports and data,
@@ -87,6 +89,16 @@ DEPLOY_EMERGENCY="" # set by `deploy --emergency <reason>`
 GATES_DIR="$WATCH_DIR/gates"
 GATE_LOCK="${GAUSS_GATE_LOCK:-$HOME/.local/state/gauss-gate.lock}" # shared with agents running gates by hand
 GATES=(test:ops test build quality:full verify)
+# Gate queue (2026-10-29): sessions held a `claude-heavy --wait 720 ... gates record` each for hours
+# (~1 GB of idle sessions on an 8 GB Mac), each with its own npm ci. Now a session enqueues and
+# can be archived; one detached runner works through the requests one at a time under claude-heavy
+# (memory, power, Argo's guard) in one checkout of its own, reinstalling only when the lockfile changes.
+GATES_QUEUE="$GATES_DIR/queue"         # <time>-<tree>.req, oldest first; one per tree
+GATES_RESULTS="$GATES_DIR/results.log" # <utc> <sha> <tree> PASSED|FAILED|SKIPPED|ERROR|EXPIRED <detail>, one line per request
+GATES_RUNNER="$GATES_DIR/runner"       # held by the one runner (its pid inside)
+HEAVY="${GAUSS_HEAVY:-$HOME/.local/bin/claude-heavy}"
+GATES_WAIT_MIN="${GAUSS_GATES_WAIT_MIN:-120}" # one claude-heavy wait; the runner asks again when it gives up
+GATES_EXPIRE_H="${GAUSS_GATES_EXPIRE_H:-72}"   # a request still waiting after this is dropped (EXPIRED)
 # balance: safe, reversible load shedding (GAU-126). GAUSS_BALANCE=0 turns it off.
 BALANCE="${GAUSS_BALANCE:-1}"
 LOCAL_CODER="${GAUSS_LOCAL_CODER:-$HOME/.local/bin/local-coder}"   # optional on-device model server
@@ -577,9 +589,22 @@ deployer() { if [ -n "${GAUSS_BY:-}" ]; then echo "$GAUSS_BY"; elif [ -n "${CLAU
 
 # The gates are heavy for an 8 GB Mac (a hard reset on 2026-10-21 under memory pressure), so
 # each waits for normal pressure and takes the lock other agents use for the same gates.
+# GATES_HOLD=1 when this run took the lock (and so must free it).
 gate_lock() {
-  local level _; mkdir -p "$(dirname "$GATE_LOCK")"
-  until read -r level _ < <(memory_stats) && [ "$level" = 1 ] && mkdir "$GATE_LOCK" 2>/dev/null; do sleep 20; done
+  local level _; mkdir -p "$(dirname "$GATE_LOCK")"; GATES_HOLD=0
+  until read -r level _ < <(memory_stats) && [ "$level" = 1 ] \
+    && { gate_lock_ours || { mkdir "$GATE_LOCK" 2>/dev/null && GATES_HOLD=1; }; }; do sleep 20; done
+}
+# claude-heavy takes the same lock before it runs its command, so `claude-heavy -- gates record`
+# (and the queue) would wait for itself forever: a lock owned by one of our callers is ours.
+gate_lock_ours() {
+  local owner p; owner=$(awk '{print $1}' "$GATE_LOCK/owner" 2>/dev/null) && [ -n "$owner" ] || return 1
+  p=$$
+  while [ -n "$p" ] && [ "$p" -gt 1 ]; do
+    [ "$p" = "$owner" ] && return 0
+    p=$(/bin/ps -o ppid= -p "$p" 2>/dev/null | tr -d ' ')
+  done
+  return 1
 }
 
 gates_record() { # gates_record <checkout-dir>: run the gates on a clean checkout and record the result by tree
@@ -593,10 +618,10 @@ gates_record() { # gates_record <checkout-dir>: run the gates on a clean checkou
   # Release the lock on exit only while holding it: an interrupted wait must not free another agent's lock.
   trap '[ "${GATES_HOLD:-0}" = 1 ] && rmdir "$GATE_LOCK" 2>/dev/null; rm -rf "$GATES_TMP"' EXIT
   for g in "${GATES[@]}"; do
-    gate_lock; GATES_HOLD=1
+    gate_lock
     echo "gate $g ..."
     rc=0; (cd "$dir" && PATH="$(dirname "$NODE"):$PATH" npm run "$g" >"$tmp/$g.log" 2>&1) || rc=$?
-    rmdir "$GATE_LOCK" 2>/dev/null || true; GATES_HOLD=0
+    if [ "$GATES_HOLD" = 1 ]; then rmdir "$GATE_LOCK" 2>/dev/null || true; fi; GATES_HOLD=0
     echo "$rc" >"$tmp/$g.rc"
   done
   [ "$(git -C "$dir" rev-parse HEAD)" = "$sha" ] && [ -z "$(git -C "$dir" status --porcelain)" ] \
@@ -647,6 +672,183 @@ if r.get("passed") is not True or r.get("tree") != sys.argv[2]:
     sys.exit(1)
 print(json.dumps(r, ensure_ascii=False))
 ' "$GATES_DIR/$1.json" "$1"
+}
+
+req_get() { sed -n "s/^$2=//p" "$1" | head -1; } # req_get <request file> <key>
+
+gates_result() { # gates_result <sha> <tree> <STATUS> <detail>: the one line a session or the ledger reads later
+  mkdir -p "$GATES_DIR"
+  printf '%s %s %s %s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$1" "$2" "$3" "$4" >>"$GATES_RESULTS"
+  event gates_result "${1:0:7}" "$3 ${1:0:7}: $4" sha="$1" tree="$2" status="$3"
+}
+
+gates_queued() { local f; for f in "$GATES_QUEUE"/*-"$1".req; do [ -f "$f" ] && { echo "$f"; return 0; }; done; return 1; } # by tree
+
+gates_resolve() { # gates_resolve <checkout-dir>|<commit>: sets G_SRC G_SHA G_TREE G_REPO
+  if [ -d "$1" ]; then
+    G_SRC=$(cd "$1" && pwd) || return 1
+    [ -z "$(git -C "$G_SRC" status --porcelain)" ] \
+      || { echo "$G_SRC has uncommitted or untracked files: commit them first (the queue gates commits)." >&2; return 1; }
+    G_SHA=$(git -C "$G_SRC" rev-parse --verify HEAD) || return 1
+  else
+    G_SRC=$PWD
+    G_SHA=$(git -C "$G_SRC" rev-parse -q --verify "$1^{commit}" 2>/dev/null) || { echo "Unknown commit '$1' in $G_SRC." >&2; return 1; }
+  fi
+  G_TREE=$(git -C "$G_SRC" rev-parse "$G_SHA^{tree}") && G_REPO=$(git -C "$G_SRC" rev-parse --path-format=absolute --git-common-dir)
+}
+
+# A new head replaces the older heads of its branch still waiting (2026-10-31: three hand prunes of
+# stale requests in one day, each costing a full gate slot). Never a commit already on origin/main:
+# a queued main (for a deploy) is an ancestor of every branch that merged it.
+gates_supersede() { # gates_supersede <new-sha> <new-request>
+  local new=$1 keep=$2 r old
+  for r in "$GATES_QUEUE"/*.req; do
+    [ -f "$r" ] && [ "$r" != "$keep" ] || continue
+    old=$(req_get "$r" sha)
+    [ -n "$old" ] && [ "$old" != "$new" ] || continue
+    git --git-dir="$G_REPO" merge-base --is-ancestor "$old" "$new" 2>/dev/null || continue
+    git --git-dir="$G_REPO" merge-base --is-ancestor "$old" refs/remotes/origin/main 2>/dev/null && continue
+    rm -f "$r" && echo "Superseded ${old:0:7}: ${new:0:7} contains it."
+  done
+}
+
+gates_enqueue() { # gates_enqueue <checkout-dir>|<commit>: queue a gate run for that commit's tree, start the runner
+  gates_resolve "${1:?usage: $0 gates enqueue <checkout-dir>|<commit>}" || return 1
+  local sha=$G_SHA tree=$G_TREE f
+  if gate_record "$tree" >/dev/null; then
+    gates_result "$sha" "$tree" SKIPPED "already passed: $(gates_summary "$GATES_DIR/$tree.json")"
+    echo "Already passed: ${sha:0:7} (tree ${tree:0:7}) has a passing gate record; nothing queued."; return 0
+  fi
+  mkdir -p "$GATES_QUEUE"
+  if f=$(gates_queued "$tree"); then
+    echo "Already queued: tree ${tree:0:7} ($(req_get "$f" sha | cut -c1-7), by $(req_get "$f" by))."
+  else
+    f="$GATES_QUEUE/$(python3 -Ic 'import time; print("%.6f" % time.time())')-$tree.req"
+    printf 'sha=%s\ntree=%s\nrepo=%s\nnode=%s\nby=%s\nqueued=%s\n' "$sha" "$tree" "$G_REPO" "$NODE" "$(deployer)" "$(date +%s)" >"$f.tmp"
+    mv "$f.tmp" "$f"
+    event gates_queued "${sha:0:7}" "gate run queued for ${sha:0:7}" sha="$sha" tree="$tree" by="$(deployer)"
+    gates_supersede "$sha" "$f"
+    echo "Queued ${sha:0:7} (tree ${tree:0:7}); $(ls "$GATES_QUEUE" | grep -c '\.req$') in the queue."
+  fi
+  echo "Result later (any session, or the ledger): $0 gates result ${sha:0:7}   (or: tail -1 \"$GATES_RESULTS\")"
+  gates_start
+}
+
+gates_runner_pid() { local p; p=$(cat "$GATES_RUNNER/pid" 2>/dev/null) && [ -n "$p" ] && kill -0 "$p" 2>/dev/null && echo "$p"; }
+
+gates_start() { # start the one runner, detached from this session (own session id, no terminal), if none runs
+  local p
+  if p=$(gates_runner_pid); then echo "The gate runner is working (pid $p)."; return 0; fi
+  [ "${GAUSS_GATES_START:-1}" = 1 ] || return 0 # tests
+  mkdir -p "$GATES_DIR" "$LOGS"
+  # The runner outlives the checkout that queued it (sessions' worktrees get removed): run a copy.
+  # Renamed into place, so a runner still reading the old copy keeps it.
+  cp "$0" "$GATES_DIR/runner.sh.$$" && mv -f "$GATES_DIR/runner.sh.$$" "$GATES_DIR/runner.sh" || return 1
+  nohup perl -MPOSIX -e 'POSIX::setsid(); exec @ARGV' /bin/bash "$GATES_DIR/runner.sh" gates run \
+    </dev/null >>"$LOGS/gates-runner.log" 2>&1 &
+  echo "Gate runner started (log: $LOGS/gates-runner.log)."
+}
+
+gates_run() { # gates_run [--once]: work through the queue, oldest first, then exit; --once: stop after one wait that gave up
+  local once=${1:-} self req sha tree queued rc pid
+  self="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
+  mkdir -p "$GATES_QUEUE"
+  until mkdir "$GATES_RUNNER" 2>/dev/null; do
+    pid=$(cat "$GATES_RUNNER/pid" 2>/dev/null || true)
+    if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then echo "The gate runner is already working (pid $pid)."; return 0; fi
+    # No pid yet: another runner is starting, unless that was long ago.
+    [ -z "$pid" ] && [ "$(mtime_age_min "$GATES_RUNNER")" -lt 1 ] && { echo "Another gate runner is starting."; return 0; }
+    rm -rf "$GATES_RUNNER"
+  done
+  echo $$ >"$GATES_RUNNER/pid"
+  trap 'rm -rf "$GATES_RUNNER"' EXIT
+  while req=$(ls "$GATES_QUEUE"/*.req 2>/dev/null | sort | head -1) && [ -n "$req" ]; do
+    sha=$(req_get "$req" sha); tree=$(req_get "$req" tree); queued=$(req_get "$req" queued)
+    if [ $(( $(date +%s) - ${queued:-0} )) -ge $(( GATES_EXPIRE_H * 3600 )) ]; then
+      gates_result "$sha" "$tree" EXPIRED "waited over ${GATES_EXPIRE_H} h for memory or power; enqueue it again"
+      rm -f "$req"; continue
+    fi
+    if gate_record "$tree" >/dev/null; then # passed meanwhile (another request, or by hand)
+      gates_result "$sha" "$tree" SKIPPED "already passed: $(gates_summary "$GATES_DIR/$tree.json")"
+      rm -f "$req"; continue
+    fi
+    echo "$(date '+%F %T') gates ${sha:0:7} ..."
+    rc=0
+    if [ -x "$HEAVY" ]; then
+      "$HEAVY" --wait "$GATES_WAIT_MIN" --name gates --label "gate queue ${sha:0:7}" -- /bin/bash "$self" gates run-one "$req" || rc=$?
+    else
+      /bin/bash "$self" gates run-one "$req" || rc=$?
+    fi
+    if [ "$rc" = 75 ] && [ -f "$req" ]; then # claude-heavy gave up waiting; the request stays first in line
+      echo "$(date '+%F %T') ${sha:0:7} still waiting for memory or power; asking again."
+      [ "$once" = --once ] && return 0
+      sleep "${GAUSS_GATES_RETRY_S:-60}"; continue
+    fi
+    if [ -f "$req" ]; then # run-one died before it could say why
+      gates_result "$sha" "$tree" ERROR "gate run exited $rc without a result (log: $LOGS/gates-runner.log)"; rm -f "$req"
+    fi
+    tail -1 "$GATES_RESULTS"
+  done
+  echo "$(date '+%F %T') gate queue empty."
+}
+
+gates_run_one() { # gates_run_one <request>: check out, install if the lockfile changed, gates_record, write the result
+  local req=$1 sha tree repo node by co lock out rc=0 line status
+  # Withdrawn while claude-heavy waited (a session re-queued a new head): nothing to run.
+  [ -f "$req" ] || { echo "Request $(basename "$req") was withdrawn; skipping."; return 0; }
+  sha=$(req_get "$req" sha); tree=$(req_get "$req" tree); repo=$(req_get "$req" repo); node=$(req_get "$req" node); by=$(req_get "$req" by)
+  [ -n "$node" ] && [ -x "$node" ] && NODE=$node # the Node the session queued with (Node 22)
+  co=${GAUSS_GATES_CHECKOUT:-$(dirname "$repo").worktrees/gates}
+  gates_fail() { gates_result "$sha" "$tree" ERROR "$1"; rm -f "$req"; return 1; }
+  mkdir -p "$GATES_DIR/runs"
+  if [ -e "$co" ]; then
+    # Only ever reset a checkout the queue made: never someone's working checkout.
+    grep -Fqx "$co" "$GATES_DIR/checkouts" 2>/dev/null || { gates_fail "$co exists and was not made by the gate queue (set GAUSS_GATES_CHECKOUT)"; return 1; }
+    { git -C "$co" checkout -q --detach -f "$sha" && git -C "$co" clean -fdq; } || { gates_fail "could not check out ${sha:0:7} in $co"; return 1; }
+  else
+    git --git-dir="$repo" -c advice.detachedHead=false worktree add -q --detach "$co" "$sha" || { gates_fail "could not add the gate checkout $co at ${sha:0:7}"; return 1; }
+    echo "$co" >>"$GATES_DIR/checkouts" # one per repository
+  fi
+  # One install for consecutive requests with the same package-lock.json.
+  lock=$(shasum "$co/package-lock.json" | cut -d' ' -f1) || { gates_fail "no package-lock.json at ${sha:0:7}"; return 1; }
+  if [ "$(cat "$co/node_modules/.gauss-lock" 2>/dev/null)" != "$lock" ]; then
+    echo "Installing dependencies in $co ..."
+    (cd "$co" && PATH="$(dirname "$NODE"):$PATH" npm ci --no-audit --no-fund >"$GATES_DIR/runs/$sha.install.log" 2>&1) \
+      || { gates_fail "npm ci failed (log: $GATES_DIR/runs/$sha.install.log)"; return 1; }
+    echo "$lock" >"$co/node_modules/.gauss-lock"
+  fi
+  out=$(GAUSS_BY=$by; gates_record "$co" 2>&1) || rc=$?
+  printf '%s\n' "$out" >"$GATES_DIR/runs/$sha.log"
+  line=$(printf '%s\n' "$out" | grep -E '^(PASSED|FAILED)' | tail -1 || true)
+  if [ -n "$line" ]; then status=${line%% *}; line=${line#* }
+  else status=ERROR; line="$(printf '%s\n' "$out" | tail -1) (log: $GATES_DIR/runs/$sha.log)"; fi
+  gates_result "$sha" "$tree" "$status" "$line"
+  rm -f "$req"
+  [ "$status" = PASSED ]
+}
+
+gates_show_result() { # gates_show_result <checkout-dir>|<commit>: the latest line for that tree; exit 0 passed, 1 failed/none, 3 queued
+  local arg=${1:?usage: $0 gates result <checkout-dir>|<commit>|status} tree="" line f
+  if gates_resolve "$arg" 2>/dev/null; then tree=$G_TREE; else tree=$arg; fi # a session's worktree may be gone: match a prefix
+  if [ ${#tree} = 40 ] && f=$(gates_queued "$tree"); then
+    echo "QUEUED ${tree:0:7} since $(date -r "$(req_get "$f" queued)" '+%F %H:%M') by $(req_get "$f" by); runner: $(gates_runner_pid >/dev/null && echo working || echo 'not running (the awake guard restarts it within a minute)')"
+    return 3
+  fi
+  line=$(awk -v t="$tree" 'index($2, t) == 1 || index($3, t) == 1' "$GATES_RESULTS" 2>/dev/null | tail -1)
+  [ -n "$line" ] || { echo "No gate result or request for $arg."; return 1; }
+  echo "$line"
+  case $(echo "$line" | cut -d' ' -f4) in PASSED) return 0 ;; SKIPPED) [[ "$line" == *" already passed: "* ]] ;; *) return 1 ;; esac
+}
+
+gates_status() {
+  local f n=0 p
+  if p=$(gates_runner_pid); then echo "runner: working (pid $p)"; else echo "runner: not running"; fi
+  for f in "$GATES_QUEUE"/*.req; do
+    [ -f "$f" ] || continue; n=$((n + 1))
+    echo "queued: $(req_get "$f" sha | cut -c1-7) by $(req_get "$f" by) since $(date -r "$(req_get "$f" queued)" '+%F %H:%M')"
+  done
+  [ $n -gt 0 ] || echo "queue: empty"
+  tail -5 "$GATES_RESULTS" 2>/dev/null || true
 }
 
 record_deploy() { # record_deploy <deploy|rollback> <ok|failed> <from> <to> <tree> <gates json|""> <reason>
@@ -831,6 +1033,8 @@ awake_guard() { # run every minute by the awake agent
   memory_sample "$level" "$swap"
   disk_alerts "$(disk_free_gb)"
   balance || true
+  # A queued gate run outlives a reboot or a killed runner: start one again.
+  if ls "$GATES_QUEUE" 2>/dev/null | grep -q '\.req$' && ! gates_runner_pid >/dev/null; then gates_start >/dev/null || true; fi
   [ -f "$SUDOERS" ] || return 0 # not set up; status and check say so
   if [ -f "$AWAKE_OFF" ]; then
     awake_set 0 "turned off"
@@ -1158,6 +1362,10 @@ case "${1:-}" in
   gates)
     case "${2:-}" in
       record) gates_record "${3:-}" ;;
+      enqueue) gates_enqueue "${3:-}" ;;
+      run) gates_run "${3:-}" ;;
+      run-one) gates_run_one "${3:?}" ;;
+      result) if [ "${3:-}" = status ]; then gates_status; else gates_show_result "${3:-}"; fi ;;
       *) for f in "$GATES_DIR"/*.json; do [ -f "$f" ] && gates_summary "$f"; done; true ;;
     esac
     ;;
@@ -1182,7 +1390,7 @@ case "${1:-}" in
     echo "Gauss services removed. Logs kept in $LOGS."
     ;;
   *)
-    sed -n '2,19p' "$0"
+    sed -n '2,21p' "$0"
     exit 2
     ;;
 esac
