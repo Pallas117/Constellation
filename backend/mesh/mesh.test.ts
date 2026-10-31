@@ -181,6 +181,26 @@ test("network scores are allowlisted; nothing unmeasured is invented", () => {
   assert.equal(parseReport(okReport)!.net, undefined, "older Argo: no block");
 });
 
+test("net.radio: Argo's radio profile is allowlisted field by field (GAU-188)", () => {
+  const net = { privacy: 70, privacyWhy: [], rttMs: 29, speed: "excellent", signal: "excellent", rssi: -35, noise: -98 };
+  // The 2026-10-23 hotspot: crowded 2.4 GHz ch10, Wi-Fi hop clean, loss upstream.
+  const radio = {
+    band: "2.4", channel: 10, widthMHz: 20, phy: "ax", mcs: 9, txMbps: 114, coChannel: 1, overlapping: 3,
+    gwLossPct: 0, gwJitterMs: 1, netLossPct: 40, netJitterMs: 400, netRttMs: 967, path: "upstream",
+  };
+  assert.deepEqual(parseNet({ ...net, radio })!.radio, radio);
+  assert.deepEqual(parseNet({ ...net, radio: { netLossPct: 0, path: "ok" } })!.radio, { netLossPct: 0, path: "ok" }, "wired: link quality only");
+  assert.equal(parseNet({ ...net, radio: { ssid: "HomeNet", bssid: "aa:bb" } })!.radio, undefined, "names are never kept");
+  for (const bad of [
+    { band: "3.6" }, { channel: 0 }, { widthMHz: 30 }, { phy: "802.11ax" }, { mcs: 16 }, { netLossPct: 101 },
+    { path: "somewhere" }, { overlapping: -1 }, { channel: 10.5 },
+  ]) {
+    const parsed = parseNet({ ...net, radio: { ...radio, ...bad } });
+    assert.ok(parsed, `a bad radio field must not drop the report: ${JSON.stringify(bad)}`);
+    assert.equal(parsed.radio, undefined, JSON.stringify(bad));
+  }
+});
+
 test("platform is allowlisted and phones never host", () => {
   assert.equal(parseReport({ ...okReport, platform: "ios" })!.platform, "ios");
   assert.equal(parseReport({ ...okReport, platform: "playstation" })!.platform, undefined);
