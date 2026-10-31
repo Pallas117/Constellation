@@ -697,6 +697,21 @@ gates_resolve() { # gates_resolve <checkout-dir>|<commit>: sets G_SRC G_SHA G_TR
   G_TREE=$(git -C "$G_SRC" rev-parse "$G_SHA^{tree}") && G_REPO=$(git -C "$G_SRC" rev-parse --path-format=absolute --git-common-dir)
 }
 
+# A new head replaces the older heads of its branch still waiting (2026-10-31: three hand prunes of
+# stale requests in one day, each costing a full gate slot). Never a commit already on origin/main:
+# a queued main (for a deploy) is an ancestor of every branch that merged it.
+gates_supersede() { # gates_supersede <new-sha> <new-request>
+  local new=$1 keep=$2 r old
+  for r in "$GATES_QUEUE"/*.req; do
+    [ -f "$r" ] && [ "$r" != "$keep" ] || continue
+    old=$(req_get "$r" sha)
+    [ -n "$old" ] && [ "$old" != "$new" ] || continue
+    git --git-dir="$G_REPO" merge-base --is-ancestor "$old" "$new" 2>/dev/null || continue
+    git --git-dir="$G_REPO" merge-base --is-ancestor "$old" refs/remotes/origin/main 2>/dev/null && continue
+    rm -f "$r" && echo "Superseded ${old:0:7}: ${new:0:7} contains it."
+  done
+}
+
 gates_enqueue() { # gates_enqueue <checkout-dir>|<commit>: queue a gate run for that commit's tree, start the runner
   gates_resolve "${1:?usage: $0 gates enqueue <checkout-dir>|<commit>}" || return 1
   local sha=$G_SHA tree=$G_TREE f
@@ -712,6 +727,7 @@ gates_enqueue() { # gates_enqueue <checkout-dir>|<commit>: queue a gate run for 
     printf 'sha=%s\ntree=%s\nrepo=%s\nnode=%s\nby=%s\nqueued=%s\n' "$sha" "$tree" "$G_REPO" "$NODE" "$(deployer)" "$(date +%s)" >"$f.tmp"
     mv "$f.tmp" "$f"
     event gates_queued "${sha:0:7}" "gate run queued for ${sha:0:7}" sha="$sha" tree="$tree" by="$(deployer)"
+    gates_supersede "$sha" "$f"
     echo "Queued ${sha:0:7} (tree ${tree:0:7}); $(ls "$GATES_QUEUE" | grep -c '\.req$') in the queue."
   fi
   echo "Result later (any session, or the ledger): $0 gates result ${sha:0:7}   (or: tail -1 \"$GATES_RESULTS\")"

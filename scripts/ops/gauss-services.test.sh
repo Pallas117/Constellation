@@ -406,6 +406,17 @@ out=$(HEAVYGIVEUP=1 run gates run --once 2>&1); [[ "$out" == *"still waiting"* ]
   && [ "$(tail -1 "$GR" | cut -d' ' -f2)" != "$F" ]; expect "gates run: when claude-heavy gives up, the request stays queued" $?
 GAUSS_GATES_EXPIRE_H=0 run gates run >/dev/null 2>&1
 [ "$(tail -1 "$GR" | cut -d' ' -f2,4)" = "$F EXPIRED" ] && [ -z "$(ls "$GQ")" ]; expect "gates run: a request waiting past GAUSS_GATES_EXPIRE_H expires" $?
+g checkout -q --detach "$E"; echo h1 >"$LIVE/backend/server.ts"; g commit -qam h1; H1=$(g rev-parse HEAD)
+echo h2 >"$LIVE/backend/server.ts"; g commit -qam h2; H2=$(g rev-parse HEAD); g checkout -q --detach "$E"
+(cd "$LIVE" && run gates enqueue "$H1" >/dev/null 2>&1); out=$(cd "$LIVE" && run gates enqueue "$H2" 2>&1)
+[[ "$out" == *"Superseded ${H1:0:7}"* ]] && [ "$(ls "$GQ" | grep -c '\.req$')" = 1 ] && grep -q "sha=$H2" "$GQ"/*.req
+expect "gates enqueue: a new head replaces its branch's older queued head" $?
+rm -f "$GQ"/*.req
+g update-ref refs/remotes/origin/main "$H1"
+(cd "$LIVE" && run gates enqueue "$H1" >/dev/null 2>&1); (cd "$LIVE" && run gates enqueue "$H2" >/dev/null 2>&1)
+[ "$(ls "$GQ" | grep -c '\.req$')" = 2 ]; expect "gates enqueue: a queued commit on origin/main is never superseded" $?
+g update-ref -d refs/remotes/origin/main
+rm -f "$GQ"/*.req
 n=$(wc -l <"$GR"); out=$(run gates run-one "$GQ/withdrawn.req" 2>&1); [ $? = 0 ] && [[ "$out" == *"withdrawn"* ]] && [ "$(wc -l <"$GR")" = "$n" ]
 expect "gates run-one: a request withdrawn while waiting is skipped, with no result line" $?
 touch "$SW/stray"; out=$(run gates enqueue "$SW" 2>&1); [ $? != 0 ] && [[ "$out" == *"uncommitted or untracked"* ]]; expect "gates enqueue refuses a dirty checkout" $?
