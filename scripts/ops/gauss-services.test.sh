@@ -56,7 +56,7 @@ run() { # run <args...>: gauss-services.sh with the stubs; alerts land in $LOG
     GAUSS_SUDOERS="$T/sudoers" MLX="${MLX:-0}" MLXPORT="${MLXPORT:-8089}" ACTIONS="$T/actions" GAUSS_BALANCE="${GAUSS_BALANCE:-1}" \
     LOADED="${LOADED:-}" HEALTH="${HEALTH:-200}" HEALTH_FILE="${HEALTH_FILE:-}" GAUSS_DEPLOY_WAIT=0 DISKGB="${DISKGB:-50}" \
     GATEFAIL="${GATEFAIL:-}" GAUSS_BY=test-user BOOT="${BOOT:-1000}" GAUSS_DIAG_DIRS="$T/diag" GAUSS_EVENTS_MAX_KB="${GAUSS_EVENTS_MAX_KB:-5120}" \
-    GAUSS_DEV_DRY="${GAUSS_DEV_DRY:-0}" GAUSS_DEV_API_PORT="${GAUSS_DEV_API_PORT:-3101}" \
+    GAUSS_DEV_DRY="${GAUSS_DEV_DRY:-0}" GAUSS_GATES_START=0 HEAVYGIVEUP="${HEAVYGIVEUP:-}" GAUSS_GATES_EXPIRE_H="${GAUSS_GATES_EXPIRE_H:-72}" GAUSS_DEV_API_PORT="${GAUSS_DEV_API_PORT:-3101}" \
     SRC="${SRC:-AC Power}" BATT="${BATT:-80%; charging; present: true}" SD="${SD:-0}" \
     ARGOSTATUS="${ARGOSTATUS:-}" LEVEL="${LEVEL:-1}" FREE="${FREE:-50}" SWAPUSED="${SWAPUSED:-1000}" OLD_ARGO="${OLD_ARGO:-}" bash "$SCRIPT" "$@"
 }
@@ -371,6 +371,65 @@ out=$(GATEFAIL=test run gates record "$GW" 2>&1); rc=$?
 expect "gates record: a failing gate is recorded as FAILED, so the tree can't be deployed" $?
 touch "$GW/stray"; out=$(run gates record "$GW" 2>&1); [[ "$out" == *"uncommitted or untracked"* ]]; expect "gates record refuses a dirty checkout" $?
 rm -f "$GW/stray"
+
+# gates enqueue/run: a session hands its gate run to the queue and can be archived; one runner
+# works through it oldest first under claude-heavy, skipping trees that already passed.
+# claude-heavy stub: takes the shared gate lock like the real one (owner = its pid), then runs the command.
+printf '%s\n' '#!/bin/bash' 'echo "heavy $*" >>"$ACTIONS"; [ -n "${HEAVYGIVEUP:-}" ] && exit 75' \
+  'while [ $# -gt 0 ] && [ "$1" != -- ]; do shift; done; [ $# -gt 0 ] && shift' \
+  'L="$HOME/.local/state/gauss-gate.lock"; mkdir -p "${L%/*}"; mkdir "$L" || exit 9; echo "$$ now test" >"$L/owner"' \
+  '"$@"; rc=$?; rm -rf "$L"; exit $rc' >"$T/home/.local/bin/claude-heavy"
+chmod +x "$T/home/.local/bin/claude-heavy"
+GQ="$WD/gates/queue"; GR="$WD/gates/results.log"; GCO="$T/live-checkout.worktrees/gates"
+tree_of() { g rev-parse "$1^{tree}"; }
+rm -f "$WD/gates/$(tree_of "$D").json" "$WD/gates/$(tree_of "$E").json" "$WD/gates/$(tree_of "$C").json"
+SW="$T/session worktree"; g worktree add -q --detach "$SW" "$D" # a session's worktree of the same repo
+out=$(run gates enqueue "$SW" 2>&1); [[ "$out" == *"Queued ${D:0:7}"* ]] && [ "$(ls "$GQ" | grep -c '\.req$')" = 1 ]
+expect "gates enqueue: a clean checkout is queued by tree" $?
+out=$(cd "$LIVE" && run gates enqueue "$D" 2>&1); [[ "$out" == *"Already queued: tree $(tree_of "$D" | cut -c1-7)"* ]] && [ "$(ls "$GQ" | grep -c '\.req$')" = 1 ]
+expect "gates enqueue: the same tree is queued once" $?
+out=$(cd "$LIVE" && run gates enqueue "$A" 2>&1); [[ "$out" == *"Already passed: ${A:0:7}"* ]] && [ "$(ls "$GQ" | grep -c '\.req$')" = 1 ] \
+  && [ "$(tail -1 "$GR" | cut -d' ' -f2,4)" = "$A SKIPPED" ]
+expect "gates enqueue: a tree with a passing record is skipped, with a result line" $?
+(cd "$LIVE" && run gates enqueue "$E" >/dev/null 2>&1 && run gates enqueue "$C" >/dev/null 2>&1)
+out=$(cd "$LIVE" && run gates result "$E"); [ $? = 3 ] && [[ "$out" == "QUEUED $(tree_of "$E" | cut -c1-7)"* ]]
+expect "gates result: a queued request says QUEUED (exit 3)" $?
+gated "$C" # C passes by hand while queued: the runner must not run it again
+out=$(run gates run 2>&1); rc=$?
+[ $rc = 0 ] && [ "$(cut -d' ' -f2,4 "$GR" | tail -3 | tr '\n' ';')" = "$D PASSED;$E PASSED;$C SKIPPED;" ] && [ -z "$(ls "$GQ")" ]
+expect "gates run: requests run oldest first, one at a time; a tree that passed meanwhile is skipped" $?
+[ "$(grep -c '^heavy --wait [0-9]* --name gates --label gate queue' "$T/actions")" = 2 ] && [ "$(grep -c '^npm ci' "$T/actions")" = 1 ]
+expect "gates run: each run is admitted by claude-heavy; one install for runs sharing package-lock.json" $?
+python3 -Ic 'import json,sys; sys.exit(0 if all(json.load(open(f))["passed"] and json.load(open(f))["by"]=="test-user" for f in sys.argv[1:]) else 1)' \
+  "$WD/gates/$(tree_of "$D").json" "$WD/gates/$(tree_of "$E").json" && [ "$(git -C "$GCO" rev-parse HEAD)" = "$E" ]
+expect "gates run: results are recorded by tree exactly as gates record does, in the queue's own checkout" $?
+[ ! -d "$T/home/.local/state/gauss-gate.lock" ] && [ ! -d "$WD/gates/runner" ]
+expect "gates run: no self-deadlock on claude-heavy's gate lock; runner and gate locks released" $?
+out=$(cd "$LIVE" && run gates result "$E"); [ $? = 0 ] && [[ "$out" == *" $E $(tree_of "$E") PASSED ${E:0:7}"* ]]
+expect "gates result: the one-line result for a commit (exit 0 passed)" $?
+out=$(run gates result "${E:0:9}"); [ $? = 0 ]; expect "gates result: a SHA prefix works without the checkout" $?
+g checkout -q --detach "$E"; echo f >"$LIVE/backend/server.ts"; g commit -qam queued-f; F=$(g rev-parse HEAD); g checkout -q --detach "$E"
+(cd "$LIVE" && run gates enqueue "$F" >/dev/null 2>&1)
+out=$(HEAVYGIVEUP=1 run gates run --once 2>&1); [[ "$out" == *"still waiting"* ]] && [ "$(ls "$GQ" | grep -c '\.req$')" = 1 ] \
+  && [ "$(tail -1 "$GR" | cut -d' ' -f2)" != "$F" ]; expect "gates run: when claude-heavy gives up, the request stays queued" $?
+GAUSS_GATES_EXPIRE_H=0 run gates run >/dev/null 2>&1
+[ "$(tail -1 "$GR" | cut -d' ' -f2,4)" = "$F EXPIRED" ] && [ -z "$(ls "$GQ")" ]; expect "gates run: a request waiting past GAUSS_GATES_EXPIRE_H expires" $?
+g checkout -q --detach "$E"; echo h1 >"$LIVE/backend/server.ts"; g commit -qam h1; H1=$(g rev-parse HEAD)
+echo h2 >"$LIVE/backend/server.ts"; g commit -qam h2; H2=$(g rev-parse HEAD); g checkout -q --detach "$E"
+(cd "$LIVE" && run gates enqueue "$H1" >/dev/null 2>&1); out=$(cd "$LIVE" && run gates enqueue "$H2" 2>&1)
+[[ "$out" == *"Superseded ${H1:0:7}"* ]] && [ "$(ls "$GQ" | grep -c '\.req$')" = 1 ] && grep -q "sha=$H2" "$GQ"/*.req
+expect "gates enqueue: a new head replaces its branch's older queued head" $?
+rm -f "$GQ"/*.req
+g update-ref refs/remotes/origin/main "$H1"
+(cd "$LIVE" && run gates enqueue "$H1" >/dev/null 2>&1); (cd "$LIVE" && run gates enqueue "$H2" >/dev/null 2>&1)
+[ "$(ls "$GQ" | grep -c '\.req$')" = 2 ]; expect "gates enqueue: a queued commit on origin/main is never superseded" $?
+g update-ref -d refs/remotes/origin/main
+rm -f "$GQ"/*.req
+n=$(wc -l <"$GR"); out=$(run gates run-one "$GQ/withdrawn.req" 2>&1); [ $? = 0 ] && [[ "$out" == *"withdrawn"* ]] && [ "$(wc -l <"$GR")" = "$n" ]
+expect "gates run-one: a request withdrawn while waiting is skipped, with no result line" $?
+touch "$SW/stray"; out=$(run gates enqueue "$SW" 2>&1); [ $? != 0 ] && [[ "$out" == *"uncommitted or untracked"* ]]; expect "gates enqueue refuses a dirty checkout" $?
+rm -f "$SW/stray"
+out=$(run gates result status); [[ "$out" == *"runner: not running"*"queue: empty"* ]]; expect "gates result status: runner, queue and recent results" $?
 
 # balance (GAU-126): shed optional load, undo it when conditions recover
 acts() { tr '\n' ';' <"$T/actions" | sed 's/;$//'; }
