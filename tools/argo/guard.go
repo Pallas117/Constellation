@@ -53,6 +53,14 @@ const (
 	swapGrowingGB = 0.3 // over swapRiseOver: high swap that is still climbing stays a risk
 	minToFloor    = 60  // minutes of battery left before the floor that still count as safe
 	historyGap    = 15 * time.Minute
+	// Coping at warn (2026-10-31, Josh "a better way to sense development demand vs mac
+	// resources"): on this 8 GB Mac the kernel says warn ~half the time while barely paging
+	// (swap 2.25 GB at warn vs 1.94 at normal over 24-31 Oct). Warn with little swap-out and
+	// memory the kernel itself counts as available is "coping", not short.
+	thrashMBMin  = 64.0            // swap-outs above this many MB/min mean the host is short, whatever the flag
+	pagingOver   = 2 * time.Minute // the shortest gap a swap-out rate is measured over
+	longJobSecs  = 15 * 60         // a job that ran longer than this needs a margin to start at warn
+	longJobExtra = 1.5             // that margin
 )
 
 // Battery is one battery reading. Watts are positive into the battery.
@@ -84,6 +92,8 @@ type Sample struct {
 	SpeedPct  int       `json:"speed,omitempty"` // the OS's CPU speed limit (100 = not throttled, 0 unknown)
 	Batt      *Battery  `json:"bat,omitempty"`
 	SwappedPc int       `json:"swapped,omitempty"` // share of compressed memory already pushed to disk (macOS)
+	AvailGB   float64   `json:"avail,omitempty"`   // what the kernel counts as available (macOS kern.memorystatus_level × RAM)
+	SwapOutGB float64   `json:"swo,omitempty"`     // swap-outs since boot (macOS vm_stat), for the paging rate
 }
 
 // Finding is one reason behind a level.
@@ -104,6 +114,9 @@ type Assessment struct {
 	DrainPctH     float64   `json:"drainPctH"`  // battery points lost per hour on battery (or on a charger that can't keep up)
 	MinToFloor    int       `json:"minToFloor"` // minutes until the battery floor at the current drain; -1 unknown
 	ChargerBehind bool      `json:"chargerBehind"`
+	PagingMBMin   float64   `json:"pagingMBMin"` // swap-outs per minute since an earlier reading; -1 unknown
+	AvailRoomGB   float64   `json:"availRoomGB"` // available memory after the reserve: what a job may take at warn
+	Coping        bool      `json:"coping"`      // at warn, but not paging and with available memory
 }
 
 func (a *Assessment) add(res, code string, l Level, format string, args ...any) {
@@ -158,6 +171,27 @@ func calmHour(hist []Sample, cur Sample) bool {
 	return true
 }
 
+// paging is swap-out MB per minute from the newest earlier reading at least
+// pagingOver old (and within historyGap), -1 when there is none or the counter
+// went back (a reboot).
+func paging(hist []Sample, cur Sample) float64 {
+	if cur.SwapOutGB <= 0 {
+		return -1
+	}
+	pts := recent(hist, cur.At, historyGap)
+	for i := len(pts) - 1; i >= 0; i-- {
+		d := cur.At.Sub(pts[i].At)
+		if d < pagingOver || pts[i].SwapOutGB <= 0 {
+			continue
+		}
+		if cur.SwapOutGB < pts[i].SwapOutGB {
+			return -1
+		}
+		return round1((cur.SwapOutGB - pts[i].SwapOutGB) * 1024 / d.Minutes())
+	}
+	return -1
+}
+
 // swapRise is the swap growth from the lowest point in the last hour to now.
 func swapRise(hist []Sample, cur Sample) float64 {
 	lo := cur.SwapGB
@@ -196,11 +230,22 @@ func assess(hist []Sample, cur Sample) Assessment {
 	a.HeadroomGB = round1(math.Max(0, cur.RAMGB-cur.InRAMGB-reserveGB))
 	a.WarnMin = int(warnWithin(hist, cur, time.Hour).Minutes())
 	a.SwapRiseGB = swapRise(hist, cur)
+	a.PagingMBMin = paging(hist, cur)
+	if cur.AvailGB > 0 {
+		a.AvailRoomGB = round1(math.Max(0, cur.AvailGB-reserveGB))
+	}
+	a.Coping = cur.Pressure == "warn" && a.PagingMBMin >= 0 && a.PagingMBMin < thrashMBMin &&
+		a.AvailRoomGB > 0 && a.SwapRiseGB < swapRiseGB
 
 	// Memory: the kernel's own level first, then how long and how fast.
 	switch {
 	case cur.Pressure == "critical":
 		a.add("memory", "mem-critical", LevelBlock, "memory pressure is critical: the OS is compressing, swapping and killing apps")
+	case a.PagingMBMin >= thrashMBMin:
+		a.add("memory", "mem-paging", LevelRisk, "swapping out %.0f MB/min: memory is short", a.PagingMBMin)
+	case a.Coping:
+		a.add("memory", "mem-warn-coping", LevelWatch, "memory pressure is at warn (%d of the last 60 min) but coping: %.1f GB available, swapping out %.0f MB/min",
+			a.WarnMin, cur.AvailGB, a.PagingMBMin)
 	case a.WarnMin >= int(sustainedWarn.Minutes()):
 		a.add("memory", "mem-warn-sustained", LevelRisk, "memory was at warn for %d of the last 60 min (alert at 30)", a.WarnMin)
 	case cur.Pressure == "warn":
@@ -374,11 +419,18 @@ func autoscale(prev Scale, a Assessment, target int, now time.Time) Scale {
 // lightJobGB is the most a job may ask for while the host is at watch.
 const lightJobGB = 1.0
 
-// admit decides whether a job that needs memGB may start now.
+// admit decides whether a job that needs memGB may start now. At warn while
+// coping, what the kernel counts as available decides, not the light-job cap:
+// the job still runs under the guard, which stops it at block.
 func admit(a Assessment, memGB float64) (bool, string) {
 	switch {
 	case a.Level >= LevelRisk:
 		return false, "host at " + a.Level.String() + ": " + worst(a)
+	case a.Coping && a.Level == LevelWatch:
+		if memGB > a.AvailRoomGB {
+			return false, fmt.Sprintf("needs %.1f GB, %.1f GB available after the %.1f GB reserve (memory at warn)", memGB, a.AvailRoomGB, reserveGB)
+		}
+		return true, fmt.Sprintf("ok at warn: coping, %.1f GB available after the reserve", a.AvailRoomGB)
 	case a.Level == LevelWatch && memGB > lightJobGB:
 		return false, fmt.Sprintf("light work only (%s); this job asks for %.1f GB, the limit is %.1f GB", worst(a), memGB, lightJobGB)
 	case memGB > a.HeadroomGB && memGB > 0:
@@ -482,6 +534,22 @@ func macMemory(vmstat string) (inRAM, demand float64) {
 	g := func(n float64) float64 { return n * ps / (1 << 30) }
 	wired, anon := p["Pages wired down"], p["Anonymous pages"]
 	return round1(g(wired + anon + p["Pages occupied by compressor"])), round1(g(wired + anon + p["Pages stored in compressor"]))
+}
+
+// swapOutGB is vm_stat's Swapouts counter (pages since boot) in GB.
+func swapOutGB(vmstat string) float64 {
+	ps, p := parseVMStat(vmstat)
+	return p["Swapouts"] * ps / (1 << 30)
+}
+
+// availGB is kern.memorystatus_level (the percentage of memory the kernel counts
+// as available: the "free percentage" memory_pressure prints) times RAM; 0 unknown.
+func availGB(level string, ramGB float64) float64 {
+	pct, err := strconv.Atoi(strings.TrimSpace(level))
+	if err != nil || pct <= 0 || pct > 100 || ramGB <= 0 {
+		return 0
+	}
+	return round1(float64(pct) / 100 * ramGB)
 }
 
 var (
