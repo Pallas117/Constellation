@@ -1153,6 +1153,7 @@ case "${1:-}" in
     while [ $# -gt 0 ]; do
       case "$1" in
         --emergency) DEPLOY_EMERGENCY=${2:-}; [ -n "$DEPLOY_EMERGENCY" ] || { echo "--emergency needs a reason" >&2; exit 2; }; shift ;;
+        -*) echo "deploy: unknown option $1 (usage: deploy <sha> [fallback dir] [--emergency <reason>])" >&2; exit 2 ;;
         *) args+=("$1") ;;
       esac
       shift

@@ -50,7 +50,8 @@ const (
 	sustainedWarn = 30 * time.Minute
 	swapRiseGB    = 1.0 // GAU-165: +1 GB of swap within 60 min while at warn
 	swapRiseOver  = 60 * time.Minute
-	minToFloor    = 60 // minutes of battery left before the floor that still count as safe
+	swapGrowingGB = 0.3 // over swapRiseOver: high swap that is still climbing stays a risk
+	minToFloor    = 60  // minutes of battery left before the floor that still count as safe
 	historyGap    = 15 * time.Minute
 	// Coping at warn (2026-10-31, Josh "a better way to sense development demand vs mac
 	// resources"): on this 8 GB Mac the kernel says warn ~half the time while barely paging
@@ -155,6 +156,21 @@ func warnWithin(hist []Sample, cur Sample, window time.Duration) time.Duration {
 	return d
 }
 
+// calmHour is true when unbroken readings cover the last hour (to within one
+// history gap) and none of them, nor now, was at warn or worse.
+func calmHour(hist []Sample, cur Sample) bool {
+	pts := append(recent(hist, cur.At, time.Hour), cur)
+	if atWarn(cur.Pressure) || cur.Pressure == "" || cur.At.Sub(pts[0].At) < time.Hour-historyGap {
+		return false
+	}
+	for i := 0; i+1 < len(pts); i++ {
+		if atWarn(pts[i].Pressure) || pts[i].Pressure == "" || pts[i+1].At.Sub(pts[i].At) > historyGap {
+			return false
+		}
+	}
+	return true
+}
+
 // paging is swap-out MB per minute from the newest earlier reading at least
 // pagingOver old (and within historyGap), -1 when there is none or the counter
 // went back (a reboot).
@@ -240,8 +256,18 @@ func assess(hist []Sample, cur Sample) Assessment {
 	if atWarn(cur.Pressure) && a.SwapRiseGB >= swapRiseGB {
 		a.add("memory", "swap-rising", LevelRisk, "swap grew %.1f GB in the last hour while at warn", a.SwapRiseGB)
 	}
+	// macOS only frees swap when the swapped pages are touched or their process
+	// exits, so "used" stays high long after pressure is back to normal. High
+	// swap is a watch only after a calm hour on record (normal throughout, swap
+	// not growing); otherwise a risk. The GAU-165 crash began at normal with
+	// 4.2 GB and no history, so "normal right now" is not enough. (2026-10-28: a
+	// stale 4.6 GB held five gate runs at normal on AC for 12 h until they gave up.)
 	if cur.SwapGB >= swapMaxGB {
-		a.add("memory", "swap-high", LevelRisk, "%.1f GB of swap in use (limit %.0f GB)", cur.SwapGB, swapMaxGB)
+		if !calmHour(hist, cur) || a.SwapRiseGB >= swapGrowingGB {
+			a.add("memory", "swap-high", LevelRisk, "%.1f GB of swap in use (limit %.0f GB)", cur.SwapGB, swapMaxGB)
+		} else {
+			a.add("memory", "swap-high", LevelWatch, "%.1f GB of swap in use (limit %.0f GB) but not growing and pressure is normal", cur.SwapGB, swapMaxGB)
+		}
 	}
 	if cur.RAMGB > 0 && a.HeadroomGB == 0 && cur.Pressure == "normal" {
 		a.add("memory", "no-headroom", LevelOK, "no spare RAM after the %.1f GB reserve (%.1f of %.0f GB held by work)", reserveGB, cur.InRAMGB, cur.RAMGB)
