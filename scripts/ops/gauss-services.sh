@@ -654,6 +654,17 @@ r["passed"] = all(r[k]["exit"] == 0 for k in ("test_ops", "test", "build", "qual
 print(json.dumps(r, ensure_ascii=False))
 ' "$tmp" "$sha" "$tree" "$(deployer)" "$(date -u +%Y-%m-%dT%H:%M:%SZ)") || return 1
   mkdir -p "$GATES_DIR"; printf '%s\n' "$json" >"$GATES_DIR/$tree.json"
+  # Keep the end of each failed gate's output (2026-10-31: "npm test 486/487" with nothing to read).
+  local g kept="$GATES_DIR/logs/$tree"
+  rm -rf "$kept"
+  for g in "${GATES[@]}"; do
+    [ "$(cat "$tmp/$g.rc" 2>/dev/null)" = 0 ] && continue
+    mkdir -p "$kept" && tail -400 "$tmp/$g.log" >"$kept/$g.log" 2>/dev/null
+  done
+  [ -d "$kept" ] && echo "Failed gate output: $kept"
+  if [ -d "$GATES_DIR/logs" ]; then # keep the last 20 (ls fails on an empty dir: pipefail + set -e)
+    ls -dt "$GATES_DIR"/logs/*/ 2>/dev/null | tail -n +21 | while IFS= read -r old; do rm -rf "$old"; done || true
+  fi
   gates_summary "$GATES_DIR/$tree.json"
   gate_record "$tree" >/dev/null
 }
@@ -746,23 +757,29 @@ gates_runner_pid() { local p; p=$(cat "$GATES_RUNNER/pid" 2>/dev/null) && [ -n "
 
 gates_start() { # start the one runner, detached from this session (own session id, no terminal), if none runs
   local p
-  if p=$(gates_runner_pid); then echo "The gate runner is working (pid $p)."; return 0; fi
-  [ "${GAUSS_GATES_START:-1}" = 1 ] || return 0 # tests
   mkdir -p "$GATES_DIR" "$LOGS"
   # The runner outlives the checkout that queued it (sessions' worktrees get removed): run a copy.
-  # Renamed into place, so a runner still reading the old copy keeps it.
-  cp "$0" "$GATES_DIR/runner.sh.$$" && mv -f "$GATES_DIR/runner.sh.$$" "$GATES_DIR/runner.sh" || return 1
+  # Renamed into place, so a runner still reading the old copy keeps it. Refreshed on every enqueue,
+  # even with a runner alive (2026-10-31: a runner that never idles kept running old queue code for
+  # days); the runner re-runs itself when it sees the new copy.
+  if ! cmp -s "$0" "$GATES_DIR/runner.sh"; then
+    cp "$0" "$GATES_DIR/runner.sh.$$" && mv -f "$GATES_DIR/runner.sh.$$" "$GATES_DIR/runner.sh" || return 1
+  fi
+  if p=$(gates_runner_pid); then echo "The gate runner is working (pid $p)."; return 0; fi
+  [ "${GAUSS_GATES_START:-1}" = 1 ] || return 0 # tests
   nohup perl -MPOSIX -e 'POSIX::setsid(); exec @ARGV' /bin/bash "$GATES_DIR/runner.sh" gates run \
     </dev/null >>"$LOGS/gates-runner.log" 2>&1 &
   echo "Gate runner started (log: $LOGS/gates-runner.log)."
 }
 
 gates_run() { # gates_run [--once]: work through the queue, oldest first, then exit; --once: stop after one wait that gave up
-  local once=${1:-} self req sha tree queued rc pid
+  local once=${1:-} self req sha tree queued rc pid me
   self="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
+  me=$(shasum "$self" | cut -d' ' -f1)
   mkdir -p "$GATES_QUEUE"
   until mkdir "$GATES_RUNNER" 2>/dev/null; do
     pid=$(cat "$GATES_RUNNER/pid" 2>/dev/null || true)
+    [ "$pid" = "$$" ] && break # this runner, re-run on a newer copy of itself: the lock is still ours
     if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then echo "The gate runner is already working (pid $pid)."; return 0; fi
     # No pid yet: another runner is starting, unless that was long ago.
     [ -z "$pid" ] && [ "$(mtime_age_min "$GATES_RUNNER")" -lt 1 ] && { echo "Another gate runner is starting."; return 0; }
@@ -771,6 +788,10 @@ gates_run() { # gates_run [--once]: work through the queue, oldest first, then e
   echo $$ >"$GATES_RUNNER/pid"
   trap 'rm -rf "$GATES_RUNNER"' EXIT
   while req=$(ls "$GATES_QUEUE"/*.req 2>/dev/null | sort | head -1) && [ -n "$req" ]; do
+    if [ "$(shasum "$self" | cut -d' ' -f1)" != "$me" ]; then
+      echo "$(date '+%F %T') runner code changed: re-running the new copy"
+      exec /bin/bash "$self" gates run $once
+    fi
     sha=$(req_get "$req" sha); tree=$(req_get "$req" tree); queued=$(req_get "$req" queued)
     if [ $(( $(date +%s) - ${queued:-0} )) -ge $(( GATES_EXPIRE_H * 3600 )) ]; then
       gates_result "$sha" "$tree" EXPIRED "waited over ${GATES_EXPIRE_H} h for memory or power; enqueue it again"
@@ -824,6 +845,17 @@ gates_run_one() { # gates_run_one <request>: check out, install if the lockfile 
     (cd "$co" && PATH="$(dirname "$NODE"):$PATH" npm ci --no-audit --no-fund >"$GATES_DIR/runs/$sha.install.log" 2>&1) \
       || { gates_fail "npm ci failed (log: $GATES_DIR/runs/$sha.install.log)"; return 1; }
     echo "$lock" >"$co/node_modules/.gauss-lock"
+  fi
+  # The native MHD kernel is built by npm ci, so it went stale when only its C++ changed: a commit
+  # was tested against another commit's build/ (2026-10-31). Rebuild when its sources differ.
+  if [ -f "$co/binding.gyp" ]; then
+    local native; native=$(cat "$co/binding.gyp" "$co"/backend/cpp/* 2>/dev/null | shasum | cut -d' ' -f1)
+    if [ "$(cat "$co/build/.gauss-native" 2>/dev/null)" != "$native" ]; then
+      echo "Rebuilding the native kernel in $co ..."
+      (cd "$co" && PATH="$(dirname "$NODE"):$PATH" node_modules/.bin/node-gyp rebuild >"$GATES_DIR/runs/$sha.native.log" 2>&1) \
+        || { gates_fail "native build failed (log: $GATES_DIR/runs/$sha.native.log)"; return 1; }
+      echo "$native" >"$co/build/.gauss-native"
+    fi
   fi
   out=$(GAUSS_BY=$by; gates_record "$co" 2>&1) || rc=$?
   printf '%s\n' "$out" >"$GATES_DIR/runs/$sha.log"
