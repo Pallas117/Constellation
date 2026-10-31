@@ -43,9 +43,9 @@
 # learning job (03:00, or on next wake) rebuilds the nowcast dataset from the
 # data collected so far and records a new model version; an awake guard keeps
 # the Mac awake with the lid closed, except on battery at or below
-# GAUSS_AWAKE_MIN_BATTERY% (default 10, the mesh's critical-battery level), where it
-# lets the Mac sleep again. It texts the phone (via `argo notify`) at
-# GAUSS_AWAKE_WARN_BATTERY% (default 20), at the floor, and when the charger can't keep up.
+# GAUSS_AWAKE_MIN_BATTERY% (default 40), where it lets the Mac sleep again. It texts
+# the phone (via `argo notify`) at GAUSS_AWAKE_WARN_BATTERY% (default 50), at the floor,
+# and when the charger can't keep up.
 # The site is shared at GAUSS_PUBLIC_URL (default: this Mac's tailnet name over
 # HTTP, encrypted by Tailscale; never exposed to the internet). It is built with a
 # same-origin API (/api, /ws), so the one build works at http://127.0.0.1:8080 on
@@ -63,10 +63,11 @@ LABELS=(uk.lightbound.gauss-backend uk.lightbound.gauss-frontend uk.lightbound.g
 SERVICES=(uk.lightbound.gauss-backend uk.lightbound.gauss-frontend)
 SUDOERS="${GAUSS_SUDOERS:-/etc/sudoers.d/gauss-awake}" # override only in tests
 AWAKE_OFF="$HOME/Library/Application Support/Gauss/awake-off"
-# Same floor the mesh uses for its own devices: below 10% a device is flagged
-# (backend/services/device-registry.ts) and swapped out (device-swap-manager.ts).
-AWAKE_MIN_BATTERY="${GAUSS_AWAKE_MIN_BATTERY:-10}"
-AWAKE_WARN_BATTERY="${GAUSS_AWAKE_WARN_BATTERY:-20}" # phone warning before the floor
+# 40%, not the mesh's 10% critical level: heavy jobs never run on battery anyway, and an
+# awake Mac drained a worn battery to 10% overnight (2026-10-28), leaving nothing for the
+# day. Staying awake on battery only covers short trips away from the charger.
+AWAKE_MIN_BATTERY="${GAUSS_AWAKE_MIN_BATTERY:-40}"
+AWAKE_WARN_BATTERY="${GAUSS_AWAKE_WARN_BATTERY:-50}" # phone warning (and load shedding) before the floor
 ARGO="${ARGO:-$HOME/.local/bin/argo}"
 # Memory uses the kernel's pressure level (kern.memorystatus_vm_pressure_level: 1 normal, 2 warn,
 # 4 critical) and swap in GB; see memory_stats for why not "free %" or swap "% used".
@@ -866,7 +867,10 @@ balance() { # balance [--dry-run]
   read -r level swap free < <(memory_stats); disk=$(disk_free_gb)
   { [ "$level" -ge "$MEM_SHED_LEVEL" ] || swap_high "$swap"; } && mem_short=1
   [ $on_battery = 1 ] && [ "$pct" -le "$AWAKE_WARN_BATTERY" ] && batt_low=1
-  { [ $on_battery = 0 ] || [ "${pct:-0}" -gt $((AWAKE_WARN_BATTERY + 10)) ]; } && recovered=1
+  # On AC only counts when it is gaining: a weak charger losing ground flapped learning and Low Power
+  # Mode on and off at 10-14% (balance.log 27-28 Oct).
+  local gaining=0; [ $on_battery = 0 ] && [[ "$batt" != *"discharging"* && "$batt" != *"not charging"* ]] && gaining=1
+  { [ $gaining = 1 ] || [ "${pct:-0}" -gt $((AWAKE_WARN_BATTERY + 10)) ]; } && recovered=1
   local notify=() quiet=()
   act() { if [ $dry = 1 ]; then echo "would: $*"; else "$@" >/dev/null 2>&1 || true; fi; }
 
