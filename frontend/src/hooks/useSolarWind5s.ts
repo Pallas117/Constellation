@@ -70,10 +70,14 @@ export function useSolarWind5s({ history = true, backfillMs = SERIES_WINDOW_MS }
     () => (pushed.length > 0 ? mergeSeries(feed.data, pushed) : feed.data ?? NO_POINTS),
     [feed.data, pushed],
   );
-  // Each poll catches up with what was pushed: keep only the points it doesn't hold yet.
-  useEffect(() => {
+  // Each poll catches up with what was pushed: keep only the points it doesn't hold yet. Done
+  // while rendering when the polled series changes (React's "adjust state when an input
+  // changes"), not in an effect, so it costs no extra render pass.
+  const [polled, setPolled] = useState(feed.data);
+  if (polled !== feed.data) {
+    setPolled(feed.data);
     setPushed((prev) => pendingAfter(prev, feed.data));
-  }, [feed.data]);
+  }
 
   useEffect(() => {
     const wsEnabled = String(import.meta.env.VITE_HELIO_WS_ENABLED ?? "false") === "true";
