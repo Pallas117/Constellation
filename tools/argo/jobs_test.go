@@ -138,7 +138,8 @@ func TestAppendJobTrims(t *testing.T) {
 // TestGuardRunLearns: a real guarded run records its peak, the job sees
 // ARGO_WORKERS, and after three runs the measurement decides admission.
 func TestGuardRunLearns(t *testing.T) {
-	// Tests run under `argo guard run` (claude-heavy), which sets these; a caller's value wins.
+	// Run under `argo guard run` (claude-heavy), the test itself inherits ARGO_WORKERS and
+	// ARGO_HEADROOM_GB, and a caller's value rightly wins over the computed one.
 	for _, k := range []string{"ARGO_WORKERS", "ARGO_HEADROOM_GB"} {
 		t.Setenv(k, "")
 		os.Unsetenv(k)

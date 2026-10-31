@@ -433,10 +433,21 @@ func admit(a Assessment, memGB float64) (bool, string) {
 		return true, fmt.Sprintf("ok at warn: coping, %.1f GB available after the reserve", a.AvailRoomGB)
 	case a.Level == LevelWatch && memGB > lightJobGB:
 		return false, fmt.Sprintf("light work only (%s); this job asks for %.1f GB, the limit is %.1f GB", worst(a), memGB, lightJobGB)
-	case memGB > a.HeadroomGB && memGB > 0:
-		return false, fmt.Sprintf("needs %.1f GB, %.1f GB free after the %.1f GB reserve", memGB, a.HeadroomGB, reserveGB)
+	case memGB > roomFor(a) && memGB > 0:
+		return false, fmt.Sprintf("needs %.1f GB, %.1f GB free after the %.1f GB reserve", memGB, roomFor(a), reserveGB)
 	}
 	return true, "ok"
+}
+
+// roomFor is the memory a new job may take when the host is not at warn: RAM
+// not held by work, or what the kernel counts as available (it includes file
+// cache it can drop) when that is larger and the host isn't paging. Without the
+// second, a job could start at warn-but-coping yet be refused at normal.
+func roomFor(a Assessment) float64 {
+	if a.AvailRoomGB > a.HeadroomGB && a.PagingMBMin >= 0 && a.PagingMBMin < thrashMBMin {
+		return a.AvailRoomGB
+	}
+	return a.HeadroomGB
 }
 
 // worst is the text of the most severe finding.
