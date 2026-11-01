@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildAuroraGrid, latLonGridHarmonics, sphericalHarmonics } from "./healpix.js";
+import { auroraGridKey, buildAuroraGrid, latLonGridHarmonics, sphericalHarmonics } from "./healpix.js";
 import type { CanonicalSpaceWeatherPoint } from "../types.js";
 
 const point = {
@@ -64,4 +64,21 @@ test("aurora grid at nside 64 builds within its 1 s pipeline budget", () => {
     runs.push(`wall ${wallMs.toFixed(0)}ms / cpu ${cpuMs.toFixed(0)}ms`);
   }
   assert.fail(`every run exceeded ${budgetMs}ms: ${runs.join(", ")}`);
+});
+
+test("auroraGridKey covers every input of buildAuroraGrid: a reused grid is the grid a rebuild would give", () => {
+  // `point` above has only these four fields, so buildAuroraGrid reads nothing else.
+  const extra = { ...point, density: 9, speed: 700, timestamp: "2026-11-01T00:00:00Z" } as unknown as CanonicalSpaceWeatherPoint;
+  assert.equal(auroraGridKey(extra), auroraGridKey(point));
+  assert.deepEqual(buildAuroraGrid(extra, 8).grid, buildAuroraGrid(point, 8).grid);
+  const changed: Array<[string, CanonicalSpaceWeatherPoint]> = [
+    ["kp", { ...point, indices: { kp: 6 } } as unknown as CanonicalSpaceWeatherPoint],
+    ["bz", { ...point, magneticField: { z: -9 } } as unknown as CanonicalSpaceWeatherPoint],
+    ["newell", { ...point, coupling: { newell: 9000 } } as unknown as CanonicalSpaceWeatherPoint],
+    ["ey", { ...point, electricField: { ey: 3 } } as unknown as CanonicalSpaceWeatherPoint],
+  ];
+  for (const [name, p] of changed) {
+    assert.notEqual(auroraGridKey(p), auroraGridKey(point), `${name} must change the key`);
+    assert.notDeepEqual(buildAuroraGrid(p, 8).grid, buildAuroraGrid(point, 8).grid, `${name} changes the grid`);
+  }
 });

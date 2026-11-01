@@ -49,3 +49,6 @@ data/mesh/
 data/commerce/
 # Telemetry archives written by the retention job (gzip + manifest; GAU-157). Never commit them.
 data/bedrock/archive/
+# Prebuilt backend (gauss-services.sh prebuild_backend, live and fallback checkouts only)
+backend/**/*.js
+shared/**/*.js
