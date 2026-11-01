@@ -189,8 +189,8 @@ func (l Loop) Tick(ctx context.Context) State {
 		case class == Offline: // a Mac with no network can't send it; it would arrive stale
 		case quiet > 0: // this network usually clears it by itself: say so only if it lasts longer
 			st.NotifyDue = now.Add(quiet)
-		default:
-			l.Fx.Notify("Argo: "+string(class), reason+"\n"+st.Net.Line()) // rate limit: only on class change
+		default: // rate limit: only on class change
+			l.Fx.Notify("Argo: "+string(class), reason+"\n"+st.Net.Line()+fixHint(Plan(class, snap, st.Networks[fp].Fixes[class])))
 			st.Notified = true
 		}
 	}
