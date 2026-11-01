@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"os/exec"
 	"strings"
 	"time"
 )
@@ -29,8 +31,11 @@ func Plan(c Class, s Snapshot, remembered string) []Action {
 	case Captive:
 		a = append(a, Action{ID: "open-portal", Say: "Wi-Fi login page detected; opening it.", Command: "open http://captive.apple.com", Auto: true})
 	case DNS:
+		if s.DNSDirectOK && s.Tailscale.Running { // the network answers; Tailscale's resolver doesn't
+			a = append(a, Action{ID: "check-magicdns", Say: "Tailscale's DNS is stuck while the network's DNS works. Toggle Tailscale off and on, or for now:", Command: "tailscale set --accept-dns=false"})
+		}
 		a = append(a, Action{ID: "flush-dns", Say: "DNS is failing. Flush the resolver cache:", Command: "sudo dscacheutil -flushcache; sudo killall -HUP mDNSResponder", Admin: true})
-		if s.Tailscale.Running {
+		if s.Tailscale.Running && !s.DNSDirectOK {
 			a = append(a, Action{ID: "check-magicdns", Say: "If it persists, MagicDNS may be stuck:", Command: "tailscale set --accept-dns=false"})
 		}
 	case DeadProxy:
@@ -80,6 +85,7 @@ const settleDelay = 10 * time.Second
 type Effects interface {
 	Notify(title, msg string)
 	Open(url string) error
+	Run(name string, args ...string) error // only the Wi-Fi shield's warp-cli connect/disconnect
 	Sleep(d time.Duration)
 	Now() time.Time
 }
@@ -92,7 +98,17 @@ func (f realEffects) Notify(title, msg string) {
 		f.phone.Send(title, msg, time.Now())
 	}
 }
-func (realEffects) Open(u string) error   { return openURL(u) }
+func (realEffects) Open(u string) error { return openURL(u) }
+func (realEffects) Run(name string, args ...string) error {
+	if name == "warp-cli" {
+		if name = warpCLI(); name == "" {
+			return errors.New("warp-cli not found")
+		}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	return exec.CommandContext(ctx, name, args...).Run()
+}
 func (realEffects) Sleep(d time.Duration) { time.Sleep(d) }
 func (realEffects) Now() time.Time        { return time.Now() }
 
@@ -123,7 +139,7 @@ func (l Loop) Tick(ctx context.Context) State {
 		class, reason = Classify(snap)
 	}
 	now := l.Fx.Now()
-	fp := Fingerprint(snap.GatewayMAC, snap.PublicIP)
+	fp := netFingerprint(snap)
 	// With the link down (or the internet unreachable) there is no public IP and
 	// often no gateway: that is still the network we were on, so the incident
 	// and what Argo learns from it belong to it, not to an empty fingerprint.
@@ -135,10 +151,16 @@ func (l Loop) Tick(ctx context.Context) State {
 			st.Networks[fp] = Net{FirstSeen: now, Fixes: map[Class]string{}}
 		}
 	}
-	prev := st.Class
+	prev, prevPublicIP := st.Class, st.PublicIP
 	st.Fingerprint, st.Loc, st.CheckedAt, st.Tailscale = fp, snap.Loc, now, snap.Tailscale
-	st.Gateway, st.GatewayMAC = snap.Gateway, snap.GatewayMAC
+	if fp != "" {
+		l.watchNeighbours(&st, snap, fp, prevPublicIP) // before Gateway/GatewayMAC move on
+	}
+	st.Gateway, st.GatewayMAC, st.PublicIP = snap.Gateway, snap.GatewayMAC, snap.PublicIP
 	st.Net = ScoreNet(snap)
+	if fp != "" {
+		l.shield(ctx, &st, snap, fp)
+	}
 	l.say("%s  %s", class, reason)
 
 	if !class.Blocking() {
@@ -154,18 +176,24 @@ func (l Loop) Tick(ctx context.Context) State {
 	}
 
 	if class != prev {
-		if prev.Blocking() { // one failure turned into another: close the old incident
+		flip := prev.Blocking() // one failure turned into another: the log closes the old class
+		if flip {
 			_ = l.Store.Append(Incident{Time: now, Event: "superseded", Class: prev, Fingerprint: fp})
 		}
-		st.IncidentAt, st.Attempts, st.LastFix, st.IncidentFP = now, 0, "", fp
-		st.Notified, st.NotifyDue = false, time.Time{}
 		_ = l.Store.Append(Incident{Time: now, Event: "open", Class: class, Fingerprint: fp, Detail: reason})
+		// A slow hotspot flips between DNS and PORT_BLOCK (2026-10-27 19:53-19:59). That is
+		// one outage: keep its start, attempts and backoff, and don't text again for it.
+		if !flip {
+			st.IncidentAt, st.Attempts, st.LastFix, st.IncidentFP = now, 0, "", fp
+			st.Notified, st.NotifyDue = false, time.Time{}
+		}
 		switch quiet := st.Networks[fp].quietFor(class); {
+		case flip && (st.Notified || !st.NotifyDue.IsZero()): // already told, or already scheduled
 		case class == Offline: // a Mac with no network can't send it; it would arrive stale
 		case quiet > 0: // this network usually clears it by itself: say so only if it lasts longer
 			st.NotifyDue = now.Add(quiet)
-		default:
-			l.Fx.Notify("Argo: "+string(class), reason+"\n"+st.Net.Line()) // rate limit: only on class change
+		default: // rate limit: only on class change
+			l.Fx.Notify("Argo: "+string(class), reason+"\n"+st.Net.Line()+fixHint(Plan(class, snap, st.Networks[fp].Fixes[class])))
 			st.Notified = true
 		}
 	}

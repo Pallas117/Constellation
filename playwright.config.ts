@@ -21,9 +21,14 @@ const server =
     : `npm run build -- --outDir ${OUT_DIR} --emptyOutDir --logLevel warn && ` +
       `npm run preview -- --outDir ${OUT_DIR} --host 127.0.0.1 --port ${port} --strictPort`;
 
+// Under `argo guard run` (claude-heavy), ARGO_WORKERS is how many browsers this host can afford
+// right now: 1 at memory warn. Without it, Playwright's default (half the logical cores).
+const workers = Number(process.env.ARGO_WORKERS) || undefined;
+
 export default defineConfig({
   testDir: "./tests/e2e",
   fullyParallel: false,
+  workers,
   timeout: 45_000,
   expect: {
     timeout: 10_000,

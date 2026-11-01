@@ -14,16 +14,29 @@
  * Scales: https://www.swpc.noaa.gov/noaa-scales-explanation
  */
 import type { CanonicalSpaceWeatherPoint, ParticleReading, ScaleReading, XrayReading } from "../types.js";
+import { freshnessLabel, freshnessMs, type FreshnessKey } from "../../shared/policy/freshness.js";
 
 /** NOAA S-scale lower bounds on the GOES ≥10 MeV integral proton flux, in pfu (S1…S5). */
 export const S_SCALE_PFU = [10, 1e2, 1e3, 1e4, 1e5] as const;
 export const S_SCALE_CHANNEL = ">=10 MeV";
 
+type KpKind = CanonicalSpaceWeatherPoint["indices"]["kpKind"];
+
 /**
- * A Kp value older than this is not current. The completed 3-hour Kp is used for
- * up to 6 h (see currentKp in adapters/noaa-swpc.ts), so the same bound applies.
+ * A Kp value older than this is not current: the completed 3-hour Kp's bound, the longest a
+ * Kp reading is used (see currentKp in adapters/noaa-swpc.ts).
  */
-export const KP_MAX_AGE_MS = 6 * 60 * 60 * 1000;
+export const KP_MAX_AGE_MS = freshnessMs("kp_planetary_3h");
+
+/**
+ * The freshness rule for a Kp reading of either NOAA product: the running estimate is published
+ * every minute, so it expires sooner than a completed 3-hour value. An unknown product gets the
+ * shorter bound.
+ */
+export const kpFreshnessKey = (kind: KpKind): FreshnessKey => (kind === "planetary-3h" ? "kp_planetary_3h" : "kp_estimated_1m");
+
+/** Maximum age of a Kp reading of `kind`, in ms. */
+export const kpMaxAgeMs = (kind: KpKind): number => freshnessMs(kpFreshnessKey(kind));
 
 const UNKNOWN = (scale: "S" | "G" | "R", basis: string, observedAt: string | null = null): ScaleReading => ({
   level: null,
@@ -59,7 +72,9 @@ export function geomagneticStorm(indices: CanonicalSpaceWeatherPoint["indices"],
   const observedAt = indices.kpObservedAt ?? null;
   if (!indices.kpKind || !observedAt) return UNKNOWN("G", "No NOAA Kp reading");
   const age = nowMs - Date.parse(observedAt);
-  if (!Number.isFinite(age) || age > KP_MAX_AGE_MS) return UNKNOWN("G", "Kp reading is older than 6 h", observedAt);
+  if (!Number.isFinite(age) || age > kpMaxAgeMs(indices.kpKind)) {
+    return UNKNOWN("G", `Kp reading is older than ${freshnessLabel(kpFreshnessKey(indices.kpKind))}`, observedAt);
+  }
   if (!Number.isFinite(indices.kp)) return UNKNOWN("G", "Kp is not a number", observedAt);
   const level = Math.min(5, Math.max(0, Math.floor(indices.kp) - 4)) as ScaleReading["level"];
   const kind = indices.kpKind === "estimated-1m" ? "running 3-hour estimate" : "last completed 3-hour Kp";

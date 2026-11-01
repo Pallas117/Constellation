@@ -7,12 +7,15 @@
 //   npm run org -- add-member <org-id> <email>      (they must have signed in once)
 //   npm run org -- remove-member <org-id> <email>
 //   npm run org -- usage <org-id> [YYYY-MM]          (for invoicing / pilot evidence)
+//   npm run org -- usage-csv <org-id> <from YYYY-MM> [to YYYY-MM] > usage.csv
+//                                                    (trust records per spacecraft-month, GAU-70)
 //   npm run org -- leads                             ("Request a pilot" submissions)
 import Database from "better-sqlite3";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { isPlan, PLANS } from "../commerce/plans.js";
 import { CommerceStore } from "../commerce/store.js";
+import { summarise, trustUsageCsv } from "../commerce/usage-export.js";
 
 const store = new CommerceStore(path.resolve(process.env.COMMERCE_DB_PATH ?? "data/commerce/commerce.db"));
 const [cmd, ...args] = process.argv.slice(2);
@@ -73,6 +76,18 @@ switch (cmd) {
     for (const r of rows) byEndpoint.set(r.endpoint, (byEndpoint.get(r.endpoint) ?? 0) + r.count);
     console.log(`${o.name} (${o.plan}) API usage for ${month}: ${rows.reduce((n, r) => n + r.count, 0)} requests`);
     for (const [endpoint, n] of [...byEndpoint].sort((a, b) => b[1] - a[1])) console.log(`  ${String(n).padStart(8)}  ${endpoint}`);
+    const trust = summarise(store.trustUsage(o.id, month, month));
+    console.log(`Trust records issued: ${trust.records} across ${trust.spacecraftMonths} spacecraft (npm run org -- usage-csv for the invoice lines)`);
+    break;
+  }
+  case "usage-csv": {
+    const [id, from, to = from] = args;
+    const o = org(id);
+    if (!from || !/^\d{4}-\d{2}$/.test(from) || !/^\d{4}-\d{2}$/.test(to) || to < from) fail("Usage: npm run org -- usage-csv <org-id> <from YYYY-MM> [to YYYY-MM]");
+    const rows = store.trustUsage(o.id, from, to);
+    process.stdout.write(trustUsageCsv(o.name, rows));
+    const s = summarise(rows);
+    console.error(`${o.name}: ${s.records} trust records, ${s.spacecraftMonths} spacecraft-months, ${from} to ${to}`);
     break;
   }
   case "leads": {
@@ -85,5 +100,5 @@ switch (cmd) {
     break;
   }
   default:
-    fail("Usage: npm run org -- <list|create|plan|add-member|remove-member|usage|leads> …");
+    fail("Usage: npm run org -- <list|create|plan|add-member|remove-member|usage|usage-csv|leads> …");
 }

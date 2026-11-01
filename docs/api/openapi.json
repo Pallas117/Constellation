@@ -1,33 +1,37 @@
 {
   "openapi": "3.1.0",
   "info": {
-    "title": "Gauss data API",
+    "title": "Gauss pilot API",
     "version": "0.1.0",
-    "summary": "Organisation-key machine API for refined space-weather data and PR-01 trust records.",
-    "description": "Mounted at /api/v1 (backend/commerce/routers.ts, createDataApiRouter). Every call needs an organisation API key. The organisation's plan must include API access; each key has a per-minute limit and each organisation a daily quota. Successful calls (status < 400) are metered by route template for invoicing. backend/openapi.test.ts fails if a route here and a route in the router drift apart."
+    "summary": "The HTTP routes a Fleet Integration pilot calls: refined space-weather data and PR-01 trust records by organisation API key, organisation key and usage self-service by signed-in session, and the public health summary.",
+    "description": "Each operation states its access in `security` and in `x-gauss-access`:\n\n- `/api/v1/*` (`api-key`): an organisation API key, `Authorization: Bearer gk_…`. Mounted before session auth (backend/commerce/routers.ts, createDataApiRouter). The organisation's plan must include API access; each key has a per-minute limit and each organisation a daily quota. Successful calls (status < 400) are metered by route template, never by query string.\n- `/api/orgs/*` (`user`): a signed-in Gauss session with at least the `user` role (backend/rbac.ts, API_POLICY). The router also requires membership of the organisation; operators and admins may read any organisation's usage. Organisations, plans and members are managed by an admin with `npm run org`.\n- `GET /health` (`public`): no credentials; `x-public-reason` says why.\n\nEvery `/api` request first passes CyberTiger, the server's intrusion guard. It answers 429 when the client IP is over its per-IP rate limit or blocked, and 400 when a request matches an attack signature, with `{ \"error\", \"requestId\" }`. Repeated 401 and 403 responses from one IP block that IP for a while, so fix credentials rather than retrying. Every `/api` response carries an `x-request-id` header; quote it when reporting a problem.\n\nUnknown values are never filled with guesses: each schema says how it shows them (null, `unknown`, or quality flags on a carried-forward point). Fields may be added within 0.x; ignore fields you don't know.\n\nErrors are JSON `{ \"error\": \"…\" }`. A request body that is not valid JSON, or is over 2 MB, is answered 500 by the server's error handler, not 400.\n\nNot covered: sign-in (`/api/auth/*`, served by better-auth); customer-log ingest and evidence packs (PR-03a and PR-04 are command-line tools, `npm run trust:ingest` and `npm run trust:verify`, with no HTTP routes); admin tooling. backend/commerce/openapi.test.ts fails if a pilot route and this file drift apart."
   },
-  "servers": [{ "url": "/api/v1", "description": "Relative to the Gauss backend origin" }],
+  "servers": [{ "url": "/", "description": "The Gauss backend origin (default http://127.0.0.1:3001)" }],
   "security": [{ "apiKey": [] }],
   "paths": {
-    "/data/space-weather/latest": {
+    "/api/v1/data/space-weather/latest": {
       "get": {
+        "x-gauss-access": "api-key",
         "operationId": "getLatestSpaceWeather",
         "summary": "Most recent refined space-weather point",
+        "description": "The newest point from the live feed. A point whose values were measured more than 15 minutes ago is still returned, but flagged stale (quality.stale and quality.lowConfidence true, quality.tier 3).",
         "responses": {
           "200": {
-            "description": "The latest point",
+            "description": "The latest point; check `quality` before treating its values as current",
             "headers": { "X-Quota-Limit": { "$ref": "#/components/headers/QuotaLimit" }, "X-Quota-Remaining": { "$ref": "#/components/headers/QuotaRemaining" } },
             "content": { "application/json": { "schema": { "$ref": "#/components/schemas/PointResponse" } } }
           },
-          "404": { "$ref": "#/components/responses/NoData" },
+          "400": { "$ref": "#/components/responses/GuardRefused" },
           "401": { "$ref": "#/components/responses/Unauthorized" },
           "403": { "$ref": "#/components/responses/PlanForbidden" },
+          "404": { "$ref": "#/components/responses/NoData" },
           "429": { "$ref": "#/components/responses/RateLimited" }
         }
       }
     },
-    "/data/space-weather/history": {
+    "/api/v1/data/space-weather/history": {
       "get": {
+        "x-gauss-access": "api-key",
         "operationId": "getSpaceWeatherHistory",
         "summary": "Refined space-weather points over a lookback window",
         "parameters": [
@@ -50,14 +54,16 @@
             "headers": { "X-Quota-Limit": { "$ref": "#/components/headers/QuotaLimit" }, "X-Quota-Remaining": { "$ref": "#/components/headers/QuotaRemaining" } },
             "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HistoryResponse" } } }
           },
+          "400": { "$ref": "#/components/responses/GuardRefused" },
           "401": { "$ref": "#/components/responses/Unauthorized" },
           "403": { "$ref": "#/components/responses/PlanForbidden" },
           "429": { "$ref": "#/components/responses/RateLimited" }
         }
       }
     },
-    "/data/sources/status": {
+    "/api/v1/data/sources/status": {
       "get": {
+        "x-gauss-access": "api-key",
         "operationId": "getSourceStatus",
         "summary": "Health of each upstream data source",
         "responses": {
@@ -66,17 +72,19 @@
             "headers": { "X-Quota-Limit": { "$ref": "#/components/headers/QuotaLimit" }, "X-Quota-Remaining": { "$ref": "#/components/headers/QuotaRemaining" } },
             "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SourcesResponse" } } }
           },
+          "400": { "$ref": "#/components/responses/GuardRefused" },
           "401": { "$ref": "#/components/responses/Unauthorized" },
           "403": { "$ref": "#/components/responses/PlanForbidden" },
           "429": { "$ref": "#/components/responses/RateLimited" }
         }
       }
     },
-    "/data/trust/records": {
+    "/api/v1/data/trust/records": {
       "post": {
+        "x-gauss-access": "api-key",
         "operationId": "createTrustRecords",
         "summary": "PR-01: a trust record for one inference, or a batch",
-        "description": "Send one inference object, or {\"inferences\": [...]} with 1 to 100 items. Each item is validated on its own: in a batch, invalid items come back in `rejected` with their errors and are never guessed. Inference times older than the plan's lookback are refused (older windows are a replay pilot, PR-03). The environment is read from Gauss's held history at the inference time; records state their sources, ages, confidence and limitations.",
+        "description": "Send one inference object, or {\"inferences\": [...]} with 1 to 100 items. Each item is validated on its own: in a batch, invalid items come back in `rejected` with their errors and are never guessed. Inference times older than the plan's lookback are refused (older windows are a replay pilot, PR-03). The environment is read from Gauss's held history at the inference time; records state their sources, ages, confidence and limitations. Every record returned is logged once (spacecraft and month) for invoicing before the response is sent; rejected items are not logged.",
         "requestBody": {
           "required": true,
           "content": {
@@ -106,16 +114,124 @@
             }
           },
           "400": {
-            "description": "Invalid single inference, or a batch outside 1..100 items",
+            "description": "Invalid single inference (with `errors`), a batch outside 1..100 items, or CyberTiger refused the request (with `requestId`)",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/PlanForbidden" },
+          "429": { "$ref": "#/components/responses/RateLimited" },
+          "500": {
+            "description": "The usage log for invoicing could not be written, so no records were issued; safe to retry. Also returned when the body is not valid JSON or is over 2 MB.",
             "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
           },
           "503": {
             "description": "This server does not offer trust records (no environment history)",
             "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
-          },
-          "401": { "$ref": "#/components/responses/Unauthorized" },
+          }
+        }
+      }
+    },
+    "/api/orgs/mine": {
+      "get": {
+        "security": [{ "session": [] }],
+        "x-gauss-access": "user",
+        "operationId": "listMyOrgs",
+        "summary": "Your organisations, their plan limits and API keys",
+        "description": "Organisations the signed-in user is a member of, each with its plan limits and every API key it has had (active and revoked), oldest first. Keys are listed by prefix only; the secret is never shown again. An empty list when you are in no organisation: an admin adds members with `npm run org -- add-member`.",
+        "responses": {
+          "200": { "description": "Your organisations", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/OrgsResponse" } } } },
+          "400": { "$ref": "#/components/responses/GuardRefused" },
+          "401": { "$ref": "#/components/responses/SessionRequired" },
+          "429": { "$ref": "#/components/responses/GuardLimited" }
+        }
+      }
+    },
+    "/api/orgs/{orgId}/keys": {
+      "post": {
+        "security": [{ "session": [] }],
+        "x-gauss-access": "user",
+        "operationId": "createApiKey",
+        "summary": "Create an API key for your organisation",
+        "description": "Members only. The plain key is in this response and nowhere else: Gauss stores only its SHA-256. Put it in a secret manager; never in a URL, a log or source control.",
+        "parameters": [
+          { "name": "orgId", "in": "path", "required": true, "description": "Organisation id, from `GET /api/orgs/mine`", "schema": { "type": "string", "format": "uuid" } }
+        ],
+        "requestBody": { "required": false, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CreateKeyRequest" } } } },
+        "responses": {
+          "201": { "description": "The new key, shown once", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CreatedKey" } } } },
+          "400": { "$ref": "#/components/responses/GuardRefused" },
+          "401": { "$ref": "#/components/responses/SessionRequired" },
           "403": { "$ref": "#/components/responses/PlanForbidden" },
-          "429": { "$ref": "#/components/responses/RateLimited" }
+          "404": { "$ref": "#/components/responses/OrgNotFound" },
+          "429": { "$ref": "#/components/responses/GuardLimited" },
+          "500": { "$ref": "#/components/responses/BodyUnreadable" }
+        }
+      }
+    },
+    "/api/orgs/{orgId}/keys/{keyId}": {
+      "delete": {
+        "security": [{ "session": [] }],
+        "x-gauss-access": "user",
+        "operationId": "revokeApiKey",
+        "summary": "Revoke one of your organisation's API keys",
+        "description": "Members only. Takes effect at once: the next call with that key gets 401. Revoked keys stay listed, with revokedAt.",
+        "parameters": [
+          { "name": "orgId", "in": "path", "required": true, "description": "Organisation id, from `GET /api/orgs/mine`", "schema": { "type": "string", "format": "uuid" } },
+          { "name": "keyId", "in": "path", "required": true, "description": "Key id (ApiKeyInfo.id), not the key itself", "schema": { "type": "string", "format": "uuid" } }
+        ],
+        "responses": {
+          "204": { "description": "Revoked" },
+          "400": { "$ref": "#/components/responses/GuardRefused" },
+          "401": { "$ref": "#/components/responses/SessionRequired" },
+          "404": { "description": "Not a member of the organisation, no such key in it, or the key was already revoked. No body." },
+          "429": { "$ref": "#/components/responses/GuardLimited" }
+        }
+      }
+    },
+    "/api/orgs/{orgId}/usage": {
+      "get": {
+        "security": [{ "session": [] }],
+        "x-gauss-access": "user",
+        "operationId": "getOrgUsage",
+        "summary": "API calls per day, key and route for one organisation",
+        "description": "Successful /api/v1 calls counted per UTC day, key and route template. Members see their organisation; operators and admins may read any. This counts calls: trust records per spacecraft-month, the pilot invoicing unit, come from the admin export `npm run org -- usage-csv`.",
+        "parameters": [
+          { "name": "orgId", "in": "path", "required": true, "description": "Organisation id, from `GET /api/orgs/mine`", "schema": { "type": "string", "format": "uuid" } },
+          {
+            "name": "from",
+            "in": "query",
+            "description": "First UTC day, inclusive (YYYY-MM-DD). Missing or not in that shape: the first day of the current UTC month.",
+            "schema": { "type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}$" }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "description": "Last UTC day, inclusive (YYYY-MM-DD). Missing or not in that shape: today (UTC).",
+            "schema": { "type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}$" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Usage rows; an empty list when there were no calls",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/UsageResponse" } } }
+          },
+          "400": { "$ref": "#/components/responses/GuardRefused" },
+          "401": { "$ref": "#/components/responses/SessionRequired" },
+          "404": { "$ref": "#/components/responses/OrgNotFound" },
+          "429": { "$ref": "#/components/responses/GuardLimited" }
+        }
+      }
+    },
+    "/health": {
+      "get": {
+        "operationId": "getHealth",
+        "summary": "Public health summary",
+        "description": "For load balancers and monitoring. `npm run tpm` reads this and exits 0 (green or insufficient), 1 (amber), 2 (red) or 3 (unreachable). Outside /api, so CyberTiger does not inspect it. Measure values are behind `GET /api/system/tpm` (operator role, not a pilot route).",
+        "security": [],
+        "x-gauss-access": "public",
+        "x-public-reason": "Liveness for monitoring without credentials. It returns only the overall TPM status and the ids of red measures, never values, hosts or versions (backend/server.ts, GAU-122).",
+        "responses": {
+          "200": { "description": "The process is up; judge health by tpm.status", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Health" } } } }
         }
       }
     }
@@ -127,6 +243,12 @@
         "scheme": "bearer",
         "bearerFormat": "gk_…",
         "description": "Organisation API key, sent as `Authorization: Bearer gk_…`. Keys are created by organisation admins; never put a key in a URL."
+      },
+      "session": {
+        "type": "apiKey",
+        "in": "cookie",
+        "name": "better-auth.session_token",
+        "description": "A signed-in Gauss session (better-auth). Sign in through the web app (email and password, or Google/GitHub single sign-on where the server enables it); the browser then sends the session cookie. better-auth's default cookie name is shown; on HTTPS origins it carries the `__Secure-` prefix. Machine integrations use an organisation API key instead; never copy a session cookie into scripts or logs."
       }
     },
     "headers": {
@@ -135,7 +257,7 @@
     },
     "responses": {
       "Unauthorized": {
-        "description": "Missing or invalid API key",
+        "description": "Missing, malformed, unknown or revoked API key. Repeated 401s count towards CyberTiger's IP block.",
         "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
       },
       "PlanForbidden": {
@@ -143,12 +265,32 @@
         "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
       },
       "RateLimited": {
-        "description": "Per-key per-minute limit (with Retry-After) or the organisation's daily quota reached",
+        "description": "Per-key per-minute limit (with Retry-After) or the organisation's daily quota reached; or CyberTiger's per-IP limit or an IP block (the body then carries requestId)",
         "headers": { "Retry-After": { "description": "Seconds until the minute window resets (minute limit only)", "schema": { "type": "integer" } } },
         "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
       },
       "NoData": {
         "description": "No data has been ingested yet",
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+      },
+      "GuardRefused": {
+        "description": "CyberTiger refused the request because it matched an attack signature. Quote the requestId when reporting a false positive.",
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+      },
+      "SessionRequired": {
+        "description": "No signed-in session (cookie missing or expired). Repeated 401s count towards CyberTiger's IP block.",
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+      },
+      "GuardLimited": {
+        "description": "CyberTiger's per-IP rate limit, or the IP is blocked (for example after repeated 401 or 403 responses)",
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+      },
+      "OrgNotFound": {
+        "description": "No such organisation, or you are not a member. The two look the same so organisation ids can't be probed.",
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+      },
+      "BodyUnreadable": {
+        "description": "The request body was not valid JSON or was over 2 MB (the server's error handler answers 500 for these)",
         "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
       }
     },
@@ -158,7 +300,8 @@
         "required": ["error"],
         "properties": {
           "error": { "type": "string" },
-          "errors": { "type": "array", "items": { "type": "string" }, "description": "Validation errors for a single trust-record request" }
+          "errors": { "type": "array", "items": { "type": "string" }, "description": "Validation errors for a single trust-record request" },
+          "requestId": { "type": "string", "description": "CyberTiger request id, on requests it refused" }
         }
       },
       "Meta": {
@@ -172,8 +315,283 @@
       },
       "SpaceWeatherPoint": {
         "type": "object",
-        "description": "A canonical refined space-weather point (backend/types.ts CanonicalSpaceWeatherPoint).",
-        "additionalProperties": true
+        "description": "One refined space-weather point, issued every 5 s (backend/types.ts CanonicalSpaceWeatherPoint). Vectors are GSM; plasma and field values come from the L1 monitor. How unknown values are shown: the core numbers (rho, velocity, magneticField, electricField, solarWind, indices, coupling) are never null. With no current L1 readout the point carries the previous values forward (or placeholders when there has never been a readout) and says so in `quality`: tier 1 = carried from a measurement still under the age cap, tier 3 = stale (stale and lowConfidence true). Treat tier-3 values as unknown, not as measurements. Optional enrichments are null when unknown or too old: arriving, densityCheck, xray, particles.protons, particles.electrons, noaaAlerts. A NOAA scale level of null means unknown, never 'no storm'; a sense check of `unknown` means nothing current to check, never 'pass'. Points from before a field existed (history after an upgrade) simply lack it.",
+        "additionalProperties": true,
+        "required": [
+          "timestamp",
+          "source",
+          "rho",
+          "velocity",
+          "magneticField",
+          "electricField",
+          "solarWind",
+          "indices",
+          "coupling",
+          "propagation",
+          "alerts",
+          "quality",
+          "uncertainty"
+        ],
+        "properties": {
+          "timestamp": { "type": "string", "format": "date-time", "description": "When the point was issued (5 s ingest tick), UTC" },
+          "observedAt": {
+            "type": ["string", "null"],
+            "format": "date-time",
+            "description": "When its L1 values were measured, UTC; freshness is judged from this. Null when there has been no measurement."
+          },
+          "spacecraft": { "type": "string", "description": "L1 spacecraft the values came from" },
+          "source": {
+            "enum": ["fusion", "noaa-swpc", "esa-hapi", "jaxa-erg", "mms-cdaweb", "mms-lasp", "goes-swpc", "kyoto-dst", "model-nowcast", "synthetic-nowcast"],
+            "description": "Live points are `fusion`"
+          },
+          "rho": { "type": "number", "description": "Proton number density, cm⁻³ (same as solarWind.density)" },
+          "velocity": {
+            "type": "object",
+            "required": ["x", "y", "z", "magnitude"],
+            "properties": {
+              "x": { "type": "number", "description": "Solar-wind velocity, km/s, GSM" },
+              "y": { "type": "number", "description": "Solar-wind velocity, km/s, GSM" },
+              "z": { "type": "number", "description": "Solar-wind velocity, km/s, GSM" },
+              "magnitude": { "type": "number", "description": "Bulk speed, km/s" }
+            }
+          },
+          "magneticField": {
+            "type": "object",
+            "required": ["x", "y", "z", "bt"],
+            "properties": {
+              "x": { "type": "number", "description": "Interplanetary magnetic field, nT, GSM" },
+              "y": { "type": "number", "description": "Interplanetary magnetic field, nT, GSM" },
+              "z": { "type": "number", "description": "Interplanetary magnetic field, nT, GSM" },
+              "bt": { "type": "number", "description": "Total field |B|, nT" }
+            }
+          },
+          "electricField": {
+            "type": "object",
+            "required": ["x", "y", "z", "ey"],
+            "properties": {
+              "x": { "type": "number", "description": "Motional electric field E = -V×B, mV/m, GSM" },
+              "y": { "type": "number", "description": "Motional electric field E = -V×B, mV/m, GSM" },
+              "z": { "type": "number", "description": "Motional electric field E = -V×B, mV/m, GSM" },
+              "ey": { "type": "number", "description": "E_y, mV/m, GSM (same as y)" }
+            }
+          },
+          "solarWind": {
+            "type": "object",
+            "required": ["speed", "density", "dynamicPressure"],
+            "properties": {
+              "speed": { "type": "number", "description": "Bulk speed, km/s" },
+              "density": { "type": "number", "description": "Proton number density, cm⁻³" },
+              "dynamicPressure": { "type": "number", "description": "Dynamic pressure, nPa" }
+            }
+          },
+          "indices": {
+            "type": "object",
+            "required": ["kp", "dst", "dstMethod", "dstDerivedFrom"],
+            "properties": {
+              "kp": {
+                "type": "number",
+                "description": "Planetary Kp, 0 to 9. With no Kp reading at all the nowcast uses 2 and kpObservedAt is absent: treat kp as unknown then.",
+                "minimum": 0,
+                "maximum": 9
+              },
+              "dst": { "type": "number", "description": "Dst, nT" },
+              "dstMethod": { "type": "string", "description": "`measured` (Kyoto Dst under 2 h old), or the model that derived dst; a modelled Dst never passes for a measurement" },
+              "dstDerivedFrom": { "type": "array", "items": { "type": "string" }, "description": "Fields dst was derived from; empty when measured" },
+              "kpKind": { "enum": ["estimated-1m", "planetary-3h"], "description": "estimated-1m is current; planetary-3h lags up to 3 h" },
+              "kpObservedAt": { "type": ["string", "null"], "format": "date-time", "description": "When the Kp value was observed, UTC" },
+              "dstObservedAt": { "type": ["string", "null"], "format": "date-time", "description": "Hour of the measured Kyoto Dst; absent when dst is modelled" }
+            }
+          },
+          "derived": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/DerivedField" },
+            "description": "Values not measured as published, with method and inputs; empty when all were measured"
+          },
+          "coupling": {
+            "type": "object",
+            "required": ["newell", "epsilon"],
+            "properties": {
+              "newell": {
+                "type": "number",
+                "description": "Newell et al. (2007) coupling v^(4/3)·Bt^(2/3)·sin^(8/3)(θc/2), in (km/s)^(4/3)·nT^(2/3); compare values, not absolute units"
+              },
+              "epsilon": { "type": "number", "description": "Akasofu ε energy input, W (l0 = 7 Re)" }
+            }
+          },
+          "propagation": {
+            "type": "object",
+            "required": ["l1DelaySeconds", "etaEarthArrival"],
+            "properties": {
+              "l1DelaySeconds": { "type": "number", "description": "Ballistic L1-to-Earth travel time, s (1.5×10⁶ km at |Vx| clamped to 250–2000 km/s)" },
+              "etaEarthArrival": { "type": "string", "format": "date-time", "description": "When the measured solar wind reaches Earth, UTC" }
+            }
+          },
+          "alerts": {
+            "type": "object",
+            "required": ["stormTier", "reason"],
+            "properties": {
+              "stormTier": { "enum": ["quiet", "watch", "warning", "severe"], "description": "Bz-driven geomagnetic nowcast" },
+              "reason": { "type": "string", "description": "Why, in words; ends with the Shue magnetopause standoff r0 in Re" },
+              "radiation": { "$ref": "#/components/schemas/ScaleReading", "description": "NOAA S-scale from GOES ≥10 MeV protons" },
+              "geomagnetic": { "$ref": "#/components/schemas/ScaleReading", "description": "NOAA G-scale from planetary Kp" },
+              "radioBlackout": { "$ref": "#/components/schemas/ScaleReading", "description": "NOAA R-scale from GOES 0.1–0.8 nm X-rays" }
+            }
+          },
+          "arriving": {
+            "oneOf": [{ "$ref": "#/components/schemas/ArrivingSolarWind" }, { "type": "null" }],
+            "description": "Null until 3 h of L1 history covers one travel time, or when the feed is lost"
+          },
+          "densityCheck": {
+            "oneOf": [{ "$ref": "#/components/schemas/DensityDisagreement" }, { "type": "null" }],
+            "description": "Set when two L1 spacecraft disagree on density by more than 2×; the density uncertainty then spans both"
+          },
+          "xray": { "oneOf": [{ "$ref": "#/components/schemas/XrayReading" }, { "type": "null" }], "description": "Null when missing or older than 15 min" },
+          "particles": {
+            "type": "object",
+            "required": ["protons", "electrons"],
+            "properties": {
+              "protons": { "oneOf": [{ "$ref": "#/components/schemas/ParticleReading" }, { "type": "null" }], "description": "Null when missing or older than 30 min" },
+              "electrons": { "oneOf": [{ "$ref": "#/components/schemas/ParticleReading" }, { "type": "null" }], "description": "Null when missing or older than 30 min" }
+            }
+          },
+          "senseChecks": { "type": "array", "items": { "$ref": "#/components/schemas/SenseCheck" } },
+          "noaaAlerts": {
+            "type": ["array", "null"],
+            "items": { "$ref": "#/components/schemas/NoaaAlert" },
+            "description": "NOAA alerts, watches and warnings from the last 24 h, newest first; null when unreadable"
+          },
+          "quality": {
+            "type": "object",
+            "required": ["outlier", "stale", "interpolated", "extrapolated", "lowConfidence", "tier"],
+            "properties": {
+              "outlier": { "type": "boolean" },
+              "stale": { "type": "boolean", "description": "True when the values are past the age cap: treat as unknown" },
+              "interpolated": { "type": "boolean" },
+              "extrapolated": { "type": "boolean", "description": "True when values were carried forward" },
+              "lowConfidence": { "type": "boolean" },
+              "tier": { "enum": [0, 1, 2, 3], "description": "0 live, 1 carried from a recent measurement, 2 synthetic, 3 stale (unknown)" }
+            }
+          },
+          "uncertainty": {
+            "type": "object",
+            "required": ["speed", "density", "bz"],
+            "properties": {
+              "speed": {
+                "type": "object",
+                "required": ["lower", "upper", "sigma"],
+                "properties": {
+                  "lower": { "type": "number", "description": "km/s" },
+                  "upper": { "type": "number", "description": "km/s" },
+                  "sigma": { "type": "number", "description": "km/s, one standard deviation" }
+                }
+              },
+              "density": {
+                "type": "object",
+                "required": ["lower", "upper", "sigma"],
+                "properties": {
+                  "lower": { "type": "number", "description": "cm⁻³" },
+                  "upper": { "type": "number", "description": "cm⁻³" },
+                  "sigma": { "type": "number", "description": "cm⁻³, one standard deviation" }
+                }
+              },
+              "bz": {
+                "type": "object",
+                "required": ["lower", "upper", "sigma"],
+                "properties": {
+                  "lower": { "type": "number", "description": "nT, GSM" },
+                  "upper": { "type": "number", "description": "nT, GSM" },
+                  "sigma": { "type": "number", "description": "nT, GSM, one standard deviation" }
+                }
+              }
+            }
+          }
+        }
+      },
+      "ScaleReading": {
+        "type": "object",
+        "required": ["level", "label", "basis", "observedAt"],
+        "properties": {
+          "level": { "enum": [0, 1, 2, 3, 4, 5, null], "description": "0 = below the scale; null = unknown (input missing or stale), never 'no storm'" },
+          "label": { "type": "string", "description": "e.g. S2 or G0; S? or G? when unknown" },
+          "basis": { "type": "string", "description": "What the level was read from, in words" },
+          "observedAt": { "type": ["string", "null"], "format": "date-time", "description": "When the input was measured, UTC; null when there was none" }
+        }
+      },
+      "SenseCheck": {
+        "type": "object",
+        "required": ["id", "status", "reason", "observedAt"],
+        "properties": {
+          "id": { "enum": ["l1-field-magnitude", "l1-plasma-tracking", "goes-proton-spectrum", "goes-proton-channels", "goes-xray", "noaa-scales"] },
+          "status": { "enum": ["pass", "flag", "unknown"], "description": "`unknown` when there was nothing current to check, never `pass`" },
+          "reason": { "type": "string" },
+          "observedAt": { "type": ["string", "null"], "format": "date-time", "description": "Newest sample checked, UTC; null when there was none" },
+          "checked": { "type": "integer", "description": "Samples checked, for checks over a window" },
+          "flagged": { "type": "integer", "description": "Samples flagged, for checks over a window" }
+        }
+      },
+      "DerivedField": {
+        "type": "object",
+        "required": ["field", "method", "derivedFrom"],
+        "properties": {
+          "field": { "type": "string", "description": "Canonical field, e.g. velocity" },
+          "method": { "type": "string" },
+          "derivedFrom": { "type": "array", "items": { "type": "string" }, "description": "Published inputs it was obtained from" }
+        }
+      },
+      "ArrivingSolarWind": {
+        "type": "object",
+        "description": "The solar wind reaching Earth now: L1 values one ballistic travel time ago, 5-min mean, GSM",
+        "required": ["observedAt", "arrivedAt", "travelSeconds", "spacecraft", "samples", "bz", "by", "density", "speed", "dynamicPressure"],
+        "properties": {
+          "observedAt": { "type": "string", "format": "date-time", "description": "Last L1 measurement in the mean, UTC" },
+          "arrivedAt": { "type": "string", "format": "date-time", "description": "When it reached Earth, UTC" },
+          "travelSeconds": { "type": "number", "description": "s" },
+          "spacecraft": { "type": "string" },
+          "samples": { "type": "integer" },
+          "bz": { "type": "number", "description": "nT, GSM" },
+          "by": { "type": "number", "description": "nT, GSM" },
+          "density": { "type": "number", "description": "cm⁻³" },
+          "speed": { "type": "number", "description": "km/s" },
+          "dynamicPressure": { "type": "number", "description": "nPa" }
+        }
+      },
+      "DensityDisagreement": {
+        "type": "object",
+        "required": ["spacecraft", "density", "reference", "referenceDensity", "ratio", "minutes"],
+        "properties": {
+          "spacecraft": { "type": "string" },
+          "density": { "type": "number", "description": "cm⁻³" },
+          "reference": { "type": "string", "description": "The other L1 spacecraft" },
+          "referenceDensity": { "type": "number", "description": "cm⁻³" },
+          "ratio": { "type": "number" },
+          "minutes": { "type": "number", "description": "How long they have disagreed, min" }
+        }
+      },
+      "XrayReading": {
+        "type": "object",
+        "required": ["value", "band", "flareClass", "satellite", "timestamp"],
+        "properties": {
+          "value": { "type": "number", "description": "GOES 0.1–0.8 nm irradiance, W·m⁻²" },
+          "band": { "type": "string" },
+          "flareClass": { "type": "string", "description": "e.g. B5.7, M1.2" },
+          "satellite": { "type": ["string", "null"] },
+          "timestamp": { "type": "string", "format": "date-time", "description": "Measurement time, UTC" }
+        }
+      },
+      "NoaaAlert": {
+        "type": "object",
+        "required": ["productId", "issuedAt", "headline"],
+        "properties": { "productId": { "type": "string" }, "issuedAt": { "type": "string" }, "headline": { "type": "string", "description": "The line as NOAA wrote it" } }
+      },
+      "ParticleReading": {
+        "type": "object",
+        "required": ["value", "energy", "satellite", "timestamp"],
+        "properties": {
+          "value": { "type": "number", "description": "Integral flux, cm⁻²·s⁻¹·sr⁻¹ (pfu for protons)" },
+          "energy": { "type": "string", "description": "Energy channel, e.g. >=10 MeV" },
+          "satellite": { "type": ["string", "null"] },
+          "timestamp": { "type": "string", "format": "date-time", "description": "Measurement time, UTC" }
+        }
       },
       "PointResponse": {
         "type": "object",
@@ -192,7 +610,10 @@
                 "type": "object",
                 "required": ["source", "lookbackMs", "count"],
                 "properties": {
-                  "source": { "type": "string", "description": "Which history served the points" },
+                  "source": {
+                    "enum": ["memory", "database"],
+                    "description": "Which history served the points. `memory` is the backend's in-memory feed (about 28 h at 5 s cadence, reloaded from local telemetry on restart)."
+                  },
                   "lookbackMs": { "type": "integer", "description": "Lookback actually applied, after the plan cap" },
                   "count": { "type": "integer" }
                 }
@@ -201,13 +622,21 @@
           }
         }
       },
+      "SourceStatus": {
+        "type": "object",
+        "required": ["source", "lastSeen", "latencySeconds", "healthy"],
+        "properties": {
+          "source": { "type": "string", "description": "Upstream source id, e.g. noaa-swpc" },
+          "lastSeen": { "type": ["string", "null"], "format": "date-time", "description": "Last successful fetch, UTC; null when never" },
+          "latencySeconds": { "type": ["number", "null"], "description": "s; null when unknown" },
+          "healthy": { "type": "boolean" },
+          "message": { "type": "string", "description": "Why it is unhealthy, when it is" }
+        }
+      },
       "SourcesResponse": {
         "type": "object",
         "required": ["data", "meta"],
-        "properties": {
-          "data": { "description": "Per-source status as reported by the ingest pipeline" },
-          "meta": { "$ref": "#/components/schemas/Meta" }
-        }
+        "properties": { "data": { "type": "array", "items": { "$ref": "#/components/schemas/SourceStatus" } }, "meta": { "$ref": "#/components/schemas/Meta" } }
       },
       "Ephemeris": {
         "type": "object",
@@ -371,6 +800,113 @@
           },
           "meta": {
             "allOf": [{ "$ref": "#/components/schemas/Meta" }, { "type": "object", "required": ["count"], "properties": { "count": { "type": "integer" } } }]
+          }
+        }
+      },
+      "Plan": { "enum": ["free", "pilot", "enterprise"], "description": "What an organisation has bought (backend/commerce/plans.ts); set by an admin" },
+      "PlanLimits": {
+        "type": "object",
+        "examples": [{ "api": true, "requestsPerMinute": 60, "requestsPerDay": 50000, "maxLookbackMs": 86400000 }],
+        "required": ["api", "requestsPerMinute", "requestsPerDay", "maxLookbackMs"],
+        "properties": {
+          "api": { "type": "boolean", "description": "Whether the organisation's keys may call /api/v1 at all" },
+          "requestsPerMinute": { "type": "integer", "description": "Per key" },
+          "requestsPerDay": { "type": "integer", "description": "Per organisation, all keys together, per UTC day" },
+          "maxLookbackMs": { "type": "integer", "description": "Longest history window and oldest trust-record inference time, ms" }
+        }
+      },
+      "Org": {
+        "type": "object",
+        "required": ["id", "name", "plan", "createdAt"],
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "name": { "type": "string" },
+          "plan": { "$ref": "#/components/schemas/Plan" },
+          "createdAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "ApiKeyInfo": {
+        "type": "object",
+        "description": "An API key's metadata. The secret itself is never returned after creation.",
+        "required": ["id", "orgId", "name", "prefix", "createdBy", "createdAt", "lastUsedAt", "revokedAt"],
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "orgId": { "type": "string", "format": "uuid" },
+          "name": { "type": "string" },
+          "prefix": { "type": "string", "description": "Tells keys apart in lists; not enough to use the key", "pattern": "^gk_[0-9a-f]{8}$" },
+          "createdBy": { "type": "string", "description": "User id of the member who created it" },
+          "createdAt": { "type": "string", "format": "date-time" },
+          "lastUsedAt": { "type": ["string", "null"], "format": "date-time", "description": "Last successful call; null when never used" },
+          "revokedAt": { "type": ["string", "null"], "format": "date-time", "description": "Null while the key is active" }
+        }
+      },
+      "OrgWithKeys": {
+        "allOf": [
+          { "$ref": "#/components/schemas/Org" },
+          {
+            "type": "object",
+            "required": ["limits", "keys"],
+            "properties": {
+              "limits": { "$ref": "#/components/schemas/PlanLimits" },
+              "keys": { "type": "array", "items": { "$ref": "#/components/schemas/ApiKeyInfo" }, "description": "Active and revoked, oldest first" }
+            }
+          }
+        ]
+      },
+      "OrgsResponse": { "type": "object", "required": ["orgs"], "properties": { "orgs": { "type": "array", "items": { "$ref": "#/components/schemas/OrgWithKeys" } } } },
+      "CreateKeyRequest": {
+        "type": "object",
+        "properties": { "name": { "type": "string", "description": "A label for the key; trimmed and cut to 80 characters. Empty or missing: \"API key\"." } }
+      },
+      "CreatedKey": {
+        "type": "object",
+        "required": ["key", "info", "note"],
+        "properties": {
+          "key": { "type": "string", "description": "The API key. Shown once; send it as `Authorization: Bearer <key>`.", "pattern": "^gk_[0-9a-f]{8}_[A-Za-z0-9_-]{43}$" },
+          "info": { "$ref": "#/components/schemas/ApiKeyInfo" },
+          "note": { "type": "string" }
+        }
+      },
+      "UsageRow": {
+        "type": "object",
+        "required": ["day", "keyId", "endpoint", "count"],
+        "properties": {
+          "day": { "type": "string", "description": "UTC day, YYYY-MM-DD", "format": "date" },
+          "keyId": { "type": "string", "format": "uuid" },
+          "endpoint": { "type": "string", "description": "Method and route template, e.g. `GET /api/v1/data/space-weather/latest`" },
+          "count": { "type": "integer", "description": "Successful calls (status < 400)" }
+        }
+      },
+      "UsageResponse": {
+        "type": "object",
+        "required": ["from", "to", "total", "rows"],
+        "properties": {
+          "from": { "type": "string", "description": "First day applied, YYYY-MM-DD" },
+          "to": { "type": "string", "description": "Last day applied, YYYY-MM-DD" },
+          "total": { "type": "integer", "description": "Sum of count over rows" },
+          "rows": { "type": "array", "items": { "$ref": "#/components/schemas/UsageRow" }, "description": "Ordered by day, key and endpoint" }
+        }
+      },
+      "Health": {
+        "type": "object",
+        "required": ["ok", "timestamp", "tpm"],
+        "properties": {
+          "ok": { "const": true, "description": "Always true when the process answers" },
+          "timestamp": { "type": "string", "format": "date-time", "description": "Server time, UTC" },
+          "tpm": {
+            "type": "object",
+            "required": ["status", "red"],
+            "properties": {
+              "status": {
+                "enum": ["green", "amber", "red", "insufficient"],
+                "description": "Worst technical performance measure (backend/lib/tpm.ts). `insufficient`: a measure has no value yet (for example just after start); it never hides amber or red."
+              },
+              "red": {
+                "type": "array",
+                "items": { "enum": ["data_age", "loop_liveness", "tick_p95", "persist_failures", "disk_free", "memory_rss", "official_sources_down", "forecast_skill"] },
+                "description": "Ids of measures at red"
+              }
+            }
           }
         }
       }

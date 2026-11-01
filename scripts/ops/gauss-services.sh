@@ -14,7 +14,11 @@
 #   scripts/ops/gauss-services.sh uninstall                unload + remove agents
 #   scripts/ops/gauss-services.sh dev <checkout-dir>        run a dev/R&D checkout beside live (:3101 API, :5174 site)
 #   scripts/ops/gauss-services.sh fallback prepare <dir> [sha]|on|off|status   cold-standby last-known-good build
-#   scripts/ops/gauss-services.sh deploy <commit> [fallback-dir]   switch live to <commit>; rolls back by itself if it doesn't come up
+#   scripts/ops/gauss-services.sh deploy <commit> [fallback-dir] [--emergency <reason>]   switch live to <commit>; rolls back by itself if it doesn't come up
+#   scripts/ops/gauss-services.sh gates record <checkout-dir>|list   run the five gates on a clean checkout; deploy needs a passing record
+#   scripts/ops/gauss-services.sh gates enqueue <checkout-dir>|<commit>   hand a gate run to the queue; the session can then be archived
+#   scripts/ops/gauss-services.sh gates result <checkout-dir>|<commit>|status   the queue's one-line result (exit 0 passed, 1 failed, 3 queued)
+#   scripts/ops/gauss-services.sh events [--since 2h] [--json]     timeline: watchdog, failover, deploys, alerts, boots (events.jsonl)
 #
 # Three layers (GAU-158): dev (any other checkout, foreground, own ports and data,
 # never the live API), production (this install), and fallback: a built, not running,
@@ -25,7 +29,11 @@
 # switches, so the standby is always the previous version (by hand:
 # `fallback prepare <dir>`, default sha: the live checkout's HEAD).
 #
-# deploy (run the gates on the commit first): refuses under memory pressure or over
+# deploy (GAU-162) refuses a commit that isn't on origin/main or whose exact tree has no
+# passing gate record (`gates record`), unless `--emergency <reason>`, which texts the phone.
+# Each deploy and rollback is a line in deploy-history.jsonl (by, from, to, tree, gates,
+# fallback, result) and an event; `check` says whether live is a recorded deploy.
+# It also refuses under memory pressure or over
 # local code changes in live (live's data files are kept), refreshes the fallback,
 # checks out the commit, runs npm ci only if package-lock.json changed, reinstalls and
 # waits for what a deploy can break (backend, site, site -> API, same-origin build).
@@ -37,9 +45,9 @@
 # learning job (03:00, or on next wake) rebuilds the nowcast dataset from the
 # data collected so far and records a new model version; an awake guard keeps
 # the Mac awake with the lid closed, except on battery at or below
-# GAUSS_AWAKE_MIN_BATTERY% (default 10, the mesh's critical-battery level), where it
-# lets the Mac sleep again. It texts the phone (via `argo notify`) at
-# GAUSS_AWAKE_WARN_BATTERY% (default 20), at the floor, and when the charger can't keep up.
+# GAUSS_AWAKE_MIN_BATTERY% (default 40), where it lets the Mac sleep again. It texts
+# the phone (via `argo notify`) at GAUSS_AWAKE_WARN_BATTERY% (default 50), at the floor,
+# and when the charger can't keep up.
 # The site is shared at GAUSS_PUBLIC_URL (default: this Mac's tailnet name over
 # HTTP, encrypted by Tailscale; never exposed to the internet). It is built with a
 # same-origin API (/api, /ws), so the one build works at http://127.0.0.1:8080 on
@@ -57,27 +65,69 @@ LABELS=(uk.lightbound.gauss-backend uk.lightbound.gauss-frontend uk.lightbound.g
 SERVICES=(uk.lightbound.gauss-backend uk.lightbound.gauss-frontend)
 SUDOERS="${GAUSS_SUDOERS:-/etc/sudoers.d/gauss-awake}" # override only in tests
 AWAKE_OFF="$HOME/Library/Application Support/Gauss/awake-off"
-# Same floor the mesh uses for its own devices: below 10% a device is flagged
-# (backend/services/device-registry.ts) and swapped out (device-swap-manager.ts).
-AWAKE_MIN_BATTERY="${GAUSS_AWAKE_MIN_BATTERY:-10}"
-AWAKE_WARN_BATTERY="${GAUSS_AWAKE_WARN_BATTERY:-20}" # phone warning before the floor
+# 40%, not the mesh's 10% critical level: heavy jobs never run on battery anyway, and an
+# awake Mac drained a worn battery to 10% overnight (2026-10-28), leaving nothing for the
+# day. Staying awake on battery only covers short trips away from the charger.
+AWAKE_MIN_BATTERY="${GAUSS_AWAKE_MIN_BATTERY:-40}"
+AWAKE_WARN_BATTERY="${GAUSS_AWAKE_WARN_BATTERY:-50}" # phone warning (and load shedding) before the floor
 ARGO="${ARGO:-$HOME/.local/bin/argo}"
 # Memory uses the kernel's pressure level (kern.memorystatus_vm_pressure_level: 1 normal, 2 warn,
 # 4 critical) and swap in GB; see memory_stats for why not "free %" or swap "% used".
 MEM_ALERT_LEVEL="${GAUSS_MEM_ALERT_LEVEL:-4}" # phone alert at or above this pressure level
 MEM_SHED_LEVEL="${GAUSS_MEM_SHED_LEVEL:-2}"   # balance sheds optional load at or above this level
 SWAP_MAX_GB="${GAUSS_SWAP_MAX_GB:-4}"         # ... or at or above this many GB of swap in use
-DISK_MIN_GB="${GAUSS_DISK_MIN_GB:-8}"   # ... or below this many GB free on the boot volume
+# ... or below this many GB free on the boot volume. Swap files grow on this disk: the 2026-10-22
+# 01:00 kernel panic logged "LOW swap space" with 12-13 GB free, so clean up well before that.
+# Below DISK_MIN_GB balance clears rebuildable caches quietly: the dev Mac sat under 15 GB in 54% of
+# the 2026-10-17..25 samples, so a text there would arrive all day. The text (and a failing check)
+# comes below DISK_ALERT_GB, or below DISK_MIN_GB while swap is high: the panic's combination.
+DISK_MIN_GB="${GAUSS_DISK_MIN_GB:-15}"
+DISK_ALERT_GB="${GAUSS_DISK_ALERT_GB:-12}"   # 8% of samples were under 12 GB; 4% under 8
+# mem-guard writes one sample every 10 min (gauss-tpm-watch): footprint GB per owner, which the
+# alerts use to say what to close. Sustained warn and swap climbing over an hour are Argo's guard
+# texts (GAU-165: guard-memory, guard-swap), so this script doesn't repeat them.
+MEM_LOG="${GAUSS_MEM_LOG:-$HOME/Library/Logs/gauss/memory.tsv}"
+# macOS's pressure level can still say normal while swap runs away (fl4p/macos-oom-guard, 2026), so
+# two faster signals: kern.memorystatus_level (% of memory available) under AVAIL_MIN, and swap
+# growing SWAP_FAST_GB within 2.5 min (the 2026-10-17..25 log's biggest rise was 2.7 GB in 10 min).
+AVAIL_MIN="${GAUSS_MEM_AVAIL_MIN:-10}"
+SWAP_FAST_GB="${GAUSS_SWAP_FAST_GB:-1}"
+SWAP_LAST="${GAUSS_SWAP_LAST:-$HOME/Library/Application Support/Gauss/swap-last}" # "<epoch> <swap MB>"
 WATCH_DIR="$HOME/Library/Application Support/Gauss"
 GUARD_HEARTBEAT="$WATCH_DIR/guard.heartbeat" # Argo restarts the guard if this goes stale
 WATCH_KICKS="$WATCH_DIR/watch-kicks"         # "<label> <epoch>" per watchdog restart
 WATCH_MAX_KICKS=3
 DEPLOY_LOCK="$WATCH_DIR/deploying" # held by deploy; the guard leaves the services alone meanwhile
 DEPLOY_WAIT="${GAUSS_DEPLOY_WAIT:-90}" # seconds a deploy waits for the services to come up
+DEPLOY_HISTORY="$WATCH_DIR/deploy-history.jsonl" # every deploy and rollback; never rotated (a line per deploy)
+DEPLOY_EMERGENCY="" # set by `deploy --emergency <reason>`
+# Gate records (GAU-162), keyed by tree hash: what was tested is exactly what is deployed, even
+# after a merge commit or a rebase that leaves the tree unchanged (GAU-161 finding 4).
+GATES_DIR="$WATCH_DIR/gates"
+GATE_LOCK="${GAUSS_GATE_LOCK:-$HOME/.local/state/gauss-gate.lock}" # shared with agents running gates by hand
+# `verify` already runs the full test suite, the ops tests and the production build
+# (scripts/verify/verify.ts), so `test` and `build` are not run again as gates of
+# their own; their record fields come from verify's log. Halves a gate run.
+GATES=(test:ops quality:full verify)
+# Gate queue (2026-10-29): sessions held a `claude-heavy --wait 720 ... gates record` each for hours
+# (~1 GB of idle sessions on an 8 GB Mac), each with its own npm ci. Now a session enqueues and
+# can be archived; one detached runner works through the requests one at a time under claude-heavy
+# (memory, power, Argo's guard) in one checkout of its own, reinstalling only when the lockfile changes.
+GATES_QUEUE="$GATES_DIR/queue"         # <time>-<tree>.req, oldest first; one per tree
+GATES_RESULTS="$GATES_DIR/results.log" # <utc> <sha> <tree> PASSED|FAILED|SKIPPED|ERROR|EXPIRED <detail>, one line per request
+GATES_RUNNER="$GATES_DIR/runner"       # held by the one runner (its pid inside)
+HEAVY="${GAUSS_HEAVY:-$HOME/.local/bin/claude-heavy}"
+GATES_WAIT_MIN="${GAUSS_GATES_WAIT_MIN:-120}" # one claude-heavy wait; the runner asks again when it gives up
+GATES_EXPIRE_H="${GAUSS_GATES_EXPIRE_H:-72}"   # a request still waiting after this is dropped (EXPIRED)
 # balance: safe, reversible load shedding (GAU-126). GAUSS_BALANCE=0 turns it off.
 BALANCE="${GAUSS_BALANCE:-1}"
 LOCAL_CODER="${GAUSS_LOCAL_CODER:-$HOME/.local/bin/local-coder}"   # optional on-device model server
 LOCAL_CODER_PORT="${LOCAL_CODER_PORT:-8089}"   # local-coder's server; Gauss's memory answer model (:3032, opt-in since GAU-184) is never shed
+# macOS helpers that leak and that macOS relaunches on demand, holding no user data: balance
+# restarts one once its footprint passes LEAK_MB. CursorUIViewService (the text-cursor helper) had
+# grown to 3.7 GB before the 2026-10-22 01:00 kernel panic (GAU-183). Never apps or Claude sessions.
+LEAKY_HELPERS="${GAUSS_LEAKY_HELPERS-CursorUIViewService}"
+LEAK_MB="${GAUSS_LEAK_MB:-512}"   # it idles at 12-170 MB; reported leaks reach 3.7-4.9 GB
 CLEANUP_STAMP="$WATCH_DIR/balance-cleanup"     # balance runs disk-cleanup at most hourly
 DISK_CLEANUP="${GAUSS_DISK_CLEANUP:-$HOME/.local/bin/disk-cleanup}" # allowlisted cache cleanup
 LEARNING_PAUSED="$WATCH_DIR/learning-paused"      # ml/train/nightly.py skips while this exists
@@ -154,7 +204,166 @@ awake_set() { # awake_set 0|1 <reason>
 
 # Phone alerts go through Argo's iMessage channel (masked, queued while
 # offline, rate-limited per key); silently skipped if Argo isn't installed.
-phone() { [ -x "$ARGO" ] && "$ARGO" notify "$@" >/dev/null 2>&1 || true; }
+# Every call is `phone -key K -every N <title> <message>`; a new alert is also an event.
+phone() {
+  [ "${1:-}" = -key ] && alert_event "${2:-}" "${4:-1h}" "${5:-}" "${6:-}"
+  [ -x "$ARGO" ] && "$ARGO" notify "$@" >/dev/null 2>&1 || true
+}
+
+# Events (GAU-164): one JSON object per line in events.jsonl, so the timeline before a crash
+# is one file instead of four free-text logs. Every line carries the SHAs live and the
+# fallback were on and the memory and power state at that moment. deploy.ts writes the same
+# format. Rotated by size, one old file kept.
+EVENTS="${GAUSS_EVENTS_LOG:-$LOGS/events.jsonl}"
+EVENTS_MAX_KB="${GAUSS_EVENTS_MAX_KB:-5120}"
+BOOT_STATE="$WATCH_DIR/boottime"
+MEMORY_TSV="${MEM_GUARD_LOG:-$LOGS/memory.tsv}"       # written by ~/.local/bin/mem-guard, not this repo
+MEM_GUARD="${GAUSS_MEM_GUARD:-$HOME/.local/bin/mem-guard}"
+DIAG_DIRS="${GAUSS_DIAG_DIRS:-/Library/Logs/DiagnosticReports:$HOME/Library/Logs/DiagnosticReports}"
+
+# Reasons are free text (alert bodies, paths, git output): drop credentials in URLs, query
+# strings and token=/secret=/password=/key= values before they reach a log.
+redact() {
+  sed -E -e 's#(://)[^/@ ]+@#\1#g' -e 's#(https?://[^ ?"]*)\?[^ "]*#\1?<redacted>#g' \
+    -e 's#([A-Za-z_]*([Tt][Oo][Kk][Ee][Nn]|[Ss][Ee][Cc][Rr][Ee][Tt]|[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Kk][Ee][Yy]))=[^ &"]+#\1=<redacted>#g'
+}
+json_str() { # json_str <text>: a JSON string literal (redacted; control characters other than \t \n \r dropped)
+  local s; s=$(printf '%s' "$1" | redact | LC_ALL=C tr -d '\000-\010\013\014\016-\037')
+  s=${s//\\/\\\\}; s=${s//\"/\\\"}; s=${s//$'\t'/\\t}; s=${s//$'\r'/\\r}; s=${s//$'\n'/\\n}
+  printf '"%s"' "$s"
+}
+json_num() { [[ "${1:-}" =~ ^-?[0-9]+$ ]] && printf '%s' "$1" || printf null; }
+json_opt() { [ -n "${1:-}" ] && json_str "$1" || printf null; }
+
+event() { # event <event> <label> <reason> [key=text | key:=json]...: append one line; never fails the caller
+  local name=$1 label=$2 reason=$3; shift 3
+  local live sha="" fb="" level swap _ batt pct ac=false kv key extra=""
+  live=$(live_dir 2>/dev/null) && [ -d "$live" ] && sha=$(git -C "$live" rev-parse HEAD 2>/dev/null) || true
+  ready_record && fb=$READY_SHA || true
+  read -r level swap _ < <(memory_stats)
+  batt=$(pmset -g batt 2>/dev/null || true); pct=$(grep -Eo '[0-9]+%' <<<"$batt" | head -1 | tr -d % || true)
+  [[ "$batt" == *"'AC Power'"* ]] && ac=true
+  for kv in "$@"; do
+    key=${kv%%=*}
+    if [[ "$key" == *: ]]; then extra+=",$(json_str "${key%:}"):${kv#*=}"; else extra+=",$(json_str "$key"):$(json_str "${kv#*=}")"; fi
+  done
+  local line; line=$(printf '{"ts":"%s","host":%s,"event":%s,"label":%s,"reason":%s,"live_sha":%s,"fallback_sha":%s,"pressure":%s,"swap_mb":%s,"battery":%s,"on_ac":%s%s}' \
+    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$(json_str "$(hostname -s 2>/dev/null || true)")" "$(json_str "$name")" "$(json_str "$label")" \
+    "$(json_str "$reason")" "$(json_opt "$sha")" "$(json_opt "$fb")" "$(json_num "$level")" "$(json_num "$swap")" "$(json_num "$pct")" "$ac" "$extra")
+  mkdir -p "$(dirname "$EVENTS")" 2>/dev/null || return 0
+  if [ $(( $(stat -f %z "$EVENTS" 2>/dev/null || echo 0) / 1024 )) -ge "$EVENTS_MAX_KB" ]; then mv -f "$EVENTS" "$EVENTS.1" 2>/dev/null || true; fi
+  printf '%s\n' "$line" >>"$EVENTS" 2>/dev/null || true
+  return 0
+}
+
+# The guard re-sends an alert every minute while it holds and argo rate-limits the texts;
+# log it as an event once per key per its own interval, not every minute.
+alert_event() { # alert_event <key> <every: 30m|1h> <title> <message>
+  local stamp="$WATCH_DIR/alerts/$1" mins
+  case "$2" in *m) mins=${2%m} ;; *h) mins=$(( ${2%h} * 60 )) ;; *) mins=60 ;; esac
+  [[ "$mins" =~ ^[0-9]+$ ]] || mins=60
+  [ -n "$(find "$stamp" -mmin -"$mins" 2>/dev/null)" ] && return 0
+  mkdir -p "$WATCH_DIR/alerts" 2>/dev/null && touch "$stamp" 2>/dev/null || true
+  event alert "$1" "$3: $4"
+}
+
+boot_epoch() { sysctl -n kern.boottime 2>/dev/null | sed -nE 's/^[{] sec = ([0-9]+),.*/\1/p'; }
+iso_utc() { date -u -r "$1" +%Y-%m-%dT%H:%M:%SZ; }
+
+# Boot breadcrumb. The 2026-10-21 reset left no panic report, an empty unified log and nothing
+# in `last`. So on the first guard run after kern.boottime changes, record what we still know:
+# the last signs of life (the guard's minutely heartbeat, the last event, the last memory.tsv
+# row), any panic or JetsamEvent report since the previous boot, and pmset's shutdown cause.
+boot_check() {
+  local now prev; now=$(boot_epoch); [ -n "$now" ] || return 0
+  prev=$(cat "$BOOT_STATE" 2>/dev/null || true)
+  [ "$now" = "$prev" ] && return 0
+  mkdir -p "$WATCH_DIR" && echo "$now" >"$BOOT_STATE"
+  [[ "$prev" =~ ^[0-9]+$ ]] || return 0 # first run ever: nothing to compare with
+  # Runs before watch_peers touches the heartbeat, so its mtime is the last minute the old boot was alive.
+  local seen="" seen_hm="?" last_ev="" mem="" mem_level="" mem_swap="" reports="" cause="" ref d f
+  if [ -e "$GUARD_HEARTBEAT" ]; then seen=$(iso_utc "$(stat -f %m "$GUARD_HEARTBEAT")"); seen_hm=$(date -r "$(stat -f %m "$GUARD_HEARTBEAT")" +%H:%M); fi
+  last_ev=$(tail -1 "$EVENTS" 2>/dev/null | sed -nE 's/^[{]"ts":"([^"]+)".*/\1/p' || true)
+  mem=$(tail -1 "$MEMORY_TSV" 2>/dev/null | grep -v '^ts' || true)
+  if [ -n "$mem" ]; then
+    mem_level=$(cut -f2 <<<"$mem"); mem_swap=$(cut -f9 <<<"$mem")
+    mem="$(cut -f1 <<<"$mem") pressure $(pressure_name "$mem_level"), swap ${mem_swap} GB"
+  fi
+  ref=$(mktemp) && touch -t "$(date -r "$prev" +%Y%m%d%H%M.%S)" "$ref"
+  local IFS=:
+  for d in $DIAG_DIRS; do
+    for f in $(find "$d" -maxdepth 1 \( -name '*.panic' -o -name 'JetsamEvent*' \) -newer "$ref" 2>/dev/null | tr '\n' ':'); do
+      reports+="${reports:+ }${f##*/}"
+    done
+  done
+  unset IFS; rm -f "$ref"
+  cause=$(pmset -g log 2>/dev/null | grep 'Shutdown Cause' | tail -1 | sed -nE 's/.*Cause: *(-?[0-9]+).*/\1/p' || true)
+  local summary="restarted at ~$(date -r "$now" +%H:%M) (last seen ${seen_hm}"
+  [ -n "$mem_level" ] && summary+=", pressure $(pressure_name "$mem_level"), swap ${mem_swap} GB"
+  summary+="; reports: ${reports:-none}; shutdown cause: ${cause:-unknown})"
+  event boot "" "$summary" prev_boot="$(iso_utc "$prev")" boot="$(iso_utc "$now")" last_seen="$seen" \
+    last_event="$last_ev" last_memory="$mem" reports="$reports" shutdown_cause="$cause"
+  phone -key boot -every 10m "Gauss: $(hostname -s 2>/dev/null || echo Mac) $summary" \
+    "If nobody restarted it, the timeline is in: gauss-services.sh events --since 6h"
+}
+
+# memory.tsv is sampled every 10 min by gauss-tpm-watch. While memory is short, sample it every
+# minute as well, so the minutes before a crash are on record. mem-guard lives outside this repo.
+memory_sample() { # memory_sample <pressure level> <swap MB>
+  { [ "$1" -ge "$MEM_SHED_LEVEL" ] || swap_high "$2"; } || return 0
+  [ -x "$MEM_GUARD" ] && [ -z "$(find "$MEMORY_TSV" -mmin -1 2>/dev/null)" ] || return 0
+  "$MEM_GUARD" sample >/dev/null 2>&1 || true
+}
+
+events_show() { # events [--since 30m|2h|1d] [--json]: timeline from events.jsonl (and its rotated file)
+  local since=24h json=0
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --since) since=${2:-24h}; shift ;;
+      --json) json=1 ;;
+      "") ;;
+      *) echo "usage: $0 events [--since 30m|2h|1d] [--json]" >&2; return 2 ;;
+    esac
+    shift
+  done
+  [[ "$since" =~ ^[0-9]+[mhd]$ ]] || { echo "--since takes e.g. 30m, 2h or 1d" >&2; return 2; }
+  python3 -Ic '
+import json, sys
+from datetime import datetime, timedelta, timezone
+n, unit = int(sys.argv[1][:-1]), sys.argv[1][-1]
+cut = datetime.now(timezone.utc) - timedelta(minutes=n * {"m": 1, "h": 60, "d": 1440}[unit])
+raw, bad, shown = sys.argv[2] == "1", 0, 0
+for path in sys.argv[3:]:
+    try:
+        lines = open(path, encoding="utf-8", errors="replace").read().splitlines()
+    except OSError:
+        continue
+    for line in lines:
+        try:
+            e = json.loads(line)
+            ts = datetime.strptime(e["ts"][:19], "%Y-%m-%dT%H:%M:%S").replace(tzinfo=timezone.utc)
+        except Exception:
+            bad += 1
+            continue
+        if ts < cut:
+            continue
+        shown += 1
+        if raw:
+            print(line)
+            continue
+        sha = lambda k: (e.get(k) or "-")[:7]
+        lvl = {1: "normal", 2: "warn", 4: "critical"}.get(e.get("pressure"), "?")
+        swap = "%.1f GB" % (e["swap_mb"] / 1024) if isinstance(e.get("swap_mb"), (int, float)) else "?"
+        power = "%s%% %s" % (e.get("battery", "?"), "AC" if e.get("on_ac") else "battery") if e.get("battery") is not None else ("AC" if e.get("on_ac") else "?")
+        print("%s  %-17s %-28s %s  [live %s, fallback %s | %s, swap %s | %s]" % (
+            ts.astimezone().strftime("%m-%d %H:%M:%S"), e.get("event", "?"), e.get("label") or "-",
+            e.get("reason", ""), sha("live_sha"), sha("fallback_sha"), lvl, swap, power))
+if not raw and not shown:
+    print("no events in the last %s" % sys.argv[1])
+if bad:
+    print("(%d unreadable lines skipped)" % bad, file=sys.stderr)
+' "$since" "$json" "$EVENTS.1" "$EVENTS"
+}
 
 battery_alerts() { # battery_alerts <pmset batt output> <pct>
   local batt=$1 pct=$2
@@ -197,22 +406,78 @@ swap_high() { [ "$1" -ge $((SWAP_MAX_GB * 1024)) ]; }  # swap_high <swap MB>
 # Disk: swap files live on the boot volume, so a near-full disk turns memory
 # pressure into killed apps and failed builds (seen: 5 GB free with 5 GB swap).
 disk_free_gb() { df -g / 2>/dev/null | awk 'NR==2{print $4+0}'; }
-disk_alerts() { # disk_alerts <free GB>
-  [ "${1:-999}" -lt "$DISK_MIN_GB" ] && phone -key disk-low -every 6h "Gauss: disk ${1} GB free" \
-    "Swap and builds need room; below ${DISK_MIN_GB} GB macOS may kill apps. Clear caches or old builds."
+disk_short() { # disk_short <free GB> <swap MB>: too little room for swap to keep growing
+  [ "${1:-999}" -lt "$DISK_ALERT_GB" ] || { [ "${1:-999}" -lt "$DISK_MIN_GB" ] && swap_high "${2:-0}"; }
+}
+disk_alerts() { # disk_alerts <free GB> <swap MB>
+  disk_short "$1" "${2:-0}" || return 0
+  if [ "${1:-999}" -lt "$DISK_ALERT_GB" ]; then
+    phone -key disk-low -every 6h "Gauss: disk ${1} GB free" \
+      "Swap needs room; below ${DISK_ALERT_GB} GB macOS may kill apps. Caches are cleared for you; delete old builds or downloads."
+  else
+    phone -key disk-low -every 6h "Gauss: disk ${1} GB free, swap $(gb "$2") GB" \
+      "Swap is growing on a short disk, as before the 22 Oct crash. Close: $(memory_hint)."
+  fi
   return 0
 }
-top_memory() { ps -Acmo rss=,comm= 2>/dev/null | awk 'NR==1{printf "%s %.1f GB", $2, $1/1048576}'; }
+# Biggest process by footprint (top's MEM is phys_footprint, as Activity Monitor shows). RSS leaves
+# out compressed pages, which held 7.5 GB on 2026-10-25, so it named the wrong process.
+top_memory() {
+  local pid mem name
+  read -r pid mem < <(top -l 1 -o mem -n 1 -stats pid,mem 2>/dev/null | tail -1)
+  name=$(ps -o comm= -p "${pid:-0}" 2>/dev/null); name=${name##*/}
+  awk -v n="${name:-?}" -v m="${mem:-0}" 'BEGIN{v=m+0; u=substr(m,length(m)); if (u=="+"||u=="-") u=substr(m,length(m)-1,1)
+    if (u=="G") v*=1024; else if (u=="K") v/=1024; else if (u=="B") v/=1048576; printf "%s %.1f GB", n, v/1024}'
+}
+# memory_hint: what Josh can close, biggest first, from mem-guard's newest sample (owners of 0.5 GB+
+# that are his to close; never macOS, Gauss or the Claude app). Falls back to the biggest process.
+memory_hint() {
+  local hint=""
+  if [ -r "$MEM_LOG" ] && [ -n "$(find "$MEM_LOG" -mmin -30 2>/dev/null)" ]; then
+    hint=$(awk -F'\t' 'NR == 1 {for (i = 1; i <= NF; i++) col[$i] = i; next} {last = $0}
+      END {
+        split("browser cowork_vm claude_code whatsapp apps", k, " ")
+        lab["browser"] = "browser tabs"; lab["cowork_vm"] = "Cowork"; lab["claude_code"] = "idle Claude sessions"
+        lab["whatsapp"] = "WhatsApp"; lab["apps"] = "unused apps"
+        n = split(last, v, "\t")
+        for (i = 1; i <= 5; i++) if (col[k[i]] && v[col[k[i]]] + 0 >= 0.5) printf "%.1f\t%s %.1f GB\n", v[col[k[i]]], lab[k[i]], v[col[k[i]]]
+      }' "$MEM_LOG" | sort -rn | head -3 | cut -f2 | paste -sd ',' - | sed 's/,/, /g')
+  fi
+  echo "${hint:-$(top_memory)}"
+}
+# phys_footprint in MB, as Activity Monitor shows it. RSS leaves out compressed pages, which is
+# where a leaking helper's memory ends up (CursorUIViewService: RSS 4 MB vs footprint 12 MB idle).
+footprint_mb() { # footprint_mb <pid>
+  footprint -p "$1" 2>/dev/null | awk '$1 == "phys_footprint:" {v = $2; u = $3
+    if (u == "GB") v *= 1024; else if (u == "KB") v /= 1024; else if (u == "B" || u == "bytes") v /= 1048576
+    printf "%d", v; exit}'
+}
+
+mem_available() { # kern.memorystatus_level: % of memory available (100 when unreadable)
+  local a; a=$(sysctl -n kern.memorystatus_level 2>/dev/null)
+  case "$a" in ''|*[!0-9]*) echo 100 ;; *) echo "$a" ;; esac
+}
+swap_fast() { # swap_fast <swap MB>: swap grew SWAP_FAST_GB+ since a reading <= 150 s ago; records this one
+  local now prev_t="" prev_s=""; now=$(date +%s)
+  read -r prev_t prev_s 2>/dev/null <"$SWAP_LAST" || true
+  mkdir -p "$(dirname "$SWAP_LAST")" 2>/dev/null; echo "$now $1" >"$SWAP_LAST" 2>/dev/null || true
+  [ -n "$prev_t" ] && [ $((now - prev_t)) -le 150 ] && [ $(($1 - ${prev_s:-0})) -ge $((SWAP_FAST_GB * 1024)) ]
+}
 
 memory_alerts() { # memory_alerts <pressure level> <swap used MB>
-  local level=$1 swap=$2
-  if [ "$level" -ge "$MEM_ALERT_LEVEL" ]; then
-    phone -key memory-low -every 30m "Gauss: memory pressure $(pressure_name "$level")" \
-      "Background work may be killed. Biggest: $(top_memory). Close apps or stop a build."
+  local level=$1 swap=$2 avail; avail=$(mem_available)
+  if [ "$level" -ge "$MEM_ALERT_LEVEL" ] || [ "$avail" -lt "$AVAIL_MIN" ]; then
+    phone -key memory-low -every 30m "Gauss: memory $([ "$level" -ge "$MEM_ALERT_LEVEL" ] && echo "pressure $(pressure_name "$level")" || echo "almost out (${avail}% left)")" \
+      "Background work may be killed. Biggest: $(top_memory). Close: $(memory_hint)."
   fi
+  if swap_fast "$swap"; then
+    phone -key swap-fast -every 30m "Gauss: swap growing fast" \
+      "Swap jumped ${SWAP_FAST_GB}+ GB in a minute or two (now $(gb "$swap") GB): something is running away. Biggest: $(top_memory). Quit it if you can."
+  fi
+  # Swap stays until the work holding it ends, so this won't clear by itself; every 3 h, not hourly.
   if swap_high "$swap"; then
-    phone -key swap-high -every 1h "Gauss: swap $(gb "$swap") GB" \
-      "The Mac is short of memory and slowing down, and swap fills the disk. Biggest: $(top_memory)."
+    phone -key swap-high -every 3h "Gauss: swap $(gb "$swap") GB" \
+      "The Mac is short of memory and won't recover by itself. Close: $(memory_hint)."
   fi
 }
 
@@ -237,6 +502,7 @@ kick() { # kick <label> <reason>: rate-limited launchctl kickstart, logged and a
   awk -v n="$now" 'n-$2<86400' "$WATCH_KICKS" >"$WATCH_KICKS.tmp" 2>/dev/null && mv "$WATCH_KICKS.tmp" "$WATCH_KICKS"
   if launchctl kickstart -k "$UID_DOMAIN/$label" >/dev/null 2>&1; then
     echo "$(date '+%F %T') watchdog restarted $label: $reason"
+    event watchdog_kick "$label" "$reason"
   else
     phone -key "watch-$label" -every 1h "Gauss: can't restart $label" "$reason; launchctl kickstart failed."
   fi
@@ -308,6 +574,7 @@ fallback_on() { # fallback_on <reason>: swap live for the fallback on the same p
   for l in "${FALLBACK_LABELS[@]}"; do reload "$l" "$FALLBACK_STATE/$l.plist"; done
   echo "$(date '+%F %T') $1" >"$FALLBACK_STATE/active"
   echo "$(date '+%F %T') failover to fallback ${sha:0:7} ($dir): $1"
+  event failover fallback "$1" to="$sha"
   phone -key fallback -every 1h "Gauss: on fallback" \
     "$1. Serving last known-good ${sha:0:7} on the same URLs. Fix live, then: gauss-services.sh fallback off"
 }
@@ -320,6 +587,7 @@ fallback_off() { # back to live; the guard gets a fresh set of restarts for it
   done
   [ -f "$WATCH_KICKS" ] && { grep -Ev '^uk\.lightbound\.gauss-(backend|frontend) ' "$WATCH_KICKS" >"$WATCH_KICKS.tmp" || true; mv "$WATCH_KICKS.tmp" "$WATCH_KICKS"; }
   rm -f "$FALLBACK_STATE/active"
+  event failback fallback "back on live"
   echo "Back on live. If it fails again, the guard fails over again after $WATCH_MAX_KICKS restarts."
 }
 
@@ -345,6 +613,9 @@ fallback_prepare() { # fallback_prepare <dir> [sha]: check out, install, build, 
     local prev=""; ready_record && prev=$READY_DIR
     # Only ever re-point a directory this command made: never someone's working checkout.
     [ "$dir" = "$prev" ] || { echo "$dir exists and is not the current fallback; pick a new path." >&2; return 1; }
+    # The checkout changes under the old record from here: drop it, so a failed install or
+    # build leaves "none prepared", never a ready record describing a different checkout.
+    rm -f "$FALLBACK_STATE/ready"
     git -C "$dir" checkout -q --detach "$sha" || return 1
   else
     git -C "$live" worktree add -q --detach "$dir" "$sha" || return 1; dir=$(cd "$dir" && pwd)
@@ -362,14 +633,38 @@ fallback_prepare() { # fallback_prepare <dir> [sha]: check out, install, build, 
   mkdir -p "$FALLBACK_STATE" "$LOGS"
   # Same ports, live data and live .env (read in place, never copied): only one of the
   # two ever runs, and devices, accounts and telemetry carry over in both directions.
+  prebuild_backend "$dir"
   PLIST_DATA="$live/data" plist "${FALLBACK_LABELS[0]}" "$dir" "$LOGS/fallback-backend.log" keepalive \
-    "$NODE" --env-file-if-exists="$live/.env" --import tsx backend/server.ts >"$FALLBACK_STATE/${FALLBACK_LABELS[0]}.plist"
+    "$NODE" --env-file-if-exists="$live/.env" "${BACKEND_ARGS[@]}" >"$FALLBACK_STATE/${FALLBACK_LABELS[0]}.plist"
   PLIST_DATA="$live/data" plist "${FALLBACK_LABELS[1]}" "$dir" "$LOGS/fallback-frontend.log" keepalive \
     "$NODE" node_modules/vite/bin/vite.js preview --config frontend/vite.config.ts --host 127.0.0.1 --port 8080 --strictPort \
     >"$FALLBACK_STATE/${FALLBACK_LABELS[1]}.plist"
   plutil -lint -s "$FALLBACK_STATE/${FALLBACK_LABELS[0]}.plist" "$FALLBACK_STATE/${FALLBACK_LABELS[1]}.plist" || return 1
   echo "$sha $dir $(date +%s)" >"$FALLBACK_STATE/ready"
+  event fallback_prepared "${sha:0:7}" "fallback prepared at $dir"
   echo "Fallback ready: ${sha:0:7} at $dir (cold: not running, no memory used)."
+}
+
+# Prebuilt backend (2 Nov): running TypeScript through tsx at runtime kept the loader, source maps and
+# an esbuild helper resident: 207 MB RSS + 16 MB helper vs 91 MB prebuilt (same code, empty data,
+# 90 s). Compile backend/ and shared/ to .js beside the .ts, so every relative path (../../build,
+# ../../shared/proto, *.json) resolves as before. Only the live and fallback checkouts do this; dev
+# keeps tsx. BACKEND_ARGS is what the backend agent runs; tsx if prebuilding is not possible.
+prebuild_backend() { # prebuild_backend <checkout-dir>: sets BACKEND_ARGS
+  local dir=$1 esb="$1/node_modules/esbuild/bin/esbuild"
+  BACKEND_ARGS=(--import tsx backend/server.ts)
+  [ -f "$esb" ] && [ -n "$NODE" ] || return 0
+  # esbuild's install usually swaps its JS launcher for the native binary: run that directly.
+  local run=("$NODE" "$esb"); [ "$(head -c 2 "$esb")" != "#!" ] && [ -x "$esb" ] && run=("$esb")
+  # Drop .js left by an earlier build (only git-ignored ones, never node_modules), so a removed module can't linger.
+  (cd "$dir" && find backend shared -name '*.js' ! -path '*/node_modules/*' -print0 | git check-ignore -z --stdin 2>/dev/null | xargs -0 rm -f) || true
+  if (cd "$dir" && find backend shared -name '*.ts' ! -name '*.test.ts' ! -name '*.d.ts' ! -path '*/node_modules/*' -print0 \
+      | xargs -0 "${run[@]}" --outdir=. --outbase=. --format=esm --platform=node --target=node22 --log-level=error) \
+    && (cd "$dir" && "$NODE" --check backend/server.js); then
+    BACKEND_ARGS=(backend/server.js)
+  else
+    echo "Prebuilding the backend failed in $dir; it keeps running through tsx." >&2
+  fi
 }
 
 install_agents() { # install_agents <checkout-dir>: build the site, write and (re)load the agents
@@ -378,8 +673,9 @@ install_agents() { # install_agents <checkout-dir>: build the site, write and (r
   mkdir -p "$LOGS" "$dir/data/mesh" "$dir/data/commerce"
   echo "Building the frontend in $dir (same-origin API) ..."
   (cd "$dir" && VITE_HELIO_PROXY_URL=same-origin "$NODE" node_modules/vite/bin/vite.js build --config frontend/vite.config.ts >/dev/null) || return 1
+  prebuild_backend "$dir"
   plist uk.lightbound.gauss-backend "$dir" "$LOGS/backend.log" keepalive \
-    "$NODE" --env-file-if-exists=.env --import tsx backend/server.ts >"$AGENTS/uk.lightbound.gauss-backend.plist"
+    "$NODE" --env-file-if-exists=.env "${BACKEND_ARGS[@]}" >"$AGENTS/uk.lightbound.gauss-backend.plist"
   plist uk.lightbound.gauss-learning "$dir" "$LOGS/learning.log" nightly \
     "$(command -v python3)" -I ml/train/nightly.py --telemetry data/bedrock/telemetry.jsonl >"$AGENTS/uk.lightbound.gauss-learning.plist"
   plist uk.lightbound.gauss-frontend "$dir" "$LOGS/frontend.log" keepalive \
@@ -393,14 +689,364 @@ install_agents() { # install_agents <checkout-dir>: build the site, write and (r
   done
 }
 
+# Who ran it: GAUSS_BY if set, else the user, marked when it ran inside a Claude Code session.
+deployer() { if [ -n "${GAUSS_BY:-}" ]; then echo "$GAUSS_BY"; elif [ -n "${CLAUDECODE:-}" ]; then echo "claude-code ($(id -un))"; else id -un; fi; }
+
+# The gates are heavy for an 8 GB Mac (a hard reset on 2026-10-21 under memory pressure), so
+# each waits for normal pressure and takes the lock other agents use for the same gates.
+# GATES_HOLD=1 when this run took the lock (and so must free it).
+gate_lock() {
+  local level _; mkdir -p "$(dirname "$GATE_LOCK")"; GATES_HOLD=0
+  until read -r level _ < <(memory_stats) && [ "$level" = 1 ] \
+    && { gate_lock_ours || { mkdir "$GATE_LOCK" 2>/dev/null && GATES_HOLD=1; }; }; do sleep 20; done
+}
+# claude-heavy takes the same lock before it runs its command, so `claude-heavy -- gates record`
+# (and the queue) would wait for itself forever: a lock owned by one of our callers is ours.
+gate_lock_ours() {
+  local owner p; owner=$(awk '{print $1}' "$GATE_LOCK/owner" 2>/dev/null) && [ -n "$owner" ] || return 1
+  p=$$
+  while [ -n "$p" ] && [ "$p" -gt 1 ]; do
+    [ "$p" = "$owner" ] && return 0
+    p=$(/bin/ps -o ppid= -p "$p" 2>/dev/null | tr -d ' ')
+  done
+  return 1
+}
+
+gates_record() { # gates_record <checkout-dir>: run the gates on a clean checkout and record the result by tree
+  local dir sha tree g rc
+  dir=$(cd "${1:?usage: $0 gates record <checkout-dir>}" && pwd) || return 1
+  [ -f "$dir/backend/server.ts" ] && [ -d "$dir/node_modules" ] || { echo "$dir is not a Gauss checkout with node_modules" >&2; return 1; }
+  # A record vouches for a tree, so nothing uncommitted may be in it.
+  [ -z "$(git -C "$dir" status --porcelain)" ] || { echo "$dir has uncommitted or untracked files: commit or stash them first." >&2; return 1; }
+  sha=$(git -C "$dir" rev-parse HEAD) && tree=$(git -C "$dir" rev-parse 'HEAD^{tree}') || return 1
+  GATES_TMP=$(mktemp -d); local tmp=$GATES_TMP # global: the EXIT trap runs after this function's locals are gone
+  # Release the lock on exit only while holding it: an interrupted wait must not free another agent's lock.
+  trap '[ "${GATES_HOLD:-0}" = 1 ] && rmdir "$GATE_LOCK" 2>/dev/null; rm -rf "$GATES_TMP"' EXIT
+  for g in "${GATES[@]}"; do
+    gate_lock
+    echo "gate $g ..."
+    rc=0; (cd "$dir" && PATH="$(dirname "$NODE"):$PATH" npm run "$g" >"$tmp/$g.log" 2>&1) || rc=$?
+    if [ "$GATES_HOLD" = 1 ]; then rmdir "$GATE_LOCK" 2>/dev/null || true; fi; GATES_HOLD=0
+    echo "$rc" >"$tmp/$g.rc"
+  done
+  [ "$(git -C "$dir" rev-parse HEAD)" = "$sha" ] && [ -z "$(git -C "$dir" status --porcelain)" ] \
+    || { echo "$dir changed while the gates ran; not recording." >&2; return 1; }
+  local json; json=$(python3 -Ic '
+import json, os, re, sys
+d, sha, tree, by, at = sys.argv[1:6]
+log = lambda g: open(os.path.join(d, g + ".log"), encoding="utf-8", errors="replace").read()
+rc = lambda g: int(open(os.path.join(d, g + ".rc")).read())
+def last(pat, text, conv=int):
+    m = re.findall(pat, text, re.M)
+    return conv(m[-1]) if m else None
+ops, v = log("test:ops"), log("verify")
+def step(name): # verify prints "✔ <step>" or "✖ <step> (exit N)"; no line: verify died first
+    if re.search(r"^✔ " + name + r"$", v, re.M): return 0
+    m = re.search(r"^✖ " + name + r" \(exit (-?\d+|null)\)", v, re.M)
+    return (int(m.group(1)) if m and m.group(1) != "null" else 1) if m else max(rc("verify"), 1)
+r = {"sha": sha, "tree": tree, "by": by, "at": at,
+     "test_ops": {"exit": rc("test:ops"), "pass": last(r"gauss-services: (\d+) passed", ops), "fail": last(r"gauss-services: \d+ passed, (\d+) failed", ops), "go_ok": len(re.findall(r"^ok\s", ops, re.M))},
+     "test": {"exit": step("Test suite"), "tests": last(r"^\S* ?tests (\d+)$", v), "pass": last(r"^\S* ?pass (\d+)$", v), "fail": last(r"^\S* ?fail (\d+)$", v), "via": "verify"},
+     "build": {"exit": step("Production build"), "via": "verify"},
+     "quality": {"exit": rc("quality:full")},
+     "verify": {"exit": rc("verify"), "vcrm": last(r"VCRM: (\d+/\d+)", v, str), "fmea": last(r"FMEA: (\d+/\d+)", v, str), "passed_at": last(r"VERIFY PASSED at (\w+)", v, str)}}
+r["passed"] = all(r[k]["exit"] == 0 for k in ("test_ops", "test", "build", "quality", "verify")) \
+    and r["test"]["fail"] == 0 and r["test_ops"]["fail"] == 0 and sha.startswith(r["verify"]["passed_at"] or "-")
+print(json.dumps(r, ensure_ascii=False))
+' "$tmp" "$sha" "$tree" "$(deployer)" "$(date -u +%Y-%m-%dT%H:%M:%SZ)") || return 1
+  mkdir -p "$GATES_DIR"; printf '%s\n' "$json" >"$GATES_DIR/$tree.json"
+  # Keep the end of each failed gate's output (2026-10-31: "npm test 486/487" with nothing to read).
+  local g kept="$GATES_DIR/logs/$tree"
+  rm -rf "$kept"
+  for g in "${GATES[@]}"; do
+    [ "$(cat "$tmp/$g.rc" 2>/dev/null)" = 0 ] && continue
+    mkdir -p "$kept" && tail -400 "$tmp/$g.log" >"$kept/$g.log" 2>/dev/null
+  done
+  [ -d "$kept" ] && echo "Failed gate output: $kept"
+  if [ -d "$GATES_DIR/logs" ]; then # keep the last 20 (ls fails on an empty dir: pipefail + set -e)
+    ls -dt "$GATES_DIR"/logs/*/ 2>/dev/null | tail -n +21 | while IFS= read -r old; do rm -rf "$old"; done || true
+  fi
+  gates_summary "$GATES_DIR/$tree.json"
+  gate_record "$tree" >/dev/null
+}
+
+gates_summary() { # gates_summary <record file>: one line
+  python3 -Ic '
+import json, sys
+r = json.load(open(sys.argv[1]))
+t, o, v = r.get("test") or {}, r.get("test_ops") or {}, r.get("verify") or {}
+fails = [k for k in ("test_ops", "test", "build", "quality", "verify") if (r.get(k) or {}).get("exit") not in (0, None)]
+print("%s %s (tree %s) by %s at %s: npm test %s/%s, test:ops %s passed, build %s, quality %s, VCRM %s, FMEA %s" % (
+    "PASSED" if r.get("passed") else "FAILED (" + ", ".join(fails or ["counts"]) + ")", r["sha"][:7], r["tree"][:7], r.get("by"), r.get("at"),
+    t.get("pass"), t.get("tests"), o.get("pass"), "ok" if (r.get("build") or {}).get("exit") == 0 else "failed",
+    "ok" if (r.get("quality") or {}).get("exit") == 0 else "failed", v.get("vcrm"), v.get("fmea")))
+' "$1"
+}
+
+gate_record() { # gate_record <tree>: print the passing record for this exact tree as one JSON line, or fail
+  [ -f "$GATES_DIR/$1.json" ] || return 1
+  python3 -Ic '
+import json, sys
+r = json.load(open(sys.argv[1]))
+if r.get("passed") is not True or r.get("tree") != sys.argv[2]:
+    sys.exit(1)
+print(json.dumps(r, ensure_ascii=False))
+' "$GATES_DIR/$1.json" "$1"
+}
+
+req_get() { sed -n "s/^$2=//p" "$1" | head -1; } # req_get <request file> <key>
+
+gates_result() { # gates_result <sha> <tree> <STATUS> <detail>: the one line a session or the ledger reads later
+  mkdir -p "$GATES_DIR"
+  printf '%s %s %s %s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$1" "$2" "$3" "$4" >>"$GATES_RESULTS"
+  event gates_result "${1:0:7}" "$3 ${1:0:7}: $4" sha="$1" tree="$2" status="$3"
+}
+
+gates_queued() { local f; for f in "$GATES_QUEUE"/*-"$1".req; do [ -f "$f" ] && { echo "$f"; return 0; }; done; return 1; } # by tree
+
+gates_resolve() { # gates_resolve <checkout-dir>|<commit>: sets G_SRC G_SHA G_TREE G_REPO
+  if [ -d "$1" ]; then
+    G_SRC=$(cd "$1" && pwd) || return 1
+    [ -z "$(git -C "$G_SRC" status --porcelain)" ] \
+      || { echo "$G_SRC has uncommitted or untracked files: commit them first (the queue gates commits)." >&2; return 1; }
+    G_SHA=$(git -C "$G_SRC" rev-parse --verify HEAD) || return 1
+  else
+    G_SRC=$PWD
+    G_SHA=$(git -C "$G_SRC" rev-parse -q --verify "$1^{commit}" 2>/dev/null) || { echo "Unknown commit '$1' in $G_SRC." >&2; return 1; }
+  fi
+  G_TREE=$(git -C "$G_SRC" rev-parse "$G_SHA^{tree}") && G_REPO=$(git -C "$G_SRC" rev-parse --path-format=absolute --git-common-dir)
+}
+
+# A new head replaces the older heads of its branch still waiting (2026-10-31: three hand prunes of
+# stale requests in one day, each costing a full gate slot). Never a commit already on origin/main:
+# a queued main (for a deploy) is an ancestor of every branch that merged it.
+gates_supersede() { # gates_supersede <new-sha> <new-request>
+  local new=$1 keep=$2 r old
+  for r in "$GATES_QUEUE"/*.req; do
+    [ -f "$r" ] && [ "$r" != "$keep" ] || continue
+    old=$(req_get "$r" sha)
+    [ -n "$old" ] && [ "$old" != "$new" ] || continue
+    git --git-dir="$G_REPO" merge-base --is-ancestor "$old" "$new" 2>/dev/null || continue
+    git --git-dir="$G_REPO" merge-base --is-ancestor "$old" refs/remotes/origin/main 2>/dev/null && continue
+    rm -f "$r" && echo "Superseded ${old:0:7}: ${new:0:7} contains it."
+  done
+}
+
+gates_enqueue() { # gates_enqueue <checkout-dir>|<commit>: queue a gate run for that commit's tree, start the runner
+  gates_resolve "${1:?usage: $0 gates enqueue <checkout-dir>|<commit>}" || return 1
+  local sha=$G_SHA tree=$G_TREE f
+  if gate_record "$tree" >/dev/null; then
+    gates_result "$sha" "$tree" SKIPPED "already passed: $(gates_summary "$GATES_DIR/$tree.json")"
+    echo "Already passed: ${sha:0:7} (tree ${tree:0:7}) has a passing gate record; nothing queued."; return 0
+  fi
+  mkdir -p "$GATES_QUEUE"
+  if f=$(gates_queued "$tree"); then
+    echo "Already queued: tree ${tree:0:7} ($(req_get "$f" sha | cut -c1-7), by $(req_get "$f" by))."
+  else
+    f="$GATES_QUEUE/$(python3 -Ic 'import time; print("%.6f" % time.time())')-$tree.req"
+    printf 'sha=%s\ntree=%s\nrepo=%s\nnode=%s\nby=%s\nqueued=%s\n' "$sha" "$tree" "$G_REPO" "$NODE" "$(deployer)" "$(date +%s)" >"$f.tmp"
+    mv "$f.tmp" "$f"
+    event gates_queued "${sha:0:7}" "gate run queued for ${sha:0:7}" sha="$sha" tree="$tree" by="$(deployer)"
+    gates_supersede "$sha" "$f"
+    echo "Queued ${sha:0:7} (tree ${tree:0:7}); $(ls "$GATES_QUEUE" | grep -c '\.req$') in the queue."
+  fi
+  echo "Result later (any session, or the ledger): $0 gates result ${sha:0:7}   (or: tail -1 \"$GATES_RESULTS\")"
+  gates_start
+}
+
+gates_runner_pid() { local p; p=$(cat "$GATES_RUNNER/pid" 2>/dev/null) && [ -n "$p" ] && kill -0 "$p" 2>/dev/null && echo "$p"; }
+
+gates_start() { # start the one runner, detached from this session (own session id, no terminal), if none runs
+  local p
+  mkdir -p "$GATES_DIR" "$LOGS"
+  # The runner outlives the checkout that queued it (sessions' worktrees get removed): run a copy.
+  # Renamed into place, so a runner still reading the old copy keeps it. Refreshed on every enqueue,
+  # even with a runner alive (2026-10-31: a runner that never idles kept running old queue code for
+  # days); the runner re-runs itself when it sees the new copy.
+  if ! cmp -s "$0" "$GATES_DIR/runner.sh"; then
+    cp "$0" "$GATES_DIR/runner.sh.$$" && mv -f "$GATES_DIR/runner.sh.$$" "$GATES_DIR/runner.sh" || return 1
+  fi
+  if p=$(gates_runner_pid); then echo "The gate runner is working (pid $p)."; return 0; fi
+  [ "${GAUSS_GATES_START:-1}" = 1 ] || return 0 # tests
+  nohup perl -MPOSIX -e 'POSIX::setsid(); exec @ARGV' /bin/bash "$GATES_DIR/runner.sh" gates run \
+    </dev/null >>"$LOGS/gates-runner.log" 2>&1 &
+  echo "Gate runner started (log: $LOGS/gates-runner.log)."
+}
+
+gates_run() { # gates_run [--once]: work through the queue, oldest first, then exit; --once: stop after one wait that gave up
+  local once=${1:-} self req sha tree queued rc pid me
+  self="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
+  me=$(shasum "$self" | cut -d' ' -f1)
+  mkdir -p "$GATES_QUEUE"
+  until mkdir "$GATES_RUNNER" 2>/dev/null; do
+    pid=$(cat "$GATES_RUNNER/pid" 2>/dev/null || true)
+    [ "$pid" = "$$" ] && break # this runner, re-run on a newer copy of itself: the lock is still ours
+    if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then echo "The gate runner is already working (pid $pid)."; return 0; fi
+    # No pid yet: another runner is starting, unless that was long ago.
+    [ -z "$pid" ] && [ "$(mtime_age_min "$GATES_RUNNER")" -lt 1 ] && { echo "Another gate runner is starting."; return 0; }
+    rm -rf "$GATES_RUNNER"
+  done
+  echo $$ >"$GATES_RUNNER/pid"
+  trap 'rm -rf "$GATES_RUNNER"' EXIT
+  while req=$(ls "$GATES_QUEUE"/*.req 2>/dev/null | sort | head -1) && [ -n "$req" ]; do
+    if [ "$(shasum "$self" | cut -d' ' -f1)" != "$me" ]; then
+      echo "$(date '+%F %T') runner code changed: re-running the new copy"
+      exec /bin/bash "$self" gates run $once
+    fi
+    sha=$(req_get "$req" sha); tree=$(req_get "$req" tree); queued=$(req_get "$req" queued)
+    if [ $(( $(date +%s) - ${queued:-0} )) -ge $(( GATES_EXPIRE_H * 3600 )) ]; then
+      gates_result "$sha" "$tree" EXPIRED "waited over ${GATES_EXPIRE_H} h for memory or power; enqueue it again"
+      rm -f "$req"; continue
+    fi
+    if gate_record "$tree" >/dev/null; then # passed meanwhile (another request, or by hand)
+      gates_result "$sha" "$tree" SKIPPED "already passed: $(gates_summary "$GATES_DIR/$tree.json")"
+      rm -f "$req"; continue
+    fi
+    echo "$(date '+%F %T') gates ${sha:0:7} ..."
+    rc=0
+    if [ -x "$HEAVY" ]; then
+      "$HEAVY" --wait "$GATES_WAIT_MIN" --name gates --label "gate queue ${sha:0:7}" -- /bin/bash "$self" gates run-one "$req" || rc=$?
+    else
+      /bin/bash "$self" gates run-one "$req" || rc=$?
+    fi
+    if [ "$rc" = 75 ] && [ -f "$req" ]; then # claude-heavy gave up waiting; the request stays first in line
+      echo "$(date '+%F %T') ${sha:0:7} still waiting for memory or power; asking again."
+      [ "$once" = --once ] && return 0
+      sleep "${GAUSS_GATES_RETRY_S:-60}"; continue
+    fi
+    if [ -f "$req" ]; then # run-one died before it could say why
+      gates_result "$sha" "$tree" ERROR "gate run exited $rc without a result (log: $LOGS/gates-runner.log)"; rm -f "$req"
+    fi
+    tail -1 "$GATES_RESULTS"
+  done
+  echo "$(date '+%F %T') gate queue empty."
+}
+
+gates_run_one() { # gates_run_one <request>: check out, install if the lockfile changed, gates_record, write the result
+  local req=$1 sha tree repo node by co lock out rc=0 line status
+  # Withdrawn while claude-heavy waited (a session re-queued a new head): nothing to run.
+  [ -f "$req" ] || { echo "Request $(basename "$req") was withdrawn; skipping."; return 0; }
+  sha=$(req_get "$req" sha); tree=$(req_get "$req" tree); repo=$(req_get "$req" repo); node=$(req_get "$req" node); by=$(req_get "$req" by)
+  [ -n "$node" ] && [ -x "$node" ] && NODE=$node # the Node the session queued with (Node 22)
+  co=${GAUSS_GATES_CHECKOUT:-$(dirname "$repo").worktrees/gates}
+  gates_fail() { gates_result "$sha" "$tree" ERROR "$1"; rm -f "$req"; return 1; }
+  mkdir -p "$GATES_DIR/runs"
+  if [ -e "$co" ]; then
+    # Only ever reset a checkout the queue made: never someone's working checkout.
+    grep -Fqx "$co" "$GATES_DIR/checkouts" 2>/dev/null || { gates_fail "$co exists and was not made by the gate queue (set GAUSS_GATES_CHECKOUT)"; return 1; }
+    { git -C "$co" checkout -q --detach -f "$sha" && git -C "$co" clean -fdq; } || { gates_fail "could not check out ${sha:0:7} in $co"; return 1; }
+  else
+    git --git-dir="$repo" -c advice.detachedHead=false worktree add -q --detach "$co" "$sha" || { gates_fail "could not add the gate checkout $co at ${sha:0:7}"; return 1; }
+    echo "$co" >>"$GATES_DIR/checkouts" # one per repository
+  fi
+  # One install for consecutive requests with the same package-lock.json.
+  lock=$(shasum "$co/package-lock.json" | cut -d' ' -f1) || { gates_fail "no package-lock.json at ${sha:0:7}"; return 1; }
+  if [ "$(cat "$co/node_modules/.gauss-lock" 2>/dev/null)" != "$lock" ]; then
+    echo "Installing dependencies in $co ..."
+    (cd "$co" && PATH="$(dirname "$NODE"):$PATH" npm ci --no-audit --no-fund >"$GATES_DIR/runs/$sha.install.log" 2>&1) \
+      || { gates_fail "npm ci failed (log: $GATES_DIR/runs/$sha.install.log)"; return 1; }
+    echo "$lock" >"$co/node_modules/.gauss-lock"
+  fi
+  # The native MHD kernel is built by npm ci, so it went stale when only its C++ changed: a commit
+  # was tested against another commit's build/ (2026-10-31). Rebuild when its sources differ.
+  if [ -f "$co/binding.gyp" ]; then
+    local native; native=$(cat "$co/binding.gyp" "$co"/backend/cpp/* 2>/dev/null | shasum | cut -d' ' -f1)
+    if [ "$(cat "$co/build/.gauss-native" 2>/dev/null)" != "$native" ]; then
+      echo "Rebuilding the native kernel in $co ..."
+      # npm's own bundled node-gyp (what the install uses), run by this Node so the addon matches its ABI.
+      local gyp; gyp=$(PATH="$(dirname "$NODE"):$PATH"; p=$(command -v npm) && echo "$(dirname "$(readlink -f "$p")")/../node_modules/node-gyp/bin/node-gyp.js")
+      (cd "$co" && PATH="$(dirname "$NODE"):$PATH" "$NODE" "$gyp" rebuild >"$GATES_DIR/runs/$sha.native.log" 2>&1) \
+        || { gates_fail "native build failed (log: $GATES_DIR/runs/$sha.native.log)"; return 1; }
+      echo "$native" >"$co/build/.gauss-native"
+    fi
+  fi
+  out=$(GAUSS_BY=$by; gates_record "$co" 2>&1) || rc=$?
+  printf '%s\n' "$out" >"$GATES_DIR/runs/$sha.log"
+  line=$(printf '%s\n' "$out" | grep -E '^(PASSED|FAILED)' | tail -1 || true)
+  if [ -n "$line" ]; then status=${line%% *}; line=${line#* }
+  else status=ERROR; line="$(printf '%s\n' "$out" | tail -1) (log: $GATES_DIR/runs/$sha.log)"; fi
+  gates_result "$sha" "$tree" "$status" "$line"
+  rm -f "$req"
+  [ "$status" = PASSED ]
+}
+
+gates_show_result() { # gates_show_result <checkout-dir>|<commit>: the latest line for that tree; exit 0 passed, 1 failed/none, 3 queued
+  local arg=${1:?usage: $0 gates result <checkout-dir>|<commit>|status} tree="" line f
+  if gates_resolve "$arg" 2>/dev/null; then tree=$G_TREE; else tree=$arg; fi # a session's worktree may be gone: match a prefix
+  if [ ${#tree} = 40 ] && f=$(gates_queued "$tree"); then
+    echo "QUEUED ${tree:0:7} since $(date -r "$(req_get "$f" queued)" '+%F %H:%M') by $(req_get "$f" by); runner: $(gates_runner_pid >/dev/null && echo working || echo 'not running (the awake guard restarts it within a minute)')"
+    return 3
+  fi
+  line=$(awk -v t="$tree" 'index($2, t) == 1 || index($3, t) == 1' "$GATES_RESULTS" 2>/dev/null | tail -1)
+  [ -n "$line" ] || { echo "No gate result or request for $arg."; return 1; }
+  echo "$line"
+  case $(echo "$line" | cut -d' ' -f4) in PASSED) return 0 ;; SKIPPED) [[ "$line" == *" already passed: "* ]] ;; *) return 1 ;; esac
+}
+
+gates_status() {
+  local f n=0 p
+  if p=$(gates_runner_pid); then echo "runner: working (pid $p)"; else echo "runner: not running"; fi
+  for f in "$GATES_QUEUE"/*.req; do
+    [ -f "$f" ] || continue; n=$((n + 1))
+    echo "queued: $(req_get "$f" sha | cut -c1-7) by $(req_get "$f" by) since $(date -r "$(req_get "$f" queued)" '+%F %H:%M')"
+  done
+  [ $n -gt 0 ] || echo "queue: empty"
+  tail -5 "$GATES_RESULTS" 2>/dev/null || true
+}
+
+record_deploy() { # record_deploy <deploy|rollback> <ok|failed> <from> <to> <tree> <gates json|""> <reason>
+  local ev=$1 result=$2 from=$3 to=$4 tree=$5 gates=${6:-null} reason=$7 fb="" by; by=$(deployer)
+  ready_record && fb=$READY_SHA || true
+  mkdir -p "$WATCH_DIR"
+  printf '{"ts":"%s","action":%s,"by":%s,"from":%s,"to":%s,"tree":%s,"gates":%s,"fallback":%s,"result":%s,"emergency":%s}\n' \
+    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$(json_str "$ev")" "$(json_str "$by")" "$(json_str "$from")" "$(json_str "$to")" \
+    "$(json_str "$tree")" "$gates" "$(json_opt "$fb")" "$(json_str "$result")" "$(json_opt "$DEPLOY_EMERGENCY")" >>"$DEPLOY_HISTORY"
+  event "$ev" "${to:0:7}" "$reason" by="$by" from="$from" to="$to" tree="$tree" gates:="$gates" \
+    fallback="$fb" result="$result" emergency="$DEPLOY_EMERGENCY"
+}
+
+deploy_state() { # "ok|no <description>" for status and check: is what runs in live a recorded deploy?
+  local live head; live=$(live_dir) && [ -d "$live" ] && head=$(git -C "$live" rev-parse HEAD 2>/dev/null) \
+    || { echo "no live: not installed"; return 0; }
+  python3 -Ic '
+import json, sys
+from datetime import datetime, timezone
+head, rows = sys.argv[2], []
+try:
+    rows = [json.loads(l) for l in open(sys.argv[1]) if l.strip()]
+except (OSError, ValueError):
+    pass
+ok = [r for r in rows if r.get("to") == head and r.get("result") == "ok"]
+if not ok:
+    print("no live = %s has no deploy record (switched by hand?): deploy it with gauss-services.sh deploy" % head[:7]); sys.exit()
+r = ok[-1]
+when = datetime.strptime(r["ts"], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc).astimezone().strftime("%Y-%m-%d %H:%M")
+what = "rolled back to" if r.get("action") == "rollback" else "deployed"
+if r.get("emergency"):
+    print("no live = %s, %s %s by %s in an EMERGENCY (%s): no gate record" % (head[:7], what, when, r.get("by"), r["emergency"]))
+elif r.get("gates"):
+    g = r["gates"]
+    print("ok live = %s, %s %s by %s, gates recorded (npm test %s, test:ops %s, VCRM %s)" % (head[:7], what, when, r.get("by"),
+          (g.get("test") or {}).get("pass"), (g.get("test_ops") or {}).get("pass"), (g.get("verify") or {}).get("vcrm")))
+else:
+    print("no live = %s, %s %s by %s, no gate record" % (head[:7], what, when, r.get("by")))
+' "$DEPLOY_HISTORY" "$head"
+}
+
 # What a deploy can break, and so what decides a rollback. The rest of `check`
 # (network, space weather, memory service, Argo) can be off for reasons a rollback
 # wouldn't fix, so it is reported after a deploy, never acted on.
+# tailnet_api_in <dist-assets-dir>: true if the build hardcodes a tailnet URL (an absolute
+# http(s)://<host>.ts.net API origin breaks every browser on this Mac: macOS Tailscale doesn't loop
+# its own share back). Only a URL counts: the Mesh page's code names the ".ts.net" suffix itself
+# (lib/mesh-onboarding.ts), and a bare 'ts.net' match failed every deploy of main on 2026-10-31.
+tailnet_api_in() { grep -rEqs 'https?://[A-Za-z0-9.-]+\.ts\.net' "$1"; }
+
 deploy_ready() { # deploy_ready <dir> <seconds>: poll until the services answer, or give up
   local dir=$1 waited=0
   until [ "$(code http://127.0.0.1:3001/health)" = 200 ] && [ "$(code http://127.0.0.1:8080/)" = 200 ] \
     && [ "$(code http://127.0.0.1:8080/api/system/connectivity)" = 200 ] \
-    && ! grep -rqs 'ts\.net' "$dir/frontend/dist/assets"; do
+    && ! tailnet_api_in "$dir/frontend/dist/assets"; do
     [ "$waited" -ge "$2" ] && return 1
     sleep 3; waited=$((waited + 3)); touch "$DEPLOY_LOCK" 2>/dev/null || true
   done
@@ -424,6 +1070,16 @@ deploy() { # deploy <commit> [fallback-dir]
     || { echo "Unknown commit '$1' in $live." >&2; return 1; }
   prev=$(git -C "$live" rev-parse HEAD) || return 1
   [ "$sha" != "$prev" ] || { echo "Live is already at ${sha:0:7}."; return 0; }
+  # Only merged code with gates recorded for its exact tree, unless a person says why not.
+  local tree gates="" prev_tree prev_gates=""
+  tree=$(git -C "$live" rev-parse "$sha^{tree}") && prev_tree=$(git -C "$live" rev-parse "$prev^{tree}") || return 1
+  gates=$(gate_record "$tree") || gates=""
+  prev_gates=$(gate_record "$prev_tree") || prev_gates=""
+  if [ -z "$DEPLOY_EMERGENCY" ]; then
+    git -C "$live" merge-base --is-ancestor "$sha" origin/main 2>/dev/null \
+      || { echo "${sha:0:7} is not on origin/main: merge it first (or --emergency <reason>)." >&2; return 1; }
+    [ -n "$gates" ] || { echo "No passing gate record for ${sha:0:7} (tree ${tree:0:7}): run '$0 gates record <checkout at ${sha:0:7}>' first (or --emergency <reason>)." >&2; return 1; }
+  fi
   read -r level _ < <(memory_stats)
   if [ "$level" -ge "$MEM_SHED_LEVEL" ]; then
     echo "Memory pressure is $(pressure_name "$level"): not deploying now (npm ci and the build need headroom). Retry when normal." >&2; return 1
@@ -437,6 +1093,11 @@ deploy() { # deploy <commit> [fallback-dir]
     touch "$DEPLOY_LOCK" # left by a deploy that died
   fi
   trap 'rmdir "$DEPLOY_LOCK" 2>/dev/null || true' EXIT
+  if [ -n "$DEPLOY_EMERGENCY" ]; then
+    echo "EMERGENCY deploy of ${sha:0:7} by $(deployer): $DEPLOY_EMERGENCY (origin/main and gate checks skipped)"
+    phone -key emergency-deploy -every 10m "Gauss: emergency deploy" \
+      "${sha:0:7} by $(deployer) without the usual checks: $DEPLOY_EMERGENCY"
+  fi
 
   # The standby becomes what runs now, if it is healthy: never swap a good fallback for a broken live.
   [ -z "$fbdir" ] && ready_record && fbdir=$READY_DIR
@@ -456,19 +1117,23 @@ deploy() { # deploy <commit> [fallback-dir]
     || { echo "Checkout refused (a local data file conflicts with ${sha:0:7}?): nothing changed." >&2; return 1; }
   if switch_live "$live" "$prev" "$sha" && deploy_ready "$live" "$DEPLOY_WAIT"; then
     echo "$(date '+%F %T') deployed ${sha:0:7} (was ${prev:0:7})" >>"$LOGS/deploy.log"
+    record_deploy deploy ok "$prev" "$sha" "$tree" "$gates" "deployed ${sha:0:7} (was ${prev:0:7})"
     echo "Deployed ${sha:0:7}. Full checklist (for information; only the services decide a rollback):"
     check || true
     return 0
   fi
   echo "${sha:0:7} didn't come up within ${DEPLOY_WAIT}s: rolling back to ${prev:0:7} ..." >&2
+  record_deploy deploy failed "$prev" "$sha" "$tree" "$gates" "${sha:0:7} didn't come up within ${DEPLOY_WAIT}s"
   if switch_live "$live" "$sha" "$prev" && deploy_ready "$live" "$DEPLOY_WAIT"; then
     echo "$(date '+%F %T') ${sha:0:7} failed, rolled back to ${prev:0:7}" >>"$LOGS/deploy.log"
+    record_deploy rollback ok "$sha" "$prev" "$prev_tree" "$prev_gates" "${sha:0:7} failed, rolled back to ${prev:0:7}"
     phone -key deploy -every 10m "Gauss: deploy rolled back" \
       "${sha:0:7} didn't come up; live is back on ${prev:0:7}. Logs: ~/Library/Logs/gauss/backend.log"
     echo "Rolled back: live is on ${prev:0:7} again." >&2
     return 1
   fi
   echo "$(date '+%F %T') ${sha:0:7} failed and rollback to ${prev:0:7} failed" >>"$LOGS/deploy.log"
+  record_deploy rollback failed "$sha" "$prev" "$prev_tree" "$prev_gates" "${sha:0:7} failed and rollback to ${prev:0:7} failed"
   fallback_on "deploy of ${sha:0:7} failed and rolling back to ${prev:0:7} failed too" \
     || phone -key deploy -every 10m "Gauss: down after a deploy" "${sha:0:7} failed, rollback failed and there is no fallback. Needs a person."
   return 1
@@ -507,14 +1172,18 @@ dev_run() { # dev_run <checkout-dir>
 }
 
 awake_guard() { # run every minute by the awake agent
+  boot_check || true # first, before watch_peers refreshes the heartbeat it reads
   watch_peers
   local batt pct
   batt=$(pmset -g batt); pct=$(grep -Eo '[0-9]+%' <<<"$batt" | head -1 | tr -d % || true)
   battery_alerts "$batt" "$pct"
   local level swap free; read -r level swap free < <(memory_stats)
   memory_alerts "$level" "$swap"
-  disk_alerts "$(disk_free_gb)"
+  memory_sample "$level" "$swap"
+  disk_alerts "$(disk_free_gb)" "$swap"
   balance || true
+  # A queued gate run outlives a reboot or a killed runner: start one again.
+  if ls "$GATES_QUEUE" 2>/dev/null | grep -q '\.req$' && ! gates_runner_pid >/dev/null; then gates_start >/dev/null || true; fi
   [ -f "$SUDOERS" ] || return 0 # not set up; status and check say so
   if [ -f "$AWAKE_OFF" ]; then
     awake_set 0 "turned off"
@@ -550,7 +1219,10 @@ balance() { # balance [--dry-run]
   read -r level swap free < <(memory_stats); disk=$(disk_free_gb)
   { [ "$level" -ge "$MEM_SHED_LEVEL" ] || swap_high "$swap"; } && mem_short=1
   [ $on_battery = 1 ] && [ "$pct" -le "$AWAKE_WARN_BATTERY" ] && batt_low=1
-  { [ $on_battery = 0 ] || [ "${pct:-0}" -gt $((AWAKE_WARN_BATTERY + 10)) ]; } && recovered=1
+  # On AC only counts when it is gaining: a weak charger losing ground flapped learning and Low Power
+  # Mode on and off at 10-14% (balance.log 27-28 Oct).
+  local gaining=0; [ $on_battery = 0 ] && [[ "$batt" != *"discharging"* && "$batt" != *"not charging"* ]] && gaining=1
+  { [ $gaining = 1 ] || [ "${pct:-0}" -gt $((AWAKE_WARN_BATTERY + 10)) ]; } && recovered=1
   local notify=() quiet=()
   act() { if [ $dry = 1 ]; then echo "would: $*"; else "$@" >/dev/null 2>&1 || true; fi; }
 
@@ -561,6 +1233,16 @@ balance() { # balance [--dry-run]
   if { [ $mem_short = 1 ] || [ $batt_low = 1 ]; } && pgrep -f "$coder" >/dev/null 2>&1; then
     act pkill -f "$coder"; notify+=("stopped the local model server")
   fi
+  # A leak grows whatever the pressure, so this one doesn't wait for memory to run short.
+  local h p mb
+  for h in $LEAKY_HELPERS; do
+    for p in $(pgrep -x "$h" 2>/dev/null); do
+      mb=$(footprint_mb "$p")
+      if [ "${mb:-0}" -ge "$LEAK_MB" ]; then
+        act pkill -x "$h"; notify+=("restarted $h (${mb} MB; a macOS helper that leaks, macOS starts it again)"); break
+      fi
+    done
+  done
   if [ $batt_low = 1 ]; then
     if [ ! -f "$LEARNING_PAUSED" ]; then act mkdir -p "$WATCH_DIR"; act touch "$LEARNING_PAUSED"; quiet+=("paused nightly learning"); fi
     if [ "$(lowpower_on)" = 0 ] && sudo -n -l /usr/bin/pmset -a lowpowermode 1 >/dev/null 2>&1; then
@@ -579,7 +1261,11 @@ balance() { # balance [--dry-run]
     act "$DISK_CLEANUP" --apply --if-below "$DISK_MIN_GB"
     if [ $dry = 0 ]; then
       local after; after=$(disk_free_gb)
-      [ "${after:-0}" -gt "$disk" ] && notify+=("cleared rebuildable caches (${disk} to ${after} GB free)")
+      # A text only when the disk was short; routine clearing between 10 and 15 GB is logged quietly.
+      if [ "${after:-0}" -gt "$disk" ]; then
+        if disk_short "$disk" "$swap"; then notify+=("cleared rebuildable caches (${disk} to ${after} GB free)")
+        else quiet+=("cleared rebuildable caches (${disk} to ${after} GB free)"); fi
+      fi
     fi
   fi
 
@@ -589,6 +1275,7 @@ balance() { # balance [--dry-run]
   local summary; summary=$(IFS=';'; echo "${all[*]}" | sed 's/;/; /g')
   if [ $dry = 1 ]; then echo "would report: $summary ($state)"; return 0; fi
   mkdir -p "$LOGS"; echo "$(date '+%F %T') balance: $summary ($state)" >>"$LOGS/balance.log"
+  event balance "" "$summary ($state)"
   if [ ${#notify[@]} -gt 0 ]; then
     local extra=""; [ $mem_short = 1 ] && extra=" Biggest: $(top_memory)."
     phone -key balance -every 1h "Gauss: rebalanced" "$(IFS=';'; echo "${notify[*]}" | sed 's/;/; /g') ($state).$extra"
@@ -659,8 +1346,8 @@ resilience() { # can background work survive the lid closed, the battery, memory
   [ "$level" -lt "$MEM_ALERT_LEVEL" ] && ! swap_high "$swap" && ok=ok || ok=no
   item $ok "memory pressure $(pressure_name "$level"), swap $(gb "$swap") GB$([ $ok = no ] && echo "; biggest: $(top_memory)")"
   local disk; disk=$(disk_free_gb)
-  [ "${disk:-0}" -ge "$DISK_MIN_GB" ] && ok=ok || ok=no
-  item $ok "disk ${disk:-?} GB free$([ $ok = no ] && echo " (need ${DISK_MIN_GB}+ for swap and builds)")"
+  disk_short "${disk:-0}" "$swap" && ok=no || ok=ok
+  item $ok "disk ${disk:-?} GB free$([ $ok = no ] && echo " (need ${DISK_ALERT_GB}+, or ${DISK_MIN_GB}+ while swap is over ${SWAP_MAX_GB} GB)")"
   network_item
   local heal="$HOME/.local/share/mesh-heal/state"
   [ -n "$(find "$heal" -mmin -5 2>/dev/null)" ] && ok=ok || ok=no
@@ -688,7 +1375,7 @@ check() { # pre-demo checklist
   [ "$(code http://127.0.0.1:8080/api/system/connectivity)" = 200 ] && ok=ok || ok=no
   item $ok "website reaches the API through its own origin (:8080/api)"
   # A build that hardcodes another API origin breaks on this Mac (no tailnet loopback).
-  if grep -rqs "ts\.net" "$(launchctl print "$UID_DOMAIN/uk.lightbound.gauss-frontend" 2>/dev/null | awk -F'= ' '/working directory =/{print $2; exit}')/frontend/dist/assets" 2>/dev/null; then
+  if tailnet_api_in "$(launchctl print "$UID_DOMAIN/uk.lightbound.gauss-frontend" 2>/dev/null | awk -F'= ' '/working directory =/{print $2; exit}')/frontend/dist/assets" 2>/dev/null; then
     item no "frontend build is same-origin (it hardcodes an API host: reinstall)"
   else
     item ok "frontend build is same-origin"
@@ -719,7 +1406,8 @@ except Exception:
     print("no space-weather data unavailable")
 ' 2>/dev/null || echo "no space-weather data unavailable")
   item "${fresh%% *}" "${fresh#* }"
-  local dir; dir=$(launchctl print "$UID_DOMAIN/uk.lightbound.gauss-backend" 2>/dev/null | awk -F'= ' '/working directory =/{print $2; exit}')
+  # || true: with the backend not loaded, launchctl fails and pipefail + set -e would end the checklist here.
+  local dir; dir=$(launchctl print "$UID_DOMAIN/uk.lightbound.gauss-backend" 2>/dev/null | awk -F'= ' '/working directory =/{print $2; exit}' || true)
   local report; report=$(python3 -Ic '
 import json, sys
 from datetime import datetime, timezone
@@ -765,6 +1453,7 @@ except Exception:
     item ok "answer model off (retired 2026-10-22, GAU-184; opt-in with GAUSS_BRAIN_MODEL_SERVICE=1)"
   fi
   local fb; fb=$(fallback_state); item "${fb%% *}" "${fb#* }"
+  local dep; dep=$(deploy_state); item "${dep%% *}" "${dep#* }"
   [ $fail = 0 ] && echo "Ready to demo." || echo "Not ready: fix the ✗ items above."
   return $fail
 }
@@ -815,6 +1504,7 @@ case "${1:-}" in
     health
     printf 'awake    %s\n' "$(awake_state | cut -d' ' -f2-)"
     printf 'fallback %s\n' "$(fallback_state | cut -d' ' -f2-)"
+    printf 'deploy   %s\n' "$(deploy_state | cut -d' ' -f2-)"
     ;;
   restart)
     for l in "${SERVICES[@]}"; do launchctl kickstart -k "$UID_DOMAIN/$l"; done
@@ -824,8 +1514,33 @@ case "${1:-}" in
   dev)
     dev_run "${2:-}"
     ;;
+  prebuild) # prebuild <checkout-dir>: what deploy does before writing the backend agent
+    prebuild_backend "${2:?usage: $0 prebuild <checkout-dir>}"; echo "backend runs: node ${BACKEND_ARGS[*]}"
+    ;;
   deploy)
-    deploy "${2:-}" "${3:-}"
+    shift; args=()
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --emergency) DEPLOY_EMERGENCY=${2:-}; [ -n "$DEPLOY_EMERGENCY" ] || { echo "--emergency needs a reason" >&2; exit 2; }; shift ;;
+        -*) echo "deploy: unknown option $1 (usage: deploy <sha> [fallback dir] [--emergency <reason>])" >&2; exit 2 ;;
+        *) args+=("$1") ;;
+      esac
+      shift
+    done
+    deploy "${args[0]:-}" "${args[1]:-}"
+    ;;
+  gates)
+    case "${2:-}" in
+      record) gates_record "${3:-}" ;;
+      enqueue) gates_enqueue "${3:-}" ;;
+      run) gates_run "${3:-}" ;;
+      run-one) gates_run_one "${3:?}" ;;
+      result) if [ "${3:-}" = status ]; then gates_status; else gates_show_result "${3:-}"; fi ;;
+      *) for f in "$GATES_DIR"/*.json; do [ -f "$f" ] && gates_summary "$f"; done; true ;;
+    esac
+    ;;
+  events)
+    events_show "${2:-}" "${3:-}" "${4:-}"
     ;;
   fallback)
     case "${2:-}" in
@@ -845,7 +1560,7 @@ case "${1:-}" in
     echo "Gauss services removed. Logs kept in $LOGS."
     ;;
   *)
-    sed -n '2,17p' "$0"
+    sed -n '2,21p' "$0"
     exit 2
     ;;
 esac

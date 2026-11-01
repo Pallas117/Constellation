@@ -144,8 +144,8 @@ Automations monitor:
 
 ## Documentation Links
 
-- **Automations 1-4**: [AUTOMATION_1-4_COMPLETE.md](AUTOMATION_1-4_COMPLETE.md)
-- **Automations 5-9**: [AUTOMATION_5-9_COMPLETE.md](AUTOMATION_5-9_COMPLETE.md)
+- **Automations 1-4** (archived, July 2026): [AUTOMATION_1-4_COMPLETE.md](archive/2026-summer/AUTOMATION_1-4_COMPLETE.md)
+- **Automations 5-9** (archived, July 2026): [AUTOMATION_5-9_COMPLETE.md](archive/2026-summer/AUTOMATION_5-9_COMPLETE.md)
 - **Critical Bugs**: [docs/CRITICAL_BUGS_AND_FIXES.md](docs/CRITICAL_BUGS_AND_FIXES.md)
 - **Security**: [docs/SECURITY_AUTOMATION.md](docs/SECURITY_AUTOMATION.md)
 - **Developer scoring and onboarding**: [docs/DEVELOPER_SCORING_AND_ONBOARDING.md](docs/DEVELOPER_SCORING_AND_ONBOARDING.md)
