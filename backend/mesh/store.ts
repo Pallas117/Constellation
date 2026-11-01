@@ -125,6 +125,8 @@ export interface MeshBattery {
 export const GUARD_CODE_TEXT = {
   "mem-critical": "memory pressure critical",
   "mem-warn-sustained": "memory at warn for 30+ of the last 60 min",
+  "mem-paging": "swapping out fast: memory short",
+  "mem-warn-coping": "memory at warn but coping",
   "mem-warn": "memory pressure at warn",
   "pressure-unknown": "memory pressure unknown",
   "swap-rising": "swap climbing at warn",

@@ -64,6 +64,17 @@ expect() { # expect <name> <condition-exit-code>
   if [ "$2" = 0 ]; then pass=$((pass + 1)); else failed=$((failed + 1)); echo "FAIL: $1"; sed 's/^/    alerts: /' "$T/log"; fi
   [ -z "$JUNIT" ] || junit_case "$1" "$2" "$(sed 's/^/alerts: /' "$T/log")"
 }
+
+# Deploy/check guard against a hardcoded tailnet API origin (2026-10-31: the bare 'ts.net' grep
+# matched the Mesh page's ".ts.net" suffix check and rolled back every deploy of main).
+eval "$(sed -n '/^tailnet_api_in()/p' "$SCRIPT")"
+mkdir -p "$T/dist-suffix" "$T/dist-url" "$T/dist-plain"
+printf 'function t(h){return h.endsWith(".ts.net")}' >"$T/dist-suffix/index.js"
+printf 'const API="http://judith.tail4f9ebe.ts.net/api"' >"$T/dist-url/index.js"
+printf 'const API=""' >"$T/dist-plain/index.js"
+! tailnet_api_in "$T/dist-suffix"; expect "deploy guard: a build that only names the .ts.net suffix is same-origin" $?
+tailnet_api_in "$T/dist-url"; expect "deploy guard: a build that hardcodes a tailnet API URL is caught" $?
+! tailnet_api_in "$T/dist-plain"; expect "deploy guard: a plain same-origin build passes" $?
 alerts() { cut -d' ' -f2 "$T/log" | tr '\n' ' ' | sed 's/ $//'; } # the -key of each alert sent
 plain() { sed $'s/\033\\[[0-9;]*m//g'; }                          # drop the ✓/✗ colours
 
@@ -72,8 +83,8 @@ SRC="AC Power" BATT="6%; AC attached; not charging present: true" SD=1 run awake
 [ "$(alerts)" = "awake-unguarded charger-weak" ]; expect "6% on a weak charger with sleep disabled and no guard" $?
 SRC="AC Power" BATT="80%; charging; 1:00 remaining present: true" run awake guard
 [ -z "$(alerts)" ]; expect "80% charging: no alerts" $?
-SRC="Battery Power" BATT="18%; discharging; 1:00 remaining present: true" run awake guard
-[ "$(alerts)" = "battery-low" ]; expect "18% on battery: low warning" $?
+SRC="Battery Power" BATT="45%; discharging; 1:00 remaining present: true" run awake guard
+[ "$(alerts)" = "battery-low" ]; expect "45% on battery: low warning" $?
 SRC="Battery Power" BATT="9%; discharging; 0:20 remaining present: true" run awake guard
 [ "$(alerts)" = "battery-critical" ]; expect "9% on battery: at the floor" $?
 SRC="Battery Power" BATT="55%; discharging; 4:00 remaining present: true" run awake guard
@@ -113,8 +124,8 @@ for pct in 57 48 30 21 20 15 11 10 6 2; do
   SRC="Battery Power" BATT="${pct}%; discharging; present: true" run awake guard
   seq+="$pct:$(alerts) "
 done
-[ "$seq" = "57: 48: 30: 21: 20:battery-low 15:battery-low 11:battery-low 10:battery-critical 6:battery-critical 2:battery-critical " ]
-expect "replayed 57→2% drain: warn from 20%, critical from 10%" $?
+[ "$seq" = "57: 48:battery-low 30:battery-critical 21:battery-critical 20:battery-critical 15:battery-critical 11:battery-critical 10:battery-critical 6:battery-critical 2:battery-critical " ]
+expect "replayed 57→2% drain: warn from 50%, critical from 40%" $?
 
 EV="$T/home/Library/Logs/gauss/events.jsonl"
 # ev <python expr over the list E of events>: true when it holds (python3 -I, so the check can't import from here)
@@ -379,11 +390,13 @@ MLX=1 FREE=10 run awake guard
 [ -z "$(acts)" ]; expect "10% 'free' at normal pressure: nothing shed" $?
 LEVEL=4 run awake guard
 [ -z "$(acts)" ] && [ "$(alerts)" = "memory-low" ]; expect "memory short, nothing optional running: no action" $?
-SRC="Battery Power" BATT="18%; discharging; present: true" run awake guard
-[ -f "$PAUSED" ] && [ "$(alerts)" = "battery-low" ]; expect "battery 18%: learning paused quietly (log only)" $?
+SRC="Battery Power" BATT="45%; discharging; present: true" run awake guard
+[ -f "$PAUSED" ] && [ "$(alerts)" = "battery-low" ]; expect "battery 45%: learning paused quietly (log only)" $?
 grep -q "paused nightly learning" "$T/home/Library/Logs/gauss/balance.log"; expect "balance logs what it did" $?
-SRC="Battery Power" BATT="25%; discharging; present: true" run awake guard
-[ -f "$PAUSED" ]; expect "battery 25%: still paused (hysteresis to warn+10)" $?
+SRC="Battery Power" BATT="55%; discharging; present: true" run awake guard
+[ -f "$PAUSED" ]; expect "battery 55%: still paused (hysteresis to warn+10)" $?
+SRC="AC Power" BATT="14%; AC attached; not charging present: true" run awake guard
+[ -f "$PAUSED" ]; expect "14% on a charger that isn't keeping up: still paused" $?
 SRC="AC Power" BATT="26%; charging; present: true" run awake guard
 [ ! -f "$PAUSED" ]; expect "back on AC: learning resumed" $?
 DISKGB=5 run awake guard
