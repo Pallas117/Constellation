@@ -112,7 +112,8 @@ export function createDataApiRouter(
    * PR-01 trust records (GAU-57): one inference, or {"inferences": [...]} up to MAX_TRUST_BATCH.
    * Each item is validated on its own; an invalid one is returned with its errors, never
    * guessed. Inference times beyond the plan's lookback are refused here: older windows are a
-   * replay pilot (PR-03), not a live lookup.
+   * replay pilot (PR-03), not a live lookup. Every record returned is logged for invoicing
+   * (GAU-70) before the response goes out; if that log can't be written, nothing is returned.
    */
   router.post("/data/trust/records", (req: KeyedRequest, res) => {
     const history = data.environment?.() ?? null;
@@ -141,12 +142,23 @@ export function createDataApiRouter(
         records.push(buildTrustRecord(parsed.request, history, { nowMs }));
       }
     });
-    if (!batch) {
-      if (rejected.length) res.status(400).json({ error: "Invalid inference", errors: rejected[0].errors });
-      else res.json({ data: records[0], meta: meta(req) });
+    if (!batch && rejected.length) {
+      res.status(400).json({ error: "Invalid inference", errors: rejected[0].errors });
       return;
     }
-    res.json({ data: records, rejected, meta: { ...meta(req), count: records.length } });
+    try {
+      store.recordTrustIssued(
+        req.apiKey!.keyId,
+        records.map((r) => ({ recordId: r.recordId, spacecraftId: r.inference.spacecraftId })),
+        now(),
+      );
+    } catch (err) {
+      console.error("[trust] usage log write failed; no records returned:", err instanceof Error ? err.message : err);
+      res.status(500).json({ error: "Could not record usage; no records were issued. Please retry." });
+      return;
+    }
+    if (!batch) res.json({ data: records[0], meta: meta(req) });
+    else res.json({ data: records, rejected, meta: { ...meta(req), count: records.length } });
   });
 
   return router;

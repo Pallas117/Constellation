@@ -1,6 +1,6 @@
 {
   "$comment": "Constellation requirements baseline (GAU-120). NASA SP-2016-6105 Rev 2 §6.2/§5.3. Methods: T test, A analysis, I inspection, D demonstration. T evidence = exact test names; A/I/D evidence = repo paths. Verified by `npm run verify`.",
-  "version": "1.9.0",
+  "version": "1.11.0",
   "requirements": [
     {
       "id": "REQ-ING-001",
@@ -433,6 +433,74 @@
       ]
     },
     {
+      "id": "REQ-OPS-004",
+      "title": "Watchdog restart budget",
+      "statement": "The awake guard shall restart a watched job (Argo, mesh-heal, or a live service after two failed health checks in a row) at most 3 times per job in any rolling hour, and shall then send a phone alert instead of restarting it.",
+      "rationale": "A job that dies on start needs a person: unbounded restarts hide the fault and churn the 8 GB host (GAU-158).",
+      "parent": "GAU-158",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "stale Argo and mesh-heal: both restarted",
+        "backend down once: wait for a second failure",
+        "backend down twice: restarted",
+        "a recovery resets the strike count",
+        "4th restart in an hour: alert instead of kicking",
+        "restarts over an hour old don't count: restarted again, no alert",
+        "no fallback prepared: out of restarts only alerts"
+      ]
+    },
+    {
+      "id": "REQ-OPS-005",
+      "title": "Failover to the prepared fallback",
+      "statement": "When a live service still fails its health check after its 3 restarts in an hour and a valid fallback is prepared, the awake guard shall replace live with the fallback on the same ports (:3001, :8080), URLs, data and .env, and send a phone alert; while the fallback serves, the guard shall restart only the fallback and shall not fail over again; `fallback off` shall restore live with a fresh restart budget.",
+      "rationale": "A cold standby of the last known-good build keeps the operator URLs serving when live can't restart itself; failback stays a person's decision so live and fallback can't flap (GAU-158).",
+      "parent": "GAU-158",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "fallback status: ready although its path has a space",
+        "a corrupt, cut-short or orphaned fallback record reads as none prepared: no half failover, still alerts",
+        "out of restarts and still down: fails over to the fallback and texts the phone",
+        "status shows the fallback is serving",
+        "on fallback: the guard restarts the fallback, never fails over again",
+        "on fallback and out of restarts: alerts only, no restart loop, no flip back to live",
+        "fallback off: live back, fresh restarts for it",
+        "fallback plists: live's ports, URLs, data and .env; prepare never loads them"
+      ]
+    },
+    {
+      "id": "REQ-OPS-006",
+      "title": "Dev layer isolated from live",
+      "statement": "The dev layer shall refuse the live and fallback checkouts and live's ports (:3001, :8080), and shall start its backend and site with their own ports, data directory, public URL and API target set explicitly, so that it cannot bind live's ports, write live's data or send its API calls to live.",
+      "rationale": "R&D runs on the same host as live; a dev server must never take live's ports, data or API (GAU-158).",
+      "parent": "GAU-158",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "dev refuses the live checkout",
+        "dev refuses the fallback checkout",
+        "dev refuses the fallback checkout (path with a space)",
+        "dev refuses live's ports",
+        "dev runs on :5174 and :3101",
+        "dev start: its own ports, data and API target, set explicitly, never live's"
+      ]
+    },
+    {
+      "id": "REQ-OPS-007",
+      "title": "No heavy installs under memory pressure",
+      "statement": "`fallback prepare`, `deploy` and `dev` shall refuse, before installing, building or starting anything, when the kernel memory pressure level is warn or higher.",
+      "rationale": "npm ci was killed under memory pressure on 2026-10-19 (scripts/ops/gauss-services.sh); on the 8 GB host an install or a dev server at warn puts the live services at risk (GAU-158).",
+      "parent": "GAU-158",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "prepare refuses at memory pressure warn",
+        "deploy refuses at memory pressure warn",
+        "dev refuses at memory pressure warn"
+      ]
+    },
+    {
       "id": "REQ-WM-001",
       "title": "Deterministic, tamper-evident world records",
       "statement": "Every world-state record shall have a deterministic id and a SHA-256 checksum over its canonical content, and validation shall reject records whose content, id or schema do not match.",
@@ -528,6 +596,38 @@
         "SAA: along six days of an ISS orbit, NICER's SAA lies inside the extended tier and the core inside NICER's (GAU-141)",
         "SAA: the thresholds and the altitude band are applied as published (GAU-141)",
         "trust record: an inference inside the SAA is degraded context, with |B| and the tier (GAU-141)"
+      ]
+    },
+    {
+      "id": "REQ-TR-004",
+      "title": "Evidence packs",
+      "statement": "For an analysis window the system shall produce an evidence pack holding the trust records, the hashes of the stored inputs, the software and policy versions, every unused log row with its reason, a verdict summary and limitations; the records shall be hash-chained and the pack hashed so that a changed, reordered or missing record is detected; the same stored inputs and code shall give the same pack and PDF byte for byte; and the limitations shall always state that the pack describes the environment, not the spacecraft, with no regulatory claim in Gauss-authored text.",
+      "rationale": "PR-04 Evidence pack export, ICP-1 P0 (GAU-60): customer QA, insurers and regulators need one reproducible, tamper-evident report per window; signing the pack hash follows in GAU-67.",
+      "parent": "GAU-60",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "evidence pack: from a log and a replayed storm, every row accounted for, and the same stored inputs give the same pack and PDF (GAU-60)",
+        "evidence pack: any change is detected: a record, its hash, the chain, the order, a dropped record (GAU-60)",
+        "evidence pack: the wording rules hold even when the hashes are recomputed (GAU-60)",
+        "evidence pack: refuses records outside the window, from another log or policy, or rows not accounted for (GAU-60)",
+        "evidence pack: packs chain, each starting from the previous pack's hash (GAU-60)",
+        "evidence pack PDF: a valid PDF (cross-reference offsets, pages) carrying the pack hash and limitations (GAU-60)"
+      ]
+    },
+    {
+      "id": "REQ-TR-005",
+      "title": "Trust-record usage metering",
+      "statement": "The system shall log every trust record it returns to a customer, once, with the issuing API key, spacecraft and UTC month, in an append-only log that refuses updates and deletes; shall return no records when that log cannot be written; and shall export per-spacecraft, per-month counts as CSV that adds up to the records returned, with fields safe to open in a spreadsheet.",
+      "rationale": "GAU-70: pilots are invoiced per spacecraft-month and per 1,000 trust records (ICP commercial hooks); per-call metering counts a 100-record batch as one call, so it can't support that, and the invoice must reconcile with what was issued.",
+      "parent": "GAU-70",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "trust metering: every record returned is logged once, by spacecraft and month; rejected items are not (GAU-70)",
+        "trust metering: the log is append-only; the database refuses updates and deletes (GAU-70)",
+        "trust metering: if the usage log can't be written, no records are returned (GAU-70)",
+        "trust metering: the CSV export reconciles with the records issued and is safe to open in a spreadsheet (GAU-70)"
       ]
     }
   ]

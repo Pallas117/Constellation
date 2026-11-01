@@ -248,6 +248,9 @@ export const RadiationDataOverlayLOD = ({
 
   // Create material with LOD-appropriate point size
   const material = useMemo(() => createGlowMaterial(lodConfig.pointSize), [lodConfig.pointSize]);
+  // Free the GPU buffers of a replaced or unmounted geometry and material (GAU-208).
+  useEffect(() => () => geometry?.dispose(), [geometry]);
+  useEffect(() => () => material.dispose(), [material]);
 
   // Animate glow
   useFrame((state) => {

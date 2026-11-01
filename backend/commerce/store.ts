@@ -42,12 +42,20 @@ export interface UsageRow {
   count: number;
 }
 
+/** Trust records issued to one spacecraft in one month (UTC): the invoicing unit (GAU-70). */
+export interface TrustUsageRow {
+  month: string;
+  spacecraftId: string;
+  records: number;
+}
+
 const hash = (value: string) => createHash("sha256").update(value).digest("hex");
 const nowIso = () => new Date().toISOString();
 
 /**
  * Organisations, their plans and members, API keys (stored only as SHA-256),
- * and per-key daily usage. SQLite, separate from the auth database.
+ * per-key daily usage, and an append-only log of every trust record issued.
+ * SQLite, separate from the auth database.
  */
 export class CommerceStore {
   private db: Database.Database;
@@ -76,6 +84,16 @@ export class CommerceStore {
       CREATE TABLE IF NOT EXISTS usage (
         day TEXT NOT NULL, key_id TEXT NOT NULL REFERENCES api_keys(id), endpoint TEXT NOT NULL,
         count INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (day, key_id, endpoint));
+      -- One row per trust record returned to a customer (GAU-70): what pilots are invoiced on
+      -- (per 1,000 records, per spacecraft-month). Append-only: the database refuses changes.
+      CREATE TABLE IF NOT EXISTS trust_issued (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, issued_at TEXT NOT NULL, month TEXT NOT NULL,
+        key_id TEXT NOT NULL REFERENCES api_keys(id), spacecraft_id TEXT NOT NULL, record_id TEXT NOT NULL);
+      CREATE INDEX IF NOT EXISTS trust_issued_month_key ON trust_issued (month, key_id);
+      CREATE TRIGGER IF NOT EXISTS trust_issued_no_update BEFORE UPDATE ON trust_issued
+        BEGIN SELECT RAISE(ABORT, 'trust_issued is append-only'); END;
+      CREATE TRIGGER IF NOT EXISTS trust_issued_no_delete BEFORE DELETE ON trust_issued
+        BEGIN SELECT RAISE(ABORT, 'trust_issued is append-only'); END;
     `);
   }
 
@@ -235,5 +253,29 @@ export class CommerceStore {
         )
         .all(orgId, fromDay, toDay) as Array<{ day: string; key_id: string; endpoint: string; count: number }>
     ).map((r) => ({ day: r.day, keyId: r.key_id, endpoint: r.endpoint, count: r.count }));
+  }
+
+  // ---- trust-record metering (GAU-70) ----
+
+  /** Log the trust records just returned to a customer, all or none. */
+  recordTrustIssued(keyId: string, records: Array<{ recordId: string; spacecraftId: string }>, at = new Date()): void {
+    if (records.length === 0) return;
+    const issuedAt = at.toISOString();
+    const insert = this.db.prepare("INSERT INTO trust_issued (issued_at, month, key_id, spacecraft_id, record_id) VALUES (?, ?, ?, ?, ?)");
+    this.db.transaction(() => {
+      for (const r of records) insert.run(issuedAt, issuedAt.slice(0, 7), keyId, r.spacecraftId, r.recordId);
+    })();
+  }
+
+  /** Trust records issued per month and spacecraft, for an organisation. Months are inclusive YYYY-MM. */
+  trustUsage(orgId: string, fromMonth: string, toMonth: string): TrustUsageRow[] {
+    return (
+      this.db
+        .prepare(
+          "SELECT t.month, t.spacecraft_id, COUNT(*) AS records FROM trust_issued t JOIN api_keys k ON k.id = t.key_id " +
+            "WHERE k.org_id = ? AND t.month BETWEEN ? AND ? GROUP BY t.month, t.spacecraft_id ORDER BY t.month, t.spacecraft_id",
+        )
+        .all(orgId, fromMonth, toMonth) as Array<{ month: string; spacecraft_id: string; records: number }>
+    ).map((r) => ({ month: r.month, spacecraftId: r.spacecraft_id, records: r.records }));
   }
 }
