@@ -228,12 +228,17 @@ type fakeFx struct {
 	notes   []string
 	opened  []string
 	openErr error
+	ran     []string
 }
 
 func (f *fakeFx) Notify(title, msg string) { f.notes = append(f.notes, title) }
 func (f *fakeFx) Open(u string) error      { f.opened = append(f.opened, u); return f.openErr }
-func (f *fakeFx) Sleep(time.Duration)      {}
-func (f *fakeFx) Now() time.Time           { return f.now }
+func (f *fakeFx) Run(name string, args ...string) error {
+	f.ran = append(f.ran, name+" "+strings.Join(args, " "))
+	return nil
+}
+func (f *fakeFx) Sleep(time.Duration) {}
+func (f *fakeFx) Now() time.Time      { return f.now }
 
 func newLoop(t *testing.T, snaps ...Snapshot) (Loop, *fakeFx) {
 	fx := &fakeFx{now: time.Date(2026, 10, 9, 8, 0, 0, 0, time.UTC)}

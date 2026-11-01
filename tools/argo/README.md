@@ -87,6 +87,8 @@ Then remove the `statusLine` and `claude()` lines above if you added them, and r
 
 Wi-Fi security is checked on every probe: WIFI_RISK (a warning, like WPAD_RISK) when the network is open, WEP or WPA1, or when this Mac answers sharing services (Remote Login, File Sharing, Screen Sharing, Remote Management, AirPlay Receiver) on its LAN address. Argo only advises; it never changes System Settings.
 
+**Wi-Fi shield.** On open, WEP or WPA1 Wi-Fi, Argo turns on Cloudflare WARP (`warp-cli connect`) when WARP is set to its full-tunnel mode, re-checks that the internet and Tailscale still work, and texts "tunnel on". Back on a protected network it turns WARP off, but only if Argo turned it on. If the tunnel breaks the connection or Tailscale, Argo undoes it and leaves WARP off on that network; it does the same if you switch WARP off yourself there. With WARP in proxy or DNS-only mode it texts once per network that WARP can't protect the Mac and which setting to change. It runs no other command.
+
 Alerts stay quiet on purpose: an unresolved problem texts once when it escalates, then at most every 2 h, and OFFLINE never texts (a Mac with no network cannot send, and queued texts would arrive stale).
 
 

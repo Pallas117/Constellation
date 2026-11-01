@@ -31,6 +31,7 @@ func (s Store) path(name string) string { return filepath.Join(s.Dir, name) }
 // State is the loop's memory between ticks. Breaker and backoff numbers
 // mirror mesh-heal: 4 attempts, 60s·2^(n-1) capped at 15 min, 30 min open.
 type State struct {
+	ShieldOn     bool      `json:"shield_on,omitempty"` // Argo turned WARP on for untrusted Wi-Fi (shield.go)
 	Class        Class     `json:"class"`
 	Reason       string    `json:"reason"`
 	Fingerprint  string    `json:"fingerprint"`
@@ -63,6 +64,10 @@ type Net struct {
 	FirstSeen time.Time        `json:"first_seen"`
 	Fixes     map[Class]string `json:"fixes,omitempty"`
 	Recover   map[Class][]int  `json:"recover,omitempty"`
+	// Wi-Fi shield: leave WARP off on this network (it broke things, or you turned it off), and
+	// the "WARP is in proxy mode" advice was already sent here.
+	NoShield      bool `json:"no_shield,omitempty"`
+	ShieldAdvised bool `json:"shield_advised,omitempty"`
 }
 
 const (

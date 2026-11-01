@@ -90,6 +90,7 @@ type Snapshot struct {
 	Proxies     []Proxy     `json:"proxies,omitempty"`
 	StaleProcs  []StaleProc `json:"stale_procs,omitempty"`
 	Tailscale   Tailscale   `json:"tailscale"`
+	Warp        Warp        `json:"warp,omitempty"`   // Cloudflare WARP, for the Wi-Fi shield (shield.go)
 	Signal      *WiFiSignal `json:"signal,omitempty"` // Wi-Fi only; read at most every signalEvery
 }
 
