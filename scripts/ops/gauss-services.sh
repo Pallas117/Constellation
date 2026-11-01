@@ -852,7 +852,9 @@ gates_run_one() { # gates_run_one <request>: check out, install if the lockfile 
     local native; native=$(cat "$co/binding.gyp" "$co"/backend/cpp/* 2>/dev/null | shasum | cut -d' ' -f1)
     if [ "$(cat "$co/build/.gauss-native" 2>/dev/null)" != "$native" ]; then
       echo "Rebuilding the native kernel in $co ..."
-      (cd "$co" && PATH="$(dirname "$NODE"):$PATH" node_modules/.bin/node-gyp rebuild >"$GATES_DIR/runs/$sha.native.log" 2>&1) \
+      # npm's own bundled node-gyp (what the install uses), run by this Node so the addon matches its ABI.
+      local gyp; gyp=$(PATH="$(dirname "$NODE"):$PATH"; p=$(command -v npm) && echo "$(dirname "$(readlink -f "$p")")/../node_modules/node-gyp/bin/node-gyp.js")
+      (cd "$co" && PATH="$(dirname "$NODE"):$PATH" "$NODE" "$gyp" rebuild >"$GATES_DIR/runs/$sha.native.log" 2>&1) \
         || { gates_fail "native build failed (log: $GATES_DIR/runs/$sha.native.log)"; return 1; }
       echo "$native" >"$co/build/.gauss-native"
     fi
