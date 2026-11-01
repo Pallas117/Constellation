@@ -2,7 +2,7 @@
 
 Each cryptographic primitive in the Gauss code and what it is for. Written for GAU-67 (REG-04: keep evidence and release signing to signing, authentication and their key management) and as input to the export classification (REG-01, GAU-65). It is not a classification: that needs counsel.
 
-Source: a sweep of the code for crypto calls (`createHash`, `createHmac`, `randomBytes`, `sign`/`verify`, WebCrypto `subtle`, `getRandomValues`, Go `crypto/*` imports) on main 1e9087b plus this branch, 2026-10-24; main's later changes up to 6963a00 re-checked 2026-10-30. Third-party libraries were not swept and are marked UNVERIFIED.
+Source: a sweep of the code for crypto calls (`createHash`, `createHmac`, `randomBytes`, `sign`/`verify`, WebCrypto `subtle`, `getRandomValues`, Go `crypto/*` imports) on main 1e9087b plus this branch, 2026-10-24; main's later changes up to 87ed388 re-checked 2026-11-02. Third-party libraries were not swept and are marked UNVERIFIED.
 
 ## Evidence and release signing (GAU-67, this change)
 
