@@ -17,10 +17,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: "22"
           cache: "npm"
@@ -97,7 +97,7 @@ jobs:
           } > release_notes.md
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v3
         with:
           files: |
             sbom.json
@@ -119,10 +119,10 @@ jobs:
       id-token: write
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Build Provenance
-        uses: slsa-framework/slsa-github-generator@v1.9.0
+        uses: slsa-framework/slsa-github-generator@v2.1.0
         with:
           base64-subjects: ${{ needs.sign-release.outputs.build-outputs-sha256 }}
           upload-assets: true
@@ -133,7 +133,7 @@ jobs:
     needs: sign-release
     steps:
       - name: Download SBOM
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: sbom
 
