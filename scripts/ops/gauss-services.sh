@@ -556,8 +556,9 @@ fallback_prepare() { # fallback_prepare <dir> [sha]: check out, install, build, 
   mkdir -p "$FALLBACK_STATE" "$LOGS"
   # Same ports, live data and live .env (read in place, never copied): only one of the
   # two ever runs, and devices, accounts and telemetry carry over in both directions.
+  prebuild_backend "$dir"
   PLIST_DATA="$live/data" plist "${FALLBACK_LABELS[0]}" "$dir" "$LOGS/fallback-backend.log" keepalive \
-    "$NODE" --env-file-if-exists="$live/.env" --import tsx backend/server.ts >"$FALLBACK_STATE/${FALLBACK_LABELS[0]}.plist"
+    "$NODE" --env-file-if-exists="$live/.env" "${BACKEND_ARGS[@]}" >"$FALLBACK_STATE/${FALLBACK_LABELS[0]}.plist"
   PLIST_DATA="$live/data" plist "${FALLBACK_LABELS[1]}" "$dir" "$LOGS/fallback-frontend.log" keepalive \
     "$NODE" node_modules/vite/bin/vite.js preview --config frontend/vite.config.ts --host 127.0.0.1 --port 8080 --strictPort \
     >"$FALLBACK_STATE/${FALLBACK_LABELS[1]}.plist"
@@ -567,14 +568,37 @@ fallback_prepare() { # fallback_prepare <dir> [sha]: check out, install, build, 
   echo "Fallback ready: ${sha:0:7} at $dir (cold: not running, no memory used)."
 }
 
+# Prebuilt backend (2 Nov): running TypeScript through tsx at runtime kept the loader, source maps and
+# an esbuild helper resident: 207 MB RSS + 16 MB helper vs 91 MB prebuilt (same code, empty data,
+# 90 s). Compile backend/ and shared/ to .js beside the .ts, so every relative path (../../build,
+# ../../shared/proto, *.json) resolves as before. Only the live and fallback checkouts do this; dev
+# keeps tsx. BACKEND_ARGS is what the backend agent runs; tsx if prebuilding is not possible.
+prebuild_backend() { # prebuild_backend <checkout-dir>: sets BACKEND_ARGS
+  local dir=$1 esb="$1/node_modules/esbuild/bin/esbuild"
+  BACKEND_ARGS=(--import tsx backend/server.ts)
+  [ -f "$esb" ] && [ -n "$NODE" ] || return 0
+  # esbuild's install usually swaps its JS launcher for the native binary: run that directly.
+  local run=("$NODE" "$esb"); [ "$(head -c 2 "$esb")" != "#!" ] && [ -x "$esb" ] && run=("$esb")
+  # Drop .js left by an earlier build (only git-ignored ones, never node_modules), so a removed module can't linger.
+  (cd "$dir" && find backend shared -name '*.js' ! -path '*/node_modules/*' -print0 | git check-ignore -z --stdin 2>/dev/null | xargs -0 rm -f) || true
+  if (cd "$dir" && find backend shared -name '*.ts' ! -name '*.test.ts' ! -name '*.d.ts' ! -path '*/node_modules/*' -print0 \
+      | xargs -0 "${run[@]}" --outdir=. --outbase=. --format=esm --platform=node --target=node22 --log-level=error) \
+    && (cd "$dir" && "$NODE" --check backend/server.js); then
+    BACKEND_ARGS=(backend/server.js)
+  else
+    echo "Prebuilding the backend failed in $dir; it keeps running through tsx." >&2
+  fi
+}
+
 install_agents() { # install_agents <checkout-dir>: build the site, write and (re)load the agents
   local dir=$1 l
   [ -f "$dir/backend/server.ts" ] || { echo "$dir is not a Gauss checkout" >&2; return 1; }
   mkdir -p "$LOGS" "$dir/data/mesh" "$dir/data/commerce"
   echo "Building the frontend in $dir (same-origin API) ..."
   (cd "$dir" && VITE_HELIO_PROXY_URL=same-origin "$NODE" node_modules/vite/bin/vite.js build --config frontend/vite.config.ts >/dev/null) || return 1
+  prebuild_backend "$dir"
   plist uk.lightbound.gauss-backend "$dir" "$LOGS/backend.log" keepalive \
-    "$NODE" --env-file-if-exists=.env --import tsx backend/server.ts >"$AGENTS/uk.lightbound.gauss-backend.plist"
+    "$NODE" --env-file-if-exists=.env "${BACKEND_ARGS[@]}" >"$AGENTS/uk.lightbound.gauss-backend.plist"
   plist uk.lightbound.gauss-learning "$dir" "$LOGS/learning.log" nightly \
     "$(command -v python3)" -I ml/train/nightly.py --telemetry data/bedrock/telemetry.jsonl >"$AGENTS/uk.lightbound.gauss-learning.plist"
   plist uk.lightbound.gauss-frontend "$dir" "$LOGS/frontend.log" keepalive \
@@ -1398,6 +1422,9 @@ case "${1:-}" in
     ;;
   dev)
     dev_run "${2:-}"
+    ;;
+  prebuild) # prebuild <checkout-dir>: what deploy does before writing the backend agent
+    prebuild_backend "${2:?usage: $0 prebuild <checkout-dir>}"; echo "backend runs: node ${BACKEND_ARGS[*]}"
     ;;
   deploy)
     shift; args=()
