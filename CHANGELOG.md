@@ -39,6 +39,8 @@ Before tagging, move these entries under `## [0.1.0] - <date>`.
   double precision, matching the TypeScript path (#96); an unused magnetic-field estimate that was 10^7 too high was
   removed (#114).
 - Telemetry store: bounded tail reads, corrupt lines skipped, buffer reloaded on restart (#59).
+- Live-feed WebSockets stay connected: one upgrade router instead of two servers that each rejected the other's
+  sockets (#163).
 
 ### Security
 

@@ -81,5 +81,7 @@ func probeWiFi(ctx context.Context, s *Snapshot, route string) {
 		return
 	}
 	s.WiFiSec = parseWiFiSecurity(run(ctx, "ipconfig", "getsummary", iface))
+	s.Warp = probeWarp(ctx)
+	probeNeighbours(ctx, s, iface)
 	s.Exposed = exposedServices(strings.TrimSpace(run(ctx, "ipconfig", "getifaddr", iface)), dialQuick)
 }
