@@ -31,16 +31,20 @@ func (s Store) path(name string) string { return filepath.Join(s.Dir, name) }
 // State is the loop's memory between ticks. Breaker and backoff numbers
 // mirror mesh-heal: 4 attempts, 60s·2^(n-1) capped at 15 min, 30 min open.
 type State struct {
-	Class        Class     `json:"class"`
-	Reason       string    `json:"reason"`
-	Fingerprint  string    `json:"fingerprint"`
-	Loc          string    `json:"loc,omitempty"`
-	CheckedAt    time.Time `json:"checked_at"`
-	IncidentAt   time.Time `json:"incident_at,omitempty"`
-	Attempts     int       `json:"attempts"`
-	LastFixAt    time.Time `json:"last_fix_at,omitempty"`
-	LastFix      string    `json:"last_fix,omitempty"`
-	BreakerUntil time.Time `json:"breaker_until,omitempty"`
+	ShieldOn           bool      `json:"shield_on,omitempty"`            // Argo turned WARP on for untrusted Wi-Fi (shield.go)
+	PublicIP           string    `json:"public_ip,omitempty"`            // last tick's public IP, for the network watch
+	ShieldPrevMode     string    `json:"shield_prev_mode,omitempty"`     // WARP mode to put back ("" = Argo left the mode alone)
+	ShieldWasConnected bool      `json:"shield_was_connected,omitempty"` // WARP was already connected: leave it connected
+	Class              Class     `json:"class"`
+	Reason             string    `json:"reason"`
+	Fingerprint        string    `json:"fingerprint"`
+	Loc                string    `json:"loc,omitempty"`
+	CheckedAt          time.Time `json:"checked_at"`
+	IncidentAt         time.Time `json:"incident_at,omitempty"`
+	Attempts           int       `json:"attempts"`
+	LastFixAt          time.Time `json:"last_fix_at,omitempty"`
+	LastFix            string    `json:"last_fix,omitempty"`
+	BreakerUntil       time.Time `json:"breaker_until,omitempty"`
 	// LastSummaryAt is when the weekly iMessage summary was last sent.
 	LastSummaryAt time.Time      `json:"last_summary_at,omitempty"`
 	Networks      map[string]Net `json:"networks,omitempty"` // fingerprint → what worked there
@@ -63,6 +67,14 @@ type Net struct {
 	FirstSeen time.Time        `json:"first_seen"`
 	Fixes     map[Class]string `json:"fixes,omitempty"`
 	Recover   map[Class][]int  `json:"recover,omitempty"`
+	// Wi-Fi shield: leave WARP off on this network (it broke things, or you turned it off), and
+	// the "WARP is in proxy mode" advice was already sent here.
+	NoShield      bool `json:"no_shield,omitempty"`
+	ShieldAdvised bool `json:"shield_advised,omitempty"`
+	// Network watch (neighbours.go): devices seen, the last spoofing sign, inbound connections told.
+	Devices     int                  `json:"devices,omitempty"`
+	SuspectAt   time.Time            `json:"suspect_at,omitempty"`
+	SeenInbound map[string]time.Time `json:"seen_inbound,omitempty"`
 }
 
 const (

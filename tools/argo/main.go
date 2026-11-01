@@ -139,7 +139,24 @@ func main() {
 		err = doctor(ctx, loop.Prober)
 	case "fix":
 		loop.Out = func(s string) { fmt.Println(s) }
-		err = withLock(store, func() { flush(); loop.Tick(ctx) })
+		switch {
+		case len(os.Args) > 2 && os.Args[2] == "--list": // what gauss-phone fix shows
+			class, reason, plan := planNow(ctx, loop)
+			fixList(os.Stdout, class, reason, plan)
+		case len(os.Args) > 2: // argo fix <step>: one phone-runnable step, then a tick to verify it
+			var stepErr error
+			err = withLock(store, func() {
+				_, _, plan := planNow(ctx, loop)
+				if stepErr = fixStep(ctx, os.Stdout, plan, os.Args[2], realEffects{}.Run); stepErr == nil {
+					loop.Tick(ctx)
+				}
+			})
+			if err == nil {
+				err = stepErr
+			}
+		default:
+			err = withLock(store, func() { flush(); loop.Tick(ctx) })
+		}
 	case "tick": // LaunchAgent entry point
 		err = tick(ctx)
 	case "loop": // container entry point: a tick every ARGO_INTERVAL (default 60s) until stopped

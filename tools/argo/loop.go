@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"os/exec"
 	"strings"
 	"time"
 )
@@ -83,6 +85,7 @@ const settleDelay = 10 * time.Second
 type Effects interface {
 	Notify(title, msg string)
 	Open(url string) error
+	Run(name string, args ...string) error // only the Wi-Fi shield's warp-cli connect/disconnect
 	Sleep(d time.Duration)
 	Now() time.Time
 }
@@ -95,7 +98,17 @@ func (f realEffects) Notify(title, msg string) {
 		f.phone.Send(title, msg, time.Now())
 	}
 }
-func (realEffects) Open(u string) error   { return openURL(u) }
+func (realEffects) Open(u string) error { return openURL(u) }
+func (realEffects) Run(name string, args ...string) error {
+	if name == "warp-cli" {
+		if name = warpCLI(); name == "" {
+			return errors.New("warp-cli not found")
+		}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	return exec.CommandContext(ctx, name, args...).Run()
+}
 func (realEffects) Sleep(d time.Duration) { time.Sleep(d) }
 func (realEffects) Now() time.Time        { return time.Now() }
 
@@ -138,10 +151,16 @@ func (l Loop) Tick(ctx context.Context) State {
 			st.Networks[fp] = Net{FirstSeen: now, Fixes: map[Class]string{}}
 		}
 	}
-	prev := st.Class
+	prev, prevPublicIP := st.Class, st.PublicIP
 	st.Fingerprint, st.Loc, st.CheckedAt, st.Tailscale = fp, snap.Loc, now, snap.Tailscale
-	st.Gateway, st.GatewayMAC = snap.Gateway, snap.GatewayMAC
+	if fp != "" {
+		l.watchNeighbours(&st, snap, fp, prevPublicIP) // before Gateway/GatewayMAC move on
+	}
+	st.Gateway, st.GatewayMAC, st.PublicIP = snap.Gateway, snap.GatewayMAC, snap.PublicIP
 	st.Net = ScoreNet(snap)
+	if fp != "" {
+		l.shield(ctx, &st, snap, fp)
+	}
 	l.say("%s  %s", class, reason)
 
 	if !class.Blocking() {
@@ -173,8 +192,8 @@ func (l Loop) Tick(ctx context.Context) State {
 		case class == Offline: // a Mac with no network can't send it; it would arrive stale
 		case quiet > 0: // this network usually clears it by itself: say so only if it lasts longer
 			st.NotifyDue = now.Add(quiet)
-		default:
-			l.Fx.Notify("Argo: "+string(class), reason+"\n"+st.Net.Line()) // rate limit: only on class change
+		default: // rate limit: only on class change
+			l.Fx.Notify("Argo: "+string(class), reason+"\n"+st.Net.Line()+fixHint(Plan(class, snap, st.Networks[fp].Fixes[class])))
 			st.Notified = true
 		}
 	}

@@ -87,6 +87,12 @@ Then remove the `statusLine` and `claude()` lines above if you added them, and r
 
 Wi-Fi security is checked on every probe: WIFI_RISK (a warning, like WPAD_RISK) when the network is open, WEP or WPA1, or when this Mac answers sharing services (Remote Login, File Sharing, Screen Sharing, Remote Management, AirPlay Receiver) on its LAN address. Argo only advises; it never changes System Settings.
 
+**Network watch.** Passive only (the ARP table and this Mac's own TCP connections; nothing is scanned). If another device answers with the router's MAC, or the router's MAC changes while its address and the public IP stay the same, Argo texts "possible ARP spoofing" and treats the network as untrusted for an hour, so the Wi-Fi shield turns WARP on even on WPA2. A device on the local network connected to a sharing service (SSH, SMB, AFP, Screen Sharing, Remote Management, AirPlay) is texted once per device, with its IP and MAC; tailnet and loopback connections don't count. The device count per network is kept in state.
+
+**Fixes from the phone.** Texts and Slack only send, so incident texts now end with "Fix from Termius: gauss-phone fix" when a step can run remotely. `argo fix --list` shows the current problem's steps, numbered and marked `run`, `needs sudo at the Mac` or `advice`; `argo fix <step>` runs one, then a tick verifies it. Only `open-portal`, `check-magicdns`, `restart-daemon` and `exit-node` (allow-listed nodes) run this way, each with its fixed command and no shell; the phone reaches the Mac over SSH, so no ports, tokens or services are added.
+
+**Wi-Fi shield.** On open, WEP or WPA1 Wi-Fi, Argo switches Cloudflare WARP to its tunnel mode (`warp-cli mode warp`) if it is in another known mode, connects it, re-checks that the internet and Tailscale still work, and texts "tunnel on". Back on a protected network it puts WARP back exactly as it was: the same mode (e.g. proxy) and connected or not. If the tunnel breaks the connection or Tailscale, Argo puts WARP back and leaves it alone on that network; it does the same if you switch WARP off yourself there. A mode it doesn't know is never changed. It runs only `warp-cli mode`, `connect` and `disconnect`.
+
 Alerts stay quiet on purpose: an unresolved problem texts once when it escalates, then at most every 2 h, and OFFLINE never texts (a Mac with no network cannot send, and queued texts would arrive stale).
 
 
