@@ -10,6 +10,7 @@
  */
 import { vec, type Vector3 } from "../physics/coordinates.js";
 import type { ArrivingSolarWind, DensityDisagreement } from "../types.js";
+import { freshnessMs } from "../../shared/policy/freshness.js";
 
 type Rec = Record<string, unknown>;
 
@@ -53,8 +54,8 @@ const PAIR_TOLERANCE_MS = 90_000;
 export const L1_DISTANCE_KM = 1_500_000;
 /** Window for the driver means, as the magnetopause models were fitted. */
 export const MEAN_WINDOW_MS = 5 * 60_000;
-/** A propagated sample older than this at Earth means the series has a gap. */
-const ARRIVAL_MAX_AGE_MS = 15 * 60_000;
+/** A propagated sample older than this at Earth means the series has a gap (the L1 bound). */
+const ARRIVAL_MAX_AGE_MS = freshnessMs("l1_solar_wind");
 
 const finite = (v: unknown): number | null => {
   if (v === null || v === undefined || v === "") return null;

@@ -2,6 +2,7 @@
 // DATA PROCESSING & INTERPOLATION ENGINE
 // ============================================================================
 
+import { freshnessMs } from '../../../shared/policy/freshness';
 import type { CanonicalSpaceWeatherPoint, ScaleReading } from './types/space-weather';
 
 export interface SpaceWeatherResponse {
@@ -108,8 +109,8 @@ export class EMAInterpolator {
 // FRESHNESS (for stale data)
 // ============================================================================
 
-/** Carried values expire after 15 minutes (GAU-15). */
-export const DATA_EXPIRY_MS = 15 * 60 * 1000;
+/** Carried values expire with the L1 bound (GAU-15; shared/policy/freshness.json). */
+export const DATA_EXPIRY_MS = freshnessMs('l1_solar_wind');
 
 /**
  * Marks data stale once it is older than DATA_EXPIRY_MS. Values are left as last

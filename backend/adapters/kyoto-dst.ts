@@ -1,4 +1,5 @@
 import type { DataSource, SourceStatus } from "../types.js";
+import { freshnessMs } from "../../shared/policy/freshness.js";
 
 const SOURCE: DataSource = "kyoto-dst";
 
@@ -7,7 +8,7 @@ const SOURCE: DataSource = "kyoto-dst";
 const KYOTO_DST_URL = "https://services.swpc.noaa.gov/products/kyoto-dst.json";
 
 /** Hourly values: past this age (one missed hour) the reading is unknown and the model is used. */
-export const DST_MAX_AGE_MS = 2 * 60 * 60 * 1000;
+export const DST_MAX_AGE_MS = freshnessMs("dst_kyoto");
 
 export interface DstReading {
   dst: number;
