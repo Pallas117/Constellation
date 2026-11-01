@@ -64,6 +64,17 @@ expect() { # expect <name> <condition-exit-code>
   if [ "$2" = 0 ]; then pass=$((pass + 1)); else failed=$((failed + 1)); echo "FAIL: $1"; sed 's/^/    alerts: /' "$T/log"; fi
   [ -z "$JUNIT" ] || junit_case "$1" "$2" "$(sed 's/^/alerts: /' "$T/log")"
 }
+
+# Deploy/check guard against a hardcoded tailnet API origin (2026-10-31: the bare 'ts.net' grep
+# matched the Mesh page's ".ts.net" suffix check and rolled back every deploy of main).
+eval "$(sed -n '/^tailnet_api_in()/p' "$SCRIPT")"
+mkdir -p "$T/dist-suffix" "$T/dist-url" "$T/dist-plain"
+printf 'function t(h){return h.endsWith(".ts.net")}' >"$T/dist-suffix/index.js"
+printf 'const API="http://judith.tail4f9ebe.ts.net/api"' >"$T/dist-url/index.js"
+printf 'const API=""' >"$T/dist-plain/index.js"
+! tailnet_api_in "$T/dist-suffix"; expect "deploy guard: a build that only names the .ts.net suffix is same-origin" $?
+tailnet_api_in "$T/dist-url"; expect "deploy guard: a build that hardcodes a tailnet API URL is caught" $?
+! tailnet_api_in "$T/dist-plain"; expect "deploy guard: a plain same-origin build passes" $?
 alerts() { cut -d' ' -f2 "$T/log" | tr '\n' ' ' | sed 's/ $//'; } # the -key of each alert sent
 plain() { sed $'s/\033\\[[0-9;]*m//g'; }                          # drop the ✓/✗ colours
 

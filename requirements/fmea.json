@@ -183,14 +183,14 @@
       "item": "Host (Judith laptop)",
       "failureMode": "Sleeps, loses power or fails",
       "effect": "Whole service down, fallback included: single point of failure",
-      "detection": "Pipeline verdict 'stalled' after 3 missed ticks; HUD shows STALLED; the awake guard texts the phone at 20% and 10% battery",
-      "mitigation": "Auto-restart on wake; the awake guard keeps the host running with the lid closed down to 10% battery; a process or release failure on this host fails over to the cold-standby fallback (FM-20 to FM-24). No standby host",
+      "detection": "Pipeline verdict 'stalled' after 3 missed ticks; HUD shows STALLED; the awake guard texts the phone at 50% and 40% battery (#173)",
+      "mitigation": "Auto-restart on wake; the awake guard keeps the host running with the lid closed down to 40% battery, then lets it sleep (#173); a process or release failure on this host fails over to the cold-standby fallback (FM-20 to FM-24). No standby host",
       "severity": 5,
       "likelihood": 4,
       "residualLikelihood": 3,
       "verifiedBy": [
         "pipeline timer: status follows data age and loop liveness",
-        "replayed 57→2% drain: warn from 20%, critical from 10%",
+        "replayed 57→2% drain: warn from 50%, critical from 40%",
         "out of restarts and still down: fails over to the fallback and texts the phone"
       ],
       "gap": "Host loss (power, hardware, OS) is unmitigated: the fallback runs on the same host, so it goes down too. Needs a second node with at least 16 GB RAM as a warm standby, with data replication and Tailscale failover (docs/STABILITY.md)"
