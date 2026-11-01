@@ -39,6 +39,7 @@ import { createSwapPlan, rebalanceDeviceNetwork } from "./services/device-swap-m
 import { encodeCanonicalPoint } from "./lib/proto.js";
 import { linkGuardian } from "./lib/connectivity.js";
 import { bedrock } from "./lib/local-db.js";
+import { routeUpgrades } from "./lib/ws-upgrade.js";
 import { retentionFromEnv, startTelemetryRetention } from "./lib/telemetry-retention.js";
 import { queryLimit } from "./lib/query-limit.js";
 import { diskFreeBytes, overall, readTpms } from "./lib/tpm.js";
@@ -617,8 +618,15 @@ app.post("/api/ai/nowcast/train", async (_req, res) => {
 
 const server = http.createServer(app);
 
-const wsSpaceWeather = new WebSocketServer({ server, path: "/ws/feed/space-weather" });
-const wsMmsRecon = new WebSocketServer({ server, path: "/ws/feed/mms-reconnection" });
+const wsSpaceWeather = new WebSocketServer({ noServer: true });
+const wsMmsRecon = new WebSocketServer({ noServer: true });
+routeUpgrades(
+  server,
+  new Map([
+    ["/ws/feed/space-weather", wsSpaceWeather],
+    ["/ws/feed/mms-reconnection", wsMmsRecon],
+  ]),
+);
 trackLiveness(wsSpaceWeather);
 trackLiveness(wsMmsRecon);
 
