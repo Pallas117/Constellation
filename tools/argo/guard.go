@@ -34,11 +34,11 @@ func (l Level) String() string {
 	return [...]string{"ok", "watch", "risk", "block"}[l]
 }
 
-// Thresholds. Shared with scripts/ops/gauss-services.sh so the guard, balance
+// Thresholds. Shared with scripts/ops/gauss-services.sh (except its awake floor) so the guard, balance
 // and the awake guard agree, and with GAU-165 for the trend alerts.
 const (
-	batteryFloorPct = 10  // GAUSS_AWAKE_MIN_BATTERY: the mesh's critical-battery level
-	batteryWarnPct  = 20  // GAUSS_AWAKE_WARN_BATTERY
+	batteryFloorPct = 10  // the mesh's critical-battery level (the awake guard sleeps earlier, at 40%)
+	batteryWarnPct  = 20  // job admission only; the awake guard warns at 50%
 	batteryPairPct  = 25  // GAU-165: low battery plus memory warn was the crash combination
 	swapMaxGB       = 4.0 // GAUSS_SWAP_MAX_GB: balance sheds load from here
 	diskMinGB       = 8.0 // GAUSS_DISK_MIN_GB

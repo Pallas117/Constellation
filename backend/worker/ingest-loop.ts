@@ -123,6 +123,8 @@ export interface IngestionOptions {
 
 export class IngestionWorker {
   private timer: NodeJS.Timeout | null = null;
+  /** The pending start-up retry, so stop() can cancel it (GAU-208). */
+  private retryTimer: NodeJS.Timeout | null = null;
   private running = false;
   private previousDst: number | null = null;
   private couplingWindow: number[] = [];
@@ -170,6 +172,8 @@ export class IngestionWorker {
   }
 
   private async tickWithRetry(attempt = 0): Promise<void> {
+    // A retry chain from before a restart must not tick alongside the new one (GAU-208).
+    if (!this.running) return;
     try {
       await this.tick();
     } catch (error) {
@@ -177,15 +181,16 @@ export class IngestionWorker {
       const baseDelay = 2000;
       const delay = baseDelay * Math.pow(2, attempt);
 
-      if (attempt < maxAttempts) {
+      if (attempt < maxAttempts && this.running) {
         console.error(
           `[IngestionWorker] Initial tick failed (attempt ${attempt + 1}/${maxAttempts}), retrying in ${delay}ms`,
           error,
         );
-        setTimeout(() => {
+        this.retryTimer = setTimeout(() => {
+          this.retryTimer = null;
           void this.tickWithRetry(attempt + 1);
         }, delay);
-      } else {
+      } else if (this.running) {
         console.error(
           `[IngestionWorker] Initial tick failed after ${maxAttempts} attempts, pipeline offline`,
           error,
@@ -215,6 +220,10 @@ export class IngestionWorker {
     if (this.timer) {
       clearInterval(this.timer);
       this.timer = null;
+    }
+    if (this.retryTimer) {
+      clearTimeout(this.retryTimer);
+      this.retryTimer = null;
     }
   }
 
