@@ -1,0 +1,5 @@
+{
+  "$comment": "Published Gauss signing keys (GAU-67): public keys only, a private key here is refused. Add a key with `npm run trust:keys -- new`; rotate by setting the old key's retiredAt, and revoke a key that may be compromised with revokedAt. Check with `npm run trust:keys -- check`. See docs/EVIDENCE_SIGNING.md.",
+  "schema": "gauss.signing-keys/0.1",
+  "keys": []
+}
