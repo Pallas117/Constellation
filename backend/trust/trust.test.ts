@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+import { freshnessMin } from "../../shared/policy/freshness.js";
 import { loadArchive, replayArchive } from "../replay/replay.js";
 import type { CanonicalSpaceWeatherPoint, ScaleReading, SenseCheck } from "../types.js";
 import { EnvironmentHistory } from "./environment.js";
@@ -74,6 +75,18 @@ test("trust record: a missing reading is unknown, never consistent (GAU-57)", ()
   const placeholder = build([point(T - 30_000, { g: null, kpKind: undefined })]);
   assert.equal(placeholder.verdict.value, "unknown");
   assert.match(placeholder.verdict.reasons[0], /^Geomagnetic level unknown/);
+});
+
+test("trust record: Kp is judged by its product's bound, not one bound for both (GAU-212)", () => {
+  // point() stamps Kp and the G-scale 1 h before it was issued.
+  const completed = build([point(T - 30_000)]);
+  assert.equal(completed.environment.kp.value?.kind, "planetary-3h");
+  assert.equal(completed.environment.geomagnetic.value?.label, "G0");
+  const estimate = build([point(T - 30_000, { kpKind: "estimated-1m" })]);
+  assert.equal(estimate.environment.kp.value, null, "a running estimate an hour old has stopped updating");
+  assert.equal(estimate.environment.geomagnetic.value, null);
+  assert.match(estimate.environment.geomagnetic.limitations[0], new RegExp(`older than ${freshnessMin("kp_estimated_1m")} min`));
+  assert.equal(estimate.verdict.value, "unknown");
 });
 
 test("trust record: a stale input is unknown, even when its level was quiet (GAU-57)", () => {

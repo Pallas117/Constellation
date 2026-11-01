@@ -35,6 +35,7 @@ import { linkGuardian } from "../lib/connectivity.js";
 import { PipelineTimer, STAGE_BUDGET_MS } from "../lib/pipeline-timing.js";
 import { ForecastSkillTracker } from "../lib/tpm.js";
 import { bedrock } from "../lib/local-db.js";
+import { freshnessMs } from "../../shared/policy/freshness.js";
 import { inferAnomalyForecast } from "../ml-client/client.js";
 import type {
   CanonicalSpaceWeatherPoint,
@@ -61,7 +62,7 @@ const SWPC_PRODUCTS_MS = 2 * 60 * 1000; // NOAA scales and alerts: a cross-check
 // Freshness is judged by the age of the measurement itself, not by whether a fetch ran
 // this tick. Beyond NOAA_MAX_AGE_MS a readout is discarded rather than carried forward.
 export const NOAA_FRESH_MS = 10 * 60 * 1000;
-export const NOAA_MAX_AGE_MS = 15 * 60 * 1000; // GAU-15: carried values expire at 15 min
+export const NOAA_MAX_AGE_MS = freshnessMs("l1_solar_wind"); // GAU-15: carried values expire with the L1 bound
 
 /** 0 live, 1 buffered (measured but ageing), 3 stale (no measurement within the cap). */
 export function freshnessTier(dataTimestamp: string | null, nowMs: number): ResilienceTier {
