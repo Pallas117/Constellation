@@ -1507,6 +1507,11 @@ case "${1:-}" in
     printf 'deploy   %s\n' "$(deploy_state | cut -d' ' -f2-)"
     ;;
   restart)
+    # Live runs prebuilt JS (#194): after a checkout, restarting alone would run the old .js. Rebuild first.
+    if live=$(live_dir) && [ -n "$live" ] && plutil -extract ProgramArguments json -o - "$AGENTS/uk.lightbound.gauss-backend.plist" 2>/dev/null | grep -c 'backend/server.js' >/dev/null; then
+      prebuild_backend "$live"
+      [ "${BACKEND_ARGS[0]}" = backend/server.js ] || echo "Warning: could not rebuild $live; the backend restarts on its previous build. Run deploy to fix." >&2
+    fi
     for l in "${SERVICES[@]}"; do launchctl kickstart -k "$UID_DOMAIN/$l"; done
     sleep 8
     health
