@@ -59,9 +59,11 @@ Container images are not built yet (GAU-68); signing them is a follow-up.
 - Never put a private key in the repository, `.env*` files, environment variables, logs, URLs, chat or agent transcripts, cloud drives or the tailnet mesh folder. The keyring check refuses any private key material, and `npm run security:secrets` flags it in staged changes.
 - AI agents run the signing commands, which read the key file themselves. Agents must not open, print or copy the key file. This is a rule, not a technical control: the agents run as the same user.
 - The key file is not passphrase-protected: the tools add no encryption of their own (REG-04), and rely on the file mode and FileVault. A hardware-backed key (YubiKey or HSM) is the stronger option and a follow-up; Node's crypto cannot use one directly.
-- Backup: TBC (Josh). A lost key is not a disaster: make a new one and retire the old one. Packs it signed keep verifying.
+- Backup: none. A lost key is not a disaster: make a new one and retire the old one. Packs it signed keep verifying. Josh chose (2026-11-02) to lock the key file under a geometry pattern rather than keep copies; that lock is a separate change.
 
-## First key (Josh)
+## First keys
+
+Made on 2026-11-01 and published in `backend/trust/signing-keys.json`: evidence packs `ed25519:fd861c573a359f169d67fc7e9cd9f073`, releases `ed25519:4337a6c2faf6104ba515d546285eea8f`. They were made like this (the dates in the file names differ):
 
 ```bash
 npm run trust:keys -- new --out ~/.config/gauss/keys/evidence-2026-10.pem --purpose evidence-pack --note "Evidence packs from 2026-10"
