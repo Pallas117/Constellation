@@ -90,8 +90,10 @@ type Snapshot struct {
 	Proxies     []Proxy     `json:"proxies,omitempty"`
 	StaleProcs  []StaleProc `json:"stale_procs,omitempty"`
 	Tailscale   Tailscale   `json:"tailscale"`
-	Warp        Warp        `json:"warp,omitempty"`   // Cloudflare WARP, for the Wi-Fi shield (shield.go)
-	Signal      *WiFiSignal `json:"signal,omitempty"` // Wi-Fi only; read at most every signalEvery
+	Warp        Warp        `json:"warp,omitempty"`       // Cloudflare WARP, for the Wi-Fi shield (shield.go)
+	Neighbours  []Neighbour `json:"neighbours,omitempty"` // ARP table on the default interface (neighbours.go)
+	Inbound     []Inbound   `json:"inbound,omitempty"`    // LAN devices connected to this Mac's sharing services
+	Signal      *WiFiSignal `json:"signal,omitempty"`     // Wi-Fi only; read at most every signalEvery
 }
 
 // Classify picks the most fundamental failure first: there is no point

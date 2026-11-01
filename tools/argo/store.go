@@ -32,6 +32,7 @@ func (s Store) path(name string) string { return filepath.Join(s.Dir, name) }
 // mirror mesh-heal: 4 attempts, 60s·2^(n-1) capped at 15 min, 30 min open.
 type State struct {
 	ShieldOn           bool      `json:"shield_on,omitempty"`            // Argo turned WARP on for untrusted Wi-Fi (shield.go)
+	PublicIP           string    `json:"public_ip,omitempty"`            // last tick's public IP, for the network watch
 	ShieldPrevMode     string    `json:"shield_prev_mode,omitempty"`     // WARP mode to put back ("" = Argo left the mode alone)
 	ShieldWasConnected bool      `json:"shield_was_connected,omitempty"` // WARP was already connected: leave it connected
 	Class              Class     `json:"class"`
@@ -70,6 +71,10 @@ type Net struct {
 	// the "WARP is in proxy mode" advice was already sent here.
 	NoShield      bool `json:"no_shield,omitempty"`
 	ShieldAdvised bool `json:"shield_advised,omitempty"`
+	// Network watch (neighbours.go): devices seen, the last spoofing sign, inbound connections told.
+	Devices     int                  `json:"devices,omitempty"`
+	SuspectAt   time.Time            `json:"suspect_at,omitempty"`
+	SeenInbound map[string]time.Time `json:"seen_inbound,omitempty"`
 }
 
 const (

@@ -75,7 +75,7 @@ const shieldSettle = 5 * time.Second
 // automatically, so it changes WARP's mode itself and puts the old mode back afterwards.
 func (l Loop) shield(ctx context.Context, st *State, snap Snapshot, fp string) {
 	w, n := snap.Warp, st.Networks[fp]
-	untrusted := weakWiFi(snap.WiFiSec)
+	untrusted := weakWiFi(snap.WiFiSec) || n.suspect(l.Fx.Now()) // spoofing signs count as untrusted
 	warp := func(args ...string) error { return l.Fx.Run("warp-cli", append([]string{"--accept-tos"}, args...)...) }
 	restore := func() { // undo exactly what Argo did: the connection, then the mode
 		if !st.ShieldWasConnected {

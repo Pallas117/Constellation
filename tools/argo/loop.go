@@ -151,9 +151,12 @@ func (l Loop) Tick(ctx context.Context) State {
 			st.Networks[fp] = Net{FirstSeen: now, Fixes: map[Class]string{}}
 		}
 	}
-	prev := st.Class
+	prev, prevPublicIP := st.Class, st.PublicIP
 	st.Fingerprint, st.Loc, st.CheckedAt, st.Tailscale = fp, snap.Loc, now, snap.Tailscale
-	st.Gateway, st.GatewayMAC = snap.Gateway, snap.GatewayMAC
+	if fp != "" {
+		l.watchNeighbours(&st, snap, fp, prevPublicIP) // before Gateway/GatewayMAC move on
+	}
+	st.Gateway, st.GatewayMAC, st.PublicIP = snap.Gateway, snap.GatewayMAC, snap.PublicIP
 	st.Net = ScoreNet(snap)
 	if fp != "" {
 		l.shield(ctx, &st, snap, fp)
