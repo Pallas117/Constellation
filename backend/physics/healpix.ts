@@ -65,6 +65,11 @@ function pseudoHealpixIndex(lat: number, lon: number, nside: number): number {
   return latIdx * nLon + lonIdx;
 }
 
+/** The only inputs buildAuroraGrid reads: equal keys give an identical grid. Keep in step with it. */
+export function auroraGridKey(canonical: CanonicalSpaceWeatherPoint): string {
+  return [canonical.indices.kp, canonical.magneticField.z, canonical.coupling.newell, canonical.electricField.ey].join("|");
+}
+
 export function buildAuroraGrid(
   canonical: CanonicalSpaceWeatherPoint,
   nside = 64,
