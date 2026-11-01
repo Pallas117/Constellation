@@ -12,8 +12,8 @@ syntax = "proto3";
 //   NoaaAlerts) keep "known to be empty" apart from "unknown".
 //
 // telemetry_descriptor.json is this file as protobufjs JSON (the input ADR 0001 plans for XTCE).
-// Regenerate it after any change:
-//   node -e "require('protobufjs').load('shared/proto/telemetry.proto').then(r => console.log(JSON.stringify(r.toJSON(), null, 2)))" > shared/proto/telemetry_descriptor.json
+// Regenerate it after any change (protoName is left out: protobufjs versions differ on it):
+//   node -e "require('protobufjs').load('shared/proto/telemetry.proto').then(r => console.log(JSON.stringify(r.toJSON(), (k, v) => (k === 'protoName' ? undefined : v), 2)))" > shared/proto/telemetry_descriptor.json
 
 package space.telemetry;
 

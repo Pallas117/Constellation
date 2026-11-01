@@ -118,8 +118,12 @@ test("a value of the wrong type is refused, not sent as a default", async () => 
   await assert.rejects(encodeCanonicalPoint(bad), /does not fit sw\.point\/2\.0\.0/);
 });
 
+/** protobufjs 8.8 adds protoName (the field's snake_case name) to toJSON; 8.0 does not. It follows from the name, so it is left out. */
+const withoutProtoName = (_key: string, value: unknown) => (_key === "protoName" ? undefined : value);
+
 test("telemetry_descriptor.json is the current .proto", async () => {
   const descriptor = path.join(path.dirname(PROTO_PATH), "telemetry_descriptor.json");
   const root = await protobuf.load(PROTO_PATH);
-  assert.deepEqual(JSON.parse(readFileSync(descriptor, "utf8")), root.toJSON());
+  const current: unknown = JSON.parse(JSON.stringify(root.toJSON(), withoutProtoName));
+  assert.deepEqual(JSON.parse(readFileSync(descriptor, "utf8")), current);
 });
