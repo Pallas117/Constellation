@@ -12,6 +12,8 @@ import { createHash } from "node:crypto";
 import type { CanonicalSpaceWeatherPoint, ScaleReading, SenseCheck } from "../types.js";
 import { MAX_READING_LAG_MS, type EnvironmentHistory } from "./environment.js";
 import { IGRF_LABEL } from "../physics/igrf.js";
+import { kpMaxAgeMs } from "../physics/noaa-scales.js";
+import { freshnessMs } from "../../shared/policy/freshness.js";
 import { SAA_CORE_NT, SAA_EXTENDED_NT, saaContext } from "./saa.js";
 import { dipoleLShell, distanceKm, EPHEMERIS_TLE_CONFLICT_KM, ephemerisProblem, propagateTle, tleProblem, type Ephemeris } from "./orbit.js";
 
@@ -26,12 +28,16 @@ const SOURCE_URL = {
   dst: "https://services.swpc.noaa.gov/products/kyoto-dst.json",
 } as const;
 
-/** Beyond these ages at the inference time a reading is stale, so its field is unknown. */
+/**
+ * Beyond these ages at the inference time a reading is stale, so its field is unknown
+ * (shared/policy/freshness.json). `kp` is the completed 3-hour Kp's bound; a running estimate
+ * expires sooner (kpMaxAgeMs).
+ */
 export const MAX_AGE_MS = {
-  particles: 30 * 60_000,
-  xrays: 15 * 60_000,
-  kp: 6 * 3_600_000,
-  dst: 2 * 3_600_000,
+  particles: freshnessMs("goes_particles"),
+  xrays: freshnessMs("goes_xray"),
+  kp: freshnessMs("kp_planetary_3h"),
+  dst: freshnessMs("dst_kyoto"),
 } as const;
 
 const GEO_LIMITATION = "Measured by GOES at geostationary orbit, not at this spacecraft's position.";
@@ -265,10 +271,11 @@ function environmentFields(p: CanonicalSpaceWeatherPoint, atMs: number, fetchedA
     limitations: [GEO_LIMITATION],
   });
   const kpUrl = p.indices.kpKind === "estimated-1m" ? SOURCE_URL.kp1m : SOURCE_URL.kp3h;
+  const kpMaxAge = kpMaxAgeMs(p.indices.kpKind);
   const geomagnetic = scaleField(p.alerts.geomagnetic, atMs, fetchedAt, {
     source: "NOAA G-scale from planetary Kp",
     sourceUrl: kpUrl,
-    maxAgeMs: MAX_AGE_MS.kp,
+    maxAgeMs: kpMaxAge,
     conflict: noaaDisagrees(checks, "G"),
     caution: null,
     limitations: p.indices.kpKind === "planetary-3h" ? ["Last completed 3-hour Kp: can lag a rising storm by up to 3 h."] : ["Running Kp estimate for the current 3-hour interval."],
@@ -301,7 +308,7 @@ function environmentFields(p: CanonicalSpaceWeatherPoint, atMs: number, fetchedA
 
   const kpAge = ageSeconds(atMs, p.indices.kpObservedAt);
   const kp: TrustRecord["environment"]["kp"] =
-    p.indices.kpKind && kpAge !== null && kpAge * 1000 <= MAX_AGE_MS.kp
+    p.indices.kpKind && kpAge !== null && kpAge * 1000 <= kpMaxAge
       ? {
           value: { value: p.indices.kp, kind: p.indices.kpKind },
           source: "NOAA planetary Kp",
