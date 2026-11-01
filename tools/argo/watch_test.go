@@ -10,6 +10,7 @@ import (
 type fakeWatch struct {
 	beats   map[string]time.Time // heartbeat path → mtime; absent = missing file
 	loaded  map[string]bool
+	running map[string]bool
 	kickErr error
 	kicked  []string
 	alerts  []string
@@ -19,6 +20,7 @@ func (f *fakeWatch) fx() watchFx {
 	return watchFx{
 		modTime: func(p string) (time.Time, bool) { t, ok := f.beats[p]; return t, ok },
 		loaded:  func(l string) bool { return f.loaded[l] },
+		running: func(l string) bool { return f.running[l] },
 		kick:    func(l string) error { f.kicked = append(f.kicked, l); return f.kickErr },
 		notify:  func(key, title, msg string) { f.alerts = append(f.alerts, key+": "+title) },
 	}
@@ -93,5 +95,20 @@ func TestConfigDefaultsToWatchingGuardAndMeshHeal(t *testing.T) {
 	}
 	if got := (Config{Watch: []Peer{}}).peers(); len(got) != 0 {
 		t.Fatal("an explicit empty list should turn watching off")
+	}
+}
+
+func TestWatchLeavesARunningPeerAlone(t *testing.T) {
+	// Right after wake every heartbeat is stale; mesh-heal may be mid-heal
+	// (Wi-Fi off, sleep, on). Killing it then cut the link.
+	now := time.Date(2026, 10, 28, 11, 14, 0, 0, time.UTC)
+	f := &fakeWatch{
+		beats:   map[string]time.Time{"/hb/guard": now.Add(-time.Hour), "/hb/mesh": now.Add(-time.Hour)},
+		loaded:  map[string]bool{guard.Label: true, mesh.Label: true},
+		running: map[string]bool{mesh.Label: true},
+	}
+	watchPeers([]Peer{guard, mesh}, Store{Dir: t.TempDir()}, f.fx(), now)
+	if len(f.kicked) != 1 || f.kicked[0] != guard.Label {
+		t.Fatalf("kicked %v, want only the stopped guard", f.kicked)
 	}
 }

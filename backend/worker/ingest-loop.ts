@@ -17,7 +17,7 @@ import { fetchMmsBurstWindows, getMmsLaspStatus } from "../adapters/mms-lasp.js"
 import { fetchNoaaReadout, getNoaaStatus, type KpReading, type NOAAReadout } from "../adapters/noaa-swpc.js";
 import { arrivingNow, type L1Sample } from "../adapters/rtsw-series.js";
 import { gseToGsm, magnitude } from "../physics/coordinates.js";
-import { buildAuroraGrid } from "../physics/healpix.js";
+import { auroraGridKey, buildAuroraGrid } from "../physics/healpix.js";
 import { computeCanonicalPoint, type MhdInput } from "../physics/mhd-nowcast.js";
 import {
   computeMMSReconnectionVector,
@@ -129,6 +129,7 @@ export class IngestionWorker {
   private running = false;
   private previousDst: number | null = null;
   private couplingWindow: number[] = [];
+  private auroraGridCache: { key: string; result: ReturnType<typeof buildAuroraGrid> } | null = null;
   private lastFetch = new Map<string, number>();
 
   private noaa: NOAAReadout | null = null;
@@ -391,6 +392,19 @@ export class IngestionWorker {
     }
   }
 
+  /**
+   * The aurora grid is 49,152 points (~4 MB) built from four inputs that change about once a
+   * minute; rebuilding it every tick was the backend's largest steady garbage source. Reuse the
+   * last grid while its inputs are unchanged (same values in, same grid out).
+   */
+  private auroraGridFor(point: CanonicalSpaceWeatherPoint): ReturnType<typeof buildAuroraGrid> {
+    const key = auroraGridKey(point);
+    if (this.auroraGridCache?.key !== key) {
+      this.auroraGridCache = { key, result: buildAuroraGrid(point, 64) };
+    }
+    return this.auroraGridCache.result;
+  }
+
   private trimCouplingWindow(): void {
     const maxLen = 180;
     if (this.couplingWindow.length > maxLen) {
@@ -615,7 +629,7 @@ export class IngestionWorker {
     const auroraMap =
       this.options.auroraGrid === false
         ? null
-        : await this.timing.time("aurora-grid", () => buildAuroraGrid(point, 64)).then(({ grid, harmonics }) => ({
+        : await this.timing.time("aurora-grid", () => this.auroraGridFor(point)).then(({ grid, harmonics }) => ({
             timestamp: point.timestamp,
             nside: 64,
             grid,

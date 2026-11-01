@@ -97,7 +97,8 @@ test(
     }
     for (const [v, bt, by, bz] of [[450, 6.2, -3.0, -5.4], [612.3, 11.7, 4.1, -10.9], [380, 2.1, 1.2, 1.7]]) {
       const theta = Math.atan2(by, bz);
-      const expected = Math.pow(v, 4 / 3) * Math.pow(bt, 2 / 3) * Math.pow(Math.max(Math.sin(theta / 2), 0), 8 / 3);
+      const expected = Math.pow(v, 4 / 3) * Math.pow(bt, 2 / 3) * Math.pow(Math.abs(Math.sin(theta / 2)), 8 / 3);
+      assert.ok(expected > 0, `southward IMF couples whatever the sign of By (by=${by})`);
       assert.ok(close(kernel.newellCoupling(v, bt, by, bz), expected), `Newell coupling v=${v} bt=${bt}`);
     }
   },

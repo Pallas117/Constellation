@@ -41,6 +41,7 @@ import { linkGuardian } from "./lib/connectivity.js";
 import { bedrock } from "./lib/local-db.js";
 import { routeUpgrades } from "./lib/ws-upgrade.js";
 import { retentionFromEnv, startTelemetryRetention } from "./lib/telemetry-retention.js";
+import { queryLimit } from "./lib/query-limit.js";
 import { diskFreeBytes, overall, readTpms } from "./lib/tpm.js";
 import { SPACE_OBJECT_CATALOG } from "./lib/space-object-catalog.js";
 import { auth, ssoAllowedDomain, ssoGithubEnabled, ssoGoogleEnabled } from "./better-auth.js";
@@ -329,7 +330,7 @@ app.use("/api/device", deviceRegistryRouter);
 
 app.get("/api/feed/space-weather/5s", async (req: AuthenticatedRequest, res) => {
   const lookbackMs = parseLookback(req.query.lookback, 24 * 60 * 60 * 1000);
-  const limit = Math.max(1, Math.min(Number(req.query.limit ?? 17280), 17280));
+  const limit = queryLimit(req.query.limit, 17280, 17280);
   const token = req.auth?.token;
 
   const fromDb = await fetchCanonicalFromDb(lookbackMs, limit, token);
@@ -422,7 +423,7 @@ app.get("/api/feed/space-weather/latest/proto", async (req: AuthenticatedRequest
 
 app.get("/api/feed/mms/reconnection", async (req: AuthenticatedRequest, res) => {
   const lookbackMs = parseLookback(req.query.lookback, 2 * 60 * 60 * 1000);
-  const limit = Math.max(1, Math.min(Number(req.query.limit ?? 1440), 5000));
+  const limit = queryLimit(req.query.limit, 1440, 5000);
   const token = req.auth?.token;
 
   const fromDb = await fetchMmsFromDb(lookbackMs, limit, token);
@@ -528,7 +529,7 @@ app.get("/api/swx/structures", (_req: AuthenticatedRequest, res) => {
 });
 
 app.get("/api/security/cybertiger/events", (req: AuthenticatedRequest, res) => {
-  const limit = Math.max(1, Math.min(Number(req.query.limit ?? 200), 2000));
+  const limit = queryLimit(req.query.limit, 200, 2000);
   const events = cyberTiger.getEvents(limit);
   res.json({
     timestamp: new Date().toISOString(),
