@@ -692,11 +692,17 @@ else:
 # What a deploy can break, and so what decides a rollback. The rest of `check`
 # (network, space weather, memory service, Argo) can be off for reasons a rollback
 # wouldn't fix, so it is reported after a deploy, never acted on.
+# tailnet_api_in <dist-assets-dir>: true if the build hardcodes a tailnet URL (an absolute
+# http(s)://<host>.ts.net API origin breaks every browser on this Mac: macOS Tailscale doesn't loop
+# its own share back). Only a URL counts: the Mesh page's code names the ".ts.net" suffix itself
+# (lib/mesh-onboarding.ts), and a bare 'ts.net' match failed every deploy of main on 2026-10-31.
+tailnet_api_in() { grep -rEqs 'https?://[A-Za-z0-9.-]+\.ts\.net' "$1"; }
+
 deploy_ready() { # deploy_ready <dir> <seconds>: poll until the services answer, or give up
   local dir=$1 waited=0
   until [ "$(code http://127.0.0.1:3001/health)" = 200 ] && [ "$(code http://127.0.0.1:8080/)" = 200 ] \
     && [ "$(code http://127.0.0.1:8080/api/system/connectivity)" = 200 ] \
-    && ! grep -rqs 'ts\.net' "$dir/frontend/dist/assets"; do
+    && ! tailnet_api_in "$dir/frontend/dist/assets"; do
     [ "$waited" -ge "$2" ] && return 1
     sleep 3; waited=$((waited + 3)); touch "$DEPLOY_LOCK" 2>/dev/null || true
   done
@@ -1009,7 +1015,7 @@ check() { # pre-demo checklist
   [ "$(code http://127.0.0.1:8080/api/system/connectivity)" = 200 ] && ok=ok || ok=no
   item $ok "website reaches the API through its own origin (:8080/api)"
   # A build that hardcodes another API origin breaks on this Mac (no tailnet loopback).
-  if grep -rqs "ts\.net" "$(launchctl print "$UID_DOMAIN/uk.lightbound.gauss-frontend" 2>/dev/null | awk -F'= ' '/working directory =/{print $2; exit}')/frontend/dist/assets" 2>/dev/null; then
+  if tailnet_api_in "$(launchctl print "$UID_DOMAIN/uk.lightbound.gauss-frontend" 2>/dev/null | awk -F'= ' '/working directory =/{print $2; exit}')/frontend/dist/assets" 2>/dev/null; then
     item no "frontend build is same-origin (it hardcodes an API host: reinstall)"
   else
     item ok "frontend build is same-origin"
