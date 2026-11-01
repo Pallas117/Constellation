@@ -8,6 +8,7 @@
  * series and sends that as `arriving` (a 5-min mean); the latest L1 reading
  * is what is coming next.
  */
+import { freshnessMin } from '../../../../shared/policy/freshness.ts';
 import type { SolarWindDrivers } from './geomagnetic.ts';
 import type { CanonicalSpaceWeatherPoint, DensityDisagreement } from '../types/space-weather.ts';
 
@@ -20,8 +21,8 @@ export type FeedMode = 'live' | 'transit' | 'stale' | 'none' | 'simulated';
 
 /** Measurements fresher than this are live (the backend's NOAA_FRESH_MS). */
 export const FRESH_MIN = 10;
-/** Older than this, a measurement is not shown (the backend's NOAA_MAX_AGE_MS). */
-export const STALE_AFTER_MIN = 15;
+/** Older than this, a measurement is not shown (the L1 bound in shared/policy/freshness.json). */
+export const STALE_AFTER_MIN = freshnessMin('l1_solar_wind');
 
 /** Simulated G4: strong southward IMF behind a CME shock (Pdyn = 1.67e-6·n·v² ≈ 15 nPa). */
 export const G4_DRIVERS: SolarWindDrivers = { bz: -20, by: 6, pdyn: 15, kp: 8 };

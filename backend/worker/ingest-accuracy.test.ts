@@ -41,6 +41,11 @@ test("Kp now: the higher of this interval's running estimate and the last comple
   assert.equal(currentKp(est(0.33), done(6, "2026-10-12T00:00:00.000Z"), now)?.value, 0.33);
   assert.equal(currentKp(null, done(3.33), now)?.value, 3.33);
   assert.equal(currentKp(est(1), null, now)?.value, 1);
+  // A running estimate that stopped updating 40 min ago gives way to the completed interval
+  // (GAU-212); with nothing else it is still returned, and the G-scale then reads it as stale.
+  const stalled = { value: 5.67, observedAt: "2026-10-12T09:00:00.000Z", kind: "estimated-1m" as const };
+  assert.equal(currentKp(stalled, done(3.33), now)?.kind, "planetary-3h");
+  assert.equal(currentKp(stalled, null, now)?.kind, "estimated-1m");
 });
 
 test("NOAA: Kp reading combines the 1-minute running estimate with the 3-hourly product", async () => {
