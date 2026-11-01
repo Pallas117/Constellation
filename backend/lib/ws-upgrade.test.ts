@@ -21,9 +21,11 @@ function probe(url: string, holdMs = 150): Promise<Probe> {
     ws.on("error", () => {});
     ws.on("close", (code) => (result.closeCode = code));
     setTimeout(() => {
-      result.openAfter = ws.readyState === WebSocket.OPEN;
+      // Snapshot before terminate(): our own close (1006) must not land in the result while
+      // Promise.all still waits for the other probe, which happens when the timers fire apart.
+      const seen: Probe = { ...result, messages: [...result.messages], openAfter: ws.readyState === WebSocket.OPEN };
       ws.terminate();
-      resolve(result);
+      resolve(seen);
     }, holdMs);
   });
 }
