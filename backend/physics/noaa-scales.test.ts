@@ -67,9 +67,11 @@ test("G-scale: G1 at Kp 5 … G5 at Kp 9, with fractional Kp floored like the fr
 });
 
 test("Kp without a NOAA reading, or older than 6 h, is unknown, not G0", () => {
-  // Points with no measurement carry a placeholder Kp and no kpKind.
-  const placeholder = { kp: 2, dst: -10 } as CanonicalSpaceWeatherPoint["indices"];
-  assert.equal(geomagneticStorm(placeholder, NOW).level, null);
+  // Points with no measurement carry no Kp (null) and no kpKind (GAU-230).
+  const placeholder = { kp: null, dst: -10 } as CanonicalSpaceWeatherPoint["indices"];
+  assert.deepEqual(geomagneticStorm(placeholder, NOW), { level: null, label: "G?", basis: "No NOAA Kp reading", observedAt: null });
+  // A null Kp is unknown even when a kind and time are present: never read as Kp 0 (G0).
+  assert.equal(geomagneticStorm({ ...indices(0), kp: null }, NOW).label, "G?");
   assert.equal(geomagneticStorm(indices(2, null), NOW).level, null);
   const old = new Date(NOW - KP_MAX_AGE_MS - 60_000).toISOString();
   assert.equal(geomagneticStorm(indices(7, old, "planetary-3h"), NOW).label, "G?");

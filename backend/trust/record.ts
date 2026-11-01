@@ -300,10 +300,12 @@ function environmentFields(p: CanonicalSpaceWeatherPoint, atMs: number, fetchedA
       : unknownField("GOES integral protons", spectrum ? `Conflicting inputs: ${spectrum.reason}` : "No current GOES proton reading", { sourceUrl: SOURCE_URL.protons, fetchedAt });
 
   const kpAge = ageSeconds(atMs, p.indices.kpObservedAt);
+  // null = no Kp from any source: unknown with that reason, never a default value (GAU-230).
+  const kpValue = p.indices.kp;
   const kp: TrustRecord["environment"]["kp"] =
-    p.indices.kpKind && kpAge !== null && kpAge * 1000 <= MAX_AGE_MS.kp
+    kpValue !== null && Number.isFinite(kpValue) && p.indices.kpKind && kpAge !== null && kpAge * 1000 <= MAX_AGE_MS.kp
       ? {
-          value: { value: p.indices.kp, kind: p.indices.kpKind },
+          value: { value: kpValue, kind: p.indices.kpKind },
           source: "NOAA planetary Kp",
           sourceUrl: kpUrl,
           observedAt: p.indices.kpObservedAt ?? null,
@@ -313,7 +315,7 @@ function environmentFields(p: CanonicalSpaceWeatherPoint, atMs: number, fetchedA
           method: "measured",
           limitations: geomagnetic.limitations.filter((l) => l.startsWith("Last completed") || l.startsWith("Running")),
         }
-      : unknownField("NOAA planetary Kp", "No current Kp reading", { sourceUrl: kpUrl, fetchedAt });
+      : unknownField("NOAA planetary Kp", kpValue === null ? "No Kp reading from any source" : "No current Kp reading", { sourceUrl: kpUrl, fetchedAt });
 
   const measuredDst = p.indices.dstMethod === "measured";
   const dstAge = ageSeconds(atMs, p.indices.dstObservedAt);

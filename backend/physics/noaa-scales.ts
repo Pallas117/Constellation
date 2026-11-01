@@ -53,20 +53,21 @@ export function radiationStorm(protons: ParticleReading | null | undefined): Sca
 /**
  * Geomagnetic storm level from planetary Kp: G1 at Kp 5 … G5 at Kp 9. Fractional
  * Kp (4.67 for "5−") is floored, matching the readouts in the frontend.
- * Only a current NOAA Kp reading counts: points without one carry a placeholder.
+ * Only a current NOAA Kp reading counts: a point with no Kp (null) or no reading time is unknown.
  */
 export function geomagneticStorm(indices: CanonicalSpaceWeatherPoint["indices"], nowMs: number): ScaleReading {
   const observedAt = indices.kpObservedAt ?? null;
-  if (!indices.kpKind || !observedAt) return UNKNOWN("G", "No NOAA Kp reading");
+  const kp = indices.kp;
+  if (kp === null || !indices.kpKind || !observedAt) return UNKNOWN("G", "No NOAA Kp reading");
   const age = nowMs - Date.parse(observedAt);
   if (!Number.isFinite(age) || age > KP_MAX_AGE_MS) return UNKNOWN("G", "Kp reading is older than 6 h", observedAt);
-  if (!Number.isFinite(indices.kp)) return UNKNOWN("G", "Kp is not a number", observedAt);
-  const level = Math.min(5, Math.max(0, Math.floor(indices.kp) - 4)) as ScaleReading["level"];
+  if (!Number.isFinite(kp)) return UNKNOWN("G", "Kp is not a number", observedAt);
+  const level = Math.min(5, Math.max(0, Math.floor(kp) - 4)) as ScaleReading["level"];
   const kind = indices.kpKind === "estimated-1m" ? "running 3-hour estimate" : "last completed 3-hour Kp";
   return {
     level,
     label: `G${level}`,
-    basis: `Kp ${indices.kp.toFixed(2)} (${kind})`,
+    basis: `Kp ${kp.toFixed(2)} (${kind})`,
     observedAt,
   };
 }

@@ -299,7 +299,8 @@ export class IngestionWorker {
       magneticFieldGse: b,
       velocityGsm: v,
       magneticFieldGsm: b,
-      kp: this.kpReading?.value ?? prev?.indices.kp ?? 2,
+      // No Kp from any source is unknown (null), not a quiet-time 2 (GAU-230).
+      kp: this.kpReading?.value ?? prev?.indices.kp ?? null,
       dst: freshDst(this.kyotoDst, Date.parse(timestamp)),
     };
   }
@@ -611,15 +612,13 @@ export class IngestionWorker {
     this.couplingWindow.push(point.coupling.newell);
     this.trimCouplingWindow();
 
+    // No grid without Kp (buildAuroraGrid returns null): the served map keeps its own older timestamp.
     const auroraMap =
       this.options.auroraGrid === false
         ? null
-        : await this.timing.time("aurora-grid", () => buildAuroraGrid(point, 64)).then(({ grid, harmonics }) => ({
-            timestamp: point.timestamp,
-            nside: 64,
-            grid,
-            harmonics,
-          }));
+        : await this.timing.time("aurora-grid", () => buildAuroraGrid(point, 64)).then((built) =>
+            built ? { timestamp: point.timestamp, nside: 64, grid: built.grid, harmonics: built.harmonics } : null,
+          );
 
     if (mmsVector) this.latestMms = mmsVector;
     this.latestCanonical = point;

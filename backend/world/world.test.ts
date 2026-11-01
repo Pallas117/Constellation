@@ -15,7 +15,7 @@ import { verifyRecord } from "./ids.js";
 const T0 = Date.parse("2026-10-16T00:00:00Z");
 const at = (min: number) => new Date(T0 + min * 60_000).toISOString();
 
-function point(min: number, over: { kp?: number; bz?: number; stale?: boolean; dstMethod?: string; goes?: boolean } = {}): CanonicalSpaceWeatherPoint {
+function point(min: number, over: { kp?: number | null; bz?: number; stale?: boolean; dstMethod?: string; goes?: boolean } = {}): CanonicalSpaceWeatherPoint {
   return {
     timestamp: at(min),
     observedAt: at(min - 1),
@@ -26,7 +26,7 @@ function point(min: number, over: { kp?: number; bz?: number; stale?: boolean; d
     magneticField: { x: 2, y: 3, z: over.bz ?? -4, bt: 5.4 },
     electricField: { x: 0, y: 1.8, z: 0, ey: 1.8 },
     solarWind: { speed: 450, density: 5, dynamicPressure: 1.7 },
-    indices: { kp: over.kp ?? 3, dst: -20, dstMethod: over.dstMethod ?? "model: O'Brien & McPherron (2000) ring-current", dstDerivedFrom: ["solarWind.speed"], kpKind: "estimated-1m", kpObservedAt: at(min - 1), dstObservedAt: over.dstMethod === "measured" ? at(min - 40) : null },
+    indices: { kp: over.kp === undefined ? 3 : over.kp, dst: -20, dstMethod: over.dstMethod ?? "model: O'Brien & McPherron (2000) ring-current", dstDerivedFrom: ["solarWind.speed"], kpKind: "estimated-1m", kpObservedAt: at(min - 1), dstObservedAt: over.dstMethod === "measured" ? at(min - 40) : null },
     coupling: { newell: 4000, epsilon: 1e11 },
     propagation: { l1DelaySeconds: 3300, etaEarthArrival: at(min + 55) },
     alerts: { stormTier: "quiet", reason: "" },
@@ -68,6 +68,13 @@ test("GAU-63: a point with no measurement time yields no observations, never one
   placeholder.indices.kpObservedAt = null;
   const vars = observationsFromCanonical(placeholder).map((o) => o.variable);
   assert.deepEqual(vars, ["protons_10mev"], "only the GOES reading, which carries its own time");
+});
+
+test("GAU-230: a point with no Kp (null) yields no kp observation, even with a Kp time on it", () => {
+  const vars = observationsFromCanonical(point(0, { kp: null })).map((o) => o.variable);
+  assert.ok(!vars.includes("kp"), "unknown Kp is absent, not 0 or 2");
+  assert.ok(vars.includes("imf.bz"), "the measured L1 values are still observations");
+  assert.equal(reconstructState(observationsFromCanonical(point(0, { kp: null })), at(0)).variables.kp.provenance, "unknown");
 });
 
 test("GAU-39: ids and checksums are deterministic, and tampering is detected", () => {

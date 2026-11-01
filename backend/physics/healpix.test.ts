@@ -10,11 +10,23 @@ const point = {
   electricField: { ey: 2.5 },
 } as unknown as CanonicalSpaceWeatherPoint;
 
+/** The grid for a point with a Kp reading; failing loudly if none was built. */
+function grid(p: CanonicalSpaceWeatherPoint, nside: number) {
+  const built = buildAuroraGrid(p, nside);
+  assert.ok(built, "a point with Kp builds a grid");
+  return built;
+}
+
+test("GAU-230: without a Kp reading there is no aurora grid, not a quiet-time one", () => {
+  const noKp = { ...point, indices: { kp: null } } as unknown as CanonicalSpaceWeatherPoint;
+  assert.equal(buildAuroraGrid(noKp, 8), null);
+});
+
 test("separable harmonics match the generic per-pixel sum", () => {
   // nside 8 keeps the generic reference fast enough for a unit test.
-  const { grid } = buildAuroraGrid(point, 8);
-  const fast = latLonGridHarmonics(grid, 24, 32, 8);
-  const reference = sphericalHarmonics(grid, 8);
+  const { grid: pixels } = grid(point, 8);
+  const fast = latLonGridHarmonics(pixels, 24, 32, 8);
+  const reference = sphericalHarmonics(pixels, 8);
   assert.equal(fast.coefficients.length, reference.coefficients.length);
   const scale = Math.max(...reference.coefficients.map((c) => Math.abs(c.re)));
   fast.coefficients.forEach((c, i) => {
@@ -31,8 +43,8 @@ test("separable harmonics match the generic per-pixel sum", () => {
 test("aurora grid at nside 64 builds within its 1 s pipeline budget", () => {
   const budgetMs = 1000;
   // The warm-up run doubles as the shape check.
-  const { grid, harmonics } = buildAuroraGrid(point, 64);
-  assert.equal(grid.length, 12 * 64 * 64);
+  const { grid: pixels, harmonics } = grid(point, 64);
+  assert.equal(pixels.length, 12 * 64 * 64);
   assert.equal(harmonics.coefficients.length, 81);
 
   // Wall clock alone measures the machine: a ~25 ms build took 1.5 s during a

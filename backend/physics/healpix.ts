@@ -65,15 +65,21 @@ function pseudoHealpixIndex(lat: number, lon: number, nside: number): number {
   return latIdx * nLon + lonIdx;
 }
 
+/**
+ * Synthetic aurora probability grid placed and scaled by Kp. Without a Kp reading there is
+ * no grid (null): the oval's latitude is unknown, not that of a quiet-time Kp (GAU-230).
+ */
 export function buildAuroraGrid(
   canonical: CanonicalSpaceWeatherPoint,
   nside = 64,
-): { grid: AuroraGridPoint[]; harmonics: SphericalHarmonicCoefficients } {
+): { grid: AuroraGridPoint[]; harmonics: SphericalHarmonicCoefficients } | null {
+  const kp = canonical.indices.kp;
+  if (kp === null || !Number.isFinite(kp)) return null;
   const pixelCount = targetPixelCount(nside);
   const pixelFlux = new Array<number>(pixelCount).fill(0);
   const pixelHits = new Array<number>(pixelCount).fill(0);
 
-  const kpScale = canonical.indices.kp / 9;
+  const kpScale = kp / 9;
   const bzSouth = Math.max(0, -canonical.magneticField.z);
   const coupling = canonical.coupling.newell;
 

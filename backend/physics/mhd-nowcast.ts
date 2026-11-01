@@ -44,7 +44,8 @@ export interface MhdInput {
   /** Published GSM components, used as-is when present. */
   velocityGsm?: Vector3 | null;
   magneticFieldGsm?: Vector3 | null;
-  kp?: number;
+  /** Planetary Kp (0–9); null or absent when no source has a reading. Never defaulted (GAU-230). */
+  kp?: number | null;
   dst?: number;
   /**
    * The solar wind reaching Earth now (L1 values one travel time ago). Dst responds
@@ -147,14 +148,20 @@ export function shueStandoffDistanceRe(dynamicPressure: number, bzNt: number): n
   return clamp(r0, 4, 25);
 }
 
+/**
+ * Storm tier from the IMF (GSM Bz, nT), Newell coupling and the geomagnetic response. The
+ * response is Kp >= 5 or a Dst falling at 20 nT/h or more; with Kp unknown (null) only the
+ * Dst slope counts, so a missing Kp can neither raise nor hold the tier (GAU-230).
+ */
 function stormTier(
   bzNt: number,
-  kp: number,
+  kp: number | null,
   newell: number,
   newellP75: number,
   dstSlopeNtPerHr: number,
 ): { stormTier: "quiet" | "watch" | "warning" | "severe"; reason: string } {
-  if (bzNt <= -10 && (kp >= 5 || dstSlopeNtPerHr <= -20)) {
+  const kpResponse = kp !== null && kp >= 5;
+  if (bzNt <= -10 && (kpResponse || dstSlopeNtPerHr <= -20)) {
     return { stormTier: "severe", reason: "Strong southward IMF with geomagnetic response" };
   }
   if (bzNt <= -5 && newell >= newellP75) {
@@ -214,7 +221,8 @@ export function computeCanonicalPoint(
 
   const newell = newellCoupling(speed, bt, state.magneticField.y, state.magneticField.z);
   const epsilon = akasofuEpsilon(speed, bt, state.magneticField.y, state.magneticField.z);
-  const kp = clamp(input.kp ?? 2, 0, 9);
+  // Unknown stays unknown: no reading from any source is null, never a quiet-time 2 (GAU-63/GAU-230).
+  const kp = typeof input.kp === "number" && Number.isFinite(input.kp) ? clamp(input.kp, 0, 9) : null;
   const dtMs = previousTimestamp ? Date.parse(input.timestamp) - Date.parse(previousTimestamp) : Number.NaN;
   const dtHours = Number.isFinite(dtMs) ? dtMs / 3_600_000 : null;
   const earth = input.atEarth ?? { speed, bzGsm: state.magneticField.z, pdyn };

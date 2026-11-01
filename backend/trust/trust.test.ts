@@ -25,7 +25,7 @@ const scale = (scaleLetter: "S" | "G" | "R", level: number | null, observedMs: n
 const pass = (id: SenseCheck["id"]): SenseCheck => ({ id, status: "pass", reason: "ok", observedAt: iso(T) });
 
 /** A point Gauss issued at `issuedMs`, quiet unless overridden. */
-function point(issuedMs: number, over: { s?: number | null; g?: number | null; r?: number; protonAgeMin?: number; checks?: SenseCheck[]; kpKind?: "estimated-1m" | "planetary-3h" | undefined } = {}): CanonicalSpaceWeatherPoint {
+function point(issuedMs: number, over: { s?: number | null; g?: number | null; r?: number; protonAgeMin?: number; checks?: SenseCheck[]; kpKind?: "estimated-1m" | "planetary-3h" | undefined; kp?: number | null } = {}): CanonicalSpaceWeatherPoint {
   const protonMs = issuedMs - (over.protonAgeMin ?? 5) * 60_000;
   return {
     timestamp: iso(issuedMs),
@@ -38,7 +38,7 @@ function point(issuedMs: number, over: { s?: number | null; g?: number | null; r
       radioBlackout: scale("R", over.r ?? 0, issuedMs - 60_000, "GOES 0.1-0.8nm X-rays B5"),
     },
     particles: { protons: { value: 0.3, energy: ">=10 MeV", satellite: "GOES-18", timestamp: iso(protonMs) }, electrons: null },
-    indices: { kp: 2, dst: -10, dstMethod: "measured", dstDerivedFrom: [], kpKind: "kpKind" in over ? over.kpKind : "planetary-3h", kpObservedAt: iso(issuedMs - 3_600_000), dstObservedAt: iso(issuedMs - 30 * 60_000) },
+    indices: { kp: over.kp === undefined ? 2 : over.kp, dst: -10, dstMethod: "measured", dstDerivedFrom: [], kpKind: "kpKind" in over ? over.kpKind : "planetary-3h", kpObservedAt: iso(issuedMs - 3_600_000), dstObservedAt: iso(issuedMs - 30 * 60_000) },
     quality: { outlier: false, stale: false, interpolated: false, extrapolated: false, lowConfidence: false, tier: 0 },
     senseChecks: over.checks ?? [pass("l1-field-magnitude"), pass("goes-proton-spectrum"), pass("goes-proton-channels"), pass("goes-xray"), pass("noaa-scales")],
   } as unknown as CanonicalSpaceWeatherPoint;
@@ -71,9 +71,21 @@ test("trust record: a missing reading is unknown, never consistent (GAU-57)", ()
   // A reading more than 2 min before the inference does not describe it.
   assert.equal(build([point(T - 3 * 60_000)]).verdict.value, "unknown");
   // A placeholder point (no NOAA Kp) has G unknown: the verdict follows.
-  const placeholder = build([point(T - 30_000, { g: null, kpKind: undefined })]);
+  const placeholder = build([point(T - 30_000, { g: null, kpKind: undefined, kp: null })]);
   assert.equal(placeholder.verdict.value, "unknown");
   assert.match(placeholder.verdict.reasons[0], /^Geomagnetic level unknown/);
+});
+
+test("trust record: no Kp from any source is an unknown kp field with that reason, never a value (GAU-230)", () => {
+  // Even with a kind and a recent time on the point, a null Kp must not become a measured field.
+  const r = build([point(T - 30_000, { g: null, kp: null })]);
+  assert.equal(r.environment.kp.value, null);
+  assert.equal(r.environment.kp.confidence, "none");
+  assert.equal(r.environment.kp.method, "unknown");
+  assert.equal(r.environment.kp.limitations[0], "No Kp reading from any source");
+  assert.equal(r.verdict.value, "unknown");
+  // A known but old Kp keeps the older reason.
+  assert.equal(build([point(T - 30_000, { g: null, kpKind: undefined })]).environment.kp.limitations[0], "No current Kp reading");
 });
 
 test("trust record: a stale input is unknown, even when its level was quiet (GAU-57)", () => {
