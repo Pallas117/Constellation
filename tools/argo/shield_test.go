@@ -26,7 +26,7 @@ func TestParseWarp(t *testing.T) {
 	if w := parseWarp("Status update: Disconnected", "Mode: Warp\n"); w.Connected || !w.Tunnel() {
 		t.Fatalf("tunnel mode: %+v", w)
 	}
-	if (Warp{}).Tunnel() || (Warp{Installed: true, Mode: "DnsOverHttps"}).Tunnel() {
+	if (Warp{}).Tunnel() || (Warp{Installed: true, Mode: "DnsOverHttps"}).Tunnel() || !(Warp{Installed: true, Mode: "TunnelOnly"}).Tunnel() {
 		t.Fatal("not installed / DNS-only is not a tunnel")
 	}
 }
@@ -89,10 +89,41 @@ func TestShieldRespectsManualOff(t *testing.T) {
 	}
 }
 
-// TestShieldAdvisesProxyModeOnce: WARP in proxy mode can't protect the Mac; say
-// so once per network and run nothing.
-func TestShieldAdvisesProxyModeOnce(t *testing.T) {
-	p := shieldSnap(t, "NONE", warpProxy)
+// TestShieldSwitchesProxyModeAndPutsItBack: Josh's WARP sits in proxy mode. On
+// open Wi-Fi Argo switches it to tunnel mode and connects; on a protected network
+// it disconnects and puts proxy mode back.
+func TestShieldSwitchesProxyModeAndPutsItBack(t *testing.T) {
+	open, verified := shieldSnap(t, "NONE", warpProxy), shieldSnap(t, "NONE", warpOn)
+	home := shieldSnap(t, "WPA2_PSK", warpOn)
+	l, fx := newLoop(t, open, verified, home)
+	st := l.Tick(context.Background())
+	if !st.ShieldOn || st.ShieldPrevMode != "proxy" || strings.Join(fx.ran, ";") != "warp-cli --accept-tos mode warp;warp-cli --accept-tos connect" {
+		t.Fatalf("open Wi-Fi: %+v ran=%v", st, fx.ran)
+	}
+	st = l.Tick(context.Background())
+	if st.ShieldOn || st.ShieldPrevMode != "" || strings.Join(fx.ran[2:], ";") != "warp-cli --accept-tos disconnect;warp-cli --accept-tos mode proxy" {
+		t.Fatalf("protected network: %+v ran=%v", st, fx.ran)
+	}
+}
+
+// TestShieldAlreadyConnectedInProxyStaysConnected: WARP connected as a proxy is
+// switched to tunnel mode and, afterwards, back to proxy, still connected.
+func TestShieldAlreadyConnectedInProxyStaysConnected(t *testing.T) {
+	proxyOn := Warp{Installed: true, Mode: "WarpProxy", Connected: true}
+	open, verified := shieldSnap(t, "NONE", proxyOn), shieldSnap(t, "NONE", warpOn)
+	home := shieldSnap(t, "WPA2_PSK", warpOn)
+	l, fx := newLoop(t, open, verified, home)
+	l.Tick(context.Background())
+	l.Tick(context.Background())
+	if strings.Join(fx.ran, ";") != "warp-cli --accept-tos mode warp;warp-cli --accept-tos mode proxy" {
+		t.Fatalf("should only switch modes, never connect or disconnect: %v", fx.ran)
+	}
+}
+
+// TestShieldLeavesAnUnknownModeAlone: a mode Argo can't put back is never changed;
+// say so once per network.
+func TestShieldLeavesAnUnknownModeAlone(t *testing.T) {
+	p := shieldSnap(t, "NONE", Warp{Installed: true, Mode: "SomethingNew"})
 	l, fx := newLoop(t, p, p)
 	l.Tick(context.Background())
 	l.Tick(context.Background())

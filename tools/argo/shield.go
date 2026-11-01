@@ -24,8 +24,18 @@ type Warp struct {
 
 // Tunnel is true when WARP's mode encrypts all traffic, not just a local proxy or DNS.
 func (w Warp) Tunnel() bool {
-	m := strings.ToLower(w.Mode)
-	return w.Installed && strings.HasPrefix(m, "warp") && !strings.Contains(m, "proxy")
+	switch w.Mode {
+	case "Warp", "WarpWithDnsOverHttps", "WarpWithDnsOverTls", "TunnelOnly":
+		return w.Installed
+	}
+	return false
+}
+
+// warpModeArg maps the Mode warp-cli settings shows to the argument `warp-cli mode` takes, so a
+// mode Argo changed can be put back exactly. A mode not listed here is never changed.
+var warpModeArg = map[string]string{
+	"Warp": "warp", "WarpWithDnsOverHttps": "warp+doh", "WarpWithDnsOverTls": "warp+dot", "TunnelOnly": "tunnel_only",
+	"WarpProxy": "proxy", "DnsOverHttps": "doh", "DnsOverTls": "dot",
 }
 
 // warpCLIPaths: launchd's PATH has no /usr/local/bin, so look in the places the installer uses.
@@ -61,39 +71,61 @@ func probeWarp(ctx context.Context) Warp {
 
 const shieldSettle = 5 * time.Second
 
-// shield runs every tick, before the class decides anything else.
+// shield runs every tick, before the class decides anything else. Josh (1 Nov): switch
+// automatically, so it changes WARP's mode itself and puts the old mode back afterwards.
 func (l Loop) shield(ctx context.Context, st *State, snap Snapshot, fp string) {
 	w, n := snap.Warp, st.Networks[fp]
 	untrusted := weakWiFi(snap.WiFiSec)
+	warp := func(args ...string) error { return l.Fx.Run("warp-cli", append([]string{"--accept-tos"}, args...)...) }
+	restore := func() { // undo exactly what Argo did: the connection, then the mode
+		if !st.ShieldWasConnected {
+			_ = warp("disconnect")
+		}
+		if st.ShieldPrevMode != "" {
+			_ = warp("mode", st.ShieldPrevMode)
+		}
+		st.ShieldOn, st.ShieldPrevMode, st.ShieldWasConnected = false, "", false
+	}
 	switch {
-	case st.ShieldOn && !untrusted: // back on a protected network: undo only what Argo did
-		if w.Connected {
-			if err := l.Fx.Run("warp-cli", "--accept-tos", "disconnect"); err == nil {
-				l.say("shield: protected network again; WARP tunnel off")
+	case st.ShieldOn && !untrusted: // back on a protected network
+		restore()
+		l.say("shield: protected network again; WARP back as it was")
+	case st.ShieldOn && !w.Connected: // switched off by hand on this network: respect it
+		restore()
+		n.NoShield = true
+		l.say("shield: WARP was switched off here; leaving it off on this network")
+	case untrusted && !st.ShieldOn && !n.NoShield && w.Installed && !(w.Connected && w.Tunnel()):
+		prev := ""
+		if !w.Tunnel() {
+			if prev = warpModeArg[w.Mode]; prev == "" {
+				if !n.ShieldAdvised {
+					n.ShieldAdvised = true
+					l.Fx.Notify("Argo: open Wi-Fi, no tunnel", "This Wi-Fi is "+snap.WiFiSec+" and WARP is in a mode Argo doesn't know ("+w.Mode+"), so it left WARP alone. Use the iPhone hotspot for anything sensitive.")
+				}
+				break
+			}
+			if err := warp("mode", "warp"); err != nil {
+				l.say("shield: could not switch WARP to tunnel mode: %v", err)
+				break
 			}
 		}
-		st.ShieldOn = false
-	case st.ShieldOn && !w.Connected: // switched off by hand on this network: respect it
-		st.ShieldOn, n.NoShield = false, true
-		l.say("shield: WARP was switched off here; leaving it off on this network")
-	case untrusted && !st.ShieldOn && !n.NoShield && w.Tunnel() && !w.Connected:
-		if err := l.Fx.Run("warp-cli", "--accept-tos", "connect"); err != nil {
-			l.say("shield: could not start WARP: %v", err)
-			break
+		st.ShieldOn, st.ShieldPrevMode, st.ShieldWasConnected = true, prev, w.Connected
+		if !w.Connected {
+			if err := warp("connect"); err != nil {
+				l.say("shield: could not start WARP: %v", err)
+				restore()
+				break
+			}
 		}
 		l.Fx.Sleep(shieldSettle)
 		after := l.Prober.Probe(ctx)
 		if c, _ := Classify(after); c.Blocking() || (snap.Tailscale.Running && !after.Tailscale.Running) {
-			_ = l.Fx.Run("warp-cli", "--accept-tos", "disconnect")
+			restore()
 			n.NoShield = true
-			l.Fx.Notify("Argo: WARP tunnel undone", "Turning on WARP on this open Wi-Fi broke the connection or Tailscale, so Argo switched it off again and won't retry on this network. Use the iPhone hotspot for anything sensitive.")
+			l.Fx.Notify("Argo: WARP tunnel undone", "Turning on WARP on this open Wi-Fi broke the connection or Tailscale, so Argo put WARP back as it was and won't retry on this network. Use the iPhone hotspot for anything sensitive.")
 		} else {
-			st.ShieldOn = true
-			l.Fx.Notify("Argo: open Wi-Fi, tunnel on", "This Wi-Fi is "+snap.WiFiSec+", so anyone nearby could read unencrypted traffic. WARP now encrypts all of it. Argo turns WARP off again when you're back on a protected network.")
+			l.Fx.Notify("Argo: open Wi-Fi, tunnel on", "This Wi-Fi is "+snap.WiFiSec+", so anyone nearby could read unencrypted traffic. WARP now encrypts all of it. Argo puts WARP back as it was when you're on a protected network again.")
 		}
-	case untrusted && w.Installed && !w.Tunnel() && !n.ShieldAdvised:
-		n.ShieldAdvised = true
-		l.Fx.Notify("Argo: open Wi-Fi, no tunnel", "This Wi-Fi is "+snap.WiFiSec+". WARP is in "+w.Mode+" mode, which only covers apps set to use its proxy. In WARP's settings choose the WARP mode once; Argo will then turn it on by itself on open Wi-Fi.")
 	}
 	if fp != "" {
 		st.Networks[fp] = n
