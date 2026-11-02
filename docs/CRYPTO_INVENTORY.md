@@ -40,6 +40,9 @@ No encryption of data. The only thing encrypted is the signing key itself, when 
 | Ed25519 signature (Go `crypto/ed25519`) | `tools/argo/bpsec.go` | Integrity block (`argo-sig-1`): the source node signs each store-and-forward bundle | Authentication and integrity |
 | HPKE (RFC 9180): ML-KEM-768 + X25519 hybrid KEM, HKDF-SHA256, AES-256-GCM (Go `crypto/hpke`) | `tools/argo/bpsec.go` | Confidentiality block (`argo-seal-1`): encrypts each bundle's payload and its integrity block to the destination node (GAU-193, #153) | **Confidentiality encryption of data** |
 | Key generation (Ed25519 seed, ML-KEM-768 + X25519 key pair), CSPRNG | `tools/argo/bpsec.go` | Each Argo node's keys, kept in `node.key` (mode 600) in Argo's config folder | Key management for the two rows above |
+| HMAC-SHA-256/384/512 (RFC 9173 BIB-HMAC-SHA2, Go `crypto/hmac`, `crypto/sha256`, `crypto/sha512`), constant-time compare | `tools/argo/bpsec9173.go` | Standard BPSec integrity block (type 11) for exchanging bundles with standard DTN nodes (GAU-199, #158); keys are pre-placed by the caller | Authentication and integrity |
+| AES-128/256-GCM (RFC 9173 BCB-AES-GCM, Go `crypto/aes`, `crypto/cipher`), random IVs | `tools/argo/bpsec9173.go` | Standard BPSec confidentiality block (type 12): encrypts a bundle block for a standard DTN node (GAU-199, #158) | **Confidentiality encryption of data** |
+| AES key wrap (RFC 3394, Go `crypto/aes`) | `tools/argo/aeskw.go` | Carries an RFC 9173 block's key wrapped under a key-encryption key (GAU-199, #158) | Key management for the two rows above |
 | SHA-256 (Go), random bytes | `tools/argo/store.go`, `bundle.go`, `relay.go` | Bundle ids; checksums and random ids of relay transfers | Integrity, identification |
 | SHA-256 | `backend/mesh/bundles.ts` | Bundle ids and short fingerprints on the hub | Identification |
 | SHA-256 | `scripts/release/sbom.ts` | Stable ids in the release SBOM | Identification |
@@ -50,4 +53,4 @@ UNVERIFIED (third-party, not swept): better-auth password hashing and session to
 
 ## Pending changes that would alter this inventory
 
-- **PR #158 (GAU-199, open, head a48f2e8):** adds RFC 9173's standard BPSec contexts to Argo for interop with other DTN nodes: BIB-HMAC-SHA2 (HMAC-SHA-256/384/512 integrity) and BCB-AES-GCM (AES-GCM confidentiality) with RFC 3394 AES key wrap (`tools/argo/bpsec9173.go`, `aeskw.go`, importing `crypto/aes`, `crypto/cipher`, `crypto/hmac`). That would be a second confidentiality mechanism, not the first: main has encrypted Argo bundles since #153 (the HPKE row above). So the REG-01 question for confidentiality encryption already applies to Argo on main, whether or not #158 merges. Classification is counsel's (GAU-65). An earlier version of this note said #158 would bring that question in; it was wrong.
+- None open. PR #158 (GAU-199) added RFC 9173's contexts: the three rows above from `bpsec9173.go` and `aeskw.go`. They are a second confidentiality mechanism in Argo, not the first (the HPKE row has been on main since #153), so the REG-01 question for confidentiality encryption is unchanged by them. Classification is counsel's (GAU-65).
