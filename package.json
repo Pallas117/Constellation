@@ -79,6 +79,8 @@
     "smoke:website": "node website/tools/smoke.mjs"
   },
   "dependencies": {
+    "@better-auth/core": "1.7.12",
+    "@better-auth/passkey": "1.7.12",
     "@radix-ui/react-dialog": "^1.1.14",
     "@radix-ui/react-label": "^2.1.7",
     "@radix-ui/react-popover": "^1.1.14",
