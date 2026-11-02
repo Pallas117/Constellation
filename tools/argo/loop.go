@@ -18,6 +18,7 @@ type Action struct {
 	Command string `json:"command,omitempty"`
 	Auto    bool   `json:"auto,omitempty"`
 	Admin   bool   `json:"admin,omitempty"`
+	Arg     string `json:"-"` // a network name for wifi-join (GAU-234): its own argv item, never stored
 }
 
 // Plan returns the ladder for a class, least invasive first. Tailscale is
@@ -198,7 +199,7 @@ func (l Loop) Tick(ctx context.Context) State {
 		// one outage: keep its start, attempts and backoff, and don't text again for it.
 		if !flip {
 			st.IncidentAt, st.Attempts, st.LastFix, st.IncidentFP = now, 0, "", fp
-			st.OfflineTold = false
+			st.OfflineTold, st.WiFiSteps = false, 0
 			st.Notified, st.NotifyDue = false, time.Time{}
 		}
 		switch quiet := st.Networks[fp].quietFor(class); {
@@ -251,6 +252,7 @@ func (l Loop) Tick(ctx context.Context) State {
 			class, p50.Round(time.Second), p90.Round(time.Second), k)}}, plan...)
 	}
 	var ran []string
+	wifiTurn := st.WiFiSteps // fixed for this tick: one Wi-Fi step per attempt
 	for _, a := range plan {
 		line := a.Say
 		if a.Command != "" {
@@ -260,7 +262,15 @@ func (l Loop) Tick(ctx context.Context) State {
 		if a.Auto && class == Offline && now.Sub(st.IncidentAt) < offlineRejoinAfter {
 			continue // a network switch: give it time before resetting Wi-Fi
 		}
+		// GAU-234: with a saved network in range, attempts alternate between joining it and a Wi-Fi
+		// restart, so one step per attempt (a restart right after a join would undo it).
+		if hasAction(plan, "wifi-join") && ((a.ID == "wifi-join" && wifiTurn%2 == 1) || (a.ID == "wifi-rejoin" && wifiTurn%2 == 0)) {
+			continue
+		}
 		if a.Auto {
+			if strings.HasPrefix(a.ID, "wifi-") {
+				st.WiFiSteps++ // counted when tried, so join and restart alternate even when one fails
+			}
 			if err := l.runAuto(a); err == nil {
 				ran = append(ran, a.ID)
 			}

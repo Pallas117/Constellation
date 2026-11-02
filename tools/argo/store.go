@@ -42,6 +42,7 @@ type State struct {
 	CheckedAt          time.Time `json:"checked_at"`
 	IncidentAt         time.Time `json:"incident_at,omitempty"`
 	OfflineTold        bool      `json:"offline_told,omitempty"` // this outage was texted through the iPhone relay (GAU-233)
+	WiFiSteps          int       `json:"wifi_steps,omitempty"`   // Wi-Fi join/restart steps tried in this outage (GAU-234)
 	Attempts           int       `json:"attempts"`
 	LastFixAt          time.Time `json:"last_fix_at,omitempty"`
 	LastFix            string    `json:"last_fix,omitempty"`

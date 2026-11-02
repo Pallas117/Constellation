@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"regexp"
 	"strings"
 	"time"
@@ -52,6 +53,9 @@ func probeOfflineWiFi(ctx context.Context, s *Snapshot) {
 	if s.WiFiDevice != "" {
 		s.WiFiPower = parseWiFiPower(run(ctx, "networksetup", "-getairportpower", s.WiFiDevice))
 	}
+	if s.WiFiPower == "On" {
+		s.JoinCandidates = joinCandidates(ctx, s.WiFiDevice)
+	}
 }
 
 // offlinePlan is the OFFLINE ladder.
@@ -59,6 +63,12 @@ func offlinePlan(s Snapshot) []Action {
 	switch {
 	case s.WiFiDevice != "" && s.WiFiPower == "Off":
 		return []Action{{ID: "wifi-on", Say: "No network and Wi-Fi is off: turning Wi-Fi on.", Command: "networksetup -setairportpower " + s.WiFiDevice + " on", Auto: true}}
+	case s.WiFiDevice != "" && len(s.JoinCandidates) > 0: // GAU-234: join the best saved network in range, or restart Wi-Fi
+		c := s.JoinCandidates[0]
+		return []Action{
+			{ID: "wifi-join", Say: fmt.Sprintf("No network: joining the strongest saved network in range (%d dBm).", c.RSSI), Command: "networksetup -setairportnetwork " + s.WiFiDevice, Arg: c.SSID, Auto: true},
+			{ID: "wifi-rejoin", Say: "No network: restarting Wi-Fi so macOS rejoins a known network or the hotspot.", Command: "networksetup -setairportpower " + s.WiFiDevice + " off+on", Auto: true},
+		}
 	case s.WiFiDevice != "":
 		return []Action{{ID: "wifi-rejoin", Say: "No network: restarting Wi-Fi so macOS rejoins a known network or the hotspot.", Command: "networksetup -setairportpower " + s.WiFiDevice + " off+on", Auto: true}}
 	}
@@ -71,6 +81,9 @@ func (l Loop) runAuto(a Action) error {
 		return l.Fx.Open(strings.TrimPrefix(a.Command, "open "))
 	}
 	f := strings.Fields(a.Command)
+	if a.ID == "wifi-join" && len(f) == 3 && f[0] == "networksetup" && f[1] == "-setairportnetwork" && a.Arg != "" && !strings.ContainsRune(a.Arg, 0) {
+		return l.Fx.Run("networksetup", "-setairportnetwork", f[2], a.Arg)
+	}
 	if len(f) != 4 || f[0] != "networksetup" || f[1] != "-setairportpower" {
 		return nil // nothing else runs by itself
 	}
@@ -82,4 +95,13 @@ func (l Loop) runAuto(a Action) error {
 		return l.Fx.Run("networksetup", "-setairportpower", f[2], "on")
 	}
 	return l.Fx.Run("networksetup", "-setairportpower", f[2], f[3])
+}
+
+func hasAction(plan []Action, id string) bool {
+	for _, a := range plan {
+		if a.ID == id {
+			return true
+		}
+	}
+	return false
 }
