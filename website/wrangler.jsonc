@@ -5,6 +5,8 @@
   "name": "lightbound-site",
   "main": "worker/index.js",
   "compatibility_date": "2026-09-01",
+  // Wrangler sends Cloudflare usage metrics about the commands we run unless told not to; deploys don't need it.
+  "send_metrics": false,
   "assets": {
     "directory": "./public",
     "binding": "ASSETS",
