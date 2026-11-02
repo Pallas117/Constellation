@@ -256,6 +256,22 @@ cores − 1. The repo's `npm test` passes it to `--test-concurrency` and Playwri
 both keep their defaults: about 7 test processes and 4 browsers on an 8-core Mac. Node refuses
 `--test-concurrency` in `NODE_OPTIONS`, so the flag lives in the script.
 
+**The owner first** (`foreground.go`). Work on this Mac (video calls, browser work) comes before Gauss's jobs:
+
+| When | Jobs | Network |
+|---|---|---|
+| A call is live (a Chromium `WebRTC has active PeerConnections` assertion, or Zoom, Teams, FaceTime, Webex holding the display awake) | New jobs over 1 GB wait; running ones that big pause (SIGSTOP) until it ends, at most 2 h, then exit 75 so the queue retries | Offline, the Wi-Fi reset waits 5 min instead of 90 s |
+| At the keyboard (input in the last 5 min) | A job must leave 0.5 GB more free | as usual |
+| Away | no extra limit | as usual |
+
+**Brownout** (`brownout.go`). On a charger too weak for the load (the Mac plugged in, the battery still
+falling), a running job is shed (paused) at 35% and restored at 50%, or as soon as a 30 W+ charger is charging
+it. While shed even an 8 W charger refills the battery, so jobs run in bursts the charger can pay for instead
+of draining it to the floor. New jobs don't start at 35% or below on a charger that is behind.
+
+Every guarded job runs at nice 10, so with nothing else running it loses nothing. The finding names the
+app locally (`argo guard`); Gauss gets only the code `owner-busy` ("its owner is using it").
+
 ## Store and forward (delay-tolerant delivery)
 
 Files move between enrolled devices the way spacecraft send data home: held, forwarded when a path opens,
