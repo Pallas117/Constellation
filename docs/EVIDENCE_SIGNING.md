@@ -57,9 +57,25 @@ Container images are not built yet (GAU-68); signing them is a follow-up.
 - One key per purpose: `evidence-pack` and `release-artifact`. The signed statement carries its type, so a release signature can never pass as a pack signature, and the keyring says what each key may sign.
 - The private key is a PKCS#8 PEM file outside any repository, for example `~/.config/gauss/keys/`, in a directory only its owner can open (700), with the file at mode 600, on a disk with FileVault on. The tools refuse a key file inside the repository or one other users can read, and never overwrite one. `.gitignore` ignores `*.pem` and `*.key`.
 - Never put a private key in the repository, `.env*` files, environment variables, logs, URLs, chat or agent transcripts, cloud drives or the tailnet mesh folder. The keyring check refuses any private key material, and `npm run security:secrets` flags it in staged changes.
-- AI agents run the signing commands, which read the key file themselves. Agents must not open, print or copy the key file. This is a rule, not a technical control: the agents run as the same user.
-- The key file is not passphrase-protected: the tools add no encryption of their own (REG-04), and rely on the file mode and FileVault. A hardware-backed key (YubiKey or HSM) is the stronger option and a follow-up; Node's crypto cannot use one directly.
-- Backup: none. A lost key is not a disaster: make a new one and retire the old one. Packs it signed keep verifying. Josh chose (2026-11-02) to lock the key file under a geometry pattern rather than keep copies; that lock is a separate change.
+- Agents must not open, print or copy the key file. This is a rule, not a technical control: the agents run as the same user. With the key locked (below), an agent cannot sign without the owner drawing the pattern, which is the point.
+- Lock each key under a geometry pattern (next section). Then a copy of the file alone is not enough to sign. The lock adds to the file mode and FileVault; a hardware-backed key (YubiKey or HSM) is still the stronger option and a follow-up, and Node's crypto cannot use one directly.
+- Backup: none. A lost key is not a disaster: make a new one and retire the old one. Packs it signed keep verifying. Josh chose (2026-11-02) to lock the key file under a geometry pattern rather than keep copies. A forgotten pattern is the same as a lost key.
+
+## Lock a key under a geometry pattern
+
+The pattern is drawn on the 16 vertices of a rotating tesseract, the figure of the UI-UX-Gauss geometric lock. The vertices are labelled A to P. Each time the page opens, the figure starts in a new orientation, so the shape you draw differs while the vertices, and so the pattern, stay the same.
+
+```bash
+npm run trust:keys -- lock --key ~/.config/gauss/keys/evidence-2026-11.pem --remove-plain
+npm run trust:keys -- lock --key ~/.config/gauss/keys/release-2026-11.pem --remove-plain
+```
+
+- Draw the pattern twice in the page that opens on this Mac: 8 to 24 vertices, at least 6 different, never the same vertex twice in a row. Hovering over the figure stops its rotation, and typing the letters works too.
+- Over SSH (Termius), or with `--pattern-tty`, type the letters instead; nothing is echoed. Piped input works for scripts.
+- The tool writes `<key file>.locked` (mode 600), checks that it unlocks, and with `--remove-plain` overwrites and deletes the unlocked file. On an SSD the old blocks can survive until they are reused; FileVault keeps them encrypted.
+- From then on, sign with `--sign-key <file>.locked`. `trust:sign` and `trust:ingest --sign-key` ask for the pattern the same way, and stop after five misses or three minutes. `trust:keys new --lock` makes a key that is locked from the start.
+- The page listens on 127.0.0.1 only and closes once it has an answer. It only answers its own address and origin, and only takes a pattern sent with the nonce it served. Nothing secret goes in a URL. Neither the pattern nor the key is printed or logged.
+- Strength: the pattern is stretched with scrypt (N = 2^17, r = 8, p = 1: about 0.4 s and 128 MiB per try on an M1), and the key is sealed with AES-256-GCM. The file's header (key id, settings, lock time) is bound to the seal, so editing it fails the unlock. A pattern holds at most about 31 bits of choice, and fewer as people pick shapes, so the lock slows down someone who has copied the file; it does not stop a well-funded attacker who has it for long. Only the key is encrypted, never any data: this is key management for signing (REG-04, [CRYPTO_INVENTORY.md](CRYPTO_INVENTORY.md)).
 
 ## First keys
 

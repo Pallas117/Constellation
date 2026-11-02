@@ -11,9 +11,11 @@ Source: a sweep of main for crypto calls (`createHash`, `createHmac`, `randomByt
 | Ed25519 signature (RFC 8032), Node `crypto.sign`/`verify` | `backend/trust/signing.ts` | Sign each evidence pack (a statement of its pack hash, chain head, key id and signing time) and release files (name, size, SHA-256) | Authentication and integrity (digital signature) |
 | Ed25519 key generation, Node `generateKeyPairSync` | `scripts/trust/keys.ts` | Make a signing key | Key management for signing |
 | SHA-256 | `backend/trust/signing.ts` | Key id (fingerprint of the public key); digest of a release file | Integrity, identification |
-| PKCS#8 and SPKI PEM encoding | `backend/trust/signing.ts`, `scripts/trust/keys.ts` | Store the private key (not encrypted; file mode 600, outside the repository) and publish the public key | Key management (encoding only) |
+| PKCS#8 and SPKI PEM encoding | `backend/trust/signing.ts`, `scripts/trust/keys.ts` | Store the private key (file mode 600, outside the repository) and publish the public key | Key management (encoding only) |
+| scrypt (RFC 7914) and AES-256-GCM, Node `crypto` | `backend/trust/key-lock.ts` | Lock the private signing key at rest under its owner's geometry pattern; only the 48-byte key is sealed | Key management for signing (protects the key) |
+| Random bytes (CSPRNG), constant-time compare | `backend/trust/pattern-page.ts` | One-time nonce of the local pattern page | Authentication of the page's own requests |
 
-No encryption, key exchange or key wrapping. The private key file has no passphrase on purpose: the tools add no encryption of their own and rely on file permissions and FileVault (macOS, not Gauss code). See [EVIDENCE_SIGNING.md](EVIDENCE_SIGNING.md).
+No encryption of data and no key exchange. The only thing encrypted is the signing key itself, when its owner locks it. See [EVIDENCE_SIGNING.md](EVIDENCE_SIGNING.md).
 
 ## Evidence packs and trust records (GAU-60, GAU-66)
 
