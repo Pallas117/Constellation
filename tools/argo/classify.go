@@ -85,6 +85,8 @@ type Snapshot struct {
 	Captive     Result      `json:"captive"`
 	WPAD        bool        `json:"wpad"`
 	WiFiSec     string      `json:"wifi_security,omitempty"` // ipconfig's Security, e.g. WPA2_PSK; "" when not on Wi-Fi
+	WiFiDevice  string      `json:"wifi_device,omitempty"`   // e.g. en0; recorded when offline (rejoin.go)
+	WiFiPower   string      `json:"wifi_power,omitempty"`    // On/Off; recorded when offline
 	Exposed     []string    `json:"exposed,omitempty"`       // sharing services this Mac answers on its LAN address
 	PAC         bool        `json:"pac"`
 	Proxies     []Proxy     `json:"proxies,omitempty"`

@@ -27,7 +27,7 @@ func Plan(c Class, s Snapshot, remembered string) []Action {
 	var a []Action
 	switch c {
 	case Offline:
-		a = append(a, Action{ID: "wait", Say: "No network. Join Wi-Fi or enable the hotspot; mesh-heal will reconnect Tailscale."})
+		a = append(a, offlinePlan(s)...)
 	case Captive:
 		a = append(a, Action{ID: "open-portal", Say: "Wi-Fi login page detected; opening it.", Command: "open http://captive.apple.com", Auto: true})
 	case DNS:
@@ -235,8 +235,11 @@ func (l Loop) Tick(ctx context.Context) State {
 			line += "\n    " + a.Command
 		}
 		l.say("→ %s", line)
+		if a.Auto && class == Offline && now.Sub(st.IncidentAt) < offlineRejoinAfter {
+			continue // a network switch: give it time before resetting Wi-Fi
+		}
 		if a.Auto {
-			if err := l.Fx.Open(strings.TrimPrefix(a.Command, "open ")); err == nil {
+			if err := l.runAuto(a); err == nil {
 				ran = append(ran, a.ID)
 			}
 		}
@@ -252,7 +255,11 @@ func (l Loop) Tick(ctx context.Context) State {
 
 	// Verify: re-probe once after auto actions; user-run fixes are verified next tick.
 	if len(ran) > 0 {
-		l.Fx.Sleep(5 * time.Second)
+		settle := 5 * time.Second
+		if strings.HasPrefix(ran[0], "wifi-") {
+			settle = wifiRejoinSettle // joining a network and getting an address takes longer than a page opening
+		}
+		l.Fx.Sleep(settle)
 		if c2, _ := Classify(l.Prober.Probe(ctx)); !c2.Blocking() {
 			l.resolve(&st, class, l.Fx.Now(), st.LastFix, fp)
 			st.Class, st.Reason = c2, "recovered"
