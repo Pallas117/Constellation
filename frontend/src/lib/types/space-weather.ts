@@ -109,7 +109,8 @@ export interface CanonicalSpaceWeatherPoint {
     dynamicPressure: number;
   };
   indices: {
-    kp: number;
+    /** Planetary Kp (0–9); null when no source has a Kp reading (unknown, never 0 or 2; GAU-230). */
+    kp: number | null;
     dst: number;
     kpKind?: "estimated-1m" | "planetary-3h";
     kpObservedAt?: string | null;
