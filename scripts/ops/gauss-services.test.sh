@@ -487,6 +487,23 @@ g update-ref refs/remotes/origin/main "$H1"
 [ "$(ls "$GQ" | grep -c '\.req$')" = 2 ]; expect "gates enqueue: a queued commit on origin/main is never superseded" $?
 g update-ref -d refs/remotes/origin/main
 rm -f "$GQ"/*.req
+# Stacked PRs (2026-11-02, #210 on #158): the lower head is still its branch's head and must pass on its own.
+g update-ref refs/heads/stack-low "$H1"; g update-ref refs/heads/stack-high "$H2"
+(cd "$LIVE" && run gates enqueue "$H1" >/dev/null 2>&1); out=$(cd "$LIVE" && run gates enqueue "$H2" 2>&1)
+[[ "$out" == *"Kept ${H1:0:7}: still the head of heads/stack-low"* ]] && [ "$(ls "$GQ" | grep -c '\.req$')" = 2 ]
+expect "gates enqueue: a stacked PR's queued head stays queued when the PR above it is queued" $?
+rm -f "$GQ"/*.req; g update-ref -d refs/heads/stack-low; g update-ref refs/remotes/origin/stack-low "$H1"
+(cd "$LIVE" && run gates enqueue "$H1" >/dev/null 2>&1); (cd "$LIVE" && run gates enqueue "$H2" >/dev/null 2>&1)
+[ "$(ls "$GQ" | grep -c '\.req$')" = 2 ]; expect "gates enqueue: a head only on origin (its worktree gone) still counts as a branch head" $?
+rm -f "$GQ"/*.req; g update-ref -d refs/remotes/origin/stack-low; g update-ref -d refs/heads/stack-high
+g update-ref refs/heads/topic "$H1"; g update-ref refs/remotes/origin/topic "$H1"
+(cd "$LIVE" && run gates enqueue "$H1" >/dev/null 2>&1)
+g update-ref refs/heads/topic "$H2" # the branch moved on here; origin still has the old head (not pushed yet)
+out=$(cd "$LIVE" && run gates enqueue "$H2" 2>&1)
+[[ "$out" == *"Superseded ${H1:0:7}"* ]] && [ "$(ls "$GQ" | grep -c '\.req$')" = 1 ] && grep -q "sha=$H2" "$GQ"/*.req
+expect "gates enqueue: a branch whose head moved still supersedes its old queued head, pushed or not" $?
+g update-ref -d refs/heads/topic; g update-ref -d refs/remotes/origin/topic
+rm -f "$GQ"/*.req
 sleep 30 & LIVE_RUNNER=$!; mkdir -p "$WD/gates/runner"; echo "$LIVE_RUNNER" >"$WD/gates/runner/pid"; echo old >"$WD/gates/runner.sh"
 out=$(cd "$LIVE" && run gates enqueue "$H1" 2>&1); kill "$LIVE_RUNNER" 2>/dev/null; wait "$LIVE_RUNNER" 2>/dev/null
 [[ "$out" == *"working (pid $LIVE_RUNNER)"* ]] && cmp -s "$SCRIPT" "$WD/gates/runner.sh"

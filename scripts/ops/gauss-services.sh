@@ -819,17 +819,38 @@ gates_resolve() { # gates_resolve <checkout-dir>|<commit>: sets G_SRC G_SHA G_TR
 
 # A new head replaces the older heads of its branch still waiting (2026-10-31: three hand prunes of
 # stale requests in one day, each costing a full gate slot). Never a commit already on origin/main:
-# a queued main (for a deploy) is an ancestor of every branch that merged it.
+# a queued main (for a deploy) is an ancestor of every branch that merged it. Never a commit that is
+# still a branch's head (2026-11-02: queuing #210's head dropped the head of #158 under it, which has
+# to pass on its own before #158 merges): only a branch whose head moved on supersedes.
 gates_supersede() { # gates_supersede <new-sha> <new-request>
-  local new=$1 keep=$2 r old
+  local new=$1 keep=$2 r old tips fetched=
   for r in "$GATES_QUEUE"/*.req; do
     [ -f "$r" ] && [ "$r" != "$keep" ] || continue
     old=$(req_get "$r" sha)
     [ -n "$old" ] && [ "$old" != "$new" ] || continue
     git --git-dir="$G_REPO" merge-base --is-ancestor "$old" "$new" 2>/dev/null || continue
+    if [ -z "$fetched" ]; then # once, and only with a candidate: origin's heads as they are now (30 s cap: hotspot)
+      fetched=1
+      GIT_TERMINAL_PROMPT=0 perl -e 'alarm shift; exec @ARGV' 30 git --git-dir="$G_REPO" fetch -q origin 2>/dev/null \
+        || echo "(git fetch failed; judging branch heads by the refs already here)"
+    fi
     git --git-dir="$G_REPO" merge-base --is-ancestor "$old" refs/remotes/origin/main 2>/dev/null && continue
+    tips=$(gates_branch_tips "$old")
+    [ -z "$tips" ] || { echo "Kept ${old:0:7}: still the head of $tips."; continue; }
     rm -f "$r" && echo "Superseded ${old:0:7}: ${new:0:7} contains it."
   done
+}
+
+gates_branch_tips() { # gates_branch_tips <sha>: the branches, here or on origin, whose head is <sha> (comma-separated)
+  local ref h
+  git --git-dir="$G_REPO" for-each-ref --points-at "$1" --format='%(refname)' refs/heads refs/remotes/origin \
+    | while IFS= read -r ref; do
+      case $ref in # not origin's copy of a branch that has moved on here: that newer head just isn't pushed yet
+        refs/remotes/origin/*) h=$(git --git-dir="$G_REPO" rev-parse -q --verify "refs/heads/${ref#refs/remotes/origin/}") \
+          && [ "$h" != "$1" ] && git --git-dir="$G_REPO" merge-base --is-ancestor "$1" "$h" && continue ;;
+      esac
+      echo "${ref#refs/}"
+    done | paste -sd, -
 }
 
 gates_enqueue() { # gates_enqueue <checkout-dir>|<commit>: queue a gate run for that commit's tree, start the runner
