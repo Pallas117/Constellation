@@ -2,6 +2,7 @@
 // DATA PROCESSING & INTERPOLATION ENGINE
 // ============================================================================
 
+import { freshnessMs } from '../../../shared/policy/freshness';
 import type { CanonicalSpaceWeatherPoint, ScaleReading } from './types/space-weather';
 
 export interface SpaceWeatherResponse {
@@ -38,7 +39,8 @@ export interface InterpolatedData {
     pressure: number;
   };
   imfBz: number;
-  kpIndex: number;
+  /** null = no Kp reading from any source (GAU-230); shown as unknown, never 0 or 2. */
+  kpIndex: number | null;
   /** null = not measured by any connected source; never substitute a value. */
   protonFlux: number | null;
   electronFlux: number | null;
@@ -80,6 +82,8 @@ export class EMAInterpolator {
     
     // Exponential easing out (cubic)
     const t = 1 - Math.pow(1 - rawProgress, 3);
+    // An unknown Kp at either end is not interpolated: it switches at once (GAU-230).
+    const kp = lerpNullable(this.current.kpIndex, this.target.kpIndex, t);
 
     return {
       solarWind: {
@@ -88,7 +92,7 @@ export class EMAInterpolator {
         pressure: lerp(this.current.solarWind.pressure, this.target.solarWind.pressure, t),
       },
       imfBz: lerp(this.current.imfBz, this.target.imfBz, t),
-      kpIndex: Math.round(lerp(this.current.kpIndex, this.target.kpIndex, t)),
+      kpIndex: kp === null ? null : Math.round(kp),
       protonFlux: lerpNullable(this.current.protonFlux, this.target.protonFlux, t),
       electronFlux: lerpNullable(this.current.electronFlux, this.target.electronFlux, t),
       radiation: this.target.radiation,
@@ -108,8 +112,8 @@ export class EMAInterpolator {
 // FRESHNESS (for stale data)
 // ============================================================================
 
-/** Carried values expire after 15 minutes (GAU-15). */
-export const DATA_EXPIRY_MS = 15 * 60 * 1000;
+/** Carried values expire with the L1 bound (GAU-15; shared/policy/freshness.json). */
+export const DATA_EXPIRY_MS = freshnessMs('l1_solar_wind');
 
 /**
  * Marks data stale once it is older than DATA_EXPIRY_MS. Values are left as last
@@ -133,7 +137,7 @@ export function unavailableData(): InterpolatedData {
   return {
     solarWind: { speed: 400, density: 5, pressure: 2 },
     imfBz: 0,
-    kpIndex: 0,
+    kpIndex: null,
     protonFlux: null,
     electronFlux: null,
     radiation: null,
@@ -152,7 +156,7 @@ export interface VisualizationParams {
   magnetopauseCompression: number;  // 0.6-1.0 (1 = relaxed, 0.6 = compressed)
   beltIntensity: number;            // 0-1 (belt opacity/glow)
   reconnectionStrength: number;     // 0-1 (southward Bz effect)
-  stormLevel: number;               // 0-1 (from Kp)
+  stormLevel: number;               // 0-1 (from Kp); 0 when Kp is unknown: the scene draws no storm it can't see
   tailStretch: number;              // 1-2 (magnetotail stretch factor)
 }
 
@@ -174,7 +178,7 @@ export function calculateVisualizationParams(data: InterpolatedData): Visualizat
   const reconnectionStrength = Math.max(0, Math.min(1, -data.imfBz / 15));
 
   // Storm level from Kp index
-  const stormLevel = data.kpIndex / 9;
+  const stormLevel = data.kpIndex === null ? 0 : data.kpIndex / 9;
 
   // Tail stretch increases with solar wind pressure
   const tailStretch = 1 + pressureNorm * 0.5;
@@ -264,10 +268,15 @@ const isFiniteNumber = (v: unknown): v is number => typeof v === 'number' && Num
 const asRecord = (v: unknown): Record<string, unknown> | null =>
   v !== null && typeof v === 'object' ? (v as Record<string, unknown>) : null;
 
+/** An indices block whose Kp is a finite number or null (unknown). A missing key or a non-number is malformed. */
+const isKpOrUnknown = (indices: Record<string, unknown> | null): boolean =>
+  indices !== null && (indices.kp === null || isFiniteNumber(indices.kp));
+
 /**
  * True when `data` carries what every consumer of a canonical point reads: a valid
- * timestamp, the quality block, solar wind, Bz and Kp. Anything else is treated as
- * no data, so one malformed response can't take a page down.
+ * timestamp, the quality block, solar wind, Bz and an indices block whose Kp is a number
+ * or null (no reading, GAU-230). Anything else is treated as no data, so one malformed
+ * response can't take a page down.
  */
 export function isCanonicalPoint(data: unknown): data is CanonicalSpaceWeatherPoint {
   const d = asRecord(data);
@@ -281,7 +290,7 @@ export function isCanonicalPoint(data: unknown): data is CanonicalSpaceWeatherPo
     isFiniteNumber(solarWind?.density) &&
     isFiniteNumber(solarWind?.dynamicPressure) &&
     isFiniteNumber(asRecord(d.magneticField)?.z) &&
-    isFiniteNumber(asRecord(d.indices)?.kp)
+    isKpOrUnknown(asRecord(d.indices))
   );
 }
 

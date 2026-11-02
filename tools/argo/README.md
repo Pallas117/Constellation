@@ -71,8 +71,8 @@ Then remove the `statusLine` and `claude()` lines above if you added them, and r
 | `argo watch` | Run the peer watchdog once (also every tick): restarts the gauss-awake guard or mesh-heal when their heartbeat is stale, max 3 restarts/hour each, then alerts. Override the list with `"watch"` in config.json |
 | `argo devices` | Which watched tailnet devices are offline. Every tick, a phone of yours that has been off the tailnet for 30 min or more gets a text (SMS over its own cellular link) with the fix: open Tailscale, turn on Connect On Demand. At most every 6 h per device. Override the list with `"devices": ["hostname", ...]` in config.json |
 | `argo guard` | Resource guard (below): memory, battery, disk and CPU now and over the last 24 h, who uses memory, what to do. `--json` for scripts |
-| `argo guard admit [-mem GB] [-wait 10m]` | Exit 0 if a job needing GB may start now, 75 (with the reason) if not |
-| `argo guard run [-mem GB] [-max GB] [-wait 10m] -- cmd` | Runs `cmd` only when admitted, and stops its whole process group if the host reaches **block** or the job holds more than `-max` GB. Exit 75 when refused or stopped, otherwise `cmd`'s own code |
+| `argo guard admit [-mem GB] [-name JOB] [-wait 10m]` | Exit 0 if a job needing GB may start now, 75 (with the reason) if not. With `-name`, what that job measured replaces `-mem` (below) |
+| `argo guard run [-mem GB] [-max GB] [-name JOB] [-wait 10m] -- cmd` | Runs `cmd` only when admitted, and stops its whole process group if the host reaches **block** or the job holds more than `-max` GB. Measures the job's peak and passes `ARGO_WORKERS` (below). A job that started on AC is paused (SIGSTOP) while the Mac runs on battery and resumed when power returns ("eclipse mode"); paused for 2 h, it is stopped with exit 75 so a queue retries it. Exit 75 when refused or stopped, otherwise `cmd`'s own code |
 | `argo send [-ttl 72h] DEVICE FILE` | Queue a file for another enrolled device (below): signed, encrypted to that device, kept until it confirms. Works offline |
 | `argo outbox` / `argo inbox` | What you sent and how far it got (queued, at hub, picked up, confirmed); what you received and where it was saved |
 | `argo sync` | Forward and fetch now (every tick does this too) |
@@ -86,6 +86,14 @@ Then remove the `statusLine` and `claude()` lines above if you added them, and r
 ## How it works
 
 Wi-Fi security is checked on every probe: WIFI_RISK (a warning, like WPAD_RISK) when the network is open, WEP or WPA1, or when this Mac answers sharing services (Remote Login, File Sharing, Screen Sharing, Remote Management, AirPlay Receiver) on its LAN address. Argo only advises; it never changes System Settings.
+
+**Network watch.** Passive only (the ARP table and this Mac's own TCP connections; nothing is scanned). If another device answers with the router's MAC, or the router's MAC changes while its address and the public IP stay the same, Argo texts "possible ARP spoofing" and treats the network as untrusted for an hour, so the Wi-Fi shield turns WARP on even on WPA2. A device on the local network connected to a sharing service (SSH, SMB, AFP, Screen Sharing, Remote Management, AirPlay) is texted once per device, with its IP and MAC; tailnet and loopback connections don't count. The device count per network is kept in state.
+
+**App data watch.** Passive, every 5 minutes: which apps hold outbound connections (`lsof`) and how much each sent (`nettop`); about 0.1 s of CPU per sample. For the first week it only learns each app's usual destination networks (/24 or /48, never URLs or content), ports and 5-minute upload. Then it texts when an app it has never seen sends data out, a known app reaches 8+ networks it never used in one sample, a non-Apple app uses an unusual port, or an app uploads 50 MB+ and 10x its usual in 5 minutes (each app at most once a day). Kept in `leak.json` beside the state.
+
+**Fixes from the phone.** Texts and Slack only send, so incident texts now end with "Fix from Termius: gauss-phone fix" when a step can run remotely. `argo fix --list` shows the current problem's steps, numbered and marked `run`, `needs sudo at the Mac` or `advice`; `argo fix <step>` runs one, then a tick verifies it. Only `open-portal`, `check-magicdns`, `restart-daemon` and `exit-node` (allow-listed nodes) run this way, each with its fixed command and no shell; the phone reaches the Mac over SSH, so no ports, tokens or services are added.
+
+**Wi-Fi shield.** On open, WEP or WPA1 Wi-Fi, Argo switches Cloudflare WARP to its tunnel mode (`warp-cli mode warp`) if it is in another known mode, connects it, re-checks that the internet and Tailscale still work, and texts "tunnel on". Back on a protected network it puts WARP back exactly as it was: the same mode (e.g. proxy) and connected or not. If the tunnel breaks the connection or Tailscale, Argo puts WARP back and leaves it alone on that network; it does the same if you switch WARP off yourself there. A mode it doesn't know is never changed. It runs only `warp-cli mode`, `connect` and `disconnect`.
 
 Alerts stay quiet on purpose: an unresolved problem texts once when it escalates, then at most every 2 h, and OFFLINE never texts (a Mac with no network cannot send, and queued texts would arrive stale).
 
@@ -210,6 +218,37 @@ Replaying the evening before the 2026-10-21 hard reset (`testdata/gau165-replay.
 The job runs in its own process group (Ctrl-C is passed on). Two bad readings in a row, 5 s apart, stop it with
 SIGTERM, then SIGKILL after 15 s. `~/.local/state/argo/guard.log` records each run by command name only (never its
 arguments).
+
+**Learned job sizing (GAU-200).** A guess like `-mem 1` is wrong both ways: on 2026-10-24 a 0.3 GB check waited
+10 minutes for 1 GB, while a build can need several. So `guard run` reads the job's process-group RSS 1 s after it
+starts and at every check, and on exit appends `{at, name, peak_gb, secs, outcome}` to
+`~/.local/state/argo/jobs.jsonl` (this device only; the name is `-name` or the command's base name, never its
+arguments). Once a job has 3 successful (exit 0), measured runs, admission uses the p95 of its last 10 peaks × 1.25 instead
+of `-mem`, rounded up to 0.1 GB and never under 0.2 GB. The margin is there because RSS leaves out compressed pages
+and misses spikes between checks. Stopped, interrupted or failed runs don't count: they may have ended before their peak. `argo guard` lists
+what each job has learned. Give gate jobs a stable `-name` (e.g. `gates`, `npm-test`): a label carrying a commit
+hash never repeats, so it never learns.
+
+**Coping at warn (2026-10-31).** This 8 GB Mac sits at the kernel's "warn" about half the time while
+barely paging (24-31 Oct: swap 2.25 GB at warn vs 1.94 GB at normal; no critical sample all week), and a
+full gate run takes 1.5-3 min, yet jobs waited 12 h for "normal". So the guard now also reads what the
+kernel counts as available (`kern.memorystatus_level` × RAM, the "free percentage" `memory_pressure`
+prints) and the swap-out rate (vm_stat `Swapouts` between readings). At warn the host is **coping** when
+it swaps out under 64 MB/min, swap hasn't grown 1 GB in the hour, and available memory beats the 1.5 GB
+reserve: a job then starts if available-after-reserve covers its need (×1.5 for a job whose runs take
+15 min+), instead of the 1 GB light-job cap, and the sustained-warn alert stays quiet. Swapping out
+64 MB/min or more is `mem-paging` (risk) whatever the flag says. Without a paging reading (no earlier
+sample, an old history, a reboot) nothing changes. A running job is still stopped at block.
+`claude-heavy` hands warn to Argo when `argo guard help` mentions coping, and runs `mem-guard trim`
+once before it waits. Replayed on the week's `memory.tsv`: a 1 GB job could start in 95% of samples
+(51% today); 9 of the 349 newly admitted samples were followed within 20 min by +1 GB swap, none by
+critical pressure.
+
+**Workers sized to the host.** The job gets `ARGO_WORKERS` and `ARGO_HEADROOM_GB` (a value the caller already set
+wins). `ARGO_WORKERS` is 1 at watch, otherwise headroom ÷ `guard_worker_gb` (config.json, default 0.5 GB), capped at
+cores − 1. The repo's `npm test` passes it to `--test-concurrency` and Playwright uses it for `workers`. Without it
+both keep their defaults: about 7 test processes and 4 browsers on an 8-core Mac. Node refuses
+`--test-concurrency` in `NODE_OPTIONS`, so the flag lives in the script.
 
 ## Store and forward (delay-tolerant delivery)
 

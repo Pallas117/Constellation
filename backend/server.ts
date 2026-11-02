@@ -31,6 +31,7 @@ import type {
   NowcastInferenceRequest,
 } from "./types.js";
 import { withFreshness } from "./lib/freshness.js";
+import { canSend, sweepDeadSockets, trackLiveness, WS_HEARTBEAT_MS } from "./lib/socket-keepalive.js";
 import { IngestionWorker } from "./worker/ingest-loop.js";
 import { MAX_QUERY_CHARS, memoryQuery, memoryStatus } from "./memory/client.js";
 import { worldStateFromFeed } from "./world/build.js";
@@ -38,6 +39,9 @@ import { createSwapPlan, rebalanceDeviceNetwork } from "./services/device-swap-m
 import { encodeCanonicalPoint } from "./lib/proto.js";
 import { linkGuardian } from "./lib/connectivity.js";
 import { bedrock } from "./lib/local-db.js";
+import { routeUpgrades } from "./lib/ws-upgrade.js";
+import { retentionFromEnv, startTelemetryRetention } from "./lib/telemetry-retention.js";
+import { queryLimit } from "./lib/query-limit.js";
 import { diskFreeBytes, overall, readTpms } from "./lib/tpm.js";
 import { SPACE_OBJECT_CATALOG } from "./lib/space-object-catalog.js";
 import { auth, ssoAllowedDomain, ssoGithubEnabled, ssoGoogleEnabled } from "./better-auth.js";
@@ -326,7 +330,7 @@ app.use("/api/device", deviceRegistryRouter);
 
 app.get("/api/feed/space-weather/5s", async (req: AuthenticatedRequest, res) => {
   const lookbackMs = parseLookback(req.query.lookback, 24 * 60 * 60 * 1000);
-  const limit = Math.max(1, Math.min(Number(req.query.limit ?? 17280), 17280));
+  const limit = queryLimit(req.query.limit, 17280, 17280);
   const token = req.auth?.token;
 
   const fromDb = await fetchCanonicalFromDb(lookbackMs, limit, token);
@@ -419,7 +423,7 @@ app.get("/api/feed/space-weather/latest/proto", async (req: AuthenticatedRequest
 
 app.get("/api/feed/mms/reconnection", async (req: AuthenticatedRequest, res) => {
   const lookbackMs = parseLookback(req.query.lookback, 2 * 60 * 60 * 1000);
-  const limit = Math.max(1, Math.min(Number(req.query.limit ?? 1440), 5000));
+  const limit = queryLimit(req.query.limit, 1440, 5000);
   const token = req.auth?.token;
 
   const fromDb = await fetchMmsFromDb(lookbackMs, limit, token);
@@ -525,7 +529,7 @@ app.get("/api/swx/structures", (_req: AuthenticatedRequest, res) => {
 });
 
 app.get("/api/security/cybertiger/events", (req: AuthenticatedRequest, res) => {
-  const limit = Math.max(1, Math.min(Number(req.query.limit ?? 200), 2000));
+  const limit = queryLimit(req.query.limit, 200, 2000);
   const events = cyberTiger.getEvents(limit);
   res.json({
     timestamp: new Date().toISOString(),
@@ -614,8 +618,17 @@ app.post("/api/ai/nowcast/train", async (_req, res) => {
 
 const server = http.createServer(app);
 
-const wsSpaceWeather = new WebSocketServer({ server, path: "/ws/feed/space-weather" });
-const wsMmsRecon = new WebSocketServer({ server, path: "/ws/feed/mms-reconnection" });
+const wsSpaceWeather = new WebSocketServer({ noServer: true });
+const wsMmsRecon = new WebSocketServer({ noServer: true });
+routeUpgrades(
+  server,
+  new Map([
+    ["/ws/feed/space-weather", wsSpaceWeather],
+    ["/ws/feed/mms-reconnection", wsMmsRecon],
+  ]),
+);
+trackLiveness(wsSpaceWeather);
+trackLiveness(wsMmsRecon);
 
 type AuthedSocket = WebSocket & { auth?: AuthContext };
 
@@ -633,7 +646,8 @@ function broadcast(wss: WebSocketServer, topic: string, payload: unknown): void 
   const body = JSON.stringify({ topic, payload, timestamp: new Date().toISOString() });
   for (const client of wss.clients) {
     const socket = client as AuthedSocket;
-    if (socket.readyState === 1 && socket.auth) {
+    // A backed-up socket skips this tick rather than queueing it (GAU-208).
+    if (socket.auth && canSend(socket)) {
       client.send(body);
     }
   }
@@ -725,6 +739,8 @@ selfHealer.register({
 
 const swapIntervalMs = Number(process.env.SWAP_BALANCE_INTERVAL_MS ?? 45_000);
 let swapInterval: NodeJS.Timeout | null = null;
+let heartbeatInterval: NodeJS.Timeout | null = null;
+let stopRetention: (() => void) | null = null;
 let backendStarted = false;
 
 export async function startBackend(options?: { host?: string; port?: number }): Promise<{ app: express.Express; server: http.Server; host: string; port: number }> {
@@ -755,9 +771,15 @@ export async function startBackend(options?: { host?: string; port?: number }): 
           console.warn("[SwapManager] critical device health detected; rebalance suggested", result.plan.summary);
         }
       }, swapIntervalMs);
+      heartbeatInterval = setInterval(() => {
+        sweepDeadSockets(wsSpaceWeather);
+        sweepDeadSockets(wsMmsRecon);
+      }, WS_HEARTBEAT_MS);
 
       selfHealer.start();
       worker.start();
+      // Telemetry retention: 3 days live, every archive kept (Josh 2026-10-29; telemetry-retention.ts).
+      stopRetention = startTelemetryRetention(bedrock, retentionFromEnv());
 
       const address = server.address();
       const actualPort = typeof address === "object" && address?.port ? address.port : port;
@@ -786,6 +808,12 @@ export async function stopBackend(): Promise<void> {
     clearInterval(swapInterval);
     swapInterval = null;
   }
+  if (heartbeatInterval) {
+    clearInterval(heartbeatInterval);
+    heartbeatInterval = null;
+  }
+  stopRetention?.();
+  stopRetention = null;
 
   await new Promise<void>((resolve, reject) => {
     server.close((error) => {

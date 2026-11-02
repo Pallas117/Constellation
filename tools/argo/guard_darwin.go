@@ -17,7 +17,10 @@ func sampleHost(ctx context.Context, deep bool) Sample {
 	c := hostCapacity(ctx)
 	s := Sample{At: time.Now().UTC().Truncate(time.Second), Pressure: c.Pressure, RAMGB: c.RAMGB,
 		SwapGB: c.SwapUsedGB, DiskGB: c.DiskFreeGB, CPUs: c.CPUs}
-	s.InRAMGB, s.DemandGB = macMemory(run(ctx, "vm_stat"))
+	vm := run(ctx, "vm_stat")
+	s.InRAMGB, s.DemandGB = macMemory(vm)
+	s.SwapOutGB = swapOutGB(vm)
+	s.AvailGB = availGB(run(ctx, "sysctl", "-n", "kern.memorystatus_level"), s.RAMGB)
 	s.Load1 = parseLoad(run(ctx, "sysctl", "-n", "vm.loadavg"))
 	s.SpeedPct = parseTherm(run(ctx, "pmset", "-g", "therm"))
 	if b := parsePmsetBatt(run(ctx, "pmset", "-g", "batt")); b.Present {

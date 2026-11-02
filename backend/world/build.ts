@@ -3,6 +3,8 @@
  * mutated and nothing is written back into the ingest pipeline.
  */
 import { dynamicPressureNpa, newellCoupling } from "../physics/mhd-nowcast.js";
+import { kpMaxAgeMs } from "../physics/noaa-scales.js";
+import { freshnessMs } from "../../shared/policy/freshness.js";
 import type { CanonicalSpaceWeatherPoint } from "../types.js";
 import {
   SCHEMA_VERSION,
@@ -21,15 +23,26 @@ import { seal } from "./ids.js";
 
 /** Kp 5- and above (SWPC G1), matching ml/kp_model.py STORM_KP. */
 export const STORM_KP = 4.65;
-/** Default window: the GAU-15 freshness bound. */
-export const DEFAULT_MAX_AGE_MS = 15 * 60_000;
-/** Per-variable windows where a quantity is published less often than the 15 min bound. */
+/** Default window: the GAU-15 freshness bound for L1 measurements (shared/policy/freshness.json). */
+export const DEFAULT_MAX_AGE_MS = freshnessMs("l1_solar_wind");
+/** Per-variable windows where a quantity is published less often than the L1 bound. */
 export const VARIABLE_MAX_AGE_MS: Record<string, number> = {
-  kp: 3.5 * 3_600_000, // planetary Kp is 3-hourly and can lag up to 3 h
-  dst: 2 * 3_600_000, // hourly Kyoto quicklook (GAU-116)
-  protons_10mev: 30 * 60_000, // GOES 5-min, expired at 30 min (GAU-112)
-  electrons_2mev: 30 * 60_000,
+  // `kp` carries either NOAA product (currentKp in adapters/noaa-swpc.ts takes the higher). This is
+  // the completed 3-hour Kp's window, the longer one; a running estimate expires sooner (windowMs).
+  kp: freshnessMs("kp_planetary_3h"),
+  dst: freshnessMs("dst_kyoto"), // hourly Kyoto quicklook (GAU-116)
+  protons_10mev: freshnessMs("goes_particles"), // GOES 5-min (GAU-112)
+  electrons_2mev: freshnessMs("goes_particles"),
 };
+
+/** Observation platforms for the two NOAA Kp products the `kp` variable can carry. */
+const KP_PLATFORM = { "planetary-3h": "NOAA planetary Kp", "estimated-1m": "NOAA estimated Kp" } as const;
+
+/** How long an observation stays usable: its variable's window, and for Kp its product's. */
+function windowMs(o: Observation, defaultMs: number): number {
+  if (o.variable === "kp") return kpMaxAgeMs(o.platform === KP_PLATFORM["planetary-3h"] ? "planetary-3h" : "estimated-1m");
+  return VARIABLE_MAX_AGE_MS[o.variable] ?? defaultMs;
+}
 
 const MEASURED_VARIABLES: Array<{ variable: string; unit: Unit; frame: Frame; system: string }> = [
   { variable: "imf.bx", unit: "nT", frame: "GSM", system: "SOLAR_WIND" },
@@ -74,7 +87,7 @@ export function observationsFromCanonical(point: CanonicalSpaceWeatherPoint): Ob
     { variable: "imf.bz", value: point.magneticField?.z, observedAt: l1At, source: "noaa-swpc", platform: point.spacecraft ?? "L1", uncertainty: env(point.uncertainty?.bz) },
     { variable: "solar_wind.speed", value: point.solarWind?.speed, observedAt: l1At, source: "noaa-swpc", platform: point.spacecraft ?? "L1", uncertainty: env(point.uncertainty?.speed) },
     { variable: "solar_wind.density", value: point.solarWind?.density, observedAt: l1At, source: "noaa-swpc", platform: point.spacecraft ?? "L1", uncertainty: env(point.uncertainty?.density) },
-    { variable: "kp", value: point.indices?.kp, observedAt: iso(point.indices?.kpObservedAt), source: "noaa-swpc", platform: point.indices?.kpKind === "planetary-3h" ? "NOAA planetary Kp" : "NOAA estimated Kp", uncertainty: null },
+    { variable: "kp", value: point.indices?.kp, observedAt: iso(point.indices?.kpObservedAt), source: "noaa-swpc", platform: point.indices?.kpKind === "planetary-3h" ? KP_PLATFORM["planetary-3h"] : KP_PLATFORM["estimated-1m"], uncertainty: null },
   ];
   // Dst is an observation only when measured (Kyoto, GAU-116); a modelled Dst is derived state.
   if (point.indices?.dstMethod === "measured") {
@@ -113,7 +126,7 @@ export function reconstructState(observations: readonly Observation[], at: strin
   for (const o of observations) {
     if (o.quality.stale || o.quality.tier === 3) continue;
     const t = Date.parse(o.observedAt);
-    const window = VARIABLE_MAX_AGE_MS[o.variable] ?? maxAgeMs;
+    const window = windowMs(o, maxAgeMs);
     if (t > atMs || atMs - t > window) continue;
     const prev = best.get(o.variable);
     // Newest wins; ties broken by id so the result is order-independent.

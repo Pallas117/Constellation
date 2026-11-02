@@ -9,10 +9,11 @@ import type {
 const MAX_POINTS = 20000;
 const MAX_MMS_POINTS = 5000;
 
-// Redundancy 1: Triple-Buffered State Storage
+// One buffer. The former "secondary" and "fallback" copies were read only when this one was
+// empty, which never happens once a point is pushed (they were pushed together): about 4 MB of
+// duplicate objects for nothing. The fallback's `length % 10` test was also always true at the
+// cap, so it held the last 500 points rather than sparse history. Persistence is bedrock.
 const canonicalFeed: CanonicalSpaceWeatherPoint[] = [];
-const secondaryFeed: CanonicalSpaceWeatherPoint[] = []; // Filtered/Sanitized redundancy
-const fallbackFeed: CanonicalSpaceWeatherPoint[] = [];  // Deep history/Seed redundancy
 
 const mmsFeed: MMSReconVectorPoint[] = [];
 let sourceStatus: SourceStatus[] = [];
@@ -32,20 +33,6 @@ export function pushCanonical(point: CanonicalSpaceWeatherPoint): void {
     canonicalFeed.shift();
   }
 
-  // Redundancy: Push to secondary with slight jitter/delay simulation if needed
-  // or just as a hot-spare.
-  secondaryFeed.push({ ...point });
-  if (secondaryFeed.length > MAX_POINTS) {
-    secondaryFeed.shift();
-  }
-
-  // Backup: Keep a very sparse deep history for emergency fallback
-  if (canonicalFeed.length % 10 === 0) {
-    fallbackFeed.push({ ...point });
-    if (fallbackFeed.length > 500) {
-      fallbackFeed.shift();
-    }
-  }
 }
 
 /**
@@ -54,7 +41,18 @@ export function pushCanonical(point: CanonicalSpaceWeatherPoint): void {
  */
 export function seedCanonical(points: CanonicalSpaceWeatherPoint[]): number {
   if (canonicalFeed.length > 0) return 0;
-  for (const point of points.slice(-MAX_POINTS)) pushCanonical(point);
+  // Each persisted line parses into its own objects, so 20,000 seeded points held 20,000 copies of
+  // the same NOAA alert list (live points share one array): share it again when unchanged.
+  let alertsKey: string | undefined;
+  let alerts: CanonicalSpaceWeatherPoint["noaaAlerts"];
+  for (const point of points.slice(-MAX_POINTS)) {
+    if (point.noaaAlerts) {
+      const key = JSON.stringify(point.noaaAlerts);
+      if (key === alertsKey) point.noaaAlerts = alerts;
+      else [alertsKey, alerts] = [key, point.noaaAlerts];
+    }
+    pushCanonical(point);
+  }
   return Math.min(points.length, MAX_POINTS);
 }
 
@@ -79,9 +77,6 @@ export function setAuroraMap(map: {
 }
 
 export function getCanonicalFeed(): CanonicalSpaceWeatherPoint[] {
-  if (canonicalFeed.length > 0) return canonicalFeed;
-  if (secondaryFeed.length > 0) return secondaryFeed;
-  if (fallbackFeed.length > 0) return fallbackFeed;
   return canonicalFeed;
 }
 
@@ -90,9 +85,7 @@ export function getMmsFeed(): MMSReconVectorPoint[] {
 }
 
 export function getLatestCanonical(): CanonicalSpaceWeatherPoint | null {
-  if (canonicalFeed.length > 0) return canonicalFeed[canonicalFeed.length - 1];
-  if (secondaryFeed.length > 0) return secondaryFeed[secondaryFeed.length - 1];
-  return fallbackFeed.length > 0 ? fallbackFeed[fallbackFeed.length - 1] : null;
+  return canonicalFeed.length > 0 ? canonicalFeed[canonicalFeed.length - 1] : null;
 }
 
 export function getLatestMms(): MMSReconVectorPoint | null {
