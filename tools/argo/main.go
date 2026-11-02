@@ -86,7 +86,7 @@ func main() {
 	}
 	cfg, store := loadConfig(), DefaultStore()
 	phone := newPhoneFor(cfg)
-	loop := Loop{Prober: SystemProber{ExitNodes: cfg.ExitNodes, SignalCache: store.path("signal.json")}, Store: store, Fx: realEffects{phone: phone}}
+	loop := Loop{Prober: SystemProber{ExitNodes: cfg.ExitNodes, SignalCache: store.path("signal.json")}, Store: store, Fx: realEffects{phone: phone}, AppWatch: true}
 	flush := func() {
 		if phone != nil {
 			phone.Flush() // deliver alerts queued while offline

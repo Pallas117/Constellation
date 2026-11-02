@@ -71,6 +71,30 @@ test("modelled Dst is labelled with its method and inputs; a measured Dst says s
   assert.deepEqual(indices.dstDerivedFrom, modelled.dstDerivedFrom);
 });
 
+test("GAU-230: no Kp reading is null on the point and never raises the storm tier; the Dst slope still can", () => {
+  // Strong southward IMF (GSM Bz -15 nT): Kp >= 5 or a falling Dst makes it severe.
+  const strong = (kp: number | null | undefined): MhdInput => ({
+    timestamp: "2026-10-12T00:00:00Z",
+    source: "fusion",
+    density: 8,
+    velocityGse: vec(-600, 0, 0),
+    magneticFieldGse: vec(1, 2, -15),
+    magneticFieldGsm: vec(1, 2, -15),
+    kp,
+    dst: -40,
+  });
+  assert.equal(computeCanonicalPoint(strong(6), [], null).point.alerts.stormTier, "severe", "Kp 6 is a geomagnetic response");
+  for (const missing of [null, undefined, Number.NaN]) {
+    const { point } = computeCanonicalPoint(strong(missing), [], null);
+    assert.equal(point.indices.kp, null, `Kp ${missing} is unknown, not 2`);
+    assert.notEqual(point.alerts.stormTier, "severe", "an unknown Kp is not a geomagnetic response");
+  }
+  // Dst falling 30 nT/h over the last hour is a response on its own, Kp or not.
+  const falling = computeCanonicalPoint({ ...strong(null), dst: -70 }, [], -40, "2026-10-11T23:00:00Z").point;
+  assert.equal(falling.indices.kp, null);
+  assert.equal(falling.alerts.stormTier, "severe");
+});
+
 // GAU-133: when the native kernel is built it must agree with the TypeScript formulas.
 // It used to compute in float32 and diverged after about 7 significant digits.
 type NativeMhd = {

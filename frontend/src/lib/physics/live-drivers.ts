@@ -54,6 +54,7 @@ export interface LiveDrivers {
   /** The latest L1 reading: what reaches Earth next. Null when too old to show. */
   l1: L1Reading | null;
   densityCheck: DensityDisagreement | null;
+  /** Null when there is no point or the point has no Kp reading (GAU-230). */
   kp: { value: number; kind: 'estimated-1m' | 'planetary-3h' | 'unknown' } | null;
 }
 
@@ -93,7 +94,9 @@ export function liveDrivers(latest: CanonicalSpaceWeatherPoint | null, nowMs: nu
   // The backend drops a propagated sample 15 min after it arrived; so does the client clock.
   const arrivingOk = Boolean(a) && Number.isFinite(arrivedAgo) && arrivedAgo <= STALE_AFTER_MIN;
 
-  const kp = { value: latest.indices.kp, kind: latest.indices.kpKind ?? ('unknown' as const) };
+  // No Kp reading stays null: drivers carry kp null and the scene places no auroral oval (GAU-230).
+  const kpValue = typeof latest.indices.kp === 'number' && Number.isFinite(latest.indices.kp) ? latest.indices.kp : null;
+  const kp = kpValue === null ? null : { value: kpValue, kind: latest.indices.kpKind ?? ('unknown' as const) };
   const l1: L1Reading | null = l1Usable
     ? {
         observedAt: new Date(measured).toISOString(),
@@ -116,7 +119,7 @@ export function liveDrivers(latest: CanonicalSpaceWeatherPoint | null, nowMs: nu
     return {
       ...base,
       mode: l1Fresh ? 'live' : 'transit',
-      drivers: { bz: a.bz, by: a.by, pdyn: a.dynamicPressure, kp: kp.value },
+      drivers: { bz: a.bz, by: a.by, pdyn: a.dynamicPressure, kp: kpValue },
       plasma: { speed: a.speed, density: a.density },
       propagated: true,
       arriving: { observedAt: a.observedAt, travelMin: a.travelSeconds / 60, spacecraft: a.spacecraft },
@@ -128,7 +131,7 @@ export function liveDrivers(latest: CanonicalSpaceWeatherPoint | null, nowMs: nu
     return {
       ...base,
       mode: l1Fresh ? 'live' : 'stale',
-      drivers: { bz: l1.bz, by: l1.by, pdyn: l1.pdyn, kp: kp.value },
+      drivers: { bz: l1.bz, by: l1.by, pdyn: l1.pdyn, kp: kpValue },
       plasma: { speed: l1.speed, density: l1.density },
       propagated: false,
       arriving: null,
@@ -137,14 +140,18 @@ export function liveDrivers(latest: CanonicalSpaceWeatherPoint | null, nowMs: nu
   return { ...NONE, ageMin: base.ageMin, densityCheck: base.densityCheck };
 }
 
-/** Normalised parameters the radiation belts still use; reference values without drivers. */
+/**
+ * Normalised parameters the radiation belts still use; reference values without drivers.
+ * Without drivers the belts use the reference geometry (Kp 2). With live drivers but no Kp
+ * reading, the belts get no Kp term rather than an assumed one (GAU-230).
+ */
 export function beltVisuals(drivers: SolarWindDrivers | undefined) {
   const pressure = drivers?.pdyn ?? 2;
   const bz = drivers?.bz ?? 0;
-  const kp = drivers?.kp ?? 2;
+  const kpTerm = drivers ? (drivers.kp === null ? 0 : drivers.kp / 9) : 2 / 9;
   return {
     magnetopauseCompression: Math.max(0.6, 1 - Math.min(1, pressure / 10) * 0.4),
-    beltIntensity: Math.min(1, kp / 9 + 0.2),
+    beltIntensity: Math.min(1, kpTerm + 0.2),
     reconnectionStrength: Math.max(0, Math.min(1, -bz / 15)),
   };
 }
