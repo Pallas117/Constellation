@@ -1,5 +1,30 @@
 {
   "$comment": "Published Gauss signing keys (GAU-67): public keys only, a private key here is refused. Add a key with `npm run trust:keys -- new`; rotate by setting the old key's retiredAt, and revoke a key that may be compromised with revokedAt. Check with `npm run trust:keys -- check`. See docs/EVIDENCE_SIGNING.md.",
   "schema": "gauss.signing-keys/0.1",
-  "keys": []
+  "keys": [
+    {
+      "keyId": "ed25519:fd861c573a359f169d67fc7e9cd9f073",
+      "algorithm": "Ed25519",
+      "purposes": [
+        "evidence-pack"
+      ],
+      "publicKey": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAuJiZ11dnxWS7r7dVQs2dmHexG+2snD6ciNkgnXfJ/g4=\n-----END PUBLIC KEY-----\n",
+      "validFrom": "2026-11-01T20:27:37.489Z",
+      "retiredAt": null,
+      "revokedAt": null,
+      "note": "Evidence packs from 2026-11"
+    },
+    {
+      "keyId": "ed25519:4337a6c2faf6104ba515d546285eea8f",
+      "algorithm": "Ed25519",
+      "purposes": [
+        "release-artifact"
+      ],
+      "publicKey": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEA1A7HKz73PLFCCyxvk6QEX/8MTaZAtY21T5Y52frmGPc=\n-----END PUBLIC KEY-----\n",
+      "validFrom": "2026-11-01T20:27:38.019Z",
+      "retiredAt": null,
+      "revokedAt": null,
+      "note": "Releases from 2026-11"
+    }
+  ]
 }
