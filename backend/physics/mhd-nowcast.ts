@@ -2,6 +2,7 @@ import { createRequire } from "module";
 const require = createRequire(import.meta.url);
 
 import type { CanonicalSpaceWeatherPoint, QualityFlags, UncertaintyEnvelope } from "../types.js";
+import { bootSwitches } from "../lib/boot-switches.js";
 import {
   clamp,
   cross,
@@ -18,13 +19,17 @@ interface NativeMhd {
   newellCoupling?: (speedKmS: number, btNt: number, byNt: number, bzNt: number) => number;
 }
 
+// Parked (GAU-228): no install builds the kernel any more (package.json "gypfile": false) and the
+// TypeScript formulas give the same numbers (GAU-133 test). Opt in: npm run build:native, then
+// GAUSS_NATIVE_MHD=1. Off, a build/ left from an older install is never loaded, so it can't go stale.
 let nativeMhd: NativeMhd | null = null;
-try {
-  // Attempt to load the native C++ physics core if compiled
-  nativeMhd = require("../../build/Release/mhd_native.node");
-  console.log("[backend] Native C++ MHD kernel legacy bridge initialized");
-} catch (e) {
-  // Fallback to pure TS
+if (bootSwitches().nativeMhd) {
+  try {
+    nativeMhd = require("../../build/Release/mhd_native.node");
+    console.log("[backend] Native C++ MHD kernel legacy bridge initialized");
+  } catch {
+    console.warn("[backend] GAUSS_NATIVE_MHD=1 but the native MHD kernel is not built (npm run build:native); using TypeScript");
+  }
 }
 
 const MU0 = 4e-7 * Math.PI;

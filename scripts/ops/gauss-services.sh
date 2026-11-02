@@ -870,8 +870,10 @@ gates_run_one() { # gates_run_one <request>: check out, install if the lockfile 
       || { gates_fail "npm ci failed (log: $GATES_DIR/runs/$sha.install.log)"; return 1; }
     echo "$lock" >"$co/node_modules/.gauss-lock"
   fi
-  # The native MHD kernel is built by npm ci, so it went stale when only its C++ changed: a commit
-  # was tested against another commit's build/ (2026-10-31). Rebuild when its sources differ.
+  # The native MHD kernel: npm ci no longer builds it (package.json "gypfile": false, GAU-228) and the
+  # backend loads it only with GAUSS_NATIVE_MHD=1, but the gate still builds it so the GAU-133 test
+  # (kernel vs TypeScript) keeps running. Rebuild only when its sources differ: a stale build/ once
+  # tested a commit against another commit's C++ (2026-10-31).
   if [ -f "$co/binding.gyp" ]; then
     local native; native=$(cat "$co/binding.gyp" "$co"/backend/cpp/* 2>/dev/null | shasum | cut -d' ' -f1)
     if [ "$(cat "$co/build/.gauss-native" 2>/dev/null)" != "$native" ]; then
