@@ -186,6 +186,9 @@ func phoneSetup(args []string, cfg Config) error {
 	case "imessage", "sms": // who carries the text: Apple end to end, or the mobile carrier
 		cfg.PhoneService = ""
 		if args[0] == "sms" {
+			if !strings.HasPrefix(cfg.PhoneTo, "+") {
+				return errors.New("SMS needs a phone number; run `argo phone +60...` first")
+			}
 			cfg.PhoneService = "sms"
 		}
 		fmt.Println(routeNote[map[string]string{"imessage": "imessage-first", "sms": "sms-first"}[args[0]]] + ".")

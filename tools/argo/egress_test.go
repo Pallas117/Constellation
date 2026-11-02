@@ -67,6 +67,9 @@ func TestEgressReportCoversThirdPartiesAndOwnNetwork(t *testing.T) {
 	if days := loadOwnEgress(s.path("egress-own.json")); len(days) != 1 {
 		t.Fatalf("own counters kept %d days, want 1 (older than %d days pruned)", len(days), egressOwnDays)
 	}
+	if left, _ := filepath.Glob(filepath.Join(s.Dir, "egress-own-*.tmp")); len(left) != 0 {
+		t.Errorf("temp files left: %v", left)
+	}
 	var out bytes.Buffer
 	if err := egressCmd(nil, s, nil, &out, now); err != nil {
 		t.Fatal(err)
@@ -123,5 +126,8 @@ func TestPhoneChooseRouteSavesConfig(t *testing.T) {
 	}
 	if c := loadConfig(); c.PhoneService != "sms" {
 		t.Fatalf("after sms: %+v", c)
+	}
+	if phoneSetup([]string{"sms"}, Config{PhoneTo: "me@icloud.com"}) == nil {
+		t.Error("SMS route accepted for an email handle")
 	}
 }

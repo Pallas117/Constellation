@@ -96,9 +96,15 @@ func countOwnEgress(dir, what, host string, n int, now time.Time) {
 	}
 	b, _ := json.Marshal(days)
 	_ = os.MkdirAll(dir, 0o700)
-	tmp := path + ".tmp"
-	if os.WriteFile(tmp, b, 0o600) == nil {
-		_ = os.Rename(tmp, path) // whole file or nothing: the CLI and the tick can both write
+	tmp, err := os.CreateTemp(dir, "egress-own-*.tmp") // 0600; own name, since the CLI and the tick can both write
+	if err != nil {
+		return
+	}
+	_, werr := tmp.Write(b)
+	if cerr := tmp.Close(); werr == nil && cerr == nil {
+		_ = os.Rename(tmp.Name(), path) // whole file or nothing
+	} else {
+		_ = os.Remove(tmp.Name())
 	}
 }
 
