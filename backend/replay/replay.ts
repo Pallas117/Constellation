@@ -27,7 +27,8 @@ export interface ReplayRecord {
   density: number;
   /** Solar wind reaching Earth now, or null. */
   arrivingBz: number | null;
-  kp: number;
+  /** null when no Kp reading (GAU-230). */
+  kp: number | null;
   kpKind: string | null;
   dst: number;
   dstMethod: string;
@@ -49,7 +50,8 @@ export interface ReplaySummary {
   minutes: number;
   inputsSha256: string;
   recordsSha256: string;
-  peak: { S: number | null; G: number | null; R: number | null; kp: number; protons: number | null; dstMin: number; bzMin: number };
+  /** kp: highest Kp read, or null when no minute had a Kp reading. */
+  peak: { S: number | null; G: number | null; R: number | null; kp: number | null; protons: number | null; dstMin: number; bzMin: number };
   /** First minute each level was reached, per scale ("1" … "5"). */
   firstReached: Record<"S" | "G" | "R", Record<string, string>>;
   /** Minutes each sense-check flagged, or had nothing to check. */
@@ -74,7 +76,7 @@ export function toRecord(t: number, p: CanonicalSpaceWeatherPoint): ReplayRecord
     speed: r(p.solarWind.speed, 1),
     density: r(p.solarWind.density),
     arrivingBz: p.arriving ? r(p.arriving.bz) : null,
-    kp: r(p.indices.kp, 2),
+    kp: p.indices.kp === null ? null : r(p.indices.kp, 2),
     kpKind: p.indices.kpKind ?? null,
     dst: r(p.indices.dst, 1),
     dstMethod: p.indices.dstMethod,
@@ -146,7 +148,7 @@ const level = (label: string) => (/^[SGR]\d$/.test(label) ? Number(label[1]) : n
 
 export function summarise(archive: ReplayArchive, records: ReplayRecord[]): ReplaySummary {
   const firstReached: ReplaySummary["firstReached"] = { S: {}, G: {}, R: {} };
-  const peak: ReplaySummary["peak"] = { S: null, G: null, R: null, kp: 0, protons: null, dstMin: Infinity, bzMin: Infinity };
+  const peak: ReplaySummary["peak"] = { S: null, G: null, R: null, kp: null, protons: null, dstMin: Infinity, bzMin: Infinity };
   const checks: ReplaySummary["checks"] = {};
   let staleMinutes = 0;
   for (const rec of records) {
@@ -156,7 +158,7 @@ export function summarise(archive: ReplayArchive, records: ReplayRecord[]): Repl
       peak[scale] = Math.max(peak[scale] ?? 0, lv);
       for (let k = 1; k <= lv; k += 1) firstReached[scale][String(k)] ??= rec.t;
     }
-    peak.kp = Math.max(peak.kp, rec.kp);
+    if (rec.kp !== null) peak.kp = Math.max(peak.kp ?? 0, rec.kp);
     if (rec.protons !== null) peak.protons = Math.max(peak.protons ?? 0, rec.protons);
     peak.dstMin = Math.min(peak.dstMin, rec.dst);
     if (!rec.stale) peak.bzMin = Math.min(peak.bzMin, rec.bz);

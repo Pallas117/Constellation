@@ -37,13 +37,17 @@ export async function inferNowcast(
 /**
  * Fixed-formula nowcast used when no inference server is configured. Deterministic: the same
  * input always gives the same output. It has no learned parameters, so it reports no confidence.
+ * Both outputs start from the latest Kp; with no Kp reading they are null (unknown), not
+ * computed from an assumed Kp (GAU-230).
  */
 export function heuristicNowcast(
   request: NowcastInferenceRequest,
   now: number = Date.now(),
 ): NowcastInferenceResponse {
   const last = request.sequence[request.sequence.length - 1];
-  const kpBase = last?.indices.kp ?? 2;
+  // The sequence can come from a request body: read Kp defensively and accept only a finite 0–9 value.
+  const kpRead: unknown = last?.indices?.kp;
+  const kpBase = typeof kpRead === "number" && Number.isFinite(kpRead) && kpRead >= 0 && kpRead <= 9 ? kpRead : null;
   const bz = last?.magneticField.z ?? 0;
   const speed = last?.solarWind.speed ?? 400;
   const density = last?.solarWind.density ?? 5;
@@ -56,8 +60,8 @@ export function heuristicNowcast(
     const minutes = (i + 1) * 5;
     return {
       timestamp: new Date(now + minutes * 60 * 1000).toISOString(),
-      geomagneticPerturbation: kpBase * 8 + driver * 12,
-      auroraIntensity: Math.max(0.05, Math.min(1, (kpBase / 9) * 0.7 + driver * 0.03)),
+      geomagneticPerturbation: kpBase === null ? null : kpBase * 8 + driver * 12,
+      auroraIntensity: kpBase === null ? null : Math.max(0.05, Math.min(1, (kpBase / 9) * 0.7 + driver * 0.03)),
       confidence: null,
     };
   });

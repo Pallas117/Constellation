@@ -111,6 +111,9 @@ func parseInbound(out string) []Inbound {
 // probeNeighbours fills the network-watch fields for the default route's interface.
 func probeNeighbours(ctx context.Context, s *Snapshot, iface string) {
 	s.Neighbours = parseARPTable(run(ctx, "arp", "-an"), iface)
+	if len(s.Neighbours) == 0 && s.Gateway != "" {
+		askLocalNetwork(s.Gateway)
+	}
 	s.Inbound = parseInbound(run(ctx, "netstat", "-an", "-p", "tcp"))
 }
 
@@ -169,4 +172,21 @@ func (l Loop) watchNeighbours(st *State, snap Snapshot, fp string, prevPublicIP 
 // suspect is true while a recent spoofing sign keeps this network untrusted.
 func (n Net) suspect(now time.Time) bool {
 	return !n.SuspectAt.IsZero() && now.Sub(n.SuspectAt) < suspectFor
+}
+
+// askLocalNetwork sends one DNS query for "." to the router. macOS's Local Network privacy hides
+// the ARP table from a binary until the user allows it, and only asks when the binary contacts a
+// local device itself (2026-11-02: arp printed nothing under launchd). This is that contact; after
+// "Allow", the ARP table and the router's MAC are visible.
+func askLocalNetwork(gateway string) {
+	c, err := net.DialTimeout("udp", net.JoinHostPort(gateway, "53"), time.Second)
+	if err != nil {
+		return
+	}
+	defer c.Close()
+	_ = c.SetDeadline(time.Now().Add(time.Second))
+	// id 0x4152, recursion desired, one question: root, type NS, class IN
+	_, _ = c.Write([]byte{0x41, 0x52, 0x01, 0x00, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 2, 0, 1})
+	buf := make([]byte, 512)
+	_, _ = c.Read(buf)
 }
