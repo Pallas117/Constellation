@@ -66,12 +66,12 @@
       <figcaption>Synthetic, illustrative. Amber: proton level (NOAA S-scale), which drives bit errors. Dashed: geomagnetic level (G-scale), which drives link and GNSS disturbances. Shaded: storm window.</figcaption>
     </figure>
     <ol class="replay">
-      <li><span class="t">T&minus;24 min</span><span class="env">G0 · S0 · quiet</span><span class="st nominal">Nominal</span><span class="st nominal">Run</span><span class="why">Inputs fresh, provenance complete.</span></li>
-      <li><span class="t">T&minus;12 min</span><span class="env">G1 · S0 · field turning</span><span class="st nominal">Nominal</span><span class="st nominal">Run</span><span class="why">Watch: geomagnetic activity rising; no proton event yet.</span></li>
-      <li><span class="t">Storm onset</span><span class="env">G2 · S2 · protons rising</span><span class="st degraded">Degraded</span><span class="st degraded">Degrade</span><span class="why">Proton flux up: bit errors climbing; outputs flagged, confidence lowered.</span></li>
-      <li><span class="t">Peak</span><span class="env">G3 · S2 · storm</span><span class="st blocked">Blocked</span><span class="st abstain">Abstain</span><span class="why">Packet integrity failed in the proton event; no trusted input, so no output.</span></li>
-      <li><span class="t">T+10 min</span><span class="env">G2 · S1 · easing</span><span class="st unknown">Unknown</span><span class="st fallback">Fallback</span><span class="why">Geomagnetic link gap: records stay unknown, never "nominal". Deterministic fallback used.</span></li>
-      <li><span class="t">T+30 min</span><span class="env">G0 · S0 · recovered</span><span class="st nominal">Nominal</span><span class="st nominal">Run</span><span class="why">Quality gate passed; every flagged record is in the report.</span></li>
+      <li><span class="t">T&minus;6 h</span><span class="env">G0 · S0 · quiet</span><span class="st nominal">Nominal</span><span class="st nominal">Run</span><span class="why">Inputs fresh, provenance complete.</span></li>
+      <li><span class="t">T&minus;2 h</span><span class="env">G1 · S0 · field turning</span><span class="st nominal">Nominal</span><span class="st nominal">Run</span><span class="why">Watch: geomagnetic activity rising; no proton event yet.</span></li>
+      <li><span class="t">Onset</span><span class="env">G2 · S2 · protons rising</span><span class="st degraded">Degraded</span><span class="st degraded">Degrade</span><span class="why">Proton flux up: bit errors climbing; outputs flagged, confidence lowered.</span></li>
+      <li><span class="t">Onset +4 h</span><span class="env">G3 · S2 · storm</span><span class="st blocked">Blocked</span><span class="st abstain">Abstain</span><span class="why">Packet integrity failed in the proton event; no trusted input, so no output.</span></li>
+      <li><span class="t">Onset +10 h</span><span class="env">G2 · S1 · easing</span><span class="st unknown">Unknown</span><span class="st fallback">Fallback</span><span class="why">Geomagnetic link gap: records stay unknown, never "nominal". Deterministic fallback used.</span></li>
+      <li><span class="t">Onset +30 h</span><span class="env">G0 · S0 · recovered</span><span class="st nominal">Nominal</span><span class="st nominal">Run</span><span class="why">Quality gate passed; every flagged record is in the report.</span></li>
     </ol>
     <p class="replay-key">Each step reads top to bottom: <span>space environment</span> (G = geomagnetic, S = solar radiation), then the <span>telemetry record state</span>, the <span>onboard-AI output policy</span>, and what the evidence records. Bit errors follow S; link gaps follow G.</p>
     <p class="note">Illustrative data, not a mission record. In a pilot, the same replay runs on your own telemetry and inference logs, against the public space-weather record. Gauss is observe-only and advisory: decisions stay with your operators.</p>
@@ -83,12 +83,12 @@
   <div class="wrap">
     <p class="k">02_HOW_IT_WORKS</p>
     <h2 id="how-h">How a replay pilot works</h2>
-    <p class="lead">Fleet Integration v0.1 runs on the ground, on your own logs. Nothing is installed on a spacecraft.</p>
+    <p class="lead">Fleet Integration v0.1 will run on the ground, on your own logs; it is being built with the first pilots now. Nothing is installed on a spacecraft.</p>
     <ol class="steps">
       <li><h3>Bring your logs</h3><p>Telemetry (CCSDS/XTCE-shaped packets or Yamcs exports) and onboard inference logs, shared under a data-sharing agreement.</p></li>
       <li><h3>Correlate with the space environment</h3><p>Each record is lined up with the space-weather conditions at the time: radiation and geomagnetic activity from public NOAA and NASA HAPI services.</p></li>
       <li><h3>Score quality and provenance</h3><p>Every value carries its source and age. Bounded inference with a deterministic fallback flags outputs taken under stress. Missing or stale inputs stay <em>unknown</em>, never "nominal".</p></li>
-      <li><h3>Get the evidence</h3><p>A report your engineers and assurance reviewers can check, with success metrics agreed before the pilot starts.</p></li>
+      <li><h3>Get the evidence</h3><p>Being built: a report your engineers and assurance reviewers can check, with success metrics agreed before the pilot starts.</p></li>
     </ol>
     <p class="note"><strong>Working today:</strong> live NOAA and NASA HAPI space-weather ingest; three L1 spacecraft cross-checked, with a flag when SOLAR-1 and IMAP disagree on density; the solar wind propagated to Earth for about 50 minutes of warning; a Kp 3-hour forecast that beats persistence on held-out 2022&ndash;24 data and says plainly that it is worse during storms; radiation (S), geomagnetic (G) and radio-blackout (R) levels kept apart, computed from GOES protons, Kp and GOES X-rays to NOAA&rsquo;s thresholds and cross-checked against NOAA&rsquo;s published scales; every input sense-checked, so inconsistent sensor data is flagged with a reason instead of dropped; stale or missing inputs shown as unknown (S?, G?, R?), never as quiet. <strong>Being built for the first pilots:</strong> ingest of your own logs, output flagging and the evidence export.</p>
   </div>
@@ -102,7 +102,7 @@
       <div>
         <h3>We will show you</h3>
         <ul class="ticks">
-          <li>Which records were produced under elevated space-weather conditions (proton, electron and geomagnetic levels)</li>
+          <li>Which records were produced under elevated space-weather conditions (solar radiation S, geomagnetic G and radio-blackout R levels)</li>
           <li>Where data quality or provenance is missing, with "unknown" said plainly</li>
           <li>Simulation results labelled as simulation</li>
         </ul>
