@@ -92,7 +92,8 @@ test("unknown decodes as absent, never as 0, false or an empty list", async () =
     noaaAlerts: null,
     derived: undefined,
     senseChecks: undefined,
-    indices: { ...full.indices, kp: Number.NaN },
+    // No Kp from any source is null on the point (GAU-230) and has no wire form.
+    indices: { ...full.indices, kp: null },
     alerts: { ...full.alerts, radiation: { level: null, label: "S?", basis: "no current GOES protons", observedAt: null } },
     particles: { protons: null, electrons: null },
   };
