@@ -29,15 +29,20 @@ Optional extras:
   Argo sends an iMessage from this Mac's Messages app to your own handle, so no app or token is needed.
   macOS asks once to let Argo control Messages. Messages carry only the masked title and reason. Alerts
   raised while offline are queued (up to 20) and sent on the next tick with internet. `argo phone off`
-  turns them off. An iMessage to your own number arrives without a banner; for alerts you'll notice, set
-  `"phone_service": "sms"` in `~/.config/argo/config.json` (SMS first via Text Message Forwarding, then
-  iMessage). The background agent needs its own Automation → Messages permission: after every rebuild of the
+  turns them off. An iMessage to your own number arrives without a banner; for alerts you'll notice, run
+  `argo phone sms` (SMS first via Text Message Forwarding, then iMessage). SMS is carried by your mobile
+  carrier unencrypted; `argo phone imessage` goes back to iMessage first, end-to-end encrypted by Apple. The background agent needs its own Automation → Messages permission: after every rebuild of the
   ad-hoc-signed binary, macOS asks again on the first background send, and sends time out after 30 s until
   someone clicks Allow.
 - **Alerts from other tools.** `argo notify [-key K -every 30m] TITLE MESSAGE` sends through the same
   channel, mask and offline queue, at most once per interval per key. The gauss-awake battery guard
   uses it (battery low, at the sleep floor, charger can't keep up, no cutoff configured), as do
   mesh-heal and Claude Code `Notification` hooks.
+- **What left this Mac.** `argo egress` lists every text Argo sent in the last 7 days (time, masked
+  recipient, size, the masked text, and who carries it) and how much went to your own network (the Gauss
+  report, relay bundles to the hub; both refused unless the URL is this Mac or the tailnet). The log stays on
+  this Mac (`egress.jsonl`, `0600`, rolls over at 512 KB; daily counters in `egress-own.json`, 14 days).
+  `argo egress off` holds third-party sends: texts wait in the local queue (newest 20) until `argo egress on`.
 - **Claude Code status line.** In `~/.claude/settings.json`:
   `"statusLine": {"type": "command", "command": "argo status"}`.
   It reads the cached state only, so it never probes the network and is instant.
@@ -66,7 +71,8 @@ Then remove the `statusLine` and `claude()` lines above if you added them, and r
 | `argo doctor` | Full probe snapshot (secrets masked), the class, and what to do. Changes nothing. |
 | `argo fix` | Runs the loop once in the foreground |
 | `argo report` | Incident counts by class, how many needed a fix and were fixed, how many resolved on their own, last 10 events |
-| `argo phone <handle>\|test\|off` | Set up, test or turn off iMessage alerts to your iPhone |
+| `argo phone <handle>\|test\|off\|imessage\|sms` | Set up, test or turn off alerts to your iPhone; choose iMessage first (end-to-end encrypted) or SMS first (banner on your own number, carried by your carrier) |
+| `argo egress [off\|on]` | What Argo sent off this Mac and where (log kept on this Mac); `off` holds third-party sends locally until `on` |
 | `argo notify [-key K -every D] TITLE MSG` | Send an alert to your iPhone (masked, queued offline, rate-limited per key) |
 | `argo watch` | Run the peer watchdog once (also every tick): restarts the gauss-awake guard or mesh-heal when their heartbeat is stale, max 3 restarts/hour each, then alerts. Override the list with `"watch"` in config.json |
 | `argo devices` | Which watched tailnet devices are offline. Every tick, a phone of yours that has been off the tailnet for 30 min or more gets a text (SMS over its own cellular link) with the fix: open Tailscale, turn on Connect On Demand. At most every 6 h per device. Override the list with `"devices": ["hostname", ...]` in config.json |
