@@ -11,6 +11,7 @@ import { LayerToggles } from './ui/LayerToggles';
 import { ScreenshotButton } from './ui/ScreenshotButton';
 import { PerformanceMonitor } from './ui/PerformanceMonitor';
 import { StatusBadge } from './brand/StatusBadge';
+import { SessionControls } from './SessionControls';
 import { FEED_LABEL, type FeedState } from '@/lib/readout-status';
 import type { LayerVisibility } from './types';
 
@@ -39,6 +40,7 @@ export function ConsoleHeader({
                 <StatusBadge tone={feed === 'live' ? 'signal' : 'caution'} pulse={feed === 'live'}>
                     {FEED_LABEL[feed]}
                 </StatusBadge>
+                <SessionControls />
             </div>
         </header>
     );

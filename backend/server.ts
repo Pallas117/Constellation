@@ -44,7 +44,9 @@ import { retentionFromEnv, startTelemetryRetention } from "./lib/telemetry-reten
 import { queryLimit } from "./lib/query-limit.js";
 import { diskFreeBytes, overall, readTpms } from "./lib/tpm.js";
 import { SPACE_OBJECT_CATALOG } from "./lib/space-object-catalog.js";
-import { auth, ssoAllowedDomain, ssoGithubEnabled, ssoGoogleEnabled } from "./better-auth.js";
+import { auth, authDb, ensureAuthSchema, passkeyConfig, ssoAllowedDomain, ssoGithubEnabled, ssoGoogleEnabled } from "./better-auth.js";
+import { createAdminUsersRouter } from "./admin/users.js";
+import { windowLimit } from "./rate-limit.js";
 import { toNodeHandler } from "better-auth/node";
 import { SelfHealerAgent } from "./cybertiger/self-healer.js";
 import deviceRegistryRouter from "./device-registry.js";
@@ -124,6 +126,17 @@ app.use(
     },
     credentials: true,
   }),
+);
+
+// Passkey ceremonies (GAU-235) are rate-limited per client before better-auth
+// sees them: /api/auth sits in front of CyberTiger. A sign-in or step-up is two
+// requests (options, then verify); registering is two more.
+const passkeyClientIp = (req: express.Request) => cyberTiger.extractClientIp(req);
+const PASSKEY_LIMIT_MESSAGE = "Too many passkey attempts. Wait a minute and try again.";
+app.use("/api/auth/passkey", windowLimit({ windowMs: 60_000, max: 60, keyOf: passkeyClientIp, message: PASSKEY_LIMIT_MESSAGE }));
+app.use(
+  ["/api/auth/passkey/verify-authentication", "/api/auth/passkey/verify-registration"],
+  windowLimit({ windowMs: 60_000, max: 10, keyOf: passkeyClientIp, message: PASSKEY_LIMIT_MESSAGE }),
 );
 
 // Better-Auth handler
@@ -247,7 +260,13 @@ app.use("/api", (req: express.Request, res: express.Response, next: express.Next
 // Tells the login page which sign-in methods to offer (public, no secrets).
 app.get("/api/sso-options", (_req, res) => {
   const any = ssoGoogleEnabled || ssoGithubEnabled;
-  res.json({ google: ssoGoogleEnabled, github: ssoGithubEnabled, domain: any ? ssoAllowedDomain : null });
+  res.json({
+    google: ssoGoogleEnabled,
+    github: ssoGithubEnabled,
+    domain: any ? ssoAllowedDomain : null,
+    // The host passkeys work at; the login page offers them only there (null: off).
+    passkey: passkeyConfig.origins.length > 0 ? { rpId: passkeyConfig.rpID } : null,
+  });
 });
 
 // Argo agents report with a device token, so this sits before session auth.
@@ -284,6 +303,9 @@ app.use(
   ),
 );
 app.use("/api", enforceApiPolicy);
+
+// Admin role management; a change needs a passkey step-up (policy: backend/rbac.ts).
+app.use("/api/admin/users", createAdminUsersRouter(authDb));
 
 // Organisation self-service: keys and usage for members (policy: backend/rbac.ts).
 app.use("/api/orgs", createOrgRouter(commerce));
@@ -752,6 +774,16 @@ export async function startBackend(options?: { host?: string; port?: number }): 
     const actualPort = typeof address === "object" && address?.port ? address.port : port;
     return { app, server, host, port: actualPort };
   }
+
+  // Auth schema first: the passkey table and session fields must exist before
+  // a request can sign in. Additive; a failure stops the start (deploy rolls back).
+  const authChanges = await ensureAuthSchema();
+  if (authChanges.length > 0) console.log(`[backend] auth schema: ${authChanges.join(", ")}`);
+  console.log(
+    passkeyConfig.origins.length > 0
+      ? `[backend] passkeys: RP ID ${passkeyConfig.rpID} for ${passkeyConfig.origins.join(", ")}`
+      : `[backend] passkeys off: no secure origin matches RP ID ${passkeyConfig.rpID}`,
+  );
 
   // Reload the last 24 h from bedrock so the feed history and the 6 h forecast window survive a
   // restart instead of starting empty. GAU-117.

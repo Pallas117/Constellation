@@ -1,6 +1,7 @@
 import type { IncomingMessage } from "node:http";
 import type { NextFunction, Request, Response } from "express";
 import { auth } from "./better-auth.js";
+import { toMillis } from "./passkey-policy.js";
 
 function getWebHeaders(req: Request): Headers {
   const headers = new Headers();
@@ -26,6 +27,8 @@ export interface AuthContext {
   role: AuthRole;
   rawRoles: string[];
   token: string;
+  /** When this session was opened by a verified passkey touch (epoch ms), else null. Step-up reads it. */
+  passkeyAt?: number | null;
 }
 
 /** `P` types `req.params`; pass the route's params, e.g. `AuthenticatedRequest<{ id: string }>` for "/:id". */
@@ -114,30 +117,41 @@ export function roleFromUser(user: { role?: unknown } | null | undefined): AuthR
   return normalizeRole(user?.role) ?? "user";
 }
 
+// The development bypass (never in production) is admin and counts as freshly stepped up.
+function devBypassContext(): AuthContext {
+  return {
+    userId: "development",
+    email: null,
+    role: "admin",
+    rawRoles: ["admin"],
+    token: "dev-bypass",
+    passkeyAt: Date.now(),
+  };
+}
+
+type SessionResponse = Awaited<ReturnType<typeof auth.api.getSession>>;
+
+function contextFromSession(sessionResponse: SessionResponse): AuthContext | null {
+  if (!sessionResponse?.session || !sessionResponse.user) return null;
+  const role = roleFromUser(sessionResponse.user);
+  return {
+    userId: sessionResponse.user.id,
+    email: sessionResponse.user.email ?? null,
+    role,
+    rawRoles: [role],
+    token: sessionResponse.session.token ?? "better-auth-session",
+    passkeyAt: toMillis((sessionResponse.session as { passkeyAt?: unknown }).passkeyAt),
+  };
+}
+
 /** Resolves the caller's identity from the better-auth session, or null. */
 async function sessionContext(req: AuthenticatedRequest): Promise<AuthContext | null> {
   if (!authRequired()) {
-    return {
-      userId: "development",
-      email: null,
-      role: "admin",
-      rawRoles: ["admin"],
-      token: "dev-bypass",
-    };
+    return devBypassContext();
   }
   try {
-    const sessionResponse = await auth.api.getSession({
-      headers: getWebHeaders(req)
-    });
-    if (sessionResponse && sessionResponse.session && sessionResponse.user) {
-      return {
-        userId: sessionResponse.user.id,
-        email: sessionResponse.user.email ?? null,
-        role: roleFromUser(sessionResponse.user),
-        rawRoles: [roleFromUser(sessionResponse.user)],
-        token: sessionResponse.session.token ?? "better-auth-session"
-      };
-    }
+    const context = contextFromSession(await auth.api.getSession({ headers: getWebHeaders(req) }));
+    if (context) return context;
   } catch (err) {
     // Ignore internal auth errors; no legacy fallback is configured.
   }
@@ -189,13 +203,7 @@ export function requireRole(minRole: AuthRole) {
 
 export async function authenticateSocket(req: IncomingMessage): Promise<AuthContext | null> {
   if (!authRequired()) {
-    return {
-      userId: "development",
-      email: null,
-      role: "admin",
-      rawRoles: ["admin"],
-      token: "dev-bypass",
-    };
+    return devBypassContext();
   }
 
   const headers = new Headers();
@@ -205,16 +213,8 @@ export async function authenticateSocket(req: IncomingMessage): Promise<AuthCont
   }
 
   try {
-    const sessionResponse = await auth.api.getSession({ headers });
-    if (sessionResponse && sessionResponse.session && sessionResponse.user) {
-      return {
-        userId: sessionResponse.user.id,
-        email: sessionResponse.user.email ?? null,
-        role: roleFromUser(sessionResponse.user),
-        rawRoles: [roleFromUser(sessionResponse.user)],
-        token: sessionResponse.session.token ?? "better-auth-session",
-      };
-    }
+    const context = contextFromSession(await auth.api.getSession({ headers }));
+    if (context) return context;
   } catch {
     return null;
   }

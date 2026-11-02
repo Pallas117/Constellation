@@ -4,7 +4,8 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import type { AuthRole } from "./auth.js";
-import { accessFor, enforceApiPolicy, type Access } from "./rbac.js";
+import { STEP_UP_MAX_AGE_MS } from "./passkey-policy.js";
+import { accessFor, API_POLICY, enforceApiPolicy, policyFor, STEP_UP_REQUIRED, type Access } from "./rbac.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 
@@ -23,6 +24,9 @@ function declaredRoutes(): string[] {
   }
   for (const m of read("commerce/routers.ts").matchAll(/router\.(get|post|put|patch|delete)\("([^"]+)"/g)) {
     if (!m[2].startsWith("/data/")) out.push(`${m[1].toUpperCase()} /orgs${m[2]}`); // /data/* is the key-authenticated /api/v1
+  }
+  for (const m of read("admin/users.ts").matchAll(/router\.(get|post|put|patch|delete)\("([^"]+)"/g)) {
+    out.push(`${m[1].toUpperCase()} ${("/admin/users" + m[2]).replace(/\/$/, "")}`);
   }
   // Handled before the policy middleware by design (see rbac.ts header).
   return out.filter((r) => r !== "GET /sso-options");
@@ -53,20 +57,27 @@ test("role matrix", () => {
     ["GET", "/swx/structures", "operator"], // L1 structure candidates (GAU-154)
     ["GET", "/security/cybertiger/events", "admin"],
     ["POST", "/ai/nowcast/train", "admin"],
+    ["GET", "/admin/users", "admin"],
+    ["POST", "/admin/users/u-123/role", "admin"],
   ];
   for (const [m, p, want] of cases) assert.equal(accessFor(m, p), want, `${m} ${p}`);
   assert.equal(accessFor("POST", "/feed/space-weather/latest"), undefined, "public is GET-only");
   assert.equal(accessFor("GET", "/admin/secrets"), undefined);
 });
 
-function run(method: string, p: string, role?: AuthRole) {
+/** The JSON body of the last refusal run() saw. */
+let lastBody: unknown;
+
+function run(method: string, p: string, role?: AuthRole, passkeyAt?: number | null) {
   let status = 200;
   let passed = false;
-  const req = { method, path: p, auth: role ? { userId: "u", email: null, role, rawRoles: [role], token: "t" } : undefined };
-  const res = { status: (s: number) => ((status = s), { json: () => undefined }) };
+  let body: unknown;
+  const req = { method, path: p, auth: role ? { userId: "u", email: null, role, rawRoles: [role], token: "t", passkeyAt } : undefined };
+  const res = { status: (s: number) => ((status = s), { json: (b: unknown) => void (body = b) }) };
   enforceApiPolicy(req as never, res as never, () => {
     passed = true;
   });
+  lastBody = body;
   return passed ? 200 : status;
 }
 
@@ -80,6 +91,31 @@ test("enforcement: unlisted 404, anonymous 401, under-privileged 403, allowed pa
   assert.equal(run("POST", "/rag/query", "staff"), 403);
   assert.equal(run("POST", "/rag/query", "operator"), 200);
   assert.equal(run("POST", "/security/cybertiger/block", "operator"), 403);
-  assert.equal(run("POST", "/security/cybertiger/block", "admin"), 200);
+  assert.equal(run("POST", "/security/cybertiger/block", "admin", Date.now()), 200);
   assert.equal(run("OPTIONS", "/rag/query"), 200, "CORS preflight is never blocked");
+});
+
+test("admin changes need a passkey touch in the last 5 minutes, answered 428 (not 401/403) otherwise", () => {
+  const now = Date.now();
+  for (const [method, p] of [
+    ["POST", "/admin/users/u-123/role"],
+    ["POST", "/security/cybertiger/block"],
+    ["POST", "/security/cybertiger/unblock"],
+    ["POST", "/ai/nowcast/train"],
+  ] as const) {
+    assert.equal(run(method, p, "admin"), 428, `${p}: password-only session`);
+    assert.deepEqual((lastBody as { code?: string }).code, STEP_UP_REQUIRED);
+    assert.equal(run(method, p, "admin", now - STEP_UP_MAX_AGE_MS - 1000), 428, `${p}: touch too old`);
+    assert.equal(run(method, p, "admin", now - 60_000), 200, `${p}: touched a minute ago`);
+    assert.equal(run(method, p, "operator", now), 403, `${p}: a fresh touch never lifts the role check`);
+    assert.equal(run(method, p), 401, `${p}: anonymous`);
+  }
+  // Reads stay one step: the admin roles list does not ask for a touch.
+  assert.equal(run("GET", "/admin/users", "admin"), 200);
+});
+
+test("every admin-only change is marked step-up", () => {
+  const unguarded = API_POLICY.filter((p) => p.access === "admin" && p.method !== "GET" && !p.stepUp);
+  assert.deepEqual(unguarded.map((p) => `${p.method} ${p.path}`), []);
+  assert.equal(policyFor("POST", "/admin/users/x/role")?.stepUp, true);
 });
