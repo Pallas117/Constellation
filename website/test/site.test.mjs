@@ -18,7 +18,7 @@ const PAGES = { "/": "index.html", "/gauss/": "gauss/index.html", "/constellatio
   "/gauss/apply/": "gauss/apply/index.html", "/constellation/apply/": "constellation/apply/index.html", "/privacy/": "privacy/index.html",
   "/app/": "app/index.html", "/app/admin/": "app/admin/index.html", "/gauss/evidence/": "gauss/evidence/index.html",
   "/constellation/time/": "constellation/time/index.html", "/argo/": "argo/index.html",
-  "/education/": "education/index.html", "/education/apply/": "education/apply/index.html", "/constellation/workshops/": "constellation/workshops/index.html", "/terms/": "terms/index.html" };
+  "/education/": "education/index.html", "/education/apply/": "education/apply/index.html", "/constellation/workshops/": "constellation/workshops/index.html", "/terms/": "terms/index.html", "/press/": "press/index.html" };
 const html = Object.fromEntries(Object.entries(PAGES).map(([route, f]) => [route, read(f)]));
 // wrangler.jsonc, read as JSON once its whole-line comments are gone.
 const WRANGLER_RAW = readFileSync(join(pub, "..", "wrangler.jsonc"), "utf8");
@@ -536,4 +536,15 @@ test("traffic: every indexable page has share cards and is in the sitemap; robot
   assert.equal(ld["@graph"][0].name, "Lightbound Limited");
   assert.deepEqual(ld["@graph"][0].sameAs, ["https://luma.com/constellation"]);
   for (const [route, page] of Object.entries(html)) if (route !== "/") assert.doesNotMatch(page, /<script/, `${route}: no data blocks elsewhere`);
+});
+
+test("press: quotable facts and story angles, honest limits, a contact route, linked from the Gauss page", () => {
+  const press = html["/press/"];
+  assert.match(text(press), /company no\. 14573199/);
+  assert.match(text(press), /advisory/i);
+  assert.match(text(press), /What we won't say/);
+  assert.match(press, /href="mailto:jzwnathan@lightbound\.uk\?subject=Press"/);
+  assert.match(text(press), /synthetic/i, "says the replay is synthetic");
+  assert.doesNotMatch(text(press), /consultancy|defen[cs]e/i, "nothing that hints at what Turnstone does");
+  assert.match(html["/gauss/"], /href="\/press\/"/, "reachable from the Gauss page");
 });
