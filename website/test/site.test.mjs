@@ -282,7 +282,7 @@ test("apply pages: the static form is exactly what the Worker renders, and posts
 
 test("plans: packages and prices follow the sales plan; honest features only", () => {
   // Gauss Aurora repo, docs/SALES_FEATURE_LIST_AND_ONBOARDING.md (21 Aug 2026), "Commercial packages".
-  const expected = { pilot: "£20k–£40k per pilot", fleet_integration: "£60k–£125k a year", mission_integration: "£120k–£300k one-off", flight_candidate_adapter: "£750k–£2.5m one-off" };
+  const expected = { pilot: "$25k–$50k per pilot", fleet_integration: "$80k–$160k a year", mission_integration: "$150k–$400k one-off", flight_candidate_adapter: "$1m–$3.3m one-off" };
   assert.equal(SHOW_PRICES, true);
   assert.deepEqual(Object.fromEntries(TIERS.map((t) => [t.id, priceLabel(t)])), expected);
   assert.deepEqual(TIERS.map((t) => t.billing), ["payment", "subscription", "invoice", "invoice"]);
