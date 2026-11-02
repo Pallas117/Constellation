@@ -50,11 +50,12 @@ async function load(sessionCredential: string | null): Promise<GeometryState> {
  * The signed-in operator's passkeys and geometry. Lists passkeys only while
  * signed in (an auth route, never a CyberTiger-counted one).
  */
-export function useOperatorGeometry() {
+export function useOperatorGeometry(): GeometryState {
   const { data: session } = useSession();
   const userId = session?.user?.id ?? null;
   const sessionCredential = passkeyCredentialOf(session?.session);
-  const [state, setState] = useState<GeometryState>(EMPTY);
+  // Tagged with the user it was loaded for, so a previous account's figure never shows.
+  const [state, setState] = useState<GeometryState & { userId: string | null }>({ ...EMPTY, userId: null });
   const [version, setVersion] = useState(generation);
 
   useEffect(() => {
@@ -65,10 +66,7 @@ export function useOperatorGeometry() {
   }, []);
 
   useEffect(() => {
-    if (!userId) {
-      setState(EMPTY);
-      return;
-    }
+    if (!userId) return;
     const key = `${userId}|${sessionCredential ?? ""}|${version}`;
     let pending = cache.get(key);
     if (!pending) {
@@ -78,13 +76,13 @@ export function useOperatorGeometry() {
     }
     let cancelled = false;
     pending.then(
-      (next) => !cancelled && setState(next),
-      () => !cancelled && setState({ ...EMPTY, passkeys: [] }),
+      (next) => !cancelled && setState({ ...next, userId }),
+      () => !cancelled && setState({ ...EMPTY, passkeys: [], userId }),
     );
     return () => {
       cancelled = true;
     };
   }, [userId, sessionCredential, version]);
 
-  return state;
+  return userId && state.userId === userId ? state : EMPTY;
 }

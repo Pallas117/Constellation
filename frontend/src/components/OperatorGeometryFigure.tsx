@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "react";
 import { usePrefersReducedMotion } from "@/hooks/usePrefersReducedMotion";
 import { describeGeometry, type OperatorGeometry } from "@/lib/operator-geometry";
-import { EDGES, VERTEX_LABELS, VERTICES, project, randomRotation } from "@/lib/tesseract";
+import { EDGES, VERTEX_LABELS, VERTICES, project, randomRotation, type Rotation } from "@/lib/tesseract";
 
 const BONE = "243, 240, 232"; // --warm-white
 const SPEED = { xy: 0.004, zw: 0.003, xz: 0.0015 }; // radians per frame, as the pattern lock
@@ -30,7 +30,7 @@ export function OperatorGeometryFigure({
   className?: string;
 }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const rotation = useRef(randomRotation());
+  const rotation = useRef<Rotation | null>(null);
   const revealFrom = useRef<number | null>(null);
   const still = usePrefersReducedMotion();
 
@@ -48,9 +48,11 @@ export function OperatorGeometryFigure({
     const unit = size / 160;
     const accentEdges = new Set(geometry?.accents ?? []);
     let frame = 0;
+    // A new starting orientation for each mounted figure, kept across geometry updates.
+    rotation.current ??= randomRotation();
+    const rot = rotation.current;
 
     const draw = (now: number) => {
-      const rot = rotation.current;
       if (!still) {
         rot.xy += SPEED.xy * (geometry?.spin.xy ?? 1);
         rot.zw += SPEED.zw * (geometry?.spin.zw ?? 1);
