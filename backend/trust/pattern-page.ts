@@ -280,7 +280,8 @@ function project([x, y, z, w]) {
   a = z * Math.cos(rot.zw) - w * Math.sin(rot.zw); b = z * Math.sin(rot.zw) + w * Math.cos(rot.zw); z = a; w = b;
   a = x * Math.cos(rot.xz) - z * Math.sin(rot.xz); b = x * Math.sin(rot.xz) + z * Math.cos(rot.xz); x = a; z = b;
   const f4 = 1 / (2.45 - w), f3 = 1 / (2.45 - z * f4);
-  return { x: x * f4 * f3 * 130 + 200, y: y * f4 * f3 * 130 + 200 };
+  // The UI-UX-Gauss projection; 270 keeps every orientation inside the 400 px canvas (extent at most 0.671).
+  return { x: x * f4 * f3 * 270 + 200, y: y * f4 * f3 * 270 + 200 };
 }
 function draw() {
   if (!hovering && !still && !closed) { rot.xy += 0.004; rot.zw += 0.003; rot.xz += 0.0015; }
@@ -292,16 +293,16 @@ function draw() {
     ctx.strokeStyle = "#e7b14a"; ctx.lineWidth = 2; ctx.beginPath();
     pattern.forEach((v, n) => (n ? ctx.lineTo(proj[v].x, proj[v].y) : ctx.moveTo(proj[v].x, proj[v].y))); ctx.stroke();
   }
-  ctx.font = "11px ui-monospace, monospace"; ctx.textAlign = "center";
+  ctx.font = "600 13px ui-monospace, monospace"; ctx.textAlign = "center";
   proj.forEach((p, i) => {
     const on = pattern.includes(i);
-    ctx.beginPath(); ctx.arc(p.x, p.y, on ? 6 : 4, 0, Math.PI * 2); ctx.fillStyle = on ? "#e7b14a" : "#e8e6df"; ctx.fill();
-    ctx.fillStyle = "#7d8696"; ctx.fillText(C.labels[i], p.x, p.y - 10);
+    ctx.beginPath(); ctx.arc(p.x, p.y, on ? 7 : 5, 0, Math.PI * 2); ctx.fillStyle = on ? "#e7b14a" : "#e8e6df"; ctx.fill();
+    ctx.fillStyle = on ? "#e7b14a" : "#aab3c2"; ctx.fillText(C.labels[i], p.x, p.y - 11);
   });
   requestAnimationFrame(draw);
 }
 function show() { countEl.textContent = pattern.length + (pattern.length === 1 ? " vertex" : " vertices"); }
-function add(i) { if (closed || busy || i < 0 || i >= V.length || pattern[pattern.length - 1] === i || pattern.length >= C.rules.maxLength) return; pattern.push(i); show(); }
+function add(i) { if (closed || busy || i < 0 || i >= V.length || pattern[pattern.length - 1] === i || pattern.length >= C.rules.maxLength) return; pattern.push(i); show(); if (msg.className === "bad") say(""); }
 function say(text, kind) { msg.textContent = text; msg.className = kind || ""; }
 canvas.addEventListener("pointerenter", () => (hovering = true));
 canvas.addEventListener("pointerleave", () => (hovering = false));
@@ -319,8 +320,9 @@ document.addEventListener("keydown", (e) => {
 clear.addEventListener("click", () => { pattern = []; show(); say(""); });
 go.addEventListener("click", async () => {
   if (closed || busy) return;
+  // A pattern this short can never match, so it is not sent and does not use up a try.
+  if (pattern.length < C.rules.minLength) return say("Draw at least " + C.rules.minLength + " vertices.", "bad");
   if (C.mode === "lock" && first === null) {
-    if (pattern.length < C.rules.minLength) return say("Draw at least " + C.rules.minLength + " vertices.", "bad");
     first = pattern; pattern = []; show(); step.textContent = "Draw the same pattern again."; go.textContent = "Lock"; return say("");
   }
   busy = true; go.disabled = true; say("Checking…");

@@ -14,8 +14,8 @@ import { createCipheriv, createDecipheriv, createPrivateKey, randomBytes, scrypt
 import { writeFileSync } from "node:fs";
 import { keyIdOf, parseSigningKey, readSigningKeyFile } from "./signing.js";
 
-export const LOCKED_KEY_SCHEMA = "gauss.locked-signing-key/0.1";
-export const FIGURE = "tesseract-16";
+export const LOCKED_KEY_SCHEMA = "gauss.locked-signing-key/0.1" as const;
+export const FIGURE = "tesseract-16" as const;
 export const VERTICES = 16;
 /** Vertex labels shown on the figure and typed at a terminal: A is vertex 0, P is vertex 15. */
 export const VERTEX_LABELS = "ABCDEFGHIJKLMNOP";
@@ -78,12 +78,12 @@ export function lockKey(privateKey: KeyObject, pattern: readonly number[], optio
   if (problem) throw new Error(`pattern refused: ${problem}`);
   if (privateKey.asymmetricKeyType !== "ed25519") throw new Error("only Ed25519 signing keys are locked");
   const s = options.scrypt ?? DEFAULT_SCRYPT;
-  const header = {
+  const header: Omit<LockedKey, "iv" | "tag" | "ciphertext"> = {
     schema: LOCKED_KEY_SCHEMA,
     keyId: keyIdOf(privateKey),
     figure: FIGURE,
-    kdf: { name: "scrypt" as const, N: s.N, r: s.r, p: s.p, salt: randomBytes(16).toString("base64") },
-    cipher: "aes-256-gcm" as const,
+    kdf: { name: "scrypt", N: s.N, r: s.r, p: s.p, salt: randomBytes(16).toString("base64") },
+    cipher: "aes-256-gcm",
     lockedAt: new Date(options.nowMs ?? Date.now()).toISOString(),
   };
   const key = derive(pattern, header.kdf);
@@ -180,7 +180,7 @@ export async function openSigningKey(path: string, repoRoot: string, prompt: Pat
   try {
     locked = parseLockedKey(bytes);
   } catch (e) {
-    throw new Error(`${path}: ${(e as Error).message}`);
+    throw new Error(`${path}: ${(e as Error).message}`, { cause: e });
   }
   if (!locked) return parseSigningKey(bytes, path);
   const lockedKey = locked;
