@@ -1,21 +1,26 @@
 /**
  * Sign an evidence pack or a release file with a Gauss key (PR-04a, GAU-67):
- *   npm run trust:sign -- <pack.json> --sign-key <private key file> [--pdf pack.pdf] [--keyring <file>]
- *   npm run trust:sign -- --file <artifact> --sign-key <private key file> [--keyring <file>]
+ *   npm run trust:sign -- <pack.json> --sign-key <private key file> [--pdf pack.pdf] [--keyring <file>] [--pattern-tty]
+ *   npm run trust:sign -- --file <artifact> --sign-key <private key file> [--keyring <file>] [--pattern-tty]
  *
  * A pack is checked, then signed in place; its pack hash does not change, and `--pdf` writes its
  * PDF again because the PDF shows the signature. A release file (an archive, a checksum list, an
  * SBOM) gets a detached signature next to it, `<artifact>.sig.json`. The key must be in the
  * keyring (default: the published backend/trust/signing-keys.json), current and meant for that
  * use; its file must be outside the repository and readable only by its owner. Every signature is
- * checked against the keyring before it is written.
+ * checked against the keyring before it is written. A key locked to its owner's fingerprint
+ * (`trust:keys lock --touch-id`) asks for one touch. A key locked under a geometry pattern
+ * (`trust:keys lock`) asks for it in a one-time page on this Mac, or with `--pattern-tty` (and
+ * over SSH) as vertex letters in the terminal.
  */
 import { readFileSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { EvidencePack } from "../../backend/trust/evidence.js";
 import { renderEvidencePdf } from "../../backend/trust/evidence-pdf.js";
-import { loadKeyring, loadSigningKey, PUBLISHED_KEYRING_PATH, signFile, signPack, verifyFileSignature, verifyPackSignature } from "../../backend/trust/signing.js";
+import { openSigningKey } from "../../backend/trust/key-lock.js";
+import { patternPrompt } from "../../backend/trust/pattern-page.js";
+import { loadKeyring, PUBLISHED_KEYRING_PATH, signFile, signPack, verifyFileSignature, verifyPackSignature } from "../../backend/trust/signing.js";
 
 const args = process.argv.slice(2);
 const VALUE_FLAGS = new Set(["--sign-key", "--pdf", "--keyring", "--file"]);
@@ -27,15 +32,15 @@ const [packPath = ""] = args.filter((a, i) => !a.startsWith("--") && !VALUE_FLAG
 const filePath = opt("--file");
 const keyPath = opt("--sign-key");
 if ((!packPath && !filePath) || !keyPath) {
-  console.error("usage: npm run trust:sign -- <pack.json> --sign-key <key file> [--pdf pack.pdf] [--keyring keys.json]");
-  console.error("       npm run trust:sign -- --file <artifact> --sign-key <key file> [--keyring keys.json]");
+  console.error("usage: npm run trust:sign -- <pack.json> --sign-key <key file> [--pdf pack.pdf] [--keyring keys.json] [--pattern-tty]");
+  console.error("       npm run trust:sign -- --file <artifact> --sign-key <key file> [--keyring keys.json] [--pattern-tty]");
   process.exit(2);
 }
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "../..");
 try {
   const keyring = loadKeyring(opt("--keyring") ?? PUBLISHED_KEYRING_PATH);
-  const key = loadSigningKey(keyPath, root);
+  const key = await openSigningKey(keyPath, root, patternPrompt("unlock", basename(keyPath), { terminal: args.includes("--pattern-tty") }));
   if (filePath) {
     const bytes = readFileSync(filePath);
     const sig = signFile(bytes, basename(filePath), key, keyring);

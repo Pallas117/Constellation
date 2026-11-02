@@ -1,7 +1,7 @@
 /**
  * Ingest a customer inference log and build its trust records (PR-03a, GAU-66):
  *   npm run trust:ingest -- <log.csv|.json|.jsonl> <mapping.json> --replay <event> [--out records.jsonl] [--report report.json]
- *     [--pack pack.json [--pdf pack.pdf] [--from <ISO> --to <ISO>] [--previous-pack previous.json] [--sign-key <key file> [--keyring <file>]]]
+ *     [--pack pack.json [--pdf pack.pdf] [--from <ISO> --to <ISO>] [--previous-pack previous.json] [--sign-key <key file> [--keyring <file>] [--pattern-tty]]]
  *
  * The report lists every rejected row with its reasons; nothing is dropped silently. Records
  * carry each row's provenance (file SHA-256, row number, mapping id and version). The
@@ -12,12 +12,12 @@
  * replayed event's window) and `--pdf` its PDF. Accepted rows outside the window are listed in
  * the pack as not used, with the reason. `--previous-pack` chains it to the last pack, after
  * checking that one (and its signature, if it has one). `--sign-key` signs the pack with a Gauss
- * key (GAU-67, see `trust:sign`). Check a pack with `npm run trust:verify -- pack.json`.
+ * key (GAU-67, see `trust:sign`; a locked key asks for its pattern, `--pattern-tty` in the terminal). Check a pack with `npm run trust:verify -- pack.json`.
  */
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { readFileSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadArchive, replayArchive } from "../../backend/replay/replay.js";
 import { EnvironmentHistory } from "../../backend/trust/environment.js";
@@ -25,7 +25,9 @@ import { buildEvidencePack, verifyEvidencePack, type EvidencePack } from "../../
 import { renderEvidencePdf } from "../../backend/trust/evidence-pdf.js";
 import { ingestLog, type LogMapping } from "../../backend/trust/ingest.js";
 import { buildTrustRecord, DEFAULT_POLICY, TRUST_RECORD_SCHEMA } from "../../backend/trust/record.js";
-import { loadKeyring, loadSigningKey, PUBLISHED_KEYRING_PATH, signPack, verifyPackSignature } from "../../backend/trust/signing.js";
+import { openSigningKey } from "../../backend/trust/key-lock.js";
+import { patternPrompt } from "../../backend/trust/pattern-page.js";
+import { loadKeyring, PUBLISHED_KEYRING_PATH, signPack, verifyPackSignature } from "../../backend/trust/signing.js";
 import type { CanonicalSpaceWeatherPoint } from "../../backend/types.js";
 
 const args = process.argv.slice(2);
@@ -33,7 +35,8 @@ const opt = (name: string) => {
   const i = args.indexOf(name);
   return i >= 0 ? args[i + 1] : undefined;
 };
-const [logPath, mappingPath] = args.filter((a, i) => !a.startsWith("--") && !args[i - 1]?.startsWith("--"));
+const BOOLEAN_FLAGS = new Set(["--pattern-tty"]);
+const [logPath, mappingPath] = args.filter((a, i) => !a.startsWith("--") && !(args[i - 1]?.startsWith("--") && !BOOLEAN_FLAGS.has(args[i - 1])));
 const eventId = opt("--replay");
 if (!logPath || !mappingPath || !eventId) {
   console.error("usage: npm run trust:ingest -- <log> <mapping.json> --replay <event id> [--out records.jsonl] [--report report.json]");
@@ -124,7 +127,13 @@ if (packPath) {
     },
   );
   const signKey = opt("--sign-key");
-  const pack = signKey ? signPack(built, loadSigningKey(signKey, root), loadKeyring(opt("--keyring") ?? PUBLISHED_KEYRING_PATH)) : built;
+  const pack = signKey
+    ? signPack(
+        built,
+        await openSigningKey(signKey, root, patternPrompt("unlock", basename(signKey), { terminal: args.includes("--pattern-tty") })),
+        loadKeyring(opt("--keyring") ?? PUBLISHED_KEYRING_PATH),
+      )
+    : built;
   writeFileSync(packPath, JSON.stringify(pack, null, 2) + "\n");
   const pdfPath = opt("--pdf");
   if (pdfPath) writeFileSync(pdfPath, renderEvidencePdf(pack));
