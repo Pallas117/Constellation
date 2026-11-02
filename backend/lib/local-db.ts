@@ -1,6 +1,11 @@
+import crypto from "node:crypto";
+import { createReadStream, createWriteStream, type WriteStream } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { createInterface } from "node:readline";
+import { once } from "node:events";
 import { fileURLToPath } from "node:url";
+import { createGunzip, createGzip } from "node:zlib";
 import type { CanonicalSpaceWeatherPoint } from "../types.js";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -10,6 +15,10 @@ const DATA_DIR = process.env.GAUSS_BEDROCK_DIR
   ? path.resolve(process.env.GAUSS_BEDROCK_DIR)
   : path.resolve(__dirname, "../../data/bedrock");
 const TELEMETRY_FILE = path.join(DATA_DIR, "telemetry.jsonl");
+const ARCHIVE_DIR = path.join(DATA_DIR, "archive");
+
+/** Lines archiveOld leaves in the live file by default: readers ask for up to 20,000 (server.ts). */
+export const DEFAULT_KEEP_LINES = 30_000;
 
 /** One line of telemetry.jsonl: a `type` tag, usually a `timestamp`, and that record's fields. */
 export interface BedrockRecord {
@@ -52,15 +61,27 @@ export class BedrockDB {
    * persist-stage error instead of reporting the write as ok). GAU-121.
    */
   public async appendTelemetryStrict(data: BedrockRecord) {
-    await this.ensureDir();
     const line = JSON.stringify(data) + "\n";
     try {
-      await fs.appendFile(TELEMETRY_FILE, line, "utf8");
+      // Joins the lock queue synchronously, so lines land in call order and an append waits while
+      // archiveOld swaps the file instead of being lost.
+      await this.locked(async () => {
+        await this.ensureDir();
+        await fs.appendFile(TELEMETRY_FILE, line, "utf8");
+      });
     } catch (err) {
       this.failedWrites += 1;
       console.error("[Bedrock] Append failed", err);
       throw err;
     }
+  }
+
+  /** Serialises appends and archiving (every writer to telemetry.jsonl is in this process). */
+  private chain: Promise<unknown> = Promise.resolve();
+  private locked<T>(fn: () => Promise<T>): Promise<T> {
+    const run = this.chain.then(fn, fn);
+    this.chain = run.catch(() => undefined);
+    return run;
   }
 
   /** Lines skipped by the last read because they were not valid JSON (e.g. a torn final write). */
@@ -96,18 +117,164 @@ export class BedrockDB {
       .sort((a, b) => Date.parse(a.timestamp) - Date.parse(b.timestamp));
   }
 
-  public async clearOld(keepLines: number = 5000) {
-    await this.ensureDir();
-    try {
-      const content = await fs.readFile(TELEMETRY_FILE, "utf8");
-      const lines = content.trim().split("\n");
-      if (lines.length > keepLines) {
-        const remaining = lines.slice(lines.length - keepLines).join("\n") + "\n";
-        await fs.writeFile(TELEMETRY_FILE, remaining, "utf8");
+  /**
+   * Moves all but the newest `keepLines` lines into a verified, compressed archive (GAU-157).
+   * Nothing is deleted unless its archive was written and checked first. Not scheduled anywhere:
+   * the retention period is an owner decision.
+   */
+  public async archiveOld(keepLines: number = DEFAULT_KEEP_LINES): Promise<ArchiveResult> {
+    return this.locked(async () => {
+      await this.ensureDir();
+      return archiveTelemetry(TELEMETRY_FILE, ARCHIVE_DIR, keepLines);
+    });
+  }
+
+  /** @deprecated Use archiveOld: the old version deleted history without an archive. */
+  public async clearOld(keepLines: number = DEFAULT_KEEP_LINES): Promise<ArchiveResult> {
+    return this.archiveOld(keepLines);
+  }
+}
+
+export interface ArchiveResult {
+  archivedLines: number;
+  keptLines: number;
+  /** Absolute path of the .jsonl.gz archive, or null when there was nothing to archive. */
+  archive: string | null;
+  manifest: ArchiveManifest | null;
+}
+
+/** Fixity and provenance for one archive (CCSDS/OAIS style). Holds no record contents. */
+export interface ArchiveManifest {
+  format: "gauss-telemetry-archive/1";
+  source: string;
+  created_at: string;
+  lines: number;
+  raw_bytes: number;
+  raw_sha256: string;
+  gzip_bytes: number;
+  gzip_sha256: string;
+  first_timestamp: string | null;
+  last_timestamp: string | null;
+}
+
+function recordTime(line: string): string | null {
+  try {
+    const r = JSON.parse(line);
+    const t = r?.timestamp ?? r?.data?.timestamp;
+    return typeof t === "string" && !Number.isNaN(Date.parse(t)) ? t : null;
+  } catch {
+    return null;
+  }
+}
+
+async function write(stream: WriteStream | NodeJS.WritableStream, chunk: string): Promise<void> {
+  if (!stream.write(chunk)) await once(stream, "drain");
+}
+
+async function finish(stream: WriteStream): Promise<void> {
+  stream.end();
+  await once(stream, "close");
+}
+
+function lines(file: string) {
+  return createInterface({ input: createReadStream(file, { encoding: "utf8" }), crlfDelay: Infinity });
+}
+
+async function sha256OfStream(input: NodeJS.ReadableStream): Promise<{ sha: string; bytes: number }> {
+  const h = crypto.createHash("sha256");
+  let bytes = 0;
+  for await (const chunk of input) {
+    h.update(chunk as Buffer);
+    bytes += (chunk as Buffer).length;
+  }
+  return { sha: h.digest("hex"), bytes };
+}
+
+/**
+ * Streams `file` twice (count, then split), writing all but the newest `keepLines` lines to a
+ * gzip archive plus a manifest in `archiveDir`, verifies the archive decompresses to exactly what
+ * was removed, then atomically replaces `file` with the kept tail. Memory stays flat at any file
+ * size. On any failure the live file is left untouched and partial outputs are removed.
+ * The caller must stop other writers meanwhile (BedrockDB holds its append lock).
+ */
+export async function archiveTelemetry(file: string, archiveDir: string, keepLines: number): Promise<ArchiveResult> {
+  const keep = Math.max(0, Math.floor(keepLines));
+  let total = 0;
+  try {
+    for await (const line of lines(file)) if (line) total += 1;
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return { archivedLines: 0, keptLines: 0, archive: null, manifest: null };
+    throw err;
+  }
+  if (total <= keep) return { archivedLines: 0, keptLines: total, archive: null, manifest: null };
+
+  const toArchive = total - keep;
+  await fs.mkdir(archiveDir, { recursive: true });
+  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+  const partGz = path.join(archiveDir, `.telemetry-${stamp}.jsonl.gz.part`);
+  const partTail = `${file}.archiving-${process.pid}`;
+  try {
+    const gzip = createGzip();
+    const gzOut = createWriteStream(partGz, { mode: 0o600 });
+    const gzDone = (async () => {
+      gzip.pipe(gzOut);
+      await once(gzOut, "close");
+    })();
+    const tailOut = createWriteStream(partTail, { mode: 0o644 });
+    const raw = crypto.createHash("sha256");
+    let rawBytes = 0;
+    let first: string | null = null;
+    let last: string | null = null;
+    let seen = 0;
+    for await (const line of lines(file)) {
+      if (!line) continue;
+      const text = line + "\n";
+      if (seen < toArchive) {
+        raw.update(text);
+        rawBytes += Buffer.byteLength(text);
+        const t = recordTime(line);
+        if (t) {
+          first ??= t;
+          last = t;
+        }
+        await write(gzip, text);
+      } else {
+        await write(tailOut, text);
       }
-    } catch (err) {
-      // Ignore
+      seen += 1;
     }
+    gzip.end();
+    await gzDone;
+    await finish(tailOut);
+    const rawSha = raw.digest("hex");
+
+    // Verify before deleting anything: the archive must decompress to exactly the removed lines.
+    const check = await sha256OfStream(createReadStream(partGz).pipe(createGunzip()));
+    if (check.sha !== rawSha || check.bytes !== rawBytes) throw new Error("archive verification failed");
+    const gz = await sha256OfStream(createReadStream(partGz));
+
+    const safe = (t: string | null) => (t ?? "unknown").replace(/[:.]/g, "-");
+    const base = path.join(archiveDir, `telemetry-${safe(first)}_${safe(last)}-${stamp}.jsonl.gz`);
+    const manifest: ArchiveManifest = {
+      format: "gauss-telemetry-archive/1",
+      source: path.basename(file),
+      created_at: new Date().toISOString(),
+      lines: toArchive,
+      raw_bytes: rawBytes,
+      raw_sha256: rawSha,
+      gzip_bytes: gz.bytes,
+      gzip_sha256: gz.sha,
+      first_timestamp: first,
+      last_timestamp: last,
+    };
+    await fs.rename(partGz, base);
+    await fs.writeFile(`${base}.manifest.json`, JSON.stringify(manifest, null, 2) + "\n", { mode: 0o600 });
+    await fs.rename(partTail, file); // atomic: readers see the old file or the new one, never half
+    return { archivedLines: toArchive, keptLines: keep, archive: base, manifest };
+  } catch (err) {
+    await fs.rm(partGz, { force: true });
+    await fs.rm(partTail, { force: true });
+    throw err;
   }
 }
 

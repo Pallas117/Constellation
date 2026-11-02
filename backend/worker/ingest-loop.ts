@@ -17,7 +17,7 @@ import { fetchMmsBurstWindows, getMmsLaspStatus } from "../adapters/mms-lasp.js"
 import { fetchNoaaReadout, getNoaaStatus, type KpReading, type NOAAReadout } from "../adapters/noaa-swpc.js";
 import { arrivingNow, type L1Sample } from "../adapters/rtsw-series.js";
 import { gseToGsm, magnitude } from "../physics/coordinates.js";
-import { buildAuroraGrid } from "../physics/healpix.js";
+import { auroraGridKey, buildAuroraGrid } from "../physics/healpix.js";
 import { computeCanonicalPoint, type MhdInput } from "../physics/mhd-nowcast.js";
 import {
   computeMMSReconnectionVector,
@@ -35,6 +35,7 @@ import { linkGuardian } from "../lib/connectivity.js";
 import { PipelineTimer, STAGE_BUDGET_MS } from "../lib/pipeline-timing.js";
 import { ForecastSkillTracker } from "../lib/tpm.js";
 import { bedrock } from "../lib/local-db.js";
+import { freshnessMs } from "../../shared/policy/freshness.js";
 import { inferAnomalyForecast } from "../ml-client/client.js";
 import type {
   CanonicalSpaceWeatherPoint,
@@ -61,7 +62,7 @@ const SWPC_PRODUCTS_MS = 2 * 60 * 1000; // NOAA scales and alerts: a cross-check
 // Freshness is judged by the age of the measurement itself, not by whether a fetch ran
 // this tick. Beyond NOAA_MAX_AGE_MS a readout is discarded rather than carried forward.
 export const NOAA_FRESH_MS = 10 * 60 * 1000;
-export const NOAA_MAX_AGE_MS = 15 * 60 * 1000; // GAU-15: carried values expire at 15 min
+export const NOAA_MAX_AGE_MS = freshnessMs("l1_solar_wind"); // GAU-15: carried values expire with the L1 bound
 
 /** 0 live, 1 buffered (measured but ageing), 3 stale (no measurement within the cap). */
 export function freshnessTier(dataTimestamp: string | null, nowMs: number): ResilienceTier {
@@ -123,9 +124,12 @@ export interface IngestionOptions {
 
 export class IngestionWorker {
   private timer: NodeJS.Timeout | null = null;
+  /** The pending start-up retry, so stop() can cancel it (GAU-208). */
+  private retryTimer: NodeJS.Timeout | null = null;
   private running = false;
   private previousDst: number | null = null;
   private couplingWindow: number[] = [];
+  private auroraGridCache: { key: string; result: ReturnType<typeof buildAuroraGrid> } | null = null;
   private lastFetch = new Map<string, number>();
 
   private noaa: NOAAReadout | null = null;
@@ -170,6 +174,8 @@ export class IngestionWorker {
   }
 
   private async tickWithRetry(attempt = 0): Promise<void> {
+    // A retry chain from before a restart must not tick alongside the new one (GAU-208).
+    if (!this.running) return;
     try {
       await this.tick();
     } catch (error) {
@@ -177,15 +183,16 @@ export class IngestionWorker {
       const baseDelay = 2000;
       const delay = baseDelay * Math.pow(2, attempt);
 
-      if (attempt < maxAttempts) {
+      if (attempt < maxAttempts && this.running) {
         console.error(
           `[IngestionWorker] Initial tick failed (attempt ${attempt + 1}/${maxAttempts}), retrying in ${delay}ms`,
           error,
         );
-        setTimeout(() => {
+        this.retryTimer = setTimeout(() => {
+          this.retryTimer = null;
           void this.tickWithRetry(attempt + 1);
         }, delay);
-      } else {
+      } else if (this.running) {
         console.error(
           `[IngestionWorker] Initial tick failed after ${maxAttempts} attempts, pipeline offline`,
           error,
@@ -215,6 +222,10 @@ export class IngestionWorker {
     if (this.timer) {
       clearInterval(this.timer);
       this.timer = null;
+    }
+    if (this.retryTimer) {
+      clearTimeout(this.retryTimer);
+      this.retryTimer = null;
     }
   }
 
@@ -290,7 +301,8 @@ export class IngestionWorker {
       magneticFieldGse: b,
       velocityGsm: v,
       magneticFieldGsm: b,
-      kp: this.kpReading?.value ?? prev?.indices.kp ?? 2,
+      // No Kp from any source is unknown (null), not a quiet-time 2 (GAU-230).
+      kp: this.kpReading?.value ?? prev?.indices.kp ?? null,
       dst: freshDst(this.kyotoDst, Date.parse(timestamp)),
     };
   }
@@ -379,6 +391,19 @@ export class IngestionWorker {
       // NOT persisted. The persist stage counts the error in /api/system/pipeline. GAU-121.
       console.error(`[IngestionWorker] Bedrock write failed; point not persisted (${bedrock.failedWrites} failed writes).`, error);
     }
+  }
+
+  /**
+   * The aurora grid is 49,152 points (~4 MB) built from four inputs that change about once a
+   * minute; rebuilding it every tick was the backend's largest steady garbage source. Reuse the
+   * last grid while its inputs are unchanged (same values in, same grid out).
+   */
+  private auroraGridFor(point: CanonicalSpaceWeatherPoint): ReturnType<typeof buildAuroraGrid> {
+    const key = auroraGridKey(point);
+    if (this.auroraGridCache?.key !== key) {
+      this.auroraGridCache = { key, result: buildAuroraGrid(point, 64) };
+    }
+    return this.auroraGridCache.result;
   }
 
   private trimCouplingWindow(): void {
@@ -602,15 +627,13 @@ export class IngestionWorker {
     this.couplingWindow.push(point.coupling.newell);
     this.trimCouplingWindow();
 
+    // No grid without Kp (buildAuroraGrid returns null): the served map keeps its own older timestamp.
     const auroraMap =
       this.options.auroraGrid === false
         ? null
-        : await this.timing.time("aurora-grid", () => buildAuroraGrid(point, 64)).then(({ grid, harmonics }) => ({
-            timestamp: point.timestamp,
-            nside: 64,
-            grid,
-            harmonics,
-          }));
+        : await this.timing.time("aurora-grid", () => this.auroraGridFor(point)).then((built) =>
+            built ? { timestamp: point.timestamp, nside: 64, grid: built.grid, harmonics: built.harmonics } : null,
+          );
 
     if (mmsVector) this.latestMms = mmsVector;
     this.latestCanonical = point;
