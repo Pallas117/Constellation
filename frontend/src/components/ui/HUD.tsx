@@ -47,7 +47,13 @@ export const HUD = ({ data }: HUDProps) => {
           unit="nT"
           status={measured ? bzStatus(data.imfBz) : null}
         />
-        <DataRow label="Kp" value={fixed(data.kpIndex)} unit="/ 9" status={measured ? kpStatus(data.kpIndex) : null} />
+        {/* No Kp reading is "—" like unmeasured flux below, never 0 or 2 (GAU-230). */}
+        <DataRow
+          label="Kp"
+          value={data.kpIndex === null ? '—' : fixed(data.kpIndex)}
+          unit="/ 9"
+          status={measured && data.kpIndex !== null ? kpStatus(data.kpIndex) : null}
+        />
         <DataRow
           label="Proton flux"
           value={measured && data.protonFlux != null ? data.protonFlux.toFixed(1) : '—'}

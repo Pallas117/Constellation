@@ -389,8 +389,8 @@
             "required": ["kp", "dst", "dstMethod", "dstDerivedFrom"],
             "properties": {
               "kp": {
-                "type": "number",
-                "description": "Planetary Kp, 0 to 9. With no Kp reading at all the nowcast uses 2 and kpObservedAt is absent: treat kp as unknown then.",
+                "type": ["number", "null"],
+                "description": "Planetary Kp, 0 to 9; null when no source has a Kp reading (unknown, never a default value; GAU-230).",
                 "minimum": 0,
                 "maximum": 9
               },
