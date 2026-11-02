@@ -1061,6 +1061,24 @@ switch_live() { # switch_live <dir> <from sha> <to sha>: check out, npm ci if th
   install_agents "$1"
 }
 
+# argo_follow <live> <prev> <sha>: after a deploy, the installed Argo follows main when tools/argo
+# changed (or it can't say which commit it is). The gate already ran tools/argo/check.sh on this
+# exact tree, so install.sh skips it; install.sh rolls back by itself if the new binary fails.
+# Never fails the deploy: Gauss is up either way.
+argo_follow() {
+  local live=$1 prev=$2 sha=$3 have
+  have=$("$ARGO" version 2>/dev/null | awk '{print $3}')
+  if [ -n "$have" ] && [ "$have" != dev ] && git -C "$live" diff --quiet "$prev" "$sha" -- tools/argo; then
+    return 0
+  fi
+  command -v go >/dev/null || { echo "warning: tools/argo changed but Go isn't on PATH: run tools/argo/install.sh"; return 0; }
+  if ARGO_BIN="$ARGO" ARGO_SKIP_CHECK=1 bash "$live/tools/argo/install.sh" >>"$LOGS/argo-install.log" 2>&1; then
+    echo "Argo reinstalled from ${sha:0:7} ($LOGS/argo-install.log)."
+  else
+    echo "warning: Argo reinstall from ${sha:0:7} failed; the previous Argo still runs ($LOGS/argo-install.log)."
+  fi
+}
+
 deploy() { # deploy <commit> [fallback-dir]
   local live sha prev level fbdir=${2:-} _
   live=$(live_dir) && [ -d "$live" ] || { echo "No live install ($AGENTS/uk.lightbound.gauss-backend.plist): run install first" >&2; return 1; }
@@ -1118,6 +1136,7 @@ deploy() { # deploy <commit> [fallback-dir]
   if switch_live "$live" "$prev" "$sha" && deploy_ready "$live" "$DEPLOY_WAIT"; then
     echo "$(date '+%F %T') deployed ${sha:0:7} (was ${prev:0:7})" >>"$LOGS/deploy.log"
     record_deploy deploy ok "$prev" "$sha" "$tree" "$gates" "deployed ${sha:0:7} (was ${prev:0:7})"
+    argo_follow "$live" "$prev" "$sha"
     echo "Deployed ${sha:0:7}. Full checklist (for information; only the services decide a rollback):"
     check || true
     return 0

@@ -8,8 +8,7 @@ Gauss **Mesh & Network** page (`/mesh`) so the team can see who is blocked.
 ## Install
 
 ```bash
-cd tools/argo
-go build -trimpath -o ~/.local/bin/argo .
+tools/argo/install.sh   # full check, build (commit stamped in), swap in, roll back if it doesn't run
 argo doctor          # read-only diagnosis; check class: OK and loc=MY/SG
 argo install         # writes ~/Library/LaunchAgents/uk.lightbound.argo.plist and prints the next command
 launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/uk.lightbound.argo.plist
@@ -348,9 +347,13 @@ podman run --rm --network host argo:dev doctor     # one-off diagnosis
 ## Tests
 
 ```bash
-go test ./...                                   # unit: every class, loop, masking, parsers
+tools/argo/check.sh                             # what the gate runs: gofmt, vet (macOS+Linux), 3 builds, -race, coverage floor
+ARGO_FUZZ=30s tools/argo/check.sh               # plus 30 s of fuzzing per target
+ARGO_E2E=1 tools/argo/check.sh                  # plus two real Argos against the real Gauss mesh routers
 go test -tags integration -v ./...              # runs the real probes on this machine (read-only)
 ```
+
+What is covered, what isn't, and what runs automatically: [TESTING.md](TESTING.md).
 
 ## Migrating from netguard, netstatus and fixnet
 

@@ -40,6 +40,7 @@ stub argo 'case "$1" in
   notify) [ $# -gt 1 ] || { [ -n "${OLD_ARGO:-}" ] && echo "usage: argo [status|doctor]" >&2 || echo "usage: argo notify [-key K -every 30m] TITLE MESSAGE" >&2; exit 1; }
           shift; echo "$*" >>"$LOG" ;;
   status) echo "${ARGOSTATUS:-● OK MY ts:on}" ;;
+  version) echo "argo 0.1.0 ${ARGOVER:-dev}" ;;
 esac'
 
 # balance stubs: the local model server is "running" when MLX=1; a helper named $LEAKY runs as
@@ -64,7 +65,7 @@ run() { # run <args...>: gauss-services.sh with the stubs; alerts land in $LOG
     GAUSS_DEV_DRY="${GAUSS_DEV_DRY:-0}" GAUSS_GATES_START=0 HEAVYGIVEUP="${HEAVYGIVEUP:-}" GAUSS_GATES_EXPIRE_H="${GAUSS_GATES_EXPIRE_H:-72}" GAUSS_DEV_API_PORT="${GAUSS_DEV_API_PORT:-3101}" \
     SRC="${SRC:-AC Power}" BATT="${BATT:-80%; charging; present: true}" SD="${SD:-0}" \
     LEAKY="${LEAKY:-}" LEAKFP="${LEAKFP:-12 MB}" AVAIL="${AVAIL:-50}" GAUSS_SWAP_LAST="${SWAPLAST:-/dev/null}" \
-    ARGOSTATUS="${ARGOSTATUS:-}" LEVEL="${LEVEL:-1}" FREE="${FREE:-50}" SWAPUSED="${SWAPUSED:-1000}" OLD_ARGO="${OLD_ARGO:-}" bash "$SCRIPT" "$@"
+    ARGOSTATUS="${ARGOSTATUS:-}" LEVEL="${LEVEL:-1}" FREE="${FREE:-50}" SWAPUSED="${SWAPUSED:-1000}" OLD_ARGO="${OLD_ARGO:-}" ARGOVER="${ARGOVER:-}" bash "$SCRIPT" "$@"
 }
 expect() { # expect <name> <condition-exit-code>
   if [ "$2" = 0 ]; then pass=$((pass + 1)); else failed=$((failed + 1)); echo "FAIL: $1"; sed 's/^/    alerts: /' "$T/log"; fi
@@ -326,6 +327,8 @@ expect "deploy: an unknown flag stops before anything changes (not taken as the 
 out=$(run deploy "$Bc" "$FB2" 2>&1); rc=$?
 [ $rc = 0 ] && head_is "$Bc" && [[ "$out" == *"Deployed ${Bc:0:7}"* ]] && grep -q t1 "$LIVE/data/bedrock/telemetry.jsonl" && [ ! -d "$WD/deploying" ]
 expect "deploy: live switched, its local data kept, lock released" $?
+[[ "$out" == *"Go isn't on PATH: run tools/argo/install.sh"* ]]
+expect "deploy: an Argo that can't say its commit is due a reinstall; without Go that's a warning, not a failed deploy" $?
 [[ "$(cat "$FB/ready")" == "$A $FB2 "* ]] && [ "$(grep -c '^npm ci' "$T/actions")" = 1 ]
 expect "deploy: fallback refreshed to the previous version; npm ci only for the new fallback (live's lockfile unchanged)" $?
 pl() { plutil -extract "$2" "${3:-raw}" -o - "$1" 2>/dev/null; } # pl <plist> <key path> [raw|json]
@@ -348,7 +351,8 @@ ev '[(e["event"],e["result"],e["live_sha"]) for e in E if e["event"] in ("deploy
 expect "events: a failed deploy and its rollback, each with the SHA live was on" $?
 ev 'any(e["event"]=="fallback_prepared" and e["fallback_sha"]=="'"$A"'" for e in E) and any(e["event"]=="alert" and e["label"]=="deploy" for e in E)'
 expect "events: fallback prepared and the deploy alert are logged" $?
-main_at "$D"; out=$(run deploy "$D" 2>&1); rc=$?
+main_at "$D"; out=$(ARGOVER=0123456789ab run deploy "$D" 2>&1); rc=$?
+[[ "$out" != *"Argo reinstall"* && "$out" != *"Go isn't on PATH"* ]]; expect "deploy: tools/argo unchanged and Argo knows its commit: no reinstall" $?
 [ $rc = 0 ] && head_is "$D" && [[ "$out" == *"Fallback already at ${Bc:0:7}"* ]] && [ "$(cat "$T/actions")" = "npm ci --no-audit --no-fund" ]
 expect "deploy: lockfile changed, so npm ci runs in live; fallback not rebuilt needlessly" $?
 main_at "$C"; out=$(HEALTH_FILE=/nonexistent HEALTH=500 run deploy "$C" 2>&1); rc=$?
