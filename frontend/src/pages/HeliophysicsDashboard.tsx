@@ -32,8 +32,8 @@ const bzTone = (bz: number | undefined): Tone =>
   bz === undefined ? "default" : bz <= -10 ? "risk" : bz < 0 ? "caution" : "default";
 const pdynTone = (p: number | undefined): Tone =>
   p === undefined ? "default" : p >= 8 ? "risk" : p >= 4 ? "caution" : "default";
-const kpTone = (kp: number | undefined): Tone =>
-  kp === undefined ? "default" : kp >= 7 ? "risk" : kp >= 5 ? "caution" : "default";
+const kpTone = (kp: number | null | undefined): Tone =>
+  kp == null ? "default" : kp >= 7 ? "risk" : kp >= 5 ? "caution" : "default";
 const utc = (t: string | number) => new Date(t).toISOString().slice(11, 16);
 /** "18 Oct 17:24" (UTC): alerts span a day, so the time alone is ambiguous. */
 const dayUtc = (t: string) => `${new Date(t).toLocaleDateString("en-GB", { day: "numeric", month: "short", timeZone: "UTC" })} ${utc(t)}`;
@@ -145,7 +145,9 @@ const HeliophysicsDashboard = () => {
       ? "NOAA's running estimate for the current 3-hour interval, updated each minute."
       : live.kp?.kind === "planetary-3h"
         ? "The last completed 3-hour interval: this interval's running estimate is lower so far."
-        : "";
+        : drivers && kpValue === null
+          ? "No Kp reading from any source: unknown, so no auroral oval is drawn."
+          : "";
   const geoLine =
     geoExposed === null
       ? "GEO exposure unknown"
@@ -311,7 +313,7 @@ const HeliophysicsDashboard = () => {
                     />
                   )}
                   <Readout label="Bow shock nose" value={fmt(fieldModel?.bowShock)} unit="RE" />
-                  <Readout label="Aurora equatorward edge" value={fmt(fieldModel?.oval.equatorward, 0)} unit="° MLAT" />
+                  <Readout label="Aurora equatorward edge" value={fmt(fieldModel?.oval?.equatorward, 0)} unit="° MLAT" />
                   <Readout label="Dipole tilt" value={signed(tiltDeg)} unit="°" hint="Toward the Sun, from the UTC clock" />
                   <Readout label="Field lines open to the solar wind" value={openPct} unit="%" />
                 </dl>
@@ -474,7 +476,7 @@ const HeliophysicsDashboard = () => {
               <HudStat
                 className="hidden sm:block"
                 label="Aurora edge"
-                value={fmt(fieldModel?.oval.equatorward, 0)}
+                value={fmt(fieldModel?.oval?.equatorward, 0)}
                 unit="° MLAT"
                 detail="Equatorward edge of the auroral oval, from Kp."
               />

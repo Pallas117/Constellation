@@ -12,9 +12,10 @@
  */
 import type { SolarWindDrivers } from './geomagnetic';
 
-const KEYS = ['bz', 'by', 'pdyn', 'kp'] as const;
+const KEYS = ['bz', 'by', 'pdyn'] as const;
 
-const finite = (d: SolarWindDrivers) => KEYS.every((k) => Number.isFinite(d[k]));
+/** Bz, By and Pdyn must be finite; Kp may be null (no reading, GAU-230) but not NaN. */
+const finite = (d: SolarWindDrivers) => KEYS.every((k) => Number.isFinite(d[k])) && (d.kp === null || Number.isFinite(d.kp));
 
 export class DriverAverager {
   private samples: { t: number; d: SolarWindDrivers }[] = [];
@@ -34,13 +35,19 @@ export class DriverAverager {
     this.prune(t);
   }
 
-  /** Time-weighted mean over [now - window, now]; null before any sample. */
+  /**
+   * Time-weighted mean over [now - window, now]; null before any sample. Kp is averaged over the
+   * samples that have one, and is null when the latest sample has none: unknown is never averaged
+   * in as 0 or carried as an old value (GAU-230).
+   */
   mean(now: number): SolarWindDrivers | null {
     this.prune(now);
     if (this.samples.length === 0) return null;
     const start = now - this.windowMs;
-    const acc = { bz: 0, by: 0, pdyn: 0, kp: 0 };
+    const acc = { bz: 0, by: 0, pdyn: 0 };
     let total = 0;
+    let kpSum = 0;
+    let kpWeight = 0;
     for (let i = 0; i < this.samples.length; i++) {
       const from = Math.max(this.samples[i].t, start);
       const to = i + 1 < this.samples.length ? this.samples[i + 1].t : now;
@@ -49,9 +56,16 @@ export class DriverAverager {
       if (w <= 0) continue;
       for (const k of KEYS) acc[k] += this.samples[i].d[k] * w;
       total += w;
+      const kp = this.samples[i].d.kp;
+      if (kp !== null) {
+        kpSum += kp * w;
+        kpWeight += w;
+      }
     }
-    if (total <= 0) return { ...this.samples[this.samples.length - 1].d };
-    return { bz: acc.bz / total, by: acc.by / total, pdyn: acc.pdyn / total, kp: acc.kp / total };
+    const latest = this.samples[this.samples.length - 1].d;
+    if (total <= 0) return { ...latest };
+    const kp = latest.kp === null || kpWeight <= 0 ? null : kpSum / kpWeight;
+    return { bz: acc.bz / total, by: acc.by / total, pdyn: acc.pdyn / total, kp };
   }
 
   /** Forget history (e.g. switching between live and simulated drivers). */
@@ -81,6 +95,12 @@ export interface RetraceThresholds {
   kp: number;
 }
 
+/** Kp moved by the threshold, or became known or unknown. */
+function kpMoved(previous: number | null, next: number | null, threshold: number): boolean {
+  if (previous === null || next === null) return previous !== next;
+  return Math.abs(next - previous) >= threshold;
+}
+
 /**
  * Changes below these are visually and physically insignificant for the model:
  * 0.75 nT in Bz moves the Shue standoff by < 0.1 Re around nominal conditions.
@@ -97,7 +117,7 @@ export function shouldRetrace(
     Math.abs(next.bz - previous.bz) >= th.bz ||
     Math.abs(next.by - previous.by) >= th.by ||
     Math.abs(next.pdyn - previous.pdyn) >= Math.max(th.pdynMin, th.pdynFraction * Math.abs(previous.pdyn)) ||
-    Math.abs(next.kp - previous.kp) >= th.kp
+    kpMoved(previous.kp, next.kp, th.kp)
   );
 }
 
