@@ -63,7 +63,7 @@ export async function createInvoice(env, account, fetchImpl = fetch) {
   return sendInvoice(env, account, { amount: account.quote, currency: CURRENCY, description, meta: { email: account.email, plan: tier.id } }, fetchImpl);
 }
 
-/** A department's yearly education licence, at the quote an admin approved, invoiced in pounds. */
+/** A department's yearly education licence, at the quote an admin approved, invoiced in dollars. */
 export const eduInvoiceable = (account) => account?.edu?.plan === "department" && Number.isInteger(account.edu.quote) && account.edu.quote > 0;
 export async function createEduInvoice(env, account, fetchImpl = fetch) {
   if (!eduInvoiceable(account)) throw new Error("No department licence quote on this account");
