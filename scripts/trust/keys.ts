@@ -9,8 +9,14 @@
  * private key is never printed. `check` validates the keyring and lists each key's state; it exits
  * 1 on a problem and warns when a purpose has no current key (the release check runs it).
  *
+ *   npm run trust:keys -- lock --key <key file> --touch-id [--owner <name>] [--out <locked file>] [--remove-plain]
  *   npm run trust:keys -- lock --key <key file> [--out <locked file>] [--remove-plain] [--pattern-tty]
+ *   npm run trust:keys -- new --touch-id [--owner <name>] --out <locked file> --purpose ...
  *   npm run trust:keys -- new --lock --out <locked file> --purpose ... [--pattern-tty]
+ *
+ * `--touch-id` locks the key to its owner's fingerprint through this Mac's Secure Enclave
+ * (backend/trust/touch-id-lock.ts): one touch confirms the lock, and each signing asks for one.
+ * Each person makes their own keys on their own Mac (--owner, default the login name).
  *
  * `lock` locks a key file under a geometry pattern (backend/trust/key-lock.ts): drawn twice in a
  * one-time page with the rotating tesseract, or typed as vertex letters with --pattern-tty and over
@@ -20,8 +26,10 @@
 import { generateKeyPairSync, randomBytes, type KeyObject } from "node:crypto";
 import { closeSync, fsyncSync, mkdirSync, openSync, readFileSync, realpathSync, statSync, unlinkSync, writeFileSync, writeSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { userInfo } from "node:os";
 import { fileURLToPath } from "node:url";
 import { lockKey, unlockKey, writeLockedKey, type LockedKey } from "../../backend/trust/key-lock.js";
+import { lockKeyToEnclave, macEnclave, unlockKeyWithEnclave, type TouchIdLockedKey } from "../../backend/trust/touch-id-lock.js";
 import { patternPrompt } from "../../backend/trust/pattern-page.js";
 import { KEY_PURPOSES, keyIdOf, keyringEntry, keyStatus, loadSigningKey, parseKeyring, PUBLISHED_KEYRING_PATH, type KeyPurpose } from "../../backend/trust/signing.js";
 
@@ -36,6 +44,20 @@ const fail = (message: string): never => {
   process.exit(1);
 };
 const terminal = args.includes("--pattern-tty");
+const touchId = args.includes("--touch-id");
+
+/** Lock `key` to a new Touch ID key in this Mac's Secure Enclave, and check that it unlocks (one touch). */
+function lockWithTouchId(key: KeyObject): TouchIdLockedKey {
+  try {
+    const enclave = macEnclave();
+    const locked = lockKeyToEnclave(key, opt("--owner") ?? userInfo().username, enclave.create());
+    console.error("Touch the sensor to check the lock.");
+    if (keyIdOf(unlockKeyWithEnclave(locked, enclave)) !== keyIdOf(key)) return fail("not locked: the check gave back another key");
+    return locked;
+  } catch (e) {
+    return fail(`not locked: ${(e as Error).message}`);
+  }
+}
 
 /** Ask for a new pattern (twice) and lock `key` under it, checking that it unlocks. */
 async function lockWithPattern(key: KeyObject): Promise<LockedKey> {
@@ -58,7 +80,7 @@ if (args[0] === "new") {
   const out = opt("--out");
   const purpose = opt("--purpose") as KeyPurpose | undefined;
   if (!out || !purpose || !KEY_PURPOSES.includes(purpose)) {
-    console.error(`usage: npm run trust:keys -- new --out <file outside the repo> --purpose ${KEY_PURPOSES.join("|")} [--note <text>] [--lock [--pattern-tty]]`);
+    console.error(`usage: npm run trust:keys -- new --out <file outside the repo> --purpose ${KEY_PURPOSES.join("|")} [--note <text>] [--touch-id [--owner <name>] | --lock [--pattern-tty]]`);
     process.exit(2);
   }
   const inRepo = (p: string) => {
@@ -70,7 +92,7 @@ if (args[0] === "new") {
   mkdirSync(dirname(target), { recursive: true, mode: 0o700 });
   if (inRepo(join(realpathSync(dirname(target)), basename(target)))) fail(`${out} is inside the repository: keep signing keys outside it`);
   const { privateKey } = generateKeyPairSync("ed25519");
-  const locked = args.includes("--lock") ? await lockWithPattern(privateKey) : undefined;
+  const locked = touchId ? lockWithTouchId(privateKey) : args.includes("--lock") ? await lockWithPattern(privateKey) : undefined;
   try {
     if (locked) writeLockedKey(target, locked);
     else writeFileSync(target, privateKey.export({ format: "pem", type: "pkcs8" }), { mode: 0o600, flag: "wx" });
@@ -79,13 +101,13 @@ if (args[0] === "new") {
   }
   console.log(JSON.stringify(keyringEntry(privateKey, [purpose], Date.now(), opt("--note")), null, 2));
   console.error(
-    `Private key written to ${target} (mode 600${locked ? ", locked under your pattern" : ""}; never commit, copy into chat or paste it anywhere). ` +
+    `Private key written to ${target} (mode 600${locked ? (touchId ? ", locked to your fingerprint" : ", locked under your pattern") : ""}; never commit, copy into chat or paste it anywhere). ` +
       "Add the entry above to backend/trust/signing-keys.json and commit it, then set retiredAt on the key it replaces.",
   );
 } else if (args[0] === "lock") {
   const keyPath = opt("--key");
   if (!keyPath) {
-    console.error("usage: npm run trust:keys -- lock --key <key file> [--out <locked file>] [--remove-plain] [--pattern-tty]");
+    console.error("usage: npm run trust:keys -- lock --key <key file> [--touch-id [--owner <name>] | --pattern-tty] [--out <locked file>] [--remove-plain]");
     process.exit(2);
   }
   const key = (() => {
@@ -98,7 +120,7 @@ if (args[0] === "new") {
   const target = resolve(opt("--out") ?? `${keyPath}.locked`);
   const rel = relative(root, target);
   if (!rel.startsWith("..") && !isAbsolute(rel)) fail(`${target} is inside the repository: keep signing keys outside it`);
-  const locked = await lockWithPattern(key);
+  const locked = touchId ? lockWithTouchId(key) : await lockWithPattern(key);
   try {
     writeLockedKey(target, locked);
   } catch {
@@ -134,7 +156,7 @@ if (args[0] === "new") {
   console.log(`${path}: OK, ${keyring.keys.length} key(s)`);
 } else {
   console.error(`usage: npm run trust:keys -- new --out <file outside the repo> --purpose ${KEY_PURPOSES.join("|")} [--note <text>]`);
-  console.error("       npm run trust:keys -- lock --key <key file> [--out <locked file>] [--remove-plain] [--pattern-tty]");
+  console.error("       npm run trust:keys -- lock --key <key file> [--touch-id [--owner <name>] | --pattern-tty] [--out <locked file>] [--remove-plain]");
   console.error("       npm run trust:keys -- check [--keyring <file>]");
   process.exit(2);
 }

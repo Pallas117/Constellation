@@ -8,7 +8,8 @@
  * SBOM) gets a detached signature next to it, `<artifact>.sig.json`. The key must be in the
  * keyring (default: the published backend/trust/signing-keys.json), current and meant for that
  * use; its file must be outside the repository and readable only by its owner. Every signature is
- * checked against the keyring before it is written. A key locked under a geometry pattern
+ * checked against the keyring before it is written. A key locked to its owner's fingerprint
+ * (`trust:keys lock --touch-id`) asks for one touch. A key locked under a geometry pattern
  * (`trust:keys lock`) asks for it in a one-time page on this Mac, or with `--pattern-tty` (and
  * over SSH) as vertex letters in the terminal.
  */

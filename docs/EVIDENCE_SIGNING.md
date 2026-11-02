@@ -57,9 +57,24 @@ Container images are not built yet (GAU-68); signing them is a follow-up.
 - One key per purpose: `evidence-pack` and `release-artifact`. The signed statement carries its type, so a release signature can never pass as a pack signature, and the keyring says what each key may sign.
 - The private key is a PKCS#8 PEM file outside any repository, for example `~/.config/gauss/keys/`, in a directory only its owner can open (700), with the file at mode 600, on a disk with FileVault on. The tools refuse a key file inside the repository or one other users can read, and never overwrite one. `.gitignore` ignores `*.pem` and `*.key`.
 - Never put a private key in the repository, `.env*` files, environment variables, logs, URLs, chat or agent transcripts, cloud drives or the tailnet mesh folder. The keyring check refuses any private key material, and `npm run security:secrets` flags it in staged changes.
-- Agents must not open, print or copy the key file. This is a rule, not a technical control: the agents run as the same user. With the key locked (below), an agent cannot sign without the owner drawing the pattern, which is the point.
-- Lock each key under a geometry pattern (next section). Then a copy of the file alone is not enough to sign. The lock adds to the file mode and FileVault; a hardware-backed key (YubiKey or HSM) is still the stronger option and a follow-up, and Node's crypto cannot use one directly.
-- Backup: none. A lost key is not a disaster: make a new one and retire the old one. Packs it signed keep verifying. Josh chose (2026-11-02) to lock the key file under a geometry pattern rather than keep copies. A forgotten pattern is the same as a lost key.
+- Agents must not open, print or copy the key file. This is a rule, not a technical control: the agents run as the same user. With the key locked (below), an agent cannot sign without its owner's finger or pattern, which is the point.
+- Each person signs with their own keys, made on their own Mac and locked to their own fingerprint (next section). The keyring lists everyone's public keys with their names, so a signature's key id says who signed. Keys are never copied between people or Macs.
+- Where there is no Touch ID (over SSH, or a Mac without it), lock the key under a geometry pattern instead (the section after). Either way a copy of the file alone is not enough to sign. A YubiKey or HSM is still the stronger option and a follow-up; Node's crypto cannot use one directly.
+- Backup: none. A lost key is not a disaster: make a new one and retire the old one. Packs it signed keep verifying. Josh chose (2026-11-02) to lock keys rather than keep copies. A Mac that is lost or wiped, a changed set of fingerprints, or a forgotten pattern is the same as a lost key.
+
+## Lock a key to your fingerprint (Touch ID)
+
+Josh, 2026-11-02: tie signing to biometrics, so each person has their own. The key is locked to a key in the Mac's Secure Enclave that only works after a fingerprint enrolled on that Mac when it was made.
+
+```bash
+npm run trust:keys -- lock --key ~/.config/gauss/keys/evidence-2026-11.pem --touch-id --remove-plain
+npm run trust:keys -- new --touch-id --owner "Merve" --out ~/.config/gauss/keys/evidence-merve.locked --purpose evidence-pack --note "Merve's evidence key"
+```
+
+- `lock --touch-id` locks an existing key; `new --touch-id` makes one that is never stored unlocked. Both ask for one touch to check the lock before anything is deleted. `--owner` defaults to the login name.
+- Signing (`trust:sign`, `trust:ingest --sign-key`) asks for one touch. Touch ID needs you at the Mac: it does not work over SSH, so sign at the Mac or use a pattern-locked key there.
+- How it works: an ephemeral P-256 key agrees a secret with the enclave key (ECDH); HKDF-SHA256 and AES-256-GCM seal the signing key with it, with the file's header bound in. To unlock, the enclave gives the same secret only after Touch ID (`scripts/trust/secure-enclave.swift`, built on first use with the Command Line Tools). Every lock uses a fresh ephemeral key, so no two files share a secret, and the enclave key cannot be read out or used on another Mac.
+- The enclave key is tied to the fingerprints enrolled when it was made: adding or removing a fingerprint retires it for good (make a new signing key and retire the old one). That stops anyone from adding their own finger to your Mac to sign as you.
 
 ## Lock a key under a geometry pattern
 

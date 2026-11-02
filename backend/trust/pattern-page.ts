@@ -4,7 +4,7 @@
  * letters from the terminal without echoing them (or from piped stdin, for scripts and tests).
  *
  * The page listens on 127.0.0.1 only, on a random port, and closes after an accepted pattern,
- * five misses or three minutes. It answers only requests whose Host is its own address (against
+ * five misses, or three minutes (ten to lock: you draw twice), saying why. It answers only requests whose Host is its own address (against
  * DNS rebinding), takes a pattern only from its own origin with the nonce it put in the page, and
  * puts nothing secret in a URL. Each time it opens, the figure starts in a new orientation, so the
  * drawn shape differs while the vertices, and so the pattern, stay the same.
@@ -96,11 +96,13 @@ export async function startPatternPage(attempt: (pattern: number[]) => boolean, 
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const port = (server.address() as AddressInfo).port;
   const origin = `http://127.0.0.1:${port}`;
-  const timer = setTimeout(() => finish(false), options.timeoutMs ?? 180_000);
+  // Locking means drawing twice, so it gets longer than unlocking.
+  const timer = setTimeout(() => finish(false, "time ran out"), options.timeoutMs ?? (mode === "lock" ? 600_000 : 180_000));
 
-  function finish(ok: boolean) {
+  function finish(ok: boolean, why?: string) {
     if (finished) return;
     finished = true;
+    if (!ok && why) console.error(`The pattern page closed: ${why}.`);
     clearTimeout(timer);
     server.close();
     server.closeAllConnections();
@@ -134,13 +136,13 @@ export async function startPatternPage(attempt: (pattern: number[]) => boolean, 
     if (attempt(body.pattern)) return reply(res, { ok: true, done: true, message: mode === "lock" ? "Locked." : "Unlocked." }, () => finish(true));
     misses++;
     const left = maxMisses - misses;
-    if (left <= 0) return reply(res, { ok: false, done: true, message: "Too many misses: this page is closed." }, () => finish(false));
+    if (left <= 0) return reply(res, { ok: false, done: true, message: "Too many misses: this page is closed." }, () => finish(false, `${maxMisses} misses`));
     return reply(res, { ok: false, left, message: mode === "lock" ? "Not locked." : `No match. ${left} ${left === 1 ? "try" : "tries"} left.` });
   }
 
   const url = `${origin}/`;
   (options.open ?? openInBrowser)(url);
-  return { url, done, close: () => finish(false) };
+  return { url, done, close: () => finish(false, "closed by the tool") };
 }
 
 function openInBrowser(url: string) {

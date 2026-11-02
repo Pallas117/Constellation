@@ -13,6 +13,7 @@
 import { createCipheriv, createDecipheriv, createPrivateKey, randomBytes, scryptSync, type KeyObject } from "node:crypto";
 import { writeFileSync } from "node:fs";
 import { keyIdOf, parseSigningKey, readSigningKeyFile } from "./signing.js";
+import { macEnclave, parseTouchIdLockedKey, unlockKeyWithEnclave, type Enclave, type TouchIdLockedKey } from "./touch-id-lock.js";
 
 export const LOCKED_KEY_SCHEMA = "gauss.locked-signing-key/0.1" as const;
 export const FIGURE = "tesseract-16" as const;
@@ -160,7 +161,7 @@ export function parseLockedKey(bytes: Buffer): LockedKey | null {
 }
 
 /** Write `locked` to `path` (mode 600, never over an existing file). */
-export function writeLockedKey(path: string, locked: LockedKey): void {
+export function writeLockedKey(path: string, locked: LockedKey | TouchIdLockedKey): void {
   writeFileSync(path, JSON.stringify(locked, null, 2) + "\n", { mode: 0o600, flag: "wx" });
 }
 
@@ -171,16 +172,23 @@ export function writeLockedKey(path: string, locked: LockedKey): void {
 export type PatternPrompt = (attempt: (pattern: number[]) => boolean) => Promise<boolean>;
 
 /**
- * The private key in `path`, asking `prompt` for the pattern when the file is locked. The file
- * checks are readSigningKeyFile's; an unlocked PEM file needs no prompt.
+ * The private key in `path`: a Touch ID locked file asks `enclave` (default: this Mac's Secure
+ * Enclave), a pattern-locked one asks `prompt`, and an unlocked PEM file needs neither. The file
+ * checks are readSigningKeyFile's.
  */
-export async function openSigningKey(path: string, repoRoot: string, prompt: PatternPrompt): Promise<KeyObject> {
+export async function openSigningKey(path: string, repoRoot: string, prompt: PatternPrompt, enclave?: Enclave): Promise<KeyObject> {
   const bytes = readSigningKeyFile(path, repoRoot);
+  let touch: TouchIdLockedKey | null;
   let locked: LockedKey | null;
   try {
-    locked = parseLockedKey(bytes);
+    touch = parseTouchIdLockedKey(bytes);
+    locked = touch ? null : parseLockedKey(bytes);
   } catch (e) {
     throw new Error(`${path}: ${(e as Error).message}`, { cause: e });
+  }
+  if (touch) {
+    console.error(`Touch ID: unlocking ${touch.keyId} (${touch.owner})`);
+    return unlockKeyWithEnclave(touch, enclave ?? macEnclave());
   }
   if (!locked) return parseSigningKey(bytes, path);
   const lockedKey = locked;

@@ -14,8 +14,9 @@ Source: a sweep of main for crypto calls (`createHash`, `createHmac`, `randomByt
 | PKCS#8 and SPKI PEM encoding | `backend/trust/signing.ts`, `scripts/trust/keys.ts` | Store the private key (file mode 600, outside the repository) and publish the public key | Key management (encoding only) |
 | scrypt (RFC 7914) and AES-256-GCM, Node `crypto` | `backend/trust/key-lock.ts` | Lock the private signing key at rest under its owner's geometry pattern; only the 48-byte key is sealed | Key management for signing (protects the key) |
 | Random bytes (CSPRNG), constant-time compare | `backend/trust/pattern-page.ts` | One-time nonce of the local pattern page | Authentication of the page's own requests |
+| ECDH P-256 with a Secure Enclave key (Apple CryptoKit), HKDF-SHA256, AES-256-GCM | `backend/trust/touch-id-lock.ts`, `scripts/trust/secure-enclave.swift` | Lock the private signing key to its owner's fingerprint (Touch ID) on their Mac; only the 48-byte key is sealed | Key management for signing (protects the key) |
 
-No encryption of data and no key exchange. The only thing encrypted is the signing key itself, when its owner locks it. See [EVIDENCE_SIGNING.md](EVIDENCE_SIGNING.md).
+No encryption of data. The only thing encrypted is the signing key itself, when its owner locks it; the only key agreement is the one that locks it to the Secure Enclave. See [EVIDENCE_SIGNING.md](EVIDENCE_SIGNING.md).
 
 ## Evidence packs and trust records (GAU-60, GAU-66)
 
