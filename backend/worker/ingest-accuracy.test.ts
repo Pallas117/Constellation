@@ -4,7 +4,9 @@ import { fetchNoaaReadout } from "../adapters/noaa-swpc.js";
 import type { L1Sample } from "../adapters/rtsw-series.js";
 import { vec } from "../physics/coordinates.js";
 import { withFreshness } from "../lib/freshness.js";
-import type { CanonicalSpaceWeatherPoint } from "../types.js";
+import { decodeCanonicalPoint, encodeCanonicalPoint } from "../lib/proto.js";
+import type { CanonicalSpaceWeatherPoint, IngestionTickResult } from "../types.js";
+import { observationsFromCanonical } from "../world/build.js";
 import { IngestionWorker, NOAA_MAX_AGE_MS } from "./ingest-loop.js";
 
 type Route = (url: string) => unknown;
@@ -67,7 +69,7 @@ type Tickable = {
   noaa: unknown;
   l1Series: L1Sample[];
   lastFetch: Map<string, number>;
-  tick: () => Promise<{ canonicalPoint: CanonicalSpaceWeatherPoint }>;
+  tick: () => Promise<{ canonicalPoint: CanonicalSpaceWeatherPoint; auroraMap: IngestionTickResult["auroraMap"] }>;
 };
 
 function quietWorker(): Tickable {
@@ -217,4 +219,41 @@ test("ingest: a velocity assumed from the speed, or a locally rotated field, is 
     worker.noaa = readout(60_000, -3);
     assert.deepEqual((await worker.tick()).canonicalPoint.derived, [], "measured as published: nothing derived");
   });
+});
+
+test("ingest: a tick with no Kp from any source carries kp null end to end, never a default 2 (GAU-230)", async () => {
+  // Cold start: no NOAA readout, no Kp reading ever, no previous point. Nothing is fetched.
+  const worker = quietWorker();
+  await withFetch(() => undefined, async () => {
+    const { canonicalPoint: p, auroraMap } = await worker.tick();
+    assert.equal(p.indices.kp, null, "unknown, not 2");
+    assert.equal(p.indices.kpKind, undefined);
+    assert.equal(p.alerts.geomagnetic?.label, "G?");
+    assert.equal(p.alerts.geomagnetic?.level, null);
+    assert.equal(p.alerts.stormTier, "quiet", "nothing measured, nothing escalated");
+    assert.equal(auroraMap, null, "no Kp-placed aurora grid without Kp");
+    assert.ok(!observationsFromCanonical(p).some((o) => o.variable === "kp"), "no kp observation");
+
+    // The protobuf feed keeps it absent: it must not decode as 0.
+    const decoded = await decodeCanonicalPoint(await encodeCanonicalPoint(p));
+    assert.equal("kp" in (decoded.indices as object), false);
+
+    // A second tick carries the unknown forward, still null.
+    assert.equal((await worker.tick()).canonicalPoint.indices.kp, null);
+  });
+
+  // L1 measured with strong southward IMF (GSM Bz -15 nT) but no Kp on the readout: the tier
+  // comes from the IMF and coupling alone. The same readout with Kp 6 is severe.
+  const tierFor = async (kp: number | null) => {
+    const w = quietWorker();
+    return withFetch(() => undefined, async () => {
+      w.noaa = { ...readout(60_000, -15), kp };
+      return (await w.tick()).canonicalPoint;
+    });
+  };
+  const withoutKp = await tierFor(null);
+  assert.equal(withoutKp.indices.kp, null);
+  assert.equal(withoutKp.alerts.geomagnetic?.label, "G?");
+  assert.notEqual(withoutKp.alerts.stormTier, "severe", "an unknown Kp is not a geomagnetic response");
+  assert.equal((await tierFor(6)).alerts.stormTier, "severe");
 });

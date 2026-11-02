@@ -2,7 +2,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { DriverAverager, damp, shouldRetrace } from './driver-smoothing.ts';
 
-const d = (bz: number, pdyn = 2, kp = 2, by = 0) => ({ bz, by, pdyn, kp });
+const d = (bz: number, pdyn = 2, kp: number | null = 2, by = 0) => ({ bz, by, pdyn, kp });
 const MIN = 60_000;
 
 describe('DriverAverager', () => {
@@ -44,6 +44,29 @@ describe('DriverAverager', () => {
     a.push(0, d(1));
     a.push(0, d(3));
     assert.equal(a.mean(0)!.bz, 3);
+  });
+});
+
+describe('unknown Kp (GAU-230)', () => {
+  it('keeps the field drivers and leaves Kp null, never averaging it in as 0', () => {
+    const a = new DriverAverager(5 * MIN);
+    a.push(0, d(-4, 2, null));
+    assert.deepEqual(a.mean(MIN), d(-4, 2, null), 'a sample without Kp is still a sample');
+    a.push(4 * MIN, d(-6, 2, 3));
+    const m = a.mean(5 * MIN)!;
+    assert.equal(m.kp, 3, 'Kp averages only the samples that had one');
+    assert.ok(Math.abs(m.bz - -4.4) < 1e-9, `bz ${m.bz}`);
+    a.push(6 * MIN, d(-6, 2, null));
+    assert.equal(a.mean(7 * MIN)!.kp, null, 'Kp that became unknown is not carried as an old value');
+  });
+
+  it('ignores a NaN Kp sample and retraces when Kp becomes known or unknown', () => {
+    const a = new DriverAverager();
+    a.push(0, d(1, 2, Number.NaN));
+    assert.equal(a.mean(0), null);
+    assert.equal(shouldRetrace(d(0, 2, null), d(0, 2, null)), false);
+    assert.equal(shouldRetrace(d(0, 2, null), d(0, 2, 2)), true);
+    assert.equal(shouldRetrace(d(0, 2, 2), d(0, 2, null)), true);
   });
 });
 

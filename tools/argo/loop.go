@@ -119,6 +119,9 @@ type Loop struct {
 	Fx      Effects
 	Out     func(string) // foreground output; nil in the LaunchAgent
 	Pushers []func(State)
+	// AppWatch turns on the app data watch (leak.go); only the real agent sets it, so tests
+	// never run lsof or nettop.
+	AppWatch bool
 }
 
 func (l Loop) say(format string, args ...any) {
@@ -128,6 +131,9 @@ func (l Loop) say(format string, args ...any) {
 }
 
 func (l Loop) Tick(ctx context.Context) State {
+	if l.AppWatch {
+		l.leakWatch(ctx)
+	}
 	st := l.Store.Load()
 	snap := l.Prober.Probe(ctx)
 	class, reason := Classify(snap)
