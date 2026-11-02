@@ -86,6 +86,9 @@ type Effects interface {
 	Notify(title, msg string)
 	Open(url string) error
 	Run(name string, args ...string) error // only the Wi-Fi shield's warp-cli connect/disconnect
+	// NotifyOffline texts while this Mac has no network, through the iPhone's SMS relay (GAU-233);
+	// true when Messages accepted it.
+	NotifyOffline(title, msg string) bool
 	Sleep(d time.Duration)
 	Now() time.Time
 }
@@ -108,6 +111,10 @@ func (realEffects) Run(name string, args ...string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 	return exec.CommandContext(ctx, name, args...).Run()
+}
+func (f realEffects) NotifyOffline(title, msg string) bool {
+	desktopNotify(title, msg)
+	return f.phone != nil && f.phone.SendRelay(title, msg, time.Now())
 }
 func (realEffects) Sleep(d time.Duration) { time.Sleep(d) }
 func (realEffects) Now() time.Time        { return time.Now() }
@@ -191,6 +198,7 @@ func (l Loop) Tick(ctx context.Context) State {
 		// one outage: keep its start, attempts and backoff, and don't text again for it.
 		if !flip {
 			st.IncidentAt, st.Attempts, st.LastFix, st.IncidentFP = now, 0, "", fp
+			st.OfflineTold = false
 			st.Notified, st.NotifyDue = false, time.Time{}
 		}
 		switch quiet := st.Networks[fp].quietFor(class); {
@@ -209,6 +217,20 @@ func (l Loop) Tick(ctx context.Context) State {
 		l.Fx.Notify("Argo: "+string(class), fmt.Sprintf("%s for %s, longer than usual on this network (it usually clears in %s).\n%s",
 			reason, now.Sub(st.IncidentAt).Round(time.Minute), p50.Round(time.Second), st.Net.Line()))
 		st.Notified = true
+	}
+
+	// GAU-233: an outage lasting offlineTellAfter is texted once through the iPhone's SMS relay
+	// (Continuity), which needs no internet on the Mac, only the phone's own cellular.
+	if class == Offline && !st.OfflineTold && now.Sub(st.IncidentAt) >= offlineTellAfter {
+		st.OfflineTold = true
+		ok := l.Fx.NotifyOffline("Argo: Mac offline", fmt.Sprintf("No network since %s (%s). Argo is retrying Wi-Fi by itself; you'll get a text when it's back. If the hotspot is off, turn it on.",
+			st.IncidentAt.Local().Format("15:04"), now.Sub(st.IncidentAt).Round(time.Minute)))
+		detail := "queued (relay not accepted)"
+		if ok {
+			detail = "sent through the iPhone relay"
+		}
+		_ = l.Store.Append(Incident{Time: now, Event: "relay", Class: class, Fingerprint: fp, Detail: detail})
+		l.say("offline alert: %s", detail)
 	}
 
 	if now.Before(st.BreakerUntil) {

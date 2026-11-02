@@ -21,6 +21,7 @@ const (
 	offlineRejoinAfter = 90 * time.Second // a network switch looks offline for a few seconds; don't reset during one
 	wifiCycleGap       = 3 * time.Second
 	wifiRejoinSettle   = 20 * time.Second
+	offlineTellAfter   = 5 * time.Minute // GAU-233: long enough not to text for a network switch
 )
 
 var (
