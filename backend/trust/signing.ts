@@ -160,24 +160,36 @@ export function keyStatus(key: KeyringEntry, atMs = Date.now()): "current" | "re
 }
 
 /**
- * The private key in `path`, refusing a file inside the repository (it could be committed) or
- * one other users can read. Errors name the file, never its contents.
+ * The bytes of the key file `path`, refusing a file inside the repository (it could be committed)
+ * or one other users can read. Errors name the file, never its contents.
  */
-export function loadSigningKey(path: string, repoRoot: string): KeyObject {
+export function readSigningKeyFile(path: string, repoRoot: string): Buffer {
   const real = realpathSync(path);
   const inRepo = relative(realpathSync(repoRoot), real);
   if (!inRepo.startsWith("..") && !isAbsolute(inRepo)) throw new Error(`${path} is inside the repository: keep signing keys outside it (docs/EVIDENCE_SIGNING.md)`);
   const stat = statSync(real);
   if (!stat.isFile()) throw new Error(`${path} is not a file`);
   if (stat.mode & 0o077) throw new Error(`${path} can be read by other users (mode ${(stat.mode & 0o777).toString(8)}): chmod 600 it`);
+  return readFileSync(real);
+}
+
+/** An Ed25519 private key from PEM bytes read by readSigningKeyFile. */
+export function parseSigningKey(bytes: Buffer, path: string): KeyObject {
+  // A geometry-locked key file is JSON (backend/trust/key-lock.ts); the signing tools unlock it.
+  if (bytes[0] === 0x7b) throw new Error(`${path} is locked under a geometry pattern: use the trust tools, which ask for the pattern`);
   let key: KeyObject;
   try {
-    key = createPrivateKey(readFileSync(real));
+    key = createPrivateKey(bytes);
   } catch {
     throw new Error(`${path} is not an unencrypted PEM private key`);
   }
   if (key.asymmetricKeyType !== "ed25519") throw new Error(`${path} is not an Ed25519 key`);
   return key;
+}
+
+/** The unlocked private key in `path` (see readSigningKeyFile for the checks). */
+export function loadSigningKey(path: string, repoRoot: string): KeyObject {
+  return parseSigningKey(readSigningKeyFile(path, repoRoot), path);
 }
 
 /** The keyring entry for `privateKey`, if it may sign `purpose` at `atMs`. */
