@@ -548,3 +548,13 @@ test("press: quotable facts and story angles, honest limits, a contact route, li
   assert.doesNotMatch(text(press), /consultancy|defen[cs]e/i, "nothing that hints at what Turnstone does");
   assert.match(html["/gauss/"], /href="\/press\/"/, "reachable from the Gauss page");
 });
+
+test("home: origins show where the names come from, with linked sources and no invented family detail", () => {
+  const home = readFileSync(new URL("../public/index.html", import.meta.url), "utf8");
+  const origins = home.match(/<section id="origins"[\s\S]*?<\/section>/)?.[0] ?? "";
+  assert.equal((origins.match(/<li data-k=/g) ?? []).length, 3);
+  assert.match(origins, /1801 · PALERMO[\s\S]*1802 · BREMEN[\s\S]*1939&ndash;1945/);
+  for (const a of origins.match(/<a href="https:[^>]+>/g) ?? []) assert.match(a, /rel="noopener noreferrer"/);
+  assert.match(origins, /href="\/press\/#names"/);
+  assert.doesNotMatch(origins, /dwarf planet|invented|Piazzi Smyth/i, "Pallas is not a dwarf planet; Gauss did not invent elimination");
+});
