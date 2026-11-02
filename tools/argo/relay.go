@@ -654,7 +654,9 @@ func (r *Relay) upload(ctx context.Context, st *relayState, now time.Time, rep *
 			st.Hub.record(true, now)
 			it.State, it.CheckedAt, it.Attempts = stateAtHub, now, 0
 			it.Uploads++
-			rep.Uploaded++
+			if it.Offer == "" { // link key offers are plumbing, not something the user sent
+				rep.Uploaded++
+			}
 		case errors.Is(err, errHubRefused):
 			reached = true
 			it.State, it.Done = stateRefused, now
