@@ -157,9 +157,14 @@ const MeshDashboard = () => {
               tailnet. Exit traffic is only ever allowed through Malaysia or Singapore.
             </p>
           </div>
-          <Button asChild variant="outline">
-            {canSeeTeam ? <Link to="/operator">Back to operator console</Link> : <Link to="/">Live visualisation</Link>}
-          </Button>
+          <div className="flex gap-2">
+            <Button asChild variant="outline">
+              <Link to="/garden">Cosmic Garden</Link>
+            </Button>
+            <Button asChild variant="outline">
+              {canSeeTeam ? <Link to="/operator">Back to operator console</Link> : <Link to="/">Live visualisation</Link>}
+            </Button>
+          </div>
         </div>
       </section>
 

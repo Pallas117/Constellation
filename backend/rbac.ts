@@ -52,6 +52,10 @@ export const API_POLICY: ReadonlyArray<{ method: string; path: string; access: A
   { method: "POST", path: "/mesh/devices", access: "staff" },
   { method: "DELETE", path: "/mesh/devices/:name", access: "staff" },
 
+  // Staff: the Cosmic Garden graph; the route filters notes by role (backend/memory/garden.ts)
+  { method: "GET", path: "/garden/graph", access: "staff" },
+  { method: "GET", path: "/garden/note", access: "staff" },
+
   // Organisation self-service; the router checks membership (operators may read usage)
   { method: "GET", path: "/orgs/mine", access: "user" },
   { method: "POST", path: "/orgs/:orgId/keys", access: "user" },
