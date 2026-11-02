@@ -1,6 +1,6 @@
 # Argo delay-tolerant networking (GAU-193)
 
-Status: shipped in PR #153 (main 417eece, 2026-10-24); the hub routes reach live with the next deploy. RFC 9173 interop is in review as PR #158.
+Status: shipped in PR #153 (main 417eece, 2026-10-24); the hub routes reach live with the next deploy. RFC 9173's contexts came in PR #158; link keys (GAU-199) now use them on the relay between devices that know each other.
 Decisions (Josh, 2026-10-23):
 - Argo stays "Included" for operators and staff, with no price (the 22 Oct decision).
 - The shared internet relay is designed here and shows as "in development" on the site until counsel signs off
@@ -38,7 +38,8 @@ relayed images to the ISS via LCRD in 2024
 | CBOR codec (deterministic encoding, hard limits) | `tools/argo/cbor.go` | [RFC 8949](https://www.rfc-editor.org/rfc/rfc8949) |
 | Bundles, CRC-16/X-25 and CRC-32C, EIDs, status reports | `tools/argo/bundle.go` | [RFC 9171](https://www.rfc-editor.org/rfc/rfc9171) (BPv7) |
 | Integrity and confidentiality blocks | `tools/argo/bpsec.go` | BPSec layout ([RFC 9172](https://www.rfc-editor.org/rfc/rfc9172)), HPKE ([RFC 9180](https://www.rfc-editor.org/rfc/rfc9180)), Ed25519 ([RFC 8032](https://www.rfc-editor.org/rfc/rfc8032)) |
-| Standard BPSec blocks for interop (library only) | `tools/argo/bpsec9173.go`, `aeskw.go` | [RFC 9172](https://www.rfc-editor.org/rfc/rfc9172), [RFC 9173](https://www.rfc-editor.org/rfc/rfc9173), AES key wrap ([RFC 3394](https://www.rfc-editor.org/rfc/rfc3394)) |
+| Standard BPSec blocks (used by link keys; interop) | `tools/argo/bpsec9173.go`, `aeskw.go` | [RFC 9172](https://www.rfc-editor.org/rfc/rfc9172), [RFC 9173](https://www.rfc-editor.org/rfc/rfc9173), AES key wrap ([RFC 3394](https://www.rfc-editor.org/rfc/rfc3394)) |
+| Link keys: a fast path per pair of devices | `tools/argo/linkkeys.go` | RFC 9173 contexts, HKDF ([RFC 5869](https://www.rfc-editor.org/rfc/rfc5869)) |
 | Store-and-forward agent | `tools/argo/relay.go`, `relay_cmd.go` | |
 | Hub convergence layer | `tools/argo/hub.go` ↔ `backend/mesh/bundles.ts`, `router.ts` | HTTP (no IETF HTTP CL exists; dtn7-rs has a non-standard one) |
 | Link stability | `tools/argo/linkstats.go` | A = MTBF/(MTBF+MTTR) |
@@ -92,8 +93,8 @@ five groups of four hex digits. It is the same code in `argo keys` and on `/mesh
 ### Interoperability (RFC 9173)
 
 `tools/argo/bpsec9173.go` adds the standard BPSec blocks with RFC 9173's default security contexts, for nodes such
-as NASA HDTN, dtn7-rs and ION that use pre-placed symmetric keys (GAU-199). It is a library: the relay still uses
-blocks 192/193, and no command or key file uses it yet.
+as NASA HDTN, dtn7-rs and ION that use pre-placed symmetric keys (GAU-199). The relay uses it for link keys
+(next section); no command speaks it to non-Argo nodes yet.
 
 - **Supported:**
   - BIB (type 11) with BIB-HMAC-SHA2 (context 1): HMAC 256/256, 384/384 (default) and 512/512.
@@ -115,6 +116,69 @@ blocks 192/193, and no command or key file uses it yet.
   - HMAC keys from 16 bytes up to the hash size are accepted: §3.5 asks for the full hash size, but every
     Appendix A example uses a 16-byte key.
 - **UNVERIFIED:** live interoperability with HDTN, dtn7-rs or ION. Only the RFC's own examples have been checked.
+
+### Link keys: RFC 9173 between devices that know each other
+
+Node security (blocks 192/193) costs a fresh ML-KEM-768 + X25519 encapsulation and an Ed25519 signature on every
+bundle: about 1.3 kB and a quarter of a millisecond, even for a 200-byte receipt. Once two devices have exchanged
+one bundle, `tools/argo/linkkeys.go` moves them to RFC 9173's symmetric contexts under a key only they share.
+
+- **Onboarding a link.** The first time a device sends to a peer, it makes a random 32-byte key for that
+  direction and sends it in an offer bundle (`dtn://peer/argo`, payload CBOR
+  `[1, "link-key", id, key, created, [ids of the peer's keys it holds]]`). The offer carries node security:
+  signed with Ed25519 and sealed with HPKE ML-KEM-768 + X25519. The sender keeps using node security until the
+  peer's receipt for the offer comes back, so the peer has stored the key before anything depends on it. The
+  peer offers its own key for the other direction the same way.
+- **Bundles under a link key.** Per context and direction, the key is stretched with HKDF-SHA256
+  (`info = "argo-link-1 bib|bcb FROM>TO"`), so no two uses share a key and a bundle can't be reflected to its
+  sender.
+
+  | Bundle | Blocks |
+  |---|---|
+  | File chunk | BIB (type 11) BIB-HMAC-SHA256 over the primary block, all scope flags; BCB (type 12) BCB-AES-256-GCM over the payload, all AAD scope flags (primary block, payload header, BCB header), random 12-byte IV |
+  | Receipt | BIB-HMAC-SHA256 over the primary block and the payload |
+
+  The BIB over the primary block also picks the key: the receiver tries the sender's keys whose lifetime covers
+  the bundle's creation time, newest first, at about a microsecond each, instead of trial-decrypting a 1 MiB
+  payload. Only this exact layout and these parameters are accepted, and a bundle never mixes link and node
+  blocks.
+- **Rotation.** A sender replaces its key after 7 days or 65,536 bundles, whichever comes first (random 96-bit
+  IVs allow 2^32 per key), and an offer not confirmed in 3 days. In between it falls back to node security. A
+  receiver keeps up to 16 keys per peer and drops each at its next sync after 37 days (7 days of use plus the
+  30-day maximum lifetime), so bundles in flight still open.
+- **Lost keys.** Each offer lists the peer's keys the offering device holds. A device that lost `links.key`
+  (keeping `node.key`) can't open the next link bundle; it refuses it and offers a fresh key with an empty list.
+  The peer drops its key, if it confirmed that key more than the 10-minute clock allowance before the offer was
+  made, and sends what is still in flight again as new bundles with node security (the hub keeps the old IDs as
+  delivered). A receipt that answers a duplicate always carries Ed25519, so a sender that lost its keys still gets
+  one. `argo keys trust` (a re-enrolled device) drops both directions' keys for that device.
+- **Storage.** `~/.config/argo/links.key` (0600), next to `node.key`, written before `relay.json` so nothing refers
+  to a key that isn't on disk. Use counts are in `relay.json`; outbox items record only a key's random id. Keys are
+  never logged or shown.
+
+What changes:
+- **Confidentiality stays post-quantum.** A link key only ever travels inside HPKE with ML-KEM-768 + X25519, and
+  AES-256 and HMAC-SHA-256 keep about 128-bit strength against Grover's search.
+- **Authenticity becomes pairwise.** A valid HMAC or GCM tag proves that one of the two devices made the bundle.
+  That is all the destination needs, but no third party can check it, and either device could have made it (no
+  non-repudiation). Ed25519 stays wherever a third party may have to check the source: offers, receipts that
+  answer a duplicate, and every bundle while no link key is confirmed. The hub never checked signatures; it reads
+  only the primary block.
+- **Cost** (`tools/argo/linkkeys_bench_test.go`, `-bench BundleSecurity -benchtime 300x`, Apple M1 with memory
+  at warn, one run, 2026-11-03; send = protect + encode, receive = parse + check + decrypt):
+
+  | Bundle | Node security: send / receive / bytes added | Link key: send / receive / bytes added |
+  |---|---|---|
+  | 256 B payload | 254 µs / 214 µs / 1,302 B | 6.3 µs / 7.6 µs / 129 B |
+  | 4 KiB | 264 µs / 222 µs / 1,302 B | 9.6 µs / 10.0 µs / 129 B |
+  | 64 KiB | 464 µs / 344 µs / 1,302 B | 51 µs / 45 µs / 129 B |
+  | 1 MiB (a full chunk) | 3.63 ms / 2.29 ms / 1,302 B | 0.67 ms / 0.50 ms / 129 B |
+  | Receipt | 35 µs / 76 µs / 100 B | 4.0 µs / 5.8 µs / 101 B |
+
+  A link bundle hashes its payload once (AES-GCM) instead of twice (Ed25519's SHA-512, then HPKE's AES-GCM), and
+  carries no ML-KEM ciphertext. Receipts get faster but not smaller: two HMAC-SHA-256 tags weigh what one Ed25519
+  signature does. Each pair's first exchange costs one offer and its receipt; in the 5-day simulation
+  (`sim_test.go`) that was 12 more hub uploads (184 against 172) and the same delivery, receipts and latency.
 
 ### Reliability: end to end, because BPv7 has no custody transfer
 
@@ -221,11 +285,15 @@ service. That is a decision for Josh and the reviewer. The site says "It isn't a
 | Carrier of a mule drive | Copy, drop or delay bundles | Read or alter them |
 | Holder of a stolen device token | Upload as that device (receivers refuse anything not signed with its key); publish keys for it **only if it never published any** | Replace an already published key (409); read anyone's files |
 | Compromised hub on first contact | Offer a wrong key for a device nobody has pinned yet (trust on first use) | Change a pinned key silently: Argo alerts and keeps the old one. Mitigation: compare fingerprints out of band |
+| Either device of a linked pair | Make bundles that look as if the other device sent them to it (it holds the pair's key) | Show them to anyone else as proof: link bundles carry no signature; use one to or from a third device |
+| Thief of `links.key` | Read and forge one pair's link bundles for the keys' remaining life (up to 37 days for kept receive keys) | Read node-sealed bundles or offers (they need `node.key`) |
 
 Not covered:
 - Traffic analysis.
 - Forward secrecy against a later theft of the receiving device's private key. Each bundle has a fresh HPKE
-  encapsulation, but the recipient key is static; key rotation is a follow-up.
+  encapsulation, but the recipient key is static; whoever records the traffic and later steals `node.key` can open
+  the link key offers too, and with them the link bundles. Node key rotation is a follow-up; link keys rotate
+  weekly but travel under the node key.
 - Denial of service by an enrolled device (bounded by quotas and rate limits).
 
 ## Wording rules
@@ -239,8 +307,8 @@ Not covered:
 ## Next
 
 1. **Interoperability.** TCPCLv4 ([RFC 9174](https://www.rfc-editor.org/rfc/rfc9174)) for direct device links.
-   The RFC 9173 contexts exist as a library (see above); next is a key store and a live test against HDTN and
-   dtn7-rs (Apache-2.0). Copy no code from dtn7-go (GPL), µD3TN (AGPL) or Reticulum (restrictive licence).
+   The RFC 9173 contexts carry Argo's link keys (see above); next is a key store for keys placed by an operator
+   and a live test against HDTN and dtn7-rs (Apache-2.0). Copy no code from dtn7-go (GPL), µD3TN (AGPL) or Reticulum (restrictive licence).
 2. **Transfer improvements.** Partial-chunk resume; recipient key rotation; Contact Graph Routing once passes are
    scheduled (CCSDS SABR 734.3-B-1).
 3. **Phones.** Phones as bundle endpoints (an iOS/Android client).

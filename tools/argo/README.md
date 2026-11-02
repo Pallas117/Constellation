@@ -272,7 +272,16 @@ argo inbox                           # on ground-1: 2026-10-23 09:41  judith  ~/
   but use RFC 9171's private block types 192 and 193, because RFC 9172 has no private range for security
   context IDs and HPKE is not a standard BPSec context yet. Go standard library only (`crypto/hpke`,
   `crypto/ed25519`); no new cryptography.
-- **Keys.** `argo enroll` creates `~/.config/argo/node.key` (0600; never leaves the device) and publishes the
+- **Link keys (faster, smaller).** After the first bundle, each pair of devices switches to a key only the two of
+  them hold, delivered once inside a bundle sealed as above (so it travels under ML-KEM-768 + X25519). Bundles
+  then carry RFC 9173's standard blocks: HMAC-SHA-256 over the primary block and AES-256-GCM over the payload
+  (receipts: HMAC only). On an Apple M1 a 1 MiB chunk takes 0.67 ms to protect instead of 3.6 ms and 0.50 ms to
+  open instead of 2.3 ms, and carries 129 bytes of security instead of 1,302. Keys rotate weekly or every 65,536
+  bundles. Authenticity becomes pairwise: the receiver knows its peer made the bundle, but no third party can
+  check that, so anything a third party may need to check keeps the Ed25519 signature. Details:
+  `docs/ARGO_DTN.md`, "Link keys".
+- **Keys.** Link keys live in `~/.config/argo/links.key` (0600) and are never logged or shown.
+  `argo enroll` creates `~/.config/argo/node.key` (0600; never leaves the device) and publishes the
   public half to Gauss. Other devices pin a key the first time they see it; a different key later is reported and
   not used until someone runs `argo keys trust DEVICE`. Compare fingerprints (`argo keys`, the Key line on
   `/mesh`) with the other person before relying on a new device.
@@ -297,9 +306,10 @@ argo inbox                           # on ground-1: 2026-10-23 09:41  judith  ~/
   Seeds 7 and 424242 also give 60/60 and 60/60 with no duplicates.
 - **Not yet.**
   - Direct device-to-device transfer (TCPCLv4, [RFC 9174](https://www.rfc-editor.org/rfc/rfc9174)).
-  - Using the RFC 9173 security contexts that HDTN, dtn7-rs and ION speak. `bpsec9173.go` implements them
-    (BIB-HMAC-SHA2, BCB-AES-GCM, AES key wrap) and reproduces all four RFC 9173 Appendix A examples byte for
-    byte, but no command uses them yet, and live interoperability with those nodes is untested.
+  - Exchanging bundles with HDTN, dtn7-rs or ION. `bpsec9173.go` implements the RFC 9173 security contexts
+    they speak (BIB-HMAC-SHA2, BCB-AES-GCM, AES key wrap) and reproduces all four RFC 9173 Appendix A examples
+    byte for byte. Argo's link keys use them, but there is no way to load an operator's pre-placed keys yet, and
+    live interoperability with those nodes is untested.
   - Resuming a chunk part-way.
   - Phones.
 

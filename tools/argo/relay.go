@@ -2,7 +2,8 @@ package main
 
 // Store-and-forward delivery between enrolled devices (delay-tolerant
 // networking). Files are split into 1 MiB chunks; each chunk is one BPv7
-// bundle, signed and sealed to the destination (bpsec.go), written to disk,
+// bundle, protected with the pair's link key (linkkeys.go) or else signed and
+// sealed to the destination (bpsec.go), written to disk,
 // and forwarded when a path exists: the Gauss hub over the tailnet (hub.go)
 // or a folder someone carries (`argo mule`). Nothing is lost while offline,
 // asleep or restarted, because every step is persisted before it is acked.
@@ -96,7 +97,12 @@ type outItem struct {
 	CheckedAt time.Time `json:"checked_at,omitempty"`
 	Uploads   int       `json:"uploads,omitempty"`
 	Done      time.Time `json:"done,omitempty"`
+	Offer     string    `json:"offer,omitempty"`    // for a link key offer: the key's id
+	LinkKey   string    `json:"link_key,omitempty"` // the id of the link key protecting it, if any
 }
+
+// internal items (receipts, link key offers) are not files the user sent.
+func (it *outItem) internal() bool { return it.Receipt || it.Offer != "" }
 
 type inTransfer struct {
 	From    string    `json:"from"`
@@ -155,7 +161,10 @@ type relayState struct {
 	Published bool                   `json:"published,omitempty"`
 	Hub       pathHealth             `json:"hub"`
 	DirAt     time.Time              `json:"dir_at,omitempty"`
+	LinkUses  map[string]uint64      `json:"link_uses,omitempty"` // link key id → bundles sent with it
 	raw       []byte                 // as loaded, so an unchanged state isn't rewritten every tick
+	links     *linkFile              // links.key; nil when Relay.LinkPath is empty
+	linksRaw  []byte
 }
 
 // Relay is one device's bundle agent. Callers hold the Argo store lock.
@@ -164,6 +173,7 @@ type Relay struct {
 	Keys     NodeKeys
 	Hub      Hub // nil: no hub path (mule only)
 	InboxDir string
+	LinkPath string // links.key (linkkeys.go); empty turns link keys off
 	Now      func() time.Time
 	Notify   func(title, msg string)
 	// NoResendReceipt turns off answering duplicates with a fresh receipt
@@ -206,10 +216,35 @@ func (r *Relay) load() *relayState {
 	if st.Partial == nil {
 		st.Partial = map[string]*inTransfer{}
 	}
+	if st.LinkUses == nil {
+		st.LinkUses = map[string]uint64{}
+	}
+	if r.LinkPath != "" {
+		st.links = &linkFile{}
+		if b, err := os.ReadFile(r.LinkPath); err == nil {
+			_ = json.Unmarshal(b, st.links)
+			st.linksRaw = b
+		}
+		if st.links.Tx == nil {
+			st.links.Tx = map[string]*linkKey{}
+		}
+		if st.links.Rx == nil {
+			st.links.Rx = map[string][]*linkKey{}
+		}
+	}
 	return st
 }
 
 func (r *Relay) save(st *relayState) error {
+	if st.links != nil { // keys first: relay.json may refer to them
+		b := mustJSON(st.links)
+		if !bytes.Equal(b, st.linksRaw) {
+			if err := writeFileAtomic(r.LinkPath, b); err != nil {
+				return err
+			}
+			st.linksRaw = b
+		}
+	}
 	b := mustJSON(st)
 	if bytes.Equal(b, st.raw) {
 		return nil // an idle tick changes nothing: no write, no fsync
@@ -394,6 +429,8 @@ func (r *Relay) Send(ctx context.Context, device, path string, ttl time.Duration
 	if err != nil {
 		return "", 0, err
 	}
+	now := r.now()
+	r.ensureLink(st, device, to, now, false)
 	transfer := make([]byte, 16)
 	if _, err := rand.Read(transfer); err != nil {
 		return "", 0, err
@@ -406,7 +443,6 @@ func (r *Relay) Send(ctx context.Context, device, path string, ttl time.Duration
 	if _, err := f.Seek(0, io.SeekStart); err != nil {
 		return "", 0, err
 	}
-	now := r.now()
 	name := safeName(filepath.Base(path))
 	buf := make([]byte, chunkSize)
 	for i := range count {
@@ -415,7 +451,7 @@ func (r *Relay) Send(ctx context.Context, device, path string, ttl time.Duration
 			return "", 0, err
 		}
 		payload := adu{Name: name, Size: size, Sum: sum, Transfer: transfer, Index: i, Count: count, Data: buf[:n]}.encode()
-		item, raw, err := r.newBundle(st, device, serviceFiles, payload, ttl, now, &to, false)
+		item, raw, err := r.newBundle(st, device, serviceFiles, payload, ttl, now, &to, false, true)
 		if err != nil {
 			return "", 0, err
 		}
@@ -428,9 +464,11 @@ func (r *Relay) Send(ctx context.Context, device, path string, ttl time.Duration
 	return hex.EncodeToString(transfer), count, r.save(st)
 }
 
-// newBundle builds a signed bundle; sealTo nil leaves the payload readable
-// (receipts carry no secrets, only which bundle arrived and when).
-func (r *Relay) newBundle(st *relayState, device, service string, payload []byte, ttl time.Duration, now time.Time, sealTo *PeerKey, admin bool) (*outItem, []byte, error) {
+// newBundle builds a protected bundle; sealTo nil leaves the payload readable
+// (receipts carry no secrets, only which bundle arrived and when). With link
+// set it uses the pair's confirmed link key if there is one; otherwise, and
+// always without link, it signs (argo-sig-1) and seals to sealTo (argo-seal-1).
+func (r *Relay) newBundle(st *relayState, device, service string, payload []byte, ttl time.Duration, now time.Time, sealTo *PeerKey, admin, link bool) (*outItem, []byte, error) {
 	st.Seq++
 	b := &Bundle{
 		Primary: Primary{
@@ -451,19 +489,33 @@ func (r *Relay) newBundle(st *relayState, device, service string, payload []byte
 	} else {
 		b.Flags |= flagReportDelivery | flagStatusTime
 	}
-	if err := signBundle(b, r.Keys); err != nil {
-		return nil, nil, err
+	var lk *linkKey
+	if link {
+		lk = r.txLink(st, device, now)
 	}
-	if sealTo != nil {
-		if err := sealBundle(b, *sealTo); err != nil {
+	if lk != nil {
+		if err := linkProtect(b, lk, sealTo != nil); err != nil {
 			return nil, nil, err
+		}
+	} else {
+		if err := signBundle(b, r.Keys); err != nil {
+			return nil, nil, err
+		}
+		if sealTo != nil {
+			if err := sealBundle(b, *sealTo); err != nil {
+				return nil, nil, err
+			}
 		}
 	}
 	raw, err := b.Marshal()
 	if err != nil {
 		return nil, nil, err
 	}
-	return &outItem{Key: b.Key(), Dest: device, State: stateQueued, Created: now, Expires: b.Expires(), Receipt: admin}, raw, nil
+	it := &outItem{Key: b.Key(), Dest: device, State: stateQueued, Created: now, Expires: b.Expires(), Receipt: admin}
+	if lk != nil {
+		it.LinkKey = lk.ID
+	}
+	return it, raw, nil
 }
 
 // ---- syncing ----
@@ -540,7 +592,7 @@ func (r *Relay) expire(st *relayState, now time.Time, rep *SyncReport) {
 		case now.After(it.Expires):
 			it.State, it.Done = stateExpired, now
 			_ = os.Remove(r.outPath(k))
-			if !it.Receipt {
+			if !it.internal() {
 				rep.Expired++
 				if it.Chunk == 0 {
 					r.notify("Argo: not delivered", fmt.Sprintf("%s to %s expired before it arrived.", it.Name, it.Dest))
@@ -559,6 +611,7 @@ func (r *Relay) expire(st *relayState, now time.Time, rep *SyncReport) {
 			delete(st.Partial, id)
 		}
 	}
+	st.pruneLinks(now)
 }
 
 // pending lists outbox items in a stable order: receipts first (they are
@@ -606,7 +659,7 @@ func (r *Relay) upload(ctx context.Context, st *relayState, now time.Time, rep *
 			reached = true
 			it.State, it.Done = stateRefused, now
 			_ = os.Remove(r.outPath(it.Key))
-			if !it.Receipt && it.Chunk == 0 {
+			if !it.internal() && it.Chunk == 0 {
 				r.notify("Argo: not sent", fmt.Sprintf("Gauss refused %s for %s: %v", it.Name, it.Dest, err))
 			}
 		default:
@@ -737,6 +790,9 @@ func (r *Relay) TrustNew(ctx context.Context, device string) (PeerKey, error) {
 	for _, k := range keys {
 		if k.Node == device && k.valid() == nil {
 			st := r.load()
+			if old, ok := st.Pins[device]; !ok || old.Fingerprint() != k.Fingerprint() {
+				st.forgetLinks(device)
+			}
 			st.Pins[device] = k
 			return k, r.save(st)
 		}
@@ -753,6 +809,7 @@ const (
 	acceptChunk
 	acceptFile
 	acceptReceipt
+	acceptLinkKey
 	acceptError
 )
 
@@ -782,7 +839,7 @@ func (r *Relay) accept(ctx context.Context, st *relayState, raw []byte) (acceptR
 	key := b.Key()
 	if _, dup := st.Seen[key]; dup {
 		if b.Flags&flagReportDelivery != 0 && !r.NoResendReceipt {
-			r.queueReceipt(st, b.Primary, now) // our first receipt may have been lost
+			r.queueReceipt(st, b.Primary, now, true) // our first receipt may have been lost
 		}
 		return acceptDuplicate, nil
 	}
@@ -793,12 +850,27 @@ func (r *Relay) accept(ctx context.Context, st *relayState, raw []byte) (acceptR
 			return acceptDeferred, errors.New("unknown sender")
 		}
 	}
-	if b.Flags&flagAdminRecord != 0 {
-		if b.BlockOfType(blockArgoSeal) != nil {
-			return acceptRejected, errors.New("unexpected encrypted status report")
+	admin := b.Flags&flagAdminRecord != 0
+	linked := b.BlockOfType(blockBIB) != nil || b.BlockOfType(blockBCB) != nil
+	if linked {
+		if st.links == nil {
+			return acceptRejected, errors.New("link keys are off on this device")
 		}
-		if err := verifyBundle(b, peer); err != nil {
+		if _, err := linkOpen(b, st.links.Rx[from], !admin); err != nil {
+			if errors.Is(err, errNoLinkKey) { // e.g. links.key was lost: get the sender to drop its key
+				r.ensureLink(st, from, peer, now, true)
+			}
 			return acceptRejected, err
+		}
+	}
+	if admin {
+		if !linked {
+			if b.BlockOfType(blockArgoSeal) != nil {
+				return acceptRejected, errors.New("unexpected encrypted status report")
+			}
+			if err := verifyBundle(b, peer); err != nil {
+				return acceptRejected, err
+			}
 		}
 		rpt, err := decodeStatusReport(b.Payload())
 		if err != nil {
@@ -813,13 +885,29 @@ func (r *Relay) accept(ctx context.Context, st *relayState, raw []byte) (acceptR
 			it.State, it.Done = stateDelivered, now
 			_ = os.Remove(r.outPath(it.Key))
 		}
+		r.confirmLink(st, it, now)
 		return acceptReceipt, nil
 	}
-	if err := openBundle(b, r.Keys); err != nil {
-		return acceptRejected, err
+	if !linked {
+		if err := openBundle(b, r.Keys); err != nil {
+			return acceptRejected, err
+		}
+		if err := verifyBundle(b, peer); err != nil {
+			return acceptRejected, err
+		}
 	}
-	if err := verifyBundle(b, peer); err != nil {
-		return acceptRejected, err
+	if b.Dest.Service() == serviceArgo { // a link key offer
+		if linked {
+			return acceptRejected, errors.New("a link key must come sealed to this device's own key")
+		}
+		if err := r.acceptOffer(st, from, b, now); err != nil {
+			return acceptRejected, err
+		}
+		st.Seen[key] = b.Expires().Add(clockSkew)
+		if b.Flags&flagReportDelivery != 0 {
+			r.queueReceipt(st, b.Primary, now, false)
+		}
+		return acceptLinkKey, nil
 	}
 	a, err := decodeADU(b.Payload())
 	if err != nil {
@@ -831,15 +919,17 @@ func (r *Relay) accept(ctx context.Context, st *relayState, raw []byte) (acceptR
 	}
 	st.Seen[key] = b.Expires().Add(clockSkew)
 	if b.Flags&flagReportDelivery != 0 {
-		r.queueReceipt(st, b.Primary, now)
+		r.queueReceipt(st, b.Primary, now, false)
 	}
 	return res, nil
 }
 
-// queueReceipt answers a delivered bundle with a signed status report, sent
-// only to the bundle's own source node (never to a third party, so a
-// receipt can't be used to reflect traffic at someone else).
-func (r *Relay) queueReceipt(st *relayState, p Primary, now time.Time) {
+// queueReceipt answers a delivered bundle with a status report, sent only to
+// the bundle's own source node (never to a third party, so a receipt can't
+// be used to reflect traffic at someone else). It goes under the pair's link
+// key when there is one, except with signed (the answer to a duplicate: the
+// first receipt may have failed because the sender lost its link keys).
+func (r *Relay) queueReceipt(st *relayState, p Primary, now time.Time, signed bool) {
 	if p.ReportTo.Node() != p.Source.Node() {
 		return
 	}
@@ -854,7 +944,11 @@ func (r *Relay) queueReceipt(st *relayState, p Primary, now time.Time) {
 		return
 	}
 	ttl := max(p.Expires().Sub(now), time.Hour) // as long as the sender keeps waiting
-	item, raw, err := r.newBundle(st, p.Source.NodeName(), serviceArgo, payload, ttl, now, nil, true)
+	device := p.Source.NodeName()
+	if to, ok := st.Pins[device]; ok && !signed {
+		r.ensureLink(st, device, to, now, false)
+	}
+	item, raw, err := r.newBundle(st, device, serviceArgo, payload, ttl, now, nil, true, !signed)
 	if err != nil || writeFileAtomic(r.outPath(item.Key), raw) != nil {
 		return
 	}
@@ -1069,7 +1163,7 @@ func (r *Relay) Outbox() []outItem {
 	st := r.load()
 	var out []outItem
 	for _, it := range st.Out {
-		if !it.Receipt {
+		if !it.internal() {
 			out = append(out, *it)
 		}
 	}
