@@ -38,6 +38,14 @@ Optional extras:
   channel, mask and offline queue, at most once per interval per key. The gauss-awake battery guard
   uses it (battery low, at the sleep floor, charger can't keep up, no cutoff configured), as do
   mesh-heal and Claude Code `Notification` hooks.
+- **One alert router (GAU-197).** `-level urgent|warn|info` picks the sinks: urgent and warn text the
+  phone, and every level also goes to Slack when it is set up (info is Slack only, for routine status).
+  Battery, disk and memory alerts share one 30-minute gate per topic, so the several watchers that
+  report the same event send one text; recoveries, "critical" alerts and `-level urgent` always pass.
+- **Slack.** Create a Slack app with an incoming webhook (it posts as a bot, so it notifies; your own
+  messages never do), save the URL alone in `~/.config/argo/slack-webhook`, `chmod 600` it, then
+  `argo slack test`. Only `https://hooks.slack.com/services/…` URLs are accepted, errors never show
+  the URL, and failed posts wait in their own offline queue like the texts.
 - **Claude Code status line.** In `~/.claude/settings.json`:
   `"statusLine": {"type": "command", "command": "argo status"}`.
   It reads the cached state only, so it never probes the network and is instant.
@@ -67,7 +75,8 @@ Then remove the `statusLine` and `claude()` lines above if you added them, and r
 | `argo fix` | Runs the loop once in the foreground |
 | `argo report` | Incident counts by class, how many needed a fix and were fixed, how many resolved on their own, last 10 events |
 | `argo phone <handle>\|test\|off` | Set up, test or turn off iMessage alerts to your iPhone |
-| `argo notify [-key K -every D] TITLE MSG` | Send an alert to your iPhone (masked, queued offline, rate-limited per key) |
+| `argo notify [-key K -every D] [-level L] TITLE MSG` | Send an alert to your iPhone and Slack (masked, queued offline, rate-limited per key and topic) |
+| `argo slack test` | Send a test message to the Slack webhook |
 | `argo watch` | Run the peer watchdog once (also every tick): restarts the gauss-awake guard or mesh-heal when their heartbeat is stale, max 3 restarts/hour each, then alerts. Override the list with `"watch"` in config.json |
 | `argo devices` | Which watched tailnet devices are offline. Every tick, a phone of yours that has been off the tailnet for 30 min or more gets a text (SMS over its own cellular link) with the fix: open Tailscale, turn on Connect On Demand. At most every 6 h per device. Override the list with `"devices": ["hostname", ...]` in config.json |
 | `argo guard` | Resource guard (below): memory, battery, disk and CPU now and over the last 24 h, who uses memory, what to do. `--json` for scripts |

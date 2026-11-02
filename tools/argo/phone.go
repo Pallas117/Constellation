@@ -29,6 +29,62 @@ type Phone struct {
 	Queue  string // jsonl file of pending alerts
 	Device string
 	send   func(to, text string) error // replaced in tests
+	// Slack, when set up, gets every alert too (GAU-197); info-level alerts go only there.
+	Slack *Phone
+}
+
+// AlertLevel routes an alert: urgent and warn text the phone, info is Slack only.
+// Every level goes to Slack when it is set up.
+type AlertLevel int
+
+const (
+	AlertWarn AlertLevel = iota
+	AlertUrgent
+	AlertInfo
+)
+
+func parseLevel(s string) (AlertLevel, error) {
+	switch strings.ToLower(s) {
+	case "", "warn":
+		return AlertWarn, nil
+	case "urgent":
+		return AlertUrgent, nil
+	case "info":
+		return AlertInfo, nil
+	}
+	return AlertWarn, errors.New("-level must be urgent, warn or info")
+}
+
+// Several watchers (gauss-services, remote-watch, gauss-tpm-watch, the guard)
+// report the same battery/disk/memory condition, each with its own dedupe.
+// One gate per topic stops one event becoming several texts. Recoveries and
+// critical alerts always pass, so the gate can only delay a repeat, never
+// hide a change.
+const topicWindow = 30 * time.Minute
+
+var (
+	topicRes = []struct {
+		topic string
+		re    *regexp.Regexp
+	}{
+		{"battery", regexp.MustCompile(`(?i)\b(battery|charger|charging|power adapter)\b`)},
+		{"disk", regexp.MustCompile(`(?i)\b(disk|storage|free space)\b`)},
+		{"memory", regexp.MustCompile(`(?i)\b(memory|swap|ram)\b`)},
+	}
+	topicPassRe = regexp.MustCompile(`(?i)\b(recovered|restored|back to normal|cleared|resolved|ok again|critical|emergency|shutting down)\b`)
+)
+
+func alertTopic(title, msg string) string {
+	text := title + " " + msg
+	if topicPassRe.MatchString(text) {
+		return ""
+	}
+	for _, t := range topicRes {
+		if t.re.MatchString(text) {
+			return t.topic
+		}
+	}
+	return ""
 }
 
 func newPhone(to, device string) *Phone {
@@ -50,6 +106,9 @@ func newPhoneFor(cfg Config) *Phone {
 	p := newPhone(cfg.PhoneTo, cfg.Device)
 	if p != nil && strings.EqualFold(cfg.PhoneService, "sms") && strings.HasPrefix(p.To, "+") {
 		p.send = smsFirst
+	}
+	if p != nil {
+		p.Slack = newSlack(configDir(), filepath.Dir(p.Queue), p.Device)
 	}
 	return p
 }
@@ -82,8 +141,26 @@ func iMessage(to, text string) error {
 // instead of holding the tick for the ~2 min AppleEvent default.
 const sendTimeout = 30 * time.Second
 
-// Send delivers any queued alerts first, then this one; failures are queued.
-func (p *Phone) Send(title, msg string, at time.Time) {
+// Send is SendLevel at warn: the phone and Slack.
+func (p *Phone) Send(title, msg string, at time.Time) { p.SendLevel(AlertWarn, title, msg, at) }
+
+// SendLevel routes one alert by level after the shared topic gate.
+func (p *Phone) SendLevel(level AlertLevel, title, msg string, at time.Time) {
+	if level != AlertUrgent {
+		if t := alertTopic(title, msg); t != "" && !shouldNotify(Store{Dir: filepath.Dir(p.Queue)}, "topic-"+t, topicWindow, at) {
+			return
+		}
+	}
+	if p.Slack != nil {
+		p.Slack.send1(title, msg, at)
+	}
+	if level != AlertInfo && p.send != nil {
+		p.send1(title, msg, at)
+	}
+}
+
+// send1 delivers any queued alerts first, then this one; failures are queued.
+func (p *Phone) send1(title, msg string, at time.Time) {
 	text := fmt.Sprintf("%s on %s (%s)\n%s", Mask(title), p.Device, at.Local().Format("15:04"), Mask(msg))
 	if unlock, err := p.queueLock(); err == nil {
 		defer unlock()
@@ -93,6 +170,9 @@ func (p *Phone) Send(title, msg string, at time.Time) {
 
 // Flush retries queued alerts; called every tick so offline alerts arrive once back online.
 func (p *Phone) Flush() {
+	if p.Slack != nil {
+		p.Slack.Flush()
+	}
 	if unlock, err := p.queueLock(); err == nil {
 		defer unlock()
 	}
