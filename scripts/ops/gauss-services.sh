@@ -645,7 +645,7 @@ fallback_prepare() { # fallback_prepare <dir> [sha]: check out, install, build, 
   fi
   # Explicit returns throughout: deploy calls this in a condition, where set -e is off.
   [ "$dir" != "$live" ] || { echo "The fallback must not be the live checkout." >&2; return 1; }
-  local lock; lock=$(shasum "$dir/package-lock.json" | cut -d' ' -f1) || return 1
+  local lock; lock=$(install_key "$dir") || return 1
   if [ "$(cat "$dir/node_modules/.gauss-lock" 2>/dev/null)" != "$lock" ]; then
     echo "Installing dependencies in $dir ..."
     (cd "$dir" && PATH="$(dirname "$NODE"):$PATH" npm ci --no-audit --no-fund >/dev/null) || return 1
@@ -682,7 +682,7 @@ prebuild_backend() { # prebuild_backend <checkout-dir>: sets BACKEND_ARGS
   # Drop .js left by an earlier build (only git-ignored ones, never node_modules), so a removed module can't linger.
   (cd "$dir" && find backend shared -name '*.js' ! -path '*/node_modules/*' -print0 | git check-ignore -z --stdin 2>/dev/null | xargs -0 rm -f) || true
   if (cd "$dir" && find backend shared -name '*.ts' ! -name '*.test.ts' ! -name '*.d.ts' ! -path '*/node_modules/*' -print0 \
-      | xargs -0 "${run[@]}" --outdir=. --outbase=. --format=esm --platform=node --target=node22 --log-level=error) \
+      | xargs -0 "${run[@]}" --outdir=. --outbase=. --format=esm --platform=node --target=node26 --log-level=error) \
     && (cd "$dir" && "$NODE" --check backend/server.js); then
     BACKEND_ARGS=(backend/server.js)
   else
@@ -1018,7 +1018,7 @@ gates_run_one() { # gates_run_one <request>: check out, install if the lockfile 
     train_sync "$req" || return 0 # withdrawn: closed PR, moved head or a conflict (result written)
   fi
   sha=$(req_get "$req" sha); tree=$(req_get "$req" tree); repo=$(req_get "$req" repo); node=$(req_get "$req" node); by=$(req_get "$req" by)
-  [ -n "$node" ] && [ -x "$node" ] && NODE=$node # the Node the session queued with (Node 22)
+  [ -n "$node" ] && [ -x "$node" ] && NODE=$node # the Node the session queued with (.nvmrc: Node 26)
   co=${GAUSS_GATES_CHECKOUT:-$(dirname "$repo").worktrees/gates}
   gates_fail() { gates_result "$sha" "$tree" ERROR "$1"; rm -f "$req"; return 1; }
   mkdir -p "$GATES_DIR/runs"
@@ -1031,7 +1031,7 @@ gates_run_one() { # gates_run_one <request>: check out, install if the lockfile 
     echo "$co" >>"$GATES_DIR/checkouts" # one per repository
   fi
   # One install for consecutive requests with the same package-lock.json.
-  lock=$(shasum "$co/package-lock.json" | cut -d' ' -f1) || { gates_fail "no package-lock.json at ${sha:0:7}"; return 1; }
+  [ -f "$co/package-lock.json" ] && lock=$(install_key "$co") || { gates_fail "no package-lock.json at ${sha:0:7}"; return 1; }
   if [ "$(cat "$co/node_modules/.gauss-lock" 2>/dev/null)" != "$lock" ]; then
     echo "Installing dependencies in $co ..."
     (cd "$co" && PATH="$(dirname "$NODE"):$PATH" npm ci --no-audit --no-fund >"$GATES_DIR/runs/$sha.install.log" 2>&1) \
@@ -1229,12 +1229,21 @@ deploy_ready() { # deploy_ready <dir> <seconds>: poll until the services answer,
   done
 }
 
-switch_live() { # switch_live <dir> <from sha> <to sha>: check out, npm ci if the lockfile changed, reinstall
+# install_key <dir>: what node_modules was built for. Native modules (better-sqlite3, the MHD kernel)
+# are built for one Node ABI, so a Node upgrade needs a reinstall even with the same lockfile (2 Nov: 25 -> 26).
+install_key() { echo "$(shasum "$1/package-lock.json" | cut -d' ' -f1) node-$("$NODE" -v 2>/dev/null || echo none)"; }
+node_changed() { # node_changed <dir>: node_modules was installed by another Node (unknown counts as unchanged)
+  local was; was=$(cat "$1/node_modules/.gauss-node" 2>/dev/null) || return 1
+  [ -n "$was" ] && [ "$was" != "$("$NODE" -v 2>/dev/null || echo none)" ]
+}
+
+switch_live() { # switch_live <dir> <from sha> <to sha>: check out, npm ci if the lockfile or Node changed, reinstall
   git -C "$1" checkout -q --detach "$3" || return 1
-  if [ ! -d "$1/node_modules" ] || ! git -C "$1" diff --quiet "$2" "$3" -- package-lock.json; then
-    echo "package-lock.json changed: installing dependencies in $1 ..."
+  if [ ! -d "$1/node_modules" ] || ! git -C "$1" diff --quiet "$2" "$3" -- package-lock.json || node_changed "$1"; then
+    echo "package-lock.json or Node changed: installing dependencies in $1 ..."
     (cd "$1" && PATH="$(dirname "$NODE"):$PATH" npm ci --no-audit --no-fund >/dev/null) || return 1
   fi
+  [ -d "$1/node_modules" ] && { "$NODE" -v 2>/dev/null || echo none; } >"$1/node_modules/.gauss-node"
   install_agents "$1"
 }
 

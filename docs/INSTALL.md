@@ -37,7 +37,7 @@ Run everything as an ordinary user. No step needs root.
 git clone <repository URL from Lightbound> gauss
 cd gauss
 git checkout <release tag>     # vX.Y.Z (scripts/release/create-tag.sh); the first tag is still pending
-nvm use                        # or select Node 22 another way
+nvm use                        # or select Node 26 another way
 npm ci
 ```
 
@@ -206,7 +206,7 @@ since is lost).
 - **`npm run tpm` says unreachable (exit 3):** the backend is not running or listens elsewhere.
   Check its log and `PROXY_PORT`.
 - **Error mentioning `NODE_MODULE_VERSION` or "compiled against a different Node.js version":**
-  dependencies were installed with another Node. Select Node 22 and run `npm ci` again.
+  dependencies were installed with another Node. Select Node 26 and run `npm ci` again.
 - **Sign-in fails with "Invalid origin":** the URL in the browser is not in `ALLOWED_ORIGINS`.
 - **401 from `/api/v1`:** key missing, mistyped or revoked, or the `Bearer ` prefix is missing.
   Stop retrying: by default 8 failures in 5 minutes block your IP for 15 minutes (requests made
