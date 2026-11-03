@@ -91,6 +91,20 @@ SRC="AC Power" BATT="80%; charging; 1:00 remaining present: true" run awake guar
 [ -z "$(alerts)" ]; expect "80% charging: no alerts" $?
 SRC="Battery Power" BATT="45%; discharging; 1:00 remaining present: true" run awake guard
 [ "$(alerts)" = "battery-low" ]; expect "45% on battery: low warning" $?
+# Plug in ahead: on battery with gate runs queued (each ~5 % of battery, measured 3 Nov)
+PQ="$T/home/Library/Application Support/Gauss/gates/queue"; mkdir -p "$PQ"
+SRC="Battery Power" BATT="80%; discharging; 3:00 remaining present: true" run awake guard
+[ -z "$(alerts)" ]; expect "plug ahead: on battery with nothing queued, no text" $?
+touch "$PQ/1-a.req" "$PQ/2-b.req"
+SRC="Battery Power" BATT="80%; discharging; 3:00 remaining present: true" run awake guard
+[ -z "$(alerts)" ]; expect "plug ahead: 80% covers two queued gates (~10%), no text" $?
+SRC="Battery Power" BATT="57%; discharging; 2:00 remaining present: true" run awake guard
+[ "$(alerts)" = "plug-ahead" ] && grep -q "plug in soon" "$T/log"; expect "plug ahead: 57% with two gates queued would stop at 50%: text early" $?
+SRC="Battery Power" BATT="45%; discharging; 1:00 remaining present: true" run awake guard
+[[ " $(alerts) " == *" plug-ahead "* ]] && grep -q "plug in to keep merging" "$T/log"; expect "plug ahead: under 50% with gates queued, they wait: text" $?
+SRC="AC Power" BATT="45%; charging; present: true" run awake guard
+[ -z "$(alerts)" ]; expect "plug ahead: on AC, no text" $?
+rm -f "$PQ"/*.req
 SRC="Battery Power" BATT="9%; discharging; 0:20 remaining present: true" run awake guard
 [ "$(alerts)" = "battery-critical" ]; expect "9% on battery: at the floor" $?
 SRC="Battery Power" BATT="55%; discharging; 4:00 remaining present: true" run awake guard
@@ -514,6 +528,70 @@ expect "gates run-one: a request withdrawn while waiting is skipped, with no res
 touch "$SW/stray"; out=$(run gates enqueue "$SW" 2>&1); [ $? != 0 ] && [[ "$out" == *"uncommitted or untracked"* ]]; expect "gates enqueue refuses a dirty checkout" $?
 rm -f "$SW/stray"
 out=$(run gates result status); [[ "$out" == *"runner: not running"*"queue: empty"* ]]; expect "gates result status: runner, queue and recent results" $?
+
+# Merge train (2026-11-03): a request queued with --pr merges main in before its run and merges the
+# PR after a pass, under the standing approval's rules. GitHub is a stub that reads PR heads from a
+# real bare origin; the runner's merges and pushes are real git.
+ORIGIN="$T/origin.git"; git init -q --bare "$ORIGIN"; g remote add origin "$ORIGIN"
+git config --file "$T/home/.gitconfig" user.name train-test; git config --file "$T/home/.gitconfig" user.email t@t
+GHD="$T/gh"; mkdir -p "$GHD"
+cat >"$T/bin/gh" <<GHSTUB
+#!/bin/bash
+# pr<N> holds "state branch base draft merge-state"; the head is whatever origin has for the branch
+case "\$1 \$2" in
+  "pr view") read -r st br base dr ms <"$GHD/pr\$3" || exit 1
+    echo "\$st \$(git --git-dir="$ORIGIN" rev-parse "refs/heads/\$br") \$br \$base \$dr \$ms" ;;
+  "pr merge") echo "gh merge \$3 \${@: -1}" >>"\$ACTIONS"; exit \${GHMERGEFAIL:-0} ;;
+  "pr list") base=\$(printf '%s\n' "\$@" | grep -A1 -x -- --base | tail -1); cat "$GHD/children-\$base" 2>/dev/null ;;
+  "pr edit") echo "gh retarget \$3" >>"\$ACTIONS" ;;
+  *) exit 1 ;;
+esac
+GHSTUB
+chmod +x "$T/bin/gh"
+prevhead=$(g rev-parse HEAD)
+tc() { g checkout -q --detach "$1"; shift; while [ $# -gt 1 ]; do mkdir -p "$LIVE/$(dirname "$1")"; echo "$2" >"$LIVE/$1"; g add "$1"; shift 2; done; g commit -qm train; g rev-parse HEAD; }
+M1=$(tc "$E" main.txt main-1)
+P1=$(tc "$E" feature.txt f1)                       # behind main, merges cleanly
+P2=$(tc "$M1" backend/auth-extra.ts x)             # contains main, touches auth
+P3=$(tc "$E" main.txt mine)                        # conflicts with main
+P4=$(tc "$M1" feature4.txt f4)                     # its PR has moved on to P4b
+P4b=$(tc "$P4" feature4.txt f4b)
+g push -q origin "$M1:refs/heads/main" "$P1:refs/heads/train" "$P2:refs/heads/auth-pr" "$P3:refs/heads/clash" "$P4b:refs/heads/moved" && g fetch -q origin
+echo "OPEN train main false CLEAN" >"$GHD/pr7"; echo 8 >"$GHD/children-train"
+echo "OPEN auth-pr main false CLEAN" >"$GHD/pr9"
+echo "OPEN clash main false CLEAN" >"$GHD/pr11"
+echo "OPEN moved main false CLEAN" >"$GHD/pr12"
+out=$(cd "$LIVE" && run gates enqueue "$P1" --pr x 2>&1); [ $? = 2 ] && [[ "$out" == *"--pr <number>"* ]] && [ -z "$(ls "$GQ")" ]
+expect "train: enqueue --pr needs a PR number" $?
+for x in "$P1 7" "$P2 9" "$P3 11" "$P4 12"; do set -- $x; (cd "$LIVE" && run gates enqueue "$1" --pr "$2" >/dev/null 2>&1); done
+grep -qx "pr=7" "$GQ"/*-"$(tree_of "$P1")".req; expect "train: enqueue --pr records the PR in the request" $?
+out=$(run gates run 2>&1)
+N1=$(git --git-dir="$ORIGIN" rev-parse refs/heads/train)
+[ "$N1" != "$P1" ] && git --git-dir="$ORIGIN" merge-base --is-ancestor "$M1" "$N1" && [ "$(git --git-dir="$ORIGIN" rev-parse "$N1^1")" = "$P1" ] \
+  && grep -q "^[^ ]* $P1 [^ ]* MOVED merged main into PR #7" "$GR" && grep -q "^[^ ]* $N1 [^ ]* PASSED" "$GR"
+expect "train: a head behind main gets main merged in (pushed, no force) and the merge is what gets gated" $?
+grep -qx "gh merge 7 $N1" "$T/actions" && grep -q "^[^ ]* $N1 [^ ]* MERGED PR #7" "$GR" && grep -qx "gh retarget 8" "$T/actions"
+expect "train: after a pass the PR is merged on that exact head, and PRs stacked on it move to main" $?
+grep -q "^[^ ]* $P2 [^ ]* PASSED" "$GR" && grep -q "^[^ ]* $P2 [^ ]* HELD passed, not merged: touches backend/auth-extra.ts" "$GR" && ! grep -q "gh merge 9" "$T/actions"
+expect "train: a PR touching auth passes but waits for Josh" $?
+grep -q "^[^ ]* $P3 [^ ]* CONFLICT PR #11" "$GR" && ! grep -q " $P3 [^ ]* PASSED" "$GR" && [ "$(git --git-dir="$ORIGIN" rev-parse refs/heads/clash)" = "$P3" ] \
+  && [[ " $(alerts) " == *" train-11 "* ]]
+expect "train: a conflict with main is left alone, not gated, and texted" $?
+grep -q "^[^ ]* $P4 [^ ]* SKIPPED PR #12 moved on to ${P4b:0:7}" "$GR" && ! grep -q " $P4 [^ ]* PASSED" "$GR"
+expect "train: a request whose PR moved on is dropped without a run" $?
+out=$(cd "$LIVE" && run gates result "$N1"); [ $? = 0 ] && [[ "$out" == *MERGED* ]]; expect "train: gates result counts a merged run as passed" $?
+[ -z "$(ls "$GQ")" ] && [ -z "$(g worktree list | grep gauss-train)" ]; expect "train: queue drained, scratch worktrees removed" $?
+echo "OPEN train main true CLEAN" >"$GHD/pr13"; git --git-dir="$ORIGIN" update-ref refs/heads/train "$N1"
+P5=$(tc "$N1" f5.txt x); g push -q origin "$P5:refs/heads/train"; echo "OPEN train main true CLEAN" >"$GHD/pr13"
+(cd "$LIVE" && run gates enqueue "$P5" --pr 13 >/dev/null 2>&1); run gates run >/dev/null 2>&1
+grep -q "^[^ ]* $P5 [^ ]* HELD passed, not merged: draft" "$GR"; expect "train: a draft passes but isn't merged" $?
+P6=$(tc "$N1" f6.txt y); printf 'sha=%s\ntree=%s\nrepo=%s\nqueued=%s\nby=t\npr=7\n' "$P6" "$(tree_of "$P6")" "$(g rev-parse --absolute-git-dir)" "$(date +%s)" \
+  >"$GQ/1.000000-$(tree_of "$P1").req" # what train_sync leaves: moved to P6, still named after P1's tree
+out=$(cd "$LIVE" && run gates result "$P6" 2>&1); rc=$?
+[ $rc = 3 ] && [[ "$out" == QUEUED* ]] && [[ "$(cd "$LIVE" && run gates enqueue "$P6" 2>&1)" == *"Already queued"* ]] && [ "$(ls "$GQ" | wc -l | tr -d ' ')" = 1 ]
+expect "train: a request moved to the merged head is found by its tree (gates result says queued; no second request)" $?
+rm -f "$GQ"/*.req
+g checkout -q --detach "$prevhead"; g remote remove origin; rm -f "$T/bin/gh" "$T/home/.gitconfig"
 
 # balance (GAU-126): shed optional load, undo it when conditions recover
 acts() { tr '\n' ';' <"$T/actions" | sed 's/;$//'; }
