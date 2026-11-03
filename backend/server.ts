@@ -32,10 +32,10 @@ import type {
 } from "./types.js";
 import { withFreshness } from "./lib/freshness.js";
 import { canSend, sweepDeadSockets, trackLiveness, WS_HEARTBEAT_MS } from "./lib/socket-keepalive.js";
-import { IngestionWorker } from "./worker/ingest-loop.js";
-import { MAX_QUERY_CHARS, memoryQuery, memoryStatus } from "./memory/client.js";
+import { IngestionWorker, liveIngestSources } from "./worker/ingest-loop.js";
+import { MAX_QUERY_CHARS, memoryConfigured, memoryQuery, memoryStatus } from "./memory/client.js";
 import { worldStateFromFeed } from "./world/build.js";
-import { createSwapPlan, rebalanceDeviceNetwork } from "./services/device-swap-manager.js";
+import { createSwapPlan, scheduledRebalance } from "./services/device-swap-manager.js";
 import { encodeCanonicalPoint } from "./lib/proto.js";
 import { linkGuardian } from "./lib/connectivity.js";
 import { bedrock } from "./lib/local-db.js";
@@ -47,6 +47,7 @@ import { SPACE_OBJECT_CATALOG } from "./lib/space-object-catalog.js";
 import { auth, ssoAllowedDomain, ssoGithubEnabled, ssoGoogleEnabled } from "./better-auth.js";
 import { toNodeHandler } from "better-auth/node";
 import { SelfHealerAgent } from "./cybertiger/self-healer.js";
+import { bootSwitches } from "./lib/boot-switches.js";
 import deviceRegistryRouter from "./device-registry.js";
 import { createMeshRouters } from "./mesh/router.js";
 import { enforceApiPolicy, isPublic } from "./rbac.js";
@@ -57,6 +58,8 @@ import { getL1Structures } from "./adapters/noaa-swpc.js";
 
 const app = express();
 const cyberTiger = new CyberTigerDaemon();
+// What the backend starts on boot; GAU-228 parks some of it on small hosts (backend/lib/boot-switches.ts).
+const switches = bootSwitches();
 const selfHealer = new SelfHealerAgent({ proxyPort: Number(process.env.PROXY_PORT ?? 3001) });
 
 // Forward self-healer events into CyberTiger event stream for HUD visibility
@@ -301,7 +304,8 @@ app.use("/api/mesh", mesh.ui);
 app.get("/api/rag/status", async (_req, res) => {
   const status = await memoryStatus();
   if (!status.available) {
-    res.status(503).json({ ok: false, error: status.reason });
+    // configured: false (GAUSS_MEMORY_URL=off) tells the console to hide the panel, not show it offline.
+    res.status(503).json({ ok: false, configured: memoryConfigured(), error: status.reason });
     return;
   }
   res.json({ ok: true, chunkCount: status.chunks, ...status });
@@ -716,14 +720,17 @@ wsMmsRecon.on("connection", async (socket: AuthedSocket, req) => {
   );
 });
 
-const worker = new IngestionWorker((result: IngestionTickResult) => {
-  if (result.canonicalPoint) {
-    broadcast(wsSpaceWeather, "space-weather", result.canonicalPoint);
-  }
-  if (result.mmsVector) {
-    broadcast(wsMmsRecon, "mms-reconnection", result.mmsVector);
-  }
-});
+const worker = new IngestionWorker(
+  (result: IngestionTickResult) => {
+    if (result.canonicalPoint) {
+      broadcast(wsSpaceWeather, "space-weather", result.canonicalPoint);
+    }
+    if (result.mmsVector) {
+      broadcast(wsMmsRecon, "mms-reconnection", result.mmsVector);
+    }
+  },
+  { sources: liveIngestSources(switches) },
+);
 
 selfHealer.register({
   onRequestTraining: async () => {
@@ -765,12 +772,15 @@ export async function startBackend(options?: { host?: string; port?: number }): 
 
   return new Promise((resolve, reject) => {
     server.listen(port, host, () => {
-      swapInterval = setInterval(() => {
-        const result = rebalanceDeviceNetwork();
-        if (result.plan.summary.critical > 0) {
-          console.warn("[SwapManager] critical device health detected; rebalance suggested", result.plan.summary);
-        }
-      }, swapIntervalMs);
+      // GAUSS_SWAP_TIMER=0 stops it; on, each tick is skipped while no device is registered.
+      if (switches.swapTimer) {
+        swapInterval = setInterval(() => {
+          const result = scheduledRebalance();
+          if (result && result.plan.summary.critical > 0) {
+            console.warn("[SwapManager] critical device health detected; rebalance suggested", result.plan.summary);
+          }
+        }, swapIntervalMs);
+      }
       heartbeatInterval = setInterval(() => {
         sweepDeadSockets(wsSpaceWeather);
         sweepDeadSockets(wsMmsRecon);

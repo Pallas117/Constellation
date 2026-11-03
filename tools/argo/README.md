@@ -31,7 +31,10 @@ Optional extras:
   raised while offline are queued (up to 20) and sent on the next tick with internet. `argo phone off`
   turns them off. An iMessage to your own number arrives without a banner; for alerts you'll notice, set
   `"phone_service": "sms"` in `~/.config/argo/config.json` (SMS first via Text Message Forwarding, then
-  iMessage). The background agent needs its own Automation → Messages permission: after every rebuild of the
+  iMessage). Messages accepts an SMS before the iPhone sends it, so Argo reads back that one message's
+  status (error and sent flags only, never text) for up to 20 s and resends a "Not Delivered" SMS over
+  iMessage. This needs Full Disk Access for `~/.local/bin/argo`; `argo phone test` says whether the check is
+  on. Without it, alerts behave as before. The background agent needs its own Automation → Messages permission: after every rebuild of the
   ad-hoc-signed binary, macOS asks again on the first background send, and sends time out after 30 s until
   someone clicks Allow.
 - **Alerts from other tools.** `argo notify [-key K -every 30m] TITLE MESSAGE` sends through the same
