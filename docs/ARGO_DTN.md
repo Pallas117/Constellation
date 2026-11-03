@@ -38,6 +38,7 @@ relayed images to the ISS via LCRD in 2024
 | CBOR codec (deterministic encoding, hard limits) | `tools/argo/cbor.go` | [RFC 8949](https://www.rfc-editor.org/rfc/rfc8949) |
 | Bundles, CRC-16/X-25 and CRC-32C, EIDs, status reports | `tools/argo/bundle.go` | [RFC 9171](https://www.rfc-editor.org/rfc/rfc9171) (BPv7) |
 | Integrity and confidentiality blocks | `tools/argo/bpsec.go` | BPSec layout ([RFC 9172](https://www.rfc-editor.org/rfc/rfc9172)), HPKE ([RFC 9180](https://www.rfc-editor.org/rfc/rfc9180)), Ed25519 ([RFC 8032](https://www.rfc-editor.org/rfc/rfc8032)) |
+| Standard BPSec blocks for interop (library only) | `tools/argo/bpsec9173.go`, `aeskw.go` | [RFC 9172](https://www.rfc-editor.org/rfc/rfc9172), [RFC 9173](https://www.rfc-editor.org/rfc/rfc9173), AES key wrap ([RFC 3394](https://www.rfc-editor.org/rfc/rfc3394)) |
 | Store-and-forward agent | `tools/argo/relay.go`, `relay_cmd.go` | |
 | Hub convergence layer | `tools/argo/hub.go` ↔ `backend/mesh/bundles.ts`, `router.ts` | HTTP (no IETF HTTP CL exists; dtn7-rs has a non-standard one) |
 | Link stability | `tools/argo/linkstats.go` | A = MTBF/(MTBF+MTTR) |
@@ -87,6 +88,33 @@ Keys: `~/.config/argo/node.key` (0600) holds the Ed25519 seed and the HPKE priva
 Gauss directory (`POST /api/mesh/keys`; the first key set wins, a different one is a 409). Other devices pin a key
 the first time they see it. The fingerprint is SHA-256 over CBOR `[sign, kem_id, kem]`, the first 10 bytes shown as
 five groups of four hex digits. It is the same code in `argo keys` and on `/mesh`.
+
+### Interoperability (RFC 9173)
+
+`tools/argo/bpsec9173.go` adds the standard BPSec blocks with RFC 9173's default security contexts, for nodes such
+as NASA HDTN, dtn7-rs and ION that use pre-placed symmetric keys (GAU-199). It is a library: the relay still uses
+blocks 192/193, and no command or key file uses it yet.
+
+- **Supported:**
+  - BIB (type 11) with BIB-HMAC-SHA2 (context 1): HMAC 256/256, 384/384 (default) and 512/512.
+  - BCB (type 12) with BCB-AES-GCM (context 2): A128GCM and A256GCM (default), 8 to 16-byte IVs (12 by default,
+    random), the 128-bit tag as a security result or at the end of the ciphertext.
+  - Integrity and AAD scope flags (primary block, target header, security header); keys pre-placed or carried AES
+    key wrapped ([RFC 3394](https://www.rfc-editor.org/rfc/rfc3394), `aeskw.go`, checked on its §4 vectors).
+  - The Abstract Security Block as a CBOR sequence (RFC 9172 §3.6), unlike Argo's own blocks, which use an array.
+  - RFC 9172's block rules: one service per target, no BIB on a security block or an encrypted block, no BCB on
+    the primary block or another BCB, and BIBs added before BCBs (§3.2, §3.7 to §3.9).
+- **Golden tests:** all four Appendix A examples (A.1 to A.4) verify or decrypt from the published bytes and
+  re-encode to them byte for byte (`bpsec9173_test.go`, hex in `testdata/rfc9173/`).
+- **Choices to know about:**
+  - A primary-block BIB target is wrapped in a byte string, as A.3 publishes it and dtn7-rs computes it.
+    [Errata 9192](https://www.rfc-editor.org/errata/eid9192) (reported 2026-09-28, not verified) reads the text as
+    the bare block; `BarePrimary` selects that form, and the errata's corrected A.3 bytes are a golden test too.
+  - One target per BCB when Argo encrypts: a BCB's targets share one key and IV, and A.4 reuses its IV for two
+    targets ([errata 7002](https://www.rfc-editor.org/errata/eid7002)). Argo still decrypts such BCBs.
+  - HMAC keys from 16 bytes up to the hash size are accepted: §3.5 asks for the full hash size, but every
+    Appendix A example uses a 16-byte key.
+- **UNVERIFIED:** live interoperability with HDTN, dtn7-rs or ION. Only the RFC's own examples have been checked.
 
 ### Reliability: end to end, because BPv7 has no custody transfer
 
@@ -210,9 +238,9 @@ Not covered:
 
 ## Next
 
-1. **Interoperability.** TCPCLv4 ([RFC 9174](https://www.rfc-editor.org/rfc/rfc9174)) for direct device links, and
-   the RFC 9173 contexts for interop with HDTN and dtn7-rs (Apache-2.0). Use the RFC 9173 Appendix A vectors as
-   golden tests. Copy no code from dtn7-go (GPL), µD3TN (AGPL) or Reticulum (restrictive licence).
+1. **Interoperability.** TCPCLv4 ([RFC 9174](https://www.rfc-editor.org/rfc/rfc9174)) for direct device links.
+   The RFC 9173 contexts exist as a library (see above); next is a key store and a live test against HDTN and
+   dtn7-rs (Apache-2.0). Copy no code from dtn7-go (GPL), µD3TN (AGPL) or Reticulum (restrictive licence).
 2. **Transfer improvements.** Partial-chunk resume; recipient key rotation; Contact Graph Routing once passes are
    scheduled (CCSDS SABR 734.3-B-1).
 3. **Phones.** Phones as bundle endpoints (an iOS/Android client).
