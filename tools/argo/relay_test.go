@@ -53,7 +53,7 @@ func (n *testNode) onlyOutKey(t *testing.T) string {
 	t.Helper()
 	var keys []string
 	for k, it := range n.load().Out {
-		if !it.Receipt {
+		if !it.internal() {
 			keys = append(keys, k)
 		}
 	}

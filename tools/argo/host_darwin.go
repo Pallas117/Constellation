@@ -5,8 +5,11 @@ package main
 import (
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
+	"time"
 )
 
 // macOS host probing and effects: the system tools Argo has always used.
@@ -75,4 +78,34 @@ func messagesSend(service, to, text string) error {
 		return fmt.Errorf("Messages (%s): %s", service, strings.TrimSpace(string(out)))
 	}
 	return nil
+}
+
+// chatDBStatus reads Messages' record of the SMS sent to `to` at or after `at`:
+// its error code and sent/delivered flags only, never the text. Reading
+// ~/Library/Messages needs Full Disk Access for argo; without it the answer is
+// smsUnreadable and alerts behave as before. `to` passed handleRe (digits and a
+// leading + for SMS), so it is safe inside the SQL literal.
+func chatDBStatus(to string, at time.Time) smsState {
+	if !strings.HasPrefix(to, "+") || !handleRe.MatchString(to) {
+		return smsUnreadable
+	}
+	db := filepath.Join(os.Getenv("HOME"), "Library", "Messages", "chat.db")
+	since := (at.Unix() - 978307200 - 2) * int64(time.Second) // Messages counts ns from 2001-01-01
+	q := fmt.Sprintf("SELECT m.error, m.is_sent, m.is_delivered FROM message m JOIN handle h ON m.handle_id = h.ROWID"+
+		" WHERE m.is_from_me = 1 AND m.service = 'SMS' AND h.id = '%s' AND m.date >= %d ORDER BY m.date ASC LIMIT 1;", to, since)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "/usr/bin/sqlite3", "-readonly", "-json", db, q).Output()
+	if err != nil {
+		return smsUnreadable
+	}
+	return smsOutcome(out)
+}
+
+// chatDBReadable says whether argo can read Messages' records (Full Disk Access).
+func chatDBReadable() bool {
+	db := filepath.Join(os.Getenv("HOME"), "Library", "Messages", "chat.db")
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	return exec.CommandContext(ctx, "/usr/bin/sqlite3", "-readonly", db, "SELECT 1 FROM message LIMIT 1;").Run() == nil
 }
