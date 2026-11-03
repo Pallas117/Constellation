@@ -47,7 +47,7 @@ function answer(res: Response, check: PatternCheck, extra: Record<string, unknow
       : check.reason === "not-set"
         ? "No pattern is set for this account yet."
         : `That's not your pattern. ${check.triesLeft} ${check.triesLeft === 1 ? "try" : "tries"} left.`;
-  res.json({ ok: false, ...check, message, ...extra });
+  res.json({ ...check, message, ...extra });
 }
 
 export function createPatternRouter(deps: PatternRouterDeps): express.Router {
