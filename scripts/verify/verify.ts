@@ -3,10 +3,11 @@
  *
  * GitHub Actions is billing-locked, so this is the gate a commit must pass before merge or deploy:
  *   1. baseline is well-formed (requirements/requirements.json)
- *   2. full test suite, with a JUnit report
- *   3. ops tests (scripts/ops/gauss-services.test.sh), with their own JUnit report (GAU-163)
- *   4. production build
- *   5. VCRM: every requirement verified (no failing, skipped or missing evidence), by exact test
+ *   2. website tests (`npm run test:website`: the lightbound.uk site and its worker; GAU-228)
+ *   3. full test suite, with a JUnit report
+ *   4. ops tests (scripts/ops/gauss-services.test.sh), with their own JUnit report (GAU-163)
+ *   5. production build
+ *   6. VCRM: every requirement verified (no failing, skipped or missing evidence), by exact test
  *      name across both reports
  * Writes test-results/verification/{junit.xml,ops-junit.xml,vcrm.json,vcrm.md}. Exits non-zero on any failure.
  *
@@ -63,6 +64,11 @@ const testEnv = Object.fromEntries(
   [...(testScript.match(/^(?:\s*[A-Z_][A-Z0-9_]*=\S+)+/)?.[0] ?? "").matchAll(/([A-Z_][A-Z0-9_]*)=(\S+)/g)].map((m) => [m[1], m[2]]),
 );
 if (Object.keys(testEnv).length) console.log(`  using npm test environment: ${Object.entries(testEnv).map(([k, v]) => `${k}=${v}`).join(" ")}`);
+
+// The website's own suite (~4 s), through its npm script so the two can't drift. It must run before
+// the main suite: the gate record (scripts/ops/gauss-services.sh, gates_record) takes the last
+// "tests/pass/fail N" lines of this log as the main suite's counts.
+results.website = step("Website tests", "npm", ["run", "test:website", "--silent"]);
 
 // Same globs as `npm test`, plus a JUnit report for the matrix.
 results.tests = step("Test suite", process.execPath, [

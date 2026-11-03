@@ -10,6 +10,10 @@ import { loadArchive, replayArchive, type ReplayRecord, type ReplaySummary } fro
 
 const here = (path: string) => fileURLToPath(new URL(path, import.meta.url));
 
+// Taken before any replay starts: the replays are shared, so a count taken around a later
+// `await run(id)` would compare two moments after that replay had already finished.
+const feedBeforeReplays = getCanonicalFeed().length;
+
 // One replay per storm, shared by the tests below (they run one after another in this file).
 const runs = new Map<string, Promise<{ records: ReplayRecord[]; summary: ReplaySummary }>>();
 const run = (id: string) => {
@@ -47,9 +51,9 @@ test("replay: Jan 2026 reaches S4, with S2–S3 under G0 for hours before the ge
 });
 
 test("replay: never publishes to the live feed (GAU-138)", async () => {
-  const before = getCanonicalFeed().length;
-  await run("oct-2024");
-  assert.equal(getCanonicalFeed().length, before);
+  // One at a time: a replay swaps the global fetch while it runs.
+  for (const { id } of REPLAY_EVENTS) await run(id);
+  assert.equal(getCanonicalFeed().length, feedBeforeReplays);
 });
 
 const tiny = (rows: Partial<ReplayArchive>): ReplayArchive => ({

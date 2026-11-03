@@ -47,6 +47,11 @@ export function memoryBaseUrl(raw: string | undefined = process.env.GAUSS_MEMORY
   return url.origin;
 }
 
+/** False when GAUSS_MEMORY_URL is "off" or unusable: the console then hides its search panel (GAU-228). Unset = the default URL. */
+export function memoryConfigured(raw: string | undefined = process.env.GAUSS_MEMORY_URL): boolean {
+  return memoryBaseUrl(raw) !== null;
+}
+
 /** Corpus paths are shown to users: keep relative paths, reduce absolute ones to the file name. */
 export function displayPath(filePath: unknown): string {
   if (typeof filePath !== "string" || !filePath) return "unknown source";

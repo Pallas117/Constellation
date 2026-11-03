@@ -29,6 +29,9 @@ type Phone struct {
 	Queue  string // jsonl file of pending alerts
 	Device string
 	send   func(to, text string) error // replaced in tests
+	// sendRelay is for alerts sent while this Mac has no network (GAU-233): SMS first, so Messages
+	// hands it to the iPhone over Continuity instead of holding an iMessage it can't deliver.
+	sendRelay func(to, text string) error
 }
 
 func newPhone(to, device string) *Phone {
@@ -48,6 +51,9 @@ func newPhoneFor(cfg Config) *Phone {
 		return nil
 	}
 	p := newPhone(cfg.PhoneTo, cfg.Device)
+	if p != nil {
+		p.sendRelay = smsFirst
+	}
 	if p != nil && strings.EqualFold(cfg.PhoneService, "sms") && strings.HasPrefix(p.To, "+") {
 		p.send = smsFirst
 	}
@@ -154,6 +160,24 @@ func (p *Phone) Send(title, msg string, at time.Time) {
 		defer unlock()
 	} // still best-effort deliver if the lock is stuck
 	p.deliver(append(p.readQueue(), text))
+}
+
+// SendRelay sends one alert while this Mac is offline and reports whether Messages accepted it.
+// A failure is queued like any other alert, so it still arrives once the Mac is back online.
+func (p *Phone) SendRelay(title, msg string, at time.Time) bool {
+	text := fmt.Sprintf("%s on %s (%s)\n%s", Mask(title), p.Device, at.Local().Format("15:04"), Mask(msg))
+	send := p.send
+	if p.sendRelay != nil && strings.HasPrefix(p.To, "+") {
+		send = p.sendRelay
+	}
+	if unlock, err := p.queueLock(); err == nil {
+		defer unlock()
+	}
+	if err := send(p.To, text); err != nil {
+		p.writeQueue(append(p.readQueue(), text))
+		return false
+	}
+	return true
 }
 
 // Flush retries queued alerts; called every tick so offline alerts arrive once back online.
