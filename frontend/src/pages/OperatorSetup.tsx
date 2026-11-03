@@ -10,7 +10,7 @@ import { refreshOperatorGeometry, useOperatorGeometry } from "@/hooks/useOperato
 import { refreshOperatorPattern, useOperatorPattern } from "@/hooks/useOperatorPattern";
 import { usePrefersReducedMotion } from "@/hooks/usePrefersReducedMotion";
 import { addPasskey, passkeyTouch, useSession } from "@/lib/auth-client";
-import { samePattern, setPatternRequest } from "@/lib/pattern";
+import { samePattern, setDuressRequest, setPatternRequest } from "@/lib/pattern";
 import { landingFor, roleOf } from "@/lib/roles";
 import { safeRedirectPath } from "@/lib/safe-redirect";
 import { fetchWithStepUp, StepUpCancelled } from "@/lib/step-up";
@@ -71,18 +71,21 @@ function Panel({ children, stepKey }: { children: ReactNode; stepKey: string }) 
  * then their pattern, drawn twice. /setup?change=1 changes the pattern (it needs the current
  * one drawn in this session and a fresh passkey touch).
  */
-export default function OperatorSetup() {
+function SetupFlow() {
   useDocumentTitle("Set up sign-in");
   const navigate = useNavigate();
   const location = useLocation();
   const [params] = useSearchParams();
   const changing = params.get("change") === "1";
+  // /setup?duress=1: a second pattern to draw only under pressure (backend/pattern/sensor.ts).
+  const duressMode = params.get("duress") === "1";
   const { data } = useSession();
   const userId = data?.user?.id ?? null;
   const { passkeys, geometry } = useOperatorGeometry();
   const { status } = useOperatorPattern(userId);
   const still = usePrefersReducedMotion();
-  const [step, setStep] = useState<Step>(changing ? "draw" : "intro");
+  // Changing or adding a duress pattern starts at the touch-first step, not the introduction.
+  const [step, setStep] = useState<Step>(changing || duressMode ? "geometry" : "intro");
   const [first, setFirst] = useState<number[] | null>(null);
   const [feedback, setFeedback] = useState<PadFeedback>({ kind: "idle" });
   const [attempt, setAttempt] = useState(0);
@@ -134,7 +137,7 @@ export default function OperatorSetup() {
   const confirm = async (pattern: number[]) => {
     if (!first || !samePattern(first, pattern)) return restartDrawing("That's not the same pattern. Draw a new one from the start.");
     setFeedback({ kind: "checking" });
-    const [url, init] = setPatternRequest(pattern);
+    const [url, init] = duressMode ? setDuressRequest(pattern) : setPatternRequest(pattern);
     try {
       const res = await fetchWithStepUp(url, init, async () => {
         const touch = await passkeyTouch("confirm");
@@ -146,7 +149,7 @@ export default function OperatorSetup() {
       });
       const body = (await res.json().catch(() => ({}))) as { error?: string; code?: string };
       if (res.status === 428 && body.code === "PATTERN_REQUIRED") {
-        navigate("/pattern", { state: { from: { pathname: "/setup", search: "?change=1" } } });
+        navigate("/pattern", { state: { from: { pathname: "/setup", search: duressMode ? "?duress=1" : "?change=1" } } });
         return;
       }
       if (!res.ok) return restartDrawing(body.error ?? `Could not set the pattern (HTTP ${res.status}).`);
@@ -237,7 +240,7 @@ export default function OperatorSetup() {
 
             {step === "geometry" && (
               <Panel stepKey="geometry">
-                <h2 className="text-xl font-semibold">This is yours.</h2>
+                <h2 className="text-xl font-semibold">{duressMode ? "Add a duress pattern" : changing ? "Change your pattern" : "This is yours."}</h2>
                 <motion.div
                   initial={still ? false : { opacity: 0, scale: 0.7, rotate: -12 }}
                   animate={{ opacity: 1, scale: 1, rotate: 0 }}
@@ -266,8 +269,9 @@ export default function OperatorSetup() {
                   <p className="text-sm text-muted-foreground">Reading your passkey…</p>
                 )}
                 <p className="mt-3 max-w-sm text-sm text-muted-foreground">
-                  {geometry ? `${geometry.colourName}, ` : ""}from your passkey. You'll see it when you sign in and in the console header. It helps you spot
-                  your own session; it doesn't lock anything.
+                  {duressMode
+                    ? "A second pattern you'd draw only if someone forces you to sign in. It looks like it worked, the console shows maintenance, and an alarm goes out quietly. Make it different from your real one, and easy to recall."
+                    : `${geometry ? `${geometry.colourName}, ` : ""}from your passkey. You'll see it when you sign in and in the console header. It helps you spot your own session; it doesn't lock anything.`}
                 </p>
                 <Button className="mt-6" disabled={!geometry || touching} onClick={() => void startDrawing()}>
                   <Fingerprint className="h-4 w-4" aria-hidden="true" />
@@ -283,7 +287,9 @@ export default function OperatorSetup() {
 
             {(step === "draw" || step === "confirm") && (
               <Panel stepKey={`${step}-${attempt}`}>
-                <h2 className="text-xl font-semibold">{step === "draw" ? (changing ? "Draw a new pattern" : "Draw your pattern") : "Once more, to be sure"}</h2>
+                <h2 className="text-xl font-semibold">
+                  {step === "draw" ? (duressMode ? "Draw your duress pattern" : changing ? "Draw a new pattern" : "Draw your pattern") : "Once more, to be sure"}
+                </h2>
                 <p className="mb-4 mt-2 max-w-sm text-sm text-muted-foreground">
                   {step === "draw"
                     ? "Tap or swipe through 8 or more vertices, at least 6 different ones. The figure turns, so remember the letters, not the shape."
@@ -292,7 +298,7 @@ export default function OperatorSetup() {
                 <PatternPad
                   key={`${step}-${attempt}`}
                   colour={colour}
-                  submitLabel={step === "draw" ? "Next" : "Set pattern"}
+                  submitLabel={step === "draw" ? "Next" : duressMode ? "Set duress pattern" : "Set pattern"}
                   feedback={step === "confirm" ? feedback : { kind: "idle" }}
                   onSubmit={(pattern) => {
                     if (step === "draw") {
@@ -335,17 +341,27 @@ export default function OperatorSetup() {
                     transition={{ duration: 0.45, delay: 0.5 }}
                   />
                 </motion.svg>
-                <h2 className="mt-4 text-xl font-semibold">{changing ? "New pattern set." : "You're set up."}</h2>
+                <h2 className="mt-4 text-xl font-semibold">{duressMode ? "Duress pattern set." : changing ? "New pattern set." : "You're set up."}</h2>
                 <div className="my-4">
                   <OperatorGeometryFigure geometry={geometry} size={120} />
                 </div>
                 <p className="max-w-sm text-sm text-muted-foreground">
-                  Next time: touch, then draw. {status?.padOrigin ? "You can draw on your phone too." : ""} Five misses lock the pattern for 15 minutes; an
-                  admin can clear a forgotten one.
+                  {duressMode
+                    ? "If you ever draw it, the session looks signed in, the console shows maintenance, and an alarm goes out. Nothing on screen says so."
+                    : `Next time: touch, then draw. ${status?.padOrigin ? "You can draw on your phone too. " : ""}Five misses lock the pattern for 15 minutes; an admin can clear a forgotten one.`}
                 </p>
                 <Button className="mt-6" onClick={() => navigate(afterSetup(location, data?.user), { replace: true })}>
                   Enter the console
                 </Button>
+                {!duressMode && !status?.duressSet && (
+                  <button
+                    type="button"
+                    className="mt-3 text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+                    onClick={() => navigate("/setup?duress=1", { state: location.state })}
+                  >
+                    Optional: add a duress pattern
+                  </button>
+                )}
               </Panel>
             )}
           </AnimatePresence>
@@ -353,4 +369,10 @@ export default function OperatorSetup() {
       </div>
     </main>
   );
+}
+
+/** A new mode (?change=1, ?duress=1) starts the flow afresh rather than keeping the last step. */
+export default function OperatorSetup() {
+  const { search } = useLocation();
+  return <SetupFlow key={search} />;
 }

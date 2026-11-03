@@ -12,7 +12,7 @@ import { useOperatorGeometry } from "@/hooks/useOperatorGeometry";
 import { refreshOperatorPattern, useOperatorPattern } from "@/hooks/useOperatorPattern";
 import { usePrefersReducedMotion } from "@/hooks/usePrefersReducedMotion";
 import { signOut, useSession } from "@/lib/auth-client";
-import { fetchPatternStatus, openPadRequest, verifyPattern } from "@/lib/pattern";
+import { fetchPatternStatus, noticeText, openPadRequest, verifyPattern } from "@/lib/pattern";
 import { landingFor, roleOf } from "@/lib/roles";
 import { safeRedirectPath } from "@/lib/safe-redirect";
 
@@ -116,6 +116,7 @@ export default function PatternCheck() {
 
   if (status && !status.set && status.required) return <Navigate to="/setup" state={location.state} replace />;
   const locked = status?.lockedUntil && status.lockedUntil > now ? status.lockedUntil : null;
+  const notice = noticeText(status?.notice, (ms) => new Date(ms).toLocaleTimeString());
 
   return (
     <main className="flex min-h-screen w-full items-center justify-center bg-background px-4 py-10 text-foreground">
@@ -128,6 +129,21 @@ export default function PatternCheck() {
             <p className="text-xs text-muted-foreground">{geometry ? `${geometry.colourName} · ${geometry.code}` : "Your second check, after the touch."}</p>
           </div>
         </div>
+
+        <AnimatePresence initial={false}>
+          {notice && (
+            <motion.p
+              key="notice"
+              role="status"
+              initial={still ? false : { opacity: 0, height: 0 }}
+              animate={{ opacity: 1, height: "auto" }}
+              exit={still ? undefined : { opacity: 0, height: 0 }}
+              className="mt-4 overflow-hidden rounded-md border border-caution/50 bg-caution/10 px-3 py-2 text-sm text-caution"
+            >
+              {notice}
+            </motion.p>
+          )}
+        </AnimatePresence>
 
         <div className="mt-6 min-h-[440px]">
           <AnimatePresence mode="wait" initial={false}>

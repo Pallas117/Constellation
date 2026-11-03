@@ -72,7 +72,7 @@ test("role matrix", () => {
 let lastBody: unknown;
 
 /** Sessions have drawn their operator pattern unless a test says otherwise. */
-function run(method: string, p: string, role?: AuthRole, passkeyAt?: number | null, pattern = { set: true, verifiedAt: Date.now() as number | null }) {
+function run(method: string, p: string, role?: AuthRole, passkeyAt?: number | null, pattern: { set: boolean; verifiedAt: number | null; duress?: boolean } = { set: true, verifiedAt: Date.now() }) {
   let status = 200;
   let passed = false;
   let body: unknown;
@@ -165,4 +165,14 @@ test("setting the operator pattern needs a fresh passkey touch; drawing it does 
   assert.equal(policyFor("POST", "/operator-pattern/verify")?.stepUp, undefined);
   assert.equal(policyFor("POST", "/admin/users/x/pattern/clear")?.stepUp, true);
   assert.equal(accessFor("POST", "/operator-pattern/pad/info"), "public");
+});
+
+test("a session signed in with the duress pattern sees operator and admin routes as in maintenance (503), viewer routes as usual", () => {
+  const duress = { set: true, verifiedAt: Date.now(), duress: true };
+  assert.equal(run("POST", "/rag/query", "operator", null, duress), 503);
+  assert.match((lastBody as { error: string }).error, /maintenance/);
+  assert.equal(run("POST", "/admin/users/x/role", "admin", Date.now(), duress), 503, "a fresh touch doesn't lift it");
+  assert.equal(run("GET", "/feed/aurora/map", "operator", null, duress), 200);
+  assert.equal(policyFor("POST", "/operator-pattern/duress")?.stepUp, true);
+  assert.equal(policyFor("DELETE", "/operator-pattern/duress")?.stepUp, true);
 });

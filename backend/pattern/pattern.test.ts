@@ -6,6 +6,7 @@ import express from "express";
 import type { AuthenticatedRequest, AuthRole } from "../auth.js";
 import { enforceApiPolicy, PATTERN_REQUIRED, STEP_UP_REQUIRED } from "../rbac.js";
 import { createPatternRouter } from "./router.js";
+import { createSensor, type SensorKind } from "./sensor.js";
 import { createPadRequests, createPatternStore, PATTERN_LOCK_MS, patternPepper, type ScryptCost } from "./store.js";
 
 const CHEAP: ScryptCost = { N: 2 ** 10, r: 8, p: 1 }; // tests only; production is 2^15
@@ -76,11 +77,13 @@ test("phone requests are one-time: two minutes, five tries, one approval", () =>
 });
 
 /** The production policy middleware and router, with the session faked from test headers. */
-async function withApp(fn: (api: string, marks: { sessions: Array<[string, number]>; users: Array<[string, number | null]> }) => Promise<void>) {
+type Marks = { sessions: Array<[string, number]>; users: Array<[string, number | null]>; duress: string[]; events: SensorKind[]; alarms: string[] };
+async function withApp(fn: (api: string, marks: Marks) => Promise<void>) {
   const db = new Database(":memory:");
   const store = createPatternStore(db, { pepper: patternPepper("test-secret"), cost: CHEAP });
-  const marks = { sessions: [] as Array<[string, number]>, users: [] as Array<[string, number | null]> };
+  const marks: Marks = { sessions: [], users: [], duress: [], events: [], alarms: [] };
   const verified = new Set<string>();
+  const sensor = createSensor({ alarm: (title) => void marks.alarms.push(title), log: (e) => void marks.events.push(e.message.split(":")[0] as SensorKind) });
   const app = express();
   app.use(express.json());
   app.use("/api", (req: AuthenticatedRequest, _res, next) => {
@@ -95,7 +98,7 @@ async function withApp(fn: (api: string, marks: { sessions: Array<[string, numbe
         rawRoles: [role],
         token,
         passkeyAt: touched === undefined ? null : Date.now() - Number(touched),
-        pattern: { set: store.isSet("u-op"), verifiedAt: verified.has(token) ? Date.now() : null },
+        pattern: { set: store.isSet("u-op"), verifiedAt: verified.has(token) ? Date.now() : null, duress: marks.duress.includes(token) },
       };
     }
     next();
@@ -106,10 +109,13 @@ async function withApp(fn: (api: string, marks: { sessions: Array<[string, numbe
     createPatternRouter({
       store,
       requests: createPadRequests(),
+      sensor,
       markSession: async (token, at) => {
         verified.add(token);
         marks.sessions.push([token, at.getTime()]);
       },
+      markDuress: async (token) => void marks.duress.push(token),
+      ipOf: () => "100.64.0.9",
       markUser: async (userId, at) => void marks.users.push([userId, at ? at.getTime() : null]),
       geometryKeyFor: () => "pQECAyYgASFYIA",
       required: () => true,
@@ -131,7 +137,16 @@ test("setting a pattern needs a fresh passkey touch; changing it also needs the 
   await withApp(async (api, marks) => {
     const op = { "x-test-role": "operator" };
     const status = async (headers: Record<string, string>) => (await fetch(`${api}/status`, { headers })).json();
-    assert.deepEqual(await status(op), { required: true, set: false, verified: false, lockedUntil: null, padOrigin: "https://gauss.example.ts.net", request: null });
+    assert.deepEqual(await status(op), {
+      required: true,
+      set: false,
+      verified: false,
+      duressSet: false,
+      lockedUntil: null,
+      padOrigin: "https://gauss.example.ts.net",
+      request: null,
+      notice: { misses: 0, probes: 0, unusual: 0, lastIp: null, lastAt: null },
+    });
     const noTouch = await post(api, { pattern: PATTERN }, op);
     assert.equal(noTouch.status, 428);
     assert.equal(((await noTouch.json()) as { code: string }).code, STEP_UP_REQUIRED);
@@ -197,4 +212,53 @@ test("the frontend pad uses the same pattern rules as the server", async () => {
   const m = source.match(/PATTERN_RULES = \{ minLength: (\d+), maxLength: (\d+), minDistinct: (\d+) \}/);
   assert.ok(m, "frontend PATTERN_RULES not found");
   assert.deepEqual({ minLength: Number(m[1]), maxLength: Number(m[2]), minDistinct: Number(m[3]) }, { ...PATTERN_RULES });
+});
+
+test("a duress pattern signs in like the real one, marks the session silently and raises the alarm", async () => {
+  await withApp(async (api, marks) => {
+    const op = { "x-test-role": "operator" };
+    const DURESS = [15, 10, 5, 0, 12, 9, 6, 3];
+    await post(api, { pattern: PATTERN }, { ...op, "x-test-session": "setup", "x-test-touched-ms-ago": "0" });
+    const setup = { ...op, "x-test-session": "setup", "x-test-touched-ms-ago": "0" };
+    assert.equal((await post(`${api}/duress`, { pattern: DURESS }, { ...op, "x-test-session": "setup" })).status, 428, "needs a fresh touch");
+    assert.equal((await post(`${api}/duress`, { pattern: DURESS }, { ...op, "x-test-session": "other", "x-test-touched-ms-ago": "0" })).status, 428, "and the pattern drawn in this session");
+    const same = await post(`${api}/duress`, { pattern: PATTERN }, setup);
+    assert.equal(same.status, 400);
+    assert.match(((await same.json()) as { error: string }).error, /must differ/);
+    assert.equal((await post(`${api}/duress`, { pattern: DURESS }, setup)).status, 200);
+    assert.equal(((await (await fetch(`${api}/status`, { headers: setup })).json()) as { duressSet: boolean }).duressSet, true);
+
+    // Under duress: the answer is the same as for the real pattern.
+    const coerced = { ...op, "x-test-session": "coerced" };
+    const res = await post(`${api}/verify`, { pattern: DURESS }, coerced);
+    assert.deepEqual(await res.json(), { ok: true });
+    assert.deepEqual(marks.duress, ["coerced"]);
+    assert.ok(marks.events.includes("duress"));
+    assert.ok(marks.alarms.some((t) => /DURESS/.test(t)));
+    // Nothing the coerced session can read says so, and it can't change either pattern.
+    const seen = (await (await fetch(`${api}/status`, { headers: coerced })).json()) as { verified: boolean; duressSet: boolean };
+    assert.deepEqual([seen.verified, seen.duressSet], [true, false]);
+    assert.equal((await post(api, { pattern: WRONG }, { ...coerced, "x-test-touched-ms-ago": "0" })).status, 503);
+    assert.equal((await fetch(`${api}/duress`, { method: "DELETE", headers: { ...coerced, "x-test-touched-ms-ago": "0" } })).status, 503);
+    // The real one still signs in normally, and a new real pattern can't be the duress one.
+    assert.deepEqual(await (await post(`${api}/verify`, { pattern: PATTERN }, { ...op, "x-test-session": "fine" })).json(), { ok: true });
+    assert.equal((await post(api, { pattern: DURESS }, setup)).status, 400);
+    const removed = await fetch(`${api}/duress`, { method: "DELETE", headers: setup });
+    assert.deepEqual(await removed.json(), { ok: true, removed: true });
+  });
+});
+
+test("wrong drawings and probed phone codes reach the sensor; the operator sees them at the next drawing", async () => {
+  await withApp(async (api, marks) => {
+    const op = { "x-test-role": "operator" };
+    await post(api, { pattern: PATTERN }, { ...op, "x-test-session": "setup", "x-test-touched-ms-ago": "0" });
+    await post(`${api}/verify`, { pattern: WRONG }, { ...op, "x-test-session": "s2" });
+    await post(`${api}/verify`, { pattern: WRONG }, { ...op, "x-test-session": "s2" });
+    for (let i = 0; i < 3; i++) await post(`${api}/pad`, { request: `probe${i}`.padEnd(22, "x"), pattern: PATTERN });
+    assert.deepEqual(marks.events.filter((e) => e === "pattern-miss").length, 2);
+    assert.deepEqual(marks.events.filter((e) => e === "pad-probe").length, 3);
+    assert.ok(marks.alarms.some((t) => /wrong pattern/.test(t)) && marks.alarms.some((t) => /probed/.test(t)));
+    const notice = ((await (await fetch(`${api}/status`, { headers: { ...op, "x-test-session": "s2" } })).json()) as { notice: { misses: number } }).notice;
+    assert.equal(notice.misses, 2, "misses since the last good drawing");
+  });
 });
