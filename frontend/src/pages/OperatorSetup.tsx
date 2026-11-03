@@ -101,6 +101,26 @@ export default function OperatorSetup() {
     setStep("geometry");
   };
 
+  // The touch comes first: setting the pattern needs a passkey touch in the last 5 minutes,
+  // and asking for it after two drawings would throw both away if the prompt were closed.
+  const [touching, setTouching] = useState(false);
+  const startDrawing = async () => {
+    setMessage(null);
+    const touchedAt = Date.parse(String((data?.session as { passkeyAt?: unknown } | undefined)?.passkeyAt ?? ""));
+    if (Number.isFinite(touchedAt) && Date.now() - touchedAt < 4 * 60_000) {
+      setStep("draw");
+      return;
+    }
+    setTouching(true);
+    const touch = await passkeyTouch("confirm");
+    setTouching(false);
+    if ("error" in touch) {
+      setMessage(touch.error);
+      return;
+    }
+    setStep("draw");
+  };
+
   const restartDrawing = (note: string) => {
     setFeedback({ kind: "miss", message: note });
     window.setTimeout(() => {
@@ -249,9 +269,15 @@ export default function OperatorSetup() {
                   {geometry ? `${geometry.colourName}, ` : ""}from your passkey. You'll see it when you sign in and in the console header. It helps you spot
                   your own session; it doesn't lock anything.
                 </p>
-                <Button className="mt-6" disabled={!geometry} onClick={() => setStep("draw")}>
-                  Draw your pattern
+                <Button className="mt-6" disabled={!geometry || touching} onClick={() => void startDrawing()}>
+                  <Fingerprint className="h-4 w-4" aria-hidden="true" />
+                  {touching ? "Touch the sensor…" : "Touch, then draw your pattern"}
                 </Button>
+                {message && (
+                  <p role="alert" className="mt-3 max-w-sm text-sm text-caution">
+                    {message}
+                  </p>
+                )}
               </Panel>
             )}
 
@@ -261,7 +287,7 @@ export default function OperatorSetup() {
                 <p className="mb-4 mt-2 max-w-sm text-sm text-muted-foreground">
                   {step === "draw"
                     ? "Tap or swipe through 8 or more vertices, at least 6 different ones. The figure turns, so remember the letters, not the shape."
-                    : "Draw the same pattern again. Setting it asks for your passkey once more."}
+                    : "Draw the same pattern again."}
                 </p>
                 <PatternPad
                   key={`${step}-${attempt}`}
