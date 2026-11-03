@@ -53,14 +53,14 @@ or runaway recursion on hostile bytes). Seeds run on every gate; long runs on de
 
 ## Coverage
 
-Statement coverage 72% on 3 Nov 2026 (69% before this plan) (`check.sh` prints it). `coverage-floor` holds the floor; raise it
+Statement coverage 75.3% on 3 Nov 2026 (69% before this plan; target reached) (`check.sh` prints it). `coverage-floor` holds the floor; raise it
 when coverage goes up, never lower it to pass. Target 75% by end of November, from the gaps below.
 Not chased: `main()`, `install`/`uninstall` (launchctl), and the darwin wrappers that only run a system
 command (covered by the parsers they feed and by `-tags integration`).
 
 ## Gaps, in order
 
-1. `relay_cmd.go` (6%): the `send/inbox/sync/keys/mule` command layer. Next: table tests with a fake hub.
+1. `relay_cmd.go`: carried-folder path and usage errors covered (relaycmd_test.go); the hub path (`sync`, `keys publish|trust`) still needs a fake hub.
 2. `loop.go` (43%) and `wifiscan.go` (28%): the tick's decision path when the scan helper is missing or slow.
 3. Relay end to end in the gate: make `argo enroll` skip the live network probe under a test flag, then add
    `ARGO_E2E=1` to the gate.
