@@ -743,3 +743,45 @@ func TestSlowChargerIsAWatchAndDoesNotCapRAM(t *testing.T) {
 		t.Fatal("running on battery must keep the light-work cap")
 	}
 }
+
+// 3 Nov: a gate waited 2 h at normal pressure because the hour still held 34 warn minutes.
+func TestRecoveredAfterASustainedWarn(t *testing.T) {
+	spell := func(normalMin int) ([]Sample, Sample) {
+		var hist []Sample
+		for i := 40 + normalMin; i > 0; i-- {
+			s := calm()
+			s.At = t0.Add(-time.Duration(i) * time.Minute)
+			if i > normalMin {
+				s.Pressure = "warn"
+			}
+			hist = append(hist, s)
+		}
+		return hist, calm()
+	}
+	hist, cur := spell(16)
+	a := assess(hist, cur)
+	if a.Level != LevelWatch || !strings.Contains(codes(a), "mem-recovered") || strings.Contains(codes(a), "mem-warn-sustained") {
+		t.Fatalf("16 min normal after a warn spell: %s [%s] warn %d min", a.Level, codes(a), a.WarnMin)
+	}
+	if yes, why := admit(a, 1.7); !yes {
+		t.Errorf("a 1.7 GB gate that fits was refused after recovery: %s", why)
+	}
+	hist, cur = spell(5)
+	if a := assess(hist, cur); a.Level != LevelRisk || !strings.Contains(codes(a), "mem-warn-sustained") {
+		t.Errorf("5 min normal is not yet recovered: %s [%s]", a.Level, codes(a))
+	}
+	hist, cur = spell(16)
+	hist = hist[:40] // asleep since the spell: the calm stretch isn't on record, so no recovery
+	if a := assess(hist, cur); strings.Contains(codes(a), "mem-recovered") {
+		t.Errorf("recovered without readings for the last 16 min: [%s]", codes(a))
+	}
+}
+
+func TestRefusalNamesWhatCapsRAM(t *testing.T) {
+	var a Assessment
+	a.add("disk", "disk-tight", LevelWatch, "9.0 GB free on disk")
+	a.add("memory", "mem-warn", LevelWatch, "memory pressure is at warn (12 of the last 60 min)")
+	if yes, why := admit(a, 1.7); yes || !strings.Contains(why, "memory pressure is at warn") || strings.Contains(why, "disk") {
+		t.Fatalf("refusal = %q: it must name the memory finding, not the disk", why)
+	}
+}

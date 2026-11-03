@@ -146,6 +146,7 @@ export const GUARD_CODE_TEXT = {
   "cpu-saturated": "CPU saturated",
   "cpu-busy": "CPU busy",
   "owner-busy": "its owner is using it",
+  "mem-recovered": "memory recovered after a busy spell",
 } as const;
 export type GuardCode = keyof typeof GUARD_CODE_TEXT;
 export const GUARD_LEVELS = ["ok", "watch", "risk", "block"] as const;

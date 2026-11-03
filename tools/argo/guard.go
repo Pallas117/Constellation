@@ -49,11 +49,13 @@ const (
 	diskWatchGB   = 20.0 // Gauss's "agents" verdict wants 20 GB free
 	reserveGB     = 1.5  // mem-guard HEADROOM: file cache and free pages the OS needs
 	sustainedWarn = 30 * time.Minute
-	swapRiseGB    = 1.0 // GAU-165: +1 GB of swap within 60 min while at warn
-	swapRiseOver  = 60 * time.Minute
-	swapGrowingGB = 0.3 // over swapRiseOver: high swap that is still climbing stays a risk
-	minToFloor    = 60  // minutes of battery left before the floor that still count as safe
-	historyGap    = 15 * time.Minute
+	// recoveredAfter: normal this long after a sustained warn ends the risk (mem-recovered).
+	recoveredAfter = 15 * time.Minute
+	swapRiseGB     = 1.0 // GAU-165: +1 GB of swap within 60 min while at warn
+	swapRiseOver   = 60 * time.Minute
+	swapGrowingGB  = 0.3 // over swapRiseOver: high swap that is still climbing stays a risk
+	minToFloor     = 60  // minutes of battery left before the floor that still count as safe
+	historyGap     = 15 * time.Minute
 	// Coping at warn (2026-10-31, Josh "a better way to sense development demand vs mac
 	// resources"): on this 8 GB Mac the kernel says warn ~half the time while barely paging
 	// (swap 2.25 GB at warn vs 1.94 at normal over 24-31 Oct). Warn with little swap-out and
@@ -162,13 +164,18 @@ func warnWithin(hist []Sample, cur Sample, window time.Duration) time.Duration {
 
 // calmHour is true when unbroken readings cover the last hour (to within one
 // history gap) and none of them, nor now, was at warn or worse.
-func calmHour(hist []Sample, cur Sample) bool {
-	pts := append(recent(hist, cur.At, time.Hour), cur)
-	if atWarn(cur.Pressure) || cur.Pressure == "" || cur.At.Sub(pts[0].At) < time.Hour-historyGap {
+func calmHour(hist []Sample, cur Sample) bool { return calmFor(hist, cur, time.Hour) }
+
+// calmFor is calmHour over any window. The readings may miss a fifth of a short window (at most
+// historyGap): a 15-min window with a 15-min allowance would pass with no readings at all.
+func calmFor(hist []Sample, cur Sample, window time.Duration) bool {
+	gap := min(historyGap, window/5)
+	pts := append(recent(hist, cur.At, window), cur)
+	if atWarn(cur.Pressure) || cur.Pressure == "" || cur.At.Sub(pts[0].At) < window-gap {
 		return false
 	}
 	for i := 0; i+1 < len(pts); i++ {
-		if atWarn(pts[i].Pressure) || pts[i].Pressure == "" || pts[i+1].At.Sub(pts[i].At) > historyGap {
+		if atWarn(pts[i].Pressure) || pts[i].Pressure == "" || pts[i+1].At.Sub(pts[i].At) > gap {
 			return false
 		}
 	}
@@ -256,6 +263,11 @@ func assess(hist []Sample, cur Sample) Assessment {
 	case a.Coping:
 		a.add("memory", "mem-warn-coping", LevelWatch, "memory pressure is at warn (%d of the last 60 min) but coping: %.1f GB available, swapping out %.0f MB/min",
 			a.WarnMin, cur.AvailGB, a.PagingMBMin)
+	case a.WarnMin >= int(sustainedWarn.Minutes()) && calmFor(hist, cur, recoveredAfter):
+		// The hour's tally lags: 3 Nov a gate waited 2 h at normal pressure because the warn
+		// minutes hadn't aged out. Normal and not paging for recoveredAfter is recovered; the
+		// room check in admit still decides whether a job fits.
+		a.add("memory", "mem-recovered", LevelWatch, "memory was at warn for %d of the last 60 min, normal for the last %.0f min", a.WarnMin, recoveredAfter.Minutes())
 	case a.WarnMin >= int(sustainedWarn.Minutes()):
 		a.add("memory", "mem-warn-sustained", LevelRisk, "memory was at warn for %d of the last 60 min (alert at 30)", a.WarnMin)
 	case cur.Pressure == "warn":
@@ -455,7 +467,7 @@ func admit(a Assessment, memGB float64) (bool, string) {
 		}
 		return true, fmt.Sprintf("ok at warn: coping, %.1f GB available after keeping %.1f GB", avail, keep)
 	case a.Level == LevelWatch && memGB > lightJobGB && watchLimitsRAM(a):
-		return false, fmt.Sprintf("light work only (%s); this job asks for %.1f GB, the limit is %.1f GB", worst(a), memGB, lightJobGB)
+		return false, fmt.Sprintf("light work only (%s); this job asks for %.1f GB, the limit is %.1f GB", limiting(a), memGB, lightJobGB)
 	case memGB > room && memGB > 0:
 		return false, fmt.Sprintf("needs %.1f GB, %.1f GB free after keeping %.1f GB", memGB, room, keep)
 	}
@@ -478,11 +490,31 @@ func roomFor(a Assessment) float64 {
 // light-job cap for hours), and RAM is still checked against the headroom below.
 func watchLimitsRAM(a Assessment) bool {
 	for _, f := range a.Findings {
-		if f.Level >= LevelWatch && f.Resource != "disk" && f.Code != "charger-behind" && f.Code != "charger-weak" {
+		if limitsRAM(f) {
 			return true
 		}
 	}
 	return false
+}
+
+// limitsRAM: a watch that caps jobs at lightJobGB. Disk, a slow charger and a recovered memory
+// spell don't: admit's room check covers them.
+func limitsRAM(f Finding) bool {
+	return f.Level >= LevelWatch && f.Resource != "disk" && f.Code != "charger-behind" && f.Code != "charger-weak" && f.Code != "mem-recovered"
+}
+
+// limiting names the finding that caps RAM, for the refusal text (worst() named the disk, which doesn't).
+func limiting(a Assessment) string {
+	best := -1
+	for i, f := range a.Findings {
+		if limitsRAM(f) && (best < 0 || f.Level > a.Findings[best].Level) {
+			best = i
+		}
+	}
+	if best < 0 {
+		return worst(a)
+	}
+	return a.Findings[best].Text
 }
 
 func hasCode(a Assessment, code string) bool { return findingText(a, code) != "" }
