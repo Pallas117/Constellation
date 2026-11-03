@@ -114,7 +114,22 @@ export interface MeshBattery {
   charging: boolean;
   lowPower: boolean;
   external?: boolean; // on mains power (Argo sends it; phones don't)
+  power?: MeshPower; // Argo's power budget (tools/argo/power.go); phones don't send it
 }
+
+/**
+ * Argo's SWaP power budget: the charger's derated supply, what the machine draws and the margin.
+ * negative = plugged in but the battery still covers part of the load; eclipse = on battery.
+ */
+export interface MeshPower {
+  mode: "positive" | "negative" | "eclipse";
+  sourceW: number;
+  loadW: number;
+  marginW: number;
+}
+const POWER_MODES: readonly MeshPower["mode"][] = ["positive", "negative", "eclipse"];
+/** Below this margin a device takes light work only: one more worker would put it in deficit. */
+export const MIN_POWER_MARGIN_W = 5;
 
 /**
  * Argo's resource guard (tools/argo/guard.go, GAU-195): the host's own risk
@@ -218,6 +233,8 @@ export function assessHosting(host?: MeshHost, platform?: MeshPlatform, ctx: Hos
   const onBattery = b ? (b.external ?? b.charging) === false : false;
   if (b && onBattery && b.level <= 20) cap("no", `battery ${b.level}% on battery power`);
   else if (b && onBattery) cap("light", "on battery power: light work only");
+  else if (b?.power?.mode === "negative") cap("light", `the charger can't carry the load: drawing ${b.power.loadW} W from ${b.power.sourceW} W`);
+  else if (b?.power?.mode === "positive" && b.power.marginW < MIN_POWER_MARGIN_W) cap("light", `only ${b.power.marginW} W of power margin`);
   const g = ctx.guard;
   const guardFresh = g && ctx.receivedAt && Math.abs(Date.parse(ctx.receivedAt) - Date.parse(g.at)) <= MESH_STALE_MS;
   if (g && guardFresh) {
@@ -259,6 +276,19 @@ const text = (value: unknown, max = MAX_TEXT) => (typeof value === "string" ? va
 const num = (value: unknown, max: number) =>
   typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= max ? Math.round(value * 10) / 10 : null;
 
+/** Argo's power block; a bad mode or number drops it (the battery block itself stays). */
+export function parsePower(value: unknown): MeshPower | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const p = value as Record<string, unknown>;
+  const mode = POWER_MODES.includes(p.mode as MeshPower["mode"]) ? (p.mode as MeshPower["mode"]) : null;
+  const watts = (v: unknown) => (v === undefined ? 0 : num(v, 1000)); // omitted means 0 (Go's omitempty)
+  const sourceW = watts(p.sourceW);
+  const loadW = watts(p.loadW);
+  const marginW = typeof p.marginW === "number" && Number.isFinite(p.marginW) && Math.abs(p.marginW) <= 1000 ? Math.round(p.marginW * 10) / 10 : null;
+  if (!mode || sourceW === null || loadW === null || marginW === null) return undefined;
+  return { mode, sourceW, loadW, marginW };
+}
+
 /** Battery from a phone reporter: integer percent 0-100 and two flags; anything else drops the block. */
 export function parseBattery(value: unknown): MeshBattery | undefined {
   if (!value || typeof value !== "object") return undefined;
@@ -268,7 +298,14 @@ export function parseBattery(value: unknown): MeshBattery | undefined {
   const level = raw > 0 && raw <= 1 && !Number.isInteger(raw) ? Math.round(raw * 100) : Math.round(raw);
   if (!(level >= 0 && level <= 100)) return undefined;
   if (typeof b.charging !== "boolean") return undefined;
-  return { level, charging: b.charging, lowPower: b.lowPower === true, ...(typeof b.external === "boolean" ? { external: b.external } : {}) };
+  const power = parsePower(b.power);
+  return {
+    level,
+    charging: b.charging,
+    lowPower: b.lowPower === true,
+    ...(typeof b.external === "boolean" ? { external: b.external } : {}),
+    ...(power ? { power } : {}),
+  };
 }
 
 const isGuardCode = (c: unknown): c is GuardCode => typeof c === "string" && Object.hasOwn(GUARD_CODE_TEXT, c);
