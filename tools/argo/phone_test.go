@@ -90,3 +90,66 @@ func TestPhoneMasksSecretsAndCapsQueue(t *testing.T) {
 		t.Fatalf("secret leaked: %q", q[0])
 	}
 }
+
+func TestSMSOutcomeReadsTheRow(t *testing.T) {
+	for _, c := range []struct {
+		out  string
+		want smsState
+	}{
+		{"", smsPending}, // not recorded yet
+		{`[{"error":0,"is_sent":0,"is_delivered":0}]`, smsPending},
+		{`[{"error":0,"is_sent":1,"is_delivered":0}]`, smsSent},
+		{`[{"error":0,"is_sent":0,"is_delivered":1}]`, smsSent},
+		{`[{"error":22,"is_sent":0,"is_delivered":0}]` + "\n", smsFailedState},
+		{"not json", smsPending},
+	} {
+		if got := smsOutcome([]byte(c.out)); got != c.want {
+			t.Errorf("%q: got %d, want %d", c.out, got, c.want)
+		}
+	}
+}
+
+// TestSMSFirstResendsAFailedSMSOverIMessage: Messages accepts the SMS, the
+// iPhone then fails it; the alert goes out again over iMessage. A sent SMS,
+// or one Argo can't check, is not doubled.
+func TestSMSFirstResendsAFailedSMSOverIMessage(t *testing.T) {
+	oldSend, oldStatus := sendVia, smsStatus
+	t.Cleanup(func() { sendVia, smsStatus = oldSend, oldStatus })
+	for _, c := range []struct {
+		name   string
+		states []smsState
+		want   []string
+	}{
+		{"failed after a moment", []smsState{smsPending, smsFailedState}, []string{"SMS", "iMessage"}},
+		{"sent", []smsState{smsPending, smsSent}, []string{"SMS"}},
+		{"no Full Disk Access", []smsState{smsUnreadable}, []string{"SMS"}},
+	} {
+		var via []string
+		sendVia = func(service, _, _ string) error { via = append(via, service); return nil }
+		i := 0
+		smsStatus = func(string, time.Time) smsState {
+			st := c.states[min(i, len(c.states)-1)]
+			i++
+			return st
+		}
+		if err := smsFirst("+60123456789", "x"); err != nil {
+			t.Fatalf("%s: %v", c.name, err)
+		}
+		if strings.Join(via, ",") != strings.Join(c.want, ",") {
+			t.Errorf("%s: sent via %v, want %v", c.name, via, c.want)
+		}
+	}
+	// Messages refuses the SMS outright: iMessage at once, no status wait.
+	var via []string
+	sendVia = func(service, _, _ string) error {
+		via = append(via, service)
+		if service == "SMS" {
+			return errors.New("no SMS account")
+		}
+		return nil
+	}
+	smsStatus = func(string, time.Time) smsState { t.Fatal("status read after a refused send"); return smsPending }
+	if err := smsFirst("+60123456789", "x"); err != nil || strings.Join(via, ",") != "SMS,iMessage" {
+		t.Errorf("refused SMS: %v %v", via, err)
+	}
+}
