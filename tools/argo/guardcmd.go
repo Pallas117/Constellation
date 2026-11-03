@@ -404,7 +404,7 @@ func (r guardRunner) run(memGB, maxGB float64, wait time.Duration, argv []string
 			hold := ""
 			switch {
 			case a.Level >= LevelBlock:
-			case eclipse && !onAC(now):
+			case eclipse && !onAC(now) && !batteryCarries(now):
 				hold = "on battery"
 			case eclipse && brownout(now, a, pausedWhy == "charger can't keep up" && !pausedAt.IsZero()):
 				hold = "charger can't keep up"
@@ -672,3 +672,9 @@ func addGuard(report map[string]any, g GuardState, now time.Time) {
 
 // onAC is true when the sample shows mains power, or no battery at all.
 func onAC(s Sample) bool { return s.Batt == nil || !s.Batt.Present || s.Batt.OnAC }
+
+// batteryCarries: on battery with enough charge that work keeps running (on-battery-ok); under
+// batteryWorkPct, eclipse pauses it until the charger is back.
+func batteryCarries(s Sample) bool {
+	return s.Batt != nil && s.Batt.Present && s.Batt.Pct >= batteryWorkPct
+}

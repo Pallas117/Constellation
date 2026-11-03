@@ -388,7 +388,7 @@ func TestAdmit(t *testing.T) {
 		t.Error("admitted 30 GB with 20.5 GB free")
 	}
 	w := calm()
-	w.Batt = &Battery{Present: true, Pct: 80}
+	w.Batt = &Battery{Present: true, Pct: 45} // under batteryWorkPct: still light work only
 	watch := assess(nil, w)
 	if yes, _ := admit(watch, 1); !yes {
 		t.Error("watch should still admit light work")
@@ -401,7 +401,7 @@ func TestAdmit(t *testing.T) {
 	if yes, why := admit(assess(nil, d), 1.4); !yes {
 		t.Errorf("a tight disk alone capped a 1.4 GB job: %s", why)
 	}
-	d.Batt = &Battery{Present: true, Pct: 80}
+	d.Batt = &Battery{Present: true, Pct: 45} // under batteryWorkPct: still light work only
 	if yes, _ := admit(assess(nil, d), 1.4); yes {
 		t.Error("tight disk plus another watch finding should keep the light-job cap")
 	}
@@ -741,6 +741,11 @@ func TestSlowChargerIsAWatchAndDoesNotCapRAM(t *testing.T) {
 	onBatt := Assessment{Level: LevelWatch, HeadroomGB: 3, Findings: []Finding{{Resource: "battery", Code: "on-battery", Level: LevelWatch}}}
 	if ok, _ := admit(onBatt, 1.8); ok {
 		t.Fatal("running on battery must keep the light-work cap")
+	}
+	if a := assess(nil, func() Sample { s := calm(); s.Batt = &Battery{Present: true, Pct: 80}; return s }()); !strings.Contains(codes(a), "on-battery-ok") {
+		t.Fatalf("80%% on battery: [%s], want on-battery-ok", codes(a))
+	} else if ok, why := admit(a, 1.8); !ok {
+		t.Fatalf("a 1.8 GB gate on battery at 80%% was capped: %s", why)
 	}
 }
 

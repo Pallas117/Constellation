@@ -40,6 +40,7 @@ const (
 	batteryFloorPct    = 10  // the mesh's critical-battery level (the awake guard sleeps earlier, at 40%)
 	chargerBehindRiskH = 2.0 // a charger losing ground is a risk only when the floor is under this many hours away
 	batteryWarnPct     = 20  // job admission only; the awake guard warns at 50%
+	batteryWorkPct     = 50  // on battery at or above this, jobs run uncapped (on-battery-ok); under it, light work only
 	batteryPairPct     = 25  // GAU-165: low battery plus memory warn was the crash combination
 	swapMaxGB          = 4.0 // GAUSS_SWAP_MAX_GB: balance sheds load from here
 	diskMinGB          = 8.0 // GAUSS_DISK_MIN_GB
@@ -317,6 +318,10 @@ func assess(hist []Sample, cur Sample) Assessment {
 			a.add("battery", "battery-draining", LevelRisk, "about %d min to the %d%% floor at the current drain", a.MinToFloor, batteryFloorPct)
 		case !b.OnAC && atWarn(cur.Pressure) && b.Pct <= batteryPairPct:
 			a.add("battery", "battery-low-pressure", LevelRisk, "battery %d%% with memory at warn: plug in or close the browser", b.Pct)
+		case !b.OnAC && b.Pct >= batteryWorkPct:
+			// Measured 3 Nov: a gate drains ~20 %/h on battery (idle 6.8 %/h) and takes 5-30 min, so
+			// 2-10 % a gate. Josh: "you don't need to be plugged in all the time - just warn".
+			a.add("battery", "on-battery-ok", LevelWatch, "on battery power (%d%%): work runs until %d%%, then waits for the charger", b.Pct, batteryWorkPct)
 		case !b.OnAC:
 			a.add("battery", "on-battery", LevelWatch, "on battery power (%d%%): light work only", b.Pct)
 		}
@@ -500,7 +505,7 @@ func watchLimitsRAM(a Assessment) bool {
 // limitsRAM: a watch that caps jobs at lightJobGB. Disk, a slow charger and a recovered memory
 // spell don't: admit's room check covers them.
 func limitsRAM(f Finding) bool {
-	return f.Level >= LevelWatch && f.Resource != "disk" && f.Code != "charger-behind" && f.Code != "charger-weak" && f.Code != "mem-recovered"
+	return f.Level >= LevelWatch && f.Resource != "disk" && f.Code != "charger-behind" && f.Code != "charger-weak" && f.Code != "mem-recovered" && f.Code != "on-battery-ok"
 }
 
 // limiting names the finding that caps RAM, for the refusal text (worst() named the disk, which doesn't).
