@@ -107,7 +107,7 @@ func TestThirdPartyLooksSecret(t *testing.T) {
 		}
 	}
 	for _, s := range []string{
-		"mcp__9e092a55-67cd-4804-98bb-dbdd8f6f53ee__", "https://github.com/organizations/Pallas117/settings/installations",
+		"mcp__7c1d2e3f-aaaa-4bbb-8ccc-0123456789ab__", "https://github.com/organizations/Pallas117/settings/installations",
 		"secrets: read", "Worker secret STRIPE_SECRET_KEY (Cloudflare)", "macOS Keychain item \"Claude Code-credentials\"",
 		"api-tokens page: https://dash.example.test/profile/api-tokens",
 	} {
