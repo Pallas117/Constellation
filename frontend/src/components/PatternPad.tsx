@@ -269,7 +269,7 @@ export function PatternPad({
           onPointerUp={onPointerUp}
           onPointerCancel={onPointerUp}
           onKeyDown={onKeyDown}
-          className="aspect-square w-full touch-none select-none rounded-full outline-none focus-visible:ring-1 focus-visible:ring-ring"
+          className="aspect-square w-full touch-none select-none rounded-full outline-none focus-visible:ring-1 focus-visible:ring-muted-foreground/25"
         />
       </motion.div>
 
