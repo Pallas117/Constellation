@@ -29,6 +29,8 @@ export interface AuthContext {
   token: string;
   /** When this session was opened by a verified passkey touch (epoch ms), else null. Step-up reads it. */
   passkeyAt?: number | null;
+  /** The operator pattern (backend/pattern/): whether the user has one, and when this session drew it. */
+  pattern?: { set: boolean; verifiedAt: number | null };
 }
 
 /** `P` types `req.params`; pass the route's params, e.g. `AuthenticatedRequest<{ id: string }>` for "/:id". */
@@ -117,7 +119,7 @@ export function roleFromUser(user: { role?: unknown } | null | undefined): AuthR
   return normalizeRole(user?.role) ?? "user";
 }
 
-// The development bypass (never in production) is admin and counts as freshly stepped up.
+// The development bypass (never in production) is admin, freshly stepped up and past the pattern.
 function devBypassContext(): AuthContext {
   return {
     userId: "development",
@@ -126,6 +128,7 @@ function devBypassContext(): AuthContext {
     rawRoles: ["admin"],
     token: "dev-bypass",
     passkeyAt: Date.now(),
+    pattern: { set: true, verifiedAt: Date.now() },
   };
 }
 
@@ -141,6 +144,10 @@ function contextFromSession(sessionResponse: SessionResponse): AuthContext | nul
     rawRoles: [role],
     token: sessionResponse.session.token ?? "better-auth-session",
     passkeyAt: toMillis((sessionResponse.session as { passkeyAt?: unknown }).passkeyAt),
+    pattern: {
+      set: toMillis((sessionResponse.user as { patternSetAt?: unknown }).patternSetAt) !== null,
+      verifiedAt: toMillis((sessionResponse.session as { patternAt?: unknown }).patternAt),
+    },
   };
 }
 

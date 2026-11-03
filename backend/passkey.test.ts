@@ -170,7 +170,7 @@ async function setup() {
   const browser = new Browser(handler);
   const signUp = await browser.call("/sign-up/email", { email: "op@example.com", password: "a-long-test-password", name: "Op" });
   assert.equal(signUp.status, 200, JSON.stringify(signUp.json));
-  return { db, handler, browser, userId: signUp.json.user.id as string };
+  return { db, handler, browser, testAuth, userId: signUp.json.user.id as string };
 }
 
 async function register(browser: Browser, device: SoftAuthenticator, options?: Parameters<SoftAuthenticator["register"]>[1]) {
@@ -267,6 +267,32 @@ test("a passkey step-up replaces the browser's previous session and revokes it",
   const sessions = db.prepare("SELECT token, passkeyAt FROM session WHERE userId = ?").all(userId) as Array<{ token: string; passkeyAt: unknown }>;
   assert.equal(sessions.length, 1, "the password session is gone");
   assert.ok(toMillis(sessions[0].passkeyAt));
+});
+
+/** The session token inside better-auth's signed cookie ("<token>.<signature>"). */
+const tokenOf = (cookie: string | undefined) => decodeURIComponent(cookie ?? "").split(".")[0];
+
+test("a step-up keeps the operator pattern this browser already drew, and a fresh sign-in does not get it", async () => {
+  const { db, handler, browser, testAuth, userId } = await setup();
+  const device = new SoftAuthenticator();
+  assert.equal((await register(browser, device)).result.status, 200);
+  const drawn = new Date("2026-11-03T02:00:00Z");
+  const { internalAdapter } = await testAuth.$context;
+  await internalAdapter.updateSession(tokenOf(browser.sessionToken), { patternAt: drawn } as Record<string, unknown>);
+
+  assert.equal((await passkeySignIn(browser, device)).result.status, 200);
+  const row = db.prepare("SELECT patternAt FROM session WHERE token = ?").get(tokenOf(browser.sessionToken)) as { patternAt: unknown };
+  assert.equal(toMillis(row.patternAt), drawn.getTime(), "the replacement session keeps the drawing");
+
+  // Another browser signing in with the same passkey starts without one.
+  const other = new Browser(handler);
+  assert.equal((await passkeySignIn(other, device)).result.status, 200);
+  const fresh = db.prepare("SELECT patternAt FROM session WHERE token = ?").get(tokenOf(other.sessionToken)) as { patternAt: unknown };
+  assert.equal(toMillis(fresh.patternAt), null);
+  // And nobody can put patternAt (or patternSetAt) on themselves through sign-up or sign-in input.
+  const evil = await new Browser(handler).call("/sign-up/email", { email: "x@example.com", password: "a-long-test-password", name: "X", patternSetAt: new Date() });
+  assert.equal(evil.status === 200 ? toMillis((db.prepare("SELECT patternSetAt FROM user WHERE email = ?").get("x@example.com") as { patternSetAt: unknown }).patternSetAt) : null, null);
+  assert.ok(userId);
 });
 
 test("sessions slide: one unused for 12 hours expires", async () => {

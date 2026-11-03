@@ -10,6 +10,13 @@ export interface AdminUserRow {
   email: string | null;
   role: AuthRole;
   passkeys: number;
+  /** Whether the user has an operator pattern (backend/pattern/). */
+  pattern: boolean;
+}
+
+export interface AdminUsersDeps {
+  /** Clears a user's operator pattern so they set a new one; false if they had none. */
+  clearPattern?: (userId: string) => Promise<boolean>;
 }
 
 function roleOf(value: unknown): AuthRole {
@@ -26,19 +33,45 @@ function roleOf(value: unknown): AuthRole {
  *
  * Guards against locking the team out: no one changes their own role here,
  * and the last admin can't be demoted. Logs carry user IDs, never emails.
+ * An operator who forgets their pattern asks an admin to clear it (step-up too);
+ * an admin who forgets theirs uses `npm run auth:clear-pattern -- <email>`.
  */
-export function createAdminUsersRouter(db: Database.Database) {
+export function createAdminUsersRouter(db: Database.Database, deps: AdminUsersDeps = {}) {
   const router = express.Router();
 
   router.get("/", (_req, res) => {
+    const patterns = db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'operator_pattern'").get() !== undefined;
     const rows = db
       .prepare(
         `SELECT u.id, u.name, u.email, u.role,
-                (SELECT count(*) FROM passkey p WHERE p.userId = u.id) AS passkeys
+                (SELECT count(*) FROM passkey p WHERE p.userId = u.id) AS passkeys,
+                ${patterns ? "EXISTS (SELECT 1 FROM operator_pattern o WHERE o.userId = u.id)" : "0"} AS pattern
            FROM user u ORDER BY lower(u.email)`,
       )
-      .all() as Array<Omit<AdminUserRow, "role"> & { role: unknown }>;
-    res.json({ users: rows.map((row) => ({ ...row, role: roleOf(row.role), passkeys: Number(row.passkeys) })) });
+      .all() as Array<Omit<AdminUserRow, "role" | "pattern"> & { role: unknown; pattern: number }>;
+    res.json({
+      users: rows.map((row) => ({ ...row, role: roleOf(row.role), passkeys: Number(row.passkeys), pattern: Boolean(row.pattern) })),
+    });
+  });
+
+  router.post("/:id/pattern/clear", async (req: AuthenticatedRequest<{ id: string }>, res) => {
+    const actor = req.auth?.userId;
+    const target = req.params.id;
+    if (!deps.clearPattern) {
+      res.status(404).json({ error: "Not found" });
+      return;
+    }
+    if (target === actor) {
+      res.status(409).json({ error: "Change your own pattern from your account page, or ask another admin." });
+      return;
+    }
+    if (!db.prepare("SELECT 1 FROM user WHERE id = ?").get(target)) {
+      res.status(404).json({ error: "No such user" });
+      return;
+    }
+    const cleared = await deps.clearPattern(target);
+    console.info(`[admin] ${actor} cleared the operator pattern of ${target} (passkey step-up)`);
+    res.json({ id: target, cleared });
   });
 
   router.post("/:id/role", (req: AuthenticatedRequest<{ id: string }>, res) => {

@@ -37,8 +37,11 @@ const DISTANCE = 2.45;
 /** Largest projected extent over all orientations is under 0.671, so this scale keeps the figure inside its box. */
 export const FIT = 0.675;
 
-/** Screen position of a vertex in a `size`-pixel square box. */
-export function project([x0, y0, z0, w0]: Vec4, rot: Rotation, size: number): { x: number; y: number } {
+/**
+ * Screen position of a vertex in a `size`-pixel square box, and its depth: the projection's
+ * scale there (0.09 far to 0.89 near over all orientations), for drawing near vertices larger and brighter.
+ */
+export function project([x0, y0, z0, w0]: Vec4, rot: Rotation, size: number): { x: number; y: number; depth: number } {
   let x = x0;
   let y = y0;
   let z = z0;
@@ -58,7 +61,7 @@ export function project([x0, y0, z0, w0]: Vec4, rot: Rotation, size: number): { 
   const f4 = 1 / (DISTANCE - w);
   const f3 = 1 / (DISTANCE - z * f4);
   const scale = size * FIT;
-  return { x: x * f4 * f3 * scale + size / 2, y: y * f4 * f3 * scale + size / 2 };
+  return { x: x * f4 * f3 * scale + size / 2, y: y * f4 * f3 * scale + size / 2, depth: f4 * f3 };
 }
 
 /** A fresh starting orientation: the figure never opens the same way twice. */

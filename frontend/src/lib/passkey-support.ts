@@ -66,7 +66,7 @@ export function passkeyErrorMessage(error: { code?: string; message?: string } |
       return "No passkey was used, so nobody is signed in. No passkey on this device yet? Sign in with email below, then add one. No Touch ID prompt appeared? Open this page in Chrome or Safari.";
     }
     if (action === "confirm") return "The prompt closed before a passkey was used, so nothing was changed.";
-    return "The passkey wasn't added: the prompt was closed, or this browser can't reach Touch ID. Try again, or use Chrome or Safari.";
+    return "The passkey wasn't added: the prompt closed or timed out, or this browser can't save passkeys on this device. Chrome saves them only with iCloud Keychain or Google Password Manager passkeys turned on (Settings → Password Manager); Safari uses Touch ID directly. Or add a phone instead.";
   }
   const fallback = action === "add" ? "Could not add the passkey." : action === "confirm" ? "The passkey check failed." : "Passkey sign-in failed.";
   return error?.message?.trim() || fallback;

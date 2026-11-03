@@ -33,6 +33,7 @@
     "setup:rbac": "node --env-file-if-exists=.env --import tsx backend/scripts/rbac-bootstrap.ts",
     "auth:migrate": "node --env-file-if-exists=.env --import tsx backend/scripts/auth-migrate.ts",
     "auth:set-role": "node --env-file-if-exists=.env --import tsx backend/scripts/set-role.ts",
+    "auth:clear-pattern": "node --env-file-if-exists=.env --import tsx backend/scripts/clear-pattern.ts",
     "mesh:enroll": "node --import tsx backend/scripts/mesh-enroll.ts",
     "org": "node --env-file-if-exists=.env --import tsx backend/scripts/org.ts",
     "test:physics": "node --import tsx --test \"frontend/src/lib/physics/**/*.test.ts\"",

@@ -5,7 +5,7 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 import type { AuthRole } from "./auth.js";
 import { STEP_UP_MAX_AGE_MS } from "./passkey-policy.js";
-import { accessFor, API_POLICY, enforceApiPolicy, policyFor, STEP_UP_REQUIRED, type Access } from "./rbac.js";
+import { accessFor, API_POLICY, enforceApiPolicy, PATTERN_REQUIRED, PATTERN_SETUP_REQUIRED, policyFor, STEP_UP_REQUIRED, type Access } from "./rbac.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 
@@ -27,6 +27,9 @@ function declaredRoutes(): string[] {
   }
   for (const m of read("admin/users.ts").matchAll(/router\.(get|post|put|patch|delete)\("([^"]+)"/g)) {
     out.push(`${m[1].toUpperCase()} ${("/admin/users" + m[2]).replace(/\/$/, "")}`);
+  }
+  for (const m of read("pattern/router.ts").matchAll(/router\.(get|post|put|patch|delete)\("([^"]+)"/g)) {
+    out.push(`${m[1].toUpperCase()} ${("/operator-pattern" + m[2]).replace(/\/$/, "")}`);
   }
   // Handled before the policy middleware by design (see rbac.ts header).
   return out.filter((r) => r !== "GET /sso-options");
@@ -68,11 +71,12 @@ test("role matrix", () => {
 /** The JSON body of the last refusal run() saw. */
 let lastBody: unknown;
 
-function run(method: string, p: string, role?: AuthRole, passkeyAt?: number | null) {
+/** Sessions have drawn their operator pattern unless a test says otherwise. */
+function run(method: string, p: string, role?: AuthRole, passkeyAt?: number | null, pattern = { set: true, verifiedAt: Date.now() as number | null }) {
   let status = 200;
   let passed = false;
   let body: unknown;
-  const req = { method, path: p, auth: role ? { userId: "u", email: null, role, rawRoles: [role], token: "t", passkeyAt } : undefined };
+  const req = { method, path: p, auth: role ? { userId: "u", email: null, role, rawRoles: [role], token: "t", passkeyAt, pattern } : undefined };
   const res = { status: (s: number) => ((status = s), { json: (b: unknown) => void (body = b) }) };
   enforceApiPolicy(req as never, res as never, () => {
     passed = true;
@@ -118,4 +122,47 @@ test("every admin-only change is marked step-up", () => {
   const unguarded = API_POLICY.filter((p) => p.access === "admin" && p.method !== "GET" && !p.stepUp);
   assert.deepEqual(unguarded.map((p) => `${p.method} ${p.path}`), []);
   assert.equal(policyFor("POST", "/admin/users/x/role")?.stepUp, true);
+});
+
+test("operator and admin routes need the operator pattern drawn in this session, answered 428 (not 401/403) otherwise", () => {
+  const unset = { set: false, verifiedAt: null };
+  const undrawn = { set: true, verifiedAt: null };
+  for (const [method, p, role] of [
+    ["POST", "/rag/query", "operator"],
+    ["GET", "/swx/structures", "operator"],
+    ["GET", "/admin/users", "admin"],
+  ] as const) {
+    assert.equal(run(method, p, role, null, unset), 428, `${p}: no pattern yet`);
+    assert.equal((lastBody as { code?: string }).code, PATTERN_SETUP_REQUIRED);
+    assert.equal(run(method, p, role, null, undrawn), 428, `${p}: pattern not drawn this session`);
+    assert.equal((lastBody as { code?: string }).code, PATTERN_REQUIRED);
+    assert.equal(run(method, p, role), 200, `${p}: drawn`);
+  }
+  // A missing pattern state (any context not built from a session) fails closed.
+  const req = { method: "POST", path: "/rag/query", auth: { userId: "u", email: null, role: "operator", rawRoles: ["operator"], token: "t" } };
+  let status = 0;
+  enforceApiPolicy(req as never, { status: (s: number) => ((status = s), { json: () => undefined }) } as never, () => (status = 200));
+  assert.equal(status, 428);
+  // Viewer and staff routes, and the pattern routes themselves, never ask for it.
+  assert.equal(run("GET", "/feed/aurora/map", "operator", null, unset), 200);
+  assert.equal(run("GET", "/mesh/devices", "staff", null, unset), 200);
+  assert.equal(run("POST", "/operator-pattern/verify", "operator", null, undrawn), 200);
+  assert.equal(run("POST", "/operator-pattern/pad"), 200, "the phone's pad route is public");
+  // A step-up route checks the pattern before the touch.
+  assert.equal(run("POST", "/admin/users/x/role", "admin", Date.now(), undrawn), 428);
+  assert.equal((lastBody as { code?: string }).code, PATTERN_REQUIRED);
+  // OPERATOR_PATTERN=off turns it off.
+  process.env.OPERATOR_PATTERN = "off";
+  try {
+    assert.equal(run("POST", "/rag/query", "operator", null, unset), 200);
+  } finally {
+    delete process.env.OPERATOR_PATTERN;
+  }
+});
+
+test("setting the operator pattern needs a fresh passkey touch; drawing it does not", () => {
+  assert.equal(policyFor("POST", "/operator-pattern")?.stepUp, true);
+  assert.equal(policyFor("POST", "/operator-pattern/verify")?.stepUp, undefined);
+  assert.equal(policyFor("POST", "/admin/users/x/pattern/clear")?.stepUp, true);
+  assert.equal(accessFor("POST", "/operator-pattern/pad/info"), "public");
 });

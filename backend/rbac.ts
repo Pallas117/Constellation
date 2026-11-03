@@ -11,6 +11,10 @@ import { stepUpFresh } from "./passkey-policy.js";
  *   answer otherwise is 428 STEP_UP_REQUIRED, not 401/403, so a stale touch
  *   never counts toward CyberTiger's auth-failure block; the console asks for
  *   Touch ID or Face ID and retries.
+ * - operator and admin routes also need the operator pattern drawn in this
+ *   session (GAU-235, backend/pattern/): 428 PATTERN_SETUP_REQUIRED until one
+ *   is set, then 428 PATTERN_REQUIRED until it is drawn. OPERATOR_PATTERN=off
+ *   turns this off.
  *
  * Every /api route must appear here; anything unlisted is denied
  * (backend/rbac.test.ts fails if a route is added without a policy).
@@ -31,6 +35,13 @@ export interface Policy {
 }
 
 export const STEP_UP_REQUIRED = "STEP_UP_REQUIRED";
+export const PATTERN_SETUP_REQUIRED = "PATTERN_SETUP_REQUIRED";
+export const PATTERN_REQUIRED = "PATTERN_REQUIRED";
+
+/** Operator and admin routes need the drawn pattern unless OPERATOR_PATTERN=off. */
+export function operatorPatternRequired(env: NodeJS.ProcessEnv = process.env): boolean {
+  return (env.OPERATOR_PATTERN ?? "").trim().toLowerCase() !== "off";
+}
 
 export const API_POLICY: ReadonlyArray<Policy> = [
   // Open landing visualisation
@@ -49,6 +60,15 @@ export const API_POLICY: ReadonlyArray<Policy> = [
   { method: "GET", path: "/world/state", access: "user" }, // typed world state, read-only (GAU-39)
   { method: "GET", path: "/system/pipeline", access: "user" }, // operator-view data-flow HUD (GAU-110)
   { method: "GET", path: "/forecast/anomaly", access: "user" },
+
+  // Operator pattern (GAU-235): setting or changing it needs a fresh passkey touch.
+  // The two /pad routes are the phone's: no session, only the QR code's one-time id.
+  { method: "GET", path: "/operator-pattern/status", access: "user" },
+  { method: "POST", path: "/operator-pattern", access: "user", stepUp: true },
+  { method: "POST", path: "/operator-pattern/verify", access: "user" },
+  { method: "POST", path: "/operator-pattern/requests", access: "user" },
+  { method: "POST", path: "/operator-pattern/pad/info", access: "public" },
+  { method: "POST", path: "/operator-pattern/pad", access: "public" },
 
   // Own devices (login device binding); the router checks ownership
   { method: "GET", path: "/device", access: "user" },
@@ -90,6 +110,7 @@ export const API_POLICY: ReadonlyArray<Policy> = [
   { method: "POST", path: "/ai/nowcast/train", access: "admin", stepUp: true },
   { method: "GET", path: "/admin/users", access: "admin" },
   { method: "POST", path: "/admin/users/:id/role", access: "admin", stepUp: true },
+  { method: "POST", path: "/admin/users/:id/pattern/clear", access: "admin", stepUp: true },
 ];
 
 function matches(pattern: string, path: string): boolean {
@@ -138,6 +159,17 @@ export function enforceApiPolicy(req: AuthenticatedRequest, res: Response, next:
   if (!roleSatisfies(req.auth.role, access)) {
     res.status(403).json({ error: `Requires ${access} role` });
     return;
+  }
+  if ((access === "operator" || access === "admin") && operatorPatternRequired()) {
+    const pattern = req.auth.pattern;
+    if (!pattern?.set) {
+      res.status(428).json({ error: "Set up your operator pattern first.", code: PATTERN_SETUP_REQUIRED });
+      return;
+    }
+    if (!pattern.verifiedAt) {
+      res.status(428).json({ error: "Draw your operator pattern first.", code: PATTERN_REQUIRED });
+      return;
+    }
   }
   if (policy?.stepUp && !stepUpFresh(req.auth.passkeyAt)) {
     res.status(428).json({ error: "Confirm with your passkey (Touch ID or Face ID) first.", code: STEP_UP_REQUIRED });

@@ -5,7 +5,7 @@ import Database from "better-sqlite3";
 import express from "express";
 import type { AuthenticatedRequest, AuthRole } from "../auth.js";
 import { enforceApiPolicy } from "../rbac.js";
-import { createAdminUsersRouter } from "./users.js";
+import { createAdminUsersRouter, type AdminUsersDeps } from "./users.js";
 
 function seed() {
   const db = new Database(":memory:");
@@ -20,7 +20,7 @@ function seed() {
 }
 
 /** The production policy middleware, with the session faked from test headers. */
-async function withApp(db: Database.Database, fn: (base: string) => Promise<void>) {
+async function withApp(db: Database.Database, fn: (base: string) => Promise<void>, deps: AdminUsersDeps = {}) {
   const app = express();
   app.use(express.json());
   app.use("/api", (req: AuthenticatedRequest, _res, next) => {
@@ -34,12 +34,13 @@ async function withApp(db: Database.Database, fn: (base: string) => Promise<void
         rawRoles: [role],
         token: "t",
         passkeyAt: touched === undefined ? null : Date.now() - Number(touched),
+        pattern: { set: true, verifiedAt: Date.now() },
       };
     }
     next();
   });
   app.use("/api", enforceApiPolicy);
-  app.use("/api/admin/users", createAdminUsersRouter(db));
+  app.use("/api/admin/users", createAdminUsersRouter(db, deps));
   const server = app.listen(0);
   try {
     await fn(`http://127.0.0.1:${(server.address() as AddressInfo).port}/api/admin/users`);
@@ -107,4 +108,35 @@ test("role changes refuse bad roles, self-changes and demoting the last admin", 
     assert.equal((await fetch(`${base}/u-op/role`, setRole("admin", fresh))).status, 200);
     assert.equal((await fetch(`${base}/u-admin/role`, setRole("operator", other))).status, 200);
   });
+});
+
+test("admins clear another operator's forgotten pattern with a fresh touch, never their own", async () => {
+  const db = seed();
+  db.exec("CREATE TABLE operator_pattern (userId TEXT PRIMARY KEY)");
+  db.prepare("INSERT INTO operator_pattern (userId) VALUES (?)").run("u-op");
+  const cleared: string[] = [];
+  const clearPattern = async (userId: string) => {
+    cleared.push(userId);
+    return db.prepare("DELETE FROM operator_pattern WHERE userId = ?").run(userId).changes > 0;
+  };
+  await withApp(
+    db,
+    async (base) => {
+      const list = (await (await fetch(base, { headers: { "x-test-role": "admin" } })).json()) as { users: Array<{ id: string; pattern: boolean }> };
+      assert.deepEqual(
+        list.users.map((u) => [u.id, u.pattern]),
+        [["u-admin", false], ["u-new", false], ["u-op", true]],
+      );
+      const clear = (target: string, headers: Record<string, string>) => fetch(`${base}/${target}/pattern/clear`, { method: "POST", headers });
+      assert.equal((await clear("u-op", { "x-test-role": "admin" })).status, 428, "needs a passkey touch");
+      assert.equal((await clear("u-op", { "x-test-role": "operator", "x-test-touched-ms-ago": "0" })).status, 403);
+      assert.equal((await clear("u-admin", { "x-test-role": "admin", "x-test-touched-ms-ago": "0" })).status, 409, "not your own");
+      assert.equal((await clear("u-nobody", { "x-test-role": "admin", "x-test-touched-ms-ago": "0" })).status, 404);
+      const ok = await clear("u-op", { "x-test-role": "admin", "x-test-touched-ms-ago": "1000" });
+      assert.equal(ok.status, 200);
+      assert.deepEqual(await ok.json(), { id: "u-op", cleared: true });
+      assert.deepEqual(cleared, ["u-op"]);
+    },
+    { clearPattern },
+  );
 });

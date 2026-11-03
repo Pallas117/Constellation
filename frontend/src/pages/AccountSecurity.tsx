@@ -1,16 +1,17 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { Fingerprint, LogOut } from "lucide-react";
+import { Fingerprint, LogOut, Smartphone } from "lucide-react";
 import { OperatorGeometryFigure } from "@/components/OperatorGeometryFigure";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { useDocumentTitle } from "@/hooks/useDocumentTitle";
+import { useOperatorPattern } from "@/hooks/useOperatorPattern";
 import { refreshOperatorGeometry, useOperatorGeometry, type PasskeyRow } from "@/hooks/useOperatorGeometry";
 import { apiBase } from "@/lib/api/base-url";
-import { authClient, passkeyTouch, signOut, useSession } from "@/lib/auth-client";
-import { passkeyErrorMessage, passkeySupport, type PasskeySupport } from "@/lib/passkey-support";
+import { addPasskey, authClient, passkeyTouch, signOut, useSession } from "@/lib/auth-client";
+import { passkeySupport, type PasskeySupport } from "@/lib/passkey-support";
 import { hasRole, roleOf, type Role } from "@/lib/roles";
 import { fetchWithStepUp, StepUpCancelled } from "@/lib/step-up";
 
@@ -44,22 +45,25 @@ function usePasskeySupport(): PasskeySupport | null {
 /** Passkeys on this account: add one for this device, remove old ones. */
 function PasskeysCard({ passkeys, support }: { passkeys: PasskeyRow[] | null; support: PasskeySupport | null }) {
   const [name, setName] = useState("");
-  const [busy, setBusy] = useState(false);
+  const [busy, setBusy] = useState<"device" | "phone" | null>(null);
   const [confirming, setConfirming] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
 
-  const add = async () => {
-    setBusy(true);
+  const add = async (where: "device" | "phone") => {
+    setBusy(where);
     setMessage(null);
-    const { error } = await authClient.passkey.addPasskey({ name: name.trim() || undefined });
-    setBusy(false);
+    const error = await addPasskey(where, name);
+    setBusy(null);
     if (error) {
-      const fresh = /fresh|session/i.test(error.message ?? "");
-      setMessage(fresh ? "Sign out and in again, then add the passkey: adding one needs a recent sign-in." : passkeyErrorMessage(error, "add"));
+      setMessage(error);
       return;
     }
     setName("");
-    setMessage("Passkey added. Next time, sign in with one touch.");
+    setMessage(
+      where === "phone"
+        ? "Phone passkey added. To sign in, choose Sign in with passkey, then scan the code with that phone."
+        : "Passkey added. Next time, sign in with one touch.",
+    );
     refreshOperatorGeometry();
   };
 
@@ -113,9 +117,13 @@ function PasskeysCard({ passkeys, support }: { passkeys: PasskeyRow[] | null; su
         {support?.ok ? (
           <div className="flex flex-col gap-2 border-t border-border/60 pt-4 sm:flex-row">
             <Input placeholder="name, e.g. work MacBook" value={name} onChange={(e) => setName(e.target.value)} maxLength={60} />
-            <Button onClick={() => void add()} disabled={busy}>
+            <Button onClick={() => void add("device")} disabled={busy !== null}>
               <Fingerprint className="h-4 w-4" aria-hidden="true" />
-              {busy ? "Waiting for your touch…" : "Add a passkey"}
+              {busy === "device" ? "Waiting for your touch…" : "Add this device"}
+            </Button>
+            <Button variant="outline" onClick={() => void add("phone")} disabled={busy !== null}>
+              <Smartphone className="h-4 w-4" aria-hidden="true" />
+              {busy === "phone" ? "Scan the code with your phone…" : "Add a phone"}
             </Button>
           </div>
         ) : (
@@ -142,9 +150,10 @@ interface AdminUser {
   email: string | null;
   role: Role;
   passkeys: number;
+  pattern: boolean;
 }
 
-/** Admins only: change roles. Each change needs a fresh passkey touch (step-up). */
+/** Admins only: change roles and clear forgotten patterns. Each change needs a fresh passkey touch (step-up). */
 function RolesCard({ selfId, hasPasskey }: { selfId: string; hasPasskey: boolean }) {
   const [users, setUsers] = useState<AdminUser[] | null>(null);
   const [message, setMessage] = useState<string | null>(null);
@@ -157,16 +166,29 @@ function RolesCard({ selfId, hasPasskey }: { selfId: string; hasPasskey: boolean
   }, []);
   useEffect(load, [load]);
 
+  const stepUp = async () => {
+    const touch = await passkeyTouch("confirm");
+    if ("error" in touch) {
+      setMessage(touch.error);
+      return false;
+    }
+    return touch.userId === selfId;
+  };
+
+  const clearPattern = async (user: AdminUser) => {
+    setMessage(null);
+    try {
+      const res = await fetchWithStepUp(`${apiBase()}/api/admin/users/${encodeURIComponent(user.id)}/pattern/clear`, { method: "POST" }, stepUp);
+      const body = (await res.json().catch(() => ({}))) as { error?: string };
+      setMessage(res.ok ? `${user.email ?? user.id} sets a new pattern at their next sign-in.` : body.error ?? `Could not clear the pattern (HTTP ${res.status}).`);
+      load();
+    } catch (err) {
+      if (!(err instanceof StepUpCancelled)) setMessage("Could not clear the pattern.");
+    }
+  };
+
   const change = async (user: AdminUser, role: Role) => {
     setMessage(null);
-    const stepUp = async () => {
-      const touch = await passkeyTouch("confirm");
-      if ("error" in touch) {
-        setMessage(touch.error);
-        return false;
-      }
-      return touch.userId === selfId;
-    };
     try {
       const res = await fetchWithStepUp(
         `${apiBase()}/api/admin/users/${encodeURIComponent(user.id)}/role`,
@@ -200,6 +222,7 @@ function RolesCard({ selfId, hasPasskey }: { selfId: string; hasPasskey: boolean
                 <tr>
                   <th className="py-2 pr-4">Account</th>
                   <th className="py-2 pr-4">Passkeys</th>
+                  <th className="py-2 pr-4">Pattern</th>
                   <th className="py-2">Role</th>
                 </tr>
               </thead>
@@ -211,6 +234,19 @@ function RolesCard({ selfId, hasPasskey }: { selfId: string; hasPasskey: boolean
                       <p className="text-xs text-muted-foreground">{u.email}</p>
                     </td>
                     <td className="py-2 pr-4 text-muted-foreground">{u.passkeys}</td>
+                    <td className="py-2 pr-4 text-muted-foreground">
+                      {u.pattern ? (
+                        u.id === selfId ? (
+                          "set"
+                        ) : (
+                          <Button size="sm" variant="ghost" disabled={!hasPasskey} onClick={() => void clearPattern(u)}>
+                            Clear
+                          </Button>
+                        )
+                      ) : (
+                        "—"
+                      )}
+                    </td>
                     <td className="py-2">
                       <select
                         aria-label={`Role for ${u.email ?? u.id}`}
@@ -247,6 +283,9 @@ const AccountSecurity = () => {
   const support = usePasskeySupport();
   const role = roleOf(session?.user);
   const selfId = session?.user?.id ?? "";
+  const operator = hasRole(role, "operator");
+  const { status: pattern } = useOperatorPattern(operator ? selfId : null);
+  const patternReady = !pattern?.required || pattern.verified;
 
   const end = async (everywhere: boolean) => {
     if (everywhere) await authClient.revokeSessions().catch(() => undefined);
@@ -312,7 +351,41 @@ const AccountSecurity = () => {
             </Button>
           </CardContent>
         </Card>
-        {role === "admin" && selfId && <RolesCard selfId={selfId} hasPasskey={(passkeys?.length ?? 0) > 0} />}
+        {operator && pattern && (
+          <Card className="min-w-0">
+            <CardHeader>
+              <CardTitle>Operator pattern</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3 text-sm text-muted-foreground">
+              <p>
+                After the touch, operators draw a path through their tesseract's lettered vertices. Five misses lock it for 15 minutes; an
+                admin can clear a forgotten one.
+              </p>
+              <p className="text-foreground">{!pattern.set ? "No pattern yet." : pattern.verified ? "Set, and drawn in this session." : "Set; not drawn in this session yet."}</p>
+              <div className="flex flex-wrap gap-2">
+                {!pattern.set ? (
+                  <Button asChild>
+                    <Link to="/setup">Set up your pattern</Link>
+                  </Button>
+                ) : pattern.verified ? (
+                  <Button asChild variant="outline">
+                    <Link to="/setup?change=1">Change your pattern</Link>
+                  </Button>
+                ) : (
+                  <Button asChild variant="outline">
+                    <Link to="/pattern" state={{ from: { pathname: "/account/security" } }}>
+                      Draw it now
+                    </Link>
+                  </Button>
+                )}
+              </div>
+            </CardContent>
+          </Card>
+        )}
+        {role === "admin" && selfId && patternReady && <RolesCard selfId={selfId} hasPasskey={(passkeys?.length ?? 0) > 0} />}
+        {role === "admin" && selfId && !patternReady && (
+          <p className="text-sm text-muted-foreground xl:col-span-2">Draw your operator pattern to manage roles.</p>
+        )}
       </section>
     </main>
   );

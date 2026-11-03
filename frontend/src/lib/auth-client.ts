@@ -30,3 +30,20 @@ export async function passkeyTouch(
   const { user, session } = result.data as { user?: { id?: string }; session?: unknown };
   return user?.id ? { userId: user.id, user, session } : { error: passkeyErrorMessage(null, action) };
 }
+
+/**
+ * Adds a passkey. "device" asks for this computer's own authenticator (Touch ID); without that,
+ * Chrome may offer only a phone. "phone" asks for another device: the browser shows a QR code,
+ * the phone must be near (Bluetooth), and its Face ID or fingerprint makes the passkey.
+ * Resolves to null on success, else a message to show.
+ */
+export async function addPasskey(where: "device" | "phone", name?: string): Promise<string | null> {
+  const { error } = await authClient.passkey.addPasskey({
+    name: name?.trim() || (where === "phone" ? "Phone" : undefined),
+    authenticatorAttachment: where === "phone" ? "cross-platform" : "platform",
+  });
+  if (!error) return null;
+  return /fresh|session/i.test(error.message ?? "")
+    ? "Sign out and in again, then add the passkey: adding one needs a recent sign-in."
+    : passkeyErrorMessage(error, "add");
+}
