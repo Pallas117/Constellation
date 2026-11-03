@@ -116,6 +116,7 @@ GATES=(test:ops quality:full verify)
 GATES_QUEUE="$GATES_DIR/queue"         # <time>-<tree queued>.req, oldest first; one per tree (its tree= line)
 GATES_RESULTS="$GATES_DIR/results.log" # <utc> <sha> <tree> PASSED|FAILED|SKIPPED|ERROR|EXPIRED <detail>, one line per request
 GATES_RUNNER="$GATES_DIR/runner"       # held by the one runner (its pid inside)
+GATES_SRC="$GATES_DIR/runner.src"      # sha= blob= from= at=: the commit the runner's copy (runner.sh) came from
 HEAVY="${GAUSS_HEAVY:-$HOME/.local/bin/claude-heavy}"
 GATES_WAIT_MIN="${GAUSS_GATES_WAIT_MIN:-120}" # one claude-heavy wait; the runner asks again when it gives up
 GATES_EXPIRE_H="${GAUSS_GATES_EXPIRE_H:-72}"   # a request still waiting after this is dropped (EXPIRED)
@@ -910,16 +911,48 @@ gates_enqueue() { # gates_enqueue <checkout-dir>|<commit> [--pr N]: queue a gate
 
 gates_runner_pid() { local p; p=$(cat "$GATES_RUNNER/pid" 2>/dev/null) && [ -n "$p" ] && kill -0 "$p" 2>/dev/null && echo "$p"; }
 
+gates_runner_src() { # the commit the runner's copy came from, while runner.src still describes that copy
+  local blob
+  [ -f "$GATES_SRC" ] && blob=$(git hash-object --no-filters "$GATES_DIR/runner.sh" 2>/dev/null) \
+    && [ "$(req_get "$GATES_SRC" blob)" = "$blob" ] && req_get "$GATES_SRC" sha
+}
+
+# The runner outlives the checkout that queued it (sessions' worktrees get removed): it runs a copy,
+# renamed into place so a runner still reading the old copy keeps it. Refreshed on enqueue, even with
+# a runner alive (2026-10-31: a runner that never idles kept running old queue code for days); the
+# runner re-runs itself when it sees the new copy. Only forward (2026-11-03: an enqueue from an older
+# branch replaced the merge-train runner of PR #218 with its own script): runner.src names the commit
+# the copy came from, and only a checkout whose HEAD contains it, or origin/main's script, replaces it.
+gates_refresh_runner() {
+  local run="$GATES_DIR/runner.sh" dir pre blob head="" main="" was why
+  blob=$(git hash-object --no-filters "$0") && dir=$(cd "$(dirname "$0")" && pwd) || return 1
+  if pre=$(git -C "$dir" rev-parse --show-prefix 2>/dev/null); then
+    # The commit only vouches for this script if it is committed as is (no edits since).
+    [ "$(git -C "$dir" rev-parse -q --verify "HEAD:$pre${0##*/}" || true)" = "$blob" ] && head=$(git -C "$dir" rev-parse HEAD)
+    main=$(git -C "$dir" rev-parse -q --verify "refs/remotes/origin/main:$pre${0##*/}") || main=""
+  fi
+  was=$(gates_runner_src) || was="" # none or stale (runner.sh changed without it): refresh as before
+  if cmp -s "$0" "$run"; then
+    [ -n "$was" ] && return 0 # same code, already recorded
+  elif [ -n "$was" ] && [ "$blob" != "$main" ] \
+    && ! { [ -n "$head" ] && git -C "$dir" merge-base --is-ancestor "$was" "$head" 2>/dev/null; }; then
+    if [ -n "$head" ]; then why="this checkout (${head:0:7}) doesn't contain it"; else why="this script isn't committed as is"; fi
+    echo "Runner kept: it runs ${was:0:7} and $why. A checkout that contains ${was:0:7}, or origin/main's script, updates it."
+    return 0
+  else
+    cp "$0" "$run.$$" && mv -f "$run.$$" "$run" || return 1
+  fi
+  if [ -n "$head" ]; then
+    printf 'sha=%s\nblob=%s\nfrom=%s\nat=%s\n' "$head" "$blob" "$dir" "$(date +%s)" >"$GATES_SRC.$$" && mv -f "$GATES_SRC.$$" "$GATES_SRC"
+  else
+    rm -f "$GATES_SRC" # unknown origin: the next checkout refreshes it as before
+  fi
+}
+
 gates_start() { # start the one runner, detached from this session (own session id, no terminal), if none runs
   local p
   mkdir -p "$GATES_DIR" "$LOGS"
-  # The runner outlives the checkout that queued it (sessions' worktrees get removed): run a copy.
-  # Renamed into place, so a runner still reading the old copy keeps it. Refreshed on every enqueue,
-  # even with a runner alive (2026-10-31: a runner that never idles kept running old queue code for
-  # days); the runner re-runs itself when it sees the new copy.
-  if ! cmp -s "$0" "$GATES_DIR/runner.sh"; then
-    cp "$0" "$GATES_DIR/runner.sh.$$" && mv -f "$GATES_DIR/runner.sh.$$" "$GATES_DIR/runner.sh" || return 1
-  fi
+  gates_refresh_runner || return 1
   if p=$(gates_runner_pid); then echo "The gate runner is working (pid $p)."; return 0; fi
   [ "${GAUSS_GATES_START:-1}" = 1 ] || return 0 # tests
   nohup perl -MPOSIX -e 'POSIX::setsid(); exec @ARGV' /bin/bash "$GATES_DIR/runner.sh" gates run \
@@ -1129,6 +1162,7 @@ gates_show_result() { # gates_show_result <checkout-dir>|<commit>: the latest li
 gates_status() {
   local f n=0 p
   if p=$(gates_runner_pid); then echo "runner: working (pid $p)"; else echo "runner: not running"; fi
+  if p=$(gates_runner_src) && [ -n "$p" ]; then echo "runner code: ${p:0:7} (from $(req_get "$GATES_SRC" from))"; else echo "runner code: not recorded"; fi
   for f in "$GATES_QUEUE"/*.req; do
     [ -f "$f" ] || continue; n=$((n + 1))
     echo "queued: $(req_get "$f" sha | cut -c1-7) by $(req_get "$f" by) since $(date -r "$(req_get "$f" queued)" '+%F %H:%M')"
