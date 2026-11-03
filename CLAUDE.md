@@ -3,7 +3,7 @@
 @AGENTS.md
 
 ## Repo facts
-- Node 22 (`.nvmrc`), matching CI. Native modules (better-sqlite3) must be built with the same Node that runs them.
+- Node 26 LTS (`.nvmrc`), matching CI (Node 25 reached end of life on 2026-06-01; 26 is supported to 2029-04-30). Native modules (better-sqlite3) must be built with the same Node that runs them.
 - Backend tests: `npm test` (node:test via tsx, writes bedrock data to a temp dir). Type check: `npm run quality:types` (strict tsc on the frontend, backend, e2e tests and scripts; keep it at 0 errors). Full gate: `npm run audit:adherence`.
 - Frontend: `npm run dev` (8080), backend: `npm run dev:proxy` (3001), build: `npm run build`.
 - Auth is better-auth on `.auth.db` (email/password + Google Workspace SSO when `GOOGLE_CLIENT_ID/SECRET` are set; SSO sign-ups limited to `SSO_ALLOWED_DOMAIN`). `npm run auth:migrate`, then `npm run auth:set-role -- <email> <user|staff|operator|admin>`.
