@@ -27,6 +27,11 @@ type JobRun struct {
 	PeakGB  float64   `json:"peak_gb"` // largest process-group RSS seen at a check
 	Secs    int       `json:"secs"`
 	Outcome string    `json:"outcome"` // "exit N" or "stopped"
+	// Power (power.go): workers it was given, the machine's draw when it started and its average
+	// draw while running (unpaused), so the watts one worker adds can be learned. 0 = not measured.
+	Workers int     `json:"workers,omitempty"`
+	BaseW   float64 `json:"base_w,omitempty"`
+	AvgW    float64 `json:"avg_w,omitempty"`
 }
 
 const (

@@ -17,7 +17,7 @@ On the dev Mac, look paths up with `gauss-where constellation` and `gauss-where 
 
 1. **Pick the Linear issue and use its branch name** (`jzwnathan/gau-<n>-…`), so the PR links to it automatically. Without an issue, use `<type>/<name>` (`fix/`, `chore/`, `docs/`, `ops/`).
 2. **Create the worktree:** `npm run wt:create -- <branch>`. It fetches first and branches from `origin/main`, not from your local `main`, which may be stale. The new branch has no upstream until its first push.
-3. **Install:** Node 22 (`.nvmrc`), then `npm ci`. That also builds the native MHD module.
+3. **Install:** Node 26 (`.nvmrc`), then `npm ci`. That also builds the native MHD module.
 
 ## While you work
 
