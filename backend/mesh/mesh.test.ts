@@ -14,6 +14,7 @@ import {
   assessHosting,
   hostingVerdict,
   parseBattery,
+  parsePower,
   parseGuard,
   parseHost,
   parseNet,
@@ -288,6 +289,13 @@ test("Argo's guard block is allowlisted; unknown codes drop alone, bad values dr
     assert.equal(parseGuard({ ...g, ...bad }), undefined, JSON.stringify(bad));
   }
   assert.deepEqual(parseBattery({ level: 64, charging: false, external: true }), { level: 64, charging: false, lowPower: false, external: true });
+  const power = { mode: "negative", sourceW: 6.4, loadW: 9.2, marginW: -2.8 };
+  assert.deepEqual(parseBattery({ level: 64, charging: true, external: true, power }), { level: 64, charging: true, lowPower: false, external: true, power });
+  assert.deepEqual(parsePower({ mode: "eclipse", loadW: 7, marginW: -7 }), { mode: "eclipse", sourceW: 0, loadW: 7, marginW: -7 }, "Go omits a zero source");
+  for (const bad of [{ mode: "sunny" }, { sourceW: -1 }, { loadW: "9" }, { marginW: 1e6 }, { marginW: undefined }]) {
+    assert.equal(parsePower({ ...power, ...bad }), undefined, JSON.stringify(bad));
+  }
+  assert.equal(parseBattery({ level: 64, charging: true, power: { mode: "bad" } })!.power, undefined, "a bad power block drops alone");
 });
 
 test("hosting verdict uses report age, battery power, swap and Argo's guard, and says why", () => {
@@ -302,6 +310,15 @@ test("hosting verdict uses report age, battery power, swap and Argo's guard, and
   assert.equal(hostingVerdict(goodHost, "macos", { ...fresh, battery: battery(18, false) }), "no");
   assert.equal(hostingVerdict(goodHost, "macos", { ...fresh, battery: battery(80, true) }), "agents", "plugged in, held at 80%, is not on battery");
   assert.equal(hostingVerdict(goodHost, "macos", { ...fresh, battery: battery(18) }), "no", "phones' charging=false means on battery");
+
+  // SWaP power budget from Argo (tools/argo/power.go): a deficit or a thin margin means light work only.
+  const powered = (power: Record<string, unknown>) => parseBattery({ level: 90, charging: true, external: true, power })!;
+  assert.equal(hostingVerdict(goodHost, "macos", { ...fresh, battery: powered({ mode: "positive", sourceW: 76.8, loadW: 12, marginW: 64.8 }) }), "agents");
+  assert.deepEqual(assessHosting(goodHost, "macos", { ...fresh, battery: powered({ mode: "negative", sourceW: 6.4, loadW: 9.2, marginW: -2.8 }) }), {
+    verdict: "light",
+    why: ["the charger can't carry the load: drawing 9.2 W from 6.4 W"],
+  });
+  assert.deepEqual(assessHosting(goodHost, "macos", { ...fresh, battery: powered({ mode: "positive", sourceW: 16, loadW: 12.5, marginW: 3.5 }) }).why, ["only 3.5 W of power margin"]);
 
   const closed = assessHosting(goodHost, "macos", { ...fresh, guard: guard({ level: "risk", admission: "closed", slots: 0, reasons: ["mem-warn-sustained", "swap-rising"] }) });
   assert.equal(closed.verdict, "no");
