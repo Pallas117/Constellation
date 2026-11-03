@@ -20,7 +20,8 @@ Design and sources: `docs/ARGO_DTN.md`. User guide: `tools/argo/README.md`.
 | Resource guard | `guard*.go` | memory/battery/disk admission (GAU-195) |
 | Alerts | `notify.go`, `phone.go` | class change only; OFFLINE never texts; usual blips stay quiet (see Rules) |
 | Relay (DTN) | `cbor.go`, `bundle.go`, `bpsec.go`, `relay.go`, `relay_cmd.go`, `hub.go` | BPv7 bundles, blocks 192 (Ed25519) and 193 (HPKE ML-KEM-768+X25519), end-to-end receipts, data mule |
-| Standard BPSec (interop) | `bpsec9173.go`, `aeskw.go`, `testdata/rfc9173/` | RFC 9173 BIB-HMAC-SHA2 and BCB-AES-GCM in blocks 11/12, pre-placed keys, AES key wrap (RFC 3394). Library only: no key store or command yet |
+| Standard BPSec (interop) | `bpsec9173.go`, `aeskw.go`, `testdata/rfc9173/` | RFC 9173 BIB-HMAC-SHA2 and BCB-AES-GCM in blocks 11/12, pre-placed keys, AES key wrap (RFC 3394) |
+| Link keys | `linkkeys.go` | per-pair, per-direction keys offered under argo-sig + argo-seal, confirmed by receipt; then BIB-HMAC-SHA256 (primary) + BCB-AES-256-GCM (payload); `links.key` 0600; rotate 7 d / 65,536 bundles |
 | Hub | `backend/mesh/bundles.ts`, `router.ts` | device-token routes before session auth; ciphertext only; key directory (first key wins) |
 | UI | `frontend/src/pages/MeshDashboard.tsx`, `frontend/src/lib/link-stability.ts`, `website/public/argo/` | `/mesh` columns; `/argo/` is noindex, "Included", no price |
 
@@ -39,8 +40,11 @@ Design and sources: `docs/ARGO_DTN.md`. User guide: `tools/argo/README.md`.
 - Device-token routes: list them in the `backend/rbac.ts` header comment. CyberTiger counts 401/403, so agents must
   stop on 401.
 - Relay crypto:
-  - Use only `crypto/hpke`, `crypto/ed25519` and `hash/crc32`. Bind the primary block in HPKE `info`; sign, then
-    encrypt.
+  - Use only the standard library: `crypto/hpke`, `crypto/ed25519`, `crypto/hkdf`, `crypto/aes`, `crypto/cipher`,
+    `crypto/hmac`, `hash/crc32`. Bind the primary block in HPKE `info`; sign, then encrypt.
+  - Link keys only ever travel inside an argo-seal-1 bundle, and are used only after the peer's receipt. Never log
+    or print a `linkKey.Key`; outbox items and `relay.json` carry only its id. Anything a third party must check
+    keeps Ed25519.
   - Regenerate the golden bundles after any format change: `ARGO_WRITE_FIXTURES=1 go test -run TestBundleFixtures .`
 - Public copy (website test): no "post-quantum"/PQC, "VPN", "untraceable", grade or compliance claims; no Argo price.
 - Never self-merge changes to crypto, device-token routes or public copy (outside the standing approval).
