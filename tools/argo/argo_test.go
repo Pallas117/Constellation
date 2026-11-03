@@ -224,11 +224,13 @@ func (p *seqProber) Probe(context.Context) Snapshot {
 }
 
 type fakeFx struct {
-	now     time.Time
-	notes   []string
-	opened  []string
-	openErr error
-	ran     []string
+	now       time.Time
+	notes     []string
+	opened    []string
+	openErr   error
+	ran       []string
+	relayed   []string
+	relayFail bool
 }
 
 func (f *fakeFx) Notify(title, msg string) { f.notes = append(f.notes, title) }
@@ -238,7 +240,11 @@ func (f *fakeFx) Run(name string, args ...string) error {
 	return nil
 }
 func (f *fakeFx) Sleep(time.Duration) {}
-func (f *fakeFx) Now() time.Time      { return f.now }
+func (f *fakeFx) NotifyOffline(title, msg string) bool {
+	f.relayed = append(f.relayed, title)
+	return !f.relayFail
+}
+func (f *fakeFx) Now() time.Time { return f.now }
 
 func newLoop(t *testing.T, snaps ...Snapshot) (Loop, *fakeFx) {
 	fx := &fakeFx{now: time.Date(2026, 10, 9, 8, 0, 0, 0, time.UTC)}
