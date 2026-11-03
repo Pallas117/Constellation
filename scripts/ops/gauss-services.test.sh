@@ -539,6 +539,8 @@ SRC="AC Power" BATT="14%; AC attached; not charging present: true" run awake gua
 [ -f "$PAUSED" ]; expect "14% on a charger that isn't keeping up: still paused" $?
 SRC="AC Power" BATT="26%; charging; present: true" run awake guard
 [ ! -f "$PAUSED" ]; expect "back on AC: learning resumed" $?
+# The suite can outlast an hour of wall clock if the Mac sleeps mid-run: re-date the existing stamp
+STAMP="$T/home/Library/Application Support/Gauss/balance-cleanup"; [ -f "$STAMP" ] && touch "$STAMP"
 DISKGB=5 run awake guard
 [ -z "$(acts)" ] && [ "$(alerts)" = "disk-low" ]; expect "disk 5 GB again within the hour: no second cleanup" $?
 rm -f "$T/home/Library/Application Support/Gauss/balance-cleanup"
@@ -629,7 +631,8 @@ keys = {"ts","host","event","label","reason","live_sha","fallback_sha","pressure
 rows = [json.loads(l) for l in open(sys.argv[1])]
 sys.exit(0 if rows and all(keys <= set(r) for r in rows) else 1)' "$EV"
 expect "events.jsonl: every line is valid JSON with all fields" $?
-out=$(run events --since 2h); [[ "$out" == *"watchdog_kick"*"uk.lightbound.argo"*"[live"* && "$out" == *"boot"* ]]; expect "events --since 2h: readable timeline" $?
+# A window of a day, not 2 h: these events are stamped with the real clock, and a mid-run sleep outlasts 2 h
+out=$(run events --since 1d); [[ "$out" == *"watchdog_kick"*"uk.lightbound.argo"*"[live"* && "$out" == *"boot"* ]]; expect "events --since 1d: readable timeline" $?
 out=$(run events --json --since 1d); [ "$(printf '%s\n' "$out" | wc -l | tr -d ' ')" = "$(wc -l <"$EV" | tr -d ' ')" ]; expect "events --json: raw lines" $?
 out=$(run events --since 2x 2>&1); [ $? = 2 ] && [[ "$out" == *"30m, 2h or 1d"* ]]; expect "events: bad --since is refused" $?
 
