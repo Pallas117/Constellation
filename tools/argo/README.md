@@ -52,7 +52,7 @@ Optional extras:
 
 ```bash
 launchctl bootout gui/$(id -u)/uk.lightbound.argo
-argo uninstall       # removes the plist, ~/.local/state/argo and ~/.config/argo
+argo uninstall       # removes the plist, ~/.local/state/argo and ~/.config/argo (incl. thirdparty.json)
 rm ~/.local/bin/argo
 ```
 
@@ -79,6 +79,8 @@ Then remove the `statusLine` and `claude()` lines above if you added them, and r
 | `argo keys [list\|publish\|trust DEVICE]` | This device's key fingerprint; devices you trust and theirs; accept a device's new key after checking it |
 | `argo mule export\|import DIR` | Carry bundles on a drive to or from a device with no network |
 | `argo link` | Link stability: availability, drops and recovery times over 24 h and 7 days |
+| `argo thirdparty [list\|check\|accept] [-json]` | Third parties (below): every outside service as a node with what it can see, its scopes, where its credential lives and where to revoke it. `check` exits 3 when a node is new, changed, removed, unregistered or can see local-class data |
+| `argo thirdparty seen [TOOL]` | Credits one use of a tool (or a Claude Code hook's JSON on stdin) to its node, or records the service as unregistered. Always exits 0 |
 | `argo off` / `argo on` | Pauses or resumes the LaunchAgent ticks |
 | `argo preflight` | Fast local check for dead proxies and stuck Claude daemons (exit 1 if found) |
 | `argo run -- cmd` | Runs `cmd` with dead proxy variables removed |
@@ -319,6 +321,49 @@ log: A = MTBF / (MTBF + MTTR), computed as 1 − down/observed. They also carry 
 95th-percentile outage, and the time between drops. Time asleep counts as observed and up unless an incident was
 open. The 7-day figure is the stability score on `/mesh`. Example from this Mac on 2026-10-23:
 `Link stability 83/100 · 24 h: 84.3% up over 24.0 h, 24 drops, typical outage 3 min (p95 63 min)`.
+
+## Third parties
+
+Every outside service the setup depends on (claude.ai connectors, GitHub apps, Cloudflare, Stripe, Tailscale,
+CLIs that send code to their vendor) is a node, the way mesh peers are. Argo makes each one visible and revocable
+in one place. It is not a credential store: sign-ins stay in your browser, passkeys and Keychain, and a node only
+says **where** its credential lives.
+
+The registry is your file, `~/.config/argo/thirdparty.json` (0600). It names your accounts, so it stays on this
+Mac and never goes in this repo. One node:
+
+```json
+{"nodes": [{
+  "id": "issue-tracker",
+  "name": "Issue tracker (claude.ai connector)",
+  "kind": "connector",
+  "sees": ["internal"],
+  "scopes": ["issues read/write", "comments"],
+  "credential": "claude.ai, server side (OAuth); nothing on this Mac",
+  "revoke": "claude.ai → Settings → Connectors → Issue tracker → Disconnect",
+  "last_used": "2026-11-03",
+  "match": ["mcp__<connector-id>__"],
+  "notes": "scopes read from the tool list (UNVERIFIED against the vendor's grant)"
+}]}
+```
+
+- `sees` uses the gauss-guard classes: `none`, `public`, `mesh`, `internal`, `local`. A node that can see `local`
+  data is always flagged: local-class files must never leave this Mac.
+- `check` refuses a node that looks like it holds a credential (token prefixes such as `ghp_`, `sk_live_`,
+  `xoxb-`, private keys, JWTs, `user:pass@` URLs, long mixed-case strings) and never prints the value back.
+- The first `check` (or tick) records the registry as the accepted baseline. After that, a new node, a changed
+  `sees`/scope list, a moved credential or revoke place, a removed node, or a service seen in use with no node
+  is flagged until you run `argo thirdparty accept`. A node unused for 90 days gets a revoke reminder (advice
+  only; it does not change the exit code).
+- Every tick compares the two files (no network). A new set of changes sends one text with the **count only**:
+  SMS is not end-to-end encrypted and the list is internal. Review at the Mac with `argo thirdparty check`.
+- Argo's own record (baseline, last use, unregistered sightings) is `~/.config/argo/thirdparty.state.json`.
+
+**Last use and new connectors (optional).** A Claude Code hook credits each MCP tool call to its node by the
+node's `match` prefixes (longest wins), at most one write per node per day, and records an unknown
+`mcp__<server>` as unregistered, which `check` then flags. In `~/.claude/settings.json`:
+`"hooks": {"PostToolUse": [{"matcher": "mcp__.*", "hooks": [{"type": "command", "command": "argo thirdparty seen"}]}]}`.
+The hook only reads the tool name; it never fails or blocks the call.
 
 ## Linux and containers
 

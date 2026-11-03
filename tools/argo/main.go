@@ -113,6 +113,7 @@ func main() {
 			f(c)
 		}
 		_ = withLock(store, func() { watchPeers(cfg.peers(), store, realWatchFx(phone, store), time.Now()) })
+		thirdpartyTick(tpFilesIn(configDir()), phone, time.Now()) // texts once per new third-party change; two small file reads
 		_ = withLock(store, func() { phase(20*time.Second, func(c context.Context) { guardTick(c, store, cfg, phone, time.Now()) }) })
 		phase(30*time.Second, func(c context.Context) { relayTick(c, cfg, store, phone) }) // store-and-forward (relay.go); takes its own lock
 		var skip bool
@@ -218,6 +219,11 @@ func main() {
 		}
 		if len(lines) == 0 {
 			fmt.Println("devices: all watched devices are on the tailnet (or this Mac is off it)")
+		}
+	case "thirdparty": // outside services as nodes: what each sees, scopes, credential place, revoke place
+		var code int
+		if code, err = thirdpartyCmd(os.Args[2:], configDir(), os.Stdin, os.Stdout, time.Now()); err == nil && code != 0 {
+			os.Exit(code)
 		}
 	case "guard": // resource guard: deep analysis, admission, guarded runs (GAU-195)
 		var code int
