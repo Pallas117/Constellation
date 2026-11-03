@@ -10,7 +10,7 @@ import { useDocumentTitle } from "@/hooks/useDocumentTitle";
 import { refreshOperatorGeometry, useOperatorGeometry, type PasskeyRow } from "@/hooks/useOperatorGeometry";
 import { apiBase } from "@/lib/api/base-url";
 import { authClient, passkeyTouch, signOut, useSession } from "@/lib/auth-client";
-import { passkeySupport, type PasskeySupport } from "@/lib/passkey-support";
+import { passkeyErrorMessage, passkeySupport, type PasskeySupport } from "@/lib/passkey-support";
 import { hasRole, roleOf, type Role } from "@/lib/roles";
 import { fetchWithStepUp, StepUpCancelled } from "@/lib/step-up";
 
@@ -55,7 +55,7 @@ function PasskeysCard({ passkeys, support }: { passkeys: PasskeyRow[] | null; su
     setBusy(false);
     if (error) {
       const fresh = /fresh|session/i.test(error.message ?? "");
-      setMessage(fresh ? "Sign out and in again, then add the passkey: adding one needs a recent sign-in." : error.message || "Could not add the passkey.");
+      setMessage(fresh ? "Sign out and in again, then add the passkey: adding one needs a recent sign-in." : passkeyErrorMessage(error, "add"));
       return;
     }
     setName("");
@@ -160,7 +160,7 @@ function RolesCard({ selfId, hasPasskey }: { selfId: string; hasPasskey: boolean
   const change = async (user: AdminUser, role: Role) => {
     setMessage(null);
     const stepUp = async () => {
-      const touch = await passkeyTouch();
+      const touch = await passkeyTouch("confirm");
       if ("error" in touch) {
         setMessage(touch.error);
         return false;

@@ -1,6 +1,7 @@
 import { passkeyClient } from "@better-auth/passkey/client";
 import { createAuthClient } from "better-auth/react";
 import { apiOrigin } from "@/lib/api/base-url";
+import { passkeyErrorMessage, type PasskeyAction } from "@/lib/passkey-support";
 
 export const authClient = createAuthClient({
   baseURL: apiOrigin(),
@@ -21,13 +22,11 @@ export function passkeyCredentialOf(session: unknown): string | null {
  * and the server opens a fresh session (sign-in, or step-up when already
  * signed in). Resolves to the signed-in user, or an error message to show.
  */
-export async function passkeyTouch(): Promise<{ userId: string; user: unknown; session: unknown } | { error: string }> {
+export async function passkeyTouch(
+  action: Exclude<PasskeyAction, "add"> = "sign-in",
+): Promise<{ userId: string; user: unknown; session: unknown } | { error: string }> {
   const result = await authClient.signIn.passkey();
-  if (result.error || !result.data) {
-    const code = (result.error as { code?: string } | null)?.code;
-    if (code === "ERROR_CEREMONY_ABORTED" || code === "AUTH_CANCELLED") return { error: "Passkey sign-in was cancelled." };
-    return { error: result.error?.message || "Passkey sign-in failed." };
-  }
+  if (result.error || !result.data) return { error: passkeyErrorMessage(result.error as { code?: string; message?: string } | null, action) };
   const { user, session } = result.data as { user?: { id?: string }; session?: unknown };
-  return user?.id ? { userId: user.id, user, session } : { error: "Passkey sign-in failed." };
+  return user?.id ? { userId: user.id, user, session } : { error: passkeyErrorMessage(null, action) };
 }

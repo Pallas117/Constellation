@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { DEFAULT_IDLE_MINUTES, IDLE_WARNING_MS, idleLimitMs, idlePhase, latestActivity } from "./idle";
-import { passkeySupport, type PasskeyEnvironment } from "./passkey-support";
+import { passkeyErrorMessage, passkeySupport, type PasskeyEnvironment } from "./passkey-support";
 import { fetchWithStepUp, StepUpCancelled } from "./step-up";
 
 const page = (url: string, extra: Partial<PasskeyEnvironment> = {}): PasskeyEnvironment => {
@@ -83,4 +83,18 @@ test("a 428 STEP_UP_REQUIRED answer asks for a passkey touch and retries once", 
   const forbidden = await fetchWithStepUp("/x", {}, async () => (touches++, true), async () => new Response("{}", { status: 403 }));
   assert.equal(forbidden.status, 403);
   assert.equal(touches, 0);
+});
+
+test("a passkey prompt that ends without a passkey says what to do next, not 'Auth cancelled'", () => {
+  // What @better-auth/passkey 1.7.12 returns when the browser throws NotAllowedError (SimpleWebAuthn 13).
+  const notAllowed = { code: "ERROR_PASSTHROUGH_SEE_CAUSE_PROPERTY", message: "Auth cancelled" };
+  const signIn = passkeyErrorMessage(notAllowed, "sign-in");
+  assert.match(signIn, /Sign in with email below, then add one/);
+  assert.doesNotMatch(signIn, /Auth cancelled/);
+  assert.match(passkeyErrorMessage({ code: "ERROR_CEREMONY_ABORTED", message: "Auth cancelled" }, "confirm"), /nothing was changed/);
+  assert.match(passkeyErrorMessage({ code: "ERROR_PASSTHROUGH_SEE_CAUSE_PROPERTY", message: "The operation either timed out or was not allowed." }, "add"), /wasn't added/);
+  assert.equal(passkeyErrorMessage({ code: "ERROR_AUTHENTICATOR_PREVIOUSLY_REGISTERED", message: "Previously registered" }, "add"), "This device already has a passkey for this account.");
+  // Server refusals keep the server's words; nothing at all falls back per action.
+  assert.equal(passkeyErrorMessage({ code: "UNAUTHORIZED", message: "Passkey not found" }, "sign-in"), "Passkey not found");
+  assert.equal(passkeyErrorMessage(null, "confirm"), "The passkey check failed.");
 });
