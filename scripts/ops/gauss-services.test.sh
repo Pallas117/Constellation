@@ -91,6 +91,20 @@ SRC="AC Power" BATT="80%; charging; 1:00 remaining present: true" run awake guar
 [ -z "$(alerts)" ]; expect "80% charging: no alerts" $?
 SRC="Battery Power" BATT="45%; discharging; 1:00 remaining present: true" run awake guard
 [ "$(alerts)" = "battery-low" ]; expect "45% on battery: low warning" $?
+# Plug in ahead: on battery with gate runs queued (each ~5 % of battery, measured 3 Nov)
+PQ="$T/home/Library/Application Support/Gauss/gates/queue"; mkdir -p "$PQ"
+SRC="Battery Power" BATT="80%; discharging; 3:00 remaining present: true" run awake guard
+[ -z "$(alerts)" ]; expect "plug ahead: on battery with nothing queued, no text" $?
+touch "$PQ/1-a.req" "$PQ/2-b.req"
+SRC="Battery Power" BATT="80%; discharging; 3:00 remaining present: true" run awake guard
+[ -z "$(alerts)" ]; expect "plug ahead: 80% covers two queued gates (~10%), no text" $?
+SRC="Battery Power" BATT="57%; discharging; 2:00 remaining present: true" run awake guard
+[ "$(alerts)" = "plug-ahead" ] && grep -q "plug in soon" "$T/log"; expect "plug ahead: 57% with two gates queued would stop at 50%: text early" $?
+SRC="Battery Power" BATT="45%; discharging; 1:00 remaining present: true" run awake guard
+[[ " $(alerts) " == *" plug-ahead "* ]] && grep -q "plug in to keep merging" "$T/log"; expect "plug ahead: under 50% with gates queued, they wait: text" $?
+SRC="AC Power" BATT="45%; charging; present: true" run awake guard
+[ -z "$(alerts)" ]; expect "plug ahead: on AC, no text" $?
+rm -f "$PQ"/*.req
 SRC="Battery Power" BATT="9%; discharging; 0:20 remaining present: true" run awake guard
 [ "$(alerts)" = "battery-critical" ]; expect "9% on battery: at the floor" $?
 SRC="Battery Power" BATT="55%; discharging; 4:00 remaining present: true" run awake guard

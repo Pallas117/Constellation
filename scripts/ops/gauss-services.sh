@@ -365,9 +365,31 @@ if bad:
 ' "$since" "$json" "$EVENTS.1" "$EVENTS"
 }
 
+# Plug in ahead (Josh 2026-11-03: "you don't need to be plugged in all the time - just warn so I can
+# plug in ahead of time"). Measured from Argo's guard log that day: a gate drains ~20 %/h on battery
+# (6.8 %/h idle) and takes 5-30 min, so about PLUG_GATE_PCT a gate. Work runs on battery down to
+# WORK_BATTERY (Argo's batteryWorkPct, claude-heavy's HEAVY_BATTERY_MIN), then waits for the charger.
+PLUG_GATE_PCT="${GAUSS_PLUG_GATE_PCT:-5}"
+WORK_BATTERY="${GAUSS_WORK_BATTERY:-50}"
+plug_ahead() { # plug_ahead <pct>: on battery with gate runs queued, say when to plug in
+  local pct=$1 n need
+  [ -d "$GATES_QUEUE" ] || return 0 # find on a missing folder fails, and pipefail would end the caller
+  n=$(find "$GATES_QUEUE" -name '*.req' | wc -l | tr -d ' ') || return 0
+  [ "${n:-0}" -gt 0 ] || return 0
+  need=$(( n * PLUG_GATE_PCT ))
+  if [ "$pct" -lt "$WORK_BATTERY" ]; then
+    phone -key plug-ahead -every 1h "Gauss: plug in to keep merging" \
+      "$n PR(s) wait to be tested and merged. Under ${WORK_BATTERY}% on battery they wait for the charger (${pct}% now)."
+  elif [ $(( pct - need )) -lt "$WORK_BATTERY" ]; then
+    phone -key plug-ahead -every 1h "Gauss: plug in soon" \
+      "$n PR(s) queued need about ${need}% of battery; at ${pct}% the queue stops at ${WORK_BATTERY}%. Plug in within the hour to keep it moving."
+  fi
+}
+
 battery_alerts() { # battery_alerts <pmset batt output> <pct>
   local batt=$1 pct=$2
   [ -n "$pct" ] || return 0
+  [[ "$batt" == *"'AC Power'"* ]] || plug_ahead "$pct"
   if [ "$(sleep_disabled)" = 1 ] && [ ! -f "$SUDOERS" ]; then
     phone -key awake-unguarded -every 6h "Gauss: no battery cutoff" \
       "Sleep is disabled but the awake guard isn't set up, so nothing stops the battery running flat (${pct}%). Run: gauss-services.sh awake setup"
