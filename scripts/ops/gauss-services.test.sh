@@ -585,6 +585,12 @@ echo "OPEN train main true CLEAN" >"$GHD/pr13"; git --git-dir="$ORIGIN" update-r
 P5=$(tc "$N1" f5.txt x); g push -q origin "$P5:refs/heads/train"; echo "OPEN train main true CLEAN" >"$GHD/pr13"
 (cd "$LIVE" && run gates enqueue "$P5" --pr 13 >/dev/null 2>&1); run gates run >/dev/null 2>&1
 grep -q "^[^ ]* $P5 [^ ]* HELD passed, not merged: draft" "$GR"; expect "train: a draft passes but isn't merged" $?
+P6=$(tc "$N1" f6.txt y); printf 'sha=%s\ntree=%s\nrepo=%s\nqueued=%s\nby=t\npr=7\n' "$P6" "$(tree_of "$P6")" "$(g rev-parse --absolute-git-dir)" "$(date +%s)" \
+  >"$GQ/1.000000-$(tree_of "$P1").req" # what train_sync leaves: moved to P6, still named after P1's tree
+out=$(cd "$LIVE" && run gates result "$P6" 2>&1); rc=$?
+[ $rc = 3 ] && [[ "$out" == QUEUED* ]] && [[ "$(cd "$LIVE" && run gates enqueue "$P6" 2>&1)" == *"Already queued"* ]] && [ "$(ls "$GQ" | wc -l | tr -d ' ')" = 1 ]
+expect "train: a request moved to the merged head is found by its tree (gates result says queued; no second request)" $?
+rm -f "$GQ"/*.req
 g checkout -q --detach "$prevhead"; g remote remove origin; rm -f "$T/bin/gh" "$T/home/.gitconfig"
 
 # balance (GAU-126): shed optional load, undo it when conditions recover

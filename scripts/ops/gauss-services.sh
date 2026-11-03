@@ -113,7 +113,7 @@ GATES=(test:ops quality:full verify)
 # (~1 GB of idle sessions on an 8 GB Mac), each with its own npm ci. Now a session enqueues and
 # can be archived; one detached runner works through the requests one at a time under claude-heavy
 # (memory, power, Argo's guard) in one checkout of its own, reinstalling only when the lockfile changes.
-GATES_QUEUE="$GATES_DIR/queue"         # <time>-<tree>.req, oldest first; one per tree
+GATES_QUEUE="$GATES_DIR/queue"         # <time>-<tree queued>.req, oldest first; one per tree (its tree= line)
 GATES_RESULTS="$GATES_DIR/results.log" # <utc> <sha> <tree> PASSED|FAILED|SKIPPED|ERROR|EXPIRED <detail>, one line per request
 GATES_RUNNER="$GATES_DIR/runner"       # held by the one runner (its pid inside)
 HEAVY="${GAUSS_HEAVY:-$HOME/.local/bin/claude-heavy}"
@@ -824,7 +824,11 @@ gates_result() { # gates_result <sha> <tree> <STATUS> <detail>: the one line a s
   event gates_result "${1:0:7}" "$3 ${1:0:7}: $4" sha="$1" tree="$2" status="$3"
 }
 
-gates_queued() { local f; for f in "$GATES_QUEUE"/*-"$1".req; do [ -f "$f" ] && { echo "$f"; return 0; }; done; return 1; } # by tree
+gates_queued() { # gates_queued <tree>: the queued request for that tree, by its tree= line: train_sync moves a request
+  # to the merged head in place, so the file name keeps the tree it was queued with (2026-11-03: "gates result 0db616f"
+  # said no request while #212's moved request was running it, and a re-enqueue would have queued it twice).
+  local f; for f in "$GATES_QUEUE"/*.req; do [ -f "$f" ] && [ "$(req_get "$f" tree)" = "$1" ] && { echo "$f"; return 0; }; done; return 1
+}
 
 gates_resolve() { # gates_resolve <checkout-dir>|<commit>: sets G_SRC G_SHA G_TREE G_REPO
   if [ -d "$1" ]; then
