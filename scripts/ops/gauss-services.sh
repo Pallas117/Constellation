@@ -113,7 +113,7 @@ GATES=(test:ops quality:full verify)
 # (~1 GB of idle sessions on an 8 GB Mac), each with its own npm ci. Now a session enqueues and
 # can be archived; one detached runner works through the requests one at a time under claude-heavy
 # (memory, power, Argo's guard) in one checkout of its own, reinstalling only when the lockfile changes.
-GATES_QUEUE="$GATES_DIR/queue"         # <time>-<tree>.req, oldest first; one per tree
+GATES_QUEUE="$GATES_DIR/queue"         # <time>-<tree queued>.req, oldest first; one per tree (its tree= line)
 GATES_RESULTS="$GATES_DIR/results.log" # <utc> <sha> <tree> PASSED|FAILED|SKIPPED|ERROR|EXPIRED <detail>, one line per request
 GATES_RUNNER="$GATES_DIR/runner"       # held by the one runner (its pid inside)
 HEAVY="${GAUSS_HEAVY:-$HOME/.local/bin/claude-heavy}"
@@ -365,9 +365,31 @@ if bad:
 ' "$since" "$json" "$EVENTS.1" "$EVENTS"
 }
 
+# Plug in ahead (Josh 2026-11-03: "you don't need to be plugged in all the time - just warn so I can
+# plug in ahead of time"). Measured from Argo's guard log that day: a gate drains ~20 %/h on battery
+# (6.8 %/h idle) and takes 5-30 min, so about PLUG_GATE_PCT a gate. Work runs on battery down to
+# WORK_BATTERY (Argo's batteryWorkPct, claude-heavy's HEAVY_BATTERY_MIN), then waits for the charger.
+PLUG_GATE_PCT="${GAUSS_PLUG_GATE_PCT:-5}"
+WORK_BATTERY="${GAUSS_WORK_BATTERY:-50}"
+plug_ahead() { # plug_ahead <pct>: on battery with gate runs queued, say when to plug in
+  local pct=$1 n need
+  [ -d "$GATES_QUEUE" ] || return 0 # find on a missing folder fails, and pipefail would end the caller
+  n=$(find "$GATES_QUEUE" -name '*.req' | wc -l | tr -d ' ') || return 0
+  [ "${n:-0}" -gt 0 ] || return 0
+  need=$(( n * PLUG_GATE_PCT ))
+  if [ "$pct" -lt "$WORK_BATTERY" ]; then
+    phone -key plug-ahead -every 1h "Gauss: plug in to keep merging" \
+      "$n PR(s) wait to be tested and merged. Under ${WORK_BATTERY}% on battery they wait for the charger (${pct}% now)."
+  elif [ $(( pct - need )) -lt "$WORK_BATTERY" ]; then
+    phone -key plug-ahead -every 1h "Gauss: plug in soon" \
+      "$n PR(s) queued need about ${need}% of battery; at ${pct}% the queue stops at ${WORK_BATTERY}%. Plug in within the hour to keep it moving."
+  fi
+}
+
 battery_alerts() { # battery_alerts <pmset batt output> <pct>
   local batt=$1 pct=$2
   [ -n "$pct" ] || return 0
+  [[ "$batt" == *"'AC Power'"* ]] || plug_ahead "$pct"
   if [ "$(sleep_disabled)" = 1 ] && [ ! -f "$SUDOERS" ]; then
     phone -key awake-unguarded -every 6h "Gauss: no battery cutoff" \
       "Sleep is disabled but the awake guard isn't set up, so nothing stops the battery running flat (${pct}%). Run: gauss-services.sh awake setup"
@@ -802,7 +824,11 @@ gates_result() { # gates_result <sha> <tree> <STATUS> <detail>: the one line a s
   event gates_result "${1:0:7}" "$3 ${1:0:7}: $4" sha="$1" tree="$2" status="$3"
 }
 
-gates_queued() { local f; for f in "$GATES_QUEUE"/*-"$1".req; do [ -f "$f" ] && { echo "$f"; return 0; }; done; return 1; } # by tree
+gates_queued() { # gates_queued <tree>: the queued request for that tree, by its tree= line: train_sync moves a request
+  # to the merged head in place, so the file name keeps the tree it was queued with (2026-11-03: "gates result 0db616f"
+  # said no request while #212's moved request was running it, and a re-enqueue would have queued it twice).
+  local f; for f in "$GATES_QUEUE"/*.req; do [ -f "$f" ] && [ "$(req_get "$f" tree)" = "$1" ] && { echo "$f"; return 0; }; done; return 1
+}
 
 gates_resolve() { # gates_resolve <checkout-dir>|<commit>: sets G_SRC G_SHA G_TREE G_REPO
   if [ -d "$1" ]; then
@@ -819,22 +845,50 @@ gates_resolve() { # gates_resolve <checkout-dir>|<commit>: sets G_SRC G_SHA G_TR
 
 # A new head replaces the older heads of its branch still waiting (2026-10-31: three hand prunes of
 # stale requests in one day, each costing a full gate slot). Never a commit already on origin/main:
-# a queued main (for a deploy) is an ancestor of every branch that merged it.
+# a queued main (for a deploy) is an ancestor of every branch that merged it. Never a commit that is
+# still a branch's head (2026-11-02: queuing #210's head dropped the head of #158 under it, which has
+# to pass on its own before #158 merges): only a branch whose head moved on supersedes.
 gates_supersede() { # gates_supersede <new-sha> <new-request>
-  local new=$1 keep=$2 r old
+  local new=$1 keep=$2 r old tips fetched=
   for r in "$GATES_QUEUE"/*.req; do
     [ -f "$r" ] && [ "$r" != "$keep" ] || continue
     old=$(req_get "$r" sha)
     [ -n "$old" ] && [ "$old" != "$new" ] || continue
     git --git-dir="$G_REPO" merge-base --is-ancestor "$old" "$new" 2>/dev/null || continue
+    if [ -z "$fetched" ]; then # once, and only with a candidate: origin's heads as they are now (30 s cap: hotspot)
+      fetched=1
+      GIT_TERMINAL_PROMPT=0 perl -e 'alarm shift; exec @ARGV' 30 git --git-dir="$G_REPO" fetch -q origin 2>/dev/null \
+        || echo "(git fetch failed; judging branch heads by the refs already here)"
+    fi
     git --git-dir="$G_REPO" merge-base --is-ancestor "$old" refs/remotes/origin/main 2>/dev/null && continue
+    tips=$(gates_branch_tips "$old")
+    [ -z "$tips" ] || { echo "Kept ${old:0:7}: still the head of $tips."; continue; }
     rm -f "$r" && echo "Superseded ${old:0:7}: ${new:0:7} contains it."
   done
 }
 
-gates_enqueue() { # gates_enqueue <checkout-dir>|<commit>: queue a gate run for that commit's tree, start the runner
-  gates_resolve "${1:?usage: $0 gates enqueue <checkout-dir>|<commit>}" || return 1
-  local sha=$G_SHA tree=$G_TREE f
+gates_branch_tips() { # gates_branch_tips <sha>: the branches, here or on origin, whose head is <sha> (comma-separated)
+  local ref h
+  git --git-dir="$G_REPO" for-each-ref --points-at "$1" --format='%(refname)' refs/heads refs/remotes/origin \
+    | while IFS= read -r ref; do
+      case $ref in # not origin's copy of a branch that has moved on here: that newer head just isn't pushed yet
+        refs/remotes/origin/*) h=$(git --git-dir="$G_REPO" rev-parse -q --verify "refs/heads/${ref#refs/remotes/origin/}") \
+          && [ "$h" != "$1" ] && git --git-dir="$G_REPO" merge-base --is-ancestor "$1" "$h" && continue ;;
+      esac
+      echo "${ref#refs/}"
+    done | paste -sd, -
+}
+
+gates_enqueue() { # gates_enqueue <checkout-dir>|<commit> [--pr N]: queue a gate run for that commit's tree, start the runner
+  # --pr N puts it on the merge train (train_sync, train_merge): main is merged in before the run
+  # and the PR is merged after a pass, when the standing approval's conditions hold.
+  gates_resolve "${1:?usage: $0 gates enqueue <checkout-dir>|<commit> [--pr N]}" || return 1
+  local sha=$G_SHA tree=$G_TREE f pr=""
+  case "${2:-}" in
+    --pr) pr=${3:-}; [[ "$pr" =~ ^[0-9]+$ ]] || { echo "usage: $0 gates enqueue <checkout-dir>|<commit> --pr <number>" >&2; return 2; } ;;
+    "") ;;
+    *) echo "unknown option ${2} (expected --pr N)" >&2; return 2 ;;
+  esac
   if gate_record "$tree" >/dev/null; then
     gates_result "$sha" "$tree" SKIPPED "already passed: $(gates_summary "$GATES_DIR/$tree.json")"
     echo "Already passed: ${sha:0:7} (tree ${tree:0:7}) has a passing gate record; nothing queued."; return 0
@@ -844,7 +898,7 @@ gates_enqueue() { # gates_enqueue <checkout-dir>|<commit>: queue a gate run for 
     echo "Already queued: tree ${tree:0:7} ($(req_get "$f" sha | cut -c1-7), by $(req_get "$f" by))."
   else
     f="$GATES_QUEUE/$(python3 -Ic 'import time; print("%.6f" % time.time())')-$tree.req"
-    printf 'sha=%s\ntree=%s\nrepo=%s\nnode=%s\nby=%s\nqueued=%s\n' "$sha" "$tree" "$G_REPO" "$NODE" "$(deployer)" "$(date +%s)" >"$f.tmp"
+    printf 'sha=%s\ntree=%s\nrepo=%s\nnode=%s\nby=%s\nqueued=%s\npr=%s\n' "$sha" "$tree" "$G_REPO" "$NODE" "$(deployer)" "$(date +%s)" "$pr" >"$f.tmp"
     mv "$f.tmp" "$f"
     event gates_queued "${sha:0:7}" "gate run queued for ${sha:0:7}" sha="$sha" tree="$tree" by="$(deployer)"
     gates_supersede "$sha" "$f"
@@ -926,6 +980,10 @@ gates_run_one() { # gates_run_one <request>: check out, install if the lockfile 
   local req=$1 sha tree repo node by co lock out rc=0 line status
   # Withdrawn while claude-heavy waited (a session re-queued a new head): nothing to run.
   [ -f "$req" ] || { echo "Request $(basename "$req") was withdrawn; skipping."; return 0; }
+  local pr; pr=$(req_get "$req" pr)
+  if [ -n "$pr" ]; then # merge train: test what would land, not a head main has moved past
+    train_sync "$req" || return 0 # withdrawn: closed PR, moved head or a conflict (result written)
+  fi
   sha=$(req_get "$req" sha); tree=$(req_get "$req" tree); repo=$(req_get "$req" repo); node=$(req_get "$req" node); by=$(req_get "$req" by)
   [ -n "$node" ] && [ -x "$node" ] && NODE=$node # the Node the session queued with (.nvmrc: Node 26)
   co=${GAUSS_GATES_CHECKOUT:-$(dirname "$repo").worktrees/gates}
@@ -947,8 +1005,10 @@ gates_run_one() { # gates_run_one <request>: check out, install if the lockfile 
       || { gates_fail "npm ci failed (log: $GATES_DIR/runs/$sha.install.log)"; return 1; }
     echo "$lock" >"$co/node_modules/.gauss-lock"
   fi
-  # The native MHD kernel is built by npm ci, so it went stale when only its C++ changed: a commit
-  # was tested against another commit's build/ (2026-10-31). Rebuild when its sources differ.
+  # The native MHD kernel: npm ci no longer builds it (package.json "gypfile": false, GAU-228) and the
+  # backend loads it only with GAUSS_NATIVE_MHD=1, but the gate still builds it so the GAU-133 test
+  # (kernel vs TypeScript) keeps running. Rebuild only when its sources differ: a stale build/ once
+  # tested a commit against another commit's C++ (2026-10-31).
   if [ -f "$co/binding.gyp" ]; then
     local native; native=$(cat "$co/binding.gyp" "$co"/backend/cpp/* 2>/dev/null | shasum | cut -d' ' -f1)
     if [ "$(cat "$co/build/.gauss-native" 2>/dev/null)" != "$native" ]; then
@@ -967,7 +1027,90 @@ gates_run_one() { # gates_run_one <request>: check out, install if the lockfile 
   else status=ERROR; line="$(printf '%s\n' "$out" | tail -1) (log: $GATES_DIR/runs/$sha.log)"; fi
   gates_result "$sha" "$tree" "$status" "$line"
   rm -f "$req"
-  [ "$status" = PASSED ]
+  [ "$status" = PASSED ] || return 1
+  [ -z "$pr" ] || train_merge "$pr" "$sha" "$tree" "$repo" || true # a pass stands whether or not it merged
+}
+
+# The merge train (Josh 2026-11-03, "make fixes to merge train always"): overnight, main moved
+# twice (#197, #213) and every queued gate tested a head that could no longer merge; each PR then
+# needed a session awake to merge main in, re-queue, wait and merge. A request queued with --pr
+# now does that itself. Same rules as the standing approval (CLAUDE.md): passed on the exact head,
+# head contains origin/main, GitHub says CLEAN, not a draft, and nothing it changes matches
+# TRAIN_HOLD (auth, RBAC, crypto/TLS, secrets, CyberTiger, keys); those pass and wait for Josh.
+# Only fast-forward pushes of a merge commit to the PR's own branch; never a force push.
+TRAIN_REPO="${GAUSS_TRAIN_REPO:-Pallas117/Constellation}"
+TRAIN_HOLD="${GAUSS_TRAIN_HOLD:-auth|rbac|crypto|tls|secret|cybertiger|passkey|bpsec|signing|trust/|\.env|keys?\.}"
+
+train_pr() { # train_pr <pr>: "state head branch base draft merge-state" on one line, or fail
+  gh pr view "$1" --repo "$TRAIN_REPO" --json state,headRefOid,headRefName,baseRefName,isDraft,mergeStateStatus \
+    -q '[.state, .headRefOid, .headRefName, .baseRefName, (.isDraft|tostring), .mergeStateStatus] | join(" ")' 2>/dev/null
+}
+
+train_sync() { # train_sync <request>: merge origin/main into a train PR's head before its run; 1 = withdrawn
+  local req=$1 pr sha tree repo info state head branch base _ w new
+  pr=$(req_get "$req" pr); sha=$(req_get "$req" sha); tree=$(req_get "$req" tree); repo=$(req_get "$req" repo)
+  git --git-dir="$repo" fetch -q origin 2>/dev/null || { echo "fetch failed: gating ${sha:0:7} as queued"; return 0; }
+  info=$(train_pr "$pr") || { echo "GitHub unreachable: gating ${sha:0:7} as queued"; return 0; }
+  read -r state head branch base _ _ <<<"$info"
+  if [ "$state" != OPEN ]; then gates_result "$sha" "$tree" SKIPPED "PR #$pr is ${state:-gone}"; rm -f "$req"; return 1; fi
+  if [ "$head" != "$sha" ]; then
+    gates_result "$sha" "$tree" SKIPPED "PR #$pr moved on to ${head:0:7}; queue that head"; rm -f "$req"; return 1
+  fi
+  [ "$base" = main ] || return 0 # stacked: gated as it is; it syncs once its base has merged
+  git --git-dir="$repo" merge-base --is-ancestor refs/remotes/origin/main "$sha" && return 0
+  w=$(mktemp -d -t gauss-train)/w
+  git --git-dir="$repo" worktree add -q --detach "$w" "$sha" 2>/dev/null || { echo "could not prepare a merge of main; gating as queued"; return 0; }
+  if git -C "$w" merge -q --no-edit -m "Merge origin/main into $branch (merge train)" refs/remotes/origin/main >/dev/null 2>&1 \
+     && new=$(git -C "$w" rev-parse HEAD) && git -C "$w" push -q origin "$new:refs/heads/$branch" 2>/dev/null; then
+    sed -i '' -e "s/^sha=.*/sha=$new/" -e "s/^tree=.*/tree=$(git -C "$w" rev-parse "$new^{tree}")/" "$req"
+    gates_result "$sha" "$tree" MOVED "merged main into PR #$pr: gating ${new:0:7} instead"
+    echo "Merged main into PR #$pr: ${sha:0:7} -> ${new:0:7}"
+  else
+    git -C "$w" merge --abort 2>/dev/null || true
+    gates_result "$sha" "$tree" CONFLICT "PR #$pr can't take main without a person (conflict, or its branch moved)"
+    phone -key "train-$pr" -every 6h "Gauss: PR #$pr needs a hand" "Main has moved and #$pr doesn't merge with it cleanly. A session needs to merge main into it."
+    rm -f "$req"
+  fi
+  git --git-dir="$repo" worktree remove --force "$w" 2>/dev/null || true
+  [ -f "$req" ]
+}
+
+train_merge() { # train_merge <pr> <sha> <tree> <repo>: merge a PR that just passed, if every rule holds
+  local pr=$1 sha=$2 tree=$3 repo=$4 info state head branch base draft merge i files held child why
+  git --git-dir="$repo" fetch -q origin 2>/dev/null || true
+  for i in 1 2 3; do # GitHub computes mergeability lazily: UNKNOWN right after a push
+    info=$(train_pr "$pr") || return 1
+    read -r state head branch base draft merge <<<"$info"
+    [ "$merge" != UNKNOWN ] && break
+    sleep "${GAUSS_TRAIN_WAIT_S:-10}"
+  done
+  why=""
+  [ "$state" = OPEN ] || why="PR is $state"
+  [ -z "$why" ] && [ "$head" != "$sha" ] && why="PR moved on to ${head:0:7}"
+  [ -z "$why" ] && [ "$base" != main ] && why="stacked on $base: merges after it"
+  [ -z "$why" ] && [ "$draft" = true ] && why="draft"
+  [ -z "$why" ] && ! git --git-dir="$repo" merge-base --is-ancestor refs/remotes/origin/main "$sha" && why="main moved during the run: re-queue it"
+  [ -z "$why" ] && [ "$merge" != CLEAN ] && why="GitHub says $merge"
+  if [ -z "$why" ]; then
+    files=$(git --git-dir="$repo" diff --name-only "refs/remotes/origin/main...$sha")
+    held=$(printf '%s\n' "$files" | { grep -Ei -- "$TRAIN_HOLD" || true; } | sed -n 1,3p | tr '\n' ' ') # sed reads it all: no SIGPIPE
+    [ -z "$held" ] || why="touches ${held% }: Josh merges"
+  fi
+  if [ -n "$why" ]; then
+    gates_result "$sha" "$tree" HELD "passed, not merged: $why"
+    return 1
+  fi
+  if gh pr merge "$pr" --repo "$TRAIN_REPO" --merge --match-head-commit "$sha" >/dev/null 2>&1; then
+    gates_result "$sha" "$tree" MERGED "PR #$pr merged by the train after its gate passed on ${sha:0:7}"
+    # PRs stacked on this one now belong on main (their next queued run merges main in).
+    for child in $(gh pr list --repo "$TRAIN_REPO" --base "$branch" --state open --json number -q '.[].number' 2>/dev/null); do
+      gh pr edit "$child" --repo "$TRAIN_REPO" --base main >/dev/null 2>&1 && echo "Retargeted PR #$child to main."
+    done
+    phone -key "train-merged" -every 1m "Gauss: merged #$pr" "PR #$pr passed its checks and is merged into main."
+    return 0
+  fi
+  gates_result "$sha" "$tree" HELD "passed, but gh pr merge refused it"
+  return 1
 }
 
 gates_show_result() { # gates_show_result <checkout-dir>|<commit>: the latest line for that tree; exit 0 passed, 1 failed/none, 3 queued
@@ -980,7 +1123,7 @@ gates_show_result() { # gates_show_result <checkout-dir>|<commit>: the latest li
   line=$(awk -v t="$tree" 'index($2, t) == 1 || index($3, t) == 1' "$GATES_RESULTS" 2>/dev/null | tail -1)
   [ -n "$line" ] || { echo "No gate result or request for $arg."; return 1; }
   echo "$line"
-  case $(echo "$line" | cut -d' ' -f4) in PASSED) return 0 ;; SKIPPED) [[ "$line" == *" already passed: "* ]] ;; *) return 1 ;; esac
+  case $(echo "$line" | cut -d' ' -f4) in PASSED|MERGED|HELD) return 0 ;; SKIPPED) [[ "$line" == *" already passed: "* ]] ;; *) return 1 ;; esac
 }
 
 gates_status() {
@@ -1546,7 +1689,7 @@ case "${1:-}" in
   gates)
     case "${2:-}" in
       record) gates_record "${3:-}" ;;
-      enqueue) gates_enqueue "${3:-}" ;;
+      enqueue) gates_enqueue "${3:-}" "${4:-}" "${5:-}" ;;
       run) gates_run "${3:-}" ;;
       run-one) gates_run_one "${3:?}" ;;
       result) if [ "${3:-}" = status ]; then gates_status; else gates_show_result "${3:-}"; fi ;;
