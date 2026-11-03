@@ -256,6 +256,17 @@ cores − 1. The repo's `npm test` passes it to `--test-concurrency` and Playwri
 both keep their defaults: about 7 test processes and 4 browsers on an 8-core Mac. Node refuses
 `--test-concurrency` in `NODE_OPTIONS`, so the flag lives in the script.
 
+**Power budget (SWaP).** A spacecraft only switches loads on while its power budget has margin, and sheds them in
+eclipse. Argo keeps the same budget for the machine: **source** = the charger's rating × 0.8 (conversion losses, a
+warm charger), **load** = what the whole machine draws (the battery controller's `SystemLoad`), **margin** = source
+− load. The mode is *positive*, *negative* (plugged in, but the battery still covers part of the load: an 8 W phone
+charger under a build) or *eclipse* (on battery). `ARGO_WORKERS` never asks for more watts than the margin holds:
+one worker in negative, otherwise margin ÷ watts per worker, where watts per worker is what the same job added per
+worker over its last runs (median of at least 3 successful runs; 3 W until then; kept in `jobs.jsonl` as
+`workers`, `base_w`, `avg_w`). A desktop or a host with no draw reading gets no power cap. `argo guard` prints the
+budget on the `power` line, and each report to Gauss carries it in the battery block, so the Mesh page shows
+"9.5 W spare" or "charger 2.8 W short" and a device in deficit or under 5 W of margin is offered light work only.
+
 ## Store and forward (delay-tolerant delivery)
 
 Files move between enrolled devices the way spacecraft send data home: held, forwarded when a path opens,
