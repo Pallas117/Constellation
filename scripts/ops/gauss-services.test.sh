@@ -255,6 +255,20 @@ for rec in "abc1234def" "not a ready record" "abc1234def $T/gone checkout $(date
 done
 echo "$good" >"$FB/ready"
 [ $bad = 0 ]; expect "a corrupt, cut-short or orphaned fallback record reads as none prepared: no half failover, still alerts" $?
+# FM-21: the standby going bad is texted when it happens, not only once a failover needs it.
+fbsave="$T/fb-save"; mkdir -p "$fbsave"; cp "$T/log" "$WD/watch-kicks" "$fbsave/" 2>/dev/null || true # the failover tests below need them
+fbbad() { : >"$T/log"; rm -f "$WD"/*.strikes "$WD/watch-kicks"; LOADED="$B" run awake guard >/dev/null 2>&1; grep "^[^ ]* fallback-bad " "$T/log"; }
+[ -z "$(fbbad)" ]; expect "a usable standby: no standby text" $?
+echo "abc1234def $T/gone checkout $(date +%s)" >"$FB/ready"; out=$(fbbad)
+[[ "$out" == *"checkout, build or agents are gone"* ]]; expect "standby checkout gone: texted while live still runs" $?
+echo "abc1234def" >"$FB/ready"; [[ "$(fbbad)" == *"corrupt or cut short"* ]]; expect "standby record corrupt: texted" $?
+FBG="$T/fb-git"; mkdir -p "$FBG/frontend/dist"; touch "$FBG/frontend/dist/index.html"
+git -C "$FBG" init -q && git -C "$FBG" add -A && git -C "$FBG" -c user.name=t -c user.email=t@t commit -qm one
+echo "$(git -C "$FBG" rev-parse HEAD) $FBG $(date +%s)" >"$FB/ready"; ok1=$(fbbad)
+git -C "$FBG" -c user.name=t -c user.email=t@t commit -q --allow-empty -m two
+[ -z "$ok1" ] && [[ "$(fbbad)" == *"checkout moved to"* ]]; expect "standby checkout moved after it was prepared: texted" $?
+rm -f "$FB/ready"; [ -z "$(fbbad)" ]; expect "nothing prepared: no standby text (status warns, deploy refuses)" $?
+echo "$good" >"$FB/ready"; rm -f "$WD"/*.strikes; cp "$fbsave/log" "$T/log"; cp "$fbsave/watch-kicks" "$WD/" 2>/dev/null || true
 out=$(run dev "$FBDIR" 2>&1); [[ "$out" == *"is the fallback checkout"* ]]; expect "dev refuses the fallback checkout (path with a space)" $?
 for _ in 1 2; do HEALTH=000 LOADED="$B uk.lightbound.gauss-frontend" run awake guard; done
 [ "$(kicked)" = "bootout $B bootout uk.lightbound.gauss-frontend bootout uk.lightbound.gauss-fallback-backend bootstrap uk.lightbound.gauss-fallback-backend bootout uk.lightbound.gauss-fallback-frontend bootstrap uk.lightbound.gauss-fallback-frontend" ] \
@@ -397,11 +411,14 @@ touch -t 202001010000 "$WD/deploying"
 HEALTH=000 LOADED="$B" run awake guard; HEALTH=000 LOADED="$B" run awake guard
 [ "$(kicked)" = "$B" ]; expect "a deploy lock older than 30 min no longer silences the guard" $?
 rmdir "$WD/deploying"; rm -f "$WD/watch-kicks" "$WD"/*.strikes "$T/kicks.state"
-rm -f "$FB/ready" # nothing prepared and no path given: the deploy goes ahead, says so, and leaves no standby
+rm -f "$FB/ready" # nothing prepared and no path given (FM-24): refused unless a person says --no-fallback
 out=$(run deploy "$Bc" 2>&1); rc=$?
+[ $rc = 1 ] && ! head_is "$Bc" && [[ "$out" == *"No fallback to refresh"*"--no-fallback"* ]]
+expect "deploy with no fallback prepared or given: refused, live unchanged" $?
+out=$(run deploy "$Bc" --no-fallback 2>&1); rc=$?
 [ $rc = 0 ] && head_is "$Bc" && [[ "$out" == *"warning: no fallback to refresh"* ]] && [ ! -e "$FB/ready" ]
-expect "deploy with no fallback prepared or given: warns, deploys, leaves none" $?
-main_at "$D"; run deploy "$D" >/dev/null 2>&1; head_is "$D"; expect "deploy back to D, the gated tree the GAU-162 checks below start from" $?
+expect "deploy --no-fallback: warns, deploys, leaves none" $?
+main_at "$D"; run deploy "$D" --no-fallback >/dev/null 2>&1; head_is "$D"; expect "deploy back to D, the gated tree the GAU-162 checks below start from" $?
 
 # GAU-162: every deploy and rollback is recorded; only merged, gated trees go live without --emergency
 H="$WD/deploy-history.jsonl"
