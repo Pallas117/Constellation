@@ -242,7 +242,7 @@ event() { # event <event> <label> <reason> [key=text | key:=json]...: append one
   live=$(live_dir 2>/dev/null) && [ -d "$live" ] && sha=$(git -C "$live" rev-parse HEAD 2>/dev/null) || true
   ready_record && fb=$READY_SHA || true
   read -r level swap _ < <(memory_stats)
-  batt=$(pmset -g batt 2>/dev/null || true); pct=$(grep -Eo '[0-9]+%' <<<"$batt" | head -1 | tr -d % || true)
+  batt=$(pmset -g batt 2>/dev/null || true); pct=$(grep -Eo -m1 '[0-9]+%' <<<"$batt" | tr -d % || true)
   [[ "$batt" == *"'AC Power'"* ]] && ac=true
   for kv in "$@"; do
     key=${kv%%=*}
@@ -817,7 +817,7 @@ print(json.dumps(r, ensure_ascii=False))
 ' "$GATES_DIR/$1.json" "$1"
 }
 
-req_get() { sed -n "s/^$2=//p" "$1" | head -1; } # req_get <request file> <key>
+req_get() { sed -n "/^$2=/{s///p;q;}" "$1"; } # req_get <request file> <key>: the first value (sed quits itself, no SIGPIPE)
 
 gates_result() { # gates_result <sha> <tree> <STATUS> <detail>: the one line a session or the ledger reads later
   mkdir -p "$GATES_DIR"
@@ -975,7 +975,7 @@ gates_run() { # gates_run [--once]: work through the queue, oldest first, then e
   done
   echo $$ >"$GATES_RUNNER/pid"
   trap 'rm -rf "$GATES_RUNNER"' EXIT
-  while req=$(ls "$GATES_QUEUE"/*.req 2>/dev/null | sort | head -1) && [ -n "$req" ]; do
+  while req=$(ls "$GATES_QUEUE"/*.req 2>/dev/null | sort | awk 'NR==1') && [ -n "$req" ]; do
     if [ "$(shasum "$self" | cut -d' ' -f1)" != "$me" ]; then
       echo "$(date '+%F %T') runner code changed: re-running the new copy"
       exec /bin/bash "$self" gates run $once
@@ -1352,7 +1352,7 @@ awake_guard() { # run every minute by the awake agent
   boot_check || true # first, before watch_peers refreshes the heartbeat it reads
   watch_peers
   local batt pct
-  batt=$(pmset -g batt); pct=$(grep -Eo '[0-9]+%' <<<"$batt" | head -1 | tr -d % || true)
+  batt=$(pmset -g batt); pct=$(grep -Eo -m1 '[0-9]+%' <<<"$batt" | tr -d % || true)
   battery_alerts "$batt" "$pct"
   local level swap free; read -r level swap free < <(memory_stats)
   memory_alerts "$level" "$swap"
@@ -1360,7 +1360,7 @@ awake_guard() { # run every minute by the awake agent
   disk_alerts "$(disk_free_gb)" "$swap"
   balance || true
   # A queued gate run outlives a reboot or a killed runner: start one again.
-  if ls "$GATES_QUEUE" 2>/dev/null | grep -q '\.req$' && ! gates_runner_pid >/dev/null; then gates_start >/dev/null || true; fi
+  if ls "$GATES_QUEUE" 2>/dev/null | grep -c '\.req$' >/dev/null && ! gates_runner_pid >/dev/null; then gates_start >/dev/null || true; fi
   [ -f "$SUDOERS" ] || return 0 # not set up; status and check say so
   if [ -f "$AWAKE_OFF" ]; then
     awake_set 0 "turned off"
@@ -1391,7 +1391,7 @@ balance() { # balance [--dry-run]
   local dry=0; [ "${1:-}" = --dry-run ] && dry=1
   if [ "$BALANCE" = 0 ]; then [ $dry = 1 ] && echo "balance is off (GAUSS_BALANCE=0)"; return 0; fi
   local batt pct on_battery=0 level swap free disk mem_short=0 batt_low=0 recovered=0
-  batt=$(pmset -g batt); pct=$(grep -Eo '[0-9]+%' <<<"$batt" | head -1 | tr -d % || true)
+  batt=$(pmset -g batt); pct=$(grep -Eo -m1 '[0-9]+%' <<<"$batt" | tr -d % || true)
   [[ "$batt" != *"'AC Power'"* ]] && [ -n "$pct" ] && on_battery=1
   read -r level swap free < <(memory_stats); disk=$(disk_free_gb)
   { [ "$level" -ge "$MEM_SHED_LEVEL" ] || swap_high "$swap"; } && mem_short=1
@@ -1506,7 +1506,7 @@ network_item() {
 
 resilience() { # can background work survive the lid closed, the battery, memory and the network?
   local fail=0 ok batt pct level swap free
-  batt=$(pmset -g batt); pct=$(grep -Eo '[0-9]+%' <<<"$batt" | head -1 | tr -d % || true)
+  batt=$(pmset -g batt); pct=$(grep -Eo -m1 '[0-9]+%' <<<"$batt" | tr -d % || true)
   if [[ "$batt" == *"'AC Power'"* ]]; then
     local note=""
     if [ "${pct:-100}" -gt "$AWAKE_WARN_BATTERY" ]; then ok=ok
@@ -1552,7 +1552,7 @@ check() { # pre-demo checklist
   [ "$(code http://127.0.0.1:8080/api/system/connectivity)" = 200 ] && ok=ok || ok=no
   item $ok "website reaches the API through its own origin (:8080/api)"
   # A build that hardcodes another API origin breaks on this Mac (no tailnet loopback).
-  if tailnet_api_in "$(launchctl print "$UID_DOMAIN/uk.lightbound.gauss-frontend" 2>/dev/null | awk -F'= ' '/working directory =/{print $2; exit}')/frontend/dist/assets" 2>/dev/null; then
+  if tailnet_api_in "$(launchctl print "$UID_DOMAIN/uk.lightbound.gauss-frontend" 2>/dev/null | awk -F'= ' '/working directory =/ && !d {print $2; d=1}')/frontend/dist/assets" 2>/dev/null; then
     item no "frontend build is same-origin (it hardcodes an API host: reinstall)"
   else
     item ok "frontend build is same-origin"
@@ -1562,7 +1562,7 @@ check() { # pre-demo checklist
     # back), so verify the parts it can: sharing configured, and the website and
     # API accept the tailnet hostname. Open the URL on a phone to confirm the last hop.
     local host="${PUBLIC_URL#http://}"
-    if tailscale serve status 2>/dev/null | grep -q "/api proxy http://127.0.0.1:3001/api" \
+    if tailscale serve status 2>/dev/null | grep -c "/api proxy http://127.0.0.1:3001/api" >/dev/null \
       && [ "$(curl -s -o /dev/null -m 5 -w '%{http_code}' -H "Host: $host" http://127.0.0.1:8080/)" = 200 ] \
       && [ "$(curl -s -o /dev/null -m 5 -w '%{http_code}' -H "Host: $host" http://127.0.0.1:3001/api/system/connectivity)" = 200 ]; then
       ok=ok
@@ -1584,7 +1584,7 @@ except Exception:
 ' 2>/dev/null || echo "no space-weather data unavailable")
   item "${fresh%% *}" "${fresh#* }"
   # || true: with the backend not loaded, launchctl fails and pipefail + set -e would end the checklist here.
-  local dir; dir=$(launchctl print "$UID_DOMAIN/uk.lightbound.gauss-backend" 2>/dev/null | awk -F'= ' '/working directory =/{print $2; exit}' || true)
+  local dir; dir=$(launchctl print "$UID_DOMAIN/uk.lightbound.gauss-backend" 2>/dev/null | awk -F'= ' '/working directory =/ && !d {print $2; d=1}' || true)
   local report; report=$(python3 -Ic '
 import json, sys
 from datetime import datetime, timezone
@@ -1684,6 +1684,11 @@ case "${1:-}" in
     printf 'deploy   %s\n' "$(deploy_state | cut -d' ' -f2-)"
     ;;
   restart)
+    # Live runs prebuilt JS (#194): after a checkout, restarting alone would run the old .js. Rebuild first.
+    if live=$(live_dir) && [ -n "$live" ] && plutil -extract ProgramArguments json -o - "$AGENTS/uk.lightbound.gauss-backend.plist" 2>/dev/null | grep -c 'backend/server.js' >/dev/null; then
+      prebuild_backend "$live"
+      [ "${BACKEND_ARGS[0]}" = backend/server.js ] || echo "Warning: could not rebuild $live; the backend restarts on its previous build. Run deploy to fix." >&2
+    fi
     for l in "${SERVICES[@]}"; do launchctl kickstart -k "$UID_DOMAIN/$l"; done
     sleep 8
     health

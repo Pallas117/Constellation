@@ -553,6 +553,13 @@ touch "$SW/stray"; out=$(run gates enqueue "$SW" 2>&1); [ $? != 0 ] && [[ "$out"
 rm -f "$SW/stray"
 out=$(run gates result status); [[ "$out" == *"runner: not running"*"queue: empty"* ]]; expect "gates result status: runner, queue and recent results" $?
 
+# pipefail lint (2026-11-02): under `set -o pipefail` a reader that quits early (grep -q, head -1,
+# awk ... exit) can kill the writer with SIGPIPE, making the pipeline fail at random: alive-beacon
+# died hourly for 3 days this way. Use grep -c >/dev/null, grep -m1, sed '...;q' or awk without exit.
+early=$(cd "$(dirname "$SCRIPT")/../.." && for f in $(grep -rl 'pipefail' scripts --include='*.sh'); do
+  grep -nE '\|[[:space:]]*grep -q|\|[[:space:]]*head -(n[[:space:]]*)?1([^0-9]|$)|\|[[:space:]]*awk [^|]*[{;][[:space:]]*exit[[:space:]]*[;}]' "$f" | sed "s|^|$f:|"
+done)
+[ -z "$early" ]; expect "pipefail scripts have no early-quitting pipe readers${early:+: $early}" $?
 # Merge train (2026-11-03): a request queued with --pr merges main in before its run and merges the
 # PR after a pass, under the standing approval's rules. GitHub is a stub that reads PR heads from a
 # real bare origin; the runner's merges and pushes are real git.
