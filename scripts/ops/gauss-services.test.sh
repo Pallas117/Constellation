@@ -14,6 +14,7 @@ pass=0; failed=0
 
 stub() { printf '#!/bin/bash\n%s\n' "$2" >"$T/bin/$1"; chmod +x "$T/bin/$1"; }
 stub pmset 'if [ "$1 $2" = "-g log" ]; then echo "2026-10-21 00:05:01 +0800 Shutdown Cause  	Shutdown Cause: ${CAUSE:--128}";
+elif [ "$1 $2" = "-g ac" ]; then [ -z "${ACW:-}" ] || printf " Wattage = %sW\n" "$ACW";
 elif [ "$1 $2" = "-g batt" ]; then printf "Now drawing from '"'"'%s'"'"'\n -InternalBattery-0 (id=1)\t%s\n" "$SRC" "$BATT"; else printf " SleepDisabled\t\t%s\n" "${SD:-0}"; fi'
 stub memory_pressure 'echo "System-wide memory free percentage: ${FREE:-50}%"'
 stub sysctl 'case "$*" in
@@ -24,7 +25,7 @@ stub sysctl 'case "$*" in
 esac'
 stub ps 'case "$*" in *comm=*) echo "/opt/homebrew/bin/node" ;; *) echo "2097152 node" ;; esac'
 stub top 'printf "Processes: 600 total\nPID    MEM\n${TOPPID:-1177}  ${TOPMEM:-2048M}\n"'
-stub ioreg 'echo "\"AppleClamshellState\" = No"'
+stub ioreg 'echo "\"AppleClamshellState\" = No"; [ -z "${FCC:-}" ] || echo "  \"BatteryData\" = {\"FullChargeCapacity\"=$FCC,\"NominalChargeCapacity\"=2424,\"DesignCapacity\"=4382}"'
 # bootout/bootstrap flip a label in $KICKS.state (over $LOADED) and are logged in $KICKS
 stub launchctl 'S="$KICKS.state"; case "$1" in
   print) l=${2##*/}; grep -qx "in $l" "$S" 2>/dev/null && exit 0; grep -qx "out $l" "$S" 2>/dev/null && exit 1
@@ -62,7 +63,7 @@ run() { # run <args...>: gauss-services.sh with the stubs; alerts land in $LOG
     LOADED="${LOADED:-}" HEALTH="${HEALTH:-200}" HEALTH_FILE="${HEALTH_FILE:-}" GAUSS_DEPLOY_WAIT=0 DISKGB="${DISKGB:-50}" \
     GATEFAIL="${GATEFAIL:-}" GAUSS_BY=test-user BOOT="${BOOT:-1000}" GAUSS_DIAG_DIRS="$T/diag" GAUSS_EVENTS_MAX_KB="${GAUSS_EVENTS_MAX_KB:-5120}" \
     GAUSS_DEV_DRY="${GAUSS_DEV_DRY:-0}" GAUSS_GATES_START=0 HEAVYGIVEUP="${HEAVYGIVEUP:-}" GAUSS_GATES_EXPIRE_H="${GAUSS_GATES_EXPIRE_H:-72}" GAUSS_DEV_API_PORT="${GAUSS_DEV_API_PORT:-3101}" \
-    SRC="${SRC:-AC Power}" BATT="${BATT:-80%; charging; present: true}" SD="${SD:-0}" \
+    SRC="${SRC:-AC Power}" BATT="${BATT:-80%; charging; present: true}" SD="${SD:-0}" FCC="${FCC:-}" ACW="${ACW:-}" \
     LEAKY="${LEAKY:-}" LEAKFP="${LEAKFP:-12 MB}" AVAIL="${AVAIL:-50}" GAUSS_SWAP_LAST="${SWAPLAST:-/dev/null}" \
     ARGOSTATUS="${ARGOSTATUS:-}" LEVEL="${LEVEL:-1}" FREE="${FREE:-50}" SWAPUSED="${SWAPUSED:-1000}" OLD_ARGO="${OLD_ARGO:-}" bash "$SCRIPT" "$@"
 }
@@ -91,6 +92,16 @@ SRC="AC Power" BATT="80%; charging; 1:00 remaining present: true" run awake guar
 [ -z "$(alerts)" ]; expect "80% charging: no alerts" $?
 SRC="Battery Power" BATT="45%; discharging; 1:00 remaining present: true" run awake guard
 [ "$(alerts)" = "battery-low" ]; expect "45% on battery: low warning" $?
+# A worn battery lasts less per percent (4 Nov 2026: 52% health, 40 -> 28% in 16 min, then hibernate):
+# under 70% health the floor and the warning rise 10 points.
+SRC="Battery Power" BATT="55%; discharging; 1:00 remaining present: true" run awake guard
+[ -z "$(alerts)" ]; expect "55% on a battery of unknown health: no warning" $?
+FCC=4000 SRC="Battery Power" BATT="55%; discharging; 1:00 remaining present: true" run awake guard
+[ -z "$(alerts)" ]; expect "55% on a healthy battery (91%): no warning" $?
+FCC=2294 SRC="Battery Power" BATT="55%; discharging; 1:00 remaining present: true" run awake guard
+[ "$(alerts)" = "battery-low" ] && grep -q "sleeps at 50%" "$T/log"; expect "55% on a worn battery (52% health): low warning, sleeps at 50%" $?
+FCC=2294 SRC="Battery Power" BATT="48%; discharging; 1:00 remaining present: true" run awake guard
+[ "$(alerts)" = "battery-critical" ]; expect "48% on a worn battery: at its 50% floor" $?
 # Plug in ahead: on battery with gate runs queued (each ~5 % of battery, measured 3 Nov)
 PQ="$T/home/Library/Application Support/Gauss/gates/queue"; mkdir -p "$PQ"
 SRC="Battery Power" BATT="80%; discharging; 3:00 remaining present: true" run awake guard
@@ -419,6 +430,15 @@ out=$(run deploy "$Bc" --no-fallback 2>&1); rc=$?
 [ $rc = 0 ] && head_is "$Bc" && [[ "$out" == *"warning: no fallback to refresh"* ]] && [ ! -e "$FB/ready" ]
 expect "deploy --no-fallback: warns, deploys, leaves none" $?
 main_at "$D"; run deploy "$D" --no-fallback >/dev/null 2>&1; head_is "$D"; expect "deploy back to D, the gated tree the GAU-162 checks below start from" $?
+# A deploy's install and build can run a low battery flat mid-switch (4 Nov 2026: one ran at 13% on 8 W).
+main_at "$Bc"
+out=$(SRC="Battery Power" BATT="13%; discharging; present: true" run deploy "$Bc" 2>&1); rc=$?
+[ $rc = 1 ] && head_is "$D" && [[ "$out" == *"battery 13% on battery"* ]]; expect "deploy refused at 13% on battery" $?
+out=$(ACW=8 BATT="13%; charging; present: true" run deploy "$Bc" 2>&1); rc=$?
+[ $rc = 1 ] && head_is "$D" && [[ "$out" == *"13% on a 8 W charger"* ]]; expect "deploy refused at 13% on an 8 W charger" $?
+out=$(BATT="40%; AC attached; not charging present: true" run deploy "$Bc" 2>&1); rc=$?
+[ $rc = 1 ] && head_is "$D" && [[ "$out" == *"charger isn't keeping up"* ]]; expect "deploy refused at 40% on a charger that isn't keeping up" $?
+main_at "$D"
 
 # GAU-162: every deploy and rollback is recorded; only merged, gated trees go live without --emergency
 H="$WD/deploy-history.jsonl"
