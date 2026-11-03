@@ -3,9 +3,12 @@ import { Database, Search } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { StatusBadge } from '@/components/brand/StatusBadge';
 import { apiBase } from "@/lib/api/base-url";
+import { G4_DRIVERS, G4_PLASMA } from "@/lib/physics/live-drivers";
 
 type RagStatus = {
   ok: boolean;
+  /** false when the backend has no memory service set up (GAUSS_MEMORY_URL=off): the panel hides. */
+  configured?: boolean;
   chunkCount?: number;
   error?: string;
 };
@@ -21,22 +24,16 @@ type RagQueryResponse = {
 // memory service, which listens on loopback without auth of its own.
 const RAG_BASE = apiBase();
 
-const MOCK_AI_TEXT = `[URGENT] SYSTEM ANOMALY DETECTED
+// Narrates the "Simulate G4" scene (HeliophysicsDashboard) without claiming more than Gauss does
+// (GAU-63, GAU-228): what the scenario is, and only what Gauss computes from it. The numbers are the
+// scene's own drivers, so the two can't disagree.
+const SIMULATED_STORM_TEXT = `Simulated scenario: not live data and not a forecast.
 
-Context: LSTM Time-Series forecasting on edge node has detected a massive deviation in solar wind velocity (currently exceeding 850 km/s) and a persistent southward IMF (Bz = -18nT). [Trace: DSCOVR Real-Time Solar Wind Data] 
+The scene now runs on fixed severe-storm (G4) drivers instead of the measured L1 solar wind: IMF Bz ${G4_DRIVERS.bz} nT and By ${G4_DRIVERS.by} nT (GSM), speed ${G4_PLASMA.speed} km/s, density ${G4_PLASMA.density} cm⁻³, dynamic pressure ≈ ${G4_DRIVERS.pdyn} nPa, Kp ${G4_DRIVERS.kp}.
 
-Analysis: We are entering the initial phase of a G4-class severe geomagnetic storm. 
+From these drivers Gauss computes the magnetopause stand-off distance (Shue et al. 1998; these drivers are outside the range that model was fitted to, so the result is extrapolated), whether geostationary orbit (6.6 Re) ends up outside the magnetopause, and the field lines drawn in the scene. The radiation points along the orbits are a stored example dataset, not a Gauss output.
 
-Immediate Orbital Impacts (Based on 3D Overlay Mapping):
-- LEO (400km): Proton flux has spiked to 50,000 pfu. Warning: High risk of Single Event Upsets (SEUs) for star trackers and avionics. Atmospheric drag is calculated to increase by 45% over the next 12 hours. [Trace: GraphDB Multi-Hop Path: Anomaly->Drag->LEO_Asset]
-- GEO (35,786km): Relativistic electron flux has crossed the critical threshold (>110,000 electrons/cm²/s/sr). Warning: High probability of deep dielectric charging on satellite solar panels. [Trace: "Space Weather Impacts on GEO" NotebookLM]
-
-Tactical Recommendation: 
-1. Initiate "Safe Mode" protocols for critical trailing-edge GEO assets. 
-2. Delay planned orbital raising maneuvers for LEO constellations until the Kp index drops below 5. 
-3. Monitor the magnetopause compression index; it is currently running at 0.5 (Highly Compressed).
-
-*Confidence Interval: 94.2% (Bayesian Deep Learning Engine)*`;
+Gauss gives no satellite impact assessment, drag estimate or confidence figure for this scenario. Choose "Back to live" to return to the measured drivers.`;
 
 export function GaussRagPanel() {
   const [status, setStatus] = useState<RagStatus | null>(null);
@@ -48,7 +45,7 @@ export function GaussRagPanel() {
   
   // Source chip the user expanded
   const [activeTrace, setActiveTrace] = useState<string | null>(null);
-  // True while the answer is the scripted storm narration, not a model reply
+  // True while the answer is the storm-scenario narration, not a model reply
   const [simulated, setSimulated] = useState(false);
 
   // Helper to parse text and render citation badges
@@ -97,12 +94,12 @@ export function GaussRagPanel() {
         }
 
         intervalId = window.setInterval(() => {
-          if (currentIndex >= MOCK_AI_TEXT.length) {
+          if (currentIndex >= SIMULATED_STORM_TEXT.length) {
             clearStormInterval();
             return;
           }
 
-          setAnswer((prev) => (prev || "") + MOCK_AI_TEXT[currentIndex]);
+          setAnswer((prev) => (prev || "") + SIMULATED_STORM_TEXT[currentIndex]);
           currentIndex += 1;
         }, 15);
       } else {
@@ -167,6 +164,9 @@ export function GaussRagPanel() {
       : status.chunkCount
         ? `${status.chunkCount} knowledge chunks`
         : 'No documents indexed';
+  // No memory service set up on this backend: there is nothing to search, so show no search box.
+  // A service that is set up but down still shows, as "Knowledge base offline".
+  if (status?.configured === false) return null;
   return (
     <section aria-labelledby="rag-title" className="hud-panel w-full space-y-3 p-4">
       <div className="min-w-0">
