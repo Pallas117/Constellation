@@ -87,7 +87,7 @@
     <ol class="steps">
       <li><h3>Bring your logs</h3><p>Telemetry (CCSDS/XTCE-shaped packets or Yamcs exports) and onboard inference logs, shared under a data-sharing agreement.</p></li>
       <li><h3>Correlate with the space environment</h3><p>Each record is lined up with the space-weather conditions at the time: radiation and geomagnetic activity from public NOAA and NASA HAPI services.</p></li>
-      <li><h3>Score quality and provenance</h3><p>Every value carries its source and age. Bounded inference with a deterministic fallback flags outputs taken under stress. Missing or stale inputs stay <em>unknown</em>, never "nominal".</p></li>
+      <li><h3>Score quality and provenance</h3><p>Every value carries its source and age. Missing or stale inputs stay <em>unknown</em>, never "nominal". What Gauss does with an output taken in a storm, we walk through in person, on your own logs.</p></li>
       <li><h3>Get the evidence</h3><p>A report your engineers and assurance reviewers can check, with success metrics agreed before the pilot starts.</p></li>
     </ol>
     <p class="note"><strong>Working today:</strong> live NOAA and NASA HAPI space-weather ingest; three L1 spacecraft cross-checked, with a flag when SOLAR-1 and IMAP disagree on density; the solar wind propagated to Earth for about 50 minutes of warning; a Kp 3-hour forecast that beats persistence on held-out 2022&ndash;24 data and says plainly that it is worse during storms; radiation (S), geomagnetic (G) and radio-blackout (R) levels kept apart, computed from GOES protons, Kp and GOES X-rays to NOAA&rsquo;s thresholds and cross-checked against NOAA&rsquo;s published scales; every input sense-checked, so inconsistent sensor data is flagged with a reason instead of dropped; stale or missing inputs shown as unknown (S?, G?, R?), never as quiet. <strong>Being built for the first pilots:</strong> ingest of your own logs, output flagging and the evidence export.</p>
@@ -142,7 +142,7 @@
       <li><strong>CCSDS and XTCE</strong> Packet identity and telemetry definitions, as your ground segment already uses them.</li>
       <li><strong>Yamcs (pilot integration)</strong> Designed to replay from mission-control archives; tested on sample data so far.</li>
       <li><strong>ONNX (pilot integration)</strong> Designed for model portability across processors, for teams whose models run in orbit.</li>
-      <li><strong>Your operators decide</strong> Observe-only and advisory, with deterministic fallback. Gauss consumes the mission data you already have and never replaces mission control.</li>
+      <li><strong>Your operators decide</strong> Observe-only and advisory. Gauss consumes the mission data you already have and never replaces mission control.</li>
     </ul>
     <p class="note">Design-partner paths: we are working towards validation pilots with <strong>JAOPS</strong> and <strong>xOrbita</strong>.</p>
     <p class="logos"><img src="/assets/partners/xorbita.png" alt="xOrbita" width="122" height="40" loading="lazy" decoding="async"></p>
