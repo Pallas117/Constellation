@@ -93,6 +93,12 @@ Wi-Fi security is checked on every probe: WIFI_RISK (a warning, like WPAD_RISK) 
 
 **Fixes from the phone.** Texts and Slack only send, so incident texts now end with "Fix from Termius: gauss-phone fix" when a step can run remotely. `argo fix --list` shows the current problem's steps, numbered and marked `run`, `needs sudo at the Mac` or `advice`; `argo fix <step>` runs one, then a tick verifies it. Only `open-portal`, `check-magicdns`, `restart-daemon` and `exit-node` (allow-listed nodes) run this way, each with its fixed command and no shell; the phone reaches the Mac over SSH, so no ports, tokens or services are added.
 
+**Networks in range (GAU-234).** `ArgoWiFi.app` (`tools/argo/wifihelper`, build with `bash tools/argo/wifihelper/build.sh`) scans with CoreWLAN; it is an app bundle so macOS asks once for Location Services, which un-redacts network names. It never joins and never reads passwords. `argo networks` lists what is in range and which networks Argo would join: saved ones, plus open ones only if named in `~/.config/argo/public-wifi.txt` (the Wi-Fi shield then turns WARP on), with a signal of at least -80 dBm, best first. When offline, Argo alternates joining the best one (`networksetup -setairportnetwork <dev> <name>`, the name as its own argument) with a Wi-Fi restart. Names stay in memory: never in state, reports or texts.
+
+**Offline alert through the iPhone (GAU-233).** After 5 minutes with no network, Argo texts once per outage: "Mac offline since HH:MM". It sends the SMS first, so Messages hands it to the iPhone over Continuity (Text Message Forwarding) and needs no internet on the Mac, only the phone's cellular. A send Messages refuses is queued as usual; the incident log records `relay` with whether it was accepted. Needs iPhone Settings > Messages > Text Message Forwarding on for this Mac.
+
+**Rejoin when offline.** With no route for 90 s, Argo turns Wi-Fi on if it is off, otherwise power-cycles it (`networksetup -setairportpower <dev> off`, then `on`) so macOS auto-join picks a known network or the hotspot. It follows the loop's backoff and breaker (4 tries, then every 30 minutes), waits 20 s and re-probes, and remembers per network what worked. While offline it records the radio's state (`wifi_device`, `wifi_power`) so an outage leaves evidence. No other command runs by itself.
+
 **Wi-Fi shield.** On open, WEP or WPA1 Wi-Fi, Argo switches Cloudflare WARP to its tunnel mode (`warp-cli mode warp`) if it is in another known mode, connects it, re-checks that the internet and Tailscale still work, and texts "tunnel on". Back on a protected network it puts WARP back exactly as it was: the same mode (e.g. proxy) and connected or not. If the tunnel breaks the connection or Tailscale, Argo puts WARP back and leaves it alone on that network; it does the same if you switch WARP off yourself there. A mode it doesn't know is never changed. It runs only `warp-cli mode`, `connect` and `disconnect`.
 
 Alerts stay quiet on purpose: an unresolved problem texts once when it escalates, then at most every 2 h, and OFFLINE never texts (a Mac with no network cannot send, and queued texts would arrive stale).
@@ -249,6 +255,17 @@ wins). `ARGO_WORKERS` is 1 at watch, otherwise headroom ÷ `guard_worker_gb` (co
 cores − 1. The repo's `npm test` passes it to `--test-concurrency` and Playwright uses it for `workers`. Without it
 both keep their defaults: about 7 test processes and 4 browsers on an 8-core Mac. Node refuses
 `--test-concurrency` in `NODE_OPTIONS`, so the flag lives in the script.
+
+**Power budget (SWaP).** A spacecraft only switches loads on while its power budget has margin, and sheds them in
+eclipse. Argo keeps the same budget for the machine: **source** = the charger's rating × 0.8 (conversion losses, a
+warm charger), **load** = what the whole machine draws (the battery controller's `SystemLoad`), **margin** = source
+− load. The mode is *positive*, *negative* (plugged in, but the battery still covers part of the load: an 8 W phone
+charger under a build) or *eclipse* (on battery). `ARGO_WORKERS` never asks for more watts than the margin holds:
+one worker in negative, otherwise margin ÷ watts per worker, where watts per worker is what the same job added per
+worker over its last runs (median of at least 3 successful runs; 3 W until then; kept in `jobs.jsonl` as
+`workers`, `base_w`, `avg_w`). A desktop or a host with no draw reading gets no power cap. `argo guard` prints the
+budget on the `power` line, and each report to Gauss carries it in the battery block, so the Mesh page shows
+"9.5 W spare" or "charger 2.8 W short" and a device in deficit or under 5 W of margin is offered light work only.
 
 ## Store and forward (delay-tolerant delivery)
 

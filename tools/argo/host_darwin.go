@@ -24,6 +24,8 @@ func hostProbe(ctx context.Context, s *Snapshot) {
 	if s.Online {
 		s.GatewayMAC = parseARP(run(ctx, "arp", "-n", s.Gateway))
 		probeWiFi(ctx, s, route)
+	} else {
+		probeOfflineWiFi(ctx, s)
 	}
 	s.WPAD, s.PAC = parseScutilAuto(run(ctx, "scutil", "--proxy"))
 	for _, pr := range parseScutilProxies(run(ctx, "scutil", "--proxy")) {
