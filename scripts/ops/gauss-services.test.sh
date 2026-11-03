@@ -523,6 +523,30 @@ out=$(cd "$LIVE" && run gates enqueue "$H1" 2>&1); kill "$LIVE_RUNNER" 2>/dev/nu
 [[ "$out" == *"working (pid $LIVE_RUNNER)"* ]] && cmp -s "$SCRIPT" "$WD/gates/runner.sh"
 expect "gates enqueue: refreshes the runner's copy even while a runner is working" $?
 rm -rf "$WD/gates/runner" "$GQ"/*.req
+# The runner's copy only moves forward (2026-11-03: an older branch's enqueue replaced the merge
+# train's runner). A repo whose history carries the script: main M0, the runner's source N1, C1 on
+# top of it, and an older branch O1 beside them; a checkout of each runs its own copy.
+RR="$T/runner-repo"; rr() { git -C "$RR" -c user.email=t@t -c user.name=t "$@"; }
+rcommit() { cp "$SCRIPT" "$RR/scripts/ops/gauss-services.sh"; echo "# $1" >>"$RR/scripts/ops/gauss-services.sh"; rr add -A; rr commit -qm "$1"; rr rev-parse HEAD; }
+git init -q "$RR"; mkdir -p "$RR/scripts/ops"
+M0=$(rcommit m0); N1=$(rcommit n1); C1=$(rcommit c1); rr checkout -q --detach "$M0"; O1=$(rcommit o1); rr update-ref refs/remotes/origin/main "$M0"
+for x in M0 N1 C1 O1; do rr worktree add -q --detach "$T/rr-$x" "${!x}"; done
+runner_from() { (cd "$LIVE" && SCRIPT="$T/rr-$1/scripts/ops/gauss-services.sh" run gates enqueue "$H1" 2>&1); }
+runs() { [ "$(git -C "$T/rr-$1" show HEAD:scripts/ops/gauss-services.sh | shasum)" = "$(shasum <"$WD/gates/runner.sh")" ] && grep -qx "sha=${!1}" "$WD/gates/runner.src"; }
+rm -f "$WD/gates/runner.src"; echo old >"$WD/gates/runner.sh"
+runner_from N1 >/dev/null; runs N1; expect "gates runner: with no runner.src, an enqueue refreshes the copy as before and records its commit" $?
+out=$(runner_from O1); runs N1 && [[ "$out" == *"Runner kept: it runs ${N1:0:7} and this checkout (${O1:0:7}) doesn't contain it."* ]]
+expect "gates runner: an older branch's enqueue keeps a newer runner, and says why" $?
+out=$(runner_from C1); runs C1 && [[ "$out" != *"Runner kept"* ]]; expect "gates runner: a checkout that contains the runner's commit refreshes it" $?
+runner_from M0 >/dev/null; runs M0; expect "gates runner: origin/main's script always refreshes it" $?
+runner_from C1 >/dev/null; echo "# edited" >>"$T/rr-C1/scripts/ops/gauss-services.sh"
+out=$(runner_from C1); runs C1 && [[ "$out" == *"Runner kept: it runs ${C1:0:7} and this script isn't committed as is."* ]]
+expect "gates runner: a script with uncommitted changes doesn't replace a recorded runner" $?
+git -C "$T/rr-C1" checkout -q -- scripts/ops/gauss-services.sh
+echo "# by hand" >>"$WD/gates/runner.sh"; runner_from O1 >/dev/null; runs O1
+expect "gates runner: a runner.sh changed without runner.src (by hand, or an older script) refreshes as before" $?
+out=$(run gates result status); [[ "$out" == *"runner code: ${O1:0:7} (from $T/rr-O1/scripts/ops)"* ]]; expect "gates result status: names the commit the runner's code came from" $?
+rm -f "$GQ"/*.req
 n=$(wc -l <"$GR"); out=$(run gates run-one "$GQ/withdrawn.req" 2>&1); [ $? = 0 ] && [[ "$out" == *"withdrawn"* ]] && [ "$(wc -l <"$GR")" = "$n" ]
 expect "gates run-one: a request withdrawn while waiting is skipped, with no result line" $?
 touch "$SW/stray"; out=$(run gates enqueue "$SW" 2>&1); [ $? != 0 ] && [[ "$out" == *"uncommitted or untracked"* ]]; expect "gates enqueue refuses a dirty checkout" $?
