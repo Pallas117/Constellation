@@ -251,7 +251,7 @@ func main() {
 	case "version":
 		fmt.Println("argo", version)
 	default:
-		fmt.Fprintln(os.Stderr, "usage: argo [status|doctor|fix|report|on|off|preflight|run -- cmd|phone <handle>|test|off|imessage|sms|notify TITLE MSG|egress [off|on]|guard [admit|run]|watch|summary [--send]|enroll URL DEVICE|install|uninstall|version]\n       argo [send [-ttl D] DEVICE FILE|outbox|inbox|sync|keys [list|publish|trust DEVICE]|mule export|import DIR|link]")
+		fmt.Fprintln(os.Stderr, "usage: argo [status|doctor|fix|report|on|off|preflight|run -- cmd|phone <handle>|test|off|imessage|sms|notify TITLE MSG|egress [off|on]|thirdparty [list|check|accept|seen]|guard [admit|run]|watch|summary [--send]|enroll URL DEVICE|install|uninstall|version]\n       argo [send [-ttl D] DEVICE FILE|outbox|inbox|sync|keys [list|publish|trust DEVICE]|mule export|import DIR|link]")
 		os.Exit(2)
 	}
 	if err != nil {
