@@ -7,7 +7,7 @@ with the checks automatic rather than remembered.
 
 | When | What | Where |
 |---|---|---|
-| Every gate (any PR, `npm run test:ops`) | `tools/argo/check.sh`: gofmt, `go vet` (macOS + Linux), builds for darwin/arm64, linux/amd64 and linux/arm64, all tests with the race detector, coverage not under `coverage-floor`, fuzz seeds | gate queue |
+| Every gate (any PR, `npm run test:ops`) | `tools/argo/check.sh`: gofmt, `go vet` (macOS + Linux), builds for darwin/arm64, linux/amd64 and linux/arm64, all tests with the race detector (`-short`: the long simulation tests run in `npm run test:argo` and on install), coverage not under `coverage-floor`, fuzz seeds | gate queue |
 | Every install | `tools/argo/install.sh`: check.sh, build with the commit stamped in, the new binary must run before it replaces the old one, rollback if the installed one doesn't, keeps its 3 newest backups | by hand or from deploy |
 | Every deploy of main | `gauss-services.sh deploy` reinstalls Argo when `tools/argo` changed or the installed Argo can't say its commit (`argo version`), so the installed Argo follows main | live deploy |
 | Container build | `go vet` + Linux tests inside the build | `Containerfile` |

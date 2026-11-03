@@ -6,6 +6,8 @@
 #   3. builds for darwin/arm64, linux/amd64 and linux/arm64 (Linux without cgo, as the container)
 #   4. go test with the race detector; coverage may not drop below coverage-floor
 #   5. optional: ARGO_FUZZ=30s fuzzes every Fuzz target that long (seeds always run in step 4)
+#   ARGO_SHORT=1 skips the long simulation tests (-short): the gate's test:ops uses it, test:argo and
+#   install.sh run everything
 #   6. optional: ARGO_E2E=1 runs scripts/argo-relay-e2e.ts (two real Argos against the real Gauss
 #      mesh routers on 127.0.0.1; needs the repo's node_modules)
 # Usage: tools/argo/check.sh            (from anywhere)
@@ -30,7 +32,7 @@ for target in darwin/arm64 linux/amd64 linux/arm64; do
 done
 
 step "test (race, coverage)"
-go test -race -count=1 -coverprofile="$tmp/cover.out" ./...
+go test -race -count=1 ${ARGO_SHORT:+-short} -coverprofile="$tmp/cover.out" ./...
 total=$(go tool cover -func="$tmp/cover.out" | awk '/^total:/ {sub("%", "", $3); print $3}')
 floor=$(tr -d ' \n' <coverage-floor)
 awk -v t="$total" -v f="$floor" 'BEGIN { exit !(t + 0 >= f + 0) }' \

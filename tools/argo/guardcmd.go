@@ -339,7 +339,17 @@ func (r guardRunner) run(memGB, maxGB float64, wait time.Duration, argv []string
 	}
 	cmd := exec.Command(argv[0], argv[1:]...)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
-	cmd.Env = jobEnv(os.Environ(), jobWorkers(cur, a, r.workerGB), a.HeadroomGB)
+	workerW, wnote := workerWatts(r.store.jobRuns(), name)
+	if wnote != "" {
+		fmt.Fprintln(r.out, "argo guard:", wnote)
+	}
+	pw := powerBudget(cur)
+	ramWorkers := jobWorkers(cur, a, r.workerGB)
+	workers := powerWorkers(ramWorkers, pw, workerW)
+	if workers < ramWorkers {
+		fmt.Fprintf(r.out, "argo guard: %d worker(s): power %s\n", workers, powerText(pw, workerW))
+	}
+	cmd.Env = jobEnv(os.Environ(), workers, a.HeadroomGB)
 	// Its own process group, so a stop reaches every child (npm, node, esbuild).
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	if err := cmd.Start(); err != nil {
@@ -365,10 +375,17 @@ func (r guardRunner) run(memGB, maxGB float64, wait time.Duration, argv []string
 		peak = math.Max(peak, used)
 		return used
 	}
+	// Draw while the job runs (awake), for the watts per worker it teaches.
+	var sumW float64
+	var nW int
 	learn := func(outcome string) {
 		if peak > 0 {
-			_ = r.store.appendJob(JobRun{At: time.Now().UTC(), Name: name, PeakGB: peak,
-				Secs: int((time.Since(started) - pausedFor).Seconds()), Outcome: outcome})
+			j := JobRun{At: time.Now().UTC(), Name: name, PeakGB: peak,
+				Secs: int((time.Since(started) - pausedFor).Seconds()), Outcome: outcome, Workers: workers}
+			if nW > 0 && pw.LoadW > 0 && onAC(cur) {
+				j.BaseW, j.AvgW = pw.LoadW, round1(sumW/float64(nW))
+			}
+			_ = r.store.appendJob(j)
 		}
 	}
 	first := time.After(r.first)
@@ -427,6 +444,9 @@ func (r guardRunner) run(memGB, maxGB float64, wait time.Duration, argv []string
 				continue // asleep: nothing to measure or police
 			}
 			used := measure()
+			if b := now.Batt; b != nil && b.OnAC && b.SystemW > 0 {
+				sumW, nW = sumW+b.SystemW, nW+1
+			}
 			bad := ""
 			if !pausedAt.IsZero() {
 				bad = fmt.Sprintf("paused (%s) for %s", pausedWhy, r.maxPause)
@@ -545,6 +565,7 @@ func guardText(cur Sample, a Assessment, sc Scale, hist []Sample, users []Group)
 			w(" · Low Power Mode")
 		}
 		w("\n")
+		w("power    %s\n", powerText(powerBudget(cur), defaultWorkerW))
 		if bt.Cycles > 0 || bt.HealthPct > 0 {
 			w("         %d cycles", bt.Cycles)
 			if bt.HealthPct > 0 {
@@ -666,7 +687,11 @@ func addGuard(report map[string]any, g GuardState, now time.Time) {
 	}
 	report["guard"] = g.Report
 	if b := g.Batt; b != nil && b.Present { // the same block phones send (backend/mesh/store.ts parseBattery)
-		report["battery"] = map[string]any{"level": b.Pct, "charging": b.Charging, "external": b.OnAC, "lowPower": b.LowPower}
+		bat := map[string]any{"level": b.Pct, "charging": b.Charging, "external": b.OnAC, "lowPower": b.LowPower}
+		if p := powerBudget(Sample{Batt: b}); p.Mode != PowerUnknown { // the SWaP budget, so Gauss places work where power is spare
+			bat["power"] = p
+		}
+		report["battery"] = bat
 	}
 }
 
