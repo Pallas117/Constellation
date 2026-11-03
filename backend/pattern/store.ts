@@ -60,7 +60,8 @@ export function patternPepper(authSecret: string): Buffer {
 }
 
 export type PatternCheck =
-  | { ok: true }
+  /** `duress`: the operator drew their duress pattern (backend/pattern/sensor.ts): treat it as a match outwardly. */
+  | { ok: true; duress?: true }
   | { ok: false; reason: "not-set" }
   | { ok: false; reason: "locked"; lockedUntil: number }
   | { ok: false; reason: "miss"; triesLeft: number; lockedUntil: number | null };
@@ -74,10 +75,19 @@ interface Row {
   p: number;
   misses: number;
   lockedUntil: number | null;
+  duressSalt: string | null;
+  duressHash: string | null;
+  lastDrawnAt: number | null;
 }
 
 export interface PatternStore {
   isSet(userId: string): boolean;
+  hasDuress(userId: string): boolean;
+  /** When the operator last drew their pattern (or duress pattern) correctly, epoch ms. */
+  lastDrawnAt(userId: string): number | null;
+  /** Sets the duress pattern (needs the pattern set; must differ from it). Throws with the reason. */
+  setDuress(userId: string, pattern: readonly number[]): Promise<void>;
+  clearDuress(userId: string): boolean;
   lockedUntil(userId: string): number | null;
   /** Sets (or replaces) the operator's pattern. Throws with the rule it breaks. */
   set(userId: string, pattern: readonly number[]): Promise<void>;
@@ -105,7 +115,16 @@ export function createPatternStore(
     createdAt INTEGER NOT NULL,
     updatedAt INTEGER NOT NULL
   )`);
-  const get = db.prepare<[string], Row>("SELECT userId, salt, hash, N, r, p, misses, lockedUntil FROM operator_pattern WHERE userId = ?");
+  // Added after the first version: a duress pattern and the last good drawing.
+  const columns = new Set((db.prepare("SELECT name FROM pragma_table_info('operator_pattern')").all() as Array<{ name: string }>).map((c) => c.name));
+  for (const [name, type] of [["duressSalt", "TEXT"], ["duressHash", "TEXT"], ["lastDrawnAt", "INTEGER"]] as const) {
+    if (!columns.has(name)) db.exec(`ALTER TABLE operator_pattern ADD COLUMN ${name} ${type}`);
+  }
+  const get = db.prepare<[string], Row>(
+    "SELECT userId, salt, hash, N, r, p, misses, lockedUntil, duressSalt, duressHash, lastDrawnAt FROM operator_pattern WHERE userId = ?",
+  );
+  const setDuressRow = db.prepare("UPDATE operator_pattern SET duressSalt = ?, duressHash = ?, updatedAt = ? WHERE userId = ?");
+  const drawn = db.prepare("UPDATE operator_pattern SET misses = 0, lockedUntil = NULL, lastDrawnAt = ? WHERE userId = ?");
   const upsert = db.prepare(
     `INSERT INTO operator_pattern (userId, salt, hash, N, r, p, misses, lockedUntil, createdAt, updatedAt)
      VALUES (@userId, @salt, @hash, @N, @r, @p, 0, NULL, @at, @at)
@@ -119,13 +138,24 @@ export function createPatternStore(
     createHmac("sha256", await options.pepper).update(`${FIGURE}\0${userId}\0${pattern.join(".")}`).digest();
 
   const activeLock = (row: Row | undefined) => (row?.lockedUntil && row.lockedUntil > now() ? row.lockedUntil : null);
+  const matches = async (secret: Buffer, salt: string, hash: string, row: Row) => {
+    const expected = Buffer.from(hash, "base64");
+    const actual = await stretch(secret, Buffer.from(salt, "base64"), { N: row.N, r: row.r, p: row.p });
+    return actual.length === expected.length && timingSafeEqual(actual, expected);
+  };
 
   return {
     isSet: (userId) => get.get(userId) !== undefined,
+    hasDuress: (userId) => Boolean(get.get(userId)?.duressHash),
+    lastDrawnAt: (userId) => get.get(userId)?.lastDrawnAt ?? null,
     lockedUntil: (userId) => activeLock(get.get(userId)),
     async set(userId, pattern) {
       const problem = patternProblem(pattern);
       if (problem) throw new Error(problem);
+      const row = get.get(userId);
+      if (row?.duressSalt && row.duressHash && (await matches(await secretOf(userId, pattern), row.duressSalt, row.duressHash, row))) {
+        throw new Error("that is your duress pattern; draw a different one");
+      }
       const salt = randomBytes(16);
       const hash = await stretch(await secretOf(userId, pattern), salt, cost);
       upsert.run({ userId, salt: salt.toString("base64"), hash: hash.toString("base64"), ...cost, at: now() });
@@ -136,14 +166,14 @@ export function createPatternStore(
       const locked = activeLock(row);
       if (locked) return { ok: false, reason: "locked", lockedUntil: locked };
       // Out-of-rule input can never match; it still costs a try so it can't probe for free.
+      // With a duress pattern set, both are always computed, so the time taken says nothing.
       const valid = patternProblem(pattern) === null;
-      const expected = Buffer.from(row.hash, "base64");
-      const actual = valid
-        ? await stretch(await secretOf(userId, pattern), Buffer.from(row.salt, "base64"), { N: row.N, r: row.r, p: row.p })
-        : Buffer.alloc(expected.length);
-      if (valid && actual.length === expected.length && timingSafeEqual(actual, expected)) {
-        if (row.misses || row.lockedUntil) setMisses.run(0, null, userId);
-        return { ok: true };
+      const secret = valid ? await secretOf(userId, pattern) : null;
+      const isMain = secret ? await matches(secret, row.salt, row.hash, row) : false;
+      const isDuress = secret && row.duressSalt && row.duressHash ? await matches(secret, row.duressSalt, row.duressHash, row) : false;
+      if (isMain || isDuress) {
+        drawn.run(now(), userId);
+        return isDuress && !isMain ? { ok: true, duress: true } : { ok: true };
       }
       const misses = (row.lockedUntil && row.lockedUntil <= now() ? 0 : row.misses) + 1;
       if (misses >= PATTERN_MAX_MISSES) {
@@ -153,6 +183,21 @@ export function createPatternStore(
       }
       setMisses.run(misses, null, userId);
       return { ok: false, reason: "miss", triesLeft: PATTERN_MAX_MISSES - misses, lockedUntil: null };
+    },
+    async setDuress(userId, pattern) {
+      const problem = patternProblem(pattern);
+      if (problem) throw new Error(problem);
+      const row = get.get(userId);
+      if (!row) throw new Error("set your pattern first");
+      if (await matches(await secretOf(userId, pattern), row.salt, row.hash, row)) throw new Error("the duress pattern must differ from your pattern");
+      const salt = randomBytes(16);
+      const hash = await stretch(await secretOf(userId, pattern), salt, { N: row.N, r: row.r, p: row.p });
+      setDuressRow.run(salt.toString("base64"), hash.toString("base64"), now(), userId);
+    },
+    clearDuress(userId) {
+      const had = Boolean(get.get(userId)?.duressHash);
+      setDuressRow.run(null, null, now(), userId);
+      return had;
     },
     clear: (userId) => remove.run(userId).changes > 0,
   };

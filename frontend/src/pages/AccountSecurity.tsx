@@ -7,11 +7,12 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { useDocumentTitle } from "@/hooks/useDocumentTitle";
-import { useOperatorPattern } from "@/hooks/useOperatorPattern";
+import { refreshOperatorPattern, useOperatorPattern } from "@/hooks/useOperatorPattern";
 import { refreshOperatorGeometry, useOperatorGeometry, type PasskeyRow } from "@/hooks/useOperatorGeometry";
 import { apiBase } from "@/lib/api/base-url";
 import { addPasskey, authClient, passkeyTouch, signOut, useSession } from "@/lib/auth-client";
 import { passkeySupport, type PasskeySupport } from "@/lib/passkey-support";
+import { clearDuressRequest } from "@/lib/pattern";
 import { hasRole, roleOf, type Role } from "@/lib/roles";
 import { fetchWithStepUp, StepUpCancelled } from "@/lib/step-up";
 
@@ -286,6 +287,25 @@ const AccountSecurity = () => {
   const operator = hasRole(role, "operator");
   const { status: pattern } = useOperatorPattern(operator ? selfId : null);
   const patternReady = !pattern?.required || pattern.verified;
+  const [duressNote, setDuressNote] = useState<string | null>(null);
+  const removeDuress = async () => {
+    setDuressNote(null);
+    const [url, init] = clearDuressRequest();
+    try {
+      const res = await fetchWithStepUp(url, init, async () => {
+        const touch = await passkeyTouch("confirm");
+        if ("error" in touch) {
+          setDuressNote(touch.error);
+          return false;
+        }
+        return touch.userId === selfId;
+      });
+      setDuressNote(res.ok ? "Duress pattern removed." : "Could not remove the duress pattern.");
+      refreshOperatorPattern();
+    } catch (err) {
+      if (!(err instanceof StepUpCancelled)) setDuressNote("Could not remove the duress pattern.");
+    }
+  };
 
   const end = async (everywhere: boolean) => {
     if (everywhere) await authClient.revokeSessions().catch(() => undefined);
@@ -362,15 +382,34 @@ const AccountSecurity = () => {
                 admin can clear a forgotten one.
               </p>
               <p className="text-foreground">{!pattern.set ? "No pattern yet." : pattern.verified ? "Set, and drawn in this session." : "Set; not drawn in this session yet."}</p>
+              {pattern.verified && (
+                <p>
+                  {pattern.duressSet
+                    ? "A duress pattern is set: drawing it signs in quietly to a console in maintenance and raises the alarm."
+                    : "You can add a duress pattern: one you'd draw only under pressure. It signs in quietly and raises the alarm."}
+                </p>
+              )}
+              {duressNote && <p role="status">{duressNote}</p>}
               <div className="flex flex-wrap gap-2">
                 {!pattern.set ? (
                   <Button asChild>
                     <Link to="/setup">Set up your pattern</Link>
                   </Button>
                 ) : pattern.verified ? (
-                  <Button asChild variant="outline">
-                    <Link to="/setup?change=1">Change your pattern</Link>
-                  </Button>
+                  <>
+                    <Button asChild variant="outline">
+                      <Link to="/setup?change=1">Change your pattern</Link>
+                    </Button>
+                    {pattern.duressSet ? (
+                      <Button variant="ghost" onClick={() => void removeDuress()}>
+                        Remove the duress pattern
+                      </Button>
+                    ) : (
+                      <Button asChild variant="ghost">
+                        <Link to="/setup?duress=1">Add a duress pattern</Link>
+                      </Button>
+                    )}
+                  </>
                 ) : (
                   <Button asChild variant="outline">
                     <Link to="/pattern" state={{ from: { pathname: "/account/security" } }}>

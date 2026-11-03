@@ -13,7 +13,8 @@ export type CyberTigerEventType =
   | "auth.failure_threshold"
   | "http.error"
   | "ip.blocked"
-  | "ip.unblocked";
+  | "ip.unblocked"
+  | "pattern.sensor";
 
 export interface CyberTigerEvent {
   id: string;
@@ -387,6 +388,11 @@ export class CyberTigerDaemon {
       });
     }
     return existed;
+  }
+
+  /** Records what the operator-pattern sensor saw (backend/pattern/sensor.ts), beside CyberTiger's own events. */
+  recordSensorEvent(event: { severity: CyberTigerSeverity; ip: string; message: string; actorUserId?: string; path?: string }): void {
+    this.addEvent({ type: "pattern.sensor", ...event });
   }
 
   getEvents(limit = 200): CyberTigerEvent[] {

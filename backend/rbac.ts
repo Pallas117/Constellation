@@ -67,6 +67,8 @@ export const API_POLICY: ReadonlyArray<Policy> = [
   { method: "POST", path: "/operator-pattern", access: "user", stepUp: true },
   { method: "POST", path: "/operator-pattern/verify", access: "user" },
   { method: "POST", path: "/operator-pattern/requests", access: "user" },
+  { method: "POST", path: "/operator-pattern/duress", access: "user", stepUp: true },
+  { method: "DELETE", path: "/operator-pattern/duress", access: "user", stepUp: true },
   { method: "POST", path: "/operator-pattern/pad/info", access: "public" },
   { method: "POST", path: "/operator-pattern/pad", access: "public" },
 
@@ -158,6 +160,11 @@ export function enforceApiPolicy(req: AuthenticatedRequest, res: Response, next:
   }
   if (!roleSatisfies(req.auth.role, access)) {
     res.status(403).json({ error: `Requires ${access} role` });
+    return;
+  }
+  if ((access === "operator" || access === "admin") && req.auth.pattern?.duress) {
+    // Duress (backend/pattern/sensor.ts): the alarm has gone; the session sees a console in maintenance.
+    res.status(503).json({ error: "The operator console is in maintenance. Try again later." });
     return;
   }
   if ((access === "operator" || access === "admin") && operatorPatternRequired()) {
