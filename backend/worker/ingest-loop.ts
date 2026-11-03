@@ -101,7 +101,17 @@ export function forecastWindow(
 }
 
 /** The sources a worker can fetch. */
-export type IngestSource = "noaa" | "kyoto-dst" | "goes" | "swpc-products" | "esa" | "jaxa" | "mms" | "lasp";
+export const INGEST_SOURCES = ["noaa", "kyoto-dst", "goes", "swpc-products", "esa", "jaxa", "mms", "lasp"] as const;
+export type IngestSource = (typeof INGEST_SOURCES)[number];
+
+/**
+ * The live worker's sources (GAU-228): every source unless GAUSS_MMS=0 or GAUSS_LASP=0 (backend/lib/
+ * boot-switches.ts) leaves MMS CDAWeb (10 min) or LASP (60 s) polling out. undefined = all, the default.
+ */
+export function liveIngestSources(switches: { mms: boolean; lasp: boolean }): IngestSource[] | undefined {
+  if (switches.mms && switches.lasp) return undefined;
+  return INGEST_SOURCES.filter((s) => (s !== "mms" || switches.mms) && (s !== "lasp" || switches.lasp));
+}
 
 /**
  * How a worker runs. The defaults are the live service. A historical replay (GAU-138) runs the
@@ -418,19 +428,16 @@ export class IngestionWorker {
     if (officialOnly) {
       console.log('[IngestionWorker] OFFICIAL_SOURCES_ONLY=true — preferring official data adapters (NOAA/MMS)');
     }
+    // MMS switched off (GAUSS_MMS=0 / GAUSS_LASP=0) is left out, never reported as a source that failed.
+    const mms = [
+      ...(this.wants("mms") ? [getMmsCdawebStatus()] : []),
+      ...(this.wants("lasp") ? [getMmsLaspStatus()] : []),
+    ];
     if (officialOnly) {
-      return [getNoaaStatus(), getGoesStatus(), getKyotoDstStatus(), getMmsCdawebStatus(), getMmsLaspStatus()];
+      return [getNoaaStatus(), getGoesStatus(), getKyotoDstStatus(), ...mms];
     }
 
-    return [
-      getNoaaStatus(),
-      getGoesStatus(),
-      getKyotoDstStatus(),
-      getEsaStatus(),
-      getJaxaStatus(),
-      getMmsCdawebStatus(),
-      getMmsLaspStatus(),
-    ];
+    return [getNoaaStatus(), getGoesStatus(), getKyotoDstStatus(), getEsaStatus(), getJaxaStatus(), ...mms];
   }
 
   private async isAuroraRpcSignatureError(error: unknown): Promise<boolean> {
