@@ -550,3 +550,29 @@ footer p{margin:0 0 6px}
 /* Primary link buttons point onward; the arrow eases forward on hover (form buttons and outlines stay plain). */
 .actions > a.btn:not(.ghost)::after{content:"\2192";display:inline-block;transition:transform .2s cubic-bezier(.2,.7,.2,1)}
 @media (prefers-reduced-motion:no-preference){.actions > a.btn:not(.ghost):hover::after{transform:translateX(3px)}}
+
+/* Experiment (Josh, 4 Nov 2026: "purple glow with glassified effect over hover ... play around"). The light is the
+   black hole's own accretion-disk mauve, from the Lightbound mark. The Brand Book bars glows outside marks and photos
+   and keeps mauve for the mark: this block is the proposed amendment. It glows on hover and focus only; at rest the
+   glass is quiet. A sheen sweeps across the glass on hover (a gradient layer, no script); none with reduced motion. */
+:root{--glow:203 182 214;--violet:142 108 196;--sheen:linear-gradient(115deg,rgb(255 255 255 / 0) 35%,rgb(var(--glow) / .22) 50%,rgb(255 255 255 / 0) 65%)}
+.btn,.door,.tile,.friend,.subnav a,.live-card{transition:background-color .25s,background-position .7s cubic-bezier(.2,.7,.2,1),border-color .25s,box-shadow .35s cubic-bezier(.2,.7,.2,1),color .2s,transform .25s}
+/* Glass: frosted, lit from the top, a faint mauve rim, and a sheen parked off to the left until hover. */
+.btn.ghost,.subnav a{background-color:rgb(var(--glow) / .05);border-color:rgb(var(--glow) / .3);
+  background-image:var(--sheen),linear-gradient(180deg,rgb(255 255 255 / .1),rgb(255 255 255 / 0) 70%);background-size:250% 100%,100% 100%;background-position:120% 0,0 0;background-repeat:no-repeat}
+.btn.ghost:hover,.btn.ghost:focus-visible,.subnav a:hover,.subnav a:focus-visible{-webkit-backdrop-filter:blur(12px) saturate(160%);backdrop-filter:blur(12px) saturate(160%)}
+.btn.ghost:hover,.btn.ghost:focus-visible,.subnav a:hover,.subnav a:focus-visible{color:#fff;border-color:rgb(var(--glow) / .85);background-color:rgb(var(--violet) / .2);background-position:-20% 0,0 0;
+  box-shadow:0 0 0 1px rgb(var(--glow) / .3),0 0 30px -2px rgb(var(--violet) / .75),0 0 70px -14px rgb(var(--violet) / .6),inset 0 1px 0 rgb(255 255 255 / .22)}
+.btn:not(.ghost):not([aria-disabled=true]):hover,.btn:not(.ghost):not([aria-disabled=true]):focus-visible{
+  box-shadow:0 0 0 1px rgb(var(--glow) / .6),0 0 32px -2px rgb(var(--violet) / .85),0 0 80px -12px rgb(var(--violet) / .65)}
+/* Windows: smoked at rest, frosted glass on hover (blur only while hovered: at rest it cost a slow phone ~0.7 s of
+   first paint), catching the light at the rim. Friends' logos are never filtered, so their cards only glow. */
+.door,.tile,.friend{background-color:rgb(13 16 16 / .86);background-image:var(--sheen);background-size:250% 100%;background-position:130% 0;background-repeat:no-repeat}
+.door:hover,.door:focus-visible,.tile:hover,.tile:focus-within{-webkit-backdrop-filter:blur(10px) saturate(140%);backdrop-filter:blur(10px) saturate(140%)}
+.tile{background-image:var(--sheen),linear-gradient(180deg,rgba(243,240,232,.04),rgba(243,240,232,0) 42%);background-size:250% 100%,100% 100%;background-position:130% 0,0 0}
+.door:hover,.door:focus-visible,.friend:hover,.friend:focus-visible,.tile:hover,.tile:focus-within{border-color:rgb(var(--glow) / .7);background-color:rgb(var(--violet) / .1);background-position:-30% 0,0 0;
+  box-shadow:0 0 0 1px rgb(var(--glow) / .22),0 0 44px -10px rgb(var(--violet) / .7),0 24px 64px -20px rgb(var(--violet) / .9),inset 0 1px 0 rgb(255 255 255 / .16)}
+.live-card{border-color:rgb(var(--glow) / .34);box-shadow:0 0 0 1px rgb(var(--glow) / .1),0 0 60px -20px rgb(var(--violet) / .55),0 24px 80px -24px rgb(var(--violet) / .7),inset 0 1px 0 rgb(255 255 255 / .12)}
+.live-card:hover,.live-card:focus-within{border-color:rgb(var(--glow) / .65);
+  box-shadow:0 0 0 1px rgb(var(--glow) / .25),0 0 80px -16px rgb(var(--violet) / .8),0 24px 100px -20px rgb(var(--violet) / .95),inset 0 1px 0 rgb(255 255 255 / .18)}
+@media (prefers-reduced-motion:reduce){.btn,.door,.tile,.friend,.subnav a,.live-card{transition:none}.btn.ghost:hover,.subnav a:hover,.door:hover,.tile:hover,.friend:hover{background-position:130% 0,0 0}}
