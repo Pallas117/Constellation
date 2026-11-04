@@ -314,7 +314,7 @@ test("public release: health names the release and the deployed commit, and only
 test("full release: the same pages keep sign-in and the forms", async () => {
   const { env: full } = await appEnv();
   const page = async (path) => (await send(full, new Request(`https://lightbound.uk${path}`))).text();
-  assert.match(await page("/gauss/"), /<!--full--> <a class="btn ghost radiate" href="\/app\/">Sign in<\/a><!--\/full-->/);
+  assert.match(await page("/gauss/"), /<!--full--> <a class="btn ghost radiate" href="\/app\/">Sign in with Argo<\/a><!--\/full-->/);
   assert.match(await page("/gauss/apply/"), /<form class="form" method="post" action="\/api\/apply">/);
   assert.equal((await send(full, new Request("https://lightbound.uk/argo/"))).status, 200);
   assert.equal((await (await send(full, new Request("https://lightbound.uk/api/health"))).json()).release, "full");
@@ -1132,7 +1132,7 @@ test("one login: everyone signed in gets the free Gauss live view once GAUSS_APP
 
 test("live-view gate: /live goes through Access to the app's sign-in once accounts open; the replay until then", async () => {
   const full = { RELEASE: "full", DATA: {}, GAUSS_APP_URL: "https://app.example.test/" };
-  assert.equal(liveTarget(full), "https://app.example.test/api/auth/lightbound/sign-in?callbackURL=%2F");
+  assert.equal(liveTarget(full), "https://app.example.test/api/auth/argo/sign-in?callbackURL=%2F");
   assert.equal(liveTarget({ ...full, RELEASE: "public" }), "/gauss/#replay", "public release");
   assert.equal(liveTarget({ ...full, GAUSS_APP_URL: "" }), "/gauss/#replay", "no app yet");
   assert.equal(liveTarget({ ...full, GAUSS_APP_URL: "http://app.example.test/" }), "/gauss/#replay", "https only");

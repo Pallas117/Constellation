@@ -98,7 +98,7 @@
     letter-spacing: 0.14em;
   }
 
-  /* "Continue with Lightbound": the website's radiating sign-in (lightbound.uk, Brand Book "Accretion light").
+  /* "Continue with Argo": the website's radiating sign-in (lightbound.uk, Brand Book "Accretion light").
      On hover and focus, an ember wave then a violet one leave the button like radiation from a source. The global
      reduced-motion rule above stops it. */
   .lb-radiate {

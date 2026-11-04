@@ -123,7 +123,7 @@ const env = {
   // Staff and the members' programme list (both secrets in production). Offline, the programmes come from a synthetic tab.
   STAFF_EMAILS: process.env.STAFF_EMAILS ?? "staff@example.test",
   OPS_URL: process.env.OPS_URL ?? "https://ops.example.test/",
-  // One Lightbound login (docs/ONE_LOGIN.md): the free live-view card, and one cleared demo account for the Turnstone card.
+  // Argo, the one Lightbound login (docs/ONE_LOGIN.md): the free live-view card, and one cleared demo account for the Turnstone card.
   GAUSS_APP_URL: process.env.GAUSS_APP_URL ?? "https://app.example.test/",
   TURNSTONE_EMAILS: process.env.TURNSTONE_EMAILS ?? "cleared@example.test",
   PROGRAMMES_CSV_URL: process.env.PROGRAMMES_CSV_URL ?? (offline ? PROGRAMMES_URL : ""),

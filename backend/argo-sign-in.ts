@@ -1,4 +1,4 @@
-// One Lightbound sign-in for the Gauss app (Josh, 4 Nov 2026): the same Cloudflare Access team that signs people into
+// One Argo sign-in for the Gauss app (Josh, 4 Nov 2026): the same Cloudflare Access team that signs people into
 // lightbound.uk/app/ and the staff site sits in front of the app (app.lightbound.uk, through a Cloudflare Tunnel).
 // Access proves who someone is with a signed JWT in the Cf-Access-Jwt-Assertion header; this endpoint checks it with
 // the website's own verifier (RS256 against the team's published keys, audience, issuer, expiry), then finds or creates
@@ -39,13 +39,13 @@ export function nameFromEmail(email: string): string {
   return local.split(/[._-]+/).filter(Boolean).map((w) => w[0]!.toUpperCase() + w.slice(1)).join(" ") || email;
 }
 
-export function lightboundSignIn(env: AccessEnv = accessEnvFromProcess(), fetchImpl: typeof fetch = fetch) {
+export function argoSignIn(env: AccessEnv = accessEnvFromProcess(), fetchImpl: typeof fetch = fetch) {
   return {
-    id: "lightbound-sign-in",
+    id: "argo-sign-in",
     endpoints: {
-      lightboundSignIn: createAuthEndpoint("/lightbound/sign-in", { method: "GET" }, async (ctx) => {
+      argoSignIn: createAuthEndpoint("/argo/sign-in", { method: "GET" }, async (ctx) => {
         const back = safeCallback(ctx.query?.callbackURL);
-        const failed = `/login?error=lightbound`;
+        const failed = `/login?error=argo`;
         if (!accessSignInEnabled(env) || !ctx.request) throw ctx.redirect(failed);
         const id = await accessIdentity(ctx.request, env, { fetchImpl });
         if (!id) throw ctx.redirect(failed);

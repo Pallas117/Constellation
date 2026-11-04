@@ -3,7 +3,7 @@ import Database from "better-sqlite3";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { isSsoCallback, ssoEmailAllowed as policyAllows, ssoPolicyFromEnv, ssoSignUpAllowed } from "./sso-policy.js";
-import { accessEnvFromProcess, accessSignInEnabled, lightboundSignIn } from "./lightbound-sign-in.js";
+import { accessEnvFromProcess, accessSignInEnabled, argoSignIn } from "./argo-sign-in.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -38,15 +38,15 @@ export function ssoEmailAllowed(email: string | null | undefined): boolean {
     return policyAllows(email, ssoPolicy);
 }
 
-// One Lightbound sign-in: Cloudflare Access in front of the app (backend/lightbound-sign-in.ts). The login page shows
-// "Continue with Lightbound" when ACCESS_TEAM_DOMAIN and ACCESS_AUD are set.
+// One Argo sign-in: Cloudflare Access in front of the app (backend/argo-sign-in.ts). The login page shows
+// "Continue with Argo" when ACCESS_TEAM_DOMAIN and ACCESS_AUD are set.
 const accessEnv = accessEnvFromProcess();
-export const lightboundEnabled = accessSignInEnabled(accessEnv);
+export const argoEnabled = accessSignInEnabled(accessEnv);
 
 export const auth = betterAuth({
     database: sqlite,
     trustedOrigins,
-    plugins: [lightboundSignIn(accessEnv)],
+    plugins: [argoSignIn(accessEnv)],
     emailAndPassword: {  
         enabled: true
     },

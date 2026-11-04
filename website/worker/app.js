@@ -3,7 +3,7 @@
 // Every request is checked: a valid Cloudflare Access token for who, the account record for what.
 // Paying happens on Stripe's own pages (checkout, or an invoice where an admin allows it); this side starts it and reads the result.
 // Staff (STAFF_EMAILS) also get a link to the staff operations and training site (OPS_URL), which has its own Access application.
-// One Lightbound sign-in (the same Access team) also opens the Gauss app (GAUSS_APP_URL: the free live view, or the console on a
+// One Argo sign-in (the same Access team) also opens the Gauss app (GAUSS_APP_URL: the free live view, or the console on a
 // paid plan); people in TURNSTONE_EMAILS alone see a Turnstone card.
 import { accessIdentity, isAdmin, isCleared, isStaff } from "./auth.js";
 import { deleteAccount, getAccount, getApplication, latestApplication, listAccounts, listApplications, putAccount, setApplicationStatus } from "./data.js";
@@ -141,12 +141,12 @@ export function turnstoneCard(roomUrl) {
     `<p class="m"><a href="${esc(room)}" rel="noopener">${room === TURNSTONE_BRIEFING ? "Request a briefing" : "Open the briefing room"}</a></p></article>`;
 }
 
-/** The Gauss live view: free with the Lightbound sign-in (the app's "user" role), once GAUSS_APP_URL is an https address.
+/** The Gauss live view: free with the Argo sign-in (the app's "user" role), once GAUSS_APP_URL is an https address.
  * The same Access sign-in opens it, so there's no second password. Paid plans get the console on the same app. */
 export function liveViewCard(appUrl) {
   if (!httpsUrl(appUrl)) return "";
   return `<article class="tile"><h2 class="label">Gauss</h2><p class="big">Live view</p><p class="t">Space weather, the radiation belts and the satellites in them, live.</p>` +
-    `<p class="m">Free with your Lightbound sign-in.</p><p class="m"><a href="${esc(appUrl)}" rel="noopener">Open the live view</a></p></article>`;
+    `<p class="m">Free with your Argo sign-in.</p><p class="m"><a href="${esc(appUrl)}" rel="noopener">Open the live view</a></p></article>`;
 }
 
 export function renderWorkspace({ email, account, admin, weather, consoleUrl, supportUrl = "", argo = "", edu = "", staff = "", turnstone = "", live = "", applications = [], notice = "" }) {
@@ -276,7 +276,7 @@ async function flash(env, email) {
 }
 
 const signedOut = (respond) =>
-  respond(`<!doctype html><meta charset="utf-8"><title>Sign in · Lightbound</title><link rel="stylesheet" href="/assets/site.css"><main class="vault wrap"><div><p class="k">401_SIGN_IN</p><h1>Please sign in.</h1><p class="muted">The workspace is for approved accounts and Constellation members.</p><p class="actions"><a class="btn radiate" href="/app/">Sign in</a> <a class="btn ghost" href="/gauss/apply/">Apply</a></p></div></main>`,
+  respond(`<!doctype html><meta charset="utf-8"><title>Sign in · Lightbound</title><link rel="stylesheet" href="/assets/site.css"><main class="vault wrap"><div><p class="k">401_SIGN_IN</p><h1>Please sign in.</h1><p class="muted">The workspace is for approved accounts and Constellation members.</p><p class="actions"><a class="btn radiate" href="/app/">Sign in with Argo</a> <a class="btn ghost" href="/gauss/apply/">Apply</a></p></div></main>`,
     401, "text/html; charset=utf-8", APP_HEADERS);
 
 // A new plan or quote starts billing afresh: no earlier invoice, paid year or event can count towards it.

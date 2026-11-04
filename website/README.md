@@ -385,7 +385,7 @@ ranges; the `run_worker_first` routes from `wrangler.jsonc`; an in-memory KV; an
 - **Before you publish, check the tab** for anything you wouldn't want members to read: it is reachable by
   anyone who has its link. `/api/health` shows `programmes: not configured` until the secret is set.
 
-**One Lightbound login** (docs/ONE_LOGIN.md). The same Access team signs people into `/app/`, the Gauss app and the
+**Argo, the one Lightbound login** (docs/ONE_LOGIN.md). People sign in with Argo: the same Access team signs people into `/app/`, the Gauss app and the
 staff site. In `/app/`, everyone sees a free Gauss **Live view** card once `GAUSS_APP_URL` is https. People in
 `TURNSTONE_EMAILS` (a secret; admins are not added automatically) see a Turnstone card that says no more than the
 public page, linking to `TURNSTONE_URL` (a secret, https) or the briefing call; nobody else's workspace mentions it.

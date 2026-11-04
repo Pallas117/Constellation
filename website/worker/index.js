@@ -57,11 +57,11 @@ const ATTRIBUTION = {
   weather: "Data: NOAA Space Weather Prediction Center (swpc.noaa.gov)",
 };
 
-/** "Sign in to the live view" (the landing page's gate): through Cloudflare Access to the Gauss app's Lightbound sign-in,
+/** "Sign in to the live view" (the landing page's gate): through Cloudflare Access to the Gauss app's Argo sign-in,
  * which lands on the live view (docs/ONE_LOGIN.md). Until accounts open, or without an https GAUSS_APP_URL, the replay. */
 export function liveTarget(env) {
   if (!isFull(env) || !/^https:\/\/[^\s"<>]+$/.test(env.GAUSS_APP_URL ?? "")) return "/gauss/#replay";
-  const url = new URL("api/auth/lightbound/sign-in", env.GAUSS_APP_URL);
+  const url = new URL("api/auth/argo/sign-in", env.GAUSS_APP_URL);
   url.searchParams.set("callbackURL", "/");
   return url.href;
 }
