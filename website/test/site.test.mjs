@@ -24,7 +24,8 @@ const html = Object.fromEntries(Object.entries(PAGES).map(([route, f]) => [route
 const WRANGLER_RAW = readFileSync(join(pub, "..", "wrangler.jsonc"), "utf8");
 const WRANGLER = JSON.parse(WRANGLER_RAW.replace(/^\s*\/\/.*$/gm, "").replace(/,(\s*[}\]])/g, "$1"));
 const WORKER_ROUTES = WRANGLER.assets.run_worker_first;
-const API_ROUTES = new Set(["/api/launches", "/api/launches.ics", "/api/space-weather", "/api/health", "/cdn-cgi/access/logout"]);
+// Worker routes, not files: /live sends the gate's sign-in through Access to the Gauss app (worker/index.js).
+const API_ROUTES = new Set(["/api/launches", "/api/launches.ics", "/api/space-weather", "/api/health", "/cdn-cgi/access/logout", "/live"]);
 
 function walk(dir) {
   return readdirSync(dir, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? walk(join(dir, e.name)) : [join(dir, e.name)]));
@@ -165,6 +166,21 @@ test("every link and resource resolves", () => {
     }
   }
   for (const [, anchor] of html["/"].matchAll(/href="\/#([^"]+)"/g)) assert.match(html["/"], new RegExp(`id="${anchor}"`));
+});
+
+test("live-view gate: a labelled pre-rendered frame behind a sign-in card, no script, nothing live", () => {
+  const home = html["/"];
+  const gate = home.match(/<section id="live" class="live-gate"[\s\S]*?<\/section>/)?.[0] ?? "";
+  assert.ok(gate, "the gate follows the descent");
+  assert.ok(home.indexOf('id="live"') > home.indexOf("<!--/descent-->") && home.indexOf('id="live"') < home.indexOf('id="enter"'));
+  for (const f of ["gauss-live-wide.webp", "gauss-live-tall.webp"]) assert.ok(size(`/assets/media/${f}`) < 250_000, `${f} stays small`);
+  assert.match(gate, /loading="lazy"/, "never competes with the hero for first paint");
+  assert.match(gate, /a frame from the Gauss live view, not live data/, "a still is never passed off as live");
+  assert.match(gate, /<!--full--><a class="btn" href="\/live">Sign in to the live view<\/a><!--\/full-->/);
+  assert.match(gate, /<!--public--><a class="btn" href="\/gauss\/#replay">Watch a replay<\/a><!--\/public-->/);
+  assert.doesNotMatch(gate, /<script|<iframe|<canvas/);
+  assert.deepEqual([...home.matchAll(/class="k">(\d\d_[A-Z_]+)</g)].map((m) => m[1]), ["00_LIGHTBOUND", "01_LIVE_VIEW", "02_ENTER"], "section kickers in order");
+  assert.match(home, />03_CONTACT</);
 });
 
 test("live sections have their markers, with a working static fallback", () => {

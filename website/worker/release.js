@@ -8,5 +8,5 @@ export const isFull = (env) => env?.RELEASE === "full" && !!env?.DATA;
 
 export const CONTACT = "jzwnathan@lightbound.uk";
 
-/** Parts of a page marked <!--full-->…<!--/full--> show only when accounts are open. */
-export const forRelease = (html, env) => (isFull(env) ? html : html.replace(/<!--full-->[\s\S]*?<!--\/full-->/g, ""));
+/** Parts marked <!--full-->…<!--/full--> show only when accounts are open; <!--public-->…<!--/public--> only until then. */
+export const forRelease = (html, env) => html.replace(isFull(env) ? /<!--public-->[\s\S]*?<!--\/public-->/g : /<!--full-->[\s\S]*?<!--\/full-->/g, "");

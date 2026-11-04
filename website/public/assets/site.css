@@ -501,6 +501,25 @@ footer p{margin:0 0 6px}
 @keyframes d-step-first{0%,70%{opacity:1;visibility:visible}100%{opacity:0;visibility:hidden}}
 @keyframes d-step-last{from{opacity:0;visibility:hidden;transform:translateY(10px)}to{opacity:1;visibility:visible;transform:none}}
 
+/* Live-view gate (landing): after the descent, a pre-rendered frame of the Gauss live view (tools/capture_live_view.py)
+   fills the screen behind a smoked-glass sign-in card. An image, not the app: it shows at once, and nothing live is
+   sent before sign-in. The frame settles in as you scroll; with reduced motion it is simply there. */
+.live-gate{position:relative;min-height:100svh;display:grid;place-items:center;padding:96px clamp(16px,4vw,40px);overflow:hidden;isolation:isolate}
+.live-frame,.live-frame img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;z-index:-2}
+.live-gate::before{content:"";position:absolute;inset:0;z-index:-1;background:linear-gradient(180deg,var(--black) 0,rgba(5,5,5,.12) 24%,rgba(5,5,5,.12) 76%,var(--black) 100%)}
+.live-card{max-width:440px;width:100%;padding:28px;border:1px solid rgba(243,240,232,.16);border-radius:10px;background-color:rgba(5,5,5,.8);
+  background-image:linear-gradient(180deg,rgba(243,240,232,.06),rgba(243,240,232,0) 60%);-webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px)}
+.live-card h2{font-size:clamp(26px,3.2vw,34px);line-height:1.15;margin:.3em 0 .4em}
+.live-card p{color:rgba(243,240,232,.86)}
+.live-card .src{margin:14px 0 0;color:var(--muted);font-size:13px}
+@supports (animation-timeline:view()){
+  @media (prefers-reduced-motion:no-preference){
+    .live-frame img{animation:live-settle linear both;animation-timeline:view();animation-range:entry 0% cover 50%}
+    .live-card{animation:d-in linear both;animation-timeline:view();animation-range:entry 40% cover 45%}
+  }
+}
+@keyframes live-settle{from{opacity:0;transform:scale(1.08)}to{opacity:1;transform:none}}
+
 /* Starfield (landing): two planes of faint stars behind the descent and the doors. They scroll with the page while the
    descent's stage stays put, and the far plane drifts at a different rate, so the scene reads as deep space. */
 .starfield{position:relative;isolation:isolate}

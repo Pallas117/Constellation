@@ -14,6 +14,8 @@ import { memoryKV } from "./fixtures/kv.mjs";
 import { makeAccess } from "./fixtures/access.mjs";
 import { accessIdentity, isAdmin, isCleared, isStaff } from "../worker/auth.js";
 import { liveViewCard, turnstoneCard } from "../worker/app.js";
+import { liveTarget } from "../worker/index.js";
+import { forRelease } from "../worker/release.js";
 import { getAccount, listApplications, putAccount, saveApplication, senderOf } from "../worker/data.js";
 import { applyEvent, createPortal, formEncode, signPayload, verifySignature } from "../worker/stripe.js";
 import { billingStatus, isAcademicEmail } from "../worker/tiers.js";
@@ -1126,6 +1128,19 @@ test("one login: everyone signed in gets the free Gauss live view once GAUSS_APP
   assert.doesNotMatch(await page({ ...e, GAUSS_APP_URL: "" }, "visitor@example.test"), /Open the live view/, "hidden until set");
   assert.doesNotMatch(await page({ ...e, GAUSS_APP_URL: "http://app.example.test/" }, "visitor@example.test"), /Open the live view/, "https only");
   assert.equal(liveViewCard("javascript:alert(1)"), "");
+});
+
+test("live-view gate: /live goes through Access to the app's sign-in once accounts open; the replay until then", async () => {
+  const full = { RELEASE: "full", DATA: {}, GAUSS_APP_URL: "https://app.example.test/" };
+  assert.equal(liveTarget(full), "https://app.example.test/api/auth/lightbound/sign-in?callbackURL=%2F");
+  assert.equal(liveTarget({ ...full, RELEASE: "public" }), "/gauss/#replay", "public release");
+  assert.equal(liveTarget({ ...full, GAUSS_APP_URL: "" }), "/gauss/#replay", "no app yet");
+  assert.equal(liveTarget({ ...full, GAUSS_APP_URL: "http://app.example.test/" }), "/gauss/#replay", "https only");
+  const wrangler = await readFile(join(dirname(fileURLToPath(import.meta.url)), "..", "wrangler.jsonc"), "utf8");
+  assert.match(wrangler, /"run_worker_first": \[[^\]]*"\/live"/, "Cloudflare runs the Worker for /live (else it 404s)");
+  const page = '<p><!--full--><a href="/live">in</a><!--/full--><!--public--><a href="/gauss/#replay">r</a><!--/public--></p>';
+  assert.equal(forRelease(page, { RELEASE: "public" }), '<p><!--public--><a href="/gauss/#replay">r</a><!--/public--></p>');
+  assert.equal(forRelease(page, full), '<p><!--full--><a href="/live">in</a><!--/full--></p>');
 });
 
 test("group calls: a member's page reads one cached index, not a KV list per call; the index heals itself", async () => {

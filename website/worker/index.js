@@ -57,6 +57,15 @@ const ATTRIBUTION = {
   weather: "Data: NOAA Space Weather Prediction Center (swpc.noaa.gov)",
 };
 
+/** "Sign in to the live view" (the landing page's gate): through Cloudflare Access to the Gauss app's Lightbound sign-in,
+ * which lands on the live view (docs/ONE_LOGIN.md). Until accounts open, or without an https GAUSS_APP_URL, the replay. */
+export function liveTarget(env) {
+  if (!isFull(env) || !/^https:\/\/[^\s"<>]+$/.test(env.GAUSS_APP_URL ?? "")) return "/gauss/#replay";
+  const url = new URL("api/auth/lightbound/sign-in", env.GAUSS_APP_URL);
+  url.searchParams.set("callbackURL", "/");
+  return url.href;
+}
+
 let bootstrapping = false;
 
 async function readAll(env, ctx) {
@@ -167,6 +176,7 @@ export default {
     }
     if (request.method !== "GET" && request.method !== "HEAD")
       return respond("Method not allowed\n", 405, "text/plain; charset=utf-8", { allow: "GET, HEAD" });
+    if (pathname === "/live") return new Response(null, { status: 302, headers: { location: liveTarget(env), "cache-control": "no-store" } });
     if (Object.hasOwn(LIVE_PAGES, pathname)) {
       const feeds = NEEDS_FEEDS.has(pathname) ? await readAll(env, ctx) : {};
       const now = Date.now();
