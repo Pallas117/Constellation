@@ -14,7 +14,7 @@
 #   scripts/ops/gauss-services.sh uninstall                unload + remove agents
 #   scripts/ops/gauss-services.sh dev <checkout-dir>        run a dev/R&D checkout beside live (:3101 API, :5174 site)
 #   scripts/ops/gauss-services.sh fallback prepare <dir> [sha]|on|off|status   cold-standby last-known-good build
-#   scripts/ops/gauss-services.sh deploy <commit> [fallback-dir] [--emergency <reason>]   switch live to <commit>; rolls back by itself if it doesn't come up
+#   scripts/ops/gauss-services.sh deploy <commit> [fallback-dir] [--emergency <reason>] [--no-fallback]   switch live to <commit>; rolls back by itself if it doesn't come up
 #   scripts/ops/gauss-services.sh gates record <checkout-dir>|list   run the five gates on a clean checkout; deploy needs a passing record
 #   scripts/ops/gauss-services.sh gates enqueue <checkout-dir>|<commit>   hand a gate run to the queue; the session can then be archived
 #   scripts/ops/gauss-services.sh gates result <checkout-dir>|<commit>|status   the queue's one-line result (exit 0 passed, 1 failed, 3 queued)
@@ -117,6 +117,7 @@ DEPLOY_LOCK="$WATCH_DIR/deploying" # held by deploy; the guard leaves the servic
 DEPLOY_WAIT="${GAUSS_DEPLOY_WAIT:-90}" # seconds a deploy waits for the services to come up
 DEPLOY_HISTORY="$WATCH_DIR/deploy-history.jsonl" # every deploy and rollback; never rotated (a line per deploy)
 DEPLOY_EMERGENCY="" # set by `deploy --emergency <reason>`
+DEPLOY_NO_FALLBACK="" # set by `deploy --no-fallback`: go ahead with no standby to refresh (FM-24)
 # Gate records (GAU-162), keyed by tree hash: what was tested is exactly what is deployed, even
 # after a merge commit or a rebase that leaves the tree unchanged (GAU-161 finding 4).
 GATES_DIR="$WATCH_DIR/gates"
@@ -605,6 +606,22 @@ fallback_ready() { # a valid record, both plists and a built site
   [ -f "$FALLBACK_STATE/${FALLBACK_LABELS[0]}.plist" ] && [ -f "$FALLBACK_STATE/${FALLBACK_LABELS[1]}.plist" ] && [ -f "$READY_DIR/frontend/dist/index.html" ]
 }
 fallback_active() { loaded "${FALLBACK_LABELS[0]}"; }
+# FM-21: a standby that was prepared but can no longer serve, in words; nothing when it is fine
+# or was never prepared ("none prepared" is a status warning, and deploy refuses it: FM-24).
+fallback_problem() {
+  [ -e "$FALLBACK_STATE/ready" ] || return 0
+  if ! ready_record; then echo "its ready record is corrupt or cut short"; return 0; fi
+  if ! fallback_ready; then echo "its checkout, build or agents are gone (${READY_DIR})"; return 0; fi
+  local head; head=$(git -C "$READY_DIR" rev-parse -q --verify HEAD 2>/dev/null) || return 0 # not a git checkout: nothing to compare
+  [[ "$head" == "$READY_SHA"* ]] || echo "its checkout moved to ${head:0:7} after it was prepared at ${READY_SHA:0:7}"
+}
+fallback_watch() { # awake guard: text when the standby goes bad, not only once a failover needs it
+  fallback_active && return 0
+  local why; why=$(fallback_problem)
+  [ -n "$why" ] || return 0
+  phone -key fallback-bad -every 6h "Gauss: no usable standby" \
+    "The fallback can't take over: $why. Live still runs; if it fails there is nothing to switch to. Fix: gauss-services.sh fallback prepare <dir>"
+}
 
 fallback_on() { # fallback_on <reason>: swap live for the fallback on the same ports
   fallback_ready || { echo "No fallback prepared: $0 fallback prepare <dir>" >&2; return 1; }
@@ -1318,7 +1335,10 @@ deploy() { # deploy <commit> [fallback-dir]
 
   # The standby becomes what runs now, if it is healthy: never swap a good fallback for a broken live.
   [ -z "$fbdir" ] && ready_record && fbdir=$READY_DIR
-  if [ -z "$fbdir" ]; then
+  if [ -z "$fbdir" ] && [ -z "$DEPLOY_NO_FALLBACK$DEPLOY_EMERGENCY" ]; then
+    # FM-24: a deploy used to go ahead and leave no standby; the next live failure then had nothing to fail over to.
+    echo "No fallback to refresh: pass a path ($0 deploy <commit> <fallback-dir>), or --no-fallback to deploy without one." >&2; return 1
+  elif [ -z "$fbdir" ]; then
     echo "warning: no fallback to refresh (pass a path: $0 deploy <commit> <fallback-dir>); rollback to ${prev:0:7} still works."
   elif ready_record && [ "$READY_SHA" = "$prev" ] && [ "$READY_DIR" = "$(cd "$fbdir" 2>/dev/null && pwd)" ]; then
     echo "Fallback already at ${prev:0:7}."
@@ -1391,6 +1411,7 @@ dev_run() { # dev_run <checkout-dir>
 awake_guard() { # run every minute by the awake agent
   boot_check || true # first, before watch_peers refreshes the heartbeat it reads
   watch_peers
+  fallback_watch || true
   local batt pct
   batt=$(pmset -g batt); pct=$(grep -Eo -m1 '[0-9]+%' <<<"$batt" | tr -d % || true)
   battery_alerts "$batt" "$pct"
@@ -1744,7 +1765,8 @@ case "${1:-}" in
     while [ $# -gt 0 ]; do
       case "$1" in
         --emergency) DEPLOY_EMERGENCY=${2:-}; [ -n "$DEPLOY_EMERGENCY" ] || { echo "--emergency needs a reason" >&2; exit 2; }; shift ;;
-        -*) echo "deploy: unknown option $1 (usage: deploy <sha> [fallback dir] [--emergency <reason>])" >&2; exit 2 ;;
+        --no-fallback) DEPLOY_NO_FALLBACK=1 ;;
+        -*) echo "deploy: unknown option $1 (usage: deploy <sha> [fallback dir] [--emergency <reason>] [--no-fallback])" >&2; exit 2 ;;
         *) args+=("$1") ;;
       esac
       shift
