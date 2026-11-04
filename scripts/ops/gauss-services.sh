@@ -924,8 +924,22 @@ gates_enqueue() { # gates_enqueue <checkout-dir>|<commit> [--pr N]: queue a gate
     *) echo "unknown option ${2} (expected --pr N)" >&2; return 2 ;;
   esac
   if gate_record "$tree" >/dev/null; then
-    gates_result "$sha" "$tree" SKIPPED "already passed: $(gates_summary "$GATES_DIR/$tree.json")"
-    echo "Already passed: ${sha:0:7} (tree ${tree:0:7}) has a passing gate record; nothing queued."; return 0
+    if [ -z "$pr" ]; then
+      gates_result "$sha" "$tree" SKIPPED "already passed: $(gates_summary "$GATES_DIR/$tree.json")"
+      echo "Already passed: ${sha:0:7} (tree ${tree:0:7}) has a passing gate record; nothing queued."; return 0
+    fi
+    # On the train a pass is not the end (4 Nov: #209 passed as a draft and was HELD; marked ready and
+    # re-queued, it got "already passed" and nothing merged it, while main moved on). A head that still
+    # contains main goes straight to train_merge; one main has moved past is queued, so train_sync merges
+    # main in and the merged tree is gated.
+    git --git-dir="$G_REPO" fetch -q origin 2>/dev/null || true
+    if git --git-dir="$G_REPO" merge-base --is-ancestor refs/remotes/origin/main "$sha" 2>/dev/null; then
+      echo "Already passed: ${sha:0:7} (tree ${tree:0:7}); merging PR #$pr if the train's rules hold."
+      if train_merge "$pr" "$sha" "$tree" "$G_REPO"; then echo "Merged PR #$pr."
+      else echo "Not merged: $(tail -1 "$GATES_RESULTS" | cut -d' ' -f4-)"; fi
+      return 0
+    fi
+    echo "Already passed: ${sha:0:7}, but main has moved past it: queueing it so the train merges main in and gates that."
   fi
   mkdir -p "$GATES_QUEUE"
   if f=$(gates_queued "$tree"); then
@@ -1052,6 +1066,13 @@ gates_run_one() { # gates_run_one <request>: check out, install if the lockfile 
   local pr; pr=$(req_get "$req" pr)
   if [ -n "$pr" ]; then # merge train: test what would land, not a head main has moved past
     train_sync "$req" || return 0 # withdrawn: closed PR, moved head or a conflict (result written)
+    # Already gated (passed, then held as a draft or for GitHub's state): no second 5-30 min run.
+    if gate_record "$(req_get "$req" tree)" >/dev/null; then
+      sha=$(req_get "$req" sha); tree=$(req_get "$req" tree); repo=$(req_get "$req" repo); rm -f "$req"
+      gates_result "$sha" "$tree" SKIPPED "already passed: going straight to the merge"
+      train_merge "$pr" "$sha" "$tree" "$repo" || true
+      return 0
+    fi
   fi
   sha=$(req_get "$req" sha); tree=$(req_get "$req" tree); repo=$(req_get "$req" repo); node=$(req_get "$req" node); by=$(req_get "$req" by)
   [ -n "$node" ] && [ -x "$node" ] && NODE=$node # the Node the session queued with (.nvmrc: Node 26)
