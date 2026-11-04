@@ -47,13 +47,16 @@ An Argo session (Cloudflare Access) is not a passkey session, and requests throu
 public address. So on app.lightbound.uk, Argo opens the live view and other viewer pages; the operator console lives on
 the private ops.lightbound.space (tailnet only; passkeys use one RP ID per backend, and #230 makes it that host).
 
-**Open decision (Josh):** where paid operators sign in.
-- (a) The console stays tailnet-only at ops.lightbound.space with passkeys, and the workspace's "Open the Gauss
-  console" button points there.
-- (b) A customer-facing console path is designed separately.
-
-Until that is decided, `GAUSS_APP_URL` should be the viewer address, and the console button should not promise more
-than it opens.
+**Decided (Josh, 4 Nov 2026: "Tailnet ops console"):** paid operators use the console on the private ops network, not
+the public app.
+- The workspace's "Open the Gauss console" button goes to `GAUSS_CONSOLE_URL` (https; for example
+  `https://ops.lightbound.space/operator`), with the line "The console opens on the Lightbound private network, with a
+  passkey on your own device."
+- `GAUSS_APP_URL` is only ever the public viewer ("Open the live view", and the landing page's `/live`); the
+  viewer is never offered as the console.
+- Without `GAUSS_CONSOLE_URL`, paid plans see "Console link coming by email", as before.
+- Getting a customer operator's device onto the tailnet, and enrolling their passkey, is the ops console's job (GAU-235,
+  #211/#224/#230). How a customer joins the tailnet is not covered here (UNVERIFIED).
 
 ## Setting it up (Josh, in dashboards; nothing here is automatic)
 

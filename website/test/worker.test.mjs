@@ -13,7 +13,7 @@ import { RECORDED_AT, fixture, makeFetch } from "./fixtures/fetch.mjs";
 import { memoryKV } from "./fixtures/kv.mjs";
 import { makeAccess } from "./fixtures/access.mjs";
 import { accessIdentity, isAdmin, isCleared, isStaff } from "../worker/auth.js";
-import { liveViewCard, turnstoneCard } from "../worker/app.js";
+import { liveViewCard, renderWorkspace, turnstoneCard } from "../worker/app.js";
 import { liveTarget } from "../worker/index.js";
 import { forRelease } from "../worker/release.js";
 import { getAccount, listApplications, putAccount, saveApplication, senderOf } from "../worker/data.js";
@@ -1151,6 +1151,16 @@ test("one login: Turnstone shows only to TURNSTONE_EMAILS and says no more than 
   for (const word of ["consult", "security", "hardware", "defence", "defense", "weapon"]) assert.doesNotMatch(card, new RegExp(word, "i"));
 });
 
+test("tailnet ops console: paid plans' console button goes to GAUSS_CONSOLE_URL, never the public viewer", () => {
+  const account = { tier: "fleet_integration", billing: { status: "active" } };
+  const page = (consoleUrl) => renderWorkspace({ email: "fleet@example.test", account, admin: false, weather: null, consoleUrl });
+  const html = page("https://ops.example.test/operator");
+  assert.match(html, /<a class="btn" href="https:\/\/ops\.example\.test\/operator">Open the Gauss console<\/a>/);
+  assert.match(html, /opens on the Lightbound private network, with a passkey on your own device/);
+  assert.match(page(""), /Console link coming by email/, "no console address yet");
+  assert.doesNotMatch(page(""), /private network/);
+});
+
 test("one login: everyone signed in gets the free Gauss live view once GAUSS_APP_URL is https", async () => {
   const { env, access } = await appEnv();
   const page = async (env2, who) => (await send(env2, await as(access, who, "/app/"))).text();
@@ -1162,6 +1172,7 @@ test("one login: everyone signed in gets the free Gauss live view once GAUSS_APP
   assert.doesNotMatch(await page({ ...e, GAUSS_APP_URL: "" }, "visitor@example.test"), /Open the live view/, "hidden until set");
   assert.doesNotMatch(await page({ ...e, GAUSS_APP_URL: "http://app.example.test/" }, "visitor@example.test"), /Open the live view/, "https only");
   assert.equal(liveViewCard("javascript:alert(1)"), "");
+  assert.doesNotMatch(await page({ ...e, GAUSS_CONSOLE_URL: "" }, "visitor@example.test"), /Open the Gauss console/, "the viewer is never the console");
 });
 
 test("live-view gate: /live goes through Access to the app's sign-in once accounts open; the replay until then", async () => {

@@ -3,7 +3,9 @@
 // Every request is checked: a valid Cloudflare Access token for who, the account record for what.
 // Paying happens on Stripe's own pages (checkout, or an invoice where an admin allows it); this side starts it and reads the result.
 // Staff (STAFF_EMAILS) also get a link to the staff operations and training site (OPS_URL), which has its own Access application.
-// One Argo sign-in (the same Access team) also opens the Gauss app (GAUSS_APP_URL: the free live view, or the console on a
+// One Argo sign-in (the same Access team) also opens the Gauss app's free live view (GAUSS_APP_URL). Paid plans' console is the
+// private ops console on the tailnet (GAUSS_CONSOLE_URL; Josh, 4 Nov 2026: "Tailnet ops console"), which also needs a passkey on
+// the operator's own device (PR #230). Was: the console on a
 // paid plan); people in TURNSTONE_EMAILS alone see a Turnstone card.
 import { accessIdentity, isAdmin, isCleared, isStaff } from "./auth.js";
 import { deleteAccount, getAccount, getApplication, latestApplication, listAccounts, listApplications, putAccount, setApplicationStatus } from "./data.js";
@@ -180,10 +182,12 @@ export function renderWorkspace({ email, account, admin, weather, consoleUrl, su
   const consoleBtn = !open ? "" : consoleUrl
     ? `<a class="btn" href="${esc(consoleUrl)}">Open the Gauss console</a>`
     : `<span class="btn ghost" aria-disabled="true">Console link coming by email</span>`;
+  // The console lives on the private ops network: say so, so nobody expects it to open from any device.
+  const consoleNote = open && consoleUrl ? `<p class="m">The console opens on the Lightbound private network, with a passkey on your own device.</p>` : "";
   return (
     `<div class="section-head"><div><p class="k">00_WORKSPACE</p><h1 id="hero-h">Welcome, ${who}.</h1></div><span class="chip tier">${esc(tier.name)}</span></div>${bannerHtml}` +
     `<p class="lead">${esc(account.org ? `${account.org} · ` : "")}${esc(tier.outcome)}</p>` +
-    (consoleBtn ? `<p class="actions">${consoleBtn}</p>` : "") +
+    (consoleBtn ? `<p class="actions">${consoleBtn}</p>${consoleNote}` : "") +
     `<div class="tiles">${billingCard(account, tier)}` +
     (open ? `<article class="tile"><h2 class="label">Pilot</h2>${account.pilot ? pilotTrack(account.pilot) : `<p class="m">Not started. We'll set this up with you.</p>`}</article>` : "") +
     `<article class="tile"><h2 class="label">Space environment</h2>${renderGaussDoor(weather) || `<p class="m">Space-weather data is unavailable right now.</p>`}</article>` +
@@ -520,7 +524,7 @@ export async function handleApp(request, env, url, { respond, fillPage, fetchImp
     const callNotice = url.searchParams.get("call") ?? "";
     // Members' opportunities: four cached feeds, plus their own application only while no interests are saved.
     const opps = member ? await memberOpportunities(env, account, latest) : "";
-    return fillPage("/app/", { workspace: () => renderWorkspace({ email: id.email, account, admin, weather, consoleUrl: env.GAUSS_APP_URL || "", supportUrl: env.SUPPORT_URL || "", argo: argoCard(account, { staff: isStaff(env, id.email) }), edu: eduCard(env, account ?? { email: id.email }, id.email, url.searchParams.get("edu") === "start"), staff: isStaff(env, id.email) ? staffCard(env.OPS_URL) : "", turnstone: isCleared(env, id.email) ? turnstoneCard(env.TURNSTONE_URL) : "", live: liveViewCard(env.GAUSS_APP_URL), applications: mine, notice }) +
+    return fillPage("/app/", { workspace: () => renderWorkspace({ email: id.email, account, admin, weather, consoleUrl: httpsUrl(env.GAUSS_CONSOLE_URL) ? env.GAUSS_CONSOLE_URL : "", supportUrl: env.SUPPORT_URL || "", argo: argoCard(account, { staff: isStaff(env, id.email) }), edu: eduCard(env, account ?? { email: id.email }, id.email, url.searchParams.get("edu") === "start"), staff: isStaff(env, id.email) ? staffCard(env.OPS_URL) : "", turnstone: isCleared(env, id.email) ? turnstoneCard(env.TURNSTONE_URL) : "", live: liveViewCard(env.GAUSS_APP_URL), applications: mine, notice }) +
       (member ? renderCalls({ calls, email: id.email, tz: isZone(account?.tz) ? account.tz : "UTC", notice: callNotice }) : "") + opps }, 200, APP_HEADERS);
   }
   return fail(404, "Not found");
