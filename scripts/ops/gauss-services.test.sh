@@ -488,7 +488,7 @@ rm -f "$GW/stray"
 # gates enqueue/run: a session hands its gate run to the queue and can be archived; one runner
 # works through it oldest first under claude-heavy, skipping trees that already passed.
 # claude-heavy stub: takes the shared gate lock like the real one (owner = its pid), then runs the command.
-printf '%s\n' '#!/bin/bash' 'echo "heavy $*" >>"$ACTIONS"; [ -n "${HEAVYGIVEUP:-}" ] && exit 75' \
+printf '%s\n' '#!/bin/bash' 'echo "heavy $*" >>"$ACTIONS"; { pwd -P 2>/dev/null || echo GONE; } >>"$ACTIONS.cwd"; [ -n "${HEAVYGIVEUP:-}" ] && exit 75' \
   'while [ $# -gt 0 ] && [ "$1" != -- ]; do shift; done; [ $# -gt 0 ] && shift' \
   'L="$HOME/.local/state/gauss-gate.lock"; mkdir -p "${L%/*}"; mkdir "$L" || exit 9; echo "$$ now test" >"$L/owner"' \
   '"$@"; rc=$?; rm -rf "$L"; exit $rc' >"$T/home/.local/bin/claude-heavy"
@@ -508,9 +508,13 @@ expect "gates enqueue: a tree with a passing record is skipped, with a result li
 out=$(cd "$LIVE" && run gates result "$E"); [ $? = 3 ] && [[ "$out" == "QUEUED $(tree_of "$E" | cut -c1-7)"* ]]
 expect "gates result: a queued request says QUEUED (exit 3)" $?
 gated "$C" # C passes by hand while queued: the runner must not run it again
-out=$(run gates run 2>&1); rc=$?
+# Started from a folder that is then removed (4 Nov: a session's temporary worktree): the runner kept it as
+# its working directory and every git call failed ("getcwd: cannot access parent directories").
+gone="$T/gone-cwd"; mkdir -p "$gone"; rm -f "$T/actions.cwd"
+out=$(cd "$gone" && rmdir "$gone" && run gates run 2>&1); rc=$?
 [ $rc = 0 ] && [ "$(cut -d' ' -f2,4 "$GR" | tail -3 | tr '\n' ';')" = "$D PASSED;$E PASSED;$C SKIPPED;" ] && [ -z "$(ls "$GQ")" ]
 expect "gates run: requests run oldest first, one at a time; a tree that passed meanwhile is skipped" $?
+[ -s "$T/actions.cwd" ] && ! grep -q GONE "$T/actions.cwd"; expect "gates run: a removed starting folder doesn't break it (it works from the gates folder)" $?
 [ "$(grep -c '^heavy --wait [0-9]* --name gates --label gate queue' "$T/actions")" = 2 ] && [ "$(grep -c '^npm ci' "$T/actions")" = 1 ]
 expect "gates run: each run is admitted by claude-heavy; one install for runs sharing package-lock.json" $?
 python3 -Ic 'import json,sys; sys.exit(0 if all(json.load(open(f))["passed"] and json.load(open(f))["by"]=="test-user" for f in sys.argv[1:]) else 1)' \

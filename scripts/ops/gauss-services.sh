@@ -988,14 +988,17 @@ gates_start() { # start the one runner, detached from this session (own session 
   gates_refresh_runner || return 1
   if p=$(gates_runner_pid); then echo "The gate runner is working (pid $p)."; return 0; fi
   [ "${GAUSS_GATES_START:-1}" = 1 ] || return 0 # tests
-  nohup perl -MPOSIX -e 'POSIX::setsid(); exec @ARGV' /bin/bash "$GATES_DIR/runner.sh" gates run \
-    </dev/null >>"$LOGS/gates-runner.log" 2>&1 &
+  (cd "$GATES_DIR" && nohup perl -MPOSIX -e 'POSIX::setsid(); exec @ARGV' /bin/bash "$GATES_DIR/runner.sh" gates run \
+    </dev/null >>"$LOGS/gates-runner.log" 2>&1 &)
   echo "Gate runner started (log: $LOGS/gates-runner.log)."
 }
 
 gates_run() { # gates_run [--once]: work through the queue, oldest first, then exit; --once: stop after one wait that gave up
   local once=${1:-} self req sha tree queued rc pid me
   self="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
+  # Never the folder it was started from: that is a session's checkout, often a temporary worktree removed
+  # while the runner lives on (4 Nov: every git call then failed with getcwd errors).
+  cd "$GATES_DIR" 2>/dev/null || cd /
   me=$(shasum "$self" | cut -d' ' -f1)
   mkdir -p "$GATES_QUEUE"
   until mkdir "$GATES_RUNNER" 2>/dev/null; do
