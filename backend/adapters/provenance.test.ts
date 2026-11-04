@@ -64,6 +64,18 @@ test("NOAA: an HTTP failure is unknown, keeps the last real time, and names the 
   noURL(status.message);
 });
 
+test("NOAA: with no Kp product the L1 values still come back, Kp unknown (GAU-232)", async () => {
+  const noKp = (url: URL): Reply => (url.pathname.includes("k_index") || url.pathname.includes("k-index") ? { status: 404, body: "" } : rtsw(2)(url));
+  const readout = await withRoutes(noKp, () => fetchNoaaReadout(NOW));
+  assert.ok(readout, "the valid L1 solar wind is not thrown away");
+  assert.equal(readout.kp, null);
+  assert.equal(readout.kpReading, undefined);
+  assert.equal(readout.density, 5);
+  assert.equal(readout.magneticFieldGsm?.z, -3.97);
+  assert.equal(getNoaaStatus().healthy, true, "L1 is current; only Kp is unknown");
+  assert.match(getNoaaStatus().message ?? "", /no valid Kp/);
+});
+
 test("NOAA: an empty payload is unknown, never a default reading (GAU-63)", async () => {
   const readout = await withRoutes((url) => (url.pathname.includes("rtsw") ? { status: 200, body: [] } : rtsw(2)(url)), () => fetchNoaaReadout(NOW));
   assert.equal(readout, null);

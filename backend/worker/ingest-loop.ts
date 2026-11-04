@@ -9,7 +9,7 @@ import {
 } from "../adapters/goes-particles.js";
 import { fetchSwpcProducts, type SwpcProducts } from "../adapters/swpc-products.js";
 import { checkFieldMagnitude, checkPlasmaTracking, compareScales, expireCheck, fieldSampleProblem } from "../lib/sense-checks.js";
-import { geomagneticStorm, radiationStorm, radioBlackout } from "../physics/noaa-scales.js";
+import { currentKpReading, geomagneticStorm, radiationStorm, radioBlackout } from "../physics/noaa-scales.js";
 import { getJaxaStatus, probeJaxaCatalog } from "../adapters/jaxa-erg.js";
 import { fetchKyotoDst, freshDst, getKyotoDstStatus, type DstReading } from "../adapters/kyoto-dst.js";
 import { fetchMmsCdawebSamples, getMmsCdawebStatus } from "../adapters/mms-cdaweb.js";
@@ -290,7 +290,8 @@ export class IngestionWorker {
         magneticFieldGse: noaa.magneticFieldGse,
         velocityGsm: noaa.velocityGsm ?? null,
         magneticFieldGsm: noaa.magneticFieldGsm ?? null,
-        kp: noaa.kp,
+        // Only a Kp within its freshness bound; an old one is unknown (GAU-232).
+        kp: currentKpReading(noaa.kpReading, Date.parse(timestamp))?.value ?? null,
         // Measured Kyoto Dst while it is under 2 h old; otherwise the nowcast's labelled model
         // estimate (O'Brien & McPherron) takes over. GAU-116.
         dst: freshDst(this.kyotoDst, Date.parse(timestamp)),
@@ -311,8 +312,9 @@ export class IngestionWorker {
       magneticFieldGse: b,
       velocityGsm: v,
       magneticFieldGsm: b,
-      // No Kp from any source is unknown (null), not a quiet-time 2 (GAU-230).
-      kp: this.kpReading?.value ?? prev?.indices.kp ?? null,
+      // No current Kp from any source is unknown (null), not a quiet-time 2 (GAU-230), and not
+      // the last point's Kp of whatever age (GAU-232).
+      kp: currentKpReading(this.kpReading, Date.parse(timestamp))?.value ?? null,
       dst: freshDst(this.kyotoDst, Date.parse(timestamp)),
     };
   }
@@ -556,7 +558,7 @@ export class IngestionWorker {
         );
         // Score every served forecast later against observed Kp; persistence = Kp measured now.
         const f = this.latestForecast;
-        const kpNow = this.noaa?.kp;
+        const kpNow = currentKpReading(this.noaa?.kpReading, Date.parse(nowIso))?.value;
         if (f?.available && typeof kpNow === "number" && freshnessTier(this.noaa?.timestamp ?? null, Date.parse(nowIso)) <= 1) {
           this.forecastSkill.record(Date.parse(nowIso), f.horizonHours, f.predictedKpMax, kpNow);
         }
@@ -572,9 +574,10 @@ export class IngestionWorker {
       // Past the cap the readout is unknown, not "last known"; inputs fall back to the
       // previous canonical state and the point is flagged stale.
       this.noaa = null;
-    } else if (typeof this.noaa?.kp === "number") {
+    } else {
       // Resolve due forecasts only against a current measured Kp.
-      this.forecastSkill.resolve(Date.parse(nowIso), this.noaa.kp);
+      const kpNow = currentKpReading(this.noaa?.kpReading, Date.parse(nowIso));
+      if (kpNow) this.forecastSkill.resolve(Date.parse(nowIso), kpNow.value);
     }
     const mhdInput = this.blendInputs(nowIso);
     // The solar wind reaching Earth now, from the L1 history one travel time back.
@@ -591,9 +594,10 @@ export class IngestionWorker {
     );
     point.spacecraft = this.noaa?.spacecraft ?? this.latestCanonical?.spacecraft;
     point.arriving = arriving;
-    if (this.kpReading) {
-      point.indices.kpKind = this.kpReading.kind;
-      point.indices.kpObservedAt = this.kpReading.observedAt;
+    const kpShown = currentKpReading(this.kpReading, Date.parse(nowIso));
+    if (kpShown) {
+      point.indices.kpKind = kpShown.kind;
+      point.indices.kpObservedAt = kpShown.observedAt;
     }
     if (point.indices.dstMethod === "measured" && this.kyotoDst) point.indices.dstObservedAt = this.kyotoDst.timestamp;
     point.derived = this.derivedFields();
