@@ -381,6 +381,12 @@ out=$(run deploy "$C" 2>&1); rc=$?
 [ $rc = 1 ] && head_is "$Bc" && [[ "$out" == *"Rolled back: live is on ${Bc:0:7}"* ]] && [ "$(alerts)" = "deploy" ] && [[ "$(cat "$FB/ready")" == "$Bc $FB2 "* ]]
 expect "deploy of a bad commit: rolls back by itself and texts the phone; fallback is the last good one" $?
 grep -q "${C:0:7} failed, rolled back to ${Bc:0:7}" "$T/home/Library/Logs/gauss/deploy.log"; expect "deploy log records the rollback" $?
+# Service logs (4 Nov 2026: backend.log 12 MB, never rotated): over the cap, copied to .1 and emptied in place.
+LG="$T/home/Library/Logs/gauss"; head -c 6000000 /dev/zero | tr '\0' 'x' >"$LG/backend.log"; echo small >"$LG/frontend.log"; echo keep >"$LG/memory.tsv.test"
+run awake guard >/dev/null 2>&1
+[ ! -s "$LG/backend.log" ] && [ "$(stat -f %z "$LG/backend.log.1")" = 6000000 ] && [ "$(cat "$LG/frontend.log")" = small ] && [ ! -e "$LG/frontend.log.1" ] && [ -s "$LG/memory.tsv.test" ]
+expect "service logs over 5 MB are rotated to .1 and emptied; small ones and other tools' files are left" $?
+rm -f "$LG/backend.log.1" "$LG/memory.tsv.test"
 ev 'any(e["event"]=="deploy" and e["result"]=="ok" and e["live_sha"]=="'"$Bc"'" and e["from"]=="'"$A"'" and e["fallback_sha"]=="'"$A"'" for e in E)'
 expect "events: a deploy line carries live_sha (the new commit), from and the fallback SHA" $?
 ev '[(e["event"],e["result"],e["live_sha"]) for e in E if e["event"] in ("deploy","rollback")][-2:]==[("deploy","failed","'"$C"'"),("rollback","ok","'"$Bc"'")]'
