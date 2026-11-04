@@ -12,8 +12,13 @@ Before tagging, move these entries under `## [0.1.0] - <date>`.
 
 ### Added
 
+- Argo third-party registry: every outside service as a node with what it can see, its scopes, where its credential
+  lives and where to revoke it; `argo thirdparty check` flags new, changed and unregistered services (#219).
 - Inference trust records: the record engine (#115), `POST /api/v1/data/trust/records` on the metered data API (#116),
   SGP4 orbit context from TLEs (#122), and a South Atlantic Anomaly flag from IGRF-14 |B| (#128).
+- Ed25519 signing of evidence packs and release files, with one offline verify command for customers (#161), and the
+  first published evidence-pack and release keys (#197), which can be locked under a pattern drawn on a rotating
+  tesseract (#200).
 - Customer inference-log ingest (CSV, JSON, JSONL) with per-row provenance; every row is accepted or rejected with a
   reason (#126).
 - Space weather: separate radiation (S) and geomagnetic (G) storm streams (#101), a sense-check layer with a NOAA
@@ -39,6 +44,8 @@ Before tagging, move these entries under `## [0.1.0] - <date>`.
   double precision, matching the TypeScript path (#96); an unused magnetic-field estimate that was 10^7 too high was
   removed (#114).
 - Telemetry store: bounded tail reads, corrupt lines skipped, buffer reloaded on restart (#59).
+- Live-feed WebSockets stay connected: one upgrade router instead of two servers that each rejected the other's
+  sockets (#163).
 
 ### Security
 

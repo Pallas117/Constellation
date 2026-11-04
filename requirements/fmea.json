@@ -183,14 +183,14 @@
       "item": "Host (Judith laptop)",
       "failureMode": "Sleeps, loses power or fails",
       "effect": "Whole service down, fallback included: single point of failure",
-      "detection": "Pipeline verdict 'stalled' after 3 missed ticks; HUD shows STALLED; the awake guard texts the phone at 20% and 10% battery",
-      "mitigation": "Auto-restart on wake; the awake guard keeps the host running with the lid closed down to 10% battery; a process or release failure on this host fails over to the cold-standby fallback (FM-20 to FM-24). No standby host",
+      "detection": "Pipeline verdict 'stalled' after 3 missed ticks; HUD shows STALLED; the awake guard texts the phone at 50% and 40% battery (#173)",
+      "mitigation": "Auto-restart on wake; the awake guard keeps the host running with the lid closed down to 40% battery, then lets it sleep (#173); a process or release failure on this host fails over to the cold-standby fallback (FM-20 to FM-24). No standby host",
       "severity": 5,
       "likelihood": 4,
       "residualLikelihood": 3,
       "verifiedBy": [
         "pipeline timer: status follows data age and loop liveness",
-        "replayed 57→2% drain: warn from 20%, critical from 10%",
+        "replayed 57→2% drain: warn from 50%, critical from 40%",
         "out of restarts and still down: fails over to the fallback and texts the phone"
       ],
       "gap": "Host loss (power, hardware, OS) is unmitigated: the fallback runs on the same host, so it goes down too. Needs a second node with at least 16 GB RAM as a warm standby, with data replication and Tailscale failover (docs/STABILITY.md)"
@@ -316,9 +316,12 @@
         "fallback status: ready although its path has a space",
         "dev refuses the fallback checkout (path with a space)",
         "a corrupt, cut-short or orphaned fallback record reads as none prepared: no half failover, still alerts",
-        "deploy: a fallback that fails to rebuild stops the deploy and is not left marked ready"
+        "deploy: a fallback that fails to rebuild stops the deploy and is not left marked ready",
+        "standby checkout gone: texted while live still runs",
+        "standby record corrupt: texted",
+        "standby checkout moved after it was prepared: texted"
       ],
-      "gap": "Nothing texts when the standby goes bad: it shows in status and check, or as a 'keeps failing' alert only once the failover is needed"
+      "gap": "A moved checkout is texted but still used if a failover comes before someone re-prepares it (serving something beats serving nothing); the text is at most every 6 h"
     },
     {
       "id": "FM-22",
@@ -373,10 +376,11 @@
         "deploy of a bad commit: rolls back by itself and texts the phone; fallback is the last good one",
         "deploy and rollback both fail: switches to the fallback (kept, not replaced by an unhealthy live)",
         "deploy: a fallback that fails to rebuild stops the deploy and is not left marked ready",
-        "deploy with no fallback prepared or given: warns, deploys, leaves none",
+        "deploy with no fallback prepared or given: refused, live unchanged",
+        "deploy --no-fallback: warns, deploys, leaves none",
         "fallback status: none prepared is a warning"
       ],
-      "gap": "With no fallback prepared and no path given, deploy warns and goes ahead, leaving none; a failed refresh of the current fallback stops the deploy but leaves no fallback until `fallback prepare` succeeds"
+      "gap": "A person can still deploy with none (--no-fallback, or --emergency); a failed refresh of the current fallback stops the deploy but leaves no fallback until `fallback prepare` succeeds (texted as FM-21)"
     }
   ]
 }

@@ -6,15 +6,17 @@
  *
  * Integrity: records are sorted and hash-chained (link = SHA-256 of the previous link and the
  * record's own hash, starting from the previous pack's hash when there is one), and the pack
- * hash covers everything. Anyone holding a trusted copy of the pack hash can tell whether the
- * pack was changed; signing that hash is GAU-67. The same stored inputs and code give the same
- * pack, byte for byte.
+ * hash covers everything but the signature. Authorship: an Ed25519 signature over the pack hash
+ * and chain head (GAU-67, `signing.ts`) shows which Gauss key made the pack, so a customer
+ * needs only the published keyring, not a trusted copy of the hash. The same stored inputs and
+ * code give the same pack hash and unsigned pack, byte for byte; signing adds the signing time.
  *
  * Wording is enforced, not just intended: the limitations always state that this is the
  * environment, not the spacecraft; Gauss-authored text may not use the trust record's banned
  * words, make a regulatory claim, or say the spacecraft experienced something.
  */
 import { createHash } from "node:crypto";
+import type { PackSignature } from "./signing.js";
 import {
   canonicalJson,
   RECORD_LIMITATIONS,
@@ -35,7 +37,7 @@ export const PACK_LIMITATIONS = [
   ENVIRONMENT_NOT_SPACECRAFT,
   "Advisory only: Gauss has no telecommand authority over any spacecraft.",
   "No regulatory or compliance claim is made.",
-  "Integrity, not yet authenticity: the hashes show whether the pack changed after it was made, given a trusted copy of the pack hash. The pack is not signed yet.",
+  "Integrity and authorship: the hashes show whether the pack changed after it was made. A valid signature from a key in the published Gauss keyring shows that Gauss made it; an unsigned pack shows integrity only, given a trusted copy of the pack hash.",
 ];
 
 /** Regulatory claims a pack must not make without written advice from counsel. */
@@ -89,13 +91,15 @@ export interface EvidencePack {
   chain: { head: string; links: ChainLink[] };
   records: TrustRecord[];
   limitations: string[];
-  /** Reserved for GAU-67 (a signature over `packHash`); always null until then. */
-  signature: null;
-  /** SHA-256 of the canonical pack without this field. */
+  /** Ed25519 signature over the pack hash and chain head (GAU-67), or null when unsigned. */
+  signature: PackSignature | null;
+  /** SHA-256 of the canonical pack without this field and with `signature` null, so signing or re-signing never changes it. */
   packHash: string;
 }
 
 const sha256 = (s: string) => createHash("sha256").update(s).digest("hex");
+/** The pack hash recomputed from the pack's content (the signature is not part of it). */
+export const packHashOf = ({ packHash: _packHash, ...rest }: EvidencePack) => sha256(canonicalJson({ ...rest, signature: null }));
 const recordHashOf = ({ hash: _hash, ...rest }: TrustRecord) => sha256(canonicalJson(rest));
 const linkOf = (prev: string, recordHash: string) => sha256(prev + recordHash);
 const verdictCounts = (): Record<Verdict, number> => ({ consistent: 0, "degraded-context": 0, unknown: 0 });
@@ -209,7 +213,10 @@ export function buildEvidencePack(
   return { ...withId, packHash: sha256(canonicalJson(withId)) };
 }
 
-/** Every problem found in a pack; an empty list means it is intact and follows the wording rules. */
+/**
+ * Every problem found in a pack; an empty list means it is intact and follows the wording rules.
+ * Who made it is a separate check: `verifyPackSignature` in `signing.ts`.
+ */
 export function verifyEvidencePack(pack: EvidencePack): string[] {
   const problems: string[] = [];
   if (pack?.schema !== EVIDENCE_PACK_SCHEMA) return [`not an evidence pack (schema ${String(pack?.schema)})`];
@@ -240,8 +247,6 @@ export function verifyEvidencePack(pack: EvidencePack): string[] {
   if (canonicalJson(summarise(records)) !== canonicalJson({ scope: pack.scope, summary: pack.summary })) problems.push("the summary does not match the records");
   if (!pack.limitations?.includes(ENVIRONMENT_NOT_SPACECRAFT)) problems.push("the environment-not-spacecraft limitation is missing");
   problems.push(...packWording(pack));
-  if (pack.signature !== null) problems.push("signed packs are not supported yet (GAU-67)");
-  const { packHash, ...rest } = pack;
-  if (sha256(canonicalJson(rest)) !== packHash) problems.push("the pack hash does not match the pack");
+  if (packHashOf(pack) !== pack.packHash) problems.push("the pack hash does not match the pack");
   return problems;
 }

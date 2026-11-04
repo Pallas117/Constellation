@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
 import test from "node:test";
-import { displayPath, memoryBaseUrl, memoryQuery, memoryStatus } from "./client.js";
+import { displayPath, memoryBaseUrl, memoryConfigured, memoryQuery, memoryStatus } from "./client.js";
 
 test("only a loopback http URL reaches the memory service (it has no auth of its own)", () => {
   assert.equal(memoryBaseUrl(undefined), "http://127.0.0.1:3002", "default");
@@ -86,4 +86,10 @@ test("an unconfigured memory service is reported, not faked", async (t) => {
   const status = await memoryStatus();
   assert.equal(status.available, false);
   assert.match(!status.available ? status.reason : "", /not configured/);
+});
+
+test("GAU-228: the console hides its memory panel only when the service is switched off, not when it is unset", () => {
+  assert.equal(memoryConfigured(undefined), true, "unset uses the default loopback URL");
+  assert.equal(memoryConfigured("http://127.0.0.1:3022"), true);
+  for (const off of ["off", "", "http://example.com:3002"]) assert.equal(memoryConfigured(off), false, off);
 });

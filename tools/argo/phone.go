@@ -29,6 +29,9 @@ type Phone struct {
 	Queue  string // jsonl file of pending alerts
 	Device string
 	send   func(to, text string) error // replaced in tests
+	// sendRelay is for alerts sent while this Mac has no network (GAU-233): SMS first, so Messages
+	// hands it to the iPhone over Continuity instead of holding an iMessage it can't deliver.
+	sendRelay func(to, text string) error
 }
 
 func newPhone(to, device string) *Phone {
@@ -48,6 +51,9 @@ func newPhoneFor(cfg Config) *Phone {
 		return nil
 	}
 	p := newPhone(cfg.PhoneTo, cfg.Device)
+	if p != nil {
+		p.sendRelay = smsFirst
+	}
 	if p != nil && strings.EqualFold(cfg.PhoneService, "sms") && strings.HasPrefix(p.To, "+") {
 		p.send = smsFirst
 	}
@@ -56,12 +62,77 @@ func newPhoneFor(cfg Config) *Phone {
 
 // smsFirst sends an SMS (via the iPhone's Text Message Forwarding), which
 // shows a banner even when it comes from your own number, then falls back to
-// iMessage.
+// iMessage. Messages accepts an SMS before the iPhone has sent it, so a text
+// the iPhone then fails (a red "Not Delivered" on 2 Nov) looked sent and was
+// never retried: the outcome is now read back (smsOutcome) and a failed SMS
+// goes out again over iMessage.
 func smsFirst(to, text string) error {
-	if err := messagesSend("SMS", to, text); err == nil {
+	at := time.Now()
+	if err := sendVia("SMS", to, text); err == nil && !smsFailed(to, at) {
 		return nil
 	}
-	return messagesSend("iMessage", to, text)
+	return sendVia("iMessage", to, text)
+}
+
+// sendVia and smsStatus are the host calls, replaced in tests.
+var (
+	sendVia   = messagesSend
+	smsStatus = chatDBStatus
+)
+
+// smsState is what Messages has recorded for the SMS just sent.
+type smsState int
+
+const (
+	smsUnreadable  smsState = iota // Argo can't read Messages' records (no Full Disk Access), or not macOS
+	smsPending                     // not recorded yet, or the iPhone hasn't confirmed it
+	smsSent                        // the iPhone sent it
+	smsFailedState                 // Messages marked it "Not Delivered"
+)
+
+const (
+	smsCheckFor   = 20 * time.Second // the iPhone usually confirms within a few seconds
+	smsCheckEvery = 2 * time.Second
+)
+
+// smsFailed waits briefly for the iPhone's verdict on an SMS sent at `at`.
+// Only a recorded failure counts: no access, or no verdict in time, keeps the
+// old behaviour (treated as sent), so a missing permission never doubles texts.
+func smsFailed(to string, at time.Time) bool {
+	deadline := time.Now().Add(smsCheckFor)
+	for {
+		switch smsStatus(to, at) {
+		case smsFailedState:
+			return true
+		case smsSent, smsUnreadable:
+			return false
+		}
+		if time.Now().After(deadline) {
+			return false
+		}
+		time.Sleep(smsCheckEvery)
+	}
+}
+
+// smsOutcome reads one row of Messages' records as sqlite3 -json prints it:
+// the error code and sent/delivered flags of the oldest SMS to the handle
+// since the send. No message text is read.
+func smsOutcome(out []byte) smsState {
+	var rows []struct {
+		Error       int `json:"error"`
+		IsSent      int `json:"is_sent"`
+		IsDelivered int `json:"is_delivered"`
+	}
+	if json.Unmarshal(bytes.TrimSpace(out), &rows) != nil || len(rows) == 0 {
+		return smsPending
+	}
+	switch r := rows[0]; {
+	case r.Error != 0:
+		return smsFailedState
+	case r.IsSent != 0 || r.IsDelivered != 0:
+		return smsSent
+	}
+	return smsPending
 }
 
 // iMessage sends over iMessage, then falls back to SMS (the iPhone's Text
@@ -69,9 +140,9 @@ func smsFirst(to, text string) error {
 // doesn't silence alerts. Handle and text are argv items, never
 // interpolated into the script.
 func iMessage(to, text string) error {
-	err := messagesSend("iMessage", to, text)
+	err := sendVia("iMessage", to, text)
 	if err != nil && strings.HasPrefix(to, "+") {
-		if smsErr := messagesSend("SMS", to, text); smsErr == nil {
+		if smsErr := sendVia("SMS", to, text); smsErr == nil {
 			return nil
 		}
 	}
@@ -89,6 +160,24 @@ func (p *Phone) Send(title, msg string, at time.Time) {
 		defer unlock()
 	} // still best-effort deliver if the lock is stuck
 	p.deliver(append(p.readQueue(), text))
+}
+
+// SendRelay sends one alert while this Mac is offline and reports whether Messages accepted it.
+// A failure is queued like any other alert, so it still arrives once the Mac is back online.
+func (p *Phone) SendRelay(title, msg string, at time.Time) bool {
+	text := fmt.Sprintf("%s on %s (%s)\n%s", Mask(title), p.Device, at.Local().Format("15:04"), Mask(msg))
+	send := p.send
+	if p.sendRelay != nil && strings.HasPrefix(p.To, "+") {
+		send = p.sendRelay
+	}
+	if unlock, err := p.queueLock(); err == nil {
+		defer unlock()
+	}
+	if err := send(p.To, text); err != nil {
+		p.writeQueue(append(p.readQueue(), text))
+		return false
+	}
+	return true
 }
 
 // Flush retries queued alerts; called every tick so offline alerts arrive once back online.
@@ -160,6 +249,14 @@ func phoneSetup(args []string, cfg Config) error {
 			return err
 		}
 		fmt.Println("sent a test alert to", p.To)
+		if strings.EqualFold(cfg.PhoneService, "sms") {
+			if chatDBReadable() {
+				fmt.Println("delivery check: on (an SMS the iPhone fails is resent over iMessage)")
+			} else {
+				fmt.Println("delivery check: off. Argo can't see whether the iPhone sent the SMS, so a red \"Not Delivered\" text is not resent.")
+				fmt.Println("  To turn it on: System Settings > Privacy & Security > Full Disk Access > + > ~/.local/bin/argo")
+			}
+		}
 		return nil
 	case "off":
 		cfg.PhoneTo = ""

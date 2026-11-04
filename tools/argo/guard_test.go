@@ -197,7 +197,7 @@ func TestAssessLevels(t *testing.T) {
 		{"pressure critical", func(s *Sample) { s.Pressure = "critical" }, LevelBlock, "mem-critical"},
 		{"pressure warn, just started", func(s *Sample) { s.Pressure = "warn" }, LevelWatch, "mem-warn"},
 		{"pressure unknown", func(s *Sample) { s.Pressure = "" }, LevelWatch, "pressure-unknown"},
-		{"swap at the balance limit", func(s *Sample) { s.SwapGB = 4.2 }, LevelRisk, "swap-high"},
+		{"swap at the balance limit, no calm hour on record", func(s *Sample) { s.SwapGB = 4.2 }, LevelRisk, "swap-high"},
 		{"no headroom is information, not risk", func(s *Sample) { s.RAMGB, s.InRAMGB = 8, 7.5 }, LevelOK, "no-headroom"},
 		{"battery at the floor", func(s *Sample) { s.Batt = battery(9, false) }, LevelBlock, "battery-floor"},
 		{"battery low", func(s *Sample) { s.Batt = battery(18, false) }, LevelRisk, "battery-low"},
@@ -239,6 +239,43 @@ func TestAssessTrends(t *testing.T) {
 	}
 	if a.WarnMin != 40 || a.SwapRiseGB != 1.2 {
 		t.Errorf("warn %d min, swap +%v GB; want 40, 1.2", a.WarnMin, a.SwapRiseGB)
+	}
+
+	// High swap after a calm hour is stale (macOS keeps it allocated): watch, not risk.
+	// A warn reading, a gap or growth within the hour keeps it a risk.
+	hour := func(edit func(i int, s *Sample)) []Sample {
+		var h []Sample
+		for i := 60; i > 0; i -= 5 {
+			s := calm()
+			s.At, s.SwapGB = t0.Add(-time.Duration(i)*time.Minute), 4.6
+			edit(i, &s)
+			h = append(h, s)
+		}
+		return h
+	}
+	stale := calm()
+	stale.SwapGB = 4.6
+	for _, c := range []struct {
+		name  string
+		edit  func(i int, s *Sample)
+		level Level
+	}{
+		{"calm hour, swap flat", func(int, *Sample) {}, LevelWatch},
+		{"warn 30 min ago", func(i int, s *Sample) {
+			if i == 30 {
+				s.Pressure = "warn"
+			}
+		}, LevelRisk},
+		{"swap still climbing", func(i int, s *Sample) { s.SwapGB = 4.6 - float64(i)*0.01 }, LevelRisk},
+		{"readings only for the last 30 min", func(i int, s *Sample) {
+			if i > 30 {
+				s.At = s.At.Add(-2 * time.Hour)
+			}
+		}, LevelRisk},
+	} {
+		if as := assess(hour(c.edit), stale); as.Level != c.level || !strings.Contains(codes(as), "swap-high") {
+			t.Errorf("%s: %s [%s], want %s", c.name, as.Level, codes(as), c.level)
+		}
 	}
 
 	// A 20 min gap (lid shut, Argo off) is not time at warn.
@@ -358,6 +395,15 @@ func TestAdmit(t *testing.T) {
 	}
 	if yes, why := admit(watch, 2); yes || !strings.Contains(why, "light work only") {
 		t.Errorf("watch admitted 2 GB: %s", why)
+	}
+	d := calm()
+	d.DiskGB = 16
+	if yes, why := admit(assess(nil, d), 1.4); !yes {
+		t.Errorf("a tight disk alone capped a 1.4 GB job: %s", why)
+	}
+	d.Batt = &Battery{Present: true, Pct: 80}
+	if yes, _ := admit(assess(nil, d), 1.4); yes {
+		t.Error("tight disk plus another watch finding should keep the light-job cap")
 	}
 	r := calm()
 	r.Pressure = "critical"
@@ -513,7 +559,7 @@ func fakeRunner(t *testing.T, levels ...Assessment) guardRunner {
 	i := 0
 	return guardRunner{
 		store: Store{Dir: filepath.Join(t.TempDir(), "not-yet-created")}, out: io.Discard, every: 20 * time.Millisecond, retry: 10 * time.Millisecond,
-		grace: 2 * time.Second, strikes: 2,
+		grace: 2 * time.Second, strikes: 2, first: 10 * time.Millisecond,
 		assess: func() (Sample, Assessment) {
 			a := levels[min(i, len(levels)-1)]
 			i++
@@ -570,7 +616,114 @@ func TestGuardRun(t *testing.T) {
 	}
 
 	// Waiting: refused at first, admitted once the host recovers.
-	if yes, why := fakeRunner(t, block, block, ok).waitAdmit(0, time.Second); !yes {
+	if yes, why, _, _ := fakeRunner(t, block, block, ok).waitAdmit("", 0, time.Second); !yes {
 		t.Errorf("waitAdmit gave up: %s", why)
+	}
+}
+
+// ---- coping at warn (2026-10-31) ----
+
+func TestAvailAndSwapOut(t *testing.T) {
+	if got := availGB("43\n", 8); got != 3.4 {
+		t.Errorf("availGB(43%%, 8 GB) = %v, want 3.4", got)
+	}
+	for _, bad := range []string{"", "x", "0", "101"} {
+		if got := availGB(bad, 8); got != 0 {
+			t.Errorf("availGB(%q) = %v, want 0 (unknown)", bad, got)
+		}
+	}
+	vm := "Mach Virtual Memory Statistics: (page size of 16384 bytes)\nSwapouts:                                      65536.\n"
+	if got := swapOutGB(vm); got != 1 {
+		t.Errorf("swapOutGB = %v, want 1 (65536 pages of 16 KB)", got)
+	}
+}
+
+// warnHost is this 8 GB Mac on a typical afternoon: warn for the whole hour,
+// swap flat, the kernel counting avail GB as available, swapping out mbMin MB a
+// minute between one-minute readings.
+func warnHost(avail, mbMin float64) ([]Sample, Sample) {
+	var hist []Sample
+	for i := 40; i >= 0; i-- {
+		s := Sample{At: t0.Add(-time.Duration(i) * time.Minute), Pressure: "warn", RAMGB: 8, InRAMGB: 7.5,
+			SwapGB: 2, DiskGB: 200, CPUs: 8, Load1: 2, SpeedPct: 100, AvailGB: avail,
+			SwapOutGB: 10 + float64(40-i)*mbMin/1024}
+		hist = append(hist, s)
+	}
+	return hist[:len(hist)-1], hist[len(hist)-1]
+}
+
+func TestCopingAtWarn(t *testing.T) {
+	hist, cur := warnHost(3.4, 1)
+	a := assess(hist, cur)
+	if !a.Coping || a.Level != LevelWatch || !strings.Contains(codes(a), "mem-warn-coping") || strings.Contains(codes(a), "mem-warn-sustained") {
+		t.Fatalf("40 min of warn, 1 MB/min paging, 3.4 GB available: %s [%s] coping=%v paging=%v", a.Level, codes(a), a.Coping, a.PagingMBMin)
+	}
+	if a.PagingMBMin != 1 || a.AvailRoomGB != 1.9 {
+		t.Errorf("paging %v MB/min, room %v GB; want 1, 1.9", a.PagingMBMin, a.AvailRoomGB)
+	}
+	if yes, why := admit(a, 1.5); !yes || !strings.Contains(why, "coping") {
+		t.Errorf("coping host refused a 1.5 GB job (the old light-job cap is 1 GB): %s", why)
+	}
+	if yes, why := admit(a, 2.5); yes || !strings.Contains(why, "available") {
+		t.Errorf("coping host admitted 2.5 GB with 1.9 GB of room: %s", why)
+	}
+
+	// Paging fast: short, whatever the flag says, and nothing starts.
+	hist, cur = warnHost(3.4, 200)
+	if a := assess(hist, cur); a.Coping || a.Level != LevelRisk || !strings.Contains(codes(a), "mem-paging") {
+		t.Errorf("200 MB/min swap-out: %s [%s] coping=%v", a.Level, codes(a), a.Coping)
+	} else if yes, _ := admit(a, 0.3); yes {
+		t.Error("admitted a job while the host swaps out 200 MB/min")
+	}
+
+	// No earlier reading (or an old Argo's history without counters): unknown
+	// paging is not coping, so the old sustained-warn rule still applies.
+	hist, cur = warnHost(3.4, 1)
+	for i := range hist {
+		hist[i].SwapOutGB = 0
+	}
+	if a := assess(hist, cur); a.Coping || a.PagingMBMin != -1 || !strings.Contains(codes(a), "mem-warn-sustained") {
+		t.Errorf("unknown paging: coping=%v paging=%v [%s]", a.Coping, a.PagingMBMin, codes(a))
+	}
+
+	// Nothing available after the reserve: not coping.
+	hist, cur = warnHost(1.2, 1)
+	if a := assess(hist, cur); a.Coping {
+		t.Errorf("1.2 GB available (under the 1.5 GB reserve) counted as coping")
+	}
+
+	// A reboot resets the counter: unknown, not negative.
+	hist, cur = warnHost(3.4, 1)
+	cur.SwapOutGB = 0.01
+	if p := paging(hist, cur); p != -1 {
+		t.Errorf("counter went back: paging %v, want -1", p)
+	}
+}
+
+func TestAdmitUsesAvailableAtNormal(t *testing.T) {
+	// 31 Oct 12:41: pressure normal, 6.0 of 8 GB held by work (0.5 GB after the reserve), but the
+	// kernel counted ~3.4 GB available and nothing was paging. A 1 GB job was refused at normal
+	// that would have started at warn.
+	hist, cur := warnHost(3.4, 1)
+	for i := range hist {
+		hist[i].Pressure = "normal"
+	}
+	cur.Pressure, cur.InRAMGB = "normal", 6.0
+	a := assess(hist, cur)
+	if a.HeadroomGB != 0.5 || a.AvailRoomGB != 1.9 {
+		t.Fatalf("headroom %v, room %v; want 0.5, 1.9", a.HeadroomGB, a.AvailRoomGB)
+	}
+	if yes, why := admit(a, 1); !yes {
+		t.Errorf("normal pressure, 1.9 GB available after the reserve, refused 1 GB: %s", why)
+	}
+	if yes, _ := admit(a, 2.5); yes {
+		t.Error("admitted 2.5 GB with 1.9 GB available")
+	}
+	// Paging unknown: only RAM not held by work counts, as before.
+	for i := range hist {
+		hist[i].SwapOutGB = 0
+	}
+	if yes, _ := admit(assess(hist, cur), 1); yes {
+		t.Error("admitted 1 GB on 0.5 GB headroom with paging unknown")
 	}
 }
