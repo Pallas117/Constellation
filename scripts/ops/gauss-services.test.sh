@@ -659,6 +659,17 @@ out=$(cd "$LIVE" && run gates result "$P6" 2>&1); rc=$?
 [ $rc = 3 ] && [[ "$out" == QUEUED* ]] && [[ "$(cd "$LIVE" && run gates enqueue "$P6" 2>&1)" == *"Already queued"* ]] && [ "$(ls "$GQ" | wc -l | tr -d ' ')" = 1 ]
 expect "train: a request moved to the merged head is found by its tree (gates result says queued; no second request)" $?
 rm -f "$GQ"/*.req
+# 4 Nov: a train head that already passed (held as a draft) and is then marked ready merges without a
+# second run when it still contains main; when main has moved past it, it is queued to sync and re-gate.
+: >"$T/actions"; echo "OPEN train main false CLEAN" >"$GHD/pr13"; git --git-dir="$ORIGIN" update-ref refs/heads/train "$P5"
+out=$(cd "$LIVE" && run gates enqueue "$P5" --pr 13 2>&1)
+grep -qx "gh merge 13 $P5" "$T/actions" && [[ "$out" == *"Merged PR #13"* ]] && [ -z "$(ls "$GQ")" ]
+expect "train: an already-passed head that contains main is merged on re-enqueue, without a second run" $?
+M2=$(tc "$M1" main.txt main-2); g push -q origin "$M2:refs/heads/main" && g fetch -q origin; : >"$T/actions"
+out=$(cd "$LIVE" && run gates enqueue "$P5" --pr 13 2>&1)
+[[ "$out" == *"main has moved past it: queueing"* ]] && [ "$(ls "$GQ" | grep -c '\.req$')" = 1 ] && ! grep -q "gh merge" "$T/actions"
+expect "train: an already-passed head that main moved past is queued to sync, not merged" $?
+rm -f "$GQ"/*.req
 g checkout -q --detach "$prevhead"; g remote remove origin; rm -f "$T/bin/gh" "$T/home/.gitconfig"
 
 # balance (GAU-126): shed optional load, undo it when conditions recover
