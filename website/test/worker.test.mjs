@@ -12,7 +12,8 @@ import { SECURITY_HEADERS } from "../worker/headers.js";
 import { RECORDED_AT, fixture, makeFetch } from "./fixtures/fetch.mjs";
 import { memoryKV } from "./fixtures/kv.mjs";
 import { makeAccess } from "./fixtures/access.mjs";
-import { accessIdentity, isAdmin, isStaff } from "../worker/auth.js";
+import { accessIdentity, isAdmin, isCleared, isStaff } from "../worker/auth.js";
+import { liveViewCard, turnstoneCard } from "../worker/app.js";
 import { getAccount, listApplications, putAccount, saveApplication, senderOf } from "../worker/data.js";
 import { applyEvent, createPortal, formEncode, signPayload, verifySignature } from "../worker/stripe.js";
 import { billingStatus, isAcademicEmail } from "../worker/tiers.js";
@@ -1093,6 +1094,38 @@ test("staff: the operations and training card is for STAFF_EMAILS and admins, wi
   assert.doesNotMatch(await page(e, "visitor@example.test"), /Operations and training/);
   assert.doesNotMatch(await page({ ...e, OPS_URL: "javascript:alert(1)" }, "crew@example.test"), /Operations and training/, "https only");
   assert.doesNotMatch(await page({ ...e, OPS_URL: "" }, "crew@example.test"), /Operations and training/, "hidden until set");
+});
+
+test("one login: Turnstone shows only to TURNSTONE_EMAILS and says no more than the public page", async () => {
+  const { env, access } = await appEnv();
+  const e = { ...env, TURNSTONE_EMAILS: "Cleared@Example.test", ADMIN_EMAILS: "boss@example.test" };
+  assert.equal(isCleared(e, "cleared@example.test"), true);
+  assert.equal(isCleared(e, "boss@example.test"), false, "admins are not cleared automatically");
+  assert.equal(isCleared({ ...e, TURNSTONE_EMAILS: undefined }, "cleared@example.test"), false);
+  const page = async (env2, who) => (await send(env2, await as(access, who, "/app/"))).text();
+  const html = await page(e, "cleared@example.test");
+  assert.match(html, /<h2 class="label">Turnstone<\/h2><p class="big">Classified<\/p>/);
+  assert.match(html, /href="https:\/\/cal\.com\/joshua-nathan-xrnrqh\/30min" rel="noopener">Request a briefing</, "the briefing call until a room exists");
+  assert.doesNotMatch(html, /This account has no Gauss plan yet/);
+  assert.match(await page({ ...e, TURNSTONE_URL: "https://room.example.test/" }, "cleared@example.test"), /href="https:\/\/room\.example\.test\/" rel="noopener">Open the briefing room</);
+  assert.doesNotMatch(await page({ ...e, TURNSTONE_URL: "javascript:alert(1)" }, "cleared@example.test"), /javascript:/, "https only");
+  for (const who of ["visitor@example.test", "boss@example.test", "member@example.test"])
+    assert.doesNotMatch(await page(e, who), /label">Turnstone<|Classified|cleared for/i, `${who}: no Turnstone card (the footer link is public)`);
+  const card = turnstoneCard("");
+  for (const word of ["consult", "security", "hardware", "defence", "defense", "weapon"]) assert.doesNotMatch(card, new RegExp(word, "i"));
+});
+
+test("one login: everyone signed in gets the free Gauss live view once GAUSS_APP_URL is https", async () => {
+  const { env, access } = await appEnv();
+  const page = async (env2, who) => (await send(env2, await as(access, who, "/app/"))).text();
+  const e = { ...env, GAUSS_APP_URL: "https://app.example.test/" };
+  const html = await page(e, "visitor@example.test");
+  assert.match(html, /<h2 class="label">Gauss<\/h2><p class="big">Live view<\/p>/);
+  assert.match(html, /<a href="https:\/\/app\.example\.test\/" rel="noopener">Open the live view<\/a>/);
+  assert.doesNotMatch(html, /This account has no Gauss plan yet/);
+  assert.doesNotMatch(await page({ ...e, GAUSS_APP_URL: "" }, "visitor@example.test"), /Open the live view/, "hidden until set");
+  assert.doesNotMatch(await page({ ...e, GAUSS_APP_URL: "http://app.example.test/" }, "visitor@example.test"), /Open the live view/, "https only");
+  assert.equal(liveViewCard("javascript:alert(1)"), "");
 });
 
 test("group calls: a member's page reads one cached index, not a KV list per call; the index heals itself", async () => {

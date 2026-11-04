@@ -53,3 +53,6 @@ const listed = (list, email) => !!email && String(list ?? "").toLowerCase().spli
 export const isAdmin = (env, email) => listed(env.ADMIN_EMAILS, email);
 /** The Lightbound team (STAFF_EMAILS, a secret so the addresses stay out of the public repo); admins count as staff. */
 export const isStaff = (env, email) => isAdmin(env, email) || listed(env.STAFF_EMAILS, email);
+/** Turnstone is secret: only TURNSTONE_EMAILS (a secret, never in this repo) see anything about it once signed in.
+ * Admins are not added automatically; clearance is one list, on purpose. */
+export const isCleared = (env, email) => listed(env.TURNSTONE_EMAILS, email);
