@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { WebSocket } from "ws";
 import { isAllowedOrigin, startBackend, stopBackend } from "./server.ts";
 
 function withNodeEnv(value: string | undefined, fn: () => void) {
@@ -35,6 +36,51 @@ test("development allows any loopback port but not look-alike hosts", () => {
     assert.equal(isAllowedOrigin("http://evil.com#localhost"), false);
     assert.equal(isAllowedOrigin("not a url"), false);
   });
+});
+
+/** Open a feed socket and report its first message and whether it was still open after `holdMs`. */
+function feedSocket(url: string, origin?: string, holdMs = 300) {
+  return new Promise<{ first: string | null; status: number | null; closeCode: number | null; openAfter: boolean }>((resolve) => {
+    const result = { first: null as string | null, status: null as number | null, closeCode: null as number | null, openAfter: false };
+    const ws = new WebSocket(url, origin ? { origin } : {});
+    ws.on("message", (data) => (result.first ??= String(data)));
+    ws.on("unexpected-response", (_req, res) => {
+      result.status = res.statusCode ?? null;
+      res.resume();
+      ws.terminate();
+    });
+    ws.on("error", () => {});
+    ws.on("close", (code) => (result.closeCode = code));
+    setTimeout(() => {
+      result.openAfter = ws.readyState === WebSocket.OPEN;
+      ws.terminate();
+      resolve(result);
+    }, holdMs);
+  });
+}
+
+test("feed WebSockets: both paths connect at once and stay open; bad origin and unknown path refused (GAU-201)", async (t) => {
+  const { server, host } = await startBackend({ port: 0 });
+  const { port } = server.address() as { port: number };
+  const base = `ws://${host}:${port}`;
+  t.after(async () => {
+    delete process.env.AUTH_REQUIRED;
+    await stopBackend();
+  });
+
+  process.env.AUTH_REQUIRED = "false"; // dev bypass, so the guard admits the socket
+  const streams = ["space-weather", "mms-reconnection"];
+  const opened = await Promise.all(streams.map((s) => feedSocket(`${base}/ws/feed/${s}`)));
+  opened.forEach((r, i) => {
+    assert.equal(r.status, null, streams[i]);
+    assert.equal(JSON.parse(r.first ?? "{}").payload?.stream, streams[i], `${streams[i]}: its own handler answered`);
+    assert.equal(r.openAfter, true, `${streams[i]}: still open`);
+  });
+
+  const blocked = await Promise.all(streams.map((s) => feedSocket(`${base}/ws/feed/${s}`, "https://evil.example")));
+  blocked.forEach((r, i) => assert.equal(r.closeCode, 1008, `${streams[i]}: origin guard`));
+
+  assert.equal((await feedSocket(`${base}/ws/feed/unknown`)).status, 400);
 });
 
 test("RAG endpoints require a session and never log query text", async (t) => {

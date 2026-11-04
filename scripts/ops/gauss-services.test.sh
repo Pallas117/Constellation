@@ -14,15 +14,18 @@ pass=0; failed=0
 
 stub() { printf '#!/bin/bash\n%s\n' "$2" >"$T/bin/$1"; chmod +x "$T/bin/$1"; }
 stub pmset 'if [ "$1 $2" = "-g log" ]; then echo "2026-10-21 00:05:01 +0800 Shutdown Cause  	Shutdown Cause: ${CAUSE:--128}";
+elif [ "$1 $2" = "-g ac" ]; then [ -z "${ACW:-}" ] || printf " Wattage = %sW\n" "$ACW";
 elif [ "$1 $2" = "-g batt" ]; then printf "Now drawing from '"'"'%s'"'"'\n -InternalBattery-0 (id=1)\t%s\n" "$SRC" "$BATT"; else printf " SleepDisabled\t\t%s\n" "${SD:-0}"; fi'
 stub memory_pressure 'echo "System-wide memory free percentage: ${FREE:-50}%"'
 stub sysctl 'case "$*" in
   *pressure_level*) echo "${LEVEL:-1}" ;;
+  *memorystatus_level*) echo "${AVAIL:-50}" ;;
   *boottime*) echo "{ sec = ${BOOT:-1000}, usec = 5 } Thu Oct 22 01:01:27 2026" ;;
   *) echo "total = 6144.00M  used = ${SWAPUSED:-1000}.00M  free = 0.00M  (encrypted)" ;;
 esac'
-stub ps 'echo "2097152 node"'
-stub ioreg 'echo "\"AppleClamshellState\" = No"'
+stub ps 'case "$*" in *comm=*) echo "/opt/homebrew/bin/node" ;; *) echo "2097152 node" ;; esac'
+stub top 'printf "Processes: 600 total\nPID    MEM\n${TOPPID:-1177}  ${TOPMEM:-2048M}\n"'
+stub ioreg 'echo "\"AppleClamshellState\" = No"; [ -z "${FCC:-}" ] || echo "  \"BatteryData\" = {\"FullChargeCapacity\"=$FCC,\"NominalChargeCapacity\"=2424,\"DesignCapacity\"=4382}"'
 # bootout/bootstrap flip a label in $KICKS.state (over $LOADED) and are logged in $KICKS
 stub launchctl 'S="$KICKS.state"; case "$1" in
   print) l=${2##*/}; grep -qx "in $l" "$S" 2>/dev/null && exit 0; grep -qx "out $l" "$S" 2>/dev/null && exit 1
@@ -40,8 +43,11 @@ stub argo 'case "$1" in
   status) echo "${ARGOSTATUS:-● OK MY ts:on}" ;;
 esac'
 
-# balance stubs: the local model server is "running" when MLX=1; actions land in $ACTIONS
-stub pgrep '[ "${MLX:-0}" = 1 ] && [[ "$*" == *mlx_lm.server* && "$*" == *"--port ${MLXPORT:-8089}"* ]]'
+# balance stubs: the local model server is "running" when MLX=1; a helper named $LEAKY runs as
+# pid 4242 with footprint $LEAKFP; actions land in $ACTIONS
+stub pgrep 'if [ "$1" = -x ]; then [ -n "${LEAKY:-}" ] && [ "$2" = "$LEAKY" ] && echo 4242; exit; fi
+[ "${MLX:-0}" = 1 ] && [[ "$*" == *mlx_lm.server* && "$*" == *"--port ${MLXPORT:-8089}"* ]]'
+stub footprint '[ "$*" = "-p 4242" ] && printf "Gauss\n    phys_footprint: %s\n    phys_footprint_peak: 9 GB\n" "${LEAKFP:-12 MB}"'
 stub pkill 'echo "pkill $*" >>"$ACTIONS"'
 mkdir -p "$T/home/.local/bin"
 printf '#!/bin/bash\necho "local-coder $*" >>"$ACTIONS"\n' >"$T/home/.local/bin/local-coder"
@@ -56,14 +62,26 @@ run() { # run <args...>: gauss-services.sh with the stubs; alerts land in $LOG
     GAUSS_SUDOERS="$T/sudoers" MLX="${MLX:-0}" MLXPORT="${MLXPORT:-8089}" ACTIONS="$T/actions" GAUSS_BALANCE="${GAUSS_BALANCE:-1}" \
     LOADED="${LOADED:-}" HEALTH="${HEALTH:-200}" HEALTH_FILE="${HEALTH_FILE:-}" GAUSS_DEPLOY_WAIT=0 DISKGB="${DISKGB:-50}" \
     GATEFAIL="${GATEFAIL:-}" GAUSS_BY=test-user BOOT="${BOOT:-1000}" GAUSS_DIAG_DIRS="$T/diag" GAUSS_EVENTS_MAX_KB="${GAUSS_EVENTS_MAX_KB:-5120}" \
-    GAUSS_DEV_DRY="${GAUSS_DEV_DRY:-0}" GAUSS_DEV_API_PORT="${GAUSS_DEV_API_PORT:-3101}" \
-    SRC="${SRC:-AC Power}" BATT="${BATT:-80%; charging; present: true}" SD="${SD:-0}" \
+    GAUSS_DEV_DRY="${GAUSS_DEV_DRY:-0}" GAUSS_GATES_START=0 HEAVYGIVEUP="${HEAVYGIVEUP:-}" GAUSS_GATES_EXPIRE_H="${GAUSS_GATES_EXPIRE_H:-72}" GAUSS_DEV_API_PORT="${GAUSS_DEV_API_PORT:-3101}" \
+    SRC="${SRC:-AC Power}" BATT="${BATT:-80%; charging; present: true}" SD="${SD:-0}" FCC="${FCC:-}" ACW="${ACW:-}" \
+    LEAKY="${LEAKY:-}" LEAKFP="${LEAKFP:-12 MB}" AVAIL="${AVAIL:-50}" GAUSS_SWAP_LAST="${SWAPLAST:-/dev/null}" \
     ARGOSTATUS="${ARGOSTATUS:-}" LEVEL="${LEVEL:-1}" FREE="${FREE:-50}" SWAPUSED="${SWAPUSED:-1000}" OLD_ARGO="${OLD_ARGO:-}" bash "$SCRIPT" "$@"
 }
 expect() { # expect <name> <condition-exit-code>
   if [ "$2" = 0 ]; then pass=$((pass + 1)); else failed=$((failed + 1)); echo "FAIL: $1"; sed 's/^/    alerts: /' "$T/log"; fi
   [ -z "$JUNIT" ] || junit_case "$1" "$2" "$(sed 's/^/alerts: /' "$T/log")"
 }
+
+# Deploy/check guard against a hardcoded tailnet API origin (2026-10-31: the bare 'ts.net' grep
+# matched the Mesh page's ".ts.net" suffix check and rolled back every deploy of main).
+eval "$(sed -n '/^tailnet_api_in()/p' "$SCRIPT")"
+mkdir -p "$T/dist-suffix" "$T/dist-url" "$T/dist-plain"
+printf 'function t(h){return h.endsWith(".ts.net")}' >"$T/dist-suffix/index.js"
+printf 'const API="http://judith.tail4f9ebe.ts.net/api"' >"$T/dist-url/index.js"
+printf 'const API=""' >"$T/dist-plain/index.js"
+! tailnet_api_in "$T/dist-suffix"; expect "deploy guard: a build that only names the .ts.net suffix is same-origin" $?
+tailnet_api_in "$T/dist-url"; expect "deploy guard: a build that hardcodes a tailnet API URL is caught" $?
+! tailnet_api_in "$T/dist-plain"; expect "deploy guard: a plain same-origin build passes" $?
 alerts() { cut -d' ' -f2 "$T/log" | tr '\n' ' ' | sed 's/ $//'; } # the -key of each alert sent
 plain() { sed $'s/\033\\[[0-9;]*m//g'; }                          # drop the ✓/✗ colours
 
@@ -72,8 +90,32 @@ SRC="AC Power" BATT="6%; AC attached; not charging present: true" SD=1 run awake
 [ "$(alerts)" = "awake-unguarded charger-weak" ]; expect "6% on a weak charger with sleep disabled and no guard" $?
 SRC="AC Power" BATT="80%; charging; 1:00 remaining present: true" run awake guard
 [ -z "$(alerts)" ]; expect "80% charging: no alerts" $?
-SRC="Battery Power" BATT="18%; discharging; 1:00 remaining present: true" run awake guard
-[ "$(alerts)" = "battery-low" ]; expect "18% on battery: low warning" $?
+SRC="Battery Power" BATT="45%; discharging; 1:00 remaining present: true" run awake guard
+[ "$(alerts)" = "battery-low" ]; expect "45% on battery: low warning" $?
+# A worn battery lasts less per percent (4 Nov 2026: 52% health, 40 -> 28% in 16 min, then hibernate):
+# under 70% health the floor and the warning rise 10 points.
+SRC="Battery Power" BATT="55%; discharging; 1:00 remaining present: true" run awake guard
+[ -z "$(alerts)" ]; expect "55% on a battery of unknown health: no warning" $?
+FCC=4000 SRC="Battery Power" BATT="55%; discharging; 1:00 remaining present: true" run awake guard
+[ -z "$(alerts)" ]; expect "55% on a healthy battery (91%): no warning" $?
+FCC=2294 SRC="Battery Power" BATT="55%; discharging; 1:00 remaining present: true" run awake guard
+[ "$(alerts)" = "battery-low" ] && grep -q "sleeps at 50%" "$T/log"; expect "55% on a worn battery (52% health): low warning, sleeps at 50%" $?
+FCC=2294 SRC="Battery Power" BATT="48%; discharging; 1:00 remaining present: true" run awake guard
+[ "$(alerts)" = "battery-critical" ]; expect "48% on a worn battery: at its 50% floor" $?
+# Plug in ahead: on battery with gate runs queued (each ~5 % of battery, measured 3 Nov)
+PQ="$T/home/Library/Application Support/Gauss/gates/queue"; mkdir -p "$PQ"
+SRC="Battery Power" BATT="80%; discharging; 3:00 remaining present: true" run awake guard
+[ -z "$(alerts)" ]; expect "plug ahead: on battery with nothing queued, no text" $?
+touch "$PQ/1-a.req" "$PQ/2-b.req"
+SRC="Battery Power" BATT="80%; discharging; 3:00 remaining present: true" run awake guard
+[ -z "$(alerts)" ]; expect "plug ahead: 80% covers two queued gates (~10%), no text" $?
+SRC="Battery Power" BATT="57%; discharging; 2:00 remaining present: true" run awake guard
+[ "$(alerts)" = "plug-ahead" ] && grep -q "plug in soon" "$T/log"; expect "plug ahead: 57% with two gates queued would stop at 50%: text early" $?
+SRC="Battery Power" BATT="45%; discharging; 1:00 remaining present: true" run awake guard
+[[ " $(alerts) " == *" plug-ahead "* ]] && grep -q "plug in to keep merging" "$T/log"; expect "plug ahead: under 50% with gates queued, they wait: text" $?
+SRC="AC Power" BATT="45%; charging; present: true" run awake guard
+[ -z "$(alerts)" ]; expect "plug ahead: on AC, no text" $?
+rm -f "$PQ"/*.req
 SRC="Battery Power" BATT="9%; discharging; 0:20 remaining present: true" run awake guard
 [ "$(alerts)" = "battery-critical" ]; expect "9% on battery: at the floor" $?
 SRC="Battery Power" BATT="55%; discharging; 4:00 remaining present: true" run awake guard
@@ -94,17 +136,59 @@ run awake guard
 [ -z "$(alerts)" ]; expect "2.8 of 3 GB swap (91%; macOS adds swap files on demand): no alert" $?
 stub sysctl 'case "$*" in
   *pressure_level*) echo "${LEVEL:-1}" ;;
+  *memorystatus_level*) echo "${AVAIL:-50}" ;;
   *boottime*) echo "{ sec = ${BOOT:-1000}, usec = 5 } Thu Oct 22 01:01:27 2026" ;;
   *) echo "total = 6144.00M  used = ${SWAPUSED:-1000}.00M  free = 0.00M  (encrypted)" ;;
 esac'
 LEVEL=1 SWAPUSED=3000 run awake guard
 [ -z "$(alerts)" ]; expect "healthy memory: no alerts" $?
+AVAIL=8 run awake guard
+[ "$(alerts)" = "memory-low" ] && grep -q "memory almost out (8% left)" "$T/log"
+expect "8% available at a 'normal' pressure level (the level lags swap death): alert" $?
+AVAIL=12 run awake guard
+[ -z "$(alerts)" ]; expect "12% available: no alert" $?
+# Runaway: swap grows 1 GB+ between two readings at most 150 s apart
+rm -f "$T/swaplast"
+SWAPLAST="$T/swaplast" SWAPUSED=1000 run awake guard
+[ -z "$(alerts)" ]; expect "first swap reading: nothing to compare, no alert" $?
+SWAPLAST="$T/swaplast" SWAPUSED=2200 run awake guard
+[ "$(alerts)" = "swap-fast" ] && grep -q "Biggest: node 2.0 GB" "$T/log"; expect "swap +1.2 GB in a minute: runaway alert naming the biggest process" $?
+echo "$(( $(date +%s) - 600 )) 1000" >"$T/swaplast"
+SWAPLAST="$T/swaplast" SWAPUSED=2200 run awake guard
+[ -z "$(alerts)" ]; expect "the same rise over 10 minutes is not a runaway" $?
+
+# mem-guard's samples: what to close (sustained warn and swap climbing are Argo's guard texts, GAU-165)
+M="$T/home/Library/Logs/gauss/memory.tsv"; mkdir -p "${M%/*}"
+sample() { printf '%s\t%s\t40\t1.3\t1.8\t1.1\t2.8\t6\t%s\t15\t9.4\t8\t40\t2.2\t1.3\t1.2\t0.4\t0.1\t0.4\t0.4\t4.7\t5.5\t0.1\n' "$(date -v-"$1"M '+%F %T')" "$2" "$3"; }
+{ printf 'ts\tlevel\tfree_pct\twired\tanon\tfile\tcmp_occ\tcmp_data\tswap\tdisk\tdemand\tram\tswapped_pct\tclaude_app\tcowork_vm\tclaude_code\tgauss_live\tdev\tvpn\twhatsapp\tbrowser\tmacos\tapps\n'
+  sample 32 2 2.0; sample 21 2 2.4; sample 11 2 2.8; sample 1 2 3.2; } >"$M"
+SWAPUSED=4300 run awake guard
+grep -q "Gauss: swap 4.2 GB" "$T/log" && grep -q "Close: browser tabs 4.7 GB" "$T/log"; expect "high swap: the text says what to close" $?
+touch -t "$(date -v-2H '+%Y%m%d%H%M')" "$M"
+SWAPUSED=4300 run awake guard
+grep -q "Close: node 2.0 GB" "$T/log"; expect "a stale sample (2 h old) is not used; falls back to the biggest process" $?
+rm -f "$M"
 
 # Disk (seen on the dev Mac: 5 GB free with 5 GB of swap)
 DISKGB=5 run awake guard
 [ "$(alerts)" = "disk-low" ]; expect "5 GB free disk: alert; a cleanup that frees nothing is not claimed" $?
 DISKGB=20 run awake guard
 [ -z "$(alerts)" ]; expect "20 GB free disk: no alert" $?
+rm -f "$T/home/Library/Application Support/Gauss/balance-cleanup"
+DISKGB=13 run awake guard
+[ -z "$(alerts)" ] && grep -qx "disk-cleanup --apply --if-below 15" "$T/actions"
+expect "13 GB free with little swap (54% of the dev Mac's samples): quiet cleanup, no text" $?
+grep -q "balance: cleared\|disk-cleanup" "$T/actions"; expect "the quiet cleanup still runs" $?
+rm -f "$T/home/Library/Application Support/Gauss/balance-cleanup"
+DISKGB=13 SWAPUSED=4300 run awake guard
+grep -q "disk 13 GB free, swap 4.2 GB" "$T/log" && grep -q "Swap is growing on a short disk" "$T/log"
+expect "13 GB free with 4.2 GB swap (the 2026-10-22 panic's combination): a text that says why" $?
+DISKGB=9 run awake guard
+[ "$(alerts)" = "disk-low" ] && grep -q "below 12 GB" "$T/log"; expect "9 GB free: a text whatever the swap" $?
+out=$(DISKGB=13 run resilience 2>&1 | plain)
+[[ "$out" == *"✓ disk 13 GB free"* ]]; expect "resilience: 13 GB free with little swap passes" $?
+out=$(DISKGB=13 SWAPUSED=4300 run resilience 2>&1 | plain)
+[[ "$out" == *"✗ disk 13 GB free (need 12+, or 15+ while swap is over 4 GB)"* ]]; expect "resilience: 13 GB with high swap fails and says why" $?
 
 # Replay: a real overnight drain from the dev Mac's pmset log (57% down to 2%,
 # lid closed, on battery). Alert keys per reading; argo rate-limits repeats.
@@ -113,8 +197,8 @@ for pct in 57 48 30 21 20 15 11 10 6 2; do
   SRC="Battery Power" BATT="${pct}%; discharging; present: true" run awake guard
   seq+="$pct:$(alerts) "
 done
-[ "$seq" = "57: 48: 30: 21: 20:battery-low 15:battery-low 11:battery-low 10:battery-critical 6:battery-critical 2:battery-critical " ]
-expect "replayed 57→2% drain: warn from 20%, critical from 10%" $?
+[ "$seq" = "57: 48:battery-low 30:battery-critical 21:battery-critical 20:battery-critical 15:battery-critical 11:battery-critical 10:battery-critical 6:battery-critical 2:battery-critical " ]
+expect "replayed 57→2% drain: warn from 50%, critical from 40%" $?
 
 EV="$T/home/Library/Logs/gauss/events.jsonl"
 # ev <python expr over the list E of events>: true when it holds (python3 -I, so the check can't import from here)
@@ -182,6 +266,20 @@ for rec in "abc1234def" "not a ready record" "abc1234def $T/gone checkout $(date
 done
 echo "$good" >"$FB/ready"
 [ $bad = 0 ]; expect "a corrupt, cut-short or orphaned fallback record reads as none prepared: no half failover, still alerts" $?
+# FM-21: the standby going bad is texted when it happens, not only once a failover needs it.
+fbsave="$T/fb-save"; mkdir -p "$fbsave"; cp "$T/log" "$WD/watch-kicks" "$fbsave/" 2>/dev/null || true # the failover tests below need them
+fbbad() { : >"$T/log"; rm -f "$WD"/*.strikes "$WD/watch-kicks"; LOADED="$B" run awake guard >/dev/null 2>&1; grep "^[^ ]* fallback-bad " "$T/log"; }
+[ -z "$(fbbad)" ]; expect "a usable standby: no standby text" $?
+echo "abc1234def $T/gone checkout $(date +%s)" >"$FB/ready"; out=$(fbbad)
+[[ "$out" == *"checkout, build or agents are gone"* ]]; expect "standby checkout gone: texted while live still runs" $?
+echo "abc1234def" >"$FB/ready"; [[ "$(fbbad)" == *"corrupt or cut short"* ]]; expect "standby record corrupt: texted" $?
+FBG="$T/fb-git"; mkdir -p "$FBG/frontend/dist"; touch "$FBG/frontend/dist/index.html"
+git -C "$FBG" init -q && git -C "$FBG" add -A && git -C "$FBG" -c user.name=t -c user.email=t@t commit -qm one
+echo "$(git -C "$FBG" rev-parse HEAD) $FBG $(date +%s)" >"$FB/ready"; ok1=$(fbbad)
+git -C "$FBG" -c user.name=t -c user.email=t@t commit -q --allow-empty -m two
+[ -z "$ok1" ] && [[ "$(fbbad)" == *"checkout moved to"* ]]; expect "standby checkout moved after it was prepared: texted" $?
+rm -f "$FB/ready"; [ -z "$(fbbad)" ]; expect "nothing prepared: no standby text (status warns, deploy refuses)" $?
+echo "$good" >"$FB/ready"; rm -f "$WD"/*.strikes; cp "$fbsave/log" "$T/log"; cp "$fbsave/watch-kicks" "$WD/" 2>/dev/null || true
 out=$(run dev "$FBDIR" 2>&1); [[ "$out" == *"is the fallback checkout"* ]]; expect "dev refuses the fallback checkout (path with a space)" $?
 for _ in 1 2; do HEALTH=000 LOADED="$B uk.lightbound.gauss-frontend" run awake guard; done
 [ "$(kicked)" = "bootout $B bootout uk.lightbound.gauss-frontend bootout uk.lightbound.gauss-fallback-backend bootstrap uk.lightbound.gauss-fallback-backend bootout uk.lightbound.gauss-fallback-frontend bootstrap uk.lightbound.gauss-fallback-frontend" ] \
@@ -234,8 +332,13 @@ stub node 'if [[ " $* " == *" build "* ]]; then mkdir -p frontend/dist && touch 
 stub npm 'if [ "$1" = run ]; then
   case "$2" in
     test:ops) echo "gauss-services: 99 passed, 0 failed"; echo "ok  	argo	1.0s" ;;
-    test) if [ "$GATEFAIL" = test ]; then printf "ℹ tests 5\nℹ pass 4\nℹ fail 1\n"; else printf "ℹ tests 5\nℹ pass 5\nℹ fail 0\n"; fi ;;
-    verify) echo "▶ VCRM: 40/40 requirements verified"; echo "▶ FMEA: 12/14 failure modes mitigated"; echo "✅ VERIFY PASSED at $(git rev-parse --short HEAD)" ;;
+    test|build) echo "$2 is not a gate: verify runs it" >&2; exit 9 ;;
+    verify) echo "▶ Test suite"
+      if [ "$GATEFAIL" = test ]; then printf "ℹ tests 5\nℹ pass 4\nℹ fail 1\n✖ Test suite (exit 1)\n"; else printf "ℹ tests 5\nℹ pass 5\nℹ fail 0\n✔ Test suite\n"; fi
+      printf "▶ Production build\n✔ Production build\n"
+      echo "▶ VCRM: 40/40 requirements verified"; echo "▶ FMEA: 12/14 failure modes mitigated"
+      if [ "$GATEFAIL" = test ]; then echo "❌ VERIFY FAILED"; exit 1; fi
+      echo "✅ VERIFY PASSED at $(git rev-parse --short HEAD)" ;;
   esac
   [ "$GATEFAIL" != "$2" ]; exit
 fi
@@ -256,6 +359,9 @@ gated() { local t; t=$(g rev-parse "$1^{tree}"); mkdir -p "$WD/gates"
   printf '{"sha":"%s","tree":"%s","passed":true,"by":"test-user","at":"2026-10-22T00:00:00Z","test":{"pass":5}}\n' "$1" "$t" >"$WD/gates/$t.json"; }
 main_at "$C"; for x in "$A" "$Bc" "$C" "$D"; do gated "$x"; done
 FB2="$T/Gauss Aurora.worktrees/fb2"; rm -f "$FB/ready" "$T/kicks.state"; export HEALTH_FILE="$LIVE/health"
+out=$(run deploy "$Bc" --dry-run 2>&1); rc=$?
+[ $rc = 2 ] && head_is "$A" && [[ "$out" == *"unknown option --dry-run"* ]] && [ ! -d "$WD/deploying" ]
+expect "deploy: an unknown flag stops before anything changes (not taken as the fallback dir)" $?
 out=$(run deploy "$Bc" "$FB2" 2>&1); rc=$?
 [ $rc = 0 ] && head_is "$Bc" && [[ "$out" == *"Deployed ${Bc:0:7}"* ]] && grep -q t1 "$LIVE/data/bedrock/telemetry.jsonl" && [ ! -d "$WD/deploying" ]
 expect "deploy: live switched, its local data kept, lock released" $?
@@ -316,11 +422,23 @@ touch -t 202001010000 "$WD/deploying"
 HEALTH=000 LOADED="$B" run awake guard; HEALTH=000 LOADED="$B" run awake guard
 [ "$(kicked)" = "$B" ]; expect "a deploy lock older than 30 min no longer silences the guard" $?
 rmdir "$WD/deploying"; rm -f "$WD/watch-kicks" "$WD"/*.strikes "$T/kicks.state"
-rm -f "$FB/ready" # nothing prepared and no path given: the deploy goes ahead, says so, and leaves no standby
+rm -f "$FB/ready" # nothing prepared and no path given (FM-24): refused unless a person says --no-fallback
 out=$(run deploy "$Bc" 2>&1); rc=$?
+[ $rc = 1 ] && ! head_is "$Bc" && [[ "$out" == *"No fallback to refresh"*"--no-fallback"* ]]
+expect "deploy with no fallback prepared or given: refused, live unchanged" $?
+out=$(run deploy "$Bc" --no-fallback 2>&1); rc=$?
 [ $rc = 0 ] && head_is "$Bc" && [[ "$out" == *"warning: no fallback to refresh"* ]] && [ ! -e "$FB/ready" ]
-expect "deploy with no fallback prepared or given: warns, deploys, leaves none" $?
-main_at "$D"; run deploy "$D" >/dev/null 2>&1; head_is "$D"; expect "deploy back to D, the gated tree the GAU-162 checks below start from" $?
+expect "deploy --no-fallback: warns, deploys, leaves none" $?
+main_at "$D"; run deploy "$D" --no-fallback >/dev/null 2>&1; head_is "$D"; expect "deploy back to D, the gated tree the GAU-162 checks below start from" $?
+# A deploy's install and build can run a low battery flat mid-switch (4 Nov 2026: one ran at 13% on 8 W).
+main_at "$Bc"
+out=$(SRC="Battery Power" BATT="13%; discharging; present: true" run deploy "$Bc" 2>&1); rc=$?
+[ $rc = 1 ] && head_is "$D" && [[ "$out" == *"battery 13% on battery"* ]]; expect "deploy refused at 13% on battery" $?
+out=$(ACW=8 BATT="13%; charging; present: true" run deploy "$Bc" 2>&1); rc=$?
+[ $rc = 1 ] && head_is "$D" && [[ "$out" == *"13% on a 8 W charger"* ]]; expect "deploy refused at 13% on an 8 W charger" $?
+out=$(BATT="40%; AC attached; not charging present: true" run deploy "$Bc" 2>&1); rc=$?
+[ $rc = 1 ] && head_is "$D" && [[ "$out" == *"charger isn't keeping up"* ]]; expect "deploy refused at 40% on a charger that isn't keeping up" $?
+main_at "$D"
 
 # GAU-162: every deploy and rollback is recorded; only merged, gated trees go live without --emergency
 H="$WD/deploy-history.jsonl"
@@ -355,14 +473,193 @@ rec="$WD/gates/$(g rev-parse "$D^{tree}").json"; rm -f "$rec"
 out=$(run gates record "$GW" 2>&1); rc=$?
 [ $rc = 0 ] && [[ "$out" == *"PASSED ${D:0:7}"*"npm test 5/5, test:ops 99 passed, build ok, quality ok, VCRM 40/40, FMEA 12/14"* ]] \
   && python3 -Ic 'import json,sys; r=json.load(open(sys.argv[1])); sys.exit(0 if r["passed"] and r["sha"]==sys.argv[2] and r["by"]=="test-user" and r["test_ops"]["go_ok"]==1 else 1)' "$rec" "$D"
-expect "gates record: runs the five gates and records the counts by tree" $?
+expect "gates record: runs the gates (test and build inside verify) and records the counts by tree" $?
 [ ! -d "$T/home/.local/state/gauss-gate.lock" ]; expect "gates record releases the shared gate lock" $?
 out=$(run gates); [[ "$out" == *"PASSED ${D:0:7}"* ]]; expect "gates lists the records" $?
 out=$(GATEFAIL=test run gates record "$GW" 2>&1); rc=$?
-[ $rc != 0 ] && [[ "$out" == *"FAILED (test) ${D:0:7}"* ]] && ! python3 -Ic 'import json,sys; sys.exit(0 if json.load(open(sys.argv[1]))["passed"] else 1)' "$rec"
+[ $rc != 0 ] && [[ "$out" == *"FAILED (test, verify) ${D:0:7}"* ]] && ! python3 -Ic 'import json,sys; sys.exit(0 if json.load(open(sys.argv[1]))["passed"] else 1)' "$rec"
 expect "gates record: a failing gate is recorded as FAILED, so the tree can't be deployed" $?
+kept="$WD/gates/logs/$(basename "$rec" .json)"
+[[ "$out" == *"Failed gate output: $kept"* ]] && grep -q "VERIFY FAILED" "$kept/verify.log" && [ ! -f "$kept/test:ops.log" ]
+expect "gates record: a failed gate's output is kept beside the record, passing gates' is not" $?
 touch "$GW/stray"; out=$(run gates record "$GW" 2>&1); [[ "$out" == *"uncommitted or untracked"* ]]; expect "gates record refuses a dirty checkout" $?
 rm -f "$GW/stray"
+
+# gates enqueue/run: a session hands its gate run to the queue and can be archived; one runner
+# works through it oldest first under claude-heavy, skipping trees that already passed.
+# claude-heavy stub: takes the shared gate lock like the real one (owner = its pid), then runs the command.
+printf '%s\n' '#!/bin/bash' 'echo "heavy $*" >>"$ACTIONS"; [ -n "${HEAVYGIVEUP:-}" ] && exit 75' \
+  'while [ $# -gt 0 ] && [ "$1" != -- ]; do shift; done; [ $# -gt 0 ] && shift' \
+  'L="$HOME/.local/state/gauss-gate.lock"; mkdir -p "${L%/*}"; mkdir "$L" || exit 9; echo "$$ now test" >"$L/owner"' \
+  '"$@"; rc=$?; rm -rf "$L"; exit $rc' >"$T/home/.local/bin/claude-heavy"
+chmod +x "$T/home/.local/bin/claude-heavy"
+GQ="$WD/gates/queue"; GR="$WD/gates/results.log"; GCO="$T/live-checkout.worktrees/gates"
+tree_of() { g rev-parse "$1^{tree}"; }
+rm -f "$WD/gates/$(tree_of "$D").json" "$WD/gates/$(tree_of "$E").json" "$WD/gates/$(tree_of "$C").json"
+SW="$T/session worktree"; g worktree add -q --detach "$SW" "$D" # a session's worktree of the same repo
+out=$(run gates enqueue "$SW" 2>&1); [[ "$out" == *"Queued ${D:0:7}"* ]] && [ "$(ls "$GQ" | grep -c '\.req$')" = 1 ]
+expect "gates enqueue: a clean checkout is queued by tree" $?
+out=$(cd "$LIVE" && run gates enqueue "$D" 2>&1); [[ "$out" == *"Already queued: tree $(tree_of "$D" | cut -c1-7)"* ]] && [ "$(ls "$GQ" | grep -c '\.req$')" = 1 ]
+expect "gates enqueue: the same tree is queued once" $?
+out=$(cd "$LIVE" && run gates enqueue "$A" 2>&1); [[ "$out" == *"Already passed: ${A:0:7}"* ]] && [ "$(ls "$GQ" | grep -c '\.req$')" = 1 ] \
+  && [ "$(tail -1 "$GR" | cut -d' ' -f2,4)" = "$A SKIPPED" ]
+expect "gates enqueue: a tree with a passing record is skipped, with a result line" $?
+(cd "$LIVE" && run gates enqueue "$E" >/dev/null 2>&1 && run gates enqueue "$C" >/dev/null 2>&1)
+out=$(cd "$LIVE" && run gates result "$E"); [ $? = 3 ] && [[ "$out" == "QUEUED $(tree_of "$E" | cut -c1-7)"* ]]
+expect "gates result: a queued request says QUEUED (exit 3)" $?
+gated "$C" # C passes by hand while queued: the runner must not run it again
+out=$(run gates run 2>&1); rc=$?
+[ $rc = 0 ] && [ "$(cut -d' ' -f2,4 "$GR" | tail -3 | tr '\n' ';')" = "$D PASSED;$E PASSED;$C SKIPPED;" ] && [ -z "$(ls "$GQ")" ]
+expect "gates run: requests run oldest first, one at a time; a tree that passed meanwhile is skipped" $?
+[ "$(grep -c '^heavy --wait [0-9]* --name gates --label gate queue' "$T/actions")" = 2 ] && [ "$(grep -c '^npm ci' "$T/actions")" = 1 ]
+expect "gates run: each run is admitted by claude-heavy; one install for runs sharing package-lock.json" $?
+python3 -Ic 'import json,sys; sys.exit(0 if all(json.load(open(f))["passed"] and json.load(open(f))["by"]=="test-user" for f in sys.argv[1:]) else 1)' \
+  "$WD/gates/$(tree_of "$D").json" "$WD/gates/$(tree_of "$E").json" && [ "$(git -C "$GCO" rev-parse HEAD)" = "$E" ]
+expect "gates run: results are recorded by tree exactly as gates record does, in the queue's own checkout" $?
+[ ! -d "$T/home/.local/state/gauss-gate.lock" ] && [ ! -d "$WD/gates/runner" ]
+expect "gates run: no self-deadlock on claude-heavy's gate lock; runner and gate locks released" $?
+out=$(cd "$LIVE" && run gates result "$E"); [ $? = 0 ] && [[ "$out" == *" $E $(tree_of "$E") PASSED ${E:0:7}"* ]]
+expect "gates result: the one-line result for a commit (exit 0 passed)" $?
+out=$(run gates result "${E:0:9}"); [ $? = 0 ]; expect "gates result: a SHA prefix works without the checkout" $?
+g checkout -q --detach "$E"; echo f >"$LIVE/backend/server.ts"; g commit -qam queued-f; F=$(g rev-parse HEAD); g checkout -q --detach "$E"
+(cd "$LIVE" && run gates enqueue "$F" >/dev/null 2>&1)
+out=$(HEAVYGIVEUP=1 run gates run --once 2>&1); [[ "$out" == *"still waiting"* ]] && [ "$(ls "$GQ" | grep -c '\.req$')" = 1 ] \
+  && [ "$(tail -1 "$GR" | cut -d' ' -f2)" != "$F" ]; expect "gates run: when claude-heavy gives up, the request stays queued" $?
+GAUSS_GATES_EXPIRE_H=0 run gates run >/dev/null 2>&1
+[ "$(tail -1 "$GR" | cut -d' ' -f2,4)" = "$F EXPIRED" ] && [ -z "$(ls "$GQ")" ]; expect "gates run: a request waiting past GAUSS_GATES_EXPIRE_H expires" $?
+g checkout -q --detach "$E"; echo h1 >"$LIVE/backend/server.ts"; g commit -qam h1; H1=$(g rev-parse HEAD)
+echo h2 >"$LIVE/backend/server.ts"; g commit -qam h2; H2=$(g rev-parse HEAD); g checkout -q --detach "$E"
+(cd "$LIVE" && run gates enqueue "$H1" >/dev/null 2>&1); out=$(cd "$LIVE" && run gates enqueue "$H2" 2>&1)
+[[ "$out" == *"Superseded ${H1:0:7}"* ]] && [ "$(ls "$GQ" | grep -c '\.req$')" = 1 ] && grep -q "sha=$H2" "$GQ"/*.req
+expect "gates enqueue: a new head replaces its branch's older queued head" $?
+rm -f "$GQ"/*.req
+g update-ref refs/remotes/origin/main "$H1"
+(cd "$LIVE" && run gates enqueue "$H1" >/dev/null 2>&1); (cd "$LIVE" && run gates enqueue "$H2" >/dev/null 2>&1)
+[ "$(ls "$GQ" | grep -c '\.req$')" = 2 ]; expect "gates enqueue: a queued commit on origin/main is never superseded" $?
+g update-ref -d refs/remotes/origin/main
+rm -f "$GQ"/*.req
+# Stacked PRs (2026-11-02, #210 on #158): the lower head is still its branch's head and must pass on its own.
+g update-ref refs/heads/stack-low "$H1"; g update-ref refs/heads/stack-high "$H2"
+(cd "$LIVE" && run gates enqueue "$H1" >/dev/null 2>&1); out=$(cd "$LIVE" && run gates enqueue "$H2" 2>&1)
+[[ "$out" == *"Kept ${H1:0:7}: still the head of heads/stack-low"* ]] && [ "$(ls "$GQ" | grep -c '\.req$')" = 2 ]
+expect "gates enqueue: a stacked PR's queued head stays queued when the PR above it is queued" $?
+rm -f "$GQ"/*.req; g update-ref -d refs/heads/stack-low; g update-ref refs/remotes/origin/stack-low "$H1"
+(cd "$LIVE" && run gates enqueue "$H1" >/dev/null 2>&1); (cd "$LIVE" && run gates enqueue "$H2" >/dev/null 2>&1)
+[ "$(ls "$GQ" | grep -c '\.req$')" = 2 ]; expect "gates enqueue: a head only on origin (its worktree gone) still counts as a branch head" $?
+rm -f "$GQ"/*.req; g update-ref -d refs/remotes/origin/stack-low; g update-ref -d refs/heads/stack-high
+g update-ref refs/heads/topic "$H1"; g update-ref refs/remotes/origin/topic "$H1"
+(cd "$LIVE" && run gates enqueue "$H1" >/dev/null 2>&1)
+g update-ref refs/heads/topic "$H2" # the branch moved on here; origin still has the old head (not pushed yet)
+out=$(cd "$LIVE" && run gates enqueue "$H2" 2>&1)
+[[ "$out" == *"Superseded ${H1:0:7}"* ]] && [ "$(ls "$GQ" | grep -c '\.req$')" = 1 ] && grep -q "sha=$H2" "$GQ"/*.req
+expect "gates enqueue: a branch whose head moved still supersedes its old queued head, pushed or not" $?
+g update-ref -d refs/heads/topic; g update-ref -d refs/remotes/origin/topic
+rm -f "$GQ"/*.req
+sleep 30 & LIVE_RUNNER=$!; mkdir -p "$WD/gates/runner"; echo "$LIVE_RUNNER" >"$WD/gates/runner/pid"; echo old >"$WD/gates/runner.sh"
+out=$(cd "$LIVE" && run gates enqueue "$H1" 2>&1); kill "$LIVE_RUNNER" 2>/dev/null; wait "$LIVE_RUNNER" 2>/dev/null
+[[ "$out" == *"working (pid $LIVE_RUNNER)"* ]] && cmp -s "$SCRIPT" "$WD/gates/runner.sh"
+expect "gates enqueue: refreshes the runner's copy even while a runner is working" $?
+rm -rf "$WD/gates/runner" "$GQ"/*.req
+# The runner's copy only moves forward (2026-11-03: an older branch's enqueue replaced the merge
+# train's runner). A repo whose history carries the script: main M0, the runner's source N1, C1 on
+# top of it, and an older branch O1 beside them; a checkout of each runs its own copy.
+RR="$T/runner-repo"; rr() { git -C "$RR" -c user.email=t@t -c user.name=t "$@"; }
+rcommit() { cp "$SCRIPT" "$RR/scripts/ops/gauss-services.sh"; echo "# $1" >>"$RR/scripts/ops/gauss-services.sh"; rr add -A; rr commit -qm "$1"; rr rev-parse HEAD; }
+git init -q "$RR"; mkdir -p "$RR/scripts/ops"
+M0=$(rcommit m0); N1=$(rcommit n1); C1=$(rcommit c1); rr checkout -q --detach "$M0"; O1=$(rcommit o1); rr update-ref refs/remotes/origin/main "$M0"
+for x in M0 N1 C1 O1; do rr worktree add -q --detach "$T/rr-$x" "${!x}"; done
+runner_from() { (cd "$LIVE" && SCRIPT="$T/rr-$1/scripts/ops/gauss-services.sh" run gates enqueue "$H1" 2>&1); }
+runs() { [ "$(git -C "$T/rr-$1" show HEAD:scripts/ops/gauss-services.sh | shasum)" = "$(shasum <"$WD/gates/runner.sh")" ] && grep -qx "sha=${!1}" "$WD/gates/runner.src"; }
+rm -f "$WD/gates/runner.src"; echo old >"$WD/gates/runner.sh"
+runner_from N1 >/dev/null; runs N1; expect "gates runner: with no runner.src, an enqueue refreshes the copy as before and records its commit" $?
+out=$(runner_from O1); runs N1 && [[ "$out" == *"Runner kept: it runs ${N1:0:7} and this checkout (${O1:0:7}) doesn't contain it."* ]]
+expect "gates runner: an older branch's enqueue keeps a newer runner, and says why" $?
+out=$(runner_from C1); runs C1 && [[ "$out" != *"Runner kept"* ]]; expect "gates runner: a checkout that contains the runner's commit refreshes it" $?
+runner_from M0 >/dev/null; runs M0; expect "gates runner: origin/main's script always refreshes it" $?
+runner_from C1 >/dev/null; echo "# edited" >>"$T/rr-C1/scripts/ops/gauss-services.sh"
+out=$(runner_from C1); runs C1 && [[ "$out" == *"Runner kept: it runs ${C1:0:7} and this script isn't committed as is."* ]]
+expect "gates runner: a script with uncommitted changes doesn't replace a recorded runner" $?
+git -C "$T/rr-C1" checkout -q -- scripts/ops/gauss-services.sh
+echo "# by hand" >>"$WD/gates/runner.sh"; runner_from O1 >/dev/null; runs O1
+expect "gates runner: a runner.sh changed without runner.src (by hand, or an older script) refreshes as before" $?
+out=$(run gates result status); [[ "$out" == *"runner code: ${O1:0:7} (from $T/rr-O1/scripts/ops)"* ]]; expect "gates result status: names the commit the runner's code came from" $?
+rm -f "$GQ"/*.req
+n=$(wc -l <"$GR"); out=$(run gates run-one "$GQ/withdrawn.req" 2>&1); [ $? = 0 ] && [[ "$out" == *"withdrawn"* ]] && [ "$(wc -l <"$GR")" = "$n" ]
+expect "gates run-one: a request withdrawn while waiting is skipped, with no result line" $?
+touch "$SW/stray"; out=$(run gates enqueue "$SW" 2>&1); [ $? != 0 ] && [[ "$out" == *"uncommitted or untracked"* ]]; expect "gates enqueue refuses a dirty checkout" $?
+rm -f "$SW/stray"
+out=$(run gates result status); [[ "$out" == *"runner: not running"*"queue: empty"* ]]; expect "gates result status: runner, queue and recent results" $?
+
+# pipefail lint (2026-11-02): under `set -o pipefail` a reader that quits early (grep -q, head -1,
+# awk ... exit) can kill the writer with SIGPIPE, making the pipeline fail at random: alive-beacon
+# died hourly for 3 days this way. Use grep -c >/dev/null, grep -m1, sed '...;q' or awk without exit.
+early=$(cd "$(dirname "$SCRIPT")/../.." && for f in $(grep -rl 'pipefail' scripts --include='*.sh'); do
+  grep -nE '\|[[:space:]]*grep -q|\|[[:space:]]*head -(n[[:space:]]*)?1([^0-9]|$)|\|[[:space:]]*awk [^|]*[{;][[:space:]]*exit[[:space:]]*[;}]' "$f" | sed "s|^|$f:|"
+done)
+[ -z "$early" ]; expect "pipefail scripts have no early-quitting pipe readers${early:+: $early}" $?
+# Merge train (2026-11-03): a request queued with --pr merges main in before its run and merges the
+# PR after a pass, under the standing approval's rules. GitHub is a stub that reads PR heads from a
+# real bare origin; the runner's merges and pushes are real git.
+ORIGIN="$T/origin.git"; git init -q --bare "$ORIGIN"; g remote add origin "$ORIGIN"
+git config --file "$T/home/.gitconfig" user.name train-test; git config --file "$T/home/.gitconfig" user.email t@t
+GHD="$T/gh"; mkdir -p "$GHD"
+cat >"$T/bin/gh" <<GHSTUB
+#!/bin/bash
+# pr<N> holds "state branch base draft merge-state"; the head is whatever origin has for the branch
+case "\$1 \$2" in
+  "pr view") read -r st br base dr ms <"$GHD/pr\$3" || exit 1
+    echo "\$st \$(git --git-dir="$ORIGIN" rev-parse "refs/heads/\$br") \$br \$base \$dr \$ms" ;;
+  "pr merge") echo "gh merge \$3 \${@: -1}" >>"\$ACTIONS"; exit \${GHMERGEFAIL:-0} ;;
+  "pr list") base=\$(printf '%s\n' "\$@" | grep -A1 -x -- --base | tail -1); cat "$GHD/children-\$base" 2>/dev/null ;;
+  "pr edit") echo "gh retarget \$3" >>"\$ACTIONS" ;;
+  *) exit 1 ;;
+esac
+GHSTUB
+chmod +x "$T/bin/gh"
+prevhead=$(g rev-parse HEAD)
+tc() { g checkout -q --detach "$1"; shift; while [ $# -gt 1 ]; do mkdir -p "$LIVE/$(dirname "$1")"; echo "$2" >"$LIVE/$1"; g add "$1"; shift 2; done; g commit -qm train; g rev-parse HEAD; }
+M1=$(tc "$E" main.txt main-1)
+P1=$(tc "$E" feature.txt f1)                       # behind main, merges cleanly
+P2=$(tc "$M1" backend/auth-extra.ts x)             # contains main, touches auth
+P3=$(tc "$E" main.txt mine)                        # conflicts with main
+P4=$(tc "$M1" feature4.txt f4)                     # its PR has moved on to P4b
+P4b=$(tc "$P4" feature4.txt f4b)
+g push -q origin "$M1:refs/heads/main" "$P1:refs/heads/train" "$P2:refs/heads/auth-pr" "$P3:refs/heads/clash" "$P4b:refs/heads/moved" && g fetch -q origin
+echo "OPEN train main false CLEAN" >"$GHD/pr7"; echo 8 >"$GHD/children-train"
+echo "OPEN auth-pr main false CLEAN" >"$GHD/pr9"
+echo "OPEN clash main false CLEAN" >"$GHD/pr11"
+echo "OPEN moved main false CLEAN" >"$GHD/pr12"
+out=$(cd "$LIVE" && run gates enqueue "$P1" --pr x 2>&1); [ $? = 2 ] && [[ "$out" == *"--pr <number>"* ]] && [ -z "$(ls "$GQ")" ]
+expect "train: enqueue --pr needs a PR number" $?
+for x in "$P1 7" "$P2 9" "$P3 11" "$P4 12"; do set -- $x; (cd "$LIVE" && run gates enqueue "$1" --pr "$2" >/dev/null 2>&1); done
+grep -qx "pr=7" "$GQ"/*-"$(tree_of "$P1")".req; expect "train: enqueue --pr records the PR in the request" $?
+out=$(run gates run 2>&1)
+N1=$(git --git-dir="$ORIGIN" rev-parse refs/heads/train)
+[ "$N1" != "$P1" ] && git --git-dir="$ORIGIN" merge-base --is-ancestor "$M1" "$N1" && [ "$(git --git-dir="$ORIGIN" rev-parse "$N1^1")" = "$P1" ] \
+  && grep -q "^[^ ]* $P1 [^ ]* MOVED merged main into PR #7" "$GR" && grep -q "^[^ ]* $N1 [^ ]* PASSED" "$GR"
+expect "train: a head behind main gets main merged in (pushed, no force) and the merge is what gets gated" $?
+grep -qx "gh merge 7 $N1" "$T/actions" && grep -q "^[^ ]* $N1 [^ ]* MERGED PR #7" "$GR" && grep -qx "gh retarget 8" "$T/actions"
+expect "train: after a pass the PR is merged on that exact head, and PRs stacked on it move to main" $?
+grep -q "^[^ ]* $P2 [^ ]* PASSED" "$GR" && grep -q "^[^ ]* $P2 [^ ]* HELD passed, not merged: touches backend/auth-extra.ts" "$GR" && ! grep -q "gh merge 9" "$T/actions"
+expect "train: a PR touching auth passes but waits for Josh" $?
+grep -q "^[^ ]* $P3 [^ ]* CONFLICT PR #11" "$GR" && ! grep -q " $P3 [^ ]* PASSED" "$GR" && [ "$(git --git-dir="$ORIGIN" rev-parse refs/heads/clash)" = "$P3" ] \
+  && [[ " $(alerts) " == *" train-11 "* ]]
+expect "train: a conflict with main is left alone, not gated, and texted" $?
+grep -q "^[^ ]* $P4 [^ ]* SKIPPED PR #12 moved on to ${P4b:0:7}" "$GR" && ! grep -q " $P4 [^ ]* PASSED" "$GR"
+expect "train: a request whose PR moved on is dropped without a run" $?
+out=$(cd "$LIVE" && run gates result "$N1"); [ $? = 0 ] && [[ "$out" == *MERGED* ]]; expect "train: gates result counts a merged run as passed" $?
+[ -z "$(ls "$GQ")" ] && [ -z "$(g worktree list | grep gauss-train)" ]; expect "train: queue drained, scratch worktrees removed" $?
+echo "OPEN train main true CLEAN" >"$GHD/pr13"; git --git-dir="$ORIGIN" update-ref refs/heads/train "$N1"
+P5=$(tc "$N1" f5.txt x); g push -q origin "$P5:refs/heads/train"; echo "OPEN train main true CLEAN" >"$GHD/pr13"
+(cd "$LIVE" && run gates enqueue "$P5" --pr 13 >/dev/null 2>&1); run gates run >/dev/null 2>&1
+grep -q "^[^ ]* $P5 [^ ]* HELD passed, not merged: draft" "$GR"; expect "train: a draft passes but isn't merged" $?
+P6=$(tc "$N1" f6.txt y); printf 'sha=%s\ntree=%s\nrepo=%s\nqueued=%s\nby=t\npr=7\n' "$P6" "$(tree_of "$P6")" "$(g rev-parse --absolute-git-dir)" "$(date +%s)" \
+  >"$GQ/1.000000-$(tree_of "$P1").req" # what train_sync leaves: moved to P6, still named after P1's tree
+out=$(cd "$LIVE" && run gates result "$P6" 2>&1); rc=$?
+[ $rc = 3 ] && [[ "$out" == QUEUED* ]] && [[ "$(cd "$LIVE" && run gates enqueue "$P6" 2>&1)" == *"Already queued"* ]] && [ "$(ls "$GQ" | wc -l | tr -d ' ')" = 1 ]
+expect "train: a request moved to the merged head is found by its tree (gates result says queued; no second request)" $?
+rm -f "$GQ"/*.req
+g checkout -q --detach "$prevhead"; g remote remove origin; rm -f "$T/bin/gh" "$T/home/.gitconfig"
 
 # balance (GAU-126): shed optional load, undo it when conditions recover
 acts() { tr '\n' ';' <"$T/actions" | sed 's/;$//'; }
@@ -379,24 +676,42 @@ MLX=1 FREE=10 run awake guard
 [ -z "$(acts)" ]; expect "10% 'free' at normal pressure: nothing shed" $?
 LEVEL=4 run awake guard
 [ -z "$(acts)" ] && [ "$(alerts)" = "memory-low" ]; expect "memory short, nothing optional running: no action" $?
-SRC="Battery Power" BATT="18%; discharging; present: true" run awake guard
-[ -f "$PAUSED" ] && [ "$(alerts)" = "battery-low" ]; expect "battery 18%: learning paused quietly (log only)" $?
+SRC="Battery Power" BATT="45%; discharging; present: true" run awake guard
+[ -f "$PAUSED" ] && [ "$(alerts)" = "battery-low" ]; expect "battery 45%: learning paused quietly (log only)" $?
 grep -q "paused nightly learning" "$T/home/Library/Logs/gauss/balance.log"; expect "balance logs what it did" $?
-SRC="Battery Power" BATT="25%; discharging; present: true" run awake guard
-[ -f "$PAUSED" ]; expect "battery 25%: still paused (hysteresis to warn+10)" $?
+SRC="Battery Power" BATT="55%; discharging; present: true" run awake guard
+[ -f "$PAUSED" ]; expect "battery 55%: still paused (hysteresis to warn+10)" $?
+SRC="AC Power" BATT="14%; AC attached; not charging present: true" run awake guard
+[ -f "$PAUSED" ]; expect "14% on a charger that isn't keeping up: still paused" $?
 SRC="AC Power" BATT="26%; charging; present: true" run awake guard
 [ ! -f "$PAUSED" ]; expect "back on AC: learning resumed" $?
+# The suite can outlast an hour of wall clock if the Mac sleeps mid-run: re-date the existing stamp
+STAMP="$T/home/Library/Application Support/Gauss/balance-cleanup"; [ -f "$STAMP" ] && touch "$STAMP"
 DISKGB=5 run awake guard
 [ -z "$(acts)" ] && [ "$(alerts)" = "disk-low" ]; expect "disk 5 GB again within the hour: no second cleanup" $?
 rm -f "$T/home/Library/Application Support/Gauss/balance-cleanup"
 DISKGB=5 run awake guard
-[ "$(acts)" = "disk-cleanup --apply --if-below 8" ]; expect "disk 5 GB, an hour later: allowlisted cleanup runs" $?
+[ "$(acts)" = "disk-cleanup --apply --if-below 15" ]; expect "disk 5 GB, an hour later: allowlisted cleanup runs" $?
 MLX=1 LEVEL=4 GAUSS_BALANCE=0 run awake guard
 [ -z "$(acts)" ]; expect "GAUSS_BALANCE=0: balance does nothing" $?
 out=$(MLX=1 LEVEL=4 run balance --dry-run)
 [ -z "$(acts)" ] && [[ "$out" == *"would: pkill -f mlx_lm.server.*--port 8089"* ]]; expect "balance --dry-run only reports" $?
 out=$(run balance --dry-run)
 [[ "$out" == "balanced: nothing to do"* ]]; expect "healthy machine: nothing to do" $?
+
+# Leaking macOS helpers (GAU-183): restarted by name once past GAUSS_LEAK_MB (1024), whatever the pressure
+LEAKY=CursorUIViewService LEAKFP="3.7 GB" run awake guard
+[ "$(acts)" = "pkill -x CursorUIViewService" ] && [ "$(alerts)" = "balance" ]
+expect "a 3.7 GB CursorUIViewService is restarted at normal pressure, with one balance text" $?
+grep -q "restarted CursorUIViewService (3788 MB" "$T/home/Library/Logs/gauss/balance.log"; expect "the restart is logged with its size" $?
+LEAKY=CursorUIViewService LEAKFP="400 MB" run awake guard
+[ -z "$(acts)" ]; expect "a 400 MB helper is left alone (limit 512 MB)" $?
+LEAKY=CursorUIViewService LEAKFP="512 KB" run awake guard
+[ -z "$(acts)" ]; expect "footprint in KB parses (left alone)" $?
+LEAKY=Safari LEAKFP="6 GB" run awake guard
+[ -z "$(acts)" ]; expect "an app that isn't on the leaky-helper list is never touched" $?
+out=$(LEAKY=CursorUIViewService LEAKFP="2 GB" run balance --dry-run)
+[ -z "$(acts)" ] && [[ "$out" == *"would: pkill -x CursorUIViewService"* ]]; expect "--dry-run only reports the restart" $?
 
 # resilience checklist
 echo '{"phone_to":"+60123456789"}' >"$T/home/.config/argo/config.json"
@@ -462,7 +777,8 @@ keys = {"ts","host","event","label","reason","live_sha","fallback_sha","pressure
 rows = [json.loads(l) for l in open(sys.argv[1])]
 sys.exit(0 if rows and all(keys <= set(r) for r in rows) else 1)' "$EV"
 expect "events.jsonl: every line is valid JSON with all fields" $?
-out=$(run events --since 2h); [[ "$out" == *"watchdog_kick"*"uk.lightbound.argo"*"[live"* && "$out" == *"boot"* ]]; expect "events --since 2h: readable timeline" $?
+# A window of a day, not 2 h: these events are stamped with the real clock, and a mid-run sleep outlasts 2 h
+out=$(run events --since 1d); [[ "$out" == *"watchdog_kick"*"uk.lightbound.argo"*"[live"* && "$out" == *"boot"* ]]; expect "events --since 1d: readable timeline" $?
 out=$(run events --json --since 1d); [ "$(printf '%s\n' "$out" | wc -l | tr -d ' ')" = "$(wc -l <"$EV" | tr -d ' ')" ]; expect "events --json: raw lines" $?
 out=$(run events --since 2x 2>&1); [ $? = 2 ] && [[ "$out" == *"30m, 2h or 1d"* ]]; expect "events: bad --since is refused" $?
 
