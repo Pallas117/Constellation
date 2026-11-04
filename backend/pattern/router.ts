@@ -1,6 +1,7 @@
 import express, { type Response } from "express";
 import { roleSatisfies, type AuthenticatedRequest } from "../auth.js";
 import { PATTERN_REQUIRED } from "../rbac.js";
+import type { DeviceMemory } from "./device.js";
 import type { Sensor } from "./sensor.js";
 import { patternProblem, VERTICES, type PadRequests, type PatternCheck, type PatternStore } from "./store.js";
 
@@ -21,6 +22,10 @@ export interface PatternRouterDeps {
   store: PatternStore;
   requests: PadRequests;
   sensor: Sensor;
+  /** The pattern once a day per passkey (./device.ts). */
+  devices: DeviceMemory;
+  /** Whether this device belongs to the account's owner on the tailnet (./tailnet.ts); absent = not checked. */
+  identity?: (req: AuthenticatedRequest) => Promise<"ok" | "mismatch">;
   /** Marks a better-auth session as having passed the pattern check. */
   markSession(sessionToken: string, at: Date): Promise<void>;
   /** Marks a session as signed in under duress. */
@@ -70,13 +75,20 @@ export function createPatternRouter(deps: PatternRouterDeps): express.Router {
   const now = deps.now ?? Date.now;
 
   // What a drawing's outcome tells the sensor, and the session marks a good (or duress) one gets.
-  const settle = async (check: PatternCheck, who: { userId: string; ip: string; sessionToken: string; phone: boolean }) => {
+  const settle = async (
+    check: PatternCheck,
+    who: { userId: string; ip: string; sessionToken: string; credentialId: string | null; phone: boolean },
+  ) => {
     if (check.ok) {
       const at = new Date(now());
       await deps.markSession(who.sessionToken, at);
       if (check.duress) {
         await deps.markDuress(who.sessionToken, at);
+        // Never let a coerced device skip the pattern later: forget every passkey's daily drawing.
+        deps.devices.forget(who.userId);
         deps.sensor.record("duress", { userId: who.userId, ip: who.ip, detail: who.phone ? "drawn on a phone" : "drawn at the computer" });
+      } else {
+        deps.devices.remember(who.userId, who.credentialId);
       }
       return;
     }
@@ -87,14 +99,19 @@ export function createPatternRouter(deps: PatternRouterDeps): express.Router {
     }
   };
 
-  router.get("/status", (req: AuthenticatedRequest, res) => {
+  router.get("/status", async (req: AuthenticatedRequest, res) => {
     const auth = req.auth!;
+    const device = deps.identity ? await deps.identity(req) : "ok";
     const request = deps.requests.forSession(auth.token);
     const duress = Boolean(auth.pattern?.duress);
     res.json({
       required: deps.required() && roleSatisfies(auth.role, "operator"),
       set: deps.store.isSet(auth.userId),
       verified: Boolean(auth.pattern?.verifiedAt),
+      // Operator sessions must be opened with a passkey (rbac.ts PASSKEY_REQUIRED).
+      passkeySession: Boolean(auth.passkeyAt),
+      // "mismatch": this device isn't the account owner's on the tailnet (tailnet.ts).
+      device,
       // A duress session is told there is no duress pattern.
       duressSet: !duress && deps.store.hasDuress(auth.userId),
       lockedUntil: deps.store.lockedUntil(auth.userId),
@@ -184,7 +201,7 @@ export function createPatternRouter(deps: PatternRouterDeps): express.Router {
       return;
     }
     const check = await deps.store.check(auth.userId, pattern);
-    await settle(check, { userId: auth.userId, ip: deps.ipOf(req), sessionToken: auth.token, phone: false });
+    await settle(check, { userId: auth.userId, ip: deps.ipOf(req), sessionToken: auth.token, credentialId: auth.passkeyCredentialId ?? null, phone: false });
     answer(res, check);
   });
 
@@ -199,7 +216,7 @@ export function createPatternRouter(deps: PatternRouterDeps): express.Router {
       res.status(409).json({ error: "Set your pattern on this screen first." });
       return;
     }
-    const r = deps.requests.open(auth.userId, auth.token);
+    const r = deps.requests.open(auth.userId, auth.token, auth.passkeyCredentialId ?? null);
     res.json({ id: r.id, expiresAt: r.expiresAt, padUrl: `${deps.padOrigin}/pad#${r.id}` });
   });
 
@@ -231,7 +248,7 @@ export function createPatternRouter(deps: PatternRouterDeps): express.Router {
     }
     const check = await deps.store.check(r.userId, pattern);
     deps.requests.settle(r, check.ok);
-    await settle(check, { userId: r.userId, ip: deps.ipOf(req), sessionToken: r.sessionToken, phone: true });
+    await settle(check, { userId: r.userId, ip: deps.ipOf(req), sessionToken: r.sessionToken, credentialId: r.credentialId, phone: true });
     if (check.ok) console.log(`[pattern] ${r.userId} drew their pattern on a phone`);
     answer(res, check, { state: r.state });
   });

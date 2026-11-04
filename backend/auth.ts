@@ -29,6 +29,8 @@ export interface AuthContext {
   token: string;
   /** When this session was opened by a verified passkey touch (epoch ms), else null. Step-up reads it. */
   passkeyAt?: number | null;
+  /** The passkey this session was opened with (the pattern's once-a-day memory keys on it). */
+  passkeyCredentialId?: string | null;
   /** The operator pattern (backend/pattern/): whether the user has one, when this session drew it, and whether that was the duress pattern. */
   pattern?: { set: boolean; verifiedAt: number | null; duress?: boolean };
 }
@@ -144,6 +146,7 @@ function contextFromSession(sessionResponse: SessionResponse): AuthContext | nul
     rawRoles: [role],
     token: sessionResponse.session.token ?? "better-auth-session",
     passkeyAt: toMillis((sessionResponse.session as { passkeyAt?: unknown }).passkeyAt),
+    passkeyCredentialId: ((sessionResponse.session as { passkeyCredentialId?: unknown }).passkeyCredentialId as string | null | undefined) ?? null,
     pattern: {
       set: toMillis((sessionResponse.user as { patternSetAt?: unknown }).patternSetAt) !== null,
       verifiedAt: toMillis((sessionResponse.session as { patternAt?: unknown }).patternAt),

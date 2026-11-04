@@ -591,6 +591,25 @@ fallback_off() { # back to live; the guard gets a fresh set of restarts for it
   echo "Back on live. If it fails again, the guard fails over again after $WATCH_MAX_KICKS restarts."
 }
 
+console_item() { # the private operator console's TLS certificate (GAU-235), when there is one
+  # Issued on this Mac by ops-cert.sh (lego, DNS-01) into GAUSS_CONSOLE_CERTS; an expired one
+  # breaks every passkey sign-in, so it fails the check 14 days before it runs out.
+  local dir="${GAUSS_CONSOLE_CERTS:-$HOME/.local/state/gauss-ops-cert/certificates}" crt host end left
+  [ -d "$dir" ] || return 0
+  for crt in "$dir"/*.crt; do
+    case "$crt" in *.issuer.crt) continue ;; esac
+    [ -f "$crt" ] || continue
+    host=$(basename "$crt" .crt)
+    end=$(openssl x509 -in "$crt" -noout -enddate 2>/dev/null | cut -d= -f2) || continue
+    left=$(python3 -Ic 'import sys, datetime as d; t = d.datetime.strptime(" ".join(sys.argv[1].split()), "%b %d %H:%M:%S %Y %Z"); print(int((t - d.datetime.utcnow()).total_seconds() // 86400))' "$end" 2>/dev/null) || continue
+    if [ "$left" -ge 14 ]; then
+      item ok "console certificate for $host: $left days left"
+    else
+      item no "console certificate for $host: $left days left (renew it with ops-cert.sh)"
+    fi
+  done
+}
+
 fallback_state() { # "ok|no <description>" for status and check
   if fallback_active; then echo "no serving from fallback since $(cut -d' ' -f1-2 "$FALLBACK_STATE/active" 2>/dev/null): fix live, then '$0 fallback off'"
   elif fallback_ready; then echo "ok fallback ready: ${READY_SHA:0:7}, prepared $(date -r "$READY_AT" '+%F %H:%M') (cold standby)"
@@ -1394,6 +1413,7 @@ check() { # pre-demo checklist
     fi
     item $ok "shared on your tailnet: $PUBLIC_URL (open it on your phone to confirm)"
   fi
+  console_item
   local fresh
   fresh=$(curl -s -m 5 http://127.0.0.1:3001/api/feed/space-weather/latest | python3 -Ic '
 import json, sys

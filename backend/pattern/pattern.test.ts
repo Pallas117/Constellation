@@ -6,6 +6,7 @@ import express from "express";
 import type { AuthenticatedRequest, AuthRole } from "../auth.js";
 import { enforceApiPolicy, PATTERN_REQUIRED, STEP_UP_REQUIRED } from "../rbac.js";
 import { createPatternRouter } from "./router.js";
+import { createDeviceMemory, type DeviceMemory } from "./device.js";
 import { createSensor, type SensorKind } from "./sensor.js";
 import { createPadRequests, createPatternStore, PATTERN_LOCK_MS, patternPepper, type ScryptCost } from "./store.js";
 
@@ -77,11 +78,11 @@ test("phone requests are one-time: two minutes, five tries, one approval", () =>
 });
 
 /** The production policy middleware and router, with the session faked from test headers. */
-type Marks = { sessions: Array<[string, number]>; users: Array<[string, number | null]>; duress: string[]; events: SensorKind[]; alarms: string[] };
+type Marks = { sessions: Array<[string, number]>; users: Array<[string, number | null]>; duress: string[]; events: SensorKind[]; alarms: string[]; devices: DeviceMemory };
 async function withApp(fn: (api: string, marks: Marks) => Promise<void>) {
   const db = new Database(":memory:");
   const store = createPatternStore(db, { pepper: patternPepper("test-secret"), cost: CHEAP });
-  const marks: Marks = { sessions: [], users: [], duress: [], events: [], alarms: [] };
+  const marks: Marks = { sessions: [], users: [], duress: [], events: [], alarms: [], devices: createDeviceMemory(db, { hours: 20 }) };
   const verified = new Set<string>();
   const sensor = createSensor({ alarm: (title) => void marks.alarms.push(title), log: (e) => void marks.events.push(e.message.split(":")[0] as SensorKind) });
   const app = express();
@@ -97,7 +98,8 @@ async function withApp(fn: (api: string, marks: Marks) => Promise<void>) {
         role,
         rawRoles: [role],
         token,
-        passkeyAt: touched === undefined ? null : Date.now() - Number(touched),
+        passkeyAt: Date.now() - (touched === undefined ? 3_600_000 : Number(touched)),
+        passkeyCredentialId: req.header("x-test-credential") ?? "cred-mac",
         pattern: { set: store.isSet("u-op"), verifiedAt: verified.has(token) ? Date.now() : null, duress: marks.duress.includes(token) },
       };
     }
@@ -110,6 +112,7 @@ async function withApp(fn: (api: string, marks: Marks) => Promise<void>) {
       store,
       requests: createPadRequests(),
       sensor,
+      devices: marks.devices,
       markSession: async (token, at) => {
         verified.add(token);
         marks.sessions.push([token, at.getTime()]);
@@ -141,6 +144,8 @@ test("setting a pattern needs a fresh passkey touch; changing it also needs the 
       required: true,
       set: false,
       verified: false,
+      passkeySession: true,
+      device: "ok",
       duressSet: false,
       lockedUntil: null,
       padOrigin: "https://gauss.example.ts.net",
@@ -228,6 +233,9 @@ test("a duress pattern signs in like the real one, marks the session silently an
     assert.equal((await post(`${api}/duress`, { pattern: DURESS }, setup)).status, 200);
     assert.equal(((await (await fetch(`${api}/status`, { headers: setup })).json()) as { duressSet: boolean }).duressSet, true);
 
+    // A good drawing is remembered for this passkey (one touch back in later today)…
+    await post(`${api}/verify`, { pattern: PATTERN }, { ...op, "x-test-session": "today" });
+    assert.equal(marks.devices.fresh("u-op", "cred-mac"), true);
     // Under duress: the answer is the same as for the real pattern.
     const coerced = { ...op, "x-test-session": "coerced" };
     const res = await post(`${api}/verify`, { pattern: DURESS }, coerced);
@@ -235,6 +243,7 @@ test("a duress pattern signs in like the real one, marks the session silently an
     assert.deepEqual(marks.duress, ["coerced"]);
     assert.ok(marks.events.includes("duress"));
     assert.ok(marks.alarms.some((t) => /DURESS/.test(t)));
+    assert.equal(marks.devices.fresh("u-op", "cred-mac"), false, "…and forgotten under duress, so a coerced device can't skip it later");
     // Nothing the coerced session can read says so, and it can't change either pattern.
     const seen = (await (await fetch(`${api}/status`, { headers: coerced })).json()) as { verified: boolean; duressSet: boolean };
     assert.deepEqual([seen.verified, seen.duressSet], [true, false]);

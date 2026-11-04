@@ -5,7 +5,7 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 import type { AuthRole } from "./auth.js";
 import { STEP_UP_MAX_AGE_MS } from "./passkey-policy.js";
-import { accessFor, API_POLICY, enforceApiPolicy, PATTERN_REQUIRED, PATTERN_SETUP_REQUIRED, policyFor, STEP_UP_REQUIRED, type Access } from "./rbac.js";
+import { accessFor, API_POLICY, enforceApiPolicy, PASSKEY_REQUIRED, PATTERN_REQUIRED, PATTERN_SETUP_REQUIRED, policyFor, STEP_UP_REQUIRED, type Access } from "./rbac.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 
@@ -71,8 +71,8 @@ test("role matrix", () => {
 /** The JSON body of the last refusal run() saw. */
 let lastBody: unknown;
 
-/** Sessions have drawn their operator pattern unless a test says otherwise. */
-function run(method: string, p: string, role?: AuthRole, passkeyAt?: number | null, pattern: { set: boolean; verifiedAt: number | null; duress?: boolean } = { set: true, verifiedAt: Date.now() }) {
+/** Sessions were opened with a passkey an hour ago (not fresh for step-up) and have drawn their pattern, unless a test says otherwise. */
+function run(method: string, p: string, role?: AuthRole, passkeyAt: number | null = Date.now() - 3_600_000, pattern: { set: boolean; verifiedAt: number | null; duress?: boolean } = { set: true, verifiedAt: Date.now() }) {
   let status = 200;
   let passed = false;
   let body: unknown;
@@ -132,9 +132,9 @@ test("operator and admin routes need the operator pattern drawn in this session,
     ["GET", "/swx/structures", "operator"],
     ["GET", "/admin/users", "admin"],
   ] as const) {
-    assert.equal(run(method, p, role, null, unset), 428, `${p}: no pattern yet`);
+    assert.equal(run(method, p, role, undefined, unset), 428, `${p}: no pattern yet`);
     assert.equal((lastBody as { code?: string }).code, PATTERN_SETUP_REQUIRED);
-    assert.equal(run(method, p, role, null, undrawn), 428, `${p}: pattern not drawn this session`);
+    assert.equal(run(method, p, role, undefined, undrawn), 428, `${p}: pattern not drawn this session`);
     assert.equal((lastBody as { code?: string }).code, PATTERN_REQUIRED);
     assert.equal(run(method, p, role), 200, `${p}: drawn`);
   }
@@ -144,9 +144,9 @@ test("operator and admin routes need the operator pattern drawn in this session,
   enforceApiPolicy(req as never, { status: (s: number) => ((status = s), { json: () => undefined }) } as never, () => (status = 200));
   assert.equal(status, 428);
   // Viewer and staff routes, and the pattern routes themselves, never ask for it.
-  assert.equal(run("GET", "/feed/aurora/map", "operator", null, unset), 200);
-  assert.equal(run("GET", "/mesh/devices", "staff", null, unset), 200);
-  assert.equal(run("POST", "/operator-pattern/verify", "operator", null, undrawn), 200);
+  assert.equal(run("GET", "/feed/aurora/map", "operator", undefined, unset), 200);
+  assert.equal(run("GET", "/mesh/devices", "staff", undefined, unset), 200);
+  assert.equal(run("POST", "/operator-pattern/verify", "operator", undefined, undrawn), 200);
   assert.equal(run("POST", "/operator-pattern/pad"), 200, "the phone's pad route is public");
   // A step-up route checks the pattern before the touch.
   assert.equal(run("POST", "/admin/users/x/role", "admin", Date.now(), undrawn), 428);
@@ -154,7 +154,7 @@ test("operator and admin routes need the operator pattern drawn in this session,
   // OPERATOR_PATTERN=off turns it off.
   process.env.OPERATOR_PATTERN = "off";
   try {
-    assert.equal(run("POST", "/rag/query", "operator", null, unset), 200);
+    assert.equal(run("POST", "/rag/query", "operator", undefined, unset), 200);
   } finally {
     delete process.env.OPERATOR_PATTERN;
   }
@@ -169,10 +169,24 @@ test("setting the operator pattern needs a fresh passkey touch; drawing it does 
 
 test("a session signed in with the duress pattern sees operator and admin routes as in maintenance (503), viewer routes as usual", () => {
   const duress = { set: true, verifiedAt: Date.now(), duress: true };
-  assert.equal(run("POST", "/rag/query", "operator", null, duress), 503);
+  assert.equal(run("POST", "/rag/query", "operator", undefined, duress), 503);
   assert.match((lastBody as { error: string }).error, /maintenance/);
   assert.equal(run("POST", "/admin/users/x/role", "admin", Date.now(), duress), 503, "a fresh touch doesn't lift it");
-  assert.equal(run("GET", "/feed/aurora/map", "operator", null, duress), 200);
+  assert.equal(run("GET", "/feed/aurora/map", "operator", undefined, duress), 200);
   assert.equal(policyFor("POST", "/operator-pattern/duress")?.stepUp, true);
   assert.equal(policyFor("DELETE", "/operator-pattern/duress")?.stepUp, true);
+});
+
+test("one login for operators: the console needs a session opened with a passkey, answered 428 PASSKEY_REQUIRED otherwise", () => {
+  assert.equal(run("POST", "/rag/query", "operator", null), 428, "a password or Google session");
+  assert.equal((lastBody as { code?: string }).code, PASSKEY_REQUIRED);
+  assert.equal(run("GET", "/admin/users", "admin", null), 428);
+  assert.equal(run("GET", "/feed/aurora/map", "operator", null), 200, "viewer routes don't ask");
+  assert.equal(run("POST", "/operator-pattern/verify", "operator", null), 200, "nor do the pattern routes");
+  process.env.OPERATOR_PASSKEY = "off";
+  try {
+    assert.equal(run("POST", "/rag/query", "operator", null), 200);
+  } finally {
+    delete process.env.OPERATOR_PASSKEY;
+  }
 });

@@ -33,7 +33,8 @@ async function withApp(db: Database.Database, fn: (base: string) => Promise<void
         role,
         rawRoles: [role],
         token: "t",
-        passkeyAt: touched === undefined ? null : Date.now() - Number(touched),
+        // A passkey session opened an hour ago unless the test says when it was touched.
+        passkeyAt: Date.now() - (touched === undefined ? 3_600_000 : Number(touched)),
         pattern: { set: true, verifiedAt: Date.now() },
       };
     }

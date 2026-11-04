@@ -52,6 +52,10 @@ export interface PatternStatus {
   set: boolean;
   /** This session has drawn it. */
   verified: boolean;
+  /** This session was opened with a passkey (operator sessions must be). */
+  passkeySession: boolean;
+  /** "mismatch": this device isn't the account owner's on the tailnet; the console refuses it. */
+  device: "ok" | "mismatch";
   lockedUntil: number | null;
   /** Where phones open the pad, or null when drawing on a phone is off. */
   padOrigin: string | null;
