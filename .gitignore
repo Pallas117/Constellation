@@ -55,3 +55,6 @@ data/bedrock/archive/
 # Prebuilt backend (gauss-services.sh prebuild_backend, live and fallback checkouts only)
 backend/**/*.js
 shared/**/*.js
+
+# A plain `go build` in tools/argo leaves the binary here; it is never shipped from the repo.
+tools/argo/argo

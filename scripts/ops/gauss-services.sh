@@ -14,7 +14,7 @@
 #   scripts/ops/gauss-services.sh uninstall                unload + remove agents
 #   scripts/ops/gauss-services.sh dev <checkout-dir>        run a dev/R&D checkout beside live (:3101 API, :5174 site)
 #   scripts/ops/gauss-services.sh fallback prepare <dir> [sha]|on|off|status   cold-standby last-known-good build
-#   scripts/ops/gauss-services.sh deploy <commit> [fallback-dir] [--emergency <reason>]   switch live to <commit>; rolls back by itself if it doesn't come up
+#   scripts/ops/gauss-services.sh deploy <commit> [fallback-dir] [--emergency <reason>] [--no-fallback]   switch live to <commit>; rolls back by itself if it doesn't come up
 #   scripts/ops/gauss-services.sh gates record <checkout-dir>|list   run the five gates on a clean checkout; deploy needs a passing record
 #   scripts/ops/gauss-services.sh gates enqueue <checkout-dir>|<commit>   hand a gate run to the queue; the session can then be archived
 #   scripts/ops/gauss-services.sh gates result <checkout-dir>|<commit>|status   the queue's one-line result (exit 0 passed, 1 failed, 3 queued)
@@ -70,6 +70,22 @@ AWAKE_OFF="$HOME/Library/Application Support/Gauss/awake-off"
 # day. Staying awake on battery only covers short trips away from the charger.
 AWAKE_MIN_BATTERY="${GAUSS_AWAKE_MIN_BATTERY:-40}"
 AWAKE_WARN_BATTERY="${GAUSS_AWAKE_WARN_BATTERY:-50}" # phone warning (and load shedding) before the floor
+# A worn battery holds a fraction of its design capacity, so each percent lasts that much less. At
+# 52% health (4 Nov 2026, 365 cycles) 40 -> 28% took 16 min under ordinary load, then the gauge fell
+# 28 -> 10% in 8 min of sleep and macOS hibernated with live down. Under BATTERY_WORN_PCT health the
+# floor and the warning each rise by BATTERY_WORN_EXTRA points, unless set explicitly.
+BATTERY_WORN_PCT="${GAUSS_BATTERY_WORN_PCT:-70}"
+BATTERY_WORN_EXTRA="${GAUSS_BATTERY_WORN_EXTRA:-10}"
+battery_health() { # full-charge capacity as a % of design, or nothing on a desktop
+  ioreg -rn AppleSmartBattery 2>/dev/null \
+    | sed -n 's/.*"FullChargeCapacity"=\([0-9]*\).*"DesignCapacity"=\([0-9]*\).*/\1 \2/p' \
+    | awk 'NR==1 && $2>0 {printf "%d", $1*100/$2}'
+}
+BATTERY_HEALTH=$(battery_health || true)
+if [ -n "$BATTERY_HEALTH" ] && [ "$BATTERY_HEALTH" -lt "$BATTERY_WORN_PCT" ]; then
+  [ -n "${GAUSS_AWAKE_MIN_BATTERY:-}" ] || AWAKE_MIN_BATTERY=$((AWAKE_MIN_BATTERY + BATTERY_WORN_EXTRA))
+  [ -n "${GAUSS_AWAKE_WARN_BATTERY:-}" ] || AWAKE_WARN_BATTERY=$((AWAKE_WARN_BATTERY + BATTERY_WORN_EXTRA))
+fi
 ARGO="${ARGO:-$HOME/.local/bin/argo}"
 # Memory uses the kernel's pressure level (kern.memorystatus_vm_pressure_level: 1 normal, 2 warn,
 # 4 critical) and swap in GB; see memory_stats for why not "free %" or swap "% used".
@@ -101,6 +117,7 @@ DEPLOY_LOCK="$WATCH_DIR/deploying" # held by deploy; the guard leaves the servic
 DEPLOY_WAIT="${GAUSS_DEPLOY_WAIT:-90}" # seconds a deploy waits for the services to come up
 DEPLOY_HISTORY="$WATCH_DIR/deploy-history.jsonl" # every deploy and rollback; never rotated (a line per deploy)
 DEPLOY_EMERGENCY="" # set by `deploy --emergency <reason>`
+DEPLOY_NO_FALLBACK="" # set by `deploy --no-fallback`: go ahead with no standby to refresh (FM-24)
 # Gate records (GAU-162), keyed by tree hash: what was tested is exactly what is deployed, even
 # after a merge commit or a rebase that leaves the tree unchanged (GAU-161 finding 4).
 GATES_DIR="$WATCH_DIR/gates"
@@ -589,6 +606,22 @@ fallback_ready() { # a valid record, both plists and a built site
   [ -f "$FALLBACK_STATE/${FALLBACK_LABELS[0]}.plist" ] && [ -f "$FALLBACK_STATE/${FALLBACK_LABELS[1]}.plist" ] && [ -f "$READY_DIR/frontend/dist/index.html" ]
 }
 fallback_active() { loaded "${FALLBACK_LABELS[0]}"; }
+# FM-21: a standby that was prepared but can no longer serve, in words; nothing when it is fine
+# or was never prepared ("none prepared" is a status warning, and deploy refuses it: FM-24).
+fallback_problem() {
+  [ -e "$FALLBACK_STATE/ready" ] || return 0
+  if ! ready_record; then echo "its ready record is corrupt or cut short"; return 0; fi
+  if ! fallback_ready; then echo "its checkout, build or agents are gone (${READY_DIR})"; return 0; fi
+  local head; head=$(git -C "$READY_DIR" rev-parse -q --verify HEAD 2>/dev/null) || return 0 # not a git checkout: nothing to compare
+  [[ "$head" == "$READY_SHA"* ]] || echo "its checkout moved to ${head:0:7} after it was prepared at ${READY_SHA:0:7}"
+}
+fallback_watch() { # awake guard: text when the standby goes bad, not only once a failover needs it
+  fallback_active && return 0
+  local why; why=$(fallback_problem)
+  [ -n "$why" ] || return 0
+  phone -key fallback-bad -every 6h "Gauss: no usable standby" \
+    "The fallback can't take over: $why. Live still runs; if it fails there is nothing to switch to. Fix: gauss-services.sh fallback prepare <dir>"
+}
 
 fallback_on() { # fallback_on <reason>: swap live for the fallback on the same ports
   fallback_ready || { echo "No fallback prepared: $0 fallback prepare <dir>" >&2; return 1; }
@@ -1237,6 +1270,15 @@ node_changed() { # node_changed <dir>: node_modules was installed by another Nod
   [ -n "$was" ] && [ "$was" != "$("$NODE" -v 2>/dev/null || echo none)" ]
 }
 
+deploy_power_short() { # prints why the power can't carry a deploy, or nothing
+  local batt pct watts
+  batt=$(pmset -g batt 2>/dev/null); pct=$(grep -Eo -m1 '[0-9]+%' <<<"$batt" | tr -d % || true)
+  [ -n "$pct" ] && [ "$pct" -lt "$WORK_BATTERY" ] || return 0
+  if [[ "$batt" != *"'AC Power'"* ]]; then echo "battery ${pct}% on battery"; return 0; fi
+  if [[ "$batt" == *discharging* || "$batt" == *"not charging"* ]]; then echo "battery ${pct}% and the charger isn't keeping up"; return 0; fi
+  watts=$(pmset -g ac 2>/dev/null | sed -n 's/^ *Wattage = \([0-9]*\)W.*/\1/p')
+  [ -z "$watts" ] || [ "$watts" -ge 20 ] || echo "battery ${pct}% on a ${watts} W charger"
+}
 switch_live() { # switch_live <dir> <from sha> <to sha>: check out, npm ci if the lockfile or Node changed, reinstall
   git -C "$1" checkout -q --detach "$3" || return 1
   if [ ! -d "$1/node_modules" ] || ! git -C "$1" diff --quiet "$2" "$3" -- package-lock.json || node_changed "$1"; then
@@ -1270,6 +1312,12 @@ deploy() { # deploy <commit> [fallback-dir]
   if [ "$level" -ge "$MEM_SHED_LEVEL" ]; then
     echo "Memory pressure is $(pressure_name "$level"): not deploying now (npm ci and the build need headroom). Retry when normal." >&2; return 1
   fi
+  # The install and the build draw ~10 W: a battery under WORK_BATTERY without a charger that keeps
+  # up can die mid-switch and leave live half-deployed (4 Nov 2026: a deploy ran at 13% on 8 W).
+  local why_power; why_power=$(deploy_power_short) || true
+  if [ -n "$why_power" ] && [ -z "$DEPLOY_EMERGENCY" ]; then
+    echo "Not deploying now: $why_power. Plug into a 20 W+ charger (or --emergency <reason>)." >&2; return 1
+  fi
   # Live's data files (telemetry, models) change in place and carry over; code must not.
   local dirty; dirty=$(git -C "$live" status --porcelain --untracked-files=no | cut -c4- | grep -Ev '^(data|ml/models)/' || true)
   [ -z "$dirty" ] || { printf 'Live has local code changes; not deploying over them:\n%s\n' "$dirty" >&2; return 1; }
@@ -1287,7 +1335,10 @@ deploy() { # deploy <commit> [fallback-dir]
 
   # The standby becomes what runs now, if it is healthy: never swap a good fallback for a broken live.
   [ -z "$fbdir" ] && ready_record && fbdir=$READY_DIR
-  if [ -z "$fbdir" ]; then
+  if [ -z "$fbdir" ] && [ -z "$DEPLOY_NO_FALLBACK$DEPLOY_EMERGENCY" ]; then
+    # FM-24: a deploy used to go ahead and leave no standby; the next live failure then had nothing to fail over to.
+    echo "No fallback to refresh: pass a path ($0 deploy <commit> <fallback-dir>), or --no-fallback to deploy without one." >&2; return 1
+  elif [ -z "$fbdir" ]; then
     echo "warning: no fallback to refresh (pass a path: $0 deploy <commit> <fallback-dir>); rollback to ${prev:0:7} still works."
   elif ready_record && [ "$READY_SHA" = "$prev" ] && [ "$READY_DIR" = "$(cd "$fbdir" 2>/dev/null && pwd)" ]; then
     echo "Fallback already at ${prev:0:7}."
@@ -1360,6 +1411,7 @@ dev_run() { # dev_run <checkout-dir>
 awake_guard() { # run every minute by the awake agent
   boot_check || true # first, before watch_peers refreshes the heartbeat it reads
   watch_peers
+  fallback_watch || true
   local batt pct
   batt=$(pmset -g batt); pct=$(grep -Eo -m1 '[0-9]+%' <<<"$batt" | tr -d % || true)
   battery_alerts "$batt" "$pct"
@@ -1473,7 +1525,7 @@ awake_state() { # "ok|no <description>" for status and check
   if [ -f "$AWAKE_OFF" ]; then echo "no lid-closed awake turned off ('$0 awake on' to resume)"
   elif [ ! -f "$SUDOERS" ]; then echo "no lid-closed awake not set up ('$0 awake setup', once)"
   elif ! launchctl print "$UID_DOMAIN/uk.lightbound.gauss-awake" >/dev/null 2>&1; then echo "no lid-closed awake guard not installed ('$0 install <checkout-dir>')"
-  elif [ "$(sleep_disabled)" = 1 ]; then echo "ok stays awake with the lid closed (sleeps on battery at ${AWAKE_MIN_BATTERY}%)"
+  elif [ "$(sleep_disabled)" = 1 ]; then echo "ok stays awake with the lid closed (sleeps on battery at ${AWAKE_MIN_BATTERY}%${BATTERY_HEALTH:+; battery health ${BATTERY_HEALTH}%})"
   else echo "no battery at or below ${AWAKE_MIN_BATTERY}%: the Mac sleeps when the lid closes; plug in"
   fi
 }
@@ -1713,7 +1765,8 @@ case "${1:-}" in
     while [ $# -gt 0 ]; do
       case "$1" in
         --emergency) DEPLOY_EMERGENCY=${2:-}; [ -n "$DEPLOY_EMERGENCY" ] || { echo "--emergency needs a reason" >&2; exit 2; }; shift ;;
-        -*) echo "deploy: unknown option $1 (usage: deploy <sha> [fallback dir] [--emergency <reason>])" >&2; exit 2 ;;
+        --no-fallback) DEPLOY_NO_FALLBACK=1 ;;
+        -*) echo "deploy: unknown option $1 (usage: deploy <sha> [fallback dir] [--emergency <reason>] [--no-fallback])" >&2; exit 2 ;;
         *) args+=("$1") ;;
       esac
       shift

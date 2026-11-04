@@ -35,7 +35,7 @@ func relayFor(cfg Config, store Store, phone *Phone) (*Relay, bool, error) {
 	if err != nil {
 		return nil, false, err
 	}
-	r := &Relay{Dir: filepath.Join(store.Dir, "dtn"), Keys: keys, InboxDir: inboxDir(cfg),
+	r := &Relay{Dir: filepath.Join(store.Dir, "dtn"), Keys: keys, InboxDir: inboxDir(cfg), LinkPath: linkPath(),
 		Notify: func(title, msg string) {
 			if os.Getenv("ARGO_NO_DESKTOP") != "" { // scripts, SSH sessions, tests: print instead
 				fmt.Fprintf(os.Stderr, "argo alert: %s: %s\n", title, Mask(msg))
