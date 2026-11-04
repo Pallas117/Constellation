@@ -473,16 +473,25 @@ footer p{margin:0 0 6px}
     .descent-art{height:100%;max-height:none;overflow:visible}
     .descent-steps{max-width:660px;width:100%;margin:0 auto;min-height:7.6em;gap:0}
     .descent-steps li{grid-area:1/1;animation:d-step linear both;animation-timeline:--descent}
-    .descent-steps li:nth-child(1){animation-name:d-step-first;animation-range:contain 0% contain 18%}
-    .descent-steps li:nth-child(2){animation-range:contain 16% contain 40%}
-    .descent-steps li:nth-child(3){animation-range:contain 38% contain 60%}
-    .descent-steps li:nth-child(4){animation-range:contain 58% contain 80%}
-    .descent-steps li:nth-child(5){animation-name:d-step-last;animation-range:contain 78% contain 90%}
+    /* Ranges meet end to end, so a caption has faded out before the next fades in (no overlapping text). */
+    .descent-steps li:nth-child(1){animation-name:d-step-first;animation-range:contain 0% contain 17%}
+    .descent-steps li:nth-child(2){animation-range:contain 17% contain 39%}
+    .descent-steps li:nth-child(3){animation-range:contain 39% contain 59%}
+    .descent-steps li:nth-child(4){animation-range:contain 59% contain 79%}
+    .descent-steps li:nth-child(5){animation-name:d-step-last;animation-range:contain 79% contain 90%}
     .descent-steps li:focus-within{opacity:1!important;visibility:visible!important;transform:none!important}
     .descent-note{text-align:center}
     @media (max-width:560px){.descent-art{transform:scale(1.4)}}
     .d-bh{display:inline;transform-origin:0 0;animation:d-shrink linear both;animation-timeline:--descent;animation-range:contain 0% contain 30%}
     .d-bh image{animation:d-out linear both;animation-timeline:--descent;animation-range:contain 2% contain 20%}
+    /* One black hole on screen at a time: the hero's film fades as the descent rises, then the descent's own
+       black hole fades in as the stage pins. Without timeline-scope the hero keeps its film; the art still waits. */
+    .descent-art{animation:d-in linear both;animation-timeline:--descent;animation-range:entry 60% entry 100%}
+    @supports (timeline-scope:--descent){
+      main{timeline-scope:--descent}
+      .hero{border-image:none;border-bottom-color:transparent}
+      .hero .poster,.hero .film{animation:d-out linear both;animation-timeline:--descent;animation-range:entry 25% entry 60%}
+    }
     .d-earth{animation:d-in linear both;animation-timeline:--descent;animation-range:contain 14% contain 26%}
     .d-halo{animation:d-in linear both;animation-timeline:--descent;animation-range:contain 24% contain 30%}
     .d-lines path{stroke-dasharray:1;animation:d-draw linear both;animation-timeline:--descent;animation-range:contain 22% contain 46%}
