@@ -234,6 +234,20 @@ phone() {
 # format. Rotated by size, one old file kept.
 EVENTS="${GAUSS_EVENTS_LOG:-$LOGS/events.jsonl}"
 EVENTS_MAX_KB="${GAUSS_EVENTS_MAX_KB:-5120}"
+# The services' own logs. launchd keeps them open, so a rename would leave it writing to the moved file:
+# copy to .1 and empty in place instead (a line written in between can be lost). backend.log had reached
+# 12 MB in a month, never rotated, on a Mac held for disk (4 Nov 2026).
+LOG_MAX_KB="${GAUSS_LOG_MAX_KB:-5120}"
+ROTATED_LOGS="backend frontend fallback-backend fallback-frontend learning awake gates-runner deploy balance"
+rotate_logs() {
+  local n f
+  for n in $ROTATED_LOGS; do
+    f="$LOGS/$n.log"
+    [ -f "$f" ] && [ $(( $(stat -f %z "$f" 2>/dev/null || echo 0) / 1024 )) -ge "$LOG_MAX_KB" ] || continue
+    cp -p "$f" "$f.1" 2>/dev/null && : >"$f"
+  done
+  return 0
+}
 BOOT_STATE="$WATCH_DIR/boottime"
 MEMORY_TSV="${MEM_GUARD_LOG:-$LOGS/memory.tsv}"       # written by ~/.local/bin/mem-guard, not this repo
 MEM_GUARD="${GAUSS_MEM_GUARD:-$HOME/.local/bin/mem-guard}"
@@ -1443,6 +1457,7 @@ awake_guard() { # run every minute by the awake agent
   memory_alerts "$level" "$swap"
   memory_sample "$level" "$swap"
   disk_alerts "$(disk_free_gb)" "$swap"
+  rotate_logs
   balance || true
   # A queued gate run outlives a reboot or a killed runner: start one again.
   if ls "$GATES_QUEUE" 2>/dev/null | grep -c '\.req$' >/dev/null && ! gates_runner_pid >/dev/null; then gates_start >/dev/null || true; fi
