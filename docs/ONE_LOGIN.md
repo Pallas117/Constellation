@@ -50,7 +50,9 @@ the private ops.lightbound.space (tailnet only; passkeys use one RP ID per backe
 **Decided (Josh, 4 Nov 2026: "Tailnet ops console"):** paid operators use the console on the private ops network, not
 the public app.
 - The workspace's "Open the Gauss console" button goes to `GAUSS_CONSOLE_URL` (https; for example
-  `https://ops.lightbound.space/operator`), with the line "The console opens on the Lightbound private network, with a
+  `https://ops.lightbound.space:8443/operator`: the private console listens on the Mac's tailnet address at 8443,
+  because macOS won't let a normal user bind 443 on a specific address; TLS ends on the Mac, and the DNS record is
+  DNS-only, pointing at the tailnet IP), with the line "The console opens on the Lightbound private network, with a
   passkey on your own device."
 - `GAUSS_APP_URL` is only ever the public viewer ("Open the live view", and the landing page's `/live`); the
   viewer is never offered as the console.

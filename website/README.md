@@ -472,7 +472,7 @@ All of it is still in the code, and the tests run it with `RELEASE: "full"`. To 
 1. In `wrangler.jsonc`, set `RELEASE` to `"full"`.
    - Add the DATA namespace: `npx wrangler@4 kv namespace create DATA`, then a `{ "binding": "DATA", "id": … }` entry.
    - Add these vars: `ACCESS_TEAM_DOMAIN`, `ACCESS_AUD`, `ADMIN_EMAILS` (`jzwnathan@lightbound.uk`),
-     `GAUSS_APP_URL` (the public live view), `GAUSS_CONSOLE_URL` (paid plans' console on the tailnet ops site),
+     `GAUSS_APP_URL` (the public live view), `GAUSS_CONSOLE_URL` (paid plans' console on the tailnet ops site, `https://ops.lightbound.space:8443/operator`),
      `OPS_URL`, `SUPPORT_URL`, `USER_CAP` (`"50"`).
 2. Set up Stripe and sign-in as below, plus the secrets in "Members' opportunities and the staff link".
 3. Put **Sign in** back in the page headers. The public release shows Contact there; Worker-run pages bring
