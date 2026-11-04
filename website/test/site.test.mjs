@@ -469,7 +469,16 @@ test("brand: shared status colours and no shadows outside marks and photos", () 
   assert.match(css, /--live:#4E972F;--sim:#318ADA;--danger:#D4673B;/);
   assert.match(css, /\.chip\.live\{color:var\(--live\)\}/, "LIVE is the status green, always with its word");
   assert.match(gauss, /<span class="chip sim">Synthetic · screening evidence<\/span>/, "synthetic = SIMULATED blue");
-  assert.doesNotMatch(css, /text-shadow|drop-shadow|box-shadow:(?!inset 0 -1px)/, "no drop shadows or glows");
+  // Brand Book amendment (Josh, 4 Nov 2026): "accretion light". Glows only in the black hole's own disk colours, only on
+  // hover and focus (the live-view card is the one glow at rest); never text shadows or drop shadows.
+  assert.doesNotMatch(css, /text-shadow|drop-shadow/, "no text or drop shadows");
+  assert.match(css, /--hot:255 222 170;--ember:240 120 42;--mauve:203 182 214;--violet:142 108 196;/, "the disk tokens");
+  for (const [, selector, body] of css.matchAll(/([^{}]+)\{([^{}]*box-shadow:[^{}]*)\}/g)) {
+    const value = body.match(/box-shadow:([^;}]*)/)[1];
+    if (/^inset 0 -1px/.test(value)) continue;
+    assert.match(value, /var\(--disk-glow\)|rgb\(var\(--(hot|ember|mauve|violet)\)/, `${selector.trim()}: glows use the disk colours`);
+    assert.match(selector, /:hover|:focus|^\s*\.live-card\s*$/, `${selector.trim()}: glows on hover or focus only`);
+  }
   assert.match(css, /\.btn\{[^}]*border-radius:4px/, "4 px controls");
 });
 // ---- GAU-137 accuracy (review of addfbe1 against Constellation main and the 17 Oct radiation study) ----
