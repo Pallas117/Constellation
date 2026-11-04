@@ -27,6 +27,8 @@ func TestPhoneServiceChoosesSendOrder(t *testing.T) {
 		p := newPhoneFor(c.cfg)
 		if p == nil || ptr(p.send) != ptr(c.want) {
 			t.Errorf("%+v: wrong send order", c.cfg)
+		} else if route := map[bool]string{true: "sms-first", false: "imessage-first"}[ptr(c.want) == ptr(smsFirst)]; p.Route != route {
+			t.Errorf("%+v: egress route %q, want %q", c.cfg, p.Route, route)
 		}
 	}
 	if newPhoneFor(Config{PhoneTo: "not a handle", PhoneService: "sms"}) != nil {
