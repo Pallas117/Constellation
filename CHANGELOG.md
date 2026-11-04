@@ -12,6 +12,8 @@ Before tagging, move these entries under `## [0.1.0] - <date>`.
 
 ### Added
 
+- Argo third-party registry: every outside service as a node with what it can see, its scopes, where its credential
+  lives and where to revoke it; `argo thirdparty check` flags new, changed and unregistered services (#219).
 - Inference trust records: the record engine (#115), `POST /api/v1/data/trust/records` on the metered data API (#116),
   SGP4 orbit context from TLEs (#122), and a South Atlantic Anomaly flag from IGRF-14 |B| (#128).
 - Ed25519 signing of evidence packs and release files, with one offline verify command for customers (#161), and the
@@ -27,12 +29,16 @@ Before tagging, move these entries under `## [0.1.0] - <date>`.
   verified tags, with a health check and automatic rollback (#69).
 - Release records: `npm run release:sbom` writes CycloneDX SBOMs for the runtime npm dependencies and Gauss Argo,
   third-party notices, and a licence check that fails on copyleft or unknown licences (GAU-69).
+- Argo egress log: `argo egress` shows what Argo sent off the device and where, kept on the device; `argo egress off`
+  holds third-party sends until `on`; `argo phone imessage|sms` chooses who carries alerts (#215).
 
 ### Changed
 
 - Missing, stale, failed or assumed inputs are reported as unknown or derived, never as nominal or measured (#51,
   #65, #109); explicit unknown answers replace canned "verified" assessments (#26).
 - Strict type checking and ESLint over the frontend, backend, tests and scripts (#87, #91, #102).
+- `npm run alerts:watch` keeps alerts on the machine; raw log lines no longer go to Slack or Linear, and phone alerts
+  through Argo are opt-in (`ALERTS_VIA_ARGO=1`) (#215). Wrangler usage metrics are off for the website (#215).
 
 ### Fixed
 

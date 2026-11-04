@@ -20,6 +20,8 @@ Design and sources: `docs/ARGO_DTN.md`. User guide: `tools/argo/README.md`.
 | Resource guard | `guard*.go` | memory/battery/disk admission (GAU-195) |
 | Alerts | `notify.go`, `phone.go` | class change only; OFFLINE never texts; usual blips stay quiet (see Rules) |
 | Relay (DTN) | `cbor.go`, `bundle.go`, `bpsec.go`, `relay.go`, `relay_cmd.go`, `hub.go` | BPv7 bundles, blocks 192 (Ed25519) and 193 (HPKE ML-KEM-768+X25519), end-to-end receipts, data mule |
+| Standard BPSec (interop) | `bpsec9173.go`, `aeskw.go`, `testdata/rfc9173/` | RFC 9173 BIB-HMAC-SHA2 and BCB-AES-GCM in blocks 11/12, pre-placed keys, AES key wrap (RFC 3394) |
+| Link keys | `linkkeys.go` | per-pair, per-direction keys offered under argo-sig + argo-seal, confirmed by receipt; then BIB-HMAC-SHA256 (primary) + BCB-AES-256-GCM (payload); `links.key` 0600; rotate 7 d / 65,536 bundles |
 | Hub | `backend/mesh/bundles.ts`, `router.ts` | device-token routes before session auth; ciphertext only; key directory (first key wins) |
 | UI | `frontend/src/pages/MeshDashboard.tsx`, `frontend/src/lib/link-stability.ts`, `website/public/argo/` | `/mesh` columns; `/argo/` is noindex, "Included", no price |
 
@@ -38,8 +40,11 @@ Design and sources: `docs/ARGO_DTN.md`. User guide: `tools/argo/README.md`.
 - Device-token routes: list them in the `backend/rbac.ts` header comment. CyberTiger counts 401/403, so agents must
   stop on 401.
 - Relay crypto:
-  - Use only `crypto/hpke`, `crypto/ed25519` and `hash/crc32`. Bind the primary block in HPKE `info`; sign, then
-    encrypt.
+  - Use only the standard library: `crypto/hpke`, `crypto/ed25519`, `crypto/hkdf`, `crypto/aes`, `crypto/cipher`,
+    `crypto/hmac`, `hash/crc32`. Bind the primary block in HPKE `info`; sign, then encrypt.
+  - Link keys only ever travel inside an argo-seal-1 bundle, and are used only after the peer's receipt. Never log
+    or print a `linkKey.Key`; outbox items and `relay.json` carry only its id. Anything a third party must check
+    keeps Ed25519.
   - Regenerate the golden bundles after any format change: `ARGO_WRITE_FIXTURES=1 go test -run TestBundleFixtures .`
 - Public copy (website test): no "post-quantum"/PQC, "VPN", "untraceable", grade or compliance claims; no Argo price.
 - Never self-merge changes to crypto, device-token routes or public copy (outside the standing approval).
@@ -50,7 +55,8 @@ Design and sources: `docs/ARGO_DTN.md`. User guide: `tools/argo/README.md`.
 |---|---|
 | Unit + simulation | `cd tools/argo && go test ./...` (`-short` skips the 15 s 5-day DTN simulation; `ARGO_SIM_SEED=n` for other seeds) |
 | Static | `gofmt -l .`, `go vet ./...`, `GOOS=linux go vet ./...` |
-| Fuzz | `go test -run '^$' -fuzz FuzzParseBundle -fuzztime 45s -parallel 2 .` |
+| Fuzz | `go test -run '^$' -fuzz FuzzParseBundle -fuzztime 45s -parallel 2 .` (and `FuzzRFC9173`) |
+| RFC 9173 golden tests | `go test -short -run 9173 .`: Appendix A.1-A.4 byte for byte, RFC 3394 §4 vectors |
 | Hub/mesh | `node --import tsx --import ./backend/test-setup.ts --test backend/mesh/*.test.ts` |
 | End to end | `npm run test:argo-e2e`: the real binary as two devices against the real routes (1-3 min) |
 | Ops | `npm run test:ops` |
@@ -66,3 +72,8 @@ Heavy jobs go through `claude-heavy`. A Go package or one node test file may use
 - `ARGO_NO_DESKTOP=1` stops relay alerts popping banners in scripts and tests.
 - An older Gauss answers the relay routes with a non-JSON 404. Argo treats that as "retry later", not a refusal.
 - The 24 h log on the hostel hotspot: 24 drops, median 3 min, p95 about 1 h. Calibrate simulations from `argo link`, not guesses.
+- The toolchain is pinned in `go.mod` (`toolchain go1.26.10`; `crypto/hpke` needs 1.26). Build with `go build -o /dev/null .` or `-o ~/somewhere`: a plain `go build` leaves an `argo` binary in `tools/argo` (ignored, but don't ship it).
+- RFC 9173 errata matter:
+  - Errata 9192 (reported 2026-09-28, UNVERIFIED) reads A.3's IPPT as using the bare primary block. The published example and dtn7-rs wrap it in a byte string. Argo wraps by default; `BarePrimary` selects the bare form. HDTN's choice is unknown.
+  - Errata 7002: A.4 reuses one AES-GCM IV for two targets. `addBCB` therefore takes one target per BCB. Never set `BCBConfig.IV` outside golden tests.
+- A Go subagent in a separate worktree may not have the newest `.claude/` files until main is merged into its branch. Brief it with the paths.

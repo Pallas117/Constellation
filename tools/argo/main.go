@@ -113,6 +113,7 @@ func main() {
 			f(c)
 		}
 		_ = withLock(store, func() { watchPeers(cfg.peers(), store, realWatchFx(phone, store), time.Now()) })
+		thirdpartyTick(tpFilesIn(configDir()), phone, time.Now()) // texts once per new third-party change; two small file reads
 		_ = withLock(store, func() { phase(20*time.Second, func(c context.Context) { guardTick(c, store, cfg, phone, time.Now()) }) })
 		phase(30*time.Second, func(c context.Context) { relayTick(c, cfg, store, phone) }) // store-and-forward (relay.go); takes its own lock
 		var skip bool
@@ -177,6 +178,8 @@ func main() {
 			case <-time.After(every):
 			}
 		}
+	case "networks": // GAU-234: Wi-Fi networks in range and what Argo would join (names stay on this Mac)
+		err = printNetworks(ctx, os.Stdout)
 	case "summary": // what Argo caught, fixed and learned in the last 7 days
 		now := time.Now()
 		st := store.Load()
@@ -219,6 +222,11 @@ func main() {
 		if len(lines) == 0 {
 			fmt.Println("devices: all watched devices are on the tailnet (or this Mac is off it)")
 		}
+	case "thirdparty": // outside services as nodes: what each sees, scopes, credential place, revoke place
+		var code int
+		if code, err = thirdpartyCmd(os.Args[2:], configDir(), os.Stdin, os.Stdout, time.Now()); err == nil && code != 0 {
+			os.Exit(code)
+		}
 	case "guard": // resource guard: deep analysis, admission, guarded runs (GAU-195)
 		var code int
 		if code, err = guardCmd(os.Args[2:], store, cfg, os.Stdout); err == nil && code != 0 {
@@ -228,6 +236,8 @@ func main() {
 		err = notifyCmd(os.Args[2:], phone, store, time.Now())
 	case "phone":
 		err = phoneSetup(os.Args[2:], cfg)
+	case "egress": // what Argo sent off this Mac and where; `off|on` holds or releases third-party sends
+		err = egressCmd(os.Args[2:], store, phone, os.Stdout, time.Now())
 	case "enroll":
 		if err = enroll(os.Args[2:]); err == nil {
 			err = verifyEnroll(ctx, loadConfig(), store, loop.Prober)
@@ -241,7 +251,7 @@ func main() {
 	case "version":
 		fmt.Println("argo", version)
 	default:
-		fmt.Fprintln(os.Stderr, "usage: argo [status|doctor|fix|report|on|off|preflight|run -- cmd|phone <handle>|test|off|notify TITLE MSG|guard [admit|run]|watch|summary [--send]|enroll URL DEVICE|install|uninstall|version]\n       argo [send [-ttl D] DEVICE FILE|outbox|inbox|sync|keys [list|publish|trust DEVICE]|mule export|import DIR|link]")
+		fmt.Fprintln(os.Stderr, "usage: argo [status|doctor|fix|report|on|off|preflight|run -- cmd|phone <handle>|test|off|imessage|sms|notify TITLE MSG|egress [off|on]|thirdparty [list|check|accept|seen]|guard [admit|run]|watch|summary [--send]|enroll URL DEVICE|install|uninstall|version]\n       argo [send [-ttl D] DEVICE FILE|outbox|inbox|sync|keys [list|publish|trust DEVICE]|mule export|import DIR|link]")
 		os.Exit(2)
 	}
 	if err != nil {

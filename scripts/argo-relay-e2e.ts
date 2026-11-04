@@ -123,7 +123,11 @@ async function main() {
   r = await run(homes.alpha, ["outbox"]);
   check(/pass-plan\.csv → e2e-bravo: 1\/1 confirmed/.test(r.out) && /ephemeris\.bin → e2e-bravo: 3\/3 confirmed/.test(r.out), "the sender sees both confirmed", r.out);
 
-  // 6. A bundle altered at the hub is refused and never reaches the inbox.
+  // 6. A bundle altered at the hub is refused and never reaches the inbox. First let alpha's receipt
+  //    for bravo's link key offer through, so the mailbox holds only the next file, which now goes
+  //    under the pair's link key (RFC 9173 BIB + BCB) instead of argo-sig + argo-seal.
+  await run(homes.alpha, ["sync"]);
+  await run(homes.bravo, ["sync"]);
   const evil = path.join(root, "orders.txt");
   writeFileSync(evil, "genuine");
   await run(homes.alpha, ["send", "e2e-bravo", evil]);
