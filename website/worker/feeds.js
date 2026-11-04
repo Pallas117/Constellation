@@ -8,6 +8,7 @@
 // Funding Tracker, read from the one tab published as CSV (PROGRAMMES_CSV_URL, a secret). Only titles, dates,
 // short summaries and official links are kept, never article text.
 import { readCapped } from "./body.js";
+import { isFull } from "./release.js";
 
 // Constellation's events: the public Luma calendar. Luma publishes an iCal feed for every public calendar
 // (it says to refresh every 12 hours). Only titles, times and public event links are kept: not organisers,
@@ -32,11 +33,12 @@ export const FEEDS = Object.freeze({
   weather: { key: "feed:weather", refreshMin: 15, staleMin: 45 },
   // Optional: Luma being down never makes /api/health fail.
   events: { key: "feed:events", refreshMin: 180, staleMin: 1440, optional: true },
-  news: { key: "feed:news", refreshMin: 60, staleMin: 720, optional: true },
-  ukri: { key: "feed:ukri", refreshMin: 360, staleMin: 2880, optional: true },
-  uksa: { key: "feed:uksa", refreshMin: 360, staleMin: 2880, optional: true },
+  // members: for signed-in members' opportunities only, so a public release (release.js) doesn't fetch them.
+  news: { key: "feed:news", refreshMin: 60, staleMin: 720, optional: true, members: true },
+  ukri: { key: "feed:ukri", refreshMin: 360, staleMin: 2880, optional: true, members: true },
+  uksa: { key: "feed:uksa", refreshMin: 360, staleMin: 2880, optional: true, members: true },
   // Only once PROGRAMMES_CSV_URL is set; until then it is "not configured", not failing.
-  programmes: { key: "feed:programmes", refreshMin: 180, staleMin: 2880, optional: true, needs: "PROGRAMMES_CSV_URL" },
+  programmes: { key: "feed:programmes", refreshMin: 180, staleMin: 2880, optional: true, members: true, needs: "PROGRAMMES_CSV_URL" },
 });
 
 const UA = "lightbound.uk-site/1 (+https://lightbound.uk)";
@@ -302,18 +304,19 @@ function isDue(rec, feed, now) {
 
 const errorText = (err) => clean(err?.name === "TimeoutError" ? "upstream timed out" : String(err?.message ?? err), 200);
 
-/** False for a feed that waits on a setting (PROGRAMMES_CSV_URL) that isn't set, or isn't a valid published-CSV link. */
-export const configured = (env, name) => (name === "programmes" ? !!programmesUrl(env) : true);
+/** False for a members' feed in a public release, and for a feed that waits on a setting (PROGRAMMES_CSV_URL) that
+ * isn't set, or isn't a valid published-CSV link. */
+export const configured = (env, name) => (FEEDS[name].members && !isFull(env) ? false : name === "programmes" ? !!programmesUrl(env) : true);
 
 /** Called by the cron trigger. Returns what happened to each feed, for the log. */
 export async function refreshFeeds(env, { fetchImpl = fetch, now = Date.now(), force = false } = {}) {
   const results = {};
   for (const [name, feed] of Object.entries(FEEDS)) {
-    const prev = await readFeed(env, name);
-    if (feed.needs && !configured(env, name)) {
+    if (!configured(env, name)) {
       results[name] = "not configured";
       continue;
     }
+    const prev = await readFeed(env, name);
     if (!force && !isDue(prev, feed, now)) {
       results[name] = "fresh";
       continue;

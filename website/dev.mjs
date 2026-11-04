@@ -22,6 +22,7 @@ import { fixtureFetch } from "./test/fixtures/fetch.mjs";
 import { PROGRAMMES_URL } from "./test/fixtures/opportunities.mjs";
 import { memoryKV } from "./test/fixtures/kv.mjs";
 import { makeAccess } from "./test/fixtures/access.mjs";
+import { isFull } from "./worker/release.js";
 
 const dir = dirname(fileURLToPath(import.meta.url));
 const root = join(dir, "public");
@@ -113,6 +114,9 @@ const env = {
   STRIPE_API_BASE: `http://127.0.0.1:${port}/__stripe`,
   STRIPE_SECRET_KEY: "dev-local-placeholder",
   STRIPE_WEBHOOK_SECRET: "dev-local-webhook-placeholder",
+  RELEASE: process.env.RELEASE ?? "full", // the preview opens everything; production is "public" (RELEASE=public npm run site:dev)
+  ADMIN_EMAILS: process.env.ADMIN_EMAILS ?? "jzwnathan@lightbound.uk", // a secret-free var once accounts open; not in the public config
+  SOURCE_SHA: process.env.SOURCE_SHA ?? "", // production sets it at deploy (wrangler deploy --var SOURCE_SHA:...)
   SUPPORT_URL: process.env.SUPPORT_URL ?? "", // e.g. SUPPORT_URL=https://buy.stripe.com/test_... npm run site:dev
   EDU_SALES: process.env.EDU_SALES ?? "open", // the preview opens Gauss for Education; production defaults to "off"
   EDU_STAFF_PRICE: process.env.EDU_STAFF_PRICE ?? "", // empty = "Price TBC" (no staff checkout), as in production until Josh sets it
@@ -282,7 +286,8 @@ createServer(async (req, res) => {
     if (url.pathname === "/cdn-cgi/access/logout") return send(302, { location: "/", "set-cookie": "dev_access=; Path=/; Max-Age=0" });
 
     const headers = new Headers(Object.entries(req.headers).filter(([, v]) => typeof v === "string"));
-    if (url.pathname === "/app" || url.pathname.startsWith("/app/")) {
+    // Access sits in front of /app/* only once accounts open; in a public release the Worker answers 404 itself.
+    if ((url.pathname === "/app" || url.pathname.startsWith("/app/")) && isFull(env)) {
       const who = cookie(req, "dev_access");
       if (!who) return send(302, { location: `/__dev/login?redirect=${encodeURIComponent(url.pathname)}` });
       headers.set("cf-access-jwt-assertion", await access.sign(decodeURIComponent(who)));

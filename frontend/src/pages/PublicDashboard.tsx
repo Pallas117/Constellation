@@ -167,8 +167,12 @@ export default function PublicDashboard() {
             <HudStat
               label="Kp"
               value={fmt(drivers?.kp)}
-              tone={drivers ? (drivers.kp >= 7 ? 'risk' : drivers.kp >= 5 ? 'caution' : 'default') : 'default'}
-              detail="Planetary geomagnetic activity, 0–9. 5 and above is a storm (G1+)."
+              tone={drivers && drivers.kp !== null ? (drivers.kp >= 7 ? 'risk' : drivers.kp >= 5 ? 'caution' : 'default') : 'default'}
+              detail={
+                drivers && drivers.kp === null
+                  ? 'Planetary geomagnetic activity, 0–9. No Kp reading from any source: unknown.'
+                  : 'Planetary geomagnetic activity, 0–9. 5 and above is a storm (G1+).'
+              }
             />
             <HudStat
               label="Radiation"

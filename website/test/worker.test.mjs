@@ -72,7 +72,7 @@ test("space weather: NOAA scales, Kp and solar wind; NOAA times are UTC whatever
 const core = (r) => ({ launches: r.launches, weather: r.weather, events: r.events });
 
 test("refresh: fills KV, then leaves fresh feeds alone (LL2 allows 15 calls an hour)", async () => {
-  const env = { LIVE: memoryKV() };
+  const env = { LIVE: memoryKV(), DATA: memoryKV(), RELEASE: "full" };
   const f = makeFetch();
   const first = await refreshFeeds(env, { fetchImpl: f, now: RECORDED_AT });
   assert.deepEqual(core(first), { launches: "updated", weather: "updated", events: "updated" });
@@ -86,6 +86,10 @@ test("refresh: fills KV, then leaves fresh feeds alone (LL2 allows 15 calls an h
   const later = await refreshFeeds(env, { fetchImpl: f, now: RECORDED_AT + 180 * MIN });
   assert.deepEqual(core(later), { launches: "updated", weather: "updated", events: "updated" }, "Luma every 3 hours");
   assert.deepEqual([later.news, later.ukri, later.uksa], ["updated", "fresh", "fresh"], "news hourly, calls every 6 hours");
+  const pub = makeFetch();
+  const open = await refreshFeeds({ LIVE: memoryKV() }, { fetchImpl: pub, now: RECORDED_AT });
+  assert.deepEqual([open.news, open.ukri, open.uksa, open.programmes], ["not configured", "not configured", "not configured", "not configured"], "a public release fetches no members' feeds");
+  assert.equal(pub.calls.length, 6);
 });
 
 test("events: Luma's calendar becomes titles, times and public links only; cancelled events dropped", () => {
@@ -250,8 +254,67 @@ test("routes: a fresh deploy fetches once in the background, before the first cr
   const res = await worker.fetch(new Request("https://lightbound.uk/"), fresh, ctx);
   assert.equal(res.status, 200, "page still serves while data loads");
   await settle();
-  assert.equal(f.calls.length, 9);
+  assert.equal(f.calls.length, 6, "a public release: launches, events and four for space weather");
   assert.ok(await readFeed(fresh, "launches"));
+});
+
+// ---- The public release (GAU-178): RELEASE unset or "public" ----
+test("public release: sign-in, the workspace, Argo, form posts and the webhook answer 404, whatever the method", async () => {
+  for (const [path, method] of [["/app/", "GET"], ["/app", "GET"], ["/app/admin/", "GET"], ["/app/checkout", "POST"], ["/app/", "HEAD"], ["/argo/", "GET"]]) {
+    const res = await call(path, { method });
+    assert.equal(res.status, 404, `${method} ${path}`);
+    assert.equal(res.headers.get("cache-control"), "no-store");
+    for (const [k, v] of Object.entries(SECURITY_HEADERS)) assert.equal(res.headers.get(k), v, `${path} ${k}`);
+  }
+  for (const [path, method] of [["/api/apply", "POST"], ["/api/apply", "GET"], ["/api/stripe/webhook", "POST"]]) assert.equal((await call(path, { method })).status, 404, `${method} ${path}`);
+  // "full" without the DATA namespace is a half-configured deploy: it stays public.
+  const half = { ...env, RELEASE: "full" };
+  assert.equal((await send(half, new Request("https://lightbound.uk/app/"))).status, 404);
+});
+
+test("public release: each form's page asks by email instead, and carries the package but never any answers", async () => {
+  for (const path of ["/gauss/apply/", "/constellation/apply/", "/education/apply/", "/constellation/workshops/"]) {
+    const page = await (await call(path)).text();
+    assert.doesNotMatch(page, /<form|action="\/api\/apply"/, `${path}: no form`);
+    assert.match(page, /<p class="k">BY_EMAIL<\/p>/, path);
+    assert.match(page, /href="mailto:jzwnathan@lightbound\.uk\?subject=[^"]+&amp;body=/, `${path}: a mailto with the questions`);
+  }
+  const fleet = await (await call("/gauss/apply/?plan=fleet_integration&sent=1")).text();
+  assert.match(fleet, /<li>Package: Fleet Integration · £60k–£125k a year<\/li>/);
+  assert.match(fleet, /subject=Gauss%20brief%20%C2%B7%20Fleet%20Integration&amp;/);
+  assert.doesNotMatch(fleet, /RECEIVED/, "nothing was sent, so nothing says so");
+  assert.match(await (await call("/gauss/apply/?plan=%22%3E%3Cscript%3E")).text(), /<li>Package: Pilot · £20k–£40k<\/li>/, "unknown package: the pilot");
+});
+
+test("public release: pages offer pilots and an email route; later plans are in development; nothing links to sign-in", async () => {
+  const gauss = await (await call("/gauss/")).text();
+  assert.equal((gauss.match(/<span class="label">In development<\/span>/g) || []).length, 3);
+  assert.match(gauss, /Start with a pilot/);
+  assert.match(gauss, /the later plans are in development and follow a pilot/);
+  for (const path of ["/", "/gauss/", "/constellation/", "/education/", "/constellation/time/", "/gauss/apply/"]) {
+    const page = await (await call(path)).text();
+    assert.doesNotMatch(page, /href="\/app\/|>Sign in<|<!--full-->/, `${path}: sign-in links removed`);
+  }
+  const open = { ...env, EDU_SALES: "open", SUPPORT_URL: "https://buy.stripe.com/test_00abc123" };
+  assert.doesNotMatch(await (await send(open, new Request("https://lightbound.uk/education/"))).text(), /\/app\/\?edu=start/, "education stays opening soon");
+  assert.doesNotMatch(await (await send(open, new Request("https://lightbound.uk/constellation/"))).text(), /Support Constellation/, "no payment links");
+});
+
+test("public release: health names the release and the deployed commit, and only the feeds it uses", async () => {
+  const body = await (await call("/api/health")).json();
+  assert.deepEqual([body.release, body.source, Object.keys(body.feeds)], ["public", null, ["launches", "weather", "events"]]);
+  const sha = "6643d5f76bf98468a3c09570401077eb221d6a69";
+  assert.equal((await (await send({ ...env, SOURCE_SHA: sha }, new Request("https://lightbound.uk/api/health"))).json()).source, sha);
+  assert.equal((await (await send({ ...env, SOURCE_SHA: "<script>" }, new Request("https://lightbound.uk/api/health"))).json()).source, null);
+});
+
+test("full release: the same pages keep sign-in and the forms", async () => {
+  const { env: full } = await appEnv();
+  const page = async (path) => (await send(full, new Request(`https://lightbound.uk${path}`))).text();
+  assert.match(await page("/gauss/"), /<!--full--> <a class="btn ghost" href="\/app\/">Sign in<\/a><!--\/full-->/);
+  assert.match(await page("/gauss/apply/"), /<form class="form" method="post" action="\/api\/apply">/);
+  assert.equal((await send(full, new Request("https://lightbound.uk/argo/"))).status, 200);
+  assert.equal((await (await send(full, new Request("https://lightbound.uk/api/health"))).json()).release, "full");
 });
 
 // ---- Sign-in (Cloudflare Access JWT) ----
@@ -280,7 +343,7 @@ test("sign-in: only a valid Access JWT for our team and application counts", asy
 // ---- Applications ----
 async function appEnv() {
   const access = await makeAccess();
-  return { access, env: { ASSETS, LIVE: memoryKV(), DATA: memoryKV(), ADMIN_EMAILS: "boss@example.test", STRIPE_SECRET_KEY: "test-placeholder", STRIPE_WEBHOOK_SECRET: "test-webhook-placeholder", ...access.env } };
+  return { access, env: { ASSETS, LIVE: memoryKV(), DATA: memoryKV(), RELEASE: "full", ADMIN_EMAILS: "boss@example.test", STRIPE_SECRET_KEY: "test-placeholder", STRIPE_WEBHOOK_SECRET: "test-webhook-placeholder", ...access.env } };
 }
 const post = (path, body, headers = {}) => new Request(`https://lightbound.uk${path}`, {
   method: "POST", body: new URLSearchParams(body).toString(),
@@ -951,7 +1014,7 @@ test("opportunities: the tracker's published CSV tab, read loosely and safely", 
 });
 
 test("opportunities: the programme feed waits for its setting, and health says so", async () => {
-  const env = { ASSETS, LIVE: memoryKV() };
+  const env = { ASSETS, LIVE: memoryKV(), DATA: memoryKV(), RELEASE: "full" };
   const f = makeFetch({}, { shiftTo: Date.now() });
   assert.equal((await refreshFeeds(env, { fetchImpl: f })).programmes, "not configured");
   assert.ok(!f.calls.includes("programmes"));
@@ -965,7 +1028,7 @@ test("opportunities: the programme feed waits for its setting, and health says s
 });
 
 test("opportunities: a reply without a length still can't exceed the 2 MB cap", async () => {
-  const env = { LIVE: memoryKV() };
+  const env = { LIVE: memoryKV(), DATA: memoryKV(), RELEASE: "full" };
   const big = async (url) => String(url).includes("spaceflightnewsapi")
     ? new Response(new ReadableStream({ start(c) { for (let i = 0; i < 3; i++) c.enqueue(new Uint8Array(1024 * 1024)); c.close(); } }))
     : makeFetch()(url);

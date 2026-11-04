@@ -3,6 +3,7 @@
 //   WCAG AA text contrast, tap targets of at least 24 px, no sideways overflow, one h1 and no skipped heading levels,
 //   labelled form controls, alt on images, unique ids, and no console errors.
 // usage: npm run audit:website [-- name,name...]       (BASE=https://... to audit a deployed site; OUT=dir for screenshots)
+//        RELEASE=public npm run audit:website         (the public release: /argo/ and /app/ must answer 404, no sign-in)
 import { createRequire } from "node:module";
 import { spawn } from "node:child_process";
 import { mkdirSync } from "node:fs";
@@ -26,6 +27,11 @@ const PAGES = [
   ["app-staff", "/app/", "staff@example.test"], ["app-none", "/app/", "visitor@example.test"], ["app-edu", "/app/?edu=start", "audit@example.ac.uk"],
   ["admin", "/app/admin/", "jzwnathan@lightbound.uk"],
 ];
+// The public release (worker/release.js) has no sign-in to emulate, and its closed pages are checked as 404s.
+const PUBLIC = process.env.RELEASE === "public";
+const pages = PUBLIC
+  ? [...PAGES.filter(([, , who]) => !who).map(([n, p, w, s]) => (n === "argo" ? [n, p, w, 404] : [n, p, w, s])), ["app-closed", "/app/", null, 404]]
+  : PAGES;
 const only = process.argv[2] ? process.argv[2].split(",") : null;
 
 async function startPreview() {
@@ -81,7 +87,7 @@ const browser = await chromium.launch({ channel: "chromium" });
 let bad = 0;
 try {
   for (const [w, h] of [[375, 812], [1280, 800]]) {
-    for (const [name, path, who, status = 200] of PAGES) {
+    for (const [name, path, who, status = 200] of pages) {
       if (only && !only.includes(name)) continue;
       const ctx = await browser.newContext({ viewport: { width: w, height: h }, deviceScaleFactor: 1, reducedMotion: "reduce" });
       if (who && !process.env.BASE) await ctx.addCookies([{ name: "dev_access", value: encodeURIComponent(who), url: preview.base }]);

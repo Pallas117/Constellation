@@ -26,8 +26,12 @@ Nothing in **this** repo (Constellation) uses CCSDS framing or packet formats,
 XTCE, or SDLS today (grep for `ccsds` and `xtce` found nothing). Every external
 interface here is HTTPS/JSON or protobuf.
 
-CCSDS/cFS work already exists in the sibling `Pallas117/gauss-aurora` repo and is
-tracked in Linear project **Orbital Interoperability (CCSDS + ONNX)**:
+Earlier CCSDS/cFS work is tracked in Linear project **Orbital Interoperability (CCSDS + ONNX)**.
+**Correction (2026-10-22, GAU-186):** this ADR first said that work "already exists in the sibling
+`Pallas117/gauss-aurora` repo". It doesn't: that repo has one branch with none of these paths, and
+no published repository holds the code. A Phase 0 source reconciliation (GAU-186) located it in an
+unpublished R&D working tree and records what was observed and tested. Until it has a reviewed,
+pushed home, treat the "What exists" column below as historical status, not as code this repo can use:
 
 | Linear | State (2026-10-10) | What exists |
 |---|---|---|
@@ -37,6 +41,11 @@ tracked in Linear project **Orbital Interoperability (CCSDS + ONNX)**:
 | GAU-17 / GAU-20 | In Progress | Seven-zone CCSDS/cFS qualification contract and offline replay fixtures |
 | GAU-32 SPACE-SEC-001 | In Review | SDLS, credentials and key management tracked |
 | GAU-74 / GAU-75 | Backlog (M3 gate) | Flight-candidate gate and target-board benchmark of `cfs-gauss-mhd` |
+
+Observed in the 2026-10-22 reconciliation (GAU-186):
+- `cfs-gauss-mhd` is a host-only C library with a self-test. It makes no cFE/OSAL calls, so it is not yet a cFS app, and no cFS app, table or message definitions exist.
+- The software SEC-DED codec passes its unit tests.
+- Fault injection is exhaustive 1- and 2-bit software flips. That isn't radiation testing, and there is no SEU-rate model.
 
 This ADR's recommendation matches that plan (ground-first, flight work gated at
 Product Narrative milestone M3). Steps 1–4 below should **reuse** the

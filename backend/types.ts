@@ -139,7 +139,8 @@ export interface CanonicalSpaceWeatherPoint {
     dynamicPressure: number;
   };
   indices: {
-    kp: number;
+    /** Planetary Kp (0–9), or null when no source has given a Kp reading: unknown is never a default (GAU-63/GAU-230). */
+    kp: number | null;
     dst: number;
     /** "measured", or the model that derived dst (no source here measures Dst). GAU-63/GAU-84. */
     dstMethod: string;
@@ -326,8 +327,10 @@ export interface NowcastInferenceResponse {
   horizonMinutes: number;
   predictions: Array<{
     timestamp: string;
-    geomagneticPerturbation: number;
-    auroraIntensity: number;
+    /** null when an input it needs is unknown (e.g. no Kp reading), never computed from a default (GAU-230). */
+    geomagneticPerturbation: number | null;
+    /** 0–1; null when an input it needs is unknown (e.g. no Kp reading). */
+    auroraIntensity: number | null;
     /** null when the method has no calibrated confidence. */
     confidence: number | null;
   }>;

@@ -12,10 +12,10 @@ const PILLARS = [
     point: "Live space weather on the open landing page",
   },
   {
-    title: "Compute & Funding",
-    body: "Regular members help scale the network by contributing compute capacity and funding model training, while operators maintain the secure mission-critical control plane.",
+    title: "Free & Invite-Only",
+    body: "Membership is free and by invitation. There is no fee, and members are not expected to provide compute or fund model training; operators run the secure mission-critical control plane.",
     icon: Sparkles,
-    point: "Easy low-latency contributions and visibility into performance",
+    point: "Free to join, by invitation",
   },
   {
     title: "Operator Separation",
@@ -39,9 +39,9 @@ export default function MemberHub() {
                 Open access to magnetohydrodynamics, SDA, and network contributions.
               </h1>
               <p className="mt-4 max-w-2xl text-sm leading-7 text-muted-foreground">
-                Regular members keep the system funded and compute-rich. No operator credentials are required: a member
-                account opens the heliophysics visualisations, shows how the SDA is evolving, and lets you join the
-                network as a contributor.
+                Membership is free and invite-only. No operator credentials are required: a member account opens the
+                heliophysics visualisations, shows how the SDA is evolving, and lets you join the network as a
+                contributor.
               </p>
             </div>
             <div className="flex flex-col gap-3 sm:flex-row">
