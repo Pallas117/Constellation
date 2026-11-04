@@ -176,7 +176,8 @@ test("live-view gate: a labelled pre-rendered frame behind a sign-in card, no sc
   for (const f of ["gauss-live-wide.webp", "gauss-live-tall.webp"]) assert.ok(size(`/assets/media/${f}`) < 250_000, `${f} stays small`);
   assert.match(gate, /loading="lazy"/, "never competes with the hero for first paint");
   assert.match(gate, /a frame from the Gauss live view, not live data/, "a still is never passed off as live");
-  assert.match(gate, /<!--full--><a class="btn" href="\/live">Sign in to the live view<\/a><!--\/full-->/);
+  assert.match(gate, /<!--full--><a class="btn radiate" href="\/live">Sign in to the live view<\/a><!--\/full-->/);
+  assert.match(gate, /<svg class="rad-field"[^>]*aria-hidden="true"/, "the radiation field is decoration, hidden from screen readers");
   assert.match(gate, /<!--public--><a class="btn" href="\/gauss\/#replay">Watch a replay<\/a><!--\/public-->/);
   assert.doesNotMatch(gate, /<script|<iframe|<canvas/);
   assert.deepEqual([...home.matchAll(/class="k">(\d\d_[A-Z_]+)</g)].map((m) => m[1]), ["00_LIGHTBOUND", "01_LIVE_VIEW", "02_ENTER"], "section kickers in order");

@@ -97,4 +97,38 @@
     @apply font-mono text-[10px] font-bold uppercase leading-none text-muted-foreground;
     letter-spacing: 0.14em;
   }
+
+  /* "Continue with Lightbound": the website's radiating sign-in (lightbound.uk, Brand Book "Accretion light").
+     On hover and focus, an ember wave then a violet one leave the button like radiation from a source. The global
+     reduced-motion rule above stops it. */
+  .lb-radiate {
+    position: relative;
+    isolation: isolate;
+  }
+  .lb-radiate::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    border: 2px solid rgb(240 120 42);
+    opacity: 0;
+    pointer-events: none;
+  }
+  .lb-radiate:hover::before,
+  .lb-radiate:focus-visible::before {
+    animation: lb-radiate-wave 1.7s cubic-bezier(0.15, 0.6, 0.3, 1) infinite;
+  }
+  .lb-radiate:hover,
+  .lb-radiate:focus-visible {
+    animation: lb-radiate-ring 1.7s 0.55s cubic-bezier(0.15, 0.6, 0.3, 1) infinite;
+  }
+}
+
+@keyframes lb-radiate-wave {
+  0% { inset: 0; opacity: 1; border-radius: 6px; }
+  100% { inset: -24px -36px; opacity: 0; border-radius: 30px; }
+}
+@keyframes lb-radiate-ring {
+  0% { outline: 2px solid rgb(142 108 196); outline-offset: 0; }
+  100% { outline: 2px solid rgb(142 108 196 / 0); outline-offset: 26px; }
 }

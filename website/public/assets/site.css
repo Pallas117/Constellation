@@ -612,3 +612,30 @@ footer p{margin:0 0 6px}
 }
 @keyframes disk-turn{to{--disk:360deg}}
 @media (prefers-reduced-motion:reduce){.btn,.door,.tile,.friend,.subnav a,.live-card{transition:none}}
+
+/* Sign-in buttons radiate (Josh, 4 Nov 2026: "make the sign in buttons more enticing ... like the expression of
+   radiation"). On hover and focus, waves leave the button like radiation from a source: an ember ring, then a violet
+   one, staggered, in the accretion-light colours. Quiet at rest; with reduced motion, one still ring. No script. */
+.btn.radiate{position:relative;isolation:isolate}
+.btn.radiate::before{content:"";position:absolute;inset:0;border-radius:inherit;border:2px solid rgb(var(--ember));opacity:0;pointer-events:none}
+@media (prefers-reduced-motion:no-preference){
+  .btn.radiate:hover::before,.btn.radiate:focus-visible::before{animation:radiate-wave 1.7s cubic-bezier(.15,.6,.3,1) infinite}
+  .btn.radiate:hover,.btn.radiate:focus-visible{animation:radiate-ring 1.7s .55s cubic-bezier(.15,.6,.3,1) infinite}
+}
+@keyframes radiate-wave{0%{inset:0;opacity:1;border-radius:4px}100%{inset:-30px -44px;opacity:0;border-radius:36px}}
+@keyframes radiate-ring{0%{outline:2px solid rgb(var(--violet));outline-offset:0}100%{outline:2px solid rgb(var(--violet) / 0);outline-offset:32px}}
+@media (prefers-reduced-motion:reduce){.btn.radiate:hover::before,.btn.radiate:focus-visible::before{opacity:.8;inset:-6px}}
+
+/* The sign-in card's radiation field: Earth's belts holding trapped particles that bounce along the field lines
+   (the same physics as the descent). Dim at rest, bright on hover; particles hidden with reduced motion. */
+.rad-field{display:block;width:100%;height:auto;max-height:104px;margin:-4px 0 12px;opacity:.5;transition:opacity .45s}
+.rad-field .fl{fill:none;stroke:rgb(243 240 232 / .35);stroke-width:1}
+.rad-field .belt{fill:rgb(var(--ember) / .16);transition:fill .45s}
+.rad-field .belt.out{fill:rgb(var(--violet) / .12)}
+.rad-field .earth{fill:var(--panel);stroke:rgb(var(--mauve) / .7);stroke-width:1.2}
+.rad-field .rp{fill:rgb(var(--hot))}
+.rad-field .rp.v{fill:rgb(var(--violet))}
+.live-card:hover .rad-field,.live-card:focus-within .rad-field{opacity:1}
+.live-card:hover .rad-field .belt,.live-card:focus-within .rad-field .belt{fill:rgb(var(--ember) / .32)}
+.live-card:hover .rad-field .belt.out,.live-card:focus-within .rad-field .belt.out{fill:rgb(var(--violet) / .26)}
+@media (prefers-reduced-motion:reduce){.rad-field .rp{display:none}}

@@ -314,7 +314,7 @@ test("public release: health names the release and the deployed commit, and only
 test("full release: the same pages keep sign-in and the forms", async () => {
   const { env: full } = await appEnv();
   const page = async (path) => (await send(full, new Request(`https://lightbound.uk${path}`))).text();
-  assert.match(await page("/gauss/"), /<!--full--> <a class="btn ghost" href="\/app\/">Sign in<\/a><!--\/full-->/);
+  assert.match(await page("/gauss/"), /<!--full--> <a class="btn ghost radiate" href="\/app\/">Sign in<\/a><!--\/full-->/);
   assert.match(await page("/gauss/apply/"), /<form class="form" method="post" action="\/api\/apply">/);
   assert.equal((await send(full, new Request("https://lightbound.uk/argo/"))).status, 200);
   assert.equal((await (await send(full, new Request("https://lightbound.uk/api/health"))).json()).release, "full");
