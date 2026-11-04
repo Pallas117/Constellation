@@ -54,6 +54,7 @@ import {
   markUserPattern,
   newestPasskeyKey,
   passkeyConfig,
+  patternDeviceMemory,
   ssoAllowedDomain,
   ssoGithubEnabled,
   ssoGoogleEnabled,
@@ -61,6 +62,7 @@ import {
 import { createAdminUsersRouter } from "./admin/users.js";
 import { createPatternRouter } from "./pattern/router.js";
 import { argoAlarm, createSensor, watchAccess } from "./pattern/sensor.js";
+import { tailnetIdentity, tailscaleLookup } from "./pattern/tailnet.js";
 import { createPadRequests, createPatternStore, patternPepper } from "./pattern/store.js";
 import { windowLimit } from "./rate-limit.js";
 import { toNodeHandler } from "better-auth/node";
@@ -167,6 +169,8 @@ const patternStore = createPatternStore(authDb, { pepper: patternPepperKey });
 // The pattern as a sensor: probing, duress and unusual data access go to CyberTiger's log and, when
 // they matter, to Josh's phone through Argo (PATTERN_ALERTS=off|log to keep them local).
 const patternSensor = createSensor({ alarm: argoAlarm(), log: (e) => cyberTiger.recordSensorEvent(e) });
+// Operator sessions only count from the account owner's own device on the tailnet (backend/pattern/tailnet.ts).
+const deviceIdentity = tailnetIdentity({ lookup: tailscaleLookup(), sensor: patternSensor, ipOf: (req) => cyberTiger.extractClientIp(req) });
 // Where phones open the pattern pad, e.g. the tailnet share's https origin; unset: draw on the computer only.
 const patternPadOrigin = process.env.PATTERN_PAD_ORIGIN?.trim().replace(/\/+$/, "") || null;
 
@@ -336,12 +340,16 @@ app.use(
   ),
 );
 app.use("/api", enforceApiPolicy);
+app.use("/api", withAsyncMiddleware((req, res, next) => deviceIdentity.middleware(req, res, next)));
 // Operator sessions that read like bulk collection rather than the console must draw the pattern again.
 app.use(
   "/api",
   watchAccess({
     sensor: patternSensor,
-    clearDrawing: (token) => markSessionPattern(token, null),
+    clearDrawing: async (auth) => {
+      patternDeviceMemory.forget(auth.userId, auth.passkeyCredentialId);
+      await markSessionPattern(auth.token, null);
+    },
     ipOf: (req) => cyberTiger.extractClientIp(req),
     ratePerMinute: Number(process.env.PATTERN_WATCH_RATE) || undefined,
     breadthPer5Min: Number(process.env.PATTERN_WATCH_BREADTH) || undefined,
@@ -367,6 +375,8 @@ app.use(
     store: patternStore,
     requests: createPadRequests(),
     sensor: patternSensor,
+    devices: patternDeviceMemory,
+    identity: async (req) => ((await deviceIdentity.check(req)) ? "mismatch" : "ok"),
     markSession: markSessionPattern,
     markDuress: markSessionDuress,
     ipOf: (req) => cyberTiger.extractClientIp(req),

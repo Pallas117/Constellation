@@ -18,9 +18,9 @@ import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 import type { NextFunction, Response } from "express";
-import { roleSatisfies, type AuthenticatedRequest } from "../auth.js";
+import { roleSatisfies, type AuthContext, type AuthenticatedRequest } from "../auth.js";
 
-export type SensorKind = "pattern-miss" | "pattern-locked" | "pad-probe" | "pad-miss" | "duress" | "data-unusual";
+export type SensorKind = "pattern-miss" | "pattern-locked" | "pad-probe" | "pad-miss" | "duress" | "data-unusual" | "identity-mismatch";
 export type SensorSeverity = "low" | "medium" | "high" | "critical";
 
 export interface SensorEvent {
@@ -82,7 +82,13 @@ export function createSensor(options: {
     record(kind: SensorKind, input: { userId: string | null; ip: string; detail?: string; path?: string }): SensorEvent {
       const e: SensorEvent = { kind, userId: input.userId, ip: input.ip, at: now(), detail: input.detail ?? "" };
       const severity: SensorSeverity =
-        kind === "duress" ? "critical" : kind === "pattern-locked" || kind === "data-unusual" ? "high" : kind === "pad-probe" ? "medium" : "low";
+        kind === "duress"
+          ? "critical"
+          : kind === "pattern-locked" || kind === "data-unusual" || kind === "identity-mismatch"
+            ? "high"
+            : kind === "pad-probe"
+              ? "medium"
+              : "low";
       options.log({ severity, ip: e.ip, message: `${kind}${e.detail ? `: ${e.detail}` : ""}`, actorUserId: e.userId ?? undefined, path: input.path });
       console.log(`[pattern-sensor] ${kind} ${e.userId ?? "-"} from ${e.ip}${e.detail ? ` (${e.detail})` : ""}`);
       remember(e);
@@ -100,6 +106,8 @@ export function createSensor(options: {
         probesByIp.set(e.ip, times);
         if (probesByIp.size > 10_000) probesByIp.delete(probesByIp.keys().next().value as string);
         if (times.length >= PROBES_TO_ALARM) raise("Gauss: phone codes probed", `${times.length} unknown phone codes tried from ${e.ip} in 10 minutes.`, `pad-probe-${e.ip}`);
+      } else if (kind === "identity-mismatch") {
+        raise("Gauss: session on the wrong device", `${who(e.userId)}'s session was used from ${e.ip}: ${e.detail}. Refused.`, `identity-${e.userId}`);
       } else if (kind === "data-unusual") {
         raise("Gauss: unusual data access", `${who(e.userId)}'s session (${e.ip}): ${e.detail}. It must draw the pattern again.`, `data-unusual-${e.userId}`);
       }
@@ -129,7 +137,8 @@ export type Sensor = ReturnType<typeof createSensor>;
  */
 export function watchAccess(options: {
   sensor: Sensor;
-  clearDrawing: (sessionToken: string) => Promise<void>;
+  /** Clears the session's drawing (and forgets its passkey's daily drawing). */
+  clearDrawing: (auth: AuthContext) => Promise<void>;
   ipOf: (req: AuthenticatedRequest) => string;
   ratePerMinute?: number;
   breadthPer5Min?: number;
@@ -162,7 +171,7 @@ export function watchAccess(options: {
       s.flaggedAt = t;
       const detail = tooFast ? `${s.hits.length} requests in a minute` : `${s.routes.size} different routes in 5 minutes`;
       options.sensor.record("data-unusual", { userId: auth.userId, ip: options.ipOf(req), detail, path: req.path });
-      void options.clearDrawing(auth.token).catch((err: unknown) => console.warn(`[pattern-sensor] could not clear the drawing: ${(err as Error).message}`));
+      void options.clearDrawing(auth).catch((err: unknown) => console.warn(`[pattern-sensor] could not clear the drawing: ${(err as Error).message}`));
     }
     next();
   };

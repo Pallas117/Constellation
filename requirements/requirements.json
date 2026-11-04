@@ -1,6 +1,6 @@
 {
   "$comment": "Constellation requirements baseline (GAU-120). NASA SP-2016-6105 Rev 2 §6.2/§5.3. Methods: T test, A analysis, I inspection, D demonstration. T evidence = exact test names; A/I/D evidence = repo paths. Verified by `npm run verify`.",
-  "version": "1.17.0",
+  "version": "1.18.0",
   "requirements": [
     {
       "id": "REQ-ING-001",
@@ -435,6 +435,23 @@
         "wrong drawings and probed phone codes reach the sensor; the operator sees them at the next drawing",
         "a session signed in with the duress pattern sees operator and admin routes as in maintenance (503), viewer routes as usual",
         "a step-up keeps the operator pattern (and any duress mark) this browser already drew, and a fresh sign-in does not get it"
+      ]
+    },
+    {
+      "id": "REQ-SEC-006",
+      "title": "One operator login, validated on every request",
+      "statement": "Operator and admin routes shall accept only sessions opened with a passkey (428 PASSKEY_REQUIRED otherwise), shall check on every request that the device belongs to the account's owner on the tailnet (428 TAILNET_IDENTITY and an alarm otherwise), and may start a new passkey session already drawn only when the same passkey drew the pattern within the configured window (20 hours by default), never after a duress drawing.",
+      "rationale": "Josh, 2026-11-04: make the login flow smooth, one login, and keep it secure and validating. Passkey-only removes password and SSO paths into the console; the tailnet identity binds a session to the owner's devices; the once-a-day memory makes coming back one touch, a trade Josh chose.",
+      "parent": "GAU-235",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "one login for operators: the console needs a session opened with a passkey, answered 428 PASSKEY_REQUIRED otherwise",
+        "operator requests only count from the account owner's own device on the tailnet",
+        "TAILNET_LOGIN_MAP links an account to a different Tailscale login; TAILNET_IDENTITY=off turns the check off",
+        "the pattern is remembered per passkey for 20 hours; duress and unusual access forget it",
+        "coming back with the same passkey within the day starts with the pattern already drawn; another passkey does not",
+        "check: a console certificate within 14 days of expiry fails the check"
       ]
     },
     {
