@@ -196,7 +196,7 @@ export function renderAdmin({ applications, accounts, details, invited, error, c
     const d = details[a.id] ?? {};
     const planId = tierById(a.plan) ? a.plan : "pilot";
     const facts = [d.org, d.role, d.topic, d.format, d.groupSize ? `group: ${d.groupSize}` : "", d.institution, d.eduRole, d.course, d.seats ? `${d.seats} (people)` : "", d.missionType, d.stage, d.groundStack, d.dataAccess, d.timeline, d.interest, d.platform, d.devices ? `${d.devices} devices` : "",
-      d.referrer ? `referred by ${d.referrer}` : "", d.link, d.title, d.showLink].filter(Boolean).join(" · ");
+      d.referrer ? `referred by ${d.referrer}` : "", d.link, d.title, d.showLink, d.alsoJoin].filter(Boolean).join(" · ");
     const decide = a.status === "new"
       ? `<form method="post" action="/app/admin/decide" class="inline"><input type="hidden" name="id" value="${esc(a.id)}">` +
         (a.kind === "gauss" ? `${tierSelect(planId)} ${quoteInput(0)} ${invoiceCheck(false, `inv-${esc(a.id)}`)}` : a.kind === "constellation" ? `<input type="hidden" name="community" value="member">` : a.kind === "edu" ? `${quoteInput(0)} ` : "") +

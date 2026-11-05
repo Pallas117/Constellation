@@ -779,12 +779,12 @@ test("showcase: a listing request is stored and listed for admin; marking it con
   const bad = await send(env, post("/api/apply", { kind: "showcase", name: "Sam Example", email: "sam@example.test", entryType: "A project", title: "Orbit Notes", showLink: "orbit-notes", message: "A weekly newsletter on what launched and why it matters.", consent: "yes" }));
   assert.equal(bad.status, 422);
   assert.match(await bad.text(), /Please enter a full link starting with https:\/\//);
-  const res = await send(env, post("/api/apply", { kind: "showcase", name: "Sam Example", email: "sam@example.test", entryType: "A creator or channel", title: "Orbit Notes", showLink: "https://orbit-notes.example", message: "A weekly newsletter on what launched and why it matters.", consent: "yes" }));
+  const res = await send(env, post("/api/apply", { kind: "showcase", name: "Sam Example", email: "sam@example.test", entryType: "A creator or channel", title: "Orbit Notes", showLink: "https://orbit-notes.example", message: "A weekly newsletter on what launched and why it matters.", alsoJoin: "Please invite me to join too", consent: "yes" }));
   assert.equal(res.headers.get("location"), "/constellation/projects/?sent=1");
   assert.match(await (await send(env, new Request("https://lightbound.uk/constellation/projects/?sent=1"))).text(), /we email you the exact listing to approve before anything goes up/);
   const admin = await (await send(env, await as(access, "boss@example.test", "/app/admin/"))).text();
   assert.match(admin, /SHOWCASE · A creator or channel/);
-  assert.match(admin, /Orbit Notes · https:\/\/orbit-notes\.example/);
+  assert.match(admin, /Orbit Notes · https:\/\/orbit-notes\.example · Please invite me to join too/);
   const [app] = await listApplications(env);
   await send(env, await formPost(access, "boss@example.test", "/app/admin/decide", { id: app.id, decision: "approve" }));
   assert.equal((await listApplications(env))[0].status, "approved");

@@ -520,7 +520,8 @@ test("Constellation showcase: curated, approved by the people listed, free, and 
   assert.match(page, /<body class="page brand-constellation">/);
   const t = text(page);
   for (const want of [/A person chooses every listing/, /approve its wording before it goes up/, /Nothing goes up until you say yes/,
-    /Ask and it comes down/, /no one can buy a place or a higher spot/]) assert.match(t, want);
+    /Ask and it comes down/, /no one can buy a place or a higher spot/, /Ask to join in the same form; membership is free/]) assert.match(t, want);
+  assert.match(fallback, /<option value="Please invite me to join too">/, "non-members can ask to join while asking to be listed");
   // Each listing: its own share link, a type, approved wording, and an outbound link that doesn't leak the referrer.
   const list = page.match(/<ul class="steps listings" aria-label="Listings">([\s\S]*?)<\/ul>/)[1];
   for (const [li, id] of list.matchAll(/<li class="listing" id="([a-z0-9-]+)">[\s\S]*?<\/li>/g)) {

@@ -38,6 +38,7 @@ const FIELD = {
   entryType: { label: "What you'd like listed", type: "select", options: opts("A project", "A creator or channel"), required: true },
   title: { label: "Project or channel name", type: "text", max: 120, auto: "off", required: true },
   showLink: { label: "Its main link (site, channel or repository)", type: "url", max: 300, auto: "url", required: true },
+  alsoJoin: { label: "Constellation membership", type: "select", options: opts("I'm already a member", "Please invite me to join too", "Just the listing for now"), required: true },
 };
 
 // Gauss follows the onboarding flow in the sales plan: fit, readiness, pilot brief.
@@ -62,7 +63,7 @@ export const KINDS = Object.freeze({
     button: "Ask about a workshop",
   },
   showcase: {
-    steps: [{ fields: ["name", "email", "entryType", "title", "showLink", "message"] }],
+    steps: [{ fields: ["name", "email", "entryType", "title", "showLink", "message", "alsoJoin"] }],
     labels: { message: "What it is and who it's for, in a few sentences" },
     button: "Send for review",
   },
@@ -80,7 +81,7 @@ const label = (kind, f) => KINDS[kind].labels[f] ?? FIELD[f].label;
 const SHORT = { name: "name", email: "email", org: "company", role: "role", referrer: "referral", link: "link", missionType: "mission type", stage: "programme stage",
   groundStack: "ground stack", dataAccess: "evidence", plan: "package", timeline: "target start", message: "message", consent: "privacy agreement",
   interest: "what you'd like", platform: "platform", devices: "devices", note: "note", institution: "university or school", eduRole: "role", course: "course", seats: "how many people", topic: "workshop", format: "format", groupSize: "group size",
-  entryType: "what to list", title: "name of the project or channel", showLink: "main link" };
+  entryType: "what to list", title: "name of the project or channel", showLink: "main link", alsoJoin: "membership" };
 
 function control(kind, f, value, error) {
   const d = FIELD[f];
