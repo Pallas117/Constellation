@@ -324,8 +324,9 @@ argo inbox                           # on ground-1: 2026-10-23 09:41  judith  ~/
   check that, so anything a third party may need to check keeps the Ed25519 signature. Details:
   `docs/ARGO_DTN.md`, "Link keys".
 - **Keys.** Link keys live in `~/.config/argo/links.key` (0600) and are never logged or shown.
-  `argo enroll` creates `~/.config/argo/node.key` (0600; never leaves the device) and publishes the
-  public half to Gauss. Other devices pin a key the first time they see it; a different key later is reported and
+  An enrolled device creates `~/.config/argo/node.key` (0600; never leaves the device) on the first tick
+  its Gauss answers the bundle routes (or on the first relay command) and publishes the public half to Gauss,
+  so devices enrolled before the relay existed join by themselves. Other devices pin a key the first time they see it; a different key later is reported and
   not used until someone runs `argo keys trust DEVICE`. Compare fingerprints (`argo keys`, the Key line on
   `/mesh`) with the other person before relying on a new device.
 - **Paths.** The Gauss hub (`/api/mesh/bundles`, device token, tailnet only) holds ciphertext until the
