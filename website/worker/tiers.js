@@ -57,7 +57,7 @@ export const TIERS = Object.freeze([
     price: { min: 120_000, max: 300_000, unit: "one-off" },
     billing: "invoice", // invoiced by milestone
     features: ["archive", "ground", "acceptance", "evidence"],
-    entry: "Scoped with your team and invoiced by milestone.",
+    entry: "Scoped with your team, delivered by milestone.",
   },
   {
     id: "flight_candidate_adapter",

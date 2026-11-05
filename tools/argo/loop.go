@@ -59,7 +59,7 @@ func Plan(c Class, s Snapshot, remembered string) []Action {
 			n := s.Tailscale.ExitCandidates[0]
 			a = append(a, Action{ID: "exit-node", Say: "Route via the allow-listed exit node " + n + ":", Command: "tailscale set --exit-node=" + n + " --exit-node-allow-lan-access"})
 		}
-		a = append(a, Action{ID: "switch-network", Say: "Switch to a Malaysian SIM or local Wi-Fi (Hong Kong eSIMs exit in HK, which Anthropic does not serve)."})
+		a = append(a, Action{ID: "switch-network", Say: switchAdvice(c, s)})
 	case WiFiRisk:
 		if weakWiFi(s.WiFiSec) {
 			a = append(a, Action{ID: "avoid-weak-wifi", Say: "This Wi-Fi is not properly encrypted. Use your iPhone hotspot instead, or keep Tailscale on so traffic to the team stays encrypted."})
@@ -78,6 +78,22 @@ func Plan(c Class, s Snapshot, remembered string) []Action {
 		}
 	}
 	return a
+}
+
+// switchAdvice fits the advice to what failed. A Hong Kong eSIM shows up as
+// REGION (403 or an HK exit); a PORT_BLOCK in Malaysia is the network itself.
+func switchAdvice(c Class, s Snapshot) string {
+	switch {
+	case c == Region:
+		return "Switch to a Malaysian SIM or local Wi-Fi (Hong Kong eSIMs exit in HK, which Anthropic does not serve)."
+	case isIPhoneHotspot(s.Gateway):
+		return "The iPhone's mobile data is stalling. On the phone, turn Airplane mode on for 5 seconds and off again, " +
+			"or connect it by USB cable, which holds better than the Wi-Fi hotspot."
+	case uplinkStalled(s):
+		return "This Wi-Fi is connected but nothing gets through (Apple's check fails too), so it is the network, not a block on Claude. " +
+			"Shared Wi-Fi often does this when busy: switch to the iPhone hotspot."
+	}
+	return "This network lets other sites through but drops connections to Claude. Switch to the iPhone hotspot."
 }
 
 const settleDelay = 10 * time.Second

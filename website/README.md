@@ -1,4 +1,4 @@
-# lightbound.uk
+# lightbound.space
 
 The Lightbound site: a black-hole landing ("Carry hope, go beyond.") with three doors, Gauss,
 Constellation and Turnstone. It is one Cloudflare Worker with static assets. There is no client-side
@@ -49,7 +49,7 @@ visitor ──► Cloudflare ─┬─ static file (free, no Worker run) ──�
 - **Failures are safe.** If a feed fails, the last good data stays up. After 45 minutes (weather) or
   2 hours (launches), the page labels it "Stale · as of …". With no data at all, the section says
   so plainly. Nothing is ever invented.
-- **One URL to watch:** `https://lightbound.uk/api/health` returns 200 when both feeds are fresh and
+- **One URL to watch:** `https://lightbound.space/api/health` returns 200 when both feeds are fresh and
   503 otherwise, with each feed's age and last error. Point any uptime monitor at it. Worker logs are
   in the Cloudflare dashboard (observability is on).
 - **Day to day there is nothing to do.** No servers, no database, no keys to rotate.
@@ -198,7 +198,7 @@ old `argo-glyph-provisional.svg` stays only while the Access login page set-up (
   - This is more generous than the 14-day cancellation right for digital services, so no waiver wording is needed at
     Checkout (check with counsel).
 - **Stripe settings:** Checkout asks every education subscriber to accept the terms, so put
-  `https://lightbound.uk/terms/` in Stripe's public business details. Checkout fails until that's set.
+  `https://lightbound.space/terms/` in Stripe's public business details. Checkout fails until that's set.
 - **UK VAT:**
   - Lightbound must register once UK taxable turnover passes £90,000 in 12 months (gov.uk, VAT Notice 700/1). Three
     Gauss pilots at £20k–£40k would do it.
@@ -396,7 +396,7 @@ Keep the same addresses in the staff site's Access policy and its own `STAFF_EMA
 
 ## Launch: the public release (GAU-178; Pallas runs these, they need your Cloudflare login)
 
-lightbound.uk launches as the reduced public release Josh approved on 21 Oct 2026 (`RELEASE: "public"` in
+lightbound.space launches as the reduced public release Josh approved on 21 Oct 2026 (`RELEASE: "public"` in
 `wrangler.jsonc`, see `worker/release.js`):
 
 - **Open:** every public page, the live feeds, the time planner, the launch calendar and `/api/health`.
@@ -417,7 +417,9 @@ npx wrangler@4 kv namespace create LIVE    # done 23 Oct 2026: its id is in wran
 npx wrangler@4 secret put LL2_API_KEY      # optional: paste the Launch Library 2 key when asked
 ```
 
-**The launch feed needs an LL2 key in practice.** Launch Library 2 allows 15 anonymous calls an hour, and the
+**Without an LL2 key the launch feed falls back to RocketLaunch.Live.** When LL2 fails (429 or down) the cron fetches RocketLaunch.Live's free "next five" list (no key; credited on the page and in the calendar as "Data by RocketLaunch.Live", which is its one condition) and the feed stays live with fewer launches. A key is still better: twelve launches with status and orbit.
+
+**The launch feed needs an LL2 key for the full list.** Launch Library 2 allows 15 anonymous calls an hour, and the
 Worker shares Cloudflare's outbound IPs with other users who use them up: the first preview (24 Oct 2026) got
 HTTP 429 on every refresh, while the same URL answered from a home connection. With `LL2_API_KEY` set (a key from
 The Space Devs' Patreon), the Worker sends `Authorization: Token <key>` to `ll.thespacedevs.com` and to no other
@@ -438,8 +440,8 @@ npm run smoke:website -- https://lightbound-site.<account>.workers.dev $(git rev
 and that `/api/health` names the commit you meant to deploy. The first visit after a deploy fetches the feeds
 once; after that the cron runs every 15 minutes.
 
-**Then lightbound.uk** (the DNS change, so only with Josh's go-ahead):
-1. Uncomment `routes` in `wrangler.jsonc`, deploy again, and run the smoke check against `https://lightbound.uk`.
+**Then lightbound.space** (the DNS change, so only with Josh's go-ahead):
+1. Uncomment `routes` in `wrangler.jsonc`, deploy again, and run the smoke check against `https://lightbound.space`.
    This adds proxied A/AAAA records only; the Google Workspace MX records stay as they are.
 2. In the dashboard:
    - SSL/TLS > Edge Certificates: **Always Use HTTPS** on. The smoke check tests the redirect.
@@ -447,18 +449,18 @@ once; after that the cron runs every 15 minutes.
      instead of the Worker's 404.
    - Security > WAF: one rate-limiting rule on `/api/*` (the free plan's allowance is UNVERIFIED).
    - `www.lightbound.uk` has no DNS record today. Add a proxied one (DNS > Add record: AAAA `www` `100::`), then
-     Rules > Redirect Rules > the "Redirect from WWW to root" template (301 to `https://lightbound.uk`, keep the
+     Rules > Redirect Rules > the "Redirect from WWW to root" template (301 to `https://lightbound.space`, keep the
      path and query). The smoke check doesn't cover www, so try `curl -sI https://www.lightbound.uk/gauss/`.
-3. `BASE=https://lightbound.uk RELEASE=public npm run audit:website` for a last look at the real pages.
+3. `BASE=https://lightbound.space RELEASE=public npm run audit:website` for a last look at the real pages.
 
 **Rollback:** `npx wrangler@4 deployments list`, then `npx wrangler@4 rollback <version-id>`. To take the
-site off lightbound.uk entirely, remove the custom domain under Workers & Pages > lightbound-site >
+site off lightbound.space entirely, remove the custom domain under Workers & Pages > lightbound-site >
 Settings > Domains & Routes.
 
 **Still open before go-live (GAU-178):**
 - Privacy and terms are drafts written for the full site. In the public release the site itself collects
   nothing (email goes straight to Google Workspace), but they still need a lawyer's read.
-- lightbound.uk has no SPF and no DKIM (GAU-177), so replies from jzwnathan@lightbound.uk may land in spam. Add
+- lightbound.space has no SPF and no DKIM (GAU-177), so replies from jzwnathan@lightbound.uk may land in spam. Add
   them before sharing the link widely.
 
 After launch, every change is `npm run test:website`, then the deploy and smoke check above.
@@ -480,7 +482,7 @@ Stripe, once (do it in test mode first, then repeat with live keys):
    this size: card, Bacs Direct Debit and bank transfer.
 2. Under Settings > Billing > Customer portal, allow invoices, payment-method updates and
    cancellation.
-3. Under Developers > Webhooks, add `https://lightbound.uk/api/stripe/webhook` with these events:
+3. Under Developers > Webhooks, add `https://lightbound.space/api/stripe/webhook` with these events:
    - `checkout.session.completed`, `checkout.session.async_payment_succeeded` and
      `checkout.session.async_payment_failed`
    - `customer.subscription.created`, `.updated` and `.deleted`
@@ -494,7 +496,7 @@ Stripe, once (do it in test mode first, then repeat with live keys):
 
 Sign-in, once (Cloudflare dashboard > Zero Trust):
 1. Settings > Authentication: turn on **One-time PIN**.
-2. Access > Applications > Add > Self-hosted: domain `lightbound.uk`, path `app`. Policy: Allow,
+2. Access > Applications > Add > Self-hosted: domain `lightbound.space`, path `app`. Policy: Allow,
    Include **Everyone**. The Worker then decides who sees what from the account records.
 3. Copy the team domain (`<team>.cloudflareaccess.com`) and the application's **AUD tag** into
    `vars` in `wrangler.jsonc`. Neither is a secret.
