@@ -1,5 +1,5 @@
 #cloud-config
-# Gauss gate server (Oracle Always Free, VM.Standard.A1.Flex, Ubuntu 24.04 aarch64).
+# Gauss gate server (Ubuntu 24.04; Oracle Always Free VM.Standard.A1.Flex aarch64, or a DigitalOcean droplet x86_64).
 # Pull model: no GitHub runner and no inbound service besides SSH. After it joins the tailnet,
 # port 22 is closed to the internet. The "gate" user's key can only run gauss-gate-run (forced
 # command), which fetches one commit of an allowlisted public repo and runs the gates on it.
@@ -53,11 +53,13 @@ write_files:
       exit $rc
 
 runcmd:
-  # Node 26 LTS (.nvmrc) for arm64, checked against nodejs.org's SHASUMS256 before install.
+  # Node 26 LTS (.nvmrc) for this machine's architecture (arm64 on Oracle A1, x64 on DigitalOcean),
+  # checked against nodejs.org's SHASUMS256 before install.
   - |
     set -e; cd /tmp; base=https://nodejs.org/dist/latest-v26.x
+    case "$(uname -m)" in aarch64) arch=arm64 ;; x86_64) arch=x64 ;; *) echo "unsupported arch $(uname -m)"; exit 1 ;; esac
     curl -fsSLO "$base/SHASUMS256.txt"
-    f=$(grep -o 'node-v26[^ ]*-linux-arm64.tar.xz' SHASUMS256.txt | head -1)
+    f=$(grep -o "node-v26[^ ]*-linux-$arch.tar.xz" SHASUMS256.txt | head -1)
     curl -fsSLO "$base/$f"; grep " $f\$" SHASUMS256.txt | sha256sum -c -
     mkdir -p /opt/node && tar -xJf "$f" -C /opt/node --strip-components=1
     ln -sf /opt/node/bin/node /opt/node/bin/npm /opt/node/bin/npx /usr/local/bin/

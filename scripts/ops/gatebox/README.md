@@ -3,6 +3,7 @@
 This is the outside compute that the GAU-207 sizing recommends: an Oracle Always Free VM (VM.Standard.A1.Flex, 1 OCPU, 6 GB, Ubuntu 24.04 aarch64, home region Singapore) on the tailnet. It runs the Linux-portable gates (`npm ci`, `npm test`, `quality:full`, `build`) on one exact commit of the public repo. It has no GitHub runner, no tokens and no inbound service other than SSH. Once it joins the tailnet, SSH is closed to the internet.
 
 - `cloud-init.yaml`: paste it unchanged when you create the instance. It installs Node 26 (`.nvmrc`, checked against nodejs.org's SHASUMS256), Tailscale, zram and earlyoom, plus `gauss-gate-run`. The `gate` user's key (`~/.ssh/gauss-gate` on judith) can only run that command.
+- **DigitalOcean instead:** the same cloud-init works as a droplet's user data (Ubuntu 24.04 x64; it picks the x64 Node build). Size it at least 4 GiB / 2 vCPU. Use a DigitalOcean Cloud Firewall in place of Oracle's security list to close port 22 once the droplet is on the tailnet. Unlike Oracle Always Free it costs money, and a powered-off droplet still bills, unless startup credits cover it.
 - **Join with `sudo tailscale up`, not `--ssh`.** Tailscale SSH ignores `authorized_keys`, which drops the forced command and lets the `gate` user run anything the ACL allows. The step-by-step guide in GAU-223 still says `--ssh`; correct it there before anyone follows it.
 
 ## Wiring on the Mac
