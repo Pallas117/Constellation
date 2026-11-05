@@ -233,8 +233,9 @@ test("routes: live pages are filled in and carry the security headers", async ()
   assert.equal(home.status, 200);
   for (const [k, v] of Object.entries(SECURITY_HEADERS)) assert.equal(home.headers.get(k), v, k);
   const body = await home.text();
-  assert.match(body, /Space weather now/);
-  assert.match(body, /Next launch<\/span><span class="door-big">T−/);
+  // The landing page carries no readouts (Josh, 5 Nov 2026: nothing repeating); they live on the product pages below.
+  assert.doesNotMatch(body, /Space weather now|Next launch/);
+  assert.match(body, /<section id="enter" class="live-gate"/);
   const page = await (await call("/constellation/")).text();
   assert.equal((page.match(/<li class="launch">/g) || []).length, 10);
   assert.match(page, /chip live">Live/);
@@ -285,7 +286,7 @@ test("routes: a fresh deploy fetches once in the background, before the first cr
   globalThis.fetch = f;
   const fresh = { ASSETS, LIVE: memoryKV() };
   const { ctx, settle } = context();
-  const res = await worker.fetch(new Request("https://lightbound.space/"), fresh, ctx);
+  const res = await worker.fetch(new Request("https://lightbound.space/gauss/"), fresh, ctx); // the landing page reads no feeds
   assert.equal(res.status, 200, "page still serves while data loads");
   await settle();
   assert.equal(f.calls.length, 6, "a public release: launches, events and four for space weather");
@@ -329,6 +330,11 @@ test("public release: pages offer pilots and an email route; later plans are in 
     const page = await (await call(path)).text();
     assert.doesNotMatch(page, /href="\/app\/|>Sign in<|<!--full-->/, `${path}: sign-in links removed`);
   }
+  // The landing page's one door: "Sign in with Argo" pointing at the replay, and a line that says so.
+  const home = await (await call("/")).text();
+  assert.match(home, /<a class="btn argo radiate" href="\/gauss\/#replay"><img class="sail" src="\/assets\/marks\/argo-mark-colour-dark\.svg"[^>]*>Sign in with Argo<\/a>/);
+  assert.doesNotMatch(home, /href="\/live"/, "nothing points at a sign-in redirect this release does not carry");
+  assert.match(home, /this button plays a replay of the live view/);
   const open = { ...env, EDU_SALES: "open", SUPPORT_URL: "https://buy.stripe.com/test_00abc123" };
   assert.doesNotMatch(await (await send(open, new Request("https://lightbound.space/education/"))).text(), /\/app\/\?edu=start/, "education stays opening soon");
   assert.doesNotMatch(await (await send(open, new Request("https://lightbound.space/constellation/"))).text(), /Support Constellation/, "no payment links");
