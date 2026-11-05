@@ -14,7 +14,7 @@
 #   scripts/ops/gauss-services.sh uninstall                unload + remove agents
 #   scripts/ops/gauss-services.sh dev <checkout-dir>        run a dev/R&D checkout beside live (:3101 API, :5174 site)
 #   scripts/ops/gauss-services.sh fallback prepare <dir> [sha]|on|off|status   cold-standby last-known-good build
-#   scripts/ops/gauss-services.sh deploy <commit> [fallback-dir] [--emergency <reason>]   switch live to <commit>; rolls back by itself if it doesn't come up
+#   scripts/ops/gauss-services.sh deploy <commit> [fallback-dir] [--emergency <reason>] [--no-fallback]   switch live to <commit>; rolls back by itself if it doesn't come up
 #   scripts/ops/gauss-services.sh gates record <checkout-dir>|list   run the five gates on a clean checkout; deploy needs a passing record
 #   scripts/ops/gauss-services.sh gates enqueue <checkout-dir>|<commit>   hand a gate run to the queue; the session can then be archived
 #   scripts/ops/gauss-services.sh gates result <checkout-dir>|<commit>|status   the queue's one-line result (exit 0 passed, 1 failed, 3 queued)
@@ -70,6 +70,22 @@ AWAKE_OFF="$HOME/Library/Application Support/Gauss/awake-off"
 # day. Staying awake on battery only covers short trips away from the charger.
 AWAKE_MIN_BATTERY="${GAUSS_AWAKE_MIN_BATTERY:-40}"
 AWAKE_WARN_BATTERY="${GAUSS_AWAKE_WARN_BATTERY:-50}" # phone warning (and load shedding) before the floor
+# A worn battery holds a fraction of its design capacity, so each percent lasts that much less. At
+# 52% health (4 Nov 2026, 365 cycles) 40 -> 28% took 16 min under ordinary load, then the gauge fell
+# 28 -> 10% in 8 min of sleep and macOS hibernated with live down. Under BATTERY_WORN_PCT health the
+# floor and the warning each rise by BATTERY_WORN_EXTRA points, unless set explicitly.
+BATTERY_WORN_PCT="${GAUSS_BATTERY_WORN_PCT:-70}"
+BATTERY_WORN_EXTRA="${GAUSS_BATTERY_WORN_EXTRA:-10}"
+battery_health() { # full-charge capacity as a % of design, or nothing on a desktop
+  ioreg -rn AppleSmartBattery 2>/dev/null \
+    | sed -n 's/.*"FullChargeCapacity"=\([0-9]*\).*"DesignCapacity"=\([0-9]*\).*/\1 \2/p' \
+    | awk 'NR==1 && $2>0 {printf "%d", $1*100/$2}'
+}
+BATTERY_HEALTH=$(battery_health || true)
+if [ -n "$BATTERY_HEALTH" ] && [ "$BATTERY_HEALTH" -lt "$BATTERY_WORN_PCT" ]; then
+  [ -n "${GAUSS_AWAKE_MIN_BATTERY:-}" ] || AWAKE_MIN_BATTERY=$((AWAKE_MIN_BATTERY + BATTERY_WORN_EXTRA))
+  [ -n "${GAUSS_AWAKE_WARN_BATTERY:-}" ] || AWAKE_WARN_BATTERY=$((AWAKE_WARN_BATTERY + BATTERY_WORN_EXTRA))
+fi
 ARGO="${ARGO:-$HOME/.local/bin/argo}"
 # Memory uses the kernel's pressure level (kern.memorystatus_vm_pressure_level: 1 normal, 2 warn,
 # 4 critical) and swap in GB; see memory_stats for why not "free %" or swap "% used".
@@ -101,6 +117,7 @@ DEPLOY_LOCK="$WATCH_DIR/deploying" # held by deploy; the guard leaves the servic
 DEPLOY_WAIT="${GAUSS_DEPLOY_WAIT:-90}" # seconds a deploy waits for the services to come up
 DEPLOY_HISTORY="$WATCH_DIR/deploy-history.jsonl" # every deploy and rollback; never rotated (a line per deploy)
 DEPLOY_EMERGENCY="" # set by `deploy --emergency <reason>`
+DEPLOY_NO_FALLBACK="" # set by `deploy --no-fallback`: go ahead with no standby to refresh (FM-24)
 # Gate records (GAU-162), keyed by tree hash: what was tested is exactly what is deployed, even
 # after a merge commit or a rebase that leaves the tree unchanged (GAU-161 finding 4).
 GATES_DIR="$WATCH_DIR/gates"
@@ -113,9 +130,10 @@ GATES=(test:ops quality:full verify)
 # (~1 GB of idle sessions on an 8 GB Mac), each with its own npm ci. Now a session enqueues and
 # can be archived; one detached runner works through the requests one at a time under claude-heavy
 # (memory, power, Argo's guard) in one checkout of its own, reinstalling only when the lockfile changes.
-GATES_QUEUE="$GATES_DIR/queue"         # <time>-<tree>.req, oldest first; one per tree
+GATES_QUEUE="$GATES_DIR/queue"         # <time>-<tree queued>.req, oldest first; one per tree (its tree= line)
 GATES_RESULTS="$GATES_DIR/results.log" # <utc> <sha> <tree> PASSED|FAILED|SKIPPED|ERROR|EXPIRED <detail>, one line per request
 GATES_RUNNER="$GATES_DIR/runner"       # held by the one runner (its pid inside)
+GATES_SRC="$GATES_DIR/runner.src"      # sha= blob= from= at=: the commit the runner's copy (runner.sh) came from
 HEAVY="${GAUSS_HEAVY:-$HOME/.local/bin/claude-heavy}"
 GATES_WAIT_MIN="${GAUSS_GATES_WAIT_MIN:-120}" # one claude-heavy wait; the runner asks again when it gives up
 GATES_EXPIRE_H="${GAUSS_GATES_EXPIRE_H:-72}"   # a request still waiting after this is dropped (EXPIRED)
@@ -216,6 +234,20 @@ phone() {
 # format. Rotated by size, one old file kept.
 EVENTS="${GAUSS_EVENTS_LOG:-$LOGS/events.jsonl}"
 EVENTS_MAX_KB="${GAUSS_EVENTS_MAX_KB:-5120}"
+# The services' own logs. launchd keeps them open, so a rename would leave it writing to the moved file:
+# copy to .1 and empty in place instead (a line written in between can be lost). backend.log had reached
+# 12 MB in a month, never rotated, on a Mac held for disk (4 Nov 2026).
+LOG_MAX_KB="${GAUSS_LOG_MAX_KB:-5120}"
+ROTATED_LOGS="backend frontend fallback-backend fallback-frontend learning awake gates-runner deploy balance"
+rotate_logs() {
+  local n f
+  for n in $ROTATED_LOGS; do
+    f="$LOGS/$n.log"
+    [ -f "$f" ] && [ $(( $(stat -f %z "$f" 2>/dev/null || echo 0) / 1024 )) -ge "$LOG_MAX_KB" ] || continue
+    cp -p "$f" "$f.1" 2>/dev/null && : >"$f"
+  done
+  return 0
+}
 BOOT_STATE="$WATCH_DIR/boottime"
 MEMORY_TSV="${MEM_GUARD_LOG:-$LOGS/memory.tsv}"       # written by ~/.local/bin/mem-guard, not this repo
 MEM_GUARD="${GAUSS_MEM_GUARD:-$HOME/.local/bin/mem-guard}"
@@ -241,7 +273,7 @@ event() { # event <event> <label> <reason> [key=text | key:=json]...: append one
   live=$(live_dir 2>/dev/null) && [ -d "$live" ] && sha=$(git -C "$live" rev-parse HEAD 2>/dev/null) || true
   ready_record && fb=$READY_SHA || true
   read -r level swap _ < <(memory_stats)
-  batt=$(pmset -g batt 2>/dev/null || true); pct=$(grep -Eo '[0-9]+%' <<<"$batt" | head -1 | tr -d % || true)
+  batt=$(pmset -g batt 2>/dev/null || true); pct=$(grep -Eo -m1 '[0-9]+%' <<<"$batt" | tr -d % || true)
   [[ "$batt" == *"'AC Power'"* ]] && ac=true
   for kv in "$@"; do
     key=${kv%%=*}
@@ -365,9 +397,31 @@ if bad:
 ' "$since" "$json" "$EVENTS.1" "$EVENTS"
 }
 
+# Plug in ahead (Josh 2026-11-03: "you don't need to be plugged in all the time - just warn so I can
+# plug in ahead of time"). Measured from Argo's guard log that day: a gate drains ~20 %/h on battery
+# (6.8 %/h idle) and takes 5-30 min, so about PLUG_GATE_PCT a gate. Work runs on battery down to
+# WORK_BATTERY (Argo's batteryWorkPct, claude-heavy's HEAVY_BATTERY_MIN), then waits for the charger.
+PLUG_GATE_PCT="${GAUSS_PLUG_GATE_PCT:-5}"
+WORK_BATTERY="${GAUSS_WORK_BATTERY:-50}"
+plug_ahead() { # plug_ahead <pct>: on battery with gate runs queued, say when to plug in
+  local pct=$1 n need
+  [ -d "$GATES_QUEUE" ] || return 0 # find on a missing folder fails, and pipefail would end the caller
+  n=$(find "$GATES_QUEUE" -name '*.req' | wc -l | tr -d ' ') || return 0
+  [ "${n:-0}" -gt 0 ] || return 0
+  need=$(( n * PLUG_GATE_PCT ))
+  if [ "$pct" -lt "$WORK_BATTERY" ]; then
+    phone -key plug-ahead -every 1h "Gauss: plug in to keep merging" \
+      "$n PR(s) wait to be tested and merged. Under ${WORK_BATTERY}% on battery they wait for the charger (${pct}% now)."
+  elif [ $(( pct - need )) -lt "$WORK_BATTERY" ]; then
+    phone -key plug-ahead -every 1h "Gauss: plug in soon" \
+      "$n PR(s) queued need about ${need}% of battery; at ${pct}% the queue stops at ${WORK_BATTERY}%. Plug in within the hour to keep it moving."
+  fi
+}
+
 battery_alerts() { # battery_alerts <pmset batt output> <pct>
   local batt=$1 pct=$2
   [ -n "$pct" ] || return 0
+  [[ "$batt" == *"'AC Power'"* ]] || plug_ahead "$pct"
   if [ "$(sleep_disabled)" = 1 ] && [ ! -f "$SUDOERS" ]; then
     phone -key awake-unguarded -every 6h "Gauss: no battery cutoff" \
       "Sleep is disabled but the awake guard isn't set up, so nothing stops the battery running flat (${pct}%). Run: gauss-services.sh awake setup"
@@ -566,6 +620,22 @@ fallback_ready() { # a valid record, both plists and a built site
   [ -f "$FALLBACK_STATE/${FALLBACK_LABELS[0]}.plist" ] && [ -f "$FALLBACK_STATE/${FALLBACK_LABELS[1]}.plist" ] && [ -f "$READY_DIR/frontend/dist/index.html" ]
 }
 fallback_active() { loaded "${FALLBACK_LABELS[0]}"; }
+# FM-21: a standby that was prepared but can no longer serve, in words; nothing when it is fine
+# or was never prepared ("none prepared" is a status warning, and deploy refuses it: FM-24).
+fallback_problem() {
+  [ -e "$FALLBACK_STATE/ready" ] || return 0
+  if ! ready_record; then echo "its ready record is corrupt or cut short"; return 0; fi
+  if ! fallback_ready; then echo "its checkout, build or agents are gone (${READY_DIR})"; return 0; fi
+  local head; head=$(git -C "$READY_DIR" rev-parse -q --verify HEAD 2>/dev/null) || return 0 # not a git checkout: nothing to compare
+  [[ "$head" == "$READY_SHA"* ]] || echo "its checkout moved to ${head:0:7} after it was prepared at ${READY_SHA:0:7}"
+}
+fallback_watch() { # awake guard: text when the standby goes bad, not only once a failover needs it
+  fallback_active && return 0
+  local why; why=$(fallback_problem)
+  [ -n "$why" ] || return 0
+  phone -key fallback-bad -every 6h "Gauss: no usable standby" \
+    "The fallback can't take over: $why. Live still runs; if it fails there is nothing to switch to. Fix: gauss-services.sh fallback prepare <dir>"
+}
 
 fallback_on() { # fallback_on <reason>: swap live for the fallback on the same ports
   fallback_ready || { echo "No fallback prepared: $0 fallback prepare <dir>" >&2; return 1; }
@@ -622,7 +692,7 @@ fallback_prepare() { # fallback_prepare <dir> [sha]: check out, install, build, 
   fi
   # Explicit returns throughout: deploy calls this in a condition, where set -e is off.
   [ "$dir" != "$live" ] || { echo "The fallback must not be the live checkout." >&2; return 1; }
-  local lock; lock=$(shasum "$dir/package-lock.json" | cut -d' ' -f1) || return 1
+  local lock; lock=$(install_key "$dir") || return 1
   if [ "$(cat "$dir/node_modules/.gauss-lock" 2>/dev/null)" != "$lock" ]; then
     echo "Installing dependencies in $dir ..."
     (cd "$dir" && PATH="$(dirname "$NODE"):$PATH" npm ci --no-audit --no-fund >/dev/null) || return 1
@@ -659,7 +729,7 @@ prebuild_backend() { # prebuild_backend <checkout-dir>: sets BACKEND_ARGS
   # Drop .js left by an earlier build (only git-ignored ones, never node_modules), so a removed module can't linger.
   (cd "$dir" && find backend shared -name '*.js' ! -path '*/node_modules/*' -print0 | git check-ignore -z --stdin 2>/dev/null | xargs -0 rm -f) || true
   if (cd "$dir" && find backend shared -name '*.ts' ! -name '*.test.ts' ! -name '*.d.ts' ! -path '*/node_modules/*' -print0 \
-      | xargs -0 "${run[@]}" --outdir=. --outbase=. --format=esm --platform=node --target=node22 --log-level=error) \
+      | xargs -0 "${run[@]}" --outdir=. --outbase=. --format=esm --platform=node --target=node26 --log-level=error) \
     && (cd "$dir" && "$NODE" --check backend/server.js); then
     BACKEND_ARGS=(backend/server.js)
   else
@@ -794,7 +864,7 @@ print(json.dumps(r, ensure_ascii=False))
 ' "$GATES_DIR/$1.json" "$1"
 }
 
-req_get() { sed -n "s/^$2=//p" "$1" | head -1; } # req_get <request file> <key>
+req_get() { sed -n "/^$2=/{s///p;q;}" "$1"; } # req_get <request file> <key>: the first value (sed quits itself, no SIGPIPE)
 
 gates_result() { # gates_result <sha> <tree> <STATUS> <detail>: the one line a session or the ledger reads later
   mkdir -p "$GATES_DIR"
@@ -802,7 +872,11 @@ gates_result() { # gates_result <sha> <tree> <STATUS> <detail>: the one line a s
   event gates_result "${1:0:7}" "$3 ${1:0:7}: $4" sha="$1" tree="$2" status="$3"
 }
 
-gates_queued() { local f; for f in "$GATES_QUEUE"/*-"$1".req; do [ -f "$f" ] && { echo "$f"; return 0; }; done; return 1; } # by tree
+gates_queued() { # gates_queued <tree>: the queued request for that tree, by its tree= line: train_sync moves a request
+  # to the merged head in place, so the file name keeps the tree it was queued with (2026-11-03: "gates result 0db616f"
+  # said no request while #212's moved request was running it, and a re-enqueue would have queued it twice).
+  local f; for f in "$GATES_QUEUE"/*.req; do [ -f "$f" ] && [ "$(req_get "$f" tree)" = "$1" ] && { echo "$f"; return 0; }; done; return 1
+}
 
 gates_resolve() { # gates_resolve <checkout-dir>|<commit>: sets G_SRC G_SHA G_TREE G_REPO
   if [ -d "$1" ]; then
@@ -819,32 +893,74 @@ gates_resolve() { # gates_resolve <checkout-dir>|<commit>: sets G_SRC G_SHA G_TR
 
 # A new head replaces the older heads of its branch still waiting (2026-10-31: three hand prunes of
 # stale requests in one day, each costing a full gate slot). Never a commit already on origin/main:
-# a queued main (for a deploy) is an ancestor of every branch that merged it.
+# a queued main (for a deploy) is an ancestor of every branch that merged it. Never a commit that is
+# still a branch's head (2026-11-02: queuing #210's head dropped the head of #158 under it, which has
+# to pass on its own before #158 merges): only a branch whose head moved on supersedes.
 gates_supersede() { # gates_supersede <new-sha> <new-request>
-  local new=$1 keep=$2 r old
+  local new=$1 keep=$2 r old tips fetched=
   for r in "$GATES_QUEUE"/*.req; do
     [ -f "$r" ] && [ "$r" != "$keep" ] || continue
     old=$(req_get "$r" sha)
     [ -n "$old" ] && [ "$old" != "$new" ] || continue
     git --git-dir="$G_REPO" merge-base --is-ancestor "$old" "$new" 2>/dev/null || continue
+    if [ -z "$fetched" ]; then # once, and only with a candidate: origin's heads as they are now (30 s cap: hotspot)
+      fetched=1
+      GIT_TERMINAL_PROMPT=0 perl -e 'alarm shift; exec @ARGV' 30 git --git-dir="$G_REPO" fetch -q origin 2>/dev/null \
+        || echo "(git fetch failed; judging branch heads by the refs already here)"
+    fi
     git --git-dir="$G_REPO" merge-base --is-ancestor "$old" refs/remotes/origin/main 2>/dev/null && continue
+    tips=$(gates_branch_tips "$old")
+    [ -z "$tips" ] || { echo "Kept ${old:0:7}: still the head of $tips."; continue; }
     rm -f "$r" && echo "Superseded ${old:0:7}: ${new:0:7} contains it."
   done
 }
 
-gates_enqueue() { # gates_enqueue <checkout-dir>|<commit>: queue a gate run for that commit's tree, start the runner
-  gates_resolve "${1:?usage: $0 gates enqueue <checkout-dir>|<commit>}" || return 1
-  local sha=$G_SHA tree=$G_TREE f
+gates_branch_tips() { # gates_branch_tips <sha>: the branches, here or on origin, whose head is <sha> (comma-separated)
+  local ref h
+  git --git-dir="$G_REPO" for-each-ref --points-at "$1" --format='%(refname)' refs/heads refs/remotes/origin \
+    | while IFS= read -r ref; do
+      case $ref in # not origin's copy of a branch that has moved on here: that newer head just isn't pushed yet
+        refs/remotes/origin/*) h=$(git --git-dir="$G_REPO" rev-parse -q --verify "refs/heads/${ref#refs/remotes/origin/}") \
+          && [ "$h" != "$1" ] && git --git-dir="$G_REPO" merge-base --is-ancestor "$1" "$h" && continue ;;
+      esac
+      echo "${ref#refs/}"
+    done | paste -sd, -
+}
+
+gates_enqueue() { # gates_enqueue <checkout-dir>|<commit> [--pr N]: queue a gate run for that commit's tree, start the runner
+  # --pr N puts it on the merge train (train_sync, train_merge): main is merged in before the run
+  # and the PR is merged after a pass, when the standing approval's conditions hold.
+  gates_resolve "${1:?usage: $0 gates enqueue <checkout-dir>|<commit> [--pr N]}" || return 1
+  local sha=$G_SHA tree=$G_TREE f pr=""
+  case "${2:-}" in
+    --pr) pr=${3:-}; [[ "$pr" =~ ^[0-9]+$ ]] || { echo "usage: $0 gates enqueue <checkout-dir>|<commit> --pr <number>" >&2; return 2; } ;;
+    "") ;;
+    *) echo "unknown option ${2} (expected --pr N)" >&2; return 2 ;;
+  esac
   if gate_record "$tree" >/dev/null; then
-    gates_result "$sha" "$tree" SKIPPED "already passed: $(gates_summary "$GATES_DIR/$tree.json")"
-    echo "Already passed: ${sha:0:7} (tree ${tree:0:7}) has a passing gate record; nothing queued."; return 0
+    if [ -z "$pr" ]; then
+      gates_result "$sha" "$tree" SKIPPED "already passed: $(gates_summary "$GATES_DIR/$tree.json")"
+      echo "Already passed: ${sha:0:7} (tree ${tree:0:7}) has a passing gate record; nothing queued."; return 0
+    fi
+    # On the train a pass is not the end (4 Nov: #209 passed as a draft and was HELD; marked ready and
+    # re-queued, it got "already passed" and nothing merged it, while main moved on). A head that still
+    # contains main goes straight to train_merge; one main has moved past is queued, so train_sync merges
+    # main in and the merged tree is gated.
+    git --git-dir="$G_REPO" fetch -q origin 2>/dev/null || true
+    if git --git-dir="$G_REPO" merge-base --is-ancestor refs/remotes/origin/main "$sha" 2>/dev/null; then
+      echo "Already passed: ${sha:0:7} (tree ${tree:0:7}); merging PR #$pr if the train's rules hold."
+      if train_merge "$pr" "$sha" "$tree" "$G_REPO"; then echo "Merged PR #$pr."
+      else echo "Not merged: $(tail -1 "$GATES_RESULTS" | cut -d' ' -f4-)"; fi
+      return 0
+    fi
+    echo "Already passed: ${sha:0:7}, but main has moved past it: queueing it so the train merges main in and gates that."
   fi
   mkdir -p "$GATES_QUEUE"
   if f=$(gates_queued "$tree"); then
     echo "Already queued: tree ${tree:0:7} ($(req_get "$f" sha | cut -c1-7), by $(req_get "$f" by))."
   else
     f="$GATES_QUEUE/$(python3 -Ic 'import time; print("%.6f" % time.time())')-$tree.req"
-    printf 'sha=%s\ntree=%s\nrepo=%s\nnode=%s\nby=%s\nqueued=%s\n' "$sha" "$tree" "$G_REPO" "$NODE" "$(deployer)" "$(date +%s)" >"$f.tmp"
+    printf 'sha=%s\ntree=%s\nrepo=%s\nnode=%s\nby=%s\nqueued=%s\npr=%s\n' "$sha" "$tree" "$G_REPO" "$NODE" "$(deployer)" "$(date +%s)" "$pr" >"$f.tmp"
     mv "$f.tmp" "$f"
     event gates_queued "${sha:0:7}" "gate run queued for ${sha:0:7}" sha="$sha" tree="$tree" by="$(deployer)"
     gates_supersede "$sha" "$f"
@@ -856,26 +972,61 @@ gates_enqueue() { # gates_enqueue <checkout-dir>|<commit>: queue a gate run for 
 
 gates_runner_pid() { local p; p=$(cat "$GATES_RUNNER/pid" 2>/dev/null) && [ -n "$p" ] && kill -0 "$p" 2>/dev/null && echo "$p"; }
 
+gates_runner_src() { # the commit the runner's copy came from, while runner.src still describes that copy
+  local blob
+  [ -f "$GATES_SRC" ] && blob=$(git hash-object --no-filters "$GATES_DIR/runner.sh" 2>/dev/null) \
+    && [ "$(req_get "$GATES_SRC" blob)" = "$blob" ] && req_get "$GATES_SRC" sha
+}
+
+# The runner outlives the checkout that queued it (sessions' worktrees get removed): it runs a copy,
+# renamed into place so a runner still reading the old copy keeps it. Refreshed on enqueue, even with
+# a runner alive (2026-10-31: a runner that never idles kept running old queue code for days); the
+# runner re-runs itself when it sees the new copy. Only forward (2026-11-03: an enqueue from an older
+# branch replaced the merge-train runner of PR #218 with its own script): runner.src names the commit
+# the copy came from, and only a checkout whose HEAD contains it, or origin/main's script, replaces it.
+gates_refresh_runner() {
+  local run="$GATES_DIR/runner.sh" dir pre blob head="" main="" was why
+  blob=$(git hash-object --no-filters "$0") && dir=$(cd "$(dirname "$0")" && pwd) || return 1
+  if pre=$(git -C "$dir" rev-parse --show-prefix 2>/dev/null); then
+    # The commit only vouches for this script if it is committed as is (no edits since).
+    [ "$(git -C "$dir" rev-parse -q --verify "HEAD:$pre${0##*/}" || true)" = "$blob" ] && head=$(git -C "$dir" rev-parse HEAD)
+    main=$(git -C "$dir" rev-parse -q --verify "refs/remotes/origin/main:$pre${0##*/}") || main=""
+  fi
+  was=$(gates_runner_src) || was="" # none or stale (runner.sh changed without it): refresh as before
+  if cmp -s "$0" "$run"; then
+    [ -n "$was" ] && return 0 # same code, already recorded
+  elif [ -n "$was" ] && [ "$blob" != "$main" ] \
+    && ! { [ -n "$head" ] && git -C "$dir" merge-base --is-ancestor "$was" "$head" 2>/dev/null; }; then
+    if [ -n "$head" ]; then why="this checkout (${head:0:7}) doesn't contain it"; else why="this script isn't committed as is"; fi
+    echo "Runner kept: it runs ${was:0:7} and $why. A checkout that contains ${was:0:7}, or origin/main's script, updates it."
+    return 0
+  else
+    cp "$0" "$run.$$" && mv -f "$run.$$" "$run" || return 1
+  fi
+  if [ -n "$head" ]; then
+    printf 'sha=%s\nblob=%s\nfrom=%s\nat=%s\n' "$head" "$blob" "$dir" "$(date +%s)" >"$GATES_SRC.$$" && mv -f "$GATES_SRC.$$" "$GATES_SRC"
+  else
+    rm -f "$GATES_SRC" # unknown origin: the next checkout refreshes it as before
+  fi
+}
+
 gates_start() { # start the one runner, detached from this session (own session id, no terminal), if none runs
   local p
   mkdir -p "$GATES_DIR" "$LOGS"
-  # The runner outlives the checkout that queued it (sessions' worktrees get removed): run a copy.
-  # Renamed into place, so a runner still reading the old copy keeps it. Refreshed on every enqueue,
-  # even with a runner alive (2026-10-31: a runner that never idles kept running old queue code for
-  # days); the runner re-runs itself when it sees the new copy.
-  if ! cmp -s "$0" "$GATES_DIR/runner.sh"; then
-    cp "$0" "$GATES_DIR/runner.sh.$$" && mv -f "$GATES_DIR/runner.sh.$$" "$GATES_DIR/runner.sh" || return 1
-  fi
+  gates_refresh_runner || return 1
   if p=$(gates_runner_pid); then echo "The gate runner is working (pid $p)."; return 0; fi
   [ "${GAUSS_GATES_START:-1}" = 1 ] || return 0 # tests
-  nohup perl -MPOSIX -e 'POSIX::setsid(); exec @ARGV' /bin/bash "$GATES_DIR/runner.sh" gates run \
-    </dev/null >>"$LOGS/gates-runner.log" 2>&1 &
+  (cd "$GATES_DIR" && nohup perl -MPOSIX -e 'POSIX::setsid(); exec @ARGV' /bin/bash "$GATES_DIR/runner.sh" gates run \
+    </dev/null >>"$LOGS/gates-runner.log" 2>&1 &)
   echo "Gate runner started (log: $LOGS/gates-runner.log)."
 }
 
 gates_run() { # gates_run [--once]: work through the queue, oldest first, then exit; --once: stop after one wait that gave up
   local once=${1:-} self req sha tree queued rc pid me
   self="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
+  # Never the folder it was started from: that is a session's checkout, often a temporary worktree removed
+  # while the runner lives on (4 Nov: every git call then failed with getcwd errors).
+  cd "$GATES_DIR" 2>/dev/null || cd /
   me=$(shasum "$self" | cut -d' ' -f1)
   mkdir -p "$GATES_QUEUE"
   until mkdir "$GATES_RUNNER" 2>/dev/null; do
@@ -888,7 +1039,7 @@ gates_run() { # gates_run [--once]: work through the queue, oldest first, then e
   done
   echo $$ >"$GATES_RUNNER/pid"
   trap 'rm -rf "$GATES_RUNNER"' EXIT
-  while req=$(ls "$GATES_QUEUE"/*.req 2>/dev/null | sort | head -1) && [ -n "$req" ]; do
+  while req=$(ls "$GATES_QUEUE"/*.req 2>/dev/null | sort | awk 'NR==1') && [ -n "$req" ]; do
     if [ "$(shasum "$self" | cut -d' ' -f1)" != "$me" ]; then
       echo "$(date '+%F %T') runner code changed: re-running the new copy"
       exec /bin/bash "$self" gates run $once
@@ -926,8 +1077,19 @@ gates_run_one() { # gates_run_one <request>: check out, install if the lockfile 
   local req=$1 sha tree repo node by co lock out rc=0 line status
   # Withdrawn while claude-heavy waited (a session re-queued a new head): nothing to run.
   [ -f "$req" ] || { echo "Request $(basename "$req") was withdrawn; skipping."; return 0; }
+  local pr; pr=$(req_get "$req" pr)
+  if [ -n "$pr" ]; then # merge train: test what would land, not a head main has moved past
+    train_sync "$req" || return 0 # withdrawn: closed PR, moved head or a conflict (result written)
+    # Already gated (passed, then held as a draft or for GitHub's state): no second 5-30 min run.
+    if gate_record "$(req_get "$req" tree)" >/dev/null; then
+      sha=$(req_get "$req" sha); tree=$(req_get "$req" tree); repo=$(req_get "$req" repo); rm -f "$req"
+      gates_result "$sha" "$tree" SKIPPED "already passed: going straight to the merge"
+      train_merge "$pr" "$sha" "$tree" "$repo" || true
+      return 0
+    fi
+  fi
   sha=$(req_get "$req" sha); tree=$(req_get "$req" tree); repo=$(req_get "$req" repo); node=$(req_get "$req" node); by=$(req_get "$req" by)
-  [ -n "$node" ] && [ -x "$node" ] && NODE=$node # the Node the session queued with (Node 22)
+  [ -n "$node" ] && [ -x "$node" ] && NODE=$node # the Node the session queued with (.nvmrc: Node 26)
   co=${GAUSS_GATES_CHECKOUT:-$(dirname "$repo").worktrees/gates}
   gates_fail() { gates_result "$sha" "$tree" ERROR "$1"; rm -f "$req"; return 1; }
   mkdir -p "$GATES_DIR/runs"
@@ -940,15 +1102,17 @@ gates_run_one() { # gates_run_one <request>: check out, install if the lockfile 
     echo "$co" >>"$GATES_DIR/checkouts" # one per repository
   fi
   # One install for consecutive requests with the same package-lock.json.
-  lock=$(shasum "$co/package-lock.json" | cut -d' ' -f1) || { gates_fail "no package-lock.json at ${sha:0:7}"; return 1; }
+  [ -f "$co/package-lock.json" ] && lock=$(install_key "$co") || { gates_fail "no package-lock.json at ${sha:0:7}"; return 1; }
   if [ "$(cat "$co/node_modules/.gauss-lock" 2>/dev/null)" != "$lock" ]; then
     echo "Installing dependencies in $co ..."
     (cd "$co" && PATH="$(dirname "$NODE"):$PATH" npm ci --no-audit --no-fund >"$GATES_DIR/runs/$sha.install.log" 2>&1) \
       || { gates_fail "npm ci failed (log: $GATES_DIR/runs/$sha.install.log)"; return 1; }
     echo "$lock" >"$co/node_modules/.gauss-lock"
   fi
-  # The native MHD kernel is built by npm ci, so it went stale when only its C++ changed: a commit
-  # was tested against another commit's build/ (2026-10-31). Rebuild when its sources differ.
+  # The native MHD kernel: npm ci no longer builds it (package.json "gypfile": false, GAU-228) and the
+  # backend loads it only with GAUSS_NATIVE_MHD=1, but the gate still builds it so the GAU-133 test
+  # (kernel vs TypeScript) keeps running. Rebuild only when its sources differ: a stale build/ once
+  # tested a commit against another commit's C++ (2026-10-31).
   if [ -f "$co/binding.gyp" ]; then
     local native; native=$(cat "$co/binding.gyp" "$co"/backend/cpp/* 2>/dev/null | shasum | cut -d' ' -f1)
     if [ "$(cat "$co/build/.gauss-native" 2>/dev/null)" != "$native" ]; then
@@ -967,7 +1131,90 @@ gates_run_one() { # gates_run_one <request>: check out, install if the lockfile 
   else status=ERROR; line="$(printf '%s\n' "$out" | tail -1) (log: $GATES_DIR/runs/$sha.log)"; fi
   gates_result "$sha" "$tree" "$status" "$line"
   rm -f "$req"
-  [ "$status" = PASSED ]
+  [ "$status" = PASSED ] || return 1
+  [ -z "$pr" ] || train_merge "$pr" "$sha" "$tree" "$repo" || true # a pass stands whether or not it merged
+}
+
+# The merge train (Josh 2026-11-03, "make fixes to merge train always"): overnight, main moved
+# twice (#197, #213) and every queued gate tested a head that could no longer merge; each PR then
+# needed a session awake to merge main in, re-queue, wait and merge. A request queued with --pr
+# now does that itself. Same rules as the standing approval (CLAUDE.md): passed on the exact head,
+# head contains origin/main, GitHub says CLEAN, not a draft, and nothing it changes matches
+# TRAIN_HOLD (auth, RBAC, crypto/TLS, secrets, CyberTiger, keys); those pass and wait for Josh.
+# Only fast-forward pushes of a merge commit to the PR's own branch; never a force push.
+TRAIN_REPO="${GAUSS_TRAIN_REPO:-Pallas117/Constellation}"
+TRAIN_HOLD="${GAUSS_TRAIN_HOLD:-auth|rbac|crypto|tls|secret|cybertiger|passkey|bpsec|signing|trust/|\.env|keys?\.}"
+
+train_pr() { # train_pr <pr>: "state head branch base draft merge-state" on one line, or fail
+  gh pr view "$1" --repo "$TRAIN_REPO" --json state,headRefOid,headRefName,baseRefName,isDraft,mergeStateStatus \
+    -q '[.state, .headRefOid, .headRefName, .baseRefName, (.isDraft|tostring), .mergeStateStatus] | join(" ")' 2>/dev/null
+}
+
+train_sync() { # train_sync <request>: merge origin/main into a train PR's head before its run; 1 = withdrawn
+  local req=$1 pr sha tree repo info state head branch base _ w new
+  pr=$(req_get "$req" pr); sha=$(req_get "$req" sha); tree=$(req_get "$req" tree); repo=$(req_get "$req" repo)
+  git --git-dir="$repo" fetch -q origin 2>/dev/null || { echo "fetch failed: gating ${sha:0:7} as queued"; return 0; }
+  info=$(train_pr "$pr") || { echo "GitHub unreachable: gating ${sha:0:7} as queued"; return 0; }
+  read -r state head branch base _ _ <<<"$info"
+  if [ "$state" != OPEN ]; then gates_result "$sha" "$tree" SKIPPED "PR #$pr is ${state:-gone}"; rm -f "$req"; return 1; fi
+  if [ "$head" != "$sha" ]; then
+    gates_result "$sha" "$tree" SKIPPED "PR #$pr moved on to ${head:0:7}; queue that head"; rm -f "$req"; return 1
+  fi
+  [ "$base" = main ] || return 0 # stacked: gated as it is; it syncs once its base has merged
+  git --git-dir="$repo" merge-base --is-ancestor refs/remotes/origin/main "$sha" && return 0
+  w=$(mktemp -d -t gauss-train)/w
+  git --git-dir="$repo" worktree add -q --detach "$w" "$sha" 2>/dev/null || { echo "could not prepare a merge of main; gating as queued"; return 0; }
+  if git -C "$w" merge -q --no-edit -m "Merge origin/main into $branch (merge train)" refs/remotes/origin/main >/dev/null 2>&1 \
+     && new=$(git -C "$w" rev-parse HEAD) && git -C "$w" push -q origin "$new:refs/heads/$branch" 2>/dev/null; then
+    sed -i '' -e "s/^sha=.*/sha=$new/" -e "s/^tree=.*/tree=$(git -C "$w" rev-parse "$new^{tree}")/" "$req"
+    gates_result "$sha" "$tree" MOVED "merged main into PR #$pr: gating ${new:0:7} instead"
+    echo "Merged main into PR #$pr: ${sha:0:7} -> ${new:0:7}"
+  else
+    git -C "$w" merge --abort 2>/dev/null || true
+    gates_result "$sha" "$tree" CONFLICT "PR #$pr can't take main without a person (conflict, or its branch moved)"
+    phone -key "train-$pr" -every 6h "Gauss: PR #$pr needs a hand" "Main has moved and #$pr doesn't merge with it cleanly. A session needs to merge main into it."
+    rm -f "$req"
+  fi
+  git --git-dir="$repo" worktree remove --force "$w" 2>/dev/null || true
+  [ -f "$req" ]
+}
+
+train_merge() { # train_merge <pr> <sha> <tree> <repo>: merge a PR that just passed, if every rule holds
+  local pr=$1 sha=$2 tree=$3 repo=$4 info state head branch base draft merge i files held child why
+  git --git-dir="$repo" fetch -q origin 2>/dev/null || true
+  for i in 1 2 3; do # GitHub computes mergeability lazily: UNKNOWN right after a push
+    info=$(train_pr "$pr") || return 1
+    read -r state head branch base draft merge <<<"$info"
+    [ "$merge" != UNKNOWN ] && break
+    sleep "${GAUSS_TRAIN_WAIT_S:-10}"
+  done
+  why=""
+  [ "$state" = OPEN ] || why="PR is $state"
+  [ -z "$why" ] && [ "$head" != "$sha" ] && why="PR moved on to ${head:0:7}"
+  [ -z "$why" ] && [ "$base" != main ] && why="stacked on $base: merges after it"
+  [ -z "$why" ] && [ "$draft" = true ] && why="draft"
+  [ -z "$why" ] && ! git --git-dir="$repo" merge-base --is-ancestor refs/remotes/origin/main "$sha" && why="main moved during the run: re-queue it"
+  [ -z "$why" ] && [ "$merge" != CLEAN ] && why="GitHub says $merge"
+  if [ -z "$why" ]; then
+    files=$(git --git-dir="$repo" diff --name-only "refs/remotes/origin/main...$sha")
+    held=$(printf '%s\n' "$files" | { grep -Ei -- "$TRAIN_HOLD" || true; } | sed -n 1,3p | tr '\n' ' ') # sed reads it all: no SIGPIPE
+    [ -z "$held" ] || why="touches ${held% }: Josh merges"
+  fi
+  if [ -n "$why" ]; then
+    gates_result "$sha" "$tree" HELD "passed, not merged: $why"
+    return 1
+  fi
+  if gh pr merge "$pr" --repo "$TRAIN_REPO" --merge --match-head-commit "$sha" >/dev/null 2>&1; then
+    gates_result "$sha" "$tree" MERGED "PR #$pr merged by the train after its gate passed on ${sha:0:7}"
+    # PRs stacked on this one now belong on main (their next queued run merges main in).
+    for child in $(gh pr list --repo "$TRAIN_REPO" --base "$branch" --state open --json number -q '.[].number' 2>/dev/null); do
+      gh pr edit "$child" --repo "$TRAIN_REPO" --base main >/dev/null 2>&1 && echo "Retargeted PR #$child to main."
+    done
+    phone -key "train-merged" -every 1m "Gauss: merged #$pr" "PR #$pr passed its checks and is merged into main."
+    return 0
+  fi
+  gates_result "$sha" "$tree" HELD "passed, but gh pr merge refused it"
+  return 1
 }
 
 gates_show_result() { # gates_show_result <checkout-dir>|<commit>: the latest line for that tree; exit 0 passed, 1 failed/none, 3 queued
@@ -980,12 +1227,13 @@ gates_show_result() { # gates_show_result <checkout-dir>|<commit>: the latest li
   line=$(awk -v t="$tree" 'index($2, t) == 1 || index($3, t) == 1' "$GATES_RESULTS" 2>/dev/null | tail -1)
   [ -n "$line" ] || { echo "No gate result or request for $arg."; return 1; }
   echo "$line"
-  case $(echo "$line" | cut -d' ' -f4) in PASSED) return 0 ;; SKIPPED) [[ "$line" == *" already passed: "* ]] ;; *) return 1 ;; esac
+  case $(echo "$line" | cut -d' ' -f4) in PASSED|MERGED|HELD) return 0 ;; SKIPPED) [[ "$line" == *" already passed: "* ]] ;; *) return 1 ;; esac
 }
 
 gates_status() {
   local f n=0 p
   if p=$(gates_runner_pid); then echo "runner: working (pid $p)"; else echo "runner: not running"; fi
+  if p=$(gates_runner_src) && [ -n "$p" ]; then echo "runner code: ${p:0:7} (from $(req_get "$GATES_SRC" from))"; else echo "runner code: not recorded"; fi
   for f in "$GATES_QUEUE"/*.req; do
     [ -f "$f" ] || continue; n=$((n + 1))
     echo "queued: $(req_get "$f" sha | cut -c1-7) by $(req_get "$f" by) since $(date -r "$(req_get "$f" queued)" '+%F %H:%M')"
@@ -1052,12 +1300,30 @@ deploy_ready() { # deploy_ready <dir> <seconds>: poll until the services answer,
   done
 }
 
-switch_live() { # switch_live <dir> <from sha> <to sha>: check out, npm ci if the lockfile changed, reinstall
+# install_key <dir>: what node_modules was built for. Native modules (better-sqlite3, the MHD kernel)
+# are built for one Node ABI, so a Node upgrade needs a reinstall even with the same lockfile (2 Nov: 25 -> 26).
+install_key() { echo "$(shasum "$1/package-lock.json" | cut -d' ' -f1) node-$("$NODE" -v 2>/dev/null || echo none)"; }
+node_changed() { # node_changed <dir>: node_modules was installed by another Node (unknown counts as unchanged)
+  local was; was=$(cat "$1/node_modules/.gauss-node" 2>/dev/null) || return 1
+  [ -n "$was" ] && [ "$was" != "$("$NODE" -v 2>/dev/null || echo none)" ]
+}
+
+deploy_power_short() { # prints why the power can't carry a deploy, or nothing
+  local batt pct watts
+  batt=$(pmset -g batt 2>/dev/null); pct=$(grep -Eo -m1 '[0-9]+%' <<<"$batt" | tr -d % || true)
+  [ -n "$pct" ] && [ "$pct" -lt "$WORK_BATTERY" ] || return 0
+  if [[ "$batt" != *"'AC Power'"* ]]; then echo "battery ${pct}% on battery"; return 0; fi
+  if [[ "$batt" == *discharging* || "$batt" == *"not charging"* ]]; then echo "battery ${pct}% and the charger isn't keeping up"; return 0; fi
+  watts=$(pmset -g ac 2>/dev/null | sed -n 's/^ *Wattage = \([0-9]*\)W.*/\1/p')
+  [ -z "$watts" ] || [ "$watts" -ge 20 ] || echo "battery ${pct}% on a ${watts} W charger"
+}
+switch_live() { # switch_live <dir> <from sha> <to sha>: check out, npm ci if the lockfile or Node changed, reinstall
   git -C "$1" checkout -q --detach "$3" || return 1
-  if [ ! -d "$1/node_modules" ] || ! git -C "$1" diff --quiet "$2" "$3" -- package-lock.json; then
-    echo "package-lock.json changed: installing dependencies in $1 ..."
+  if [ ! -d "$1/node_modules" ] || ! git -C "$1" diff --quiet "$2" "$3" -- package-lock.json || node_changed "$1"; then
+    echo "package-lock.json or Node changed: installing dependencies in $1 ..."
     (cd "$1" && PATH="$(dirname "$NODE"):$PATH" npm ci --no-audit --no-fund >/dev/null) || return 1
   fi
+  [ -d "$1/node_modules" ] && { "$NODE" -v 2>/dev/null || echo none; } >"$1/node_modules/.gauss-node"
   install_agents "$1"
 }
 
@@ -1084,6 +1350,12 @@ deploy() { # deploy <commit> [fallback-dir]
   if [ "$level" -ge "$MEM_SHED_LEVEL" ]; then
     echo "Memory pressure is $(pressure_name "$level"): not deploying now (npm ci and the build need headroom). Retry when normal." >&2; return 1
   fi
+  # The install and the build draw ~10 W: a battery under WORK_BATTERY without a charger that keeps
+  # up can die mid-switch and leave live half-deployed (4 Nov 2026: a deploy ran at 13% on 8 W).
+  local why_power; why_power=$(deploy_power_short) || true
+  if [ -n "$why_power" ] && [ -z "$DEPLOY_EMERGENCY" ]; then
+    echo "Not deploying now: $why_power. Plug into a 20 W+ charger (or --emergency <reason>)." >&2; return 1
+  fi
   # Live's data files (telemetry, models) change in place and carry over; code must not.
   local dirty; dirty=$(git -C "$live" status --porcelain --untracked-files=no | cut -c4- | grep -Ev '^(data|ml/models)/' || true)
   [ -z "$dirty" ] || { printf 'Live has local code changes; not deploying over them:\n%s\n' "$dirty" >&2; return 1; }
@@ -1101,7 +1373,10 @@ deploy() { # deploy <commit> [fallback-dir]
 
   # The standby becomes what runs now, if it is healthy: never swap a good fallback for a broken live.
   [ -z "$fbdir" ] && ready_record && fbdir=$READY_DIR
-  if [ -z "$fbdir" ]; then
+  if [ -z "$fbdir" ] && [ -z "$DEPLOY_NO_FALLBACK$DEPLOY_EMERGENCY" ]; then
+    # FM-24: a deploy used to go ahead and leave no standby; the next live failure then had nothing to fail over to.
+    echo "No fallback to refresh: pass a path ($0 deploy <commit> <fallback-dir>), or --no-fallback to deploy without one." >&2; return 1
+  elif [ -z "$fbdir" ]; then
     echo "warning: no fallback to refresh (pass a path: $0 deploy <commit> <fallback-dir>); rollback to ${prev:0:7} still works."
   elif ready_record && [ "$READY_SHA" = "$prev" ] && [ "$READY_DIR" = "$(cd "$fbdir" 2>/dev/null && pwd)" ]; then
     echo "Fallback already at ${prev:0:7}."
@@ -1174,16 +1449,18 @@ dev_run() { # dev_run <checkout-dir>
 awake_guard() { # run every minute by the awake agent
   boot_check || true # first, before watch_peers refreshes the heartbeat it reads
   watch_peers
+  fallback_watch || true
   local batt pct
-  batt=$(pmset -g batt); pct=$(grep -Eo '[0-9]+%' <<<"$batt" | head -1 | tr -d % || true)
+  batt=$(pmset -g batt); pct=$(grep -Eo -m1 '[0-9]+%' <<<"$batt" | tr -d % || true)
   battery_alerts "$batt" "$pct"
   local level swap free; read -r level swap free < <(memory_stats)
   memory_alerts "$level" "$swap"
   memory_sample "$level" "$swap"
   disk_alerts "$(disk_free_gb)" "$swap"
+  rotate_logs
   balance || true
   # A queued gate run outlives a reboot or a killed runner: start one again.
-  if ls "$GATES_QUEUE" 2>/dev/null | grep -q '\.req$' && ! gates_runner_pid >/dev/null; then gates_start >/dev/null || true; fi
+  if ls "$GATES_QUEUE" 2>/dev/null | grep -c '\.req$' >/dev/null && ! gates_runner_pid >/dev/null; then gates_start >/dev/null || true; fi
   [ -f "$SUDOERS" ] || return 0 # not set up; status and check say so
   if [ -f "$AWAKE_OFF" ]; then
     awake_set 0 "turned off"
@@ -1214,7 +1491,7 @@ balance() { # balance [--dry-run]
   local dry=0; [ "${1:-}" = --dry-run ] && dry=1
   if [ "$BALANCE" = 0 ]; then [ $dry = 1 ] && echo "balance is off (GAUSS_BALANCE=0)"; return 0; fi
   local batt pct on_battery=0 level swap free disk mem_short=0 batt_low=0 recovered=0
-  batt=$(pmset -g batt); pct=$(grep -Eo '[0-9]+%' <<<"$batt" | head -1 | tr -d % || true)
+  batt=$(pmset -g batt); pct=$(grep -Eo -m1 '[0-9]+%' <<<"$batt" | tr -d % || true)
   [[ "$batt" != *"'AC Power'"* ]] && [ -n "$pct" ] && on_battery=1
   read -r level swap free < <(memory_stats); disk=$(disk_free_gb)
   { [ "$level" -ge "$MEM_SHED_LEVEL" ] || swap_high "$swap"; } && mem_short=1
@@ -1287,7 +1564,7 @@ awake_state() { # "ok|no <description>" for status and check
   if [ -f "$AWAKE_OFF" ]; then echo "no lid-closed awake turned off ('$0 awake on' to resume)"
   elif [ ! -f "$SUDOERS" ]; then echo "no lid-closed awake not set up ('$0 awake setup', once)"
   elif ! launchctl print "$UID_DOMAIN/uk.lightbound.gauss-awake" >/dev/null 2>&1; then echo "no lid-closed awake guard not installed ('$0 install <checkout-dir>')"
-  elif [ "$(sleep_disabled)" = 1 ]; then echo "ok stays awake with the lid closed (sleeps on battery at ${AWAKE_MIN_BATTERY}%)"
+  elif [ "$(sleep_disabled)" = 1 ]; then echo "ok stays awake with the lid closed (sleeps on battery at ${AWAKE_MIN_BATTERY}%${BATTERY_HEALTH:+; battery health ${BATTERY_HEALTH}%})"
   else echo "no battery at or below ${AWAKE_MIN_BATTERY}%: the Mac sleeps when the lid closes; plug in"
   fi
 }
@@ -1329,7 +1606,7 @@ network_item() {
 
 resilience() { # can background work survive the lid closed, the battery, memory and the network?
   local fail=0 ok batt pct level swap free
-  batt=$(pmset -g batt); pct=$(grep -Eo '[0-9]+%' <<<"$batt" | head -1 | tr -d % || true)
+  batt=$(pmset -g batt); pct=$(grep -Eo -m1 '[0-9]+%' <<<"$batt" | tr -d % || true)
   if [[ "$batt" == *"'AC Power'"* ]]; then
     local note=""
     if [ "${pct:-100}" -gt "$AWAKE_WARN_BATTERY" ]; then ok=ok
@@ -1375,7 +1652,7 @@ check() { # pre-demo checklist
   [ "$(code http://127.0.0.1:8080/api/system/connectivity)" = 200 ] && ok=ok || ok=no
   item $ok "website reaches the API through its own origin (:8080/api)"
   # A build that hardcodes another API origin breaks on this Mac (no tailnet loopback).
-  if tailnet_api_in "$(launchctl print "$UID_DOMAIN/uk.lightbound.gauss-frontend" 2>/dev/null | awk -F'= ' '/working directory =/{print $2; exit}')/frontend/dist/assets" 2>/dev/null; then
+  if tailnet_api_in "$(launchctl print "$UID_DOMAIN/uk.lightbound.gauss-frontend" 2>/dev/null | awk -F'= ' '/working directory =/ && !d {print $2; d=1}')/frontend/dist/assets" 2>/dev/null; then
     item no "frontend build is same-origin (it hardcodes an API host: reinstall)"
   else
     item ok "frontend build is same-origin"
@@ -1385,7 +1662,7 @@ check() { # pre-demo checklist
     # back), so verify the parts it can: sharing configured, and the website and
     # API accept the tailnet hostname. Open the URL on a phone to confirm the last hop.
     local host="${PUBLIC_URL#http://}"
-    if tailscale serve status 2>/dev/null | grep -q "/api proxy http://127.0.0.1:3001/api" \
+    if tailscale serve status 2>/dev/null | grep -c "/api proxy http://127.0.0.1:3001/api" >/dev/null \
       && [ "$(curl -s -o /dev/null -m 5 -w '%{http_code}' -H "Host: $host" http://127.0.0.1:8080/)" = 200 ] \
       && [ "$(curl -s -o /dev/null -m 5 -w '%{http_code}' -H "Host: $host" http://127.0.0.1:3001/api/system/connectivity)" = 200 ]; then
       ok=ok
@@ -1407,7 +1684,7 @@ except Exception:
 ' 2>/dev/null || echo "no space-weather data unavailable")
   item "${fresh%% *}" "${fresh#* }"
   # || true: with the backend not loaded, launchctl fails and pipefail + set -e would end the checklist here.
-  local dir; dir=$(launchctl print "$UID_DOMAIN/uk.lightbound.gauss-backend" 2>/dev/null | awk -F'= ' '/working directory =/{print $2; exit}' || true)
+  local dir; dir=$(launchctl print "$UID_DOMAIN/uk.lightbound.gauss-backend" 2>/dev/null | awk -F'= ' '/working directory =/ && !d {print $2; d=1}' || true)
   local report; report=$(python3 -Ic '
 import json, sys
 from datetime import datetime, timezone
@@ -1507,6 +1784,11 @@ case "${1:-}" in
     printf 'deploy   %s\n' "$(deploy_state | cut -d' ' -f2-)"
     ;;
   restart)
+    # Live runs prebuilt JS (#194): after a checkout, restarting alone would run the old .js. Rebuild first.
+    if live=$(live_dir) && [ -n "$live" ] && plutil -extract ProgramArguments json -o - "$AGENTS/uk.lightbound.gauss-backend.plist" 2>/dev/null | grep -c 'backend/server.js' >/dev/null; then
+      prebuild_backend "$live"
+      [ "${BACKEND_ARGS[0]}" = backend/server.js ] || echo "Warning: could not rebuild $live; the backend restarts on its previous build. Run deploy to fix." >&2
+    fi
     for l in "${SERVICES[@]}"; do launchctl kickstart -k "$UID_DOMAIN/$l"; done
     sleep 8
     health
@@ -1522,7 +1804,8 @@ case "${1:-}" in
     while [ $# -gt 0 ]; do
       case "$1" in
         --emergency) DEPLOY_EMERGENCY=${2:-}; [ -n "$DEPLOY_EMERGENCY" ] || { echo "--emergency needs a reason" >&2; exit 2; }; shift ;;
-        -*) echo "deploy: unknown option $1 (usage: deploy <sha> [fallback dir] [--emergency <reason>])" >&2; exit 2 ;;
+        --no-fallback) DEPLOY_NO_FALLBACK=1 ;;
+        -*) echo "deploy: unknown option $1 (usage: deploy <sha> [fallback dir] [--emergency <reason>] [--no-fallback])" >&2; exit 2 ;;
         *) args+=("$1") ;;
       esac
       shift
@@ -1532,7 +1815,7 @@ case "${1:-}" in
   gates)
     case "${2:-}" in
       record) gates_record "${3:-}" ;;
-      enqueue) gates_enqueue "${3:-}" ;;
+      enqueue) gates_enqueue "${3:-}" "${4:-}" "${5:-}" ;;
       run) gates_run "${3:-}" ;;
       run-one) gates_run_one "${3:?}" ;;
       result) if [ "${3:-}" = status ]; then gates_status; else gates_show_result "${3:-}"; fi ;;

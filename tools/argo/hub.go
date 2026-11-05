@@ -59,6 +59,7 @@ func (h *httpHub) do(ctx context.Context, method, path string, body []byte, ctyp
 		return nil, 0, fmt.Errorf("hub unreachable: %w", err)
 	}
 	defer resp.Body.Close()
+	countOwnEgress(DefaultStore().Dir, "relay hub", h.base.Host, len(body), time.Now())
 	out, err := io.ReadAll(io.LimitReader(resp.Body, limit+1))
 	if err != nil {
 		return nil, resp.StatusCode, err
