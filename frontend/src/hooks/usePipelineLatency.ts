@@ -1,33 +1,27 @@
 import { useEffect, useState } from 'react';
-import { fetchPipelineLatency } from '@/lib/api/heliophysics-proxy';
+import { usePolledFeed } from '@/hooks/usePolledFeed';
 import { describePipeline, type PipelineView } from '@/lib/pipelineLatency';
 import type { PipelineLatencySnapshot } from '@/lib/types/space-weather';
 
 const POLL_MS = 5000; // matches the backend ingest tick
 
-/** Polls the backend pipeline timers; the view keeps ageing between polls. */
+/**
+ * Polls the backend pipeline timers; the view keeps ageing between polls. On the shared poller, so a 401/403 stops it:
+ * CyberTiger blocks an address after 8 auth failures in 5 min, and a 5 s poll on an expired session would hit that in
+ * under a minute. Failures back off and keep the last snapshot, which describePipeline ages into STALLED.
+ */
 export const usePipelineLatency = (): PipelineView => {
-  const [snapshot, setSnapshot] = useState<{ data: PipelineLatencySnapshot; fetchedAt: number } | null>(null);
+  const { data: snapshot } = usePolledFeed<{ data: PipelineLatencySnapshot; fetchedAt: number }>({
+    path: '/api/system/pipeline',
+    intervalMs: POLL_MS,
+    maxBackoffMs: 60_000,
+    parse: (json) => ({ data: json as PipelineLatencySnapshot, fetchedAt: Date.now() }),
+  });
   const [now, setNow] = useState(() => Date.now());
 
   useEffect(() => {
-    let cancelled = false;
-    const poll = async () => {
-      try {
-        const data = await fetchPipelineLatency();
-        if (!cancelled) setSnapshot({ data, fetchedAt: Date.now() });
-      } catch {
-        // Keep the last snapshot; describePipeline ages it into STALLED if polling keeps failing.
-      }
-    };
-    void poll();
-    const pollTimer = setInterval(poll, POLL_MS);
     const clock = setInterval(() => setNow(Date.now()), 1000);
-    return () => {
-      cancelled = true;
-      clearInterval(pollTimer);
-      clearInterval(clock);
-    };
+    return () => clearInterval(clock);
   }, []);
 
   return describePipeline(snapshot?.data ?? null, snapshot ? now - snapshot.fetchedAt : 0);

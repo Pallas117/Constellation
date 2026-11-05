@@ -358,7 +358,9 @@ test("Gauss Argo: included for operators and staff, no price, not promoted, no g
   const gaussMain = html["/gauss/"].match(/<main[\s\S]*<\/main>/)[0];
   assert.doesNotMatch(text(gaussMain), /\$\d|a month/, "no price on the Gauss page (sales plan: no low-price Gauss SaaS)");
   assert.doesNotMatch(gaussMain, /href="\/argo\//, "the Gauss page offers Argo only as a scoped Assured Connectivity pilot");
-  assert.match(read("assets/marks/argo-glyph-provisional.svg"), /provisional glyph, not yet in the Brand Book/, "until the Brand Book adds Argo");
+  assert.match(html["/argo/"], /src="\/assets\/marks\/argo-mark-colour-dark\.svg"/, "the Argo sail mark, not the provisional glyph");
+  assert.match(read("assets/marks/argo-icon-colour-dark.svg"), /<rect width="64" height="64" rx="14" fill="#050505"\/>/, "favicon: the sail on a black tile");
+  assert.match(read("assets/marks/argo-glyph-provisional.svg"), /provisional glyph, not yet in the Brand Book/, "kept while the Access login page (PR #231) still names it");
   for (const [route, page] of Object.entries(html)) if (route !== "/argo/") assert.doesNotMatch(page, /href="\/argo\//, `${route}: Argo is only linked from the workspace`);
 });
 
