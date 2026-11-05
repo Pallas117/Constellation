@@ -117,6 +117,8 @@ Wi-Fi security is checked on every probe: WIFI_RISK (a warning, like WPAD_RISK) 
 
 Alerts stay quiet on purpose: an unresolved problem texts once when it escalates, then at most every 2 h, and OFFLINE never texts (a Mac with no network cannot send, and queued texts would arrive stale).
 
+**Tick timing (2026-11-05).** One lock per tick. A tick that finds another run (a tick that outlived the minute, `argo fix`, the phone) leaves quietly, counts itself in `skipped.json`, and if the default gateway is not the one the running tick last saved it sends that run SIGUSR1: the probe in flight is dropped and run again, so a network change is classified within one probe budget. The network checks (captive, DNS, API, trace) run together under a 12 s budget with 4 s connect, 5 s TLS and 6 s header limits, and `tailscale status` runs beside them, so a stalled uplink costs one budget per probe instead of 50 s of serial timeouts. After a network change or a recovery Argo asks the tailnet once, read-only (`tailscale ping` of the hub, 3 s; `tailscale netcheck` when silent) and records the answer: `argo status` ends with "switch 1m30s ago (tailnet 87ms relay, 320 ms), this network 93% up over 7 d", or "hub silent: store-and-forward" when files must wait in the outbox. Measurements and the tool inventory: `docs/argo/switching-2026-11-05.md`; `argo report --outages` prints the incident log folded into outages.
+
 
 ```
 LaunchAgent: network change (WatchPaths /Library/Preferences/SystemConfiguration), every 5 min, login
