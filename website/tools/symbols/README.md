@@ -14,9 +14,10 @@ https://claude.ai/artifact/CvWgPQyJio2m5uHPyZZHdv. Copied unchanged; the Lightbo
   wing crosses it. The three sweeps carry the bird's colours: white, ruddy (signal orange), earth blue. Square; the badge is the same drawing with a heavier stroke for 32 px and below. Published as -v3.
 - Constellation, refined 4 Nov: navy disc, gold ring broken by five evenly spaced stars, three gold key stars on an
   equilateral triangle with one white star off each. The 3-node icon is for 32 px and under.
-- Argo, 5 Nov (Josh: "Argo could be just a sail", then "a sail in the wind"; both approved): a square sail seen from the
-  side, its seams sagging down-wind and its free edge bellied out; fine mast, yard and sheet, three panels with fine gaps, set by Canopus (the
-  lime four-point star). On a black tile it is the favicon.
+- Argo, 5-6 Nov (Josh: "Argo could be just a sail", "a sail in the wind", then "one sail", "like a sweeping wind",
+  "wing"): a single crescent sail hoisted at the masthead, its leading edge bellied out like a wing, sharp at head and
+  clew, with the sheet back to the mast and Canopus (the lime four-point star) across the mast. It tapers the way the
+  Turnstone's wing sweeps do. On a black tile it is the favicon.
 - Gauss Aurora icon, 5 Nov: the symbol's own belts cropped square with a solid warm Earth, for favicons and app icons
   (the full mark is 2.45:1 and loses its field line in a square).
 

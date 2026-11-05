@@ -157,47 +157,25 @@ def star4(cx: float, cy: float, r: float, waist: float, fill: str) -> str:
 
 
 def argo(c: dict[str, str], icon: bool = False) -> str:
-    """Argo: a square sail in the wind, set by Canopus (Josh, 5 Nov 2026: "Argo could be just a sail", then "a sail in
-    the wind"; approved the same day).
+    """Argo: one sail like a sweeping wind, a wing (Josh, 5-6 Nov 2026: "Argo could be just a sail", "a sail in the
+    wind", then "I think one sail", "Sail like a sweeping wind", "Wing").
 
     Argo is the ship of the old constellation Argo Navis; its brightest star, Canopus, has been a spacecraft's
-    reference star since Mariner 3 and 4 carried the first Canopus star trackers (1964). So the one lime element is the
-    star the sail is set by. Seen from the side: the luff on the mast, every seam sagging down-wind and the free edge
-    (leech) bellied out most at two-thirds height, where the cloth fills. Three panels with fine real gaps (no ground-coloured
-    cuts, so it sits on any surface), a fine mast and braced yard, and the sheet from the clew (Josh: "more realistic
-    and less chunky"). The icon drops the sheet and opens the gaps for 16 px.
+    reference star since Mariner 3 and 4 carried the first Canopus star trackers (1964), so the one lime element is the
+    star across the mast. The sail is a single crescent: hoisted at the masthead, its leading edge bellied far out
+    like a wing, sharp at the head and at the clew, where the sheet runs back to the mast. It tapers the way the
+    Turnstone's wing sweeps do, so the two marks are siblings. The icon drops the sheet and thickens the mast for 16 px.
     """
-    gap = 7 if icon else 4.5  # fine seams; the icon opens them so they survive 16 px
-    mast = 92
-
-    def leech(y: float) -> float:
-        t = min(max((y - 40) / 150, 0), 1)
-        return 152 + 40 * math.sin(math.pi * t * 0.8)
-
-    def seam(y: float) -> tuple[tuple[float, float], ...]:
-        x1 = leech(y)
-        return (mast, y), (mast + (x1 - mast) * 0.45, y + 2), (x1 - 10, y + 15), (x1, y + 19)
-
-    def pt(p: tuple[float, float]) -> str:
-        return f"{num(p[0])} {num(p[1])}"
-
-    rows = [42, 92, 142, 190]
-    w = 6 if icon else 4  # a fine mast and yard, not a post
-    body = [f'<path d="M{mast} 20V218" fill="none" stroke="{c["warm"]}" stroke-width="{w}" stroke-linecap="round"/>',  # the mast
-            f'<path d="M80 37L164 28" fill="none" stroke="{c["warm"]}" stroke-width="{w}" stroke-linecap="round"/>']  # the yard
+    w = 6 if icon else 4
+    body = [f'<path d="M96 18V216" fill="none" stroke="{c["warm"]}" stroke-width="{w}" stroke-linecap="round"/>',  # the mast
+            f'<path d="M100 24C178 26 224 104 202 202C180 140 150 80 100 24Z" fill="{c["warm"]}"/>']  # the sail
     if not icon:
-        body.append(f'<path d="M188 208L{mast + 6} 216" fill="none" stroke="{c["warm"]}" stroke-width="2.5" stroke-linecap="round"/>')  # the sheet
-    for i in range(3):
-        y0, y1 = rows[i] + (gap / 2 if i else 0), rows[i + 1] - (gap / 2 if i < 2 else 0)
-        a0, c1, c2, a1 = seam(y0)
-        b0, d1, d2, b1 = seam(y1)
-        belly = ((a1[0] + b1[0]) / 2 + 8, (a1[1] + b1[1]) / 2)
-        body.append(f'<path d="M{pt(a0)}C{pt(c1)} {pt(c2)} {pt(a1)}Q{pt(belly)} {pt(b1)}C{pt(d2)} {pt(d1)} {pt(b0)}Z" fill="{c["warm"]}"/>')
-    body.append(star4(198, 40, 28 if icon else 20, 6 if icon else 3.5, c["star"]))
-    return svg(ARGO_ICON_BOX if icon else "60 10 166 214", body)
+        body.append(f'<path d="M202 202L100 214" fill="none" stroke="{c["warm"]}" stroke-width="2.5" stroke-linecap="round"/>')  # the sheet
+    body.append(star4(54, 46, 28 if icon else 20, 6 if icon else 3.5, c["star"]))  # Canopus, across the mast
+    return svg(ARGO_ICON_BOX if icon else "28 10 204 212", body)
 
 
-ARGO_ICON_BOX = "40 12 200 200"  # square, centred on the sail and star, for the favicon tile
+ARGO_ICON_BOX = "24 8 212 216"  # square-ish, centred on the sail and star, for the favicon tile
 
 
 def body_of(svg_text: str) -> str:
