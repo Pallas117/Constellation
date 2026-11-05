@@ -6,14 +6,14 @@ https://claude.ai/artifact/CvWgPQyJio2m5uHPyZZHdv. Copied unchanged; the Lightbo
 
 - Lightbound "Black hole": the ray-traced silhouette, flat, 3-stop gradient, ring 7 units (no blur).
 - Gauss Aurora "Radiation belts": two solid belts (outer lime, inner amber), one L 6.4 field line; reads at 16 px.
-- Turnstone v7, 5 Nov (Josh: "upgrade turnstone logos to be more professional"; approved the same day): v6's landing turnstone as
-  one silhouette, head on the body, each wing warm front feathers ending in three wingtip blades with the blue rear
-  feathers one cut behind; one cut width, one wing angle; no rock; the two-step tide line. Published as -v3. Minimum
-  32 px; below that use the badge.
+- Turnstone v8, 5 Nov (Josh: "more realistic and less chunky", then "cute but deadly"; proposed): a big round head
+  low on a plump body, a large eye with a catch-light and a hard brow, four swept blade primaries, the blue rear
+  feathers tucked under the wing, the black breast band, short orange legs with talons, the two-step tide line.
+  Published as -v3. Minimum 32 px; below that use the badge.
 - Constellation, refined 4 Nov: navy disc, gold ring broken by five evenly spaced stars, three gold key stars on an
   equilateral triangle with one white star off each. The 3-node icon is for 32 px and under.
 - Argo, 5 Nov (Josh: "Argo could be just a sail", then "a sail in the wind"; both approved): a square sail seen from the
-  side, its seams sagging down-wind and its free edge bellied out, three panels with real gaps, set by Canopus (the
+  side, its seams sagging down-wind and its free edge bellied out; fine mast, yard and sheet, three panels with fine gaps, set by Canopus (the
   lime four-point star). On a black tile it is the favicon.
 - Gauss Aurora icon, 5 Nov: the symbol's own belts cropped square with a solid warm Earth, for favicons and app icons
   (the full mark is 2.45:1 and loses its field line in a square).

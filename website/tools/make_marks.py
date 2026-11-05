@@ -77,46 +77,58 @@ def whole(half: list[tuple[float, float]]) -> list[tuple[float, float]]:
     return half + mirrored(half)[::-1][1:-1]
 
 
-CUT = 7  # the one negative-space width in the Turnstone (v7)
+MIRROR = '<g transform="matrix(-1 0 0 1 240 0)">'  # mirror about x = 120
 
 
-def turnstone_body(c: dict[str, str]) -> list[str]:
-    """Turnstone v7 (5 Nov 2026, Josh: "upgrade turnstone logos to be more professional"; approved the same day).
+def both(path_d: str, fill: str) -> list[str]:
+    """A right-half path and its mirror image: the bird is exactly symmetric."""
+    p = f'<path d="{path_d}" fill="{fill}"/>'
+    return [p, MIRROR + p + "</g>"]
 
-    v6's identity, drawn as one silhouette instead of eleven shards: the head sits on the body, and each wing grows from
-    the shoulder as the Brand Book describes it, warm front feathers ending in three wingtip blades, then the earth-blue
-    rear feathers one cut behind. One cut width (CUT) everywhere, one wing angle, no hairlines. The black breast band
-    (a real turnstone field mark) is the only cut-out; orange stays on the legs; the rock is gone and the tide is the
-    Book's two-step line, two calm strokes instead of a zigzag.
+
+def turnstone_body(c: dict[str, str], small: bool = False) -> list[str]:
+    """Turnstone v8 (5 Nov 2026, Josh: "more realistic and less chunky", then "cute but deadly").
+
+    The ruddy turnstone landing, drawn from the bird: a big round head sitting low on a plump body, a large eye with a
+    catch-light (cute); four swept blade primaries, a hard angled brow and small talons (deadly). Curved arm and
+    secondaries; the earth-blue rear feathers tucked under the trailing edge; the black breast band, a real field mark;
+    short orange legs; the Book's two-step tide line. `small` drops the catch-light and thickens strokes (the badge).
     """
-    # Each wing is drawn in its own frame: s along the leading edge (shoulder -> tip), d back towards the trailing edge.
-    sx, sy = 132, 104
-    u, n = (0.70, -0.714), (0.714, 0.70)
-
-    def wing(pts: list[tuple[float, float]]) -> list[tuple[float, float]]:
-        return [(sx + u[0] * s + n[0] * d, sy + u[1] * s + n[1] * d) for s, d in pts]
-
-    front = wing([(0, 0), (118, 0), (108, 10), (128, 12), (104, 21), (122, 25), (100, 30), (8, 30)])
-    rear = wing([(14, 30 + CUT), (96, 30 + CUT), (84, 45 + CUT), (22, 45 + CUT)])
-    body: list[str] = []
-    for shape, fill in ((front, c["warm"]), (rear, c["blue"])):
-        body += [poly(shape, fill), poly(mirrored(shape), fill)]
-    body.append(poly(whole([(120, 92), (136, 100), (146, 126), (130, 160), (120, 168)]), c["warm"]))  # the body
-    body.append(poly(whole([(120, 60), (131, 66), (133, 84), (120, 91)]), c["warm"]))  # the head
-    body.append(poly([(109, 72), (95, 79), (109, 84)], c["warm"]))  # the short, stout bill
-    body.append(poly([(108, 112), (120, 126), (132, 112), (136, 120), (120, 138), (104, 120)], c["cut"]))  # breast band
-    body.append(f'<path d="M115 166V192M125 166V192" fill="none" stroke="{c["orange"]}" stroke-width="6" stroke-linecap="square"/>')
-    body.append(f'<path d="M74 197H166M94 205H146" fill="none" stroke="{c["blue"]}" stroke-width="5" stroke-linecap="square"/>')
-    return body
+    out: list[str] = []
+    # Wing: grows from inside the shoulder; the arm curves up, the hand ends in four swept blades.
+    wing = ("M122 112C138 96 160 70 184 44C194 34 204 26 218 16"   # leading edge
+            "L210 38L230 30L212 52L232 48L210 64L228 66L202 76"     # four blade primaries, same sweep
+            "C188 92 170 110 150 126C140 126 130 122 122 112Z")      # secondaries back into the body
+    out += both(wing, c["warm"])
+    # Rear feathers: an earth-blue crescent tucked under the trailing edge, one fine cut away.
+    out += both("M202 81C188 97 170 115 152 131C158 135 164 135 168 133C184 119 198 103 208 87Z", c["blue"])
+    # Body: plump, widest low at the breast.
+    out.append(f'<path d="M120 92C138 92 150 108 150 128C150 148 138 164 120 174C102 164 90 148 90 128C90 108 102 92 120 92Z" fill="{c["warm"]}"/>')
+    # Head: big and round, sitting low on the body; bill short, sharp, turned a touch up.
+    out.append(f'<circle cx="120" cy="74" r="19" fill="{c["warm"]}"/>')
+    out.append(f'<path d="M104 72L87 71L103 80Z" fill="{c["warm"]}"/>')
+    # Eye with a catch-light (cute), under a hard angled brow (deadly).
+    out.append(f'<circle cx="112" cy="74" r="{5 if small else 4.6}" fill="{c["cut"]}"/>')
+    if not small:
+        out.append(f'<circle cx="110.6" cy="72.6" r="1.5" fill="{c["warm"]}"/>')
+    out.append(f'<path d="M103 66L122 70L121 73L104 69Z" fill="{c["cut"]}"/>')
+    # Harlequin mask: the dark stripe from the eye down the cheek, and the breast band below.
+    out.append(f'<path d="M98 112C106 117 113 123 120 131C127 123 134 117 142 112L145 118C136 124 128 132 120 143C112 132 104 124 95 118Z" fill="{c["cut"]}"/>')
+    # Short orange legs ending in small talons.
+    w = 5 if small else 4
+    out.append(f'<path d="M114 170L112 188M126 170L128 188M112 188L104 194M112 188L114 196M128 188L136 194M128 188L126 196" '
+               f'fill="none" stroke="{c["orange"]}" stroke-width="{w}" stroke-linecap="round" stroke-linejoin="round"/>')
+    out.append(f'<path d="M70 202Q120 197 170 202M92 210Q120 207 148 210" fill="none" stroke="{c["blue"]}" stroke-width="{5 if small else 3.5}" stroke-linecap="round"/>')
+    return out
 
 
 def turnstone(c: dict[str, str]) -> str:
-    return svg("10 14 220 196", turnstone_body(c))
+    return svg("6 8 228 210", turnstone_body(c))
 
 
 def turnstone_badge(c: dict[str, str]) -> str:
-    ring = f'<circle cx="120" cy="112" r="108" fill="{DARK["cut"]}" stroke="{DARK["warm"]}" stroke-width="5"/>'
-    return svg("8 0 224 224", [ring, '<g transform="translate(120 112) scale(.78) translate(-120 -112)">', *turnstone_body(DARK), "</g>"])
+    ring = f'<circle cx="120" cy="112" r="108" fill="{DARK["cut"]}" stroke="{DARK["warm"]}" stroke-width="4"/>'
+    return svg("8 0 224 224", [ring, '<g transform="translate(120 116) scale(.72) translate(-120 -112)">', *turnstone_body(DARK, small=True), "</g>"])
 
 
 def star4(cx: float, cy: float, r: float, waist: float, fill: str) -> str:
@@ -132,37 +144,41 @@ def argo(c: dict[str, str], icon: bool = False) -> str:
     Argo is the ship of the old constellation Argo Navis; its brightest star, Canopus, has been a spacecraft's
     reference star since Mariner 3 and 4 carried the first Canopus star trackers (1964). So the one lime element is the
     star the sail is set by. Seen from the side: the luff on the mast, every seam sagging down-wind and the free edge
-    (leech) bellied out most at two-thirds height, where the cloth fills. Three panels with real gaps (no ground-coloured
-    cuts, so it sits on any surface); the yard is braced a few degrees. The icon only opens the gaps for 16 px.
+    (leech) bellied out most at two-thirds height, where the cloth fills. Three panels with fine real gaps (no ground-coloured
+    cuts, so it sits on any surface), a fine mast and braced yard, and the sheet from the clew (Josh: "more realistic
+    and less chunky"). The icon drops the sheet and opens the gaps for 16 px.
     """
-    gap = 10 if icon else 7
+    gap = 7 if icon else 4.5  # fine seams; the icon opens them so they survive 16 px
     mast = 92
 
     def leech(y: float) -> float:
         t = min(max((y - 40) / 150, 0), 1)
-        return 150 + 46 * math.sin(math.pi * t * 0.8)
+        return 152 + 40 * math.sin(math.pi * t * 0.8)
 
     def seam(y: float) -> tuple[tuple[float, float], ...]:
         x1 = leech(y)
-        return (mast, y), (mast + (x1 - mast) * 0.45, y + 2), (x1 - 10, y + 16), (x1, y + 20)
+        return (mast, y), (mast + (x1 - mast) * 0.45, y + 2), (x1 - 10, y + 15), (x1, y + 19)
 
     def pt(p: tuple[float, float]) -> str:
         return f"{num(p[0])} {num(p[1])}"
 
-    rows = [44, 92, 140, 186]
-    body = [f'<path d="M{mast} 24V214" fill="none" stroke="{c["warm"]}" stroke-width="7" stroke-linecap="square"/>',  # the mast
-            f'<path d="M82 38L160 30" fill="none" stroke="{c["warm"]}" stroke-width="7" stroke-linecap="square"/>']  # the yard
+    rows = [42, 92, 142, 190]
+    w = 6 if icon else 4  # a fine mast and yard, not a post
+    body = [f'<path d="M{mast} 20V218" fill="none" stroke="{c["warm"]}" stroke-width="{w}" stroke-linecap="round"/>',  # the mast
+            f'<path d="M80 37L164 28" fill="none" stroke="{c["warm"]}" stroke-width="{w}" stroke-linecap="round"/>']  # the yard
+    if not icon:
+        body.append(f'<path d="M188 208L{mast + 6} 216" fill="none" stroke="{c["warm"]}" stroke-width="2.5" stroke-linecap="round"/>')  # the sheet
     for i in range(3):
         y0, y1 = rows[i] + (gap / 2 if i else 0), rows[i + 1] - (gap / 2 if i < 2 else 0)
         a0, c1, c2, a1 = seam(y0)
         b0, d1, d2, b1 = seam(y1)
-        belly = ((a1[0] + b1[0]) / 2 + 9, (a1[1] + b1[1]) / 2)
+        belly = ((a1[0] + b1[0]) / 2 + 8, (a1[1] + b1[1]) / 2)
         body.append(f'<path d="M{pt(a0)}C{pt(c1)} {pt(c2)} {pt(a1)}Q{pt(belly)} {pt(b1)}C{pt(d2)} {pt(d1)} {pt(b0)}Z" fill="{c["warm"]}"/>')
-    body.append(star4(196, 42, 30 if icon else 24, 7 if icon else 5, c["star"]))
-    return svg(ARGO_ICON_BOX if icon else "74 12 152 210", body)
+    body.append(star4(198, 40, 28 if icon else 20, 6 if icon else 3.5, c["star"]))
+    return svg(ARGO_ICON_BOX if icon else "60 10 166 214", body)
 
 
-ARGO_ICON_BOX = "48 14 204 204"  # square, centred on the sail and star, for the favicon tile
+ARGO_ICON_BOX = "40 12 200 200"  # square, centred on the sail and star, for the favicon tile
 
 
 def body_of(svg_text: str) -> str:
