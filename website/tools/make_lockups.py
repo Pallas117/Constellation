@@ -2,7 +2,7 @@
 
 Brand Book, "Logo system (refined, 16 Oct)": symbol 56 px, wordmark IBM Plex Sans Medium 22 px caps, 20 px gap;
 sublines JetBrains Mono 9 px. Tracking: Lightbound 24 %, Gauss 16 %, Turnstone 32 %, Constellation 20 %; Argo (the
-sign-in, proposed 5 Nov) takes Lightbound's 24 %, as it signs people in to the whole Lightbound workspace.
+sign-in, approved 5 Nov) takes Lightbound's 24 %, as it signs people in to the whole Lightbound workspace.
 Text is outlined, so no font is needed. Gauss keeps the kit lockup's two-tone "GAUSS AURORA" (AURORA in lime).
 
 usage: <python with fonttools> website/tools/make_lockups.py <Lightbound Brand Kit dir>

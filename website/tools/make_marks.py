@@ -111,7 +111,7 @@ def star4(cx: float, cy: float, r: float, waist: float, fill: str) -> str:
 
 
 def argo(c: dict[str, str], icon: bool = False, star: bool = True) -> str:
-    """Argo: a square sail full of wind, steering by Canopus (Josh, 5 Nov: "Argo could be just a sail").
+    """Argo: a square sail full of wind, steering by Canopus (Josh, 5 Nov: "Argo could be just a sail"; approved the same day).
 
     Argo is the ship of the old constellation Argo Navis; its brightest star, Canopus, has been a spacecraft's
     reference star since Mariner 3 and 4 carried the first Canopus star trackers (1964). So the one lime element is the
