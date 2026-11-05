@@ -86,23 +86,42 @@ func relayMain(cmd string, args []string, cfg Config, store Store, phone *Phone,
 	return err
 }
 
-// relayTick runs on every LaunchAgent tick once this device has node keys
-// (made by `argo enroll` or any relay command), so an older Gauss without
-// the bundle routes never sees this traffic from devices that don't use it.
+// relayTick runs on every LaunchAgent tick. A device without node keys
+// (enrolled before the relay existed, or never ran a relay command) joins by
+// itself once its Gauss answers the bundle routes; an older Gauss without
+// them never sees relay traffic.
 func relayTick(ctx context.Context, cfg Config, store Store, phone *Phone) {
 	if cfg.GaussURL == "" || store.Load().Class == Offline {
 		return
 	}
-	if _, err := os.Stat(keyPath()); err != nil {
+	c, cancel := context.WithTimeout(ctx, 40*time.Second)
+	defer cancel()
+	if !relayReady(c, cfg, keyPath(), func(cfg Config) (Hub, error) { return newHTTPHub(cfg) }) {
 		return
 	}
 	r, _, err := relayFor(cfg, store, phone)
 	if err != nil || r.Hub == nil {
 		return
 	}
-	c, cancel := context.WithTimeout(ctx, 40*time.Second)
-	defer cancel()
 	_ = withRelayLock(store, 0, func() { r.Sync(c) }) // busy: a command is syncing right now
+}
+
+// relayReady says whether this tick should sync: always once node keys
+// exist, otherwise only when the device is named and its hub answers a
+// bundle status call (relayFor then creates the keys and Sync publishes them).
+func relayReady(ctx context.Context, cfg Config, keyFile string, hubFor func(Config) (Hub, error)) bool {
+	if _, err := os.Stat(keyFile); err == nil {
+		return true
+	}
+	if !deviceRE.MatchString(cfg.Device) {
+		return false
+	}
+	hub, err := hubFor(cfg)
+	if err != nil {
+		return false
+	}
+	_, err = hub.Status(ctx, nil)
+	return err == nil
 }
 
 func relayCmd(cmd string, args []string, cfg Config, store Store, phone *Phone, out io.Writer) error {
