@@ -243,11 +243,13 @@ test("ingest: a tick with no Kp from any source carries kp null end to end, neve
   });
 
   // L1 measured with strong southward IMF (GSM Bz -15 nT) but no Kp on the readout: the tier
-  // comes from the IMF and coupling alone. The same readout with Kp 6 is severe.
+  // comes from the IMF and coupling alone. The same readout with a current Kp 6 is severe; a Kp
+  // counts only with its reading time, within the product's bound (GAU-232).
   const tierFor = async (kp: number | null) => {
     const w = quietWorker();
     return withFetch(() => undefined, async () => {
-      w.noaa = { ...readout(60_000, -15), kp };
+      const kpReading = kp === null ? undefined : { value: kp, kind: "planetary-3h" as const, observedAt: new Date(Date.now() - 3_600_000).toISOString() };
+      w.noaa = { ...readout(60_000, -15), kp, kpReading };
       return (await w.tick()).canonicalPoint;
     });
   };

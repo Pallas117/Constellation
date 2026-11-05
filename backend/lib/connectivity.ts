@@ -1,9 +1,11 @@
 import { exec } from "node:child_process";
 import { promisify } from "node:util";
 
+import { nextLinkState, type ConnectivityMode, type LinkState } from "./link-mode.js";
+
 const execAsync = promisify(exec);
 
-export type ConnectivityMode = "CLOUD" | "SAT" | "AIRGAP";
+export type { ConnectivityMode };
 
 export interface LinkStatus {
   mode: ConnectivityMode;
@@ -12,8 +14,7 @@ export interface LinkStatus {
 }
 
 class LinkGuardian {
-  private currentMode: ConnectivityMode = "CLOUD";
-  private currentLatency: number = 0;
+  private state: LinkState = { mode: "CLOUD", latencyMs: 0, failures: 0 };
   private checkInterval: NodeJS.Timeout | null = null;
   private readonly PING_HOST = "8.8.8.8"; // Standard DNS ping for general health
 
@@ -23,8 +24,8 @@ class LinkGuardian {
 
   public getStatus(): LinkStatus {
     return {
-      mode: this.currentMode,
-      latencyMs: this.currentLatency,
+      mode: this.state.mode,
+      latencyMs: this.state.latencyMs,
       lastChecked: new Date().toISOString(),
     };
   }
@@ -37,23 +38,19 @@ class LinkGuardian {
   }
 
   private async check() {
+    let latency: number | null;
     try {
       const start = Date.now();
       // Using ping -c 1 for macOS/Linux compatibility
       await execAsync(`ping -c 1 -W 2000 ${this.PING_HOST}`);
-      this.currentLatency = Date.now() - start;
-
-      if (this.currentLatency < 150) {
-        this.currentMode = "CLOUD";
-      } else {
-        this.currentMode = "SAT";
-      }
-    } catch (error) {
-      this.currentLatency = -1;
-      this.currentMode = "AIRGAP";
+      latency = Date.now() - start;
+    } catch {
+      latency = null;
     }
-
-    console.log(`[LinkGuardian] Mode: ${this.currentMode}, Latency: ${this.currentLatency}ms`);
+    const prev = this.state.mode;
+    this.state = nextLinkState(this.state, latency);
+    // Only changes: one line per check was 57k of the live backend.log's 189k lines (4 Nov 2026).
+    if (this.state.mode !== prev) console.log(`[LinkGuardian] Mode: ${prev} -> ${this.state.mode}, Latency: ${this.state.latencyMs}ms`);
   }
 
   public stop() {

@@ -83,6 +83,8 @@ Then remove the `statusLine` and `claude()` lines above if you added them, and r
 | `argo guard` | Resource guard (below): memory, battery, disk and CPU now and over the last 24 h, who uses memory, what to do. `--json` for scripts |
 | `argo guard admit [-mem GB] [-name JOB] [-wait 10m]` | Exit 0 if a job needing GB may start now, 75 (with the reason) if not. With `-name`, what that job measured replaces `-mem` (below) |
 | `argo guard run [-mem GB] [-max GB] [-name JOB] [-wait 10m] -- cmd` | Runs `cmd` only when admitted, and stops its whole process group if the host reaches **block** or the job holds more than `-max` GB. Measures the job's peak and passes `ARGO_WORKERS` (below). A job that started on AC is paused (SIGSTOP) while the Mac runs on battery and resumed when power returns ("eclipse mode"); paused for 2 h, it is stopped with exit 75 so a queue retries it. Exit 75 when refused or stopped, otherwise `cmd`'s own code |
+| `argo heal [--json]` | Self-healing log: blockers open now with the remedy the library chose for each (`live` = Argo does it, `shadow` = chosen and logged but not run, `person` = needs you), then how long each kind of blocker lasted over 7 days (below) |
+| `argo scale [--json]` | Measured demand this host could not serve over 7 days: per job runs, failures, run and lost (waiting or paused) hours, p90 peak, GB·h, watts, and whether it is `local`, `burst` (a remote runner would return its lost time) or `remote` (needs more RAM than this host has). Sizes the smallest outside runner and lists what is not measured |
 | `argo send [-ttl 72h] DEVICE FILE` | Queue a file for another enrolled device (below): signed, encrypted to that device, kept until it confirms. Works offline |
 | `argo outbox` / `argo inbox` | What you sent and how far it got (queued, at hub, picked up, confirmed); what you received and where it was saved |
 | `argo sync` | Forward and fetch now (every tick does this too) |
@@ -294,6 +296,18 @@ worker over its last runs (median of at least 3 successful runs; 3 W until then;
 `workers`, `base_w`, `avg_w`). A desktop or a host with no draw reading gets no power cap. `argo guard` prints the
 budget on the `power` line, and each report to Gauss carries it in the battery block, so the Mesh page shows
 "9.5 W spare" or "charger 2.8 W short" and a device in deficit or under 5 W of margin is offered light work only.
+
+**Self-healing (slice 2: evidence, no new actions).** Every guard tick turns findings at watch or worse
+into blocker episodes in `heal.jsonl` (this device only, newest 1000 kept): code, start, last seen, peak
+level and the remedy the rules order chose. An episode closes after 3 min without the finding. Remedies
+Argo already runs are `live` (eclipse pause, autoscaled admission, the power budget); the rest are `shadow`
+until a replay of this log shows they would have cleared blockers sooner with no wrong actions. Nothing
+is credited yet. Design: `argo-self-healing-design-2026-10-31.md` in claude-outputs.
+
+**Sizing outside compute.** `argo guard run` now records how long each job waited for admission and sat
+paused (`wait_s`, `pause_s` in `jobs.jsonl`). `argo scale` sums that: lost hours are the demand this host
+turned away, and a job's p90 peak sets the RAM a runner needs. It only reports what ran under the guard;
+GPU training and other unmeasured work are listed as MISSING, not estimated. Run it on each mesh host.
 
 ## Store and forward (delay-tolerant delivery)
 

@@ -26,9 +26,10 @@ const exitTempFail = 75
 // GuardState is what the tick leaves for `argo status`, the Gauss report and
 // the next tick's autoscaler.
 type GuardState struct {
-	Scale  Scale       `json:"scale"`
-	Report GuardReport `json:"report"`
-	Batt   *Battery    `json:"battery,omitempty"`
+	Scale  Scale              `json:"scale"`
+	Report GuardReport        `json:"report"`
+	Batt   *Battery           `json:"battery,omitempty"`
+	Open   map[string]Episode `json:"open,omitempty"` // blocker episodes still open (heal.go)
 }
 
 // GuardReport is the part Gauss sees: the decision, coarse numbers and
@@ -99,7 +100,9 @@ func guardStep(s Store, cfg Config, cur Sample) (Assessment, GuardState) {
 	a := assess(hist, cur)
 	prev := s.loadGuard()
 	sc := autoscale(prev.Scale, a, targetSlots(cur, a, cfg.slotGB()), cur.At)
-	g := GuardState{Scale: sc, Report: guardReport(a, sc, cur.At), Batt: cur.Batt}
+	open, closed := healStep(prev.Open, a, cur.At)
+	g := GuardState{Scale: sc, Report: guardReport(a, sc, cur.At), Batt: cur.Batt, Open: open}
+	_ = s.appendHeal(closed)
 	_ = s.appendGuard(cur, hist)
 	_ = s.saveGuard(g)
 	return a, g
@@ -331,7 +334,9 @@ func (r guardRunner) log(name, outcome string) {
 
 func (r guardRunner) run(memGB, maxGB float64, wait time.Duration, argv []string) (int, error) {
 	name := jobName(r.name, argv)
+	asked := queuedAt(os.Getenv("ARGO_QUEUED_AT"), time.Now())
 	ok, why, cur, a := r.waitAdmit(name, memGB, wait)
+	waited := int(time.Since(asked).Seconds())
 	if !ok {
 		fmt.Fprintln(r.out, "argo guard: not starting", filepath.Base(argv[0])+":", why)
 		r.log(argv[0], "refused: "+why)
@@ -381,7 +386,8 @@ func (r guardRunner) run(memGB, maxGB float64, wait time.Duration, argv []string
 	learn := func(outcome string) {
 		if peak > 0 {
 			j := JobRun{At: time.Now().UTC(), Name: name, PeakGB: peak,
-				Secs: int((time.Since(started) - pausedFor).Seconds()), Outcome: outcome, Workers: workers}
+				Secs: int((time.Since(started) - pausedFor).Seconds()), Outcome: outcome, Workers: workers,
+				WaitSecs: waited, PauseSecs: int(pausedFor.Seconds())}
 			if nW > 0 && pw.LoadW > 0 && onAC(cur) {
 				j.BaseW, j.AvgW = pw.LoadW, round1(sumW/float64(nW))
 			}
@@ -478,6 +484,22 @@ func (r guardRunner) run(memGB, maxGB float64, wait time.Duration, argv []string
 			return exitTempFail, nil
 		}
 	}
+}
+
+// queuedAt is when the job really started waiting: a queue in front of the
+// guard (claude-heavy) sets ARGO_QUEUED_AT to the Unix second it took the job,
+// so `argo scale` counts that wait too. Anything unreadable, in the future or
+// over a week old is ignored.
+func queuedAt(v string, now time.Time) time.Time {
+	sec, err := strconv.ParseInt(strings.TrimSpace(v), 10, 64)
+	if err != nil {
+		return now
+	}
+	t := time.Unix(sec, 0)
+	if t.After(now) || now.Sub(t) > 7*24*time.Hour {
+		return now
+	}
+	return t
 }
 
 func exitCode(err error) int {
