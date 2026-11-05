@@ -11,7 +11,7 @@ https://claude.ai/artifact/CvWgPQyJio2m5uHPyZZHdv. Copied unchanged; the Lightbo
   ring (the original Turning-tide mark's tide): three nested sweeps per wing, a wingbeat caught mid-stroke, breaking
   out of the ring; an open almond with the breast-band chevron for the body; the head with its short upturned bill and
   the dark eye of the harlequin mask; short orange legs. The ring breaks where a
-  wing crosses it. Square; the badge is the same drawing with a heavier stroke for 32 px and below. Published as -v3.
+  wing crosses it. The three sweeps carry the bird's colours: white, ruddy (signal orange), earth blue. Square; the badge is the same drawing with a heavier stroke for 32 px and below. Published as -v3.
 - Constellation, refined 4 Nov: navy disc, gold ring broken by five evenly spaced stars, three gold key stars on an
   equilateral triangle with one white star off each. The 3-node icon is for 32 px and under.
 - Argo, 5 Nov (Josh: "Argo could be just a sail", then "a sail in the wind"; both approved): a square sail seen from the

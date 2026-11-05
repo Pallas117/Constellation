@@ -121,8 +121,10 @@ def turnstone_body(c: dict[str, str], small: bool = False) -> list[str]:
     out = [f'<circle cx="120" cy="120" r="96" fill="none" stroke="{c["blue"]}" stroke-width="{ring_w}"/>']  # the turning tide
     for d in wings:
         out += both(stroke(d, c["cut"], w + 16))  # one clean break in the ring across the whole wing
-    for p0, q, p1 in TURNSTONE_WING:  # each sweep tapers from the shoulder to a sharp feather tip
-        out += both(f'<path d="{taper(p0, q, p1, w * 1.6)}" fill="{c["warm"]}"/>')
+    # Each sweep tapers from the shoulder to a sharp feather tip, in the bird's own colours (Josh: "Add some of the extra
+    # colours"): white leading feathers, the ruddy chestnut that names the bird (Turnstone signal orange), earth blue.
+    for (p0, q, p1), colour in zip(TURNSTONE_WING, ("warm", "orange", "blue")):
+        out += both(f'<path d="{taper(p0, q, p1, w * 1.6)}" fill="{c[colour]}"/>')
     # The body, stocky and round-chested as on the bird. Only the white belly is filled; above the breast line the dark
     # breast patch is left as the ground inside the outline, as the bird's black breast is.
     out.append(f'<path d="M120 100C136 104 144 118 144 132C144 148 134 158 120 162C106 158 96 148 96 132C96 118 104 104 120 100Z" '
