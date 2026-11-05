@@ -71,7 +71,7 @@ MIRROR = '<g transform="matrix(-1 0 0 1 240 0)">'  # mirror about x = 120
 
 # Turnstone wing sweeps, right side: (shoulder, control, tip). The leading feather first; each starts lower and ends
 # shorter, so the three read as one wing caught mid-beat.
-TURNSTONE_WING = [((126, 108), (148, 50), (222, 20)), ((130, 122), (158, 74), (210, 48)), ((134, 136), (164, 100), (196, 76))]
+TURNSTONE_WING = [((136, 106), (156, 52), (222, 20)), ((140, 120), (164, 76), (210, 48)), ((143, 134), (168, 102), (196, 76))]  # each starts just off the body
 
 
 def both(el: str) -> list[str]:
@@ -100,16 +100,16 @@ def turnstone_body(c: dict[str, str], small: bool = False) -> list[str]:
     wings = [f"M{sx} {sy}Q{qx} {qy} {tx} {ty}" for (sx, sy), (qx, qy), (tx, ty) in TURNSTONE_WING]
     out = [f'<circle cx="120" cy="120" r="96" fill="none" stroke="{c["blue"]}" stroke-width="{w}"/>']  # the turning tide
     for d in wings:
-        out += both(stroke(d, c["cut"], w + 10))  # breaks in the ring where the wings cross it
+        out += both(stroke(d, c["cut"], w + 16))  # one clean break in the ring across the whole wing
     for d in wings:
         out += both(stroke(d, c["warm"]))
     out += both(stroke("M120 102C131 116 133 142 120 166", c["warm"]))  # the body
-    out.append(stroke("M108 118L120 128L132 118", c["warm"]))  # the breast band, the turnstone's field mark
+    out.append(stroke("M112 120L120 127L128 120", c["warm"]))  # the breast band, the turnstone's field mark
     # The head: round, the short wedge bill turned a touch up, the dark eye of the harlequin mask.
-    out.append(f'<circle cx="120" cy="84" r="{12 if small else 11}" fill="{c["warm"]}"/>')
-    out.append(f'<path d="M110 80L94 78L110 88Z" fill="{c["warm"]}"/>')
+    out.append(f'<circle cx="120" cy="91" r="{12 if small else 11}" fill="{c["warm"]}"/>')  # sits on the body: a neck
+    out.append(stroke("M111 92L101 89", c["warm"]))  # the bill, one stroke like everything else
     if not small:
-        out.append(f'<circle cx="115" cy="82" r="3" fill="{c["cut"]}"/>')
+        out.append(f'<circle cx="116.5" cy="87.5" r="2.8" fill="{c["cut"]}"/>')
     out.append(stroke("M115 166L110 192M125 166L130 192", c["orange"], w - 2))  # the orange legs, slightly splayed
     return out
 
