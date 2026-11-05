@@ -7,15 +7,16 @@
 @layer base {
   :root {
     /* Lightbound Brand Room (9 Oct 2026): black first, warm white type,
-       one lime signal per view. HSL triplets for shadcn tokens. */
+       one lime signal per view. HSL triplets for shadcn tokens. Risk and
+       category take the Brand Book (15 Oct) danger and simulated values. */
     --black: 0 0% 2%;            /* #050505 deck ground */
     --panel: 180 10% 6%;         /* #0D1010 panels */
     --charcoal: 180 6% 15%;      /* #252A2A card edges, rails */
     --warm-white: 44 31% 93%;    /* #F3F0E8 text on black */
     --signal: 72 100% 50%;       /* #CCFF00 one signal per view */
     --amber: 39 77% 60%;         /* #E7B14A caution, deadlines */
-    --sun: 17 64% 46%;           /* #C2552A risk */
-    --earth: 208 70% 45%;        /* #2378C4 category */
+    --sun: 17 64% 53%;           /* #D4673B danger: risk, always with the word */
+    --earth: 208 70% 52%;        /* #318ADA category, SIMULATED */
 
     --background: var(--black);
     --foreground: var(--warm-white);
