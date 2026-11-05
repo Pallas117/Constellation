@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { freshnessLabel, freshnessMin, freshnessMs } from "../../shared/policy/freshness.js";
 import {
+  currentKpReading,
   flareClass,
   geomagneticStorm,
   KP_MAX_AGE_MS,
@@ -140,4 +141,18 @@ test("a missing, wrong-band or fill X-ray reading is unknown, not R0", () => {
   assert.equal(radioBlackout(xray(1e-4, "0.05-0.4nm")).level, null);
   assert.equal(radioBlackout(xray(0)).level, null);
   assert.equal(radioBlackout(xray(Number.NaN)).level, null);
+});
+
+test("a Kp reading counts only within its product's freshness bound (GAU-232)", () => {
+  const now = Date.parse("2026-11-04T12:00:00Z");
+  const at = (msAgo: number) => new Date(now - msAgo).toISOString();
+  const completed = (hoursAgo: number) => ({ value: 6, kind: "planetary-3h" as const, observedAt: at(hoursAgo * 3_600_000) });
+  assert.equal(currentKpReading(completed(7), now), null, "a 7 h old completed Kp of 6 is unknown");
+  assert.deepEqual(currentKpReading(completed(2), now), completed(2));
+  const estimate = (minAgo: number) => ({ value: 5.33, kind: "estimated-1m" as const, observedAt: at(minAgo * 60_000) });
+  assert.ok(currentKpReading(estimate(5), now));
+  assert.equal(currentKpReading(estimate(kpMaxAgeMs("estimated-1m") / 60_000 + 1), now), null);
+  assert.equal(currentKpReading({ value: 6, kind: "planetary-3h", observedAt: null }, now), null, "no time: unknown");
+  assert.equal(currentKpReading({ value: Number.NaN, kind: "planetary-3h", observedAt: at(0) }, now), null);
+  assert.equal(currentKpReading(null, now), null);
 });
