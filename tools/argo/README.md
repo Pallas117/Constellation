@@ -93,6 +93,7 @@ Then remove the `statusLine` and `claude()` lines above if you added them, and r
 | `argo link` | Link stability: availability, drops and recovery times over 24 h and 7 days |
 | `argo thirdparty [list\|check\|accept] [-json]` | Third parties (below): every outside service as a node with what it can see, its scopes, where its credential lives and where to revoke it. `check` exits 3 when a node is new, changed, removed, unregistered or can see local-class data |
 | `argo thirdparty seen [TOOL]` | Credits one use of a tool (or a Claude Code hook's JSON on stdin) to its node, or records the service as unregistered. Always exits 0 |
+| `argo dns check\|plan [--zone Z] [--file F] [--json] [--alert]` | DNS guard (below): compares each zone's public records with `~/.config/argo/dns.json` (site, SPF, DKIM, DMARC, MTA-STS, TLS-RPT, CAA, DNSSEC, redirects), one line per record, exit 2 on drift; `plan` lists the Cloudflare API requests that would close it (no token, nothing sent); `apply` is a stub that refuses |
 | `argo off` / `argo on` | Pauses or resumes the LaunchAgent ticks |
 | `argo preflight` | Fast local check for dead proxies and stuck Claude daemons (exit 1 if found) |
 | `argo run -- cmd` | Runs `cmd` with dead proxy variables removed |
@@ -407,6 +408,60 @@ node's `match` prefixes (longest wins), at most one write per node per day, and 
 `mcp__<server>` as unregistered, which `check` then flags. In `~/.claude/settings.json`:
 `"hooks": {"PostToolUse": [{"matcher": "mcp__.*", "hooks": [{"type": "command", "command": "argo thirdparty seen"}]}]}`.
 The hook only reads the tool name; it never fails or blocks the call.
+
+## DNS guard
+
+Josh (2026-11-05): "manage the DNS through Argo and make sure we have SPF, DKIM and DMARC plans as well as all the
+other needed security." This is the read-only half. Argo holds a desired-state file for each zone and tells you
+when the public DNS drifts from it; the write half is designed but gated (below).
+
+**What it checks.** `argo dns check` reads `~/.config/argo/dns.json` (start from
+[`examples/dns.json`](examples/dns.json), which covers lightbound.space and lightbound.uk) and resolves every
+record twice, against Cloudflare's 1.1.1.1 and the system resolver (RFC 1035 wire queries with EDNS(0)/DO for
+1.1.1.1, so CAA and DS work; `net.Resolver` for the system, which has no CAA or DS lookup and says so). One line
+per record: `ok`, `missing`, `differs` (expected vs found), or `unverified` (a resolver error, an address outside
+Cloudflare's published edge ranges, a TLS or connection error on an HTTP probe), then a summary line. Exit 0 when
+nothing is missing or differs, 2 on drift, 1 on a bad file. `--json` for machines, `--zone` for one zone.
+
+| In the file | Means ok when |
+|---|---|
+| `"proxied": true` on A/AAAA | every answer is in Cloudflare's published edge list (read 2026-11-05; the addresses are not pinned). A tailnet address (100.64/10) in a public answer is `differs` |
+| `"value"` / `"values"` | the record set equals these (MX, CAA, a fixed A). For TXT, the one record with the same prefix (`v=spf1`, `v=DMARC1`, `google-site-verification`) equals it; two SPF records is `differs` |
+| `"stages": [...]` | any stage matches; the last is the target. `plan` prints the next stage under "Later" |
+| `"match": "tags"`, `"require": ["rua"]` | `k=v;` lists compared tag by tag (DMARC, DKIM, TLS-RPT); required tags must be present with any value, so the existing DMARC `rua` is kept without copying its address into the file |
+| `"present": true` (+ `"prefix"`) | any value will do: DKIM until Josh generates the key, MTA-STS whose `id` changes on every edit |
+| `"dnssec": true` | a DS exists at the parent (1.1.1.1 answers it). Argo does not validate the chain; that is UNVERIFIED by design |
+| `"http": [...]` | the URL answers the status and `Location` prefix without following redirects, certificate verification on |
+
+**The plan.** `argo dns plan` prints, for every missing or differing record, the Cloudflare API v4 request that
+would fix it (method, path, JSON body; `{zone_id:…}` and `{record_id:…}` are placeholders), plus a manual line
+for a redirect rule and a `PATCH …/dnssec` for DNSSEC. It holds no token and sends nothing.
+
+**The gate.** `argo dns apply` exists only as a stub: it answers `apply needs ARGO_CF_TOKEN_<ZONE> from the
+Keychain and an explicit --yes; not enabled` and exits 1. The write half, when it comes, will read one scoped
+token per zone from the Keychain (never from the environment, a file in the repo or a URL), resolve the record
+ids, show the plan, and change nothing without `--yes`. Until then every change is made at the Cloudflare
+dashboard by Josh.
+
+**Drift alerts.** `argo dns check --alert` texts once per zone when a zone that was clean on the previous run
+starts to drift: never on the first run (nothing to compare with), never again while the same drift persists,
+at most once per 24 h per zone (key `dns-<zone>`), nothing while `argo off` or `argo egress off` holds sends.
+The text carries the count and the zone only, never record values. It is not wired into the one-minute tick:
+a check is about 30 queries per zone and the tick's budget is spent on the link, so the awake guard or
+tpm-watch calls `argo dns check --alert` twice a day. State: `~/.local/state/argo/dns-state.json`.
+
+**Mail authentication plan (lightbound.uk; lightbound.space sends no mail).**
+
+| Step | Record | Now | Target | Move on when |
+|---|---|---|---|---|
+| SPF (RFC 7208) | `TXT @` | `v=spf1 include:_spf.google.com ~all` | `… -all` | DMARC reports show every sender passing for 2-4 weeks |
+| DKIM (RFC 6376) | `TXT google._domainkey` | missing; generate in Google Admin (2048-bit, selector `google`) | present, "Authenticating email with DKIM" | `dig` shows the key, then Start authentication |
+| DMARC (RFC 7489) | `TXT _dmarc` | `p=none` + Cloudflare `rua` | `p=quarantine; pct=25`, then `p=reject` | each stage after a clean month of reports; `rua` kept throughout |
+| MTA-STS (RFC 8461) | `TXT _mta-sts` + policy file | missing | `v=STSv1; id=…` and `https://mta-sts.lightbound.uk/.well-known/mta-sts.txt` (mode testing, then enforce) | the policy host serves the file (not checked by Argo yet, UNVERIFIED) |
+| TLS-RPT (RFC 8460) | `TXT _smtp._tls` | missing | `v=TLSRPTv1; rua=mailto:security@lightbound.uk` | the mailbox exists (TBC) |
+| No-mail domain (RFC 7505) | lightbound.space `TXT @`, `_dmarc`, `MX` | missing | `v=spf1 -all`, `v=DMARC1; p=reject; adkim=s; aspf=s`, null MX `0 .` | any time |
+| CAA (RFC 8659) | `CAA @` both zones | missing | `issue`/`issuewild` for letsencrypt.org, pki.goog, ssl.com, sectigo.com; `iodef mailto:security@lightbound.uk` | any time; Universal SSL renewals need these CAs |
+| DNSSEC | DS at the parent | .uk on (Cloudflare Registrar), .space off | both on | .space: enable in Cloudflare, publish the DS at Spaceship by hand |
 
 ## Linux and containers
 
