@@ -10,6 +10,10 @@ connectivity agent (`/argo/`, unlisted, included for operators and staff, never 
 and keeping devices in sync. Public copy says only "Sign in with Argo"; it never describes the agent's features, and
 never claims more than the sign-in does (an emailed code from Cloudflare Access, checked here).
 
+The landing page has one door: after the descent, the live-view card's **Sign in with Argo** button (`.btn.argo` in
+`website/public/assets/site.css`, the Argo sail `assets/marks/argo-mark-colour-dark.svg`). It goes to `/live` in the full
+release; the public release shows the same button pointing at the replay, with a line under it that says so.
+
 ## How it works
 
 ```
