@@ -107,7 +107,7 @@ func sendReport(cfg Config, st State) (int, error) {
 	req, _ := http.NewRequest(http.MethodPost, u.String(), bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(string(tok)))
-	c := &http.Client{Timeout: 5 * time.Second, Transport: &http.Transport{Proxy: nil}}
+	c := tokenClient(5 * time.Second)
 	resp, err := c.Do(req)
 	if err != nil {
 		return 0, err

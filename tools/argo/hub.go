@@ -39,8 +39,20 @@ func newHTTPHub(cfg Config) (*httpHub, error) {
 	if err != nil {
 		return nil, errors.New("no Gauss device token; run `argo enroll` first")
 	}
-	return &httpHub{base: u, token: strings.TrimSpace(string(tok)),
-		c: &http.Client{Timeout: 30 * time.Second, Transport: &http.Transport{Proxy: nil}}}, nil
+	return &httpHub{base: u, token: strings.TrimSpace(string(tok)), c: tokenClient(30 * time.Second)}, nil
+}
+
+// tokenClient is the client for requests that carry the device token: no
+// proxy, and no redirects. Go keeps the Authorization header across a
+// same-host redirect, so following one could replay the token to a path or
+// scheme (https→http) the Gauss API never uses; the API never redirects, so a
+// 3xx is simply reported as that status.
+func tokenClient(timeout time.Duration) *http.Client {
+	return &http.Client{
+		Timeout:       timeout,
+		Transport:     &http.Transport{Proxy: nil},
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}
 }
 
 func (h *httpHub) do(ctx context.Context, method, path string, body []byte, ctype string, limit int64) ([]byte, int, error) {

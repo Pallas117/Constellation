@@ -120,10 +120,15 @@ func (f realEffects) Notify(title, msg string) {
 }
 func (realEffects) Open(u string) error { return openURL(u) }
 func (realEffects) Run(name string, args ...string) error {
-	if name == "warp-cli" {
+	switch name {
+	case "warp-cli":
 		if name = warpCLI(); name == "" {
 			return errors.New("warp-cli not found")
 		}
+	case "tailscale": // launchd and an SSH session from the phone have a minimal PATH
+		name = tailscaleCLI()
+	default:
+		name = toolPath(name)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
