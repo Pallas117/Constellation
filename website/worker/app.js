@@ -15,7 +15,7 @@ import { APP_CSP } from "./headers.js";
 import { createCheckout, createEduCheckout, createEduInvoice, createInvoice, createPortal, customerOf, eduInvoiceable, invoiceable, payable } from "./stripe.js";
 import { renderClassroom } from "./classroom.js";
 import { cleanTags, renderOpportunities } from "./opportunities.js";
-import { ARGO, BILLING, EDU, FEATURES, INVOICE_DAYS, PILOT_STEPS, TIERS, billingStatus, isOperator, eduEligible, eduMode, eduStaffLabel, eduStaffPrice, gbp, isAcademicEmail, priceLabel, quoteInRange, tierById, unlocked } from "./tiers.js";
+import { ARGO, BILLING, EDU, FEATURES, INVOICE_DAYS, PILOT_STEPS, TIERS, billingStatus, isOperator, eduEligible, eduMode, eduStaffLabel, eduStaffPrice, usd, isAcademicEmail, priceLabel, quoteInRange, tierById, unlocked } from "./tiers.js";
 
 export const APP_HEADERS = { "cache-control": "private, no-store", "x-robots-tag": "noindex", "Content-Security-Policy": APP_CSP };
 
@@ -43,7 +43,7 @@ const linkable = (u) => /^(https:\/\/|\/(?!\/))[^\s"<>]*$/.test(u ?? "");
 function billingCard(account, tier) {
   const status = billingStatus(account);
   const b = account.billing ?? {};
-  const quote = account.quote ? `${gbp(account.quote)} ${tier.billing === "subscription" ? "a year" : "one-off"}` : priceLabel(tier);
+  const quote = account.quote ? `${usd(account.quote)} ${tier.billing === "subscription" ? "a year" : "one-off"}` : priceLabel(tier);
   const portal = customerOf(account) ? postButton("/app/billing", "Manage billing", "btn ghost") : "";
   const invoice = linkable(b.invoiceUrl) ? `<p class="actions"><a class="btn" href="${esc(b.invoiceUrl)}" rel="noopener noreferrer">View invoice</a></p>` : "";
   let body;
@@ -95,7 +95,7 @@ export function eduCard(env, account, email, start = false) {
   const invoiceLink = linkable(b?.invoiceUrl) ? `<p class="actions"><a class="btn ghost" href="${esc(b.invoiceUrl)}" rel="noopener noreferrer">View invoice</a></p>` : "";
   let price = "", state, body;
   if (e?.plan === "department") {
-    price = e.quote ? `${gbp(e.quote)} a year` : "Quoted per year";
+    price = e.quote ? `${usd(e.quote)} a year` : "Quoted per year";
     state = status === "paid" ? "Licence active" : BILLING[status] ?? "Payment due";
     if (status === "paid") body = `<p class="m">Department licence until ${esc(day(b.paidUntil))}.</p>${classroom}`;
     else if (status === "invoice_open") body = `<p class="m">Invoice sent to ${esc(account.email)}${b.dueAt ? `; due ${esc(day(b.dueAt))}` : ""}. The classroom is open meanwhile.</p>${classroom}${invoiceLink}`;
@@ -188,7 +188,7 @@ export function renderWorkspace({ email, account, admin, weather, consoleUrl, su
 // ---- Admin ----
 const opt = (v, label, cur) => `<option value="${esc(v)}"${v === (cur ?? "") ? " selected" : ""}>${esc(label)}</option>`;
 const tierSelect = (cur) => `<select name="tier" aria-label="Gauss plan">${opt("", "No Gauss plan", cur)}${TIERS.map((t) => opt(t.id, `${t.name} (${priceLabel(t)})`, cur)).join("")}</select>`;
-const quoteInput = (pence) => `<label class="money"><span>£</span><input name="quote" type="number" inputmode="numeric" min="0" step="500" aria-label="Quote in pounds" placeholder="Quote" value="${pence ? pence / 100 : ""}"></label>`;
+const quoteInput = (cents) => `<label class="money"><span>$</span><input name="quote" type="number" inputmode="numeric" min="0" step="500" aria-label="Quote in dollars" placeholder="Quote" value="${cents ? cents / 100 : ""}"></label>`;
 // Defaults to "automatic" (keep, or reset to due when the plan or quote changes); the current state shows as a tag.
 const billingSelect = () => `<select name="billing" aria-label="Billing override">${opt("", "Billing: automatic", "")}${Object.entries(BILLING).map(([k, l]) => opt(k, `Set: ${l}`, null)).join("")}</select>`;
 const pilotSelect = (cur) => `<select name="pilot" aria-label="Pilot step">${opt("", "No pilot", cur)}${PILOT_STEPS.map((s) => opt(s, s, cur)).join("")}</select>`;
@@ -230,7 +230,7 @@ export function renderAdmin({ applications, accounts, details, invited, error, c
       `${u.edu ? ` <span class="tag">Education: ${esc(u.edu)}</span>` : ""}</td></tr>`;
   }).join("");
   const banner = error === "quote" || error === "edu"
-    ? `<p class="banner warn" role="alert">${error === "edu" ? "Not approved: enter the department licence's yearly quote in pounds." : "Not approved: enter a quote inside the plan's range."}</p>`
+    ? `<p class="banner warn" role="alert">${error === "edu" ? "Not approved: enter the department licence's yearly quote in dollars." : "Not approved: enter a quote inside the plan's range."}</p>`
     : invited ? `<p class="banner" role="status">${esc(invited.email)} is now a Constellation member. <a href="${esc(inviteDraft(invited.email, invited.name))}">Draft the invitation email</a> (opens your mail app; nothing is sent automatically).</p>` : "";
   return (
     `<p class="k">00_ADMIN</p><h1 id="hero-h">Applications and accounts.</h1>${banner}` +
@@ -239,7 +239,7 @@ export function renderAdmin({ applications, accounts, details, invited, error, c
     `<form method="post" action="/app/admin/invite" class="inline add"><label class="sr" for="inv-email">Email</label><input id="inv-email" name="email" type="email" placeholder="email@example.com" required> ` +
     `<label class="sr" for="inv-name">Name</label><input id="inv-name" name="name" placeholder="Name" maxlength="100"> <button class="btn">Invite</button></form>` +
     (accounts.some((u) => u.argo === "requested") ? `<p class="banner" role="status">Gauss Argo setup requested by ${accounts.filter((u) => u.argo === "requested").length}: email each their install link, then press "Mark Argo setup sent" below.</p>` : "") +
-    `<h2>Accounts (${accounts.length} of ${cap})</h2><div class="tw"><table class="table"><thead><tr><th>Email</th><th>Plan, quote (£), billing, invoice, pilot, membership</th></tr></thead><tbody>${rows}</tbody></table></div>` +
+    `<h2>Accounts (${accounts.length} of ${cap})</h2><div class="tw"><table class="table"><thead><tr><th>Email</th><th>Plan, quote ($), billing, invoice, pilot, membership</th></tr></thead><tbody>${rows}</tbody></table></div>` +
     `<form method="post" action="/app/admin/account" class="inline add"><label class="sr" for="new-email">Email</label><input id="new-email" name="email" type="email" placeholder="email@company.com" required> ` +
     `${tierSelect("")} ${quoteInput(0)} ${billingSelect()} ${invoiceCheck(false, "new-inv")} ${pilotSelect("")} ${communitySelect("")} <button class="btn" name="action" value="save">Add account</button></form>` +
     `<h2>Decided (${done.length})</h2>${done.length ? `<ul class="apps">${done.map(card).join("")}</ul>` : `<p class="muted">None yet.</p>`}` +
@@ -272,10 +272,10 @@ const signedOut = (respond) =>
 // A new plan or quote starts billing afresh: no earlier invoice, paid year or event can count towards it.
 const FRESH = { eventAt: null, invoice: null, invoiceUrl: null, dueAt: null, paidUntil: null, checkout: null };
 
-/** Quote from the form, in pence, only if it sits inside the plan's range. */
+/** Quote from the form, in cents, only if it sits inside the plan's range. */
 function quoteFrom(form, tier) {
-  const pounds = Number(form.get("quote"));
-  return tier && quoteInRange(tier, pounds) ? Math.round(pounds * 100) : null;
+  const dollars = Number(form.get("quote"));
+  return tier && quoteInRange(tier, dollars) ? Math.round(dollars * 100) : null;
 }
 
 async function memberOpportunities(env, account, latest) {
@@ -417,14 +417,14 @@ export async function handleApp(request, env, url, { respond, fillPage, fetchImp
       if (!app || app.status !== "new") return back("/app/admin/");
       const department = app.kind === "edu" && form.get("decision") === "department";
       const approve = form.get("decision") === "approve" || department;
-      const pounds = Number(form.get("quote"));
-      if (department && !(Number.isFinite(pounds) && pounds > 0 && pounds <= 1_000_000)) return back("/app/admin/?error=edu");
+      const dollars = Number(form.get("quote"));
+      if (department && !(Number.isFinite(dollars) && dollars > 0 && dollars <= 1_000_000)) return back("/app/admin/?error=edu");
       if (approve && app.kind === "gauss" && (!tier || (tier.billing !== "invoice" && quoteFrom(form, tier) === null))) return back("/app/admin/?error=quote");
       await setApplicationStatus(env, app, approve ? "approved" : "declined", id.email);
-      if (approve && app.kind === "edu") { // self-serve eligibility, or a department licence at a yearly quote (pence)
+      if (approve && app.kind === "edu") { // self-serve eligibility, or a department licence at a yearly quote (cents)
         const prev = (await getAccount(env, app.email)) ?? { email: app.email };
         const edu = { ...(prev.edu ?? {}), approvedAt: new Date().toISOString(),
-          ...(department ? { plan: "department", quote: Math.round(pounds * 100), institution: app.institution ?? null, seats: app.seats ?? null, billing: { status: "due" } } : {}) };
+          ...(department ? { plan: "department", quote: Math.round(dollars * 100), institution: app.institution ?? null, seats: app.seats ?? null, billing: { status: "due" } } : {}) };
         await putAccount(env, { ...prev, name: prev.name ?? app.name, org: prev.org ?? app.institution ?? null, edu }, id.email);
       } else if (approve && !["workshop", "argo"].includes(app.kind)) { // workshop requests and old Argo list entries are leads: no account change
         const prev = (await getAccount(env, app.email)) ?? { email: app.email };

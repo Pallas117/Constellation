@@ -315,10 +315,10 @@ test("public release: each form's page asks by email instead, and carries the pa
     assert.match(page, /href="mailto:jzwnathan@lightbound\.uk\?subject=[^"]+&amp;body=/, `${path}: a mailto with the questions`);
   }
   const fleet = await (await call("/gauss/apply/?plan=fleet_integration&sent=1")).text();
-  assert.match(fleet, /<li>Package: Fleet Integration · £60k–£125k a year<\/li>/);
+  assert.match(fleet, /<li>Package: Fleet Integration · \$80k–\$160k a year<\/li>/);
   assert.match(fleet, /subject=Gauss%20brief%20%C2%B7%20Fleet%20Integration&amp;/);
   assert.doesNotMatch(fleet, /RECEIVED/, "nothing was sent, so nothing says so");
-  assert.match(await (await call("/gauss/apply/?plan=%22%3E%3Cscript%3E")).text(), /<li>Package: Pilot · £20k–£40k<\/li>/, "unknown package: the pilot");
+  assert.match(await (await call("/gauss/apply/?plan=%22%3E%3Cscript%3E")).text(), /<li>Package: Pilot · \$25k–\$50k<\/li>/, "unknown package: the pilot");
 });
 
 test("public release: pages offer pilots and an email route; later plans are in development; nothing links to sign-in", async () => {
@@ -497,7 +497,7 @@ test("workspace: an approved quote shows Pay; checkout goes to Stripe with the q
   const res = await send(env, await as(access, "ops@example.test", "/app/"));
   assert.equal(res.headers.get("content-security-policy"), APP_CSP);
   const page = await res.text();
-  assert.match(page, /<p class="big">£28,000 one-off<\/p><p class="t">Payment due<\/p>/);
+  assert.match(page, /<p class="big">\$28,000 one-off<\/p><p class="t">Payment due<\/p>/);
   assert.match(page, /<form method="post" action="\/app\/checkout" class="inline"><button class="btn">Pay now<\/button><\/form>/);
   assert.doesNotMatch(page, /Stripe|securely|card details|Request an invoice/, "no payment-method talk; invoices only where allowed");
   assert.doesNotMatch(page, /Open the Gauss console|Console link/, "locked until paid");
@@ -508,7 +508,7 @@ test("workspace: an approved quote shows Pay; checkout goes to Stripe with the q
   const { url, body, auth } = stripe.calls[0];
   assert.equal(url, "https://api.stripe.com/v1/checkout/sessions");
   assert.equal(auth, "Bearer test-placeholder");
-  assert.deepEqual([body.get("mode"), body.get("line_items[0][price_data][currency]"), body.get("line_items[0][price_data][unit_amount]")], ["payment", "gbp", "2800000"]);
+  assert.deepEqual([body.get("mode"), body.get("line_items[0][price_data][currency]"), body.get("line_items[0][price_data][unit_amount]")], ["payment", "usd", "2800000"]);
   assert.deepEqual([body.get("client_reference_id"), body.get("metadata[email]"), body.get("metadata[plan]"), body.get("customer_creation")], ["ops@example.test", "ops@example.test", "pilot", "always"]);
   assert.equal(body.get("success_url"), "https://lightbound.space/app/?checkout=success");
   assert.equal((await withFetch(stripe, async () => send(env, await formPost(access, "ops@example.test", "/app/checkout", {}, "https://evil.example")))).status, 403);
@@ -553,7 +553,7 @@ test("invoices: only where an admin allows them; Stripe emails one invoice; paid
   const [cust, inv, item] = stripe.calls.map((c) => c.body);
   assert.deepEqual([cust.get("email"), cust.get("name")], ["fleet@example.test", "Example Ltd"]);
   assert.deepEqual([inv.get("customer"), inv.get("collection_method"), inv.get("days_until_due"), inv.get("metadata[plan]")], ["cus_new", "send_invoice", "30", "fleet_integration"]);
-  assert.deepEqual([item.get("invoice"), item.get("amount"), item.get("currency"), item.get("description")], ["in_1", "7500000", "gbp", "Gauss: Fleet Integration, 12 months"]);
+  assert.deepEqual([item.get("invoice"), item.get("amount"), item.get("currency"), item.get("description")], ["in_1", "7500000", "usd", "Gauss: Fleet Integration, 12 months"]);
   let acct = await getAccount(env, "fleet@example.test");
   assert.deepEqual([acct.billing.status, acct.billing.customer, acct.billing.invoice], ["invoice_open", "cus_new", "in_1"]);
   const sent = await (await send(env, await as(access, "fleet@example.test", "/app/?invoice=sent"))).text();
@@ -640,13 +640,13 @@ test("admin: only ADMIN_EMAILS; approval needs a quote inside the published rang
   assert.match(adminPage, /Earth observation · Launched and operating · Yamcs \/ XTCE/);
   const [app] = await listApplications(env);
   const decide = async (email, quote, origin) => send(env, await formPost(access, email, "/app/admin/decide", { id: app.id, decision: "approve", tier: "fleet_integration", quote }, origin));
-  assert.equal((await decide("ops@example.test", "75000")).status, 403, "customers cannot approve");
-  assert.equal((await decide("boss@example.test", "75000", "https://evil.example")).status, 403, "cross-site");
-  assert.equal((await decide("boss@example.test", "15000")).headers.get("location"), "/app/admin/?error=quote", "below the £60k floor");
+  assert.equal((await decide("ops@example.test", "100000")).status, 403, "customers cannot approve");
+  assert.equal((await decide("boss@example.test", "100000", "https://evil.example")).status, 403, "cross-site");
+  assert.equal((await decide("boss@example.test", "15000")).headers.get("location"), "/app/admin/?error=quote", "below the $80k floor");
   assert.equal(await getAccount(env, "ops@example.test"), null);
-  assert.equal((await decide("boss@example.test", "75000")).status, 303);
+  assert.equal((await decide("boss@example.test", "100000")).status, 303);
   const acct = await getAccount(env, "ops@example.test");
-  assert.deepEqual([acct.tier, acct.quote, acct.billing.status, acct.updatedBy], ["fleet_integration", 7_500_000, "due", "boss@example.test"]);
+  assert.deepEqual([acct.tier, acct.quote, acct.billing.status, acct.updatedBy], ["fleet_integration", 10_000_000, "due", "boss@example.test"]);
   assert.equal((await listApplications(env))[0].status, "approved");
 });
 
@@ -749,12 +749,12 @@ test("education departments: a yearly quote from admin, an invoice with 30 days 
   await send(env, await formPost(access, "boss@example.test", "/app/admin/decide", { id: app.id, decision: "department", quote: "3000" }));
   let lee = await getAccount(env, "lee@physics.example.org");
   assert.deepEqual([lee.edu.plan, lee.edu.quote, lee.edu.billing.status, lee.org, lee.tier ?? null], ["department", 300_000, "due", "Example University", null]);
-  assert.match(await (await send(env, await as(access, "lee@physics.example.org", "/app/"))).text(), /£3,000 a year[\s\S]*Request the invoice/);
+  assert.match(await (await send(env, await as(access, "lee@physics.example.org", "/app/"))).text(), /\$3,000 a year[\s\S]*Request the invoice/);
   const stripe = stripeMock();
   const inv = await withFetch(stripe, async () => send(env, await formPost(access, "lee@physics.example.org", "/app/edu/invoice")));
   assert.equal(inv.headers.get("location"), "/app/?invoice=sent");
   const item = stripe.calls.find((c) => c.url.endsWith("/v1/invoiceitems")).body;
-  assert.deepEqual([item.get("amount"), item.get("currency"), item.get("description"), item.get("metadata[product]"), item.get("metadata[offer]")], ["300000", "gbp", "Gauss for Education: department licence, 12 months", "edu", "department"]);
+  assert.deepEqual([item.get("amount"), item.get("currency"), item.get("description"), item.get("metadata[product]"), item.get("metadata[offer]")], ["300000", "usd", "Gauss for Education: department licence, 12 months", "edu", "department"]);
   lee = await getAccount(env, "lee@physics.example.org");
   assert.equal(lee.edu.billing.status, "invoice_open");
   assert.match(await (await send(env, await as(access, "lee@physics.example.org", "/app/edu/"))).text(), /Classroom\./, "open while the invoice is within its terms");
