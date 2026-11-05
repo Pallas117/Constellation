@@ -234,6 +234,20 @@ phone() {
 # format. Rotated by size, one old file kept.
 EVENTS="${GAUSS_EVENTS_LOG:-$LOGS/events.jsonl}"
 EVENTS_MAX_KB="${GAUSS_EVENTS_MAX_KB:-5120}"
+# The services' own logs. launchd keeps them open, so a rename would leave it writing to the moved file:
+# copy to .1 and empty in place instead (a line written in between can be lost). backend.log had reached
+# 12 MB in a month, never rotated, on a Mac held for disk (4 Nov 2026).
+LOG_MAX_KB="${GAUSS_LOG_MAX_KB:-5120}"
+ROTATED_LOGS="backend frontend fallback-backend fallback-frontend learning awake gates-runner deploy balance"
+rotate_logs() {
+  local n f
+  for n in $ROTATED_LOGS; do
+    f="$LOGS/$n.log"
+    [ -f "$f" ] && [ $(( $(stat -f %z "$f" 2>/dev/null || echo 0) / 1024 )) -ge "$LOG_MAX_KB" ] || continue
+    cp -p "$f" "$f.1" 2>/dev/null && : >"$f"
+  done
+  return 0
+}
 BOOT_STATE="$WATCH_DIR/boottime"
 MEMORY_TSV="${MEM_GUARD_LOG:-$LOGS/memory.tsv}"       # written by ~/.local/bin/mem-guard, not this repo
 MEM_GUARD="${GAUSS_MEM_GUARD:-$HOME/.local/bin/mem-guard}"
@@ -924,8 +938,22 @@ gates_enqueue() { # gates_enqueue <checkout-dir>|<commit> [--pr N]: queue a gate
     *) echo "unknown option ${2} (expected --pr N)" >&2; return 2 ;;
   esac
   if gate_record "$tree" >/dev/null; then
-    gates_result "$sha" "$tree" SKIPPED "already passed: $(gates_summary "$GATES_DIR/$tree.json")"
-    echo "Already passed: ${sha:0:7} (tree ${tree:0:7}) has a passing gate record; nothing queued."; return 0
+    if [ -z "$pr" ]; then
+      gates_result "$sha" "$tree" SKIPPED "already passed: $(gates_summary "$GATES_DIR/$tree.json")"
+      echo "Already passed: ${sha:0:7} (tree ${tree:0:7}) has a passing gate record; nothing queued."; return 0
+    fi
+    # On the train a pass is not the end (4 Nov: #209 passed as a draft and was HELD; marked ready and
+    # re-queued, it got "already passed" and nothing merged it, while main moved on). A head that still
+    # contains main goes straight to train_merge; one main has moved past is queued, so train_sync merges
+    # main in and the merged tree is gated.
+    git --git-dir="$G_REPO" fetch -q origin 2>/dev/null || true
+    if git --git-dir="$G_REPO" merge-base --is-ancestor refs/remotes/origin/main "$sha" 2>/dev/null; then
+      echo "Already passed: ${sha:0:7} (tree ${tree:0:7}); merging PR #$pr if the train's rules hold."
+      if train_merge "$pr" "$sha" "$tree" "$G_REPO"; then echo "Merged PR #$pr."
+      else echo "Not merged: $(tail -1 "$GATES_RESULTS" | cut -d' ' -f4-)"; fi
+      return 0
+    fi
+    echo "Already passed: ${sha:0:7}, but main has moved past it: queueing it so the train merges main in and gates that."
   fi
   mkdir -p "$GATES_QUEUE"
   if f=$(gates_queued "$tree"); then
@@ -988,14 +1016,17 @@ gates_start() { # start the one runner, detached from this session (own session 
   gates_refresh_runner || return 1
   if p=$(gates_runner_pid); then echo "The gate runner is working (pid $p)."; return 0; fi
   [ "${GAUSS_GATES_START:-1}" = 1 ] || return 0 # tests
-  nohup perl -MPOSIX -e 'POSIX::setsid(); exec @ARGV' /bin/bash "$GATES_DIR/runner.sh" gates run \
-    </dev/null >>"$LOGS/gates-runner.log" 2>&1 &
+  (cd "$GATES_DIR" && nohup perl -MPOSIX -e 'POSIX::setsid(); exec @ARGV' /bin/bash "$GATES_DIR/runner.sh" gates run \
+    </dev/null >>"$LOGS/gates-runner.log" 2>&1 &)
   echo "Gate runner started (log: $LOGS/gates-runner.log)."
 }
 
 gates_run() { # gates_run [--once]: work through the queue, oldest first, then exit; --once: stop after one wait that gave up
   local once=${1:-} self req sha tree queued rc pid me
   self="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
+  # Never the folder it was started from: that is a session's checkout, often a temporary worktree removed
+  # while the runner lives on (4 Nov: every git call then failed with getcwd errors).
+  cd "$GATES_DIR" 2>/dev/null || cd /
   me=$(shasum "$self" | cut -d' ' -f1)
   mkdir -p "$GATES_QUEUE"
   until mkdir "$GATES_RUNNER" 2>/dev/null; do
@@ -1034,6 +1065,11 @@ gates_run() { # gates_run [--once]: work through the queue, oldest first, then e
       [ "$once" = --once ] && return 0
       sleep "${GAUSS_GATES_RETRY_S:-60}"; continue
     fi
+    if [ "$rc" = 76 ] && [ -f "$req" ]; then # the install lost the network: same request, after a pause
+      echo "$(date '+%F %T') ${sha:0:7} install lost the network; trying again in ${GAUSS_GATES_NET_RETRY_S:-600} s."
+      [ "$once" = --once ] && return 0
+      sleep "${GAUSS_GATES_NET_RETRY_S:-600}"; continue
+    fi
     if [ -f "$req" ]; then # run-one died before it could say why
       gates_result "$sha" "$tree" ERROR "gate run exited $rc without a result (log: $LOGS/gates-runner.log)"; rm -f "$req"
     fi
@@ -1049,6 +1085,13 @@ gates_run_one() { # gates_run_one <request>: check out, install if the lockfile 
   local pr; pr=$(req_get "$req" pr)
   if [ -n "$pr" ]; then # merge train: test what would land, not a head main has moved past
     train_sync "$req" || return 0 # withdrawn: closed PR, moved head or a conflict (result written)
+    # Already gated (passed, then held as a draft or for GitHub's state): no second 5-30 min run.
+    if gate_record "$(req_get "$req" tree)" >/dev/null; then
+      sha=$(req_get "$req" sha); tree=$(req_get "$req" tree); repo=$(req_get "$req" repo); rm -f "$req"
+      gates_result "$sha" "$tree" SKIPPED "already passed: going straight to the merge"
+      train_merge "$pr" "$sha" "$tree" "$repo" || true
+      return 0
+    fi
   fi
   sha=$(req_get "$req" sha); tree=$(req_get "$req" tree); repo=$(req_get "$req" repo); node=$(req_get "$req" node); by=$(req_get "$req" by)
   [ -n "$node" ] && [ -x "$node" ] && NODE=$node # the Node the session queued with (.nvmrc: Node 26)
@@ -1067,8 +1110,14 @@ gates_run_one() { # gates_run_one <request>: check out, install if the lockfile 
   [ -f "$co/package-lock.json" ] && lock=$(install_key "$co") || { gates_fail "no package-lock.json at ${sha:0:7}"; return 1; }
   if [ "$(cat "$co/node_modules/.gauss-lock" 2>/dev/null)" != "$lock" ]; then
     echo "Installing dependencies in $co ..."
-    (cd "$co" && PATH="$(dirname "$NODE"):$PATH" npm ci --no-audit --no-fund >"$GATES_DIR/runs/$sha.install.log" 2>&1) \
-      || { gates_fail "npm ci failed (log: $GATES_DIR/runs/$sha.install.log)"; return 1; }
+    if ! (cd "$co" && PATH="$(dirname "$NODE"):$PATH" npm ci --no-audit --no-fund >"$GATES_DIR/runs/$sha.install.log" 2>&1); then
+      # A dropped download (5 Nov 2026: read ETIMEDOUT on the phone hotspot) isn't the commit's fault:
+      # the request stays first in line and the runner tries again later.
+      if grep -Eq 'ETIMEDOUT|ECONNRESET|ECONNREFUSED|ENOTFOUND|EAI_AGAIN|ENETUNREACH|network request to' "$GATES_DIR/runs/$sha.install.log"; then
+        echo "npm ci lost the network for ${sha:0:7} (log: $GATES_DIR/runs/$sha.install.log): it stays queued."; return 76
+      fi
+      gates_fail "npm ci failed (log: $GATES_DIR/runs/$sha.install.log)"; return 1
+    fi
     echo "$lock" >"$co/node_modules/.gauss-lock"
   fi
   # The native MHD kernel: npm ci no longer builds it (package.json "gypfile": false, GAU-228) and the
@@ -1419,6 +1468,7 @@ awake_guard() { # run every minute by the awake agent
   memory_alerts "$level" "$swap"
   memory_sample "$level" "$swap"
   disk_alerts "$(disk_free_gb)" "$swap"
+  rotate_logs
   balance || true
   # A queued gate run outlives a reboot or a killed runner: start one again.
   if ls "$GATES_QUEUE" 2>/dev/null | grep -c '\.req$' >/dev/null && ! gates_runner_pid >/dev/null; then gates_start >/dev/null || true; fi
