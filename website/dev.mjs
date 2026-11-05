@@ -123,6 +123,9 @@ const env = {
   // Staff and the members' programme list (both secrets in production). Offline, the programmes come from a synthetic tab.
   STAFF_EMAILS: process.env.STAFF_EMAILS ?? "staff@example.test",
   OPS_URL: process.env.OPS_URL ?? "https://ops.example.test/",
+  // The workspace's "Open the Gauss console" button; empty = "link is coming by email". To walk site -> console locally:
+  // GAUSS_APP_URL=http://127.0.0.1:5174/ npm run site:dev, beside scripts/ops/gauss-services.sh dev <checkout>.
+  GAUSS_APP_URL: process.env.GAUSS_APP_URL ?? "",
   PROGRAMMES_CSV_URL: process.env.PROGRAMMES_CSV_URL ?? (offline ? PROGRAMMES_URL : ""),
 };
 const admin = String(env.ADMIN_EMAILS).split(",")[0].trim();

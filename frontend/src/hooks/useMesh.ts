@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { getAuthHeaders } from "@/lib/api/auth";
 import { apiBase } from "@/lib/api/base-url";
 import { describeHttpFailure, HttpFailure } from "@/lib/api/http-error";
 import { stopsPolling, type BatteryReading, type GuardReading } from "@/lib/mesh-onboarding";
@@ -83,11 +82,12 @@ export interface OnboardingStep {
   pending?: boolean;
 }
 
-async function api(path: string, init: RequestInit = {}) {
+function api(path: string, init: RequestInit = {}) {
   return fetch(`${getBaseUrl()}/api/mesh${path}`, {
     ...init,
     credentials: "include",
-    headers: { "content-type": "application/json", ...(await getAuthHeaders()), ...(init.headers ?? {}) },
+    // The session cookie authenticates; no /get-session round trip per call for a bearer token it never has.
+    headers: { "content-type": "application/json", ...(init.headers ?? {}) },
   });
 }
 

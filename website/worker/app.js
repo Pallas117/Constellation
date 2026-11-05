@@ -7,8 +7,8 @@ import { accessIdentity, isAdmin, isStaff } from "./auth.js";
 import { deleteAccount, getAccount, getApplication, latestApplication, listAccounts, listApplications, putAccount, setApplicationStatus } from "./data.js";
 import { readCapped } from "./body.js";
 import { sameOrigin } from "./forms.js";
-import { readFeed } from "./feeds.js";
-import { esc, renderEventIcs, renderGaussDoor, supportLink } from "./render.js";
+import { feedState, readFeed } from "./feeds.js";
+import { chip, esc, renderEventIcs, renderGaussDoor, supportLink } from "./render.js";
 import { deleteCall, getCall, listCalls, renderCalls, renderCallsAdmin, rsvp, saveCall } from "./calls.js";
 import { isZone, zonedToUtc } from "./timezones.js";
 import { APP_CSP } from "./headers.js";
@@ -18,6 +18,16 @@ import { cleanTags, renderOpportunities } from "./opportunities.js";
 import { ARGO, BILLING, EDU, FEATURES, INVOICE_DAYS, PILOT_STEPS, TIERS, billingStatus, isOperator, eduEligible, eduMode, eduStaffLabel, eduStaffPrice, usd, isAcademicEmail, priceLabel, quoteInRange, tierById, unlocked } from "./tiers.js";
 
 export const APP_HEADERS = { "cache-control": "private, no-store", "x-robots-tag": "noindex", "Content-Security-Policy": APP_CSP };
+
+// The customer's workspace says where the reading came from and how fresh it is (the Gauss page promises "every value
+// carries its source and age"); the landing-page door stays a bare readout.
+function spaceTile(weather) {
+  const door = renderGaussDoor(weather);
+  if (!door) return `<article class="tile"><h2 class="label">Space environment</h2><p class="m">Space-weather data is unavailable right now.</p></article>`;
+  return `<article class="tile"><div class="tile-head"><h2 class="label">Space environment</h2>${chip(feedState("weather", weather))}</div>${door}` +
+    `<p class="m src">NOAA Space Weather Prediction Center</p></article>`;
+}
+
 const day = (iso) => (iso ? new Date(iso).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" }) : "");
 const EMAIL = /^[^@\s<>]+@[^@\s<>]+\.[^@\s<>]{2,}$/;
 
@@ -115,7 +125,8 @@ export function eduCard(env, account, email, start = false) {
 }
 
 function memberCard(supportUrl = "") {
-  return `<article class="tile"><h2 class="label">Constellation</h2><p class="big">Member</p><p class="t">Free, by invitation.</p>` +
+  // Wears Constellation's own navy and gold (Brand Book), so membership never reads as part of Gauss.
+  return `<article class="tile brand-constellation"><div class="tile-head"><h2 class="label">Constellation</h2><img src="/assets/marks/constellation-icon-colour-dark-v2.svg" alt="" width="32" height="32"></div><p class="big">Member</p><p class="t">Free, by invitation.</p>` +
     `<p class="m">Community channels are shared with members directly. Launch calendar: <a href="/api/launches.ics">subscribe</a>.</p>` +
     (supportLink(supportUrl) ? `<p class="m"><a href="${esc(supportUrl)}" rel="noopener">Support Constellation</a> (optional)</p>` : "") +
     `<p class="m"><a href="/constellation/">Constellation</a></p></article>`;
@@ -158,14 +169,14 @@ export function renderWorkspace({ email, account, admin, weather, consoleUrl, su
   const list = (ids) => ids.map((f) => `<li>${esc(FEATURES[f])}</li>`).join("");
   const consoleBtn = !open ? "" : consoleUrl
     ? `<a class="btn" href="${esc(consoleUrl)}">Open the Gauss console</a>`
-    : `<span class="btn ghost" aria-disabled="true">Console link coming by email</span>`;
+    : `<span class="m">Your Gauss console link is coming by email.</span>`; // a line, not a dead button
   return (
     `<div class="section-head"><div><p class="k">00_WORKSPACE</p><h1 id="hero-h">Welcome, ${who}.</h1></div><span class="chip tier">${esc(tier.name)}</span></div>${bannerHtml}` +
     `<p class="lead">${esc(account.org ? `${account.org} · ` : "")}${esc(tier.outcome)}</p>` +
     (consoleBtn ? `<p class="actions">${consoleBtn}</p>` : "") +
     `<div class="tiles">${billingCard(account, tier)}` +
     (open ? `<article class="tile"><h2 class="label">Pilot</h2>${account.pilot ? pilotTrack(account.pilot) : `<p class="m">Not started. We'll set this up with you.</p>`}</article>` : "") +
-    `<article class="tile"><h2 class="label">Space environment</h2>${renderGaussDoor(weather) || `<p class="m">Space-weather data is unavailable right now.</p>`}</article>` +
+    spaceTile(weather) +
     (member ? memberCard(supportUrl) : "") + argo + edu + staff + `</div>` +
     `<div class="two plan-lists"><div><h2 class="label">${open ? "Included" : "What you get"}: ${esc(tier.name)}</h2><ul class="ticks">${list(tier.features)}</ul></div>` +
     (next ? `<div><h2 class="label">Next: ${esc(next.name)}</h2><ul class="locked">${list(next.features.filter((f) => !tier.features.includes(f)))}</ul><p class="m">${esc(next.entry)} Planning range: ${esc(priceLabel(next))}.</p></div>` : "") +

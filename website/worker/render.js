@@ -51,7 +51,9 @@ export function chip({ state, fetchedAt }) {
 const head = (label, id, title, status) =>
   `<div class="section-head"><div><p class="label">${esc(label)}</p><h2 id="${esc(id)}">${esc(title)}</h2></div>${chip(status)}</div>`;
 
-const title = (l) => (l.vehicle && l.mission ? `${l.vehicle} · ${l.mission}` : l.name || l.vehicle);
+// Launch Library writes "Unknown Payload" when a mission isn't public yet; say that in our own words.
+const mission = (m) => (/^unknown payload$/i.test(String(m ?? "").trim()) ? "payload not announced" : m);
+const title = (l) => (l.vehicle && l.mission ? `${l.vehicle} · ${mission(l.mission)}` : l.name || l.vehicle);
 const where = (l) => [l.provider, l.location].filter(Boolean).join(" · ");
 const upcoming = (items, now) => (items ?? []).filter((l) => Date.parse(l.windowEnd ?? l.net) >= now - 3_600_000);
 
