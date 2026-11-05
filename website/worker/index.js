@@ -52,7 +52,7 @@ const LIVE_PAGES = {
 };
 const NEEDS_FEEDS = new Set(["/", "/gauss/", "/constellation/"]);
 const ATTRIBUTION = {
-  launches: "Data: The Space Devs Launch Library 2 (thespacedevs.com)",
+  launches: "Data: The Space Devs Launch Library 2 (thespacedevs.com); when LL2 is unavailable, Data by RocketLaunch.Live (rocketlaunch.live)",
   events: "Events: Constellation on Luma (luma.com/constellation)",
   weather: "Data: NOAA Space Weather Prediction Center (swpc.noaa.gov)",
 };

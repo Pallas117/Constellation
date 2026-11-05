@@ -18,6 +18,9 @@ export const LUMA = Object.freeze({ page: "https://luma.com/constellation", id: 
 export const SOURCES = Object.freeze({
   events: `https://api.lu.ma/ics/get?entity=calendar&id=${LUMA.id}`,
   launches: "https://ll.thespacedevs.com/2.3.0/launches/upcoming/?limit=12&mode=normal&hide_recent_previous=true",
+  // Fallback when LL2 answers 429 (shared Cloudflare egress IPs, no key): RocketLaunch.Live's free "next five" shortcut
+  // (rocketlaunch.live/api, no key; its one ask is the credit "Data by RocketLaunch.Live", which the page shows).
+  launchesFallback: "https://fdo.rocketlaunch.live/json/launches/next/5",
   scales: "https://services.swpc.noaa.gov/products/noaa-scales.json",
   kp: "https://services.swpc.noaa.gov/products/noaa-planetary-k-index.json",
   wind: "https://services.swpc.noaa.gov/products/summary/solar-wind-speed.json",
@@ -74,6 +77,42 @@ export function normaliseLaunches(json) {
     }))
     .filter((l) => l.id && l.net && (l.name || l.vehicle));
   if (!items.length) throw new Error("LL2: no usable launches");
+  return items;
+}
+
+/** RocketLaunch.Live "next five" -> the same item shape as LL2, marked source: "rocketlaunch". */
+export function normaliseRocketLaunch(json) {
+  if (!Array.isArray(json?.result)) throw new Error("RocketLaunch.Live: no result array");
+  const items = json.result
+    .map((r) => {
+      const t0 = utc(r?.t0) || utc(r?.win_open);
+      const est = r?.est_date ?? {};
+      let net = t0;
+      let precision = "MIN";
+      if (!net && est.year && est.month) {
+        net = utc(new Date(Date.UTC(+est.year, +est.month - 1, +est.day || 1)).toISOString());
+        precision = est.day ? "DAY" : "MON";
+      }
+      const country = clean(r?.pad?.location?.country, 40);
+      const place = clean(r?.pad?.location?.name, 100);
+      return {
+        id: r?.id == null ? "" : `rl-${clean(String(r.id), 32)}`,
+        name: clean(r?.name),
+        vehicle: clean(r?.vehicle?.name, 80),
+        mission: clean(r?.missions?.[0]?.name) || clean(r?.name),
+        orbit: "",
+        provider: clean(r?.provider?.name, 80),
+        location: place && country && !place.includes(country) ? `${place}, ${country}` : place || country,
+        net,
+        precision,
+        windowEnd: utc(r?.win_close),
+        status: "",
+        statusName: "",
+        source: "rocketlaunch",
+      };
+    })
+    .filter((l) => l.id && l.net && (l.name || l.vehicle));
+  if (!items.length) throw new Error("RocketLaunch.Live: no usable launches");
   return items;
 }
 
@@ -294,7 +333,18 @@ const LOADERS = {
   uksa: async (f, env, prev, now) => normaliseUksa(await fetchText(SOURCES.uksa, f, 15_000, "application/atom+xml"), prev, now),
   programmes: async (f, env) => normaliseProgrammes(await fetchText(programmesUrl(env), f, 15_000, "text/csv")),
   // LL2's full-detail query can take ~20 s (measured 18 s on 2026-10-18); the cron can afford to wait.
-  launches: async (f, env) => normaliseLaunches(await fetchJson(SOURCES.launches, f, 30_000, ll2Auth(env, SOURCES.launches))),
+  launches: async (f, env) => {
+    try {
+      return normaliseLaunches(await fetchJson(SOURCES.launches, f, 30_000, ll2Auth(env, SOURCES.launches)));
+    } catch (err) {
+      // LL2 down or rate-limited: the free RocketLaunch.Live list keeps the page live (fewer launches, credited).
+      try {
+        return normaliseRocketLaunch(await fetchJson(SOURCES.launchesFallback, f, 15_000));
+      } catch {
+        throw err; // report LL2's error; the fallback failing too keeps the previous data
+      }
+    }
+  },
   weather: async (f) => {
     // The storm scales are required; Kp and solar wind are extras that may be missing.
     const [scales, kp, wind, mag] = await Promise.allSettled(["scales", "kp", "wind", "mag"].map((k) => fetchJson(SOURCES[k], f)));
@@ -356,3 +406,7 @@ export function feedState(name, rec, now = Date.now()) {
   const state = !rec?.data ? "offline" : ageMin > FEEDS[name].staleMin ? "stale" : "live";
   return { state, ageMin, fetchedAt: rec?.fetchedAt ?? null, attemptAt: rec?.attemptAt ?? null, error: rec?.error ?? null };
 }
+
+/** Where a launches record's items came from: "ll2" (default) or "rocketlaunch". */
+export const launchesSource = (rec) => (rec?.data?.[0]?.source === "rocketlaunch" ? "rocketlaunch" : "ll2");
+export const LAUNCH_CREDIT = Object.freeze({ ll2: "The Space Devs Launch Library 2", rocketlaunch: "Data by RocketLaunch.Live" });
