@@ -79,6 +79,25 @@ def both(el: str) -> list[str]:
     return [el, MIRROR + el + "</g>"]
 
 
+def taper(p0: tuple[float, float], q: tuple[float, float], p1: tuple[float, float], w0: float, w1: float = 0.6) -> str:
+    """A quadratic sweep drawn as a filled shape whose width runs from w0 at p0 to w1 at p1 (a feather, not a tube)."""
+    n = 24
+    left, right = [], []
+    for i in range(n + 1):
+        t = i / n
+        x = (1 - t) ** 2 * p0[0] + 2 * (1 - t) * t * q[0] + t ** 2 * p1[0]
+        y = (1 - t) ** 2 * p0[1] + 2 * (1 - t) * t * q[1] + t ** 2 * p1[1]
+        dx = 2 * (1 - t) * (q[0] - p0[0]) + 2 * t * (p1[0] - q[0])
+        dy = 2 * (1 - t) * (q[1] - p0[1]) + 2 * t * (p1[1] - q[1])
+        length = math.hypot(dx, dy) or 1
+        half = (w0 + (w1 - w0) * t ** 0.9) / 2
+        nx, ny = -dy / length * half, dx / length * half
+        left.append((x + nx, y + ny))
+        right.append((x - nx, y - ny))
+    pts = left + right[::-1]
+    return "M" + "L".join(f"{num(x)} {num(y)}" for x, y in pts) + "Z"
+
+
 def turnstone_body(c: dict[str, str], small: bool = False) -> list[str]:
     """Turnstone v11 (5 Nov 2026, Josh: "We need a more uniform structure with motion, mystique that embodies the
     lightbound brand").
@@ -98,11 +117,13 @@ def turnstone_body(c: dict[str, str], small: bool = False) -> list[str]:
         return f'<path d="{d}" fill="none" stroke="{colour}" stroke-width="{width}" stroke-linecap="round"/>'
 
     wings = [f"M{sx} {sy}Q{qx} {qy} {tx} {ty}" for (sx, sy), (qx, qy), (tx, ty) in TURNSTONE_WING]
-    out = [f'<circle cx="120" cy="120" r="96" fill="none" stroke="{c["blue"]}" stroke-width="{w}"/>']  # the turning tide
+    ring_w = 6 if small else 4  # lighter than the bird, like the Lightbound photon ring: the bird leads, the orbit recedes
+    out = [f'<circle cx="120" cy="120" r="96" fill="none" stroke="{c["blue"]}" stroke-width="{ring_w}"/>']  # the turning tide
     for d in wings:
         out += both(stroke(d, c["cut"], w + 16))  # one clean break in the ring across the whole wing
-    for d in wings:
-        out += both(stroke(d, c["warm"]))
+    for p0, q, p1 in TURNSTONE_WING:  # each sweep tapers from the shoulder to a sharp feather tip
+        out += both(f'<path d="{taper(p0, q, p1, w * 1.6)}" fill="{c["warm"]}"/>')
+        out += both(f'<circle cx="{p0[0]}" cy="{p0[1]}" r="{num(w * 0.8)}" fill="{c["warm"]}"/>')  # a rounded shoulder end
     out += both(stroke("M120 102C131 116 133 142 120 166", c["warm"]))  # the body
     out.append(stroke("M112 120L120 127L128 120", c["warm"]))  # the breast band, the turnstone's field mark
     # The head: round, the short wedge bill turned a touch up, the dark eye of the harlequin mask.
