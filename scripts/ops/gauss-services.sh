@@ -137,6 +137,16 @@ GATES_SRC="$GATES_DIR/runner.src"      # sha= blob= from= at=: the commit the ru
 HEAVY="${GAUSS_HEAVY:-$HOME/.local/bin/claude-heavy}"
 GATES_WAIT_MIN="${GAUSS_GATES_WAIT_MIN:-120}" # one claude-heavy wait; the runner asks again when it gives up
 GATES_EXPIRE_H="${GAUSS_GATES_EXPIRE_H:-72}"   # a request still waiting after this is dropped (EXPIRED)
+# Gatebox (GAU-207 sizing, GAU-223): an Oracle Always Free VM on the tailnet runs the Linux-portable
+# gates (npm ci, npm test, quality:full, build) on the exact commit, fetched from public GitHub, through
+# the gate user's forced command (scripts/ops/gatebox/cloud-init.yaml). The ops tests and the VCRM need
+# macOS, so a deploy record still comes from this Mac; the gatebox screens first, so a commit that fails
+# there is FAILED without taking this Mac's memory (16 of 70 guarded gate runs failed, 29 Oct-5 Nov,
+# `argo scale`). Off unless a host is set: GAUSS_GATEBOX or one line in $WATCH_DIR/gatebox (a tailnet name).
+GATEBOX="${GAUSS_GATEBOX:-$(head -1 "$WATCH_DIR/gatebox" 2>/dev/null || true)}"
+GATEBOX_KEY="${GAUSS_GATEBOX_KEY:-$HOME/.ssh/gauss-gate}"
+GATEBOX_HOSTS="$WATCH_DIR/gatebox.known_hosts" # the gatebox's host key, pinned on first contact over the tailnet
+GATEBOX_REPO="Pallas117/Constellation"         # the only repo gauss-gate-run accepts
 # balance: safe, reversible load shedding (GAU-126). GAUSS_BALANCE=0 turns it off.
 BALANCE="${GAUSS_BALANCE:-1}"
 LOCAL_CODER="${GAUSS_LOCAL_CODER:-$HOME/.local/bin/local-coder}"   # optional on-device model server
@@ -1021,6 +1031,33 @@ gates_start() { # start the one runner, detached from this session (own session 
   echo "Gate runner started (log: $LOGS/gates-runner.log)."
 }
 
+gates_prescreen() { # gates_prescreen <sha> <tree>: 0 when the gatebox failed the commit (result written); else 1: gate it here
+  local sha=$1 tree=$2 log rc=0 last
+  [ -n "$GATEBOX" ] || return 1
+  [[ "$GATEBOX" =~ ^[A-Za-z0-9][A-Za-z0-9.-]*$ ]] || { echo "gatebox: not a host name: $GATEBOX; gating here"; return 1; }
+  [ -r "$GATEBOX_KEY" ] || { echo "gatebox: no key at $GATEBOX_KEY; gating here"; return 1; }
+  mkdir -p "$GATES_DIR/logs"; log="$GATES_DIR/logs/gatebox-${sha:0:12}.log"
+  echo "$(date '+%F %T') gatebox $GATEBOX: screening ${sha:0:7} ..."
+  # BatchMode: never a prompt. The host key is pinned in its own file on first contact (the tailnet has
+  # already authenticated the machine); a changed key is refused, and the run falls back to this Mac.
+  ssh -i "$GATEBOX_KEY" -o IdentitiesOnly=yes -o BatchMode=yes -o ConnectTimeout=15 -o ServerAliveInterval=30 \
+    -o ServerAliveCountMax=4 -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile="$GATEBOX_HOSTS" \
+    "gate@$GATEBOX" "$GATEBOX_REPO $sha" >"$log" 2>&1 </dev/null || rc=$?
+  last=$(grep -E '^gates rc=' "$log" | tail -1)
+  # gauss-gate-run prints "gates rc=N in S s on <sha>" after the gates; without that line (ssh 255, busy 75,
+  # sha not on GitHub 65, fetch 69, a killed run) the gatebox said nothing about the commit.
+  if [ "$rc" = 0 ] && [[ "$last" == "gates rc=0 "* ]]; then
+    echo "$(date '+%F %T') gatebox passed ${sha:0:7} ($last); full gates here next"; return 1
+  fi
+  if [ "$rc" -ge 1 ] && [ "$rc" -le 63 ] && [[ "$last" == "gates rc=$rc "* ]]; then
+    event gates-gatebox gates "failed on the gatebox" sha="$sha" rc:="$rc" host="$GATEBOX"
+    gates_result "$sha" "$tree" FAILED "on gatebox $GATEBOX (npm ci, test, quality:full, build): $last; log $log"
+    return 0
+  fi
+  echo "$(date '+%F %T') gatebox could not screen ${sha:0:7} (exit $rc: $(tail -1 "$log" 2>/dev/null)); gating here"
+  return 1
+}
+
 gates_run() { # gates_run [--once]: work through the queue, oldest first, then exit; --once: stop after one wait that gave up
   local once=${1:-} self req sha tree queued rc pid me
   self="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
@@ -1053,6 +1090,7 @@ gates_run() { # gates_run [--once]: work through the queue, oldest first, then e
       gates_result "$sha" "$tree" SKIPPED "already passed: $(gates_summary "$GATES_DIR/$tree.json")"
       rm -f "$req"; continue
     fi
+    if gates_prescreen "$sha" "$tree"; then rm -f "$req"; tail -1 "$GATES_RESULTS"; continue; fi
     echo "$(date '+%F %T') gates ${sha:0:7} ..."
     rc=0
     if [ -x "$HEAVY" ]; then
@@ -1064,6 +1102,11 @@ gates_run() { # gates_run [--once]: work through the queue, oldest first, then e
       echo "$(date '+%F %T') ${sha:0:7} still waiting for memory or power; asking again."
       [ "$once" = --once ] && return 0
       sleep "${GAUSS_GATES_RETRY_S:-60}"; continue
+    fi
+    if [ "$rc" = 76 ] && [ -f "$req" ]; then # the install lost the network: same request, after a pause
+      echo "$(date '+%F %T') ${sha:0:7} install lost the network; trying again in ${GAUSS_GATES_NET_RETRY_S:-600} s."
+      [ "$once" = --once ] && return 0
+      sleep "${GAUSS_GATES_NET_RETRY_S:-600}"; continue
     fi
     if [ -f "$req" ]; then # run-one died before it could say why
       gates_result "$sha" "$tree" ERROR "gate run exited $rc without a result (log: $LOGS/gates-runner.log)"; rm -f "$req"
@@ -1105,8 +1148,14 @@ gates_run_one() { # gates_run_one <request>: check out, install if the lockfile 
   [ -f "$co/package-lock.json" ] && lock=$(install_key "$co") || { gates_fail "no package-lock.json at ${sha:0:7}"; return 1; }
   if [ "$(cat "$co/node_modules/.gauss-lock" 2>/dev/null)" != "$lock" ]; then
     echo "Installing dependencies in $co ..."
-    (cd "$co" && PATH="$(dirname "$NODE"):$PATH" npm ci --no-audit --no-fund >"$GATES_DIR/runs/$sha.install.log" 2>&1) \
-      || { gates_fail "npm ci failed (log: $GATES_DIR/runs/$sha.install.log)"; return 1; }
+    if ! (cd "$co" && PATH="$(dirname "$NODE"):$PATH" npm ci --no-audit --no-fund >"$GATES_DIR/runs/$sha.install.log" 2>&1); then
+      # A dropped download (5 Nov 2026: read ETIMEDOUT on the phone hotspot) isn't the commit's fault:
+      # the request stays first in line and the runner tries again later.
+      if grep -Eq 'ETIMEDOUT|ECONNRESET|ECONNREFUSED|ENOTFOUND|EAI_AGAIN|ENETUNREACH|network request to' "$GATES_DIR/runs/$sha.install.log"; then
+        echo "npm ci lost the network for ${sha:0:7} (log: $GATES_DIR/runs/$sha.install.log): it stays queued."; return 76
+      fi
+      gates_fail "npm ci failed (log: $GATES_DIR/runs/$sha.install.log)"; return 1
+    fi
     echo "$lock" >"$co/node_modules/.gauss-lock"
   fi
   # The native MHD kernel: npm ci no longer builds it (package.json "gypfile": false, GAU-228) and the
@@ -1239,6 +1288,7 @@ gates_status() {
     echo "queued: $(req_get "$f" sha | cut -c1-7) by $(req_get "$f" by) since $(date -r "$(req_get "$f" queued)" '+%F %H:%M')"
   done
   [ $n -gt 0 ] || echo "queue: empty"
+  if [ -n "$GATEBOX" ]; then echo "gatebox: $GATEBOX screens each request first"; else echo "gatebox: off (all gates run here)"; fi
   tail -5 "$GATES_RESULTS" 2>/dev/null || true
 }
 
