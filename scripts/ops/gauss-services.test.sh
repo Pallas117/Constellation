@@ -62,7 +62,7 @@ run() { # run <args...>: gauss-services.sh with the stubs; alerts land in $LOG
     GAUSS_SUDOERS="$T/sudoers" MLX="${MLX:-0}" MLXPORT="${MLXPORT:-8089}" ACTIONS="$T/actions" GAUSS_BALANCE="${GAUSS_BALANCE:-1}" \
     LOADED="${LOADED:-}" HEALTH="${HEALTH:-200}" HEALTH_FILE="${HEALTH_FILE:-}" GAUSS_DEPLOY_WAIT=0 DISKGB="${DISKGB:-50}" \
     GATEFAIL="${GATEFAIL:-}" GAUSS_BY=test-user BOOT="${BOOT:-1000}" GAUSS_DIAG_DIRS="$T/diag" GAUSS_EVENTS_MAX_KB="${GAUSS_EVENTS_MAX_KB:-5120}" \
-    GAUSS_DEV_DRY="${GAUSS_DEV_DRY:-0}" GAUSS_GATES_START=0 HEAVYGIVEUP="${HEAVYGIVEUP:-}" GAUSS_GATES_EXPIRE_H="${GAUSS_GATES_EXPIRE_H:-72}" GAUSS_DEV_API_PORT="${GAUSS_DEV_API_PORT:-3101}" \
+    GAUSS_DEV_DRY="${GAUSS_DEV_DRY:-0}" GAUSS_GATES_START=0 HEAVYGIVEUP="${HEAVYGIVEUP:-}" NPMNET="${NPMNET:-}" GAUSS_GATES_EXPIRE_H="${GAUSS_GATES_EXPIRE_H:-72}" GAUSS_DEV_API_PORT="${GAUSS_DEV_API_PORT:-3101}" \
     SRC="${SRC:-AC Power}" BATT="${BATT:-80%; charging; present: true}" SD="${SD:-0}" FCC="${FCC:-}" ACW="${ACW:-}" \
     LEAKY="${LEAKY:-}" LEAKFP="${LEAKFP:-12 MB}" AVAIL="${AVAIL:-50}" GAUSS_SWAP_LAST="${SWAPLAST:-/dev/null}" \
     ARGOSTATUS="${ARGOSTATUS:-}" LEVEL="${LEVEL:-1}" FREE="${FREE:-50}" SWAPUSED="${SWAPUSED:-1000}" OLD_ARGO="${OLD_ARGO:-}" bash "$SCRIPT" "$@"
@@ -342,6 +342,7 @@ stub npm 'if [ "$1" = run ]; then
   esac
   [ "$GATEFAIL" != "$2" ]; exit
 fi
+[ -n "$NPMNET" ] && [ "$1" = ci ] && { echo "npm error network request to https://registry.npmjs.org/x.tgz failed, reason: read ETIMEDOUT" >&2; exit 1; }
 echo "npm $*" >>"$ACTIONS"; mkdir -p node_modules'
 g() { git -C "$LIVE" -c user.email=t@t -c user.name=t "$@"; }
 head_is() { [ "$(g rev-parse HEAD)" = "$1" ]; }
@@ -537,6 +538,12 @@ out=$(HEAVYGIVEUP=1 run gates run --once 2>&1); [[ "$out" == *"still waiting"* ]
   && [ "$(tail -1 "$GR" | cut -d' ' -f2)" != "$F" ]; expect "gates run: when claude-heavy gives up, the request stays queued" $?
 GAUSS_GATES_EXPIRE_H=0 run gates run >/dev/null 2>&1
 [ "$(tail -1 "$GR" | cut -d' ' -f2,4)" = "$F EXPIRED" ] && [ -z "$(ls "$GQ")" ]; expect "gates run: a request waiting past GAUSS_GATES_EXPIRE_H expires" $?
+# 5 Nov 2026: an install timed out on the phone hotspot and the request was dropped as ERROR.
+g checkout -q --detach "$E"; echo net >>"$LIVE/package-lock.json"; g commit -qam lock-net; N=$(g rev-parse HEAD); g checkout -q --detach "$E"
+(cd "$LIVE" && run gates enqueue "$N" >/dev/null 2>&1)
+out=$(NPMNET=1 run gates run --once 2>&1); [[ "$out" == *"lost the network"* ]] && grep -q "sha=$N" "$GQ"/*.req \
+  && ! grep -q " $N " "$GR"; expect "gates run: an install that loses the network keeps the request queued, with no result line" $?
+rm -f "$(grep -l "sha=$N" "$GQ"/*.req)"
 g checkout -q --detach "$E"; echo h1 >"$LIVE/backend/server.ts"; g commit -qam h1; H1=$(g rev-parse HEAD)
 echo h2 >"$LIVE/backend/server.ts"; g commit -qam h2; H2=$(g rev-parse HEAD); g checkout -q --detach "$E"
 (cd "$LIVE" && run gates enqueue "$H1" >/dev/null 2>&1); out=$(cd "$LIVE" && run gates enqueue "$H2" 2>&1)
