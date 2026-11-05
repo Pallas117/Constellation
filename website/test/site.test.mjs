@@ -121,7 +121,7 @@ test("marks are served without embedded C2PA metadata", () => {
 
 // ---- Turnstone is a secret project ----
 test("Turnstone: mark and name only; nothing says what it does", () => {
-  const door = html["/"].match(/<li><a class="door" href="\/turnstone\/">[\s\S]*?<\/li>/)[0];
+  const door = html["/"].match(/<li><a href="\/turnstone\/">[\s\S]*?<\/li>/)[0];
   const tells = /consult|hardware|security|services|clients|defen[cs]e|engagement|advis/i;
   assert.doesNotMatch(text(door), tells);
   const page = html["/turnstone/"];
@@ -167,9 +167,36 @@ test("every link and resource resolves", () => {
   for (const [, anchor] of html["/"].matchAll(/href="\/#([^"]+)"/g)) assert.match(html["/"], new RegExp(`id="${anchor}"`));
 });
 
+test("live-view gate: a labelled pre-rendered frame behind the Argo door, no script, nothing live", () => {
+  const home = html["/"];
+  const gate = home.match(/<section id="enter" class="live-gate"[\s\S]*?<\/section>/)?.[0] ?? "";
+  assert.ok(gate, "the gate follows the descent");
+  assert.ok(home.indexOf('id="enter"') > home.indexOf("<!--/descent-->") && home.indexOf('id="enter"') < home.indexOf('id="contact"'));
+  for (const f of ["gauss-live-wide.webp", "gauss-live-tall.webp"]) assert.ok(size(`/assets/media/${f}`) < 250_000, `${f} stays small`);
+  assert.match(gate, /loading="lazy"/, "never competes with the hero for first paint");
+  assert.match(gate, /a frame from the Gauss live view, not live data/, "a still is never passed off as live");
+  // One door: the Argo sail on the button. This release ships the public landing alone (ported from #231, which adds
+  // the sign-in route): the button plays the replay and the line under it says so. No <!--full--> block to strip.
+  const sail = '<img class="sail" src="/assets/marks/argo-mark-colour-dark.svg" alt="" width="24" height="24" decoding="async">';
+  assert.match(gate, new RegExp(`<a class="btn argo radiate" href="/gauss/#replay">${sail}Sign in with Argo</a>`));
+  assert.match(gate, /<p class="src">Accounts aren&rsquo;t open yet: until they are, this button plays a replay of the live view\. /);
+  assert.doesNotMatch(gate, /href="\/live"|<!--full-->|<!--public-->/, "nothing points at a sign-in route that is not deployed");
+  assert.match(html["/gauss/"], /<section id="replay"/, "the replay the door opens on");
+  assert.equal(read("assets/marks/argo-mark-colour-dark.svg").match(/<polygon/g).length, 5, "the Argo sail mark: mast, boom, three sails and the star");
+  assert.match(read("assets/site.css"), /\.btn\.argo\{/, "the door has its own style");
+  assert.match(gate, /<svg class="rad-field"[^>]*aria-hidden="true"/, "the radiation field is decoration, hidden from screen readers");
+  assert.doesNotMatch(gate, /<script|<iframe|<canvas/);
+  // Three movements (Josh, 5 Nov 2026): the landing is the slogan alone, the descent carries its own 01/05 captions,
+  // then one door. One short, true line about Argo; no encryption claims, nothing Argo's own page says differently.
+  assert.deepEqual([...home.matchAll(/class="k">(\d\d_[A-Z_]+)</g)].map((m) => m[1]), ["01_ENTER"], "one numbered kicker: the door");
+  assert.match(home, />02_CONTACT</);
+  assert.match(text(gate), /Argo is Gauss&rsquo;s network agent, and the way in\. Included for operators and staff; never sold\./);
+  assert.doesNotMatch(text(gate), /encrypt|quantum|HPKE|Ed25519|RFC ?9173|Nadia|Turnstone/i);
+});
+
 test("live sections have their markers, with a working static fallback", () => {
   const has = (route, m) => assert.match(html[route], new RegExp(`<!--live:${m}-->[\\s\\S]*?<!--/live:${m}-->`), `${route} ${m}`);
-  for (const m of ["gauss-door", "constellation-door"]) has("/", m);
+  assert.doesNotMatch(html["/"], /<!--live:/, "the landing page has no live sections: its readouts moved to the product pages");
   for (const m of ["launches", "weather", "gauss-door"]) has("/constellation/", m);
   has("/gauss/", "constellation-door");
 });
@@ -177,7 +204,10 @@ test("live sections have their markers, with a working static fallback", () => {
 // ---- Flow ----
 test("flow: no dead ends; each product page ends with the other doors, Turnstone leads home", () => {
   const doors = (p) => [...p.matchAll(/<a class="door" href="([^"]+)"/g)].map((m) => m[1]);
-  assert.deepEqual(doors(html["/"]), ["/gauss/", "/constellation/", "/turnstone/"], "three projects");
+  // The landing page's doors became one quiet row of marks (Josh, 5 Nov 2026: nothing repeating; the header carries the names).
+  assert.equal(html["/"].match(/<ul class="marks">/g).length, 1);
+  assert.deepEqual([...html["/"].match(/<ul class="marks">[\s\S]*?<\/ul>/)[0].matchAll(/<a href="([^"]+)">/g)].map((m) => m[1]), ["/gauss/", "/constellation/", "/turnstone/"], "three projects");
+  assert.doesNotMatch(html["/"], /class="door"|Enter Gauss|Visit Constellation|Restricted/, "no door cards on the landing page");
   assert.match(html["/"], /<a href="\/education\/">Gauss for Education<\/a>, part of <a href="\/constellation\/#outreach">Constellation&rsquo;s outreach<\/a>/);
   assert.match(html["/"], /Email Josh, the founder/);
   assert.deepEqual(doors(html["/argo/"]), ["/gauss/", "/constellation/"]);
@@ -282,7 +312,9 @@ test("GAU-12: leads with Fleet Integration; the replay demo and evidence link ar
   assert.match(text(evidence), /Synthetic · screening evidence/);
   assert.match(text(evidence), /not a mission record/);
   for (const rx of [/\bdose\b/i, /\bdamage\b/i, /failure[- ]probabilit/i]) assert.doesNotMatch(text(evidence), rx);
-  assert.match(text(html["/"].match(/<section class="hero"[\s\S]*?<\/section>/)[0]), /Gauss tells satellite, ground-segment and onboard(?:-|&#8209;)AI teams which mission data they can trust/, "wedge and buyer on the first screen");
+  // The landing's first screen is the slogan alone (Josh, 5 Nov 2026); the wedge is the descent's last caption and the Gauss page's hero.
+  assert.equal(text(html["/"].match(/<section class="hero"[\s\S]*?<\/section>/)[0]).trim(), "Carry hope, go beyond.", "the first screen is the slogan alone");
+  assert.match(text(html["/"]), /Satellites fly through all of it\. Gauss tells their teams which data to trust\./, "the wedge, once, where the descent ends");
 });
 
 test("sales-plan entry points: /pilot and /sales redirect into the Gauss flow", () => {
@@ -379,7 +411,7 @@ test("Constellation is free and invite-only: no prices, no payment, invitation w
     assert.match(text(html[route]), /invit/i);
   }
   assert.match(html["/constellation/apply/"], /<button class="btn" type="submit">Request an invitation<\/button>/);
-  assert.match(text(html["/"]), /The space community\. Free, by invitation\./);
+  assert.match(text(html["/constellation/"]), /Free, by invitation\./);
 });
 
 test("signed-in pages are private shells; the Worker fills them only after sign-in", () => {
