@@ -6,7 +6,7 @@
 import { accessIdentity, isAdmin, isStaff } from "./auth.js";
 import { deleteAccount, getAccount, getApplication, latestApplication, listAccounts, listApplications, putAccount, setApplicationStatus } from "./data.js";
 import { readCapped } from "./body.js";
-import { sameOrigin } from "./forms.js";
+import { GROUP_INVITE_PATH, groupInviteText, sameOrigin } from "./forms.js";
 import { readFeed } from "./feeds.js";
 import { esc, renderEventIcs, renderGaussDoor, supportLink } from "./render.js";
 import { deleteCall, getCall, listCalls, renderCalls, renderCallsAdmin, rsvp, saveCall } from "./calls.js";
@@ -114,9 +114,16 @@ export function eduCard(env, account, email, start = false) {
   return `<article class="tile billing"><h2 class="label">${esc(EDU.name)}</h2>${price ? `<p class="big">${esc(price)}</p>` : ""}<p class="t">${esc(state)}</p>${body}<p class="m"><a href="/education/">About ${esc(EDU.name)}</a></p></article>`;
 }
 
-function memberCard(supportUrl = "") {
+// The members' WhatsApp group (CONSTELLATION_GROUP_URL, a Worker secret: anyone holding an invite link can join,
+// so it never goes in this repo or on a public page). Only a chat.whatsapp.com invite link is used.
+export const groupLink = (url) => (/^https:\/\/chat\.whatsapp\.com\/[A-Za-z0-9]{10,40}$/.test(url ?? "") ? url : "");
+
+function memberCard(supportUrl = "", groupUrl = "") {
   return `<article class="tile"><h2 class="label">Constellation</h2><p class="big">Member</p><p class="t">Free, by invitation.</p>` +
-    `<p class="m">Community channels are shared with members directly. Launch calendar: <a href="/api/launches.ics">subscribe</a>.</p>` +
+    (groupLink(groupUrl)
+      ? `<p class="m"><a href="${esc(groupUrl)}" rel="noopener noreferrer">Join the members' WhatsApp group</a>. Please keep this link to yourself; to bring a friend, send them the <a href="${GROUP_INVITE_PATH}">invitation link</a> so a person can welcome them in.</p>`
+      : `<p class="m">Community channels are shared with members directly.</p>`) +
+    `<p class="m">Launch calendar: <a href="/api/launches.ics">subscribe</a>.</p>` +
     (supportLink(supportUrl) ? `<p class="m"><a href="${esc(supportUrl)}" rel="noopener">Support Constellation</a> (optional)</p>` : "") +
     `<p class="m"><a href="/constellation/">Constellation</a></p></article>`;
 }
@@ -128,7 +135,7 @@ export function staffCard(opsUrl) {
     `<p class="m">For the Lightbound team. It signs you in with the same email.</p><p class="m"><a href="${esc(opsUrl)}" rel="noopener">Open operations and training</a></p></article>`;
 }
 
-export function renderWorkspace({ email, account, admin, weather, consoleUrl, supportUrl = "", argo = "", edu = "", staff = "", applications = [], notice = "" }) {
+export function renderWorkspace({ email, account, admin, weather, consoleUrl, supportUrl = "", groupUrl = "", argo = "", edu = "", staff = "", applications = [], notice = "" }) {
   const tier = tierById(account?.tier);
   const who = esc(account?.name || email);
   const adminLink = admin ? `<p class="actions"><a class="btn ghost" href="/app/admin/">Applications and accounts</a></p>` : "";
@@ -150,7 +157,7 @@ export function renderWorkspace({ email, account, admin, weather, consoleUrl, su
       ? `<p class="lead">Your application from ${esc(day(pending[0].at))} is with the Lightbound team. You'll hear from us by email.</p>`
       : `<p class="lead">You're signed in as ${esc(email)}.${member || argo || edu || staff ? "" : " This account has no Gauss plan yet."}</p>`;
     return `<p class="k">00_WORKSPACE</p><h1 id="hero-h">Welcome, ${who}.</h1>${bannerHtml}${status}` +
-      (member || argo || edu || staff ? `<div class="tiles">${staff}${member ? memberCard(supportUrl) : ""}${argo}${edu}</div>` : "") +
+      (member || argo || edu || staff ? `<div class="tiles">${staff}${member ? memberCard(supportUrl, groupUrl) : ""}${argo}${edu}</div>` : "") +
       (member || argo || edu || staff ? "" : `<p class="actions"><a class="btn" href="/gauss/#plans">See the Gauss plans</a>${pending.length ? "" : ` <a class="btn ghost" href="/gauss/apply/">Apply</a>`}</p>`) + adminLink;
   }
   const open = unlocked(billingStatus(account));
@@ -166,7 +173,7 @@ export function renderWorkspace({ email, account, admin, weather, consoleUrl, su
     `<div class="tiles">${billingCard(account, tier)}` +
     (open ? `<article class="tile"><h2 class="label">Pilot</h2>${account.pilot ? pilotTrack(account.pilot) : `<p class="m">Not started. We'll set this up with you.</p>`}</article>` : "") +
     `<article class="tile"><h2 class="label">Space environment</h2>${renderGaussDoor(weather) || `<p class="m">Space-weather data is unavailable right now.</p>`}</article>` +
-    (member ? memberCard(supportUrl) : "") + argo + edu + staff + `</div>` +
+    (member ? memberCard(supportUrl, groupUrl) : "") + argo + edu + staff + `</div>` +
     `<div class="two plan-lists"><div><h2 class="label">${open ? "Included" : "What you get"}: ${esc(tier.name)}</h2><ul class="ticks">${list(tier.features)}</ul></div>` +
     (next ? `<div><h2 class="label">Next: ${esc(next.name)}</h2><ul class="locked">${list(next.features.filter((f) => !tier.features.includes(f)))}</ul><p class="m">${esc(next.entry)} Planning range: ${esc(priceLabel(next))}.</p></div>` : "") +
     `</div><p class="actions"><a class="btn ghost" href="mailto:jzwnathan@lightbound.uk?subject=${encodeURIComponent(`Gauss ${tier.name}`)}">Email Josh, the founder</a></p>` +
@@ -184,27 +191,28 @@ const pilotSelect = (cur) => `<select name="pilot" aria-label="Pilot step">${opt
 const invoiceCheck = (on, id) => `<label class="check" for="${id}"><input id="${id}" type="checkbox" name="invoice" value="yes"${on ? " checked" : ""}> Allow invoice</label>`;
 const communitySelect = (cur) => `<select name="community" aria-label="Constellation">${opt("", "Not a member", cur)}${opt("member", "Constellation member", cur)}</select>`;
 
-const inviteDraft = (email, name) => {
-  const body = `Hello${name ? ` ${name}` : ""},\n\nYou're invited to Constellation, Lightbound's space community group. Membership is free.\n\nSign in with this email address at https://lightbound.uk/app/ (we'll email you a one-time code; there's no password).\n\nJoshua`;
+const inviteDraft = (email, name, groupUrl = "") => {
+  const group = groupLink(groupUrl) ? `Join the members' WhatsApp group: ${groupUrl}\nPlease keep that link to yourself; friends can ask for an invitation at https://lightbound.uk${GROUP_INVITE_PATH}\n\n` : "";
+  const body = `Hello${name ? ` ${name}` : ""},\n\nYou're invited to Constellation, Lightbound's space community group. Membership is free.\n\n${group}Sign in with this email address at https://lightbound.uk/app/ (we'll email you a one-time code; there's no password).\n\nJoshua`;
   return `mailto:${encodeURIComponent(email)}?subject=${encodeURIComponent("Your invitation to Constellation")}&body=${encodeURIComponent(body)}`;
 };
 
-export function renderAdmin({ applications, accounts, details, invited, error, cap = 50 }) {
+export function renderAdmin({ applications, accounts, details, invited, error, cap = 50, origin = "https://lightbound.uk", groupUrl = "" }) {
   const open = applications.filter((a) => a.status === "new");
   const done = applications.filter((a) => a.status !== "new");
   const card = (a) => {
     const d = details[a.id] ?? {};
     const planId = tierById(a.plan) ? a.plan : "pilot";
     const facts = [d.org, d.role, d.topic, d.format, d.groupSize ? `group: ${d.groupSize}` : "", d.institution, d.eduRole, d.course, d.seats ? `${d.seats} (people)` : "", d.missionType, d.stage, d.groundStack, d.dataAccess, d.timeline, d.interest, d.platform, d.devices ? `${d.devices} devices` : "",
-      d.referrer ? `referred by ${d.referrer}` : "", d.link].filter(Boolean).join(" · ");
+      d.referrer ? `referred by ${d.referrer}` : "", d.link, d.title, d.showLink, d.alsoJoin].filter(Boolean).join(" · ");
     const decide = a.status === "new"
       ? `<form method="post" action="/app/admin/decide" class="inline"><input type="hidden" name="id" value="${esc(a.id)}">` +
         (a.kind === "gauss" ? `${tierSelect(planId)} ${quoteInput(0)} ${invoiceCheck(false, `inv-${esc(a.id)}`)}` : a.kind === "constellation" ? `<input type="hidden" name="community" value="member">` : a.kind === "edu" ? `${quoteInput(0)} ` : "") +
-        `<button class="btn" name="decision" value="approve">${{ gauss: "Approve with quote", constellation: "Invite", argo: "Mark handled", edu: "Approve for self-serve", workshop: "Mark contacted" }[a.kind] ?? "Approve"}</button> ` +
+        `<button class="btn" name="decision" value="approve">${{ gauss: "Approve with quote", constellation: "Invite", argo: "Mark handled", edu: "Approve for self-serve", workshop: "Mark contacted", showcase: "Mark contacted" }[a.kind] ?? "Approve"}</button> ` +
         (a.kind === "edu" ? `<button class="btn ghost" name="decision" value="department">Department licence at this yearly quote</button> ` : "") +
         `<button class="btn ghost" name="decision" value="decline">Decline</button></form>`
       : `<span class="tag${a.status === "approved" ? " go" : ""}">${esc(a.status)}</span>`;
-    const kicker = { gauss: `GAUSS · ${tierById(a.plan)?.name ?? a.plan ?? ""}`, constellation: "CONSTELLATION · INVITATION REQUEST", argo: "ARGO · EARLY-ACCESS LIST (CLOSED)", edu: `EDUCATION · ${d.eduRole ?? ""}`, workshop: `WORKSHOP · ${d.topic ?? ""}` }[a.kind] ?? a.kind;
+    const kicker = { gauss: `GAUSS · ${tierById(a.plan)?.name ?? a.plan ?? ""}`, constellation: "CONSTELLATION · INVITATION REQUEST", argo: "ARGO · EARLY-ACCESS LIST (CLOSED)", edu: `EDUCATION · ${d.eduRole ?? ""}`, workshop: `WORKSHOP · ${d.topic ?? ""}`, showcase: `SHOWCASE · ${d.entryType ?? ""}` }[a.kind] ?? a.kind;
     return `<li class="app-card"><div class="app-head"><span class="label">${esc(kicker)}</span><time datetime="${esc(a.at)}">${esc(day(a.at))}</time></div>` +
       `<h3>${esc(a.name)} <span class="muted">${esc(a.email)}</span></h3>${facts ? `<p class="m">${esc(facts)}</p>` : ""}` +
       (d.message || d.note ? `<p class="msg">${esc(d.message || d.note)}</p>` : "") + decide + `</li>`;
@@ -220,13 +228,15 @@ export function renderAdmin({ applications, accounts, details, invited, error, c
   }).join("");
   const banner = error === "quote" || error === "edu"
     ? `<p class="banner warn" role="alert">${error === "edu" ? "Not approved: enter the department licence's yearly quote in pounds." : "Not approved: enter a quote inside the plan's range."}</p>`
-    : invited ? `<p class="banner" role="status">${esc(invited.email)} is now a Constellation member. <a href="${esc(inviteDraft(invited.email, invited.name))}">Draft the invitation email</a> (opens your mail app; nothing is sent automatically).</p>` : "";
+    : invited ? `<p class="banner" role="status">${esc(invited.email)} is now a Constellation member. <a href="${esc(inviteDraft(invited.email, invited.name, groupUrl))}">Draft the invitation email</a>${groupLink(groupUrl) ? " (it includes the members' WhatsApp group link)" : ""} (opens your mail app; nothing is sent automatically).</p>` : "";
   return (
     `<p class="k">00_ADMIN</p><h1 id="hero-h">Applications and accounts.</h1>${banner}` +
     `<h2>New (${open.length})</h2>${open.length ? `<ul class="apps">${open.map(card).join("")}</ul>` : `<p class="muted">Nothing waiting.</p>`}` +
     `<h2>Invite to Constellation</h2><p class="muted">Free and invite-only. This creates the membership; you send the invitation yourself.</p>` +
     `<form method="post" action="/app/admin/invite" class="inline add"><label class="sr" for="inv-email">Email</label><input id="inv-email" name="email" type="email" placeholder="email@example.com" required> ` +
     `<label class="sr" for="inv-name">Name</label><input id="inv-name" name="name" placeholder="Name" maxlength="100"> <button class="btn">Invite</button></form>` +
+    `<p class="m announce">Friends in the WhatsApp group: <a href="${esc(`https://wa.me/?text=${encodeURIComponent(groupInviteText(origin))}`)}" rel="noopener noreferrer">Draft the group invite</a> ` +
+    `(you choose the group and press send). Their requests arrive here as "referred by ${esc("the Constellation WhatsApp group")}". Link: ${esc(origin + GROUP_INVITE_PATH)}</p>` +
     (accounts.some((u) => u.argo === "requested") ? `<p class="banner" role="status">Gauss Argo setup requested by ${accounts.filter((u) => u.argo === "requested").length}: email each their install link, then press "Mark Argo setup sent" below.</p>` : "") +
     `<h2>Accounts (${accounts.length} of ${cap})</h2><div class="tw"><table class="table"><thead><tr><th>Email</th><th>Plan, quote (£), billing, invoice, pilot, membership</th></tr></thead><tbody>${rows}</tbody></table></div>` +
     `<form method="post" action="/app/admin/account" class="inline add"><label class="sr" for="new-email">Email</label><input id="new-email" name="email" type="email" placeholder="email@company.com" required> ` +
@@ -415,7 +425,7 @@ export async function handleApp(request, env, url, { respond, fillPage, fetchImp
         const edu = { ...(prev.edu ?? {}), approvedAt: new Date().toISOString(),
           ...(department ? { plan: "department", quote: Math.round(pounds * 100), institution: app.institution ?? null, seats: app.seats ?? null, billing: { status: "due" } } : {}) };
         await putAccount(env, { ...prev, name: prev.name ?? app.name, org: prev.org ?? app.institution ?? null, edu }, id.email);
-      } else if (approve && !["workshop", "argo"].includes(app.kind)) { // workshop requests and old Argo list entries are leads: no account change
+      } else if (approve && !["workshop", "showcase", "argo"].includes(app.kind)) { // workshop requests, showcase submissions and old Argo list entries are leads: no account change
         const prev = (await getAccount(env, app.email)) ?? { email: app.email };
         const base = { ...prev, name: prev.name ?? app.name, org: prev.org ?? app.org ?? null };
         await putAccount(env, app.kind === "gauss"
@@ -484,7 +494,7 @@ export async function handleApp(request, env, url, { respond, fillPage, fetchImp
     const invited = invitedEmail ? await getAccount(env, invitedEmail) : null;
     const error = ["quote", "call", "edu"].includes(url.searchParams.get("error")) ? url.searchParams.get("error") : null;
     const calls = await listCalls(env);
-    return fillPage("/app/admin/", { admin: () => renderAdmin({ applications, accounts, details, invited: invited?.community === "member" ? invited : null, error, cap: userCap(env) }) +
+    return fillPage("/app/admin/", { admin: () => renderAdmin({ applications, accounts, details, invited: invited?.community === "member" ? invited : null, error, cap: userCap(env), origin: url.origin, groupUrl: env.CONSTELLATION_GROUP_URL || "" }) +
       `<div id="calls">${error === "call" ? `<p class="banner warn" role="alert">Not scheduled: give a title, a future start time and an https link (or none).</p>` : ""}` +
       `${renderCallsAdmin(calls, accounts.filter((a) => a.community === "member").map((a) => a.email), url.origin)}</div>` }, 200, APP_HEADERS);
   }
@@ -499,7 +509,7 @@ export async function handleApp(request, env, url, { respond, fillPage, fetchImp
     const callNotice = url.searchParams.get("call") ?? "";
     // Members' opportunities: four cached feeds, plus their own application only while no interests are saved.
     const opps = member ? await memberOpportunities(env, account, latest) : "";
-    return fillPage("/app/", { workspace: () => renderWorkspace({ email: id.email, account, admin, weather, consoleUrl: env.GAUSS_APP_URL || "", supportUrl: env.SUPPORT_URL || "", argo: argoCard(account, { staff: isStaff(env, id.email) }), edu: eduCard(env, account ?? { email: id.email }, id.email, url.searchParams.get("edu") === "start"), staff: isStaff(env, id.email) ? staffCard(env.OPS_URL) : "", applications: mine, notice }) +
+    return fillPage("/app/", { workspace: () => renderWorkspace({ email: id.email, account, admin, weather, consoleUrl: env.GAUSS_APP_URL || "", supportUrl: env.SUPPORT_URL || "", groupUrl: env.CONSTELLATION_GROUP_URL || "", argo: argoCard(account, { staff: isStaff(env, id.email) }), edu: eduCard(env, account ?? { email: id.email }, id.email, url.searchParams.get("edu") === "start"), staff: isStaff(env, id.email) ? staffCard(env.OPS_URL) : "", applications: mine, notice }) +
       (member ? renderCalls({ calls, email: id.email, tz: isZone(account?.tz) ? account.tz : "UTC", notice: callNotice }) : "") + opps }, 200, APP_HEADERS);
   }
   return fail(404, "Not found");

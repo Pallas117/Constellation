@@ -7,6 +7,7 @@
 //   /constellation/time/    public time-zone planner for group calls (no data stored)
 //   /education/             Gauss for Education; its buttons follow EDU_SALES and EDU_STAFF_PRICE
 //   /constellation/workshops/  ask for an ethics, resilience or tech-leadership workshop for a team
+//   /constellation/projects/   the curated showcase of members' projects and creators, and the form to be listed
 //   /app/*                  signed-in workspace and admin (Cloudflare Access in front; see app.js)
 //   /argo/                  Gauss Argo, for operators and staff
 //   /api/*                  launches.json, launches.ics, space-weather.json, health, POST apply,
@@ -18,7 +19,7 @@ import { FEEDS, configured, feedState, readFeed, refreshFeeds } from "./feeds.js
 import { renderEduActions, renderEduPlans, renderEvents, renderConstellationDoor, renderEventIcs, renderGaussDoor, renderIcs, renderLaunches, renderPlans, renderSupport, renderWeather } from "./render.js";
 import { eduMode, eduStaffLabel } from "./tiers.js";
 import { plannerParams, renderPlanner } from "./timezones.js";
-import { handleApply, renderApplyForm, renderContact, renderSent } from "./forms.js";
+import { handleApply, renderApplyForm, renderContact, renderSent, viaReferrer } from "./forms.js";
 import { handleApp } from "./app.js";
 import { handleWebhook } from "./stripe.js";
 import { withSecurity } from "./headers.js";
@@ -27,8 +28,10 @@ import { forRelease, isFull } from "./release.js";
 const applyPage = (kind) => () => ({
   apply: (f, t, url, env) => {
     const plan = url.searchParams.get("plan") ?? "";
-    if (!isFull(env)) return renderContact(kind, { plan });
-    return url.searchParams.get("sent") === "1" ? renderSent(kind) : renderApplyForm(kind, { plan });
+    const via = url.searchParams.get("via") ?? "";
+    if (!isFull(env)) return renderContact(kind, { plan, via });
+    const referrer = viaReferrer(kind, via);
+    return url.searchParams.get("sent") === "1" ? renderSent(kind) : renderApplyForm(kind, referrer ? { plan, referrer } : { plan });
   },
 });
 const LIVE_PAGES = {
@@ -46,6 +49,7 @@ const LIVE_PAGES = {
   "/constellation/apply/": applyPage("constellation"),
   "/education/apply/": applyPage("edu"),
   "/constellation/workshops/": applyPage("workshop"),
+  "/constellation/projects/": applyPage("showcase"),
   // Gauss for Education stays "opening soon" in a public release: starting needs a sign-in.
   "/education/": () => ({ "edu-actions": (f, t, url, env) => renderEduActions(eduMode(isFull(env) ? env : {})),
     "edu-plans": (f, t, url, env) => renderEduPlans(eduMode(isFull(env) ? env : {}), eduStaffLabel(env)) }),

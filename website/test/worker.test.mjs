@@ -307,7 +307,7 @@ test("public release: sign-in, the workspace, Argo, form posts and the webhook a
 });
 
 test("public release: each form's page asks by email instead, and carries the package but never any answers", async () => {
-  for (const path of ["/gauss/apply/", "/constellation/apply/", "/education/apply/", "/constellation/workshops/"]) {
+  for (const path of ["/gauss/apply/", "/constellation/apply/", "/education/apply/", "/constellation/workshops/", "/constellation/projects/"]) {
     const page = await (await call(path)).text();
     assert.doesNotMatch(page, /<form|action="\/api\/apply"/, `${path}: no form`);
     assert.match(page, /<p class="k">BY_EMAIL<\/p>/, path);
@@ -772,6 +772,56 @@ test("workshops: a team's request is stored and listed for admin; marking it con
   await send(env, await formPost(access, "boss@example.test", "/app/admin/decide", { id: app.id, decision: "approve" }));
   assert.equal((await listApplications(env))[0].status, "approved");
   assert.equal(await getAccount(env, "ana@example.test"), null, "no account or membership from a workshop request");
+});
+
+test("showcase: a listing request is stored and listed for admin; marking it contacted creates no account or listing", async () => {
+  const { env, access } = await appEnv();
+  const bad = await send(env, post("/api/apply", { kind: "showcase", name: "Sam Example", email: "sam@example.test", entryType: "A project", title: "Orbit Notes", showLink: "orbit-notes", message: "A weekly newsletter on what launched and why it matters.", consent: "yes" }));
+  assert.equal(bad.status, 422);
+  assert.match(await bad.text(), /Please enter a full link starting with https:\/\//);
+  const res = await send(env, post("/api/apply", { kind: "showcase", name: "Sam Example", email: "sam@example.test", entryType: "A creator or channel", title: "Orbit Notes", showLink: "https://orbit-notes.example", message: "A weekly newsletter on what launched and why it matters.", alsoJoin: "Please invite me to join too", consent: "yes" }));
+  assert.equal(res.headers.get("location"), "/constellation/projects/?sent=1");
+  assert.match(await (await send(env, new Request("https://lightbound.uk/constellation/projects/?sent=1"))).text(), /we email you the exact listing to approve before anything goes up/);
+  const admin = await (await send(env, await as(access, "boss@example.test", "/app/admin/"))).text();
+  assert.match(admin, /SHOWCASE · A creator or channel/);
+  assert.match(admin, /Orbit Notes · https:\/\/orbit-notes\.example · Please invite me to join too/);
+  const [app] = await listApplications(env);
+  await send(env, await formPost(access, "boss@example.test", "/app/admin/decide", { id: app.id, decision: "approve" }));
+  assert.equal((await listApplications(env))[0].status, "approved");
+  assert.equal(await getAccount(env, "sam@example.test"), null, "no account or membership from a showcase request");
+});
+
+test("WhatsApp group invite: ?via=group fills in who referred them, by form or by email; admin drafts the message", async () => {
+  const { env, access } = await appEnv();
+  const form = await (await send(env, new Request("https://lightbound.uk/constellation/apply/?via=group"))).text();
+  assert.match(form, /name="referrer"[^>]*value="the Constellation WhatsApp group"/);
+  for (const path of ["/constellation/apply/?via=%22%3E%3Cscript%3E", "/constellation/apply/?via=toString", "/gauss/apply/?via=group"])
+    assert.doesNotMatch(await (await send(env, new Request(`https://lightbound.uk${path}`))).text(), /WhatsApp group/, `${path}: only the known code, only on the invitation form`);
+  const byEmail = await (await call("/constellation/apply/?via=group")).text();
+  assert.match(byEmail, /<li>Who invited or referred you \(optional\): the Constellation WhatsApp group<\/li>/);
+  assert.match(byEmail, /subject=Constellation%20invitation%20%C2%B7%20WhatsApp%20group&amp;/);
+  const admin = await (await send(env, await as(access, "boss@example.test", "/app/admin/"))).text();
+  assert.match(admin, /href="https:\/\/wa\.me\/\?text=[^"]*constellation%2Fapply%2F%3Fvia%3Dgroup" rel="noopener noreferrer">Draft the group invite<\/a>/);
+});
+
+test("members' WhatsApp group: only approved members and their invitation see the link; a bad value is ignored", async () => {
+  const { env, access } = await appEnv();
+  const GROUP = "https://chat.whatsapp.com/AbCdEfGhIjKlMnOp123456";
+  const withGroup = { ...env, CONSTELLATION_GROUP_URL: GROUP };
+  await putAccount(env, { email: "member@example.test", community: "member" }, "test");
+  const member = await (await send(withGroup, await as(access, "member@example.test", "/app/"))).text();
+  assert.ok(member.includes(`<a href="${GROUP}" rel="noopener noreferrer">Join the members' WhatsApp group</a>`));
+  assert.match(member, /Please keep this link to yourself; to bring a friend, send them the <a href="\/constellation\/apply\/\?via=group">invitation link<\/a>/);
+  const stranger = await (await send(withGroup, await as(access, "someone@example.test", "/app/"))).text();
+  assert.ok(!stranger.includes("chat.whatsapp.com"), "signed in but not a member: no group link");
+  for (const bad of ["https://evil.example/join", "http://chat.whatsapp.com/AbCdEfGhIjKlMnOp123456", 'https://chat.whatsapp.com/x"><script>'])
+    assert.ok(!(await (await send({ ...env, CONSTELLATION_GROUP_URL: bad }, await as(access, "member@example.test", "/app/"))).text()).includes(bad), bad);
+  for (const route of ["/", "/constellation/", "/constellation/apply/?via=group", "/constellation/projects/"])
+    assert.ok(!(await (await send(withGroup, new Request(`https://lightbound.uk${route}`))).text()).includes("chat.whatsapp.com"), `${route}: never public`);
+  const res = await send(withGroup, await formPost(access, "boss@example.test", "/app/admin/invite", { email: "friend@example.test", name: "Friend" }));
+  const admin = await (await send(withGroup, await as(access, "boss@example.test", res.headers.get("location")))).text();
+  const draft = decodeURIComponent(admin.match(/href="mailto:[^"]*body=([^"]+)">Draft the invitation email/)[1].replace(/&#39;/g, "'").replace(/&amp;/g, "&"));
+  assert.ok(draft.includes(`Join the members' WhatsApp group: ${GROUP}`), "the invitation carries the group link");
 });
 
 test("security: big bodies refused before reading; the Stripe key only ever goes to Stripe; sign-ins never create records", async () => {

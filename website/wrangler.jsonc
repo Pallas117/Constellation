@@ -14,7 +14,7 @@
     "not_found_handling": "404-page",
     // Everything else is a static file: free, and never runs the Worker. /app/* and /argo/ stay listed in a public
     // release, so the Worker can answer 404 for them instead of the static files being served.
-    "run_worker_first": ["/", "/gauss/", "/constellation/", "/gauss/apply/", "/constellation/apply/", "/constellation/workshops/", "/education/", "/education/apply/", "/constellation/time/", "/argo/", "/app", "/app/*", "/api/*"]
+    "run_worker_first": ["/", "/gauss/", "/constellation/", "/gauss/apply/", "/constellation/apply/", "/constellation/workshops/", "/constellation/projects/", "/education/", "/education/apply/", "/constellation/time/", "/argo/", "/app", "/app/*", "/api/*"]
   },
   // Refresh launches, space weather and events into KV. Free plan: 5 cron triggers per account.
   "triggers": { "crons": ["*/15 * * * *"] },
