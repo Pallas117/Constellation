@@ -59,3 +59,7 @@ Before tagging, move these entries under `## [0.1.0] - <date>`.
   each proof once (#41).
 - Graph client input validation, safer Neo4j defaults and inference request limits (#72).
 - Dependencies with known vulnerabilities updated; Gauss Argo built with Go 1.26.10 (#135).
+- Operator passkeys (Touch ID, Face ID): one-touch sign-in with user verification enforced, a fresh touch before
+  admin changes such as role changes, one-click and idle sign-out, rate-limited passkey routes, and a per-operator
+  tesseract shown as a recognition cue, not a factor; then an operator pattern drawn on that tesseract, on the computer
+  or on a phone by QR code, with a guided setup, a five-miss lockout and admin recovery (#211).
