@@ -385,6 +385,11 @@ ranges; the `run_worker_first` routes from `wrangler.jsonc`; an in-memory KV; an
 - **Before you publish, check the tab** for anything you wouldn't want members to read: it is reachable by
   anyone who has its link. `/api/health` shows `programmes: not configured` until the secret is set.
 
+**Argo, the one Lightbound login** (docs/ONE_LOGIN.md). People sign in with Argo: the same Access team signs people into `/app/`, the Gauss app and the
+staff site. In `/app/`, everyone sees a free Gauss **Live view** card once `GAUSS_APP_URL` is https. People in
+`TURNSTONE_EMAILS` (a secret; admins are not added automatically) see a Turnstone card that says no more than the
+public page, linking to `TURNSTONE_URL` (a secret, https) or the briefing call; nobody else's workspace mentions it.
+
 **Staff link.** People in `STAFF_EMAILS` (and admins) see an "Operations and training" card in `/app/` that
 links to `OPS_URL`: the staff site, built from the private UI-UX-Gauss repo, with its own Worker and its own
 Cloudflare Access application (a staff-only email policy). Set `STAFF_EMAILS` as a secret
@@ -467,7 +472,8 @@ All of it is still in the code, and the tests run it with `RELEASE: "full"`. To 
 1. In `wrangler.jsonc`, set `RELEASE` to `"full"`.
    - Add the DATA namespace: `npx wrangler@4 kv namespace create DATA`, then a `{ "binding": "DATA", "id": … }` entry.
    - Add these vars: `ACCESS_TEAM_DOMAIN`, `ACCESS_AUD`, `ADMIN_EMAILS` (`jzwnathan@lightbound.uk`),
-     `GAUSS_APP_URL`, `OPS_URL`, `SUPPORT_URL`, `USER_CAP` (`"50"`).
+     `GAUSS_APP_URL` (the public live view), `GAUSS_CONSOLE_URL` (paid plans' console on the tailnet ops site, `https://ops.lightbound.space:8443/operator`),
+     `OPS_URL`, `SUPPORT_URL`, `USER_CAP` (`"50"`).
 2. Set up Stripe and sign-in as below, plus the secrets in "Members' opportunities and the staff link".
 3. Put **Sign in** back in the page headers. The public release shows Contact there; Worker-run pages bring
    back their own `<!--full-->` parts by themselves.

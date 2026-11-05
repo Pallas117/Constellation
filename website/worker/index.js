@@ -32,7 +32,7 @@ const applyPage = (kind) => () => ({
   },
 });
 const LIVE_PAGES = {
-  "/": () => ({ "gauss-door": (f, t) => renderGaussDoor(f.weather, t), "constellation-door": (f, t) => renderConstellationDoor(f.launches, t) }),
+  "/": () => ({}), // the landing page carries no readouts (they live on /gauss/ and /constellation/); filled for the release blocks
   "/gauss/": () => ({ plans: (f, t, url, env) => renderPlans(isFull(env)), "constellation-door": (f, t) => renderConstellationDoor(f.launches, t) }),
   "/constellation/": () => ({
     launches: (f, t) => renderLaunches(f.launches, t),
@@ -50,12 +50,21 @@ const LIVE_PAGES = {
   "/education/": () => ({ "edu-actions": (f, t, url, env) => renderEduActions(eduMode(isFull(env) ? env : {})),
     "edu-plans": (f, t, url, env) => renderEduPlans(eduMode(isFull(env) ? env : {}), eduStaffLabel(env)) }),
 };
-const NEEDS_FEEDS = new Set(["/", "/gauss/", "/constellation/"]);
+const NEEDS_FEEDS = new Set(["/gauss/", "/constellation/"]);
 const ATTRIBUTION = {
   launches: "Data: The Space Devs Launch Library 2 (thespacedevs.com)",
   events: "Events: Constellation on Luma (luma.com/constellation)",
   weather: "Data: NOAA Space Weather Prediction Center (swpc.noaa.gov)",
 };
+
+/** "Sign in to the live view" (the landing page's gate): through Cloudflare Access to the Gauss app's Argo sign-in,
+ * which lands on the live view (docs/ONE_LOGIN.md). Until accounts open, or without an https GAUSS_APP_URL, the replay. */
+export function liveTarget(env) {
+  if (!isFull(env) || !/^https:\/\/[^\s"<>]+$/.test(env.GAUSS_APP_URL ?? "")) return "/gauss/#replay";
+  const url = new URL("api/auth/argo/sign-in", env.GAUSS_APP_URL);
+  url.searchParams.set("callbackURL", "/");
+  return url.href;
+}
 
 let bootstrapping = false;
 
@@ -167,6 +176,7 @@ export default {
     }
     if (request.method !== "GET" && request.method !== "HEAD")
       return respond("Method not allowed\n", 405, "text/plain; charset=utf-8", { allow: "GET, HEAD" });
+    if (pathname === "/live") return new Response(null, { status: 302, headers: { location: liveTarget(env), "cache-control": "no-store" } });
     if (Object.hasOwn(LIVE_PAGES, pathname)) {
       const feeds = NEEDS_FEEDS.has(pathname) ? await readAll(env, ctx) : {};
       const now = Date.now();

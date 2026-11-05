@@ -46,7 +46,7 @@ import { queryLimit } from "./lib/query-limit.js";
 import { auroraMapReply, encodedReply, sendJsonList } from "./lib/json-response.js";
 import { diskFreeBytes, overall, readTpms } from "./lib/tpm.js";
 import { SPACE_OBJECT_CATALOG } from "./lib/space-object-catalog.js";
-import { auth, ssoAllowedDomain, ssoGithubEnabled, ssoGoogleEnabled } from "./better-auth.js";
+import { auth, argoEnabled, ssoAllowedDomain, ssoGithubEnabled, ssoGoogleEnabled } from "./better-auth.js";
 import { toNodeHandler } from "better-auth/node";
 import { SelfHealerAgent } from "./cybertiger/self-healer.js";
 import { bootSwitches } from "./lib/boot-switches.js";
@@ -246,7 +246,7 @@ app.use("/api", (req: express.Request, res: express.Response, next: express.Next
 // Tells the login page which sign-in methods to offer (public, no secrets).
 app.get("/api/sso-options", (_req, res) => {
   const any = ssoGoogleEnabled || ssoGithubEnabled;
-  res.json({ google: ssoGoogleEnabled, github: ssoGithubEnabled, domain: any ? ssoAllowedDomain : null });
+  res.json({ google: ssoGoogleEnabled, github: ssoGithubEnabled, argo: argoEnabled, domain: any ? ssoAllowedDomain : null });
 });
 
 // Argo agents report with a device token, so this sits before session auth.

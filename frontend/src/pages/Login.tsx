@@ -9,6 +9,7 @@ import { safeRedirectPath } from "@/lib/safe-redirect";
 import { useDocumentTitle } from "@/hooks/useDocumentTitle";
 
 const SSO_FAILED_MESSAGE = "Single sign-on failed. Use your Lightbound Google Workspace account.";
+const ARGO_FAILED_MESSAGE = "Argo sign-in didn't go through. Sign in again, or open Gauss from your Lightbound workspace.";
 
 export default function Login() {
   useDocumentTitle("Sign in");
@@ -17,15 +18,17 @@ export default function Login() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   // A failed SSO round trip lands back here with ?error.
-  const [error, setError] = useState(() =>
-    new URLSearchParams(location.search).has("error") ? SSO_FAILED_MESSAGE : "",
-  );
-  const [sso, setSso] = useState<{ google: boolean; github: boolean; domain: string | null }>({
+  const [error, setError] = useState(() => {
+    const failed = new URLSearchParams(location.search).get("error");
+    return failed === "argo" ? ARGO_FAILED_MESSAGE : failed !== null ? SSO_FAILED_MESSAGE : "";
+  });
+  const [sso, setSso] = useState<{ google: boolean; github: boolean; argo: boolean; domain: string | null }>({
     google: false,
     github: false,
+    argo: false,
     domain: null,
   });
-  const anySso = sso.google || sso.github;
+  const anySso = sso.google || sso.github || sso.argo;
   const navigate = useNavigate();
   const { data: session } = useSession();
 
@@ -66,7 +69,16 @@ export default function Login() {
     const base = apiBase();
     fetch(`${base}/api/sso-options`)
       .then((res) => (res.ok ? res.json() : null))
-      .then((options) => options && setSso({ google: Boolean(options.google), github: Boolean(options.github), domain: options.domain ?? null }))
+      .then(
+        (options) =>
+          options &&
+          setSso({
+            google: Boolean(options.google),
+            github: Boolean(options.github),
+            argo: Boolean(options.argo),
+            domain: options.domain ?? null,
+          }),
+      )
       .catch(() => undefined);
   }, []);
 
@@ -74,6 +86,14 @@ export default function Login() {
     setError("");
     const back = `${window.location.origin}/login`;
     await signIn.social({ provider, callbackURL: back, errorCallbackURL: back });
+  };
+
+  // One Argo sign-in (Cloudflare Access in front of the app): the backend checks the Access token and starts a
+  // Gauss session, then sends us back here, where the effect above routes by role.
+  const handleArgo = () => {
+    setError("");
+    const back = hasFrom ? from : "/login";
+    window.location.assign(`${apiBase()}/api/auth/argo/sign-in?callbackURL=${encodeURIComponent(back)}`);
   };
 
   return (
@@ -95,6 +115,15 @@ export default function Login() {
         {anySso && (
           <>
             <div className="mt-6 space-y-2">
+              {sso.argo && (
+                <button
+                  type="button"
+                  onClick={handleArgo}
+                  className="lb-radiate flex w-full items-center justify-center gap-2 rounded-md bg-signal px-3 py-2.5 text-sm font-semibold text-background transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+                >
+                  Continue with Argo
+                </button>
+              )}
               {sso.google && (
                 <button
                   type="button"
@@ -116,7 +145,9 @@ export default function Login() {
               )}
             </div>
             <p className="mt-2 text-center text-xs text-muted-foreground">
-              New accounts: verified @{sso.domain} email
+              {sso.argo
+                ? "Argo: one sign-in for Gauss, Constellation and your Lightbound workspace."
+                : `New accounts: verified @${sso.domain} email`}
             </p>
             <div className="my-5 flex items-center gap-3 font-mono text-[11px] uppercase tracking-[0.12em] text-muted-foreground">
               <span className="h-px flex-1 bg-charcoal" />

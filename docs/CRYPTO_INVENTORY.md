@@ -34,7 +34,7 @@ No encryption of data. The only thing encrypted is the signing key itself, when 
 | SHA-256 | `backend/world/ids.ts`, `backend/replay/replay.ts` | Content checksums and ids; replay archive hash | Integrity, identification |
 | SHA-256 | `backend/lib/local-db.ts` | Checksums of each telemetry archive (raw and gzip) in its manifest, checked before rows are trimmed (GAU-157, #121) | Integrity |
 | SHA-256 (WebCrypto) | `frontend/src/lib/operator-fingerprint.ts` | Hash of browser signals for device recognition | Identification |
-| RSASSA-PKCS1-v1_5 with SHA-256 (RS256), WebCrypto verify | `website/worker/auth.js` | Check sign-in tokens from the identity provider | Authentication |
+| RSASSA-PKCS1-v1_5 with SHA-256 (RS256), WebCrypto verify | `website/worker/auth.js` (also imported by `backend/argo-sign-in.ts`) | Check sign-in tokens from the identity provider, on the website and for the Gauss app's Argo sign-in | Authentication |
 | HMAC-SHA-256 (WebCrypto) and constant-time compare | `website/worker/stripe.js` | Check payment-provider webhook signatures | Authentication |
 | SHA-256 (WebCrypto), `getRandomValues` | `website/worker/data.js`, `website/worker/calls.js` | Hashed sender for rate limiting (the raw address is never stored); random ids | Identification, privacy |
 | Ed25519 signature (Go `crypto/ed25519`) | `tools/argo/bpsec.go` | Integrity block (`argo-sig-1`): the source node signs each store-and-forward bundle | Authentication and integrity |

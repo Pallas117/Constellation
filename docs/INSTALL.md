@@ -66,6 +66,7 @@ variables below at a data directory of your choice.
 | `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET` | unset | **secret: the `_SECRET`** | GitHub sign-in, as above, callback `.../github`. |
 | `SSO_ALLOWED_DOMAIN` | Lightbound's own domain | no | Single sign-on may create accounts only for this email domain: set yours if SSO is on (`backend/sso-policy.ts`). |
 | `SSO_ALLOWED_EMAILS` | empty | no | Extra individual addresses allowed through SSO. |
+| `ACCESS_TEAM_DOMAIN` / `ACCESS_AUD` | unset | no | One Lightbound login: the Cloudflare Access team (`<team>.cloudflareaccess.com`) and the app's AUD tag. With both set, the login page offers **Continue with Argo** (`backend/argo-sign-in.ts`, docs/ONE_LOGIN.md). |
 | `GAUSS_BEDROCK_DIR` | `data/bedrock` in the checkout | no | Telemetry: `telemetry.jsonl` and `archive/`. |
 | `GAUSS_TELEMETRY_KEEP_LINES` | `40000` (minimum 25000) | no | Lines kept live, about 3 days; older lines move to `archive/` (`backend/lib/telemetry-retention.ts`). |
 | `GAUSS_TELEMETRY_ARCHIVE_HOURS` | `24` | no | Hours between archive runs; `0` turns archiving off. |

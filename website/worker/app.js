@@ -3,7 +3,11 @@
 // Every request is checked: a valid Cloudflare Access token for who, the account record for what.
 // Paying happens on Stripe's own pages (checkout, or an invoice where an admin allows it); this side starts it and reads the result.
 // Staff (STAFF_EMAILS) also get a link to the staff operations and training site (OPS_URL), which has its own Access application.
-import { accessIdentity, isAdmin, isStaff } from "./auth.js";
+// One Argo sign-in (the same Access team) also opens the Gauss app's free live view (GAUSS_APP_URL). Paid plans' console is the
+// private ops console on the tailnet (GAUSS_CONSOLE_URL; Josh, 4 Nov 2026: "Tailnet ops console"), which also needs a passkey on
+// the operator's own device (PR #230). Was: the console on a
+// paid plan); people in TURNSTONE_EMAILS alone see a Turnstone card.
+import { accessIdentity, isAdmin, isCleared, isStaff } from "./auth.js";
 import { deleteAccount, getAccount, getApplication, latestApplication, listAccounts, listApplications, putAccount, setApplicationStatus } from "./data.js";
 import { readCapped } from "./body.js";
 import { sameOrigin } from "./forms.js";
@@ -128,7 +132,26 @@ export function staffCard(opsUrl) {
     `<p class="m">For the Lightbound team. It signs you in with the same email.</p><p class="m"><a href="${esc(opsUrl)}" rel="noopener">Open operations and training</a></p></article>`;
 }
 
-export function renderWorkspace({ email, account, admin, weather, consoleUrl, supportUrl = "", argo = "", edu = "", staff = "", applications = [], notice = "" }) {
+const TURNSTONE_BRIEFING = "https://cal.com/joshua-nathan-xrnrqh/30min";
+const httpsUrl = (u) => /^https:\/\/[^\s"<>]+$/.test(u ?? "");
+
+/** Cleared emails only (TURNSTONE_EMAILS). It says no more than the public page: the way in is TURNSTONE_URL (https),
+ * or the briefing call until that exists. Everyone else's workspace has no trace of it. */
+export function turnstoneCard(roomUrl) {
+  const room = httpsUrl(roomUrl) ? roomUrl : TURNSTONE_BRIEFING;
+  return `<article class="tile"><h2 class="label">Turnstone</h2><p class="big">Classified</p><p class="t">You're cleared for Turnstone.</p>` +
+    `<p class="m"><a href="${esc(room)}" rel="noopener">${room === TURNSTONE_BRIEFING ? "Request a briefing" : "Open the briefing room"}</a></p></article>`;
+}
+
+/** The Gauss live view: free with the Argo sign-in (the app's "user" role), once GAUSS_APP_URL is an https address.
+ * The same Access sign-in opens it, so there's no second password. Paid plans get the console on the same app. */
+export function liveViewCard(appUrl) {
+  if (!httpsUrl(appUrl)) return "";
+  return `<article class="tile"><h2 class="label">Gauss</h2><p class="big">Live view</p><p class="t">Space weather, the radiation belts and the satellites in them, live.</p>` +
+    `<p class="m">Free with your Argo sign-in.</p><p class="m"><a href="${esc(appUrl)}" rel="noopener">Open the live view</a></p></article>`;
+}
+
+export function renderWorkspace({ email, account, admin, weather, consoleUrl, supportUrl = "", argo = "", edu = "", staff = "", turnstone = "", live = "", applications = [], notice = "" }) {
   const tier = tierById(account?.tier);
   const who = esc(account?.name || email);
   const adminLink = admin ? `<p class="actions"><a class="btn ghost" href="/app/admin/">Applications and accounts</a></p>` : "";
@@ -148,9 +171,9 @@ export function renderWorkspace({ email, account, admin, weather, consoleUrl, su
     const pending = applications.filter((a) => a.status === "new");
     const status = pending.length
       ? `<p class="lead">Your application from ${esc(day(pending[0].at))} is with the Lightbound team. You'll hear from us by email.</p>`
-      : `<p class="lead">You're signed in as ${esc(email)}.${member || argo || edu || staff ? "" : " This account has no Gauss plan yet."}</p>`;
+      : `<p class="lead">You're signed in as ${esc(email)}.${member || argo || edu || staff || turnstone || live ? "" : " This account has no Gauss plan yet."}</p>`;
     return `<p class="k">00_WORKSPACE</p><h1 id="hero-h">Welcome, ${who}.</h1>${bannerHtml}${status}` +
-      (member || argo || edu || staff ? `<div class="tiles">${staff}${member ? memberCard(supportUrl) : ""}${argo}${edu}</div>` : "") +
+      (member || argo || edu || staff || turnstone || live ? `<div class="tiles">${live}${staff}${member ? memberCard(supportUrl) : ""}${argo}${edu}${turnstone}</div>` : "") +
       (member || argo || edu || staff ? "" : `<p class="actions"><a class="btn" href="/gauss/#plans">See the Gauss plans</a>${pending.length ? "" : ` <a class="btn ghost" href="/gauss/apply/">Apply</a>`}</p>`) + adminLink;
   }
   const open = unlocked(billingStatus(account));
@@ -159,14 +182,16 @@ export function renderWorkspace({ email, account, admin, weather, consoleUrl, su
   const consoleBtn = !open ? "" : consoleUrl
     ? `<a class="btn" href="${esc(consoleUrl)}">Open the Gauss console</a>`
     : `<span class="btn ghost" aria-disabled="true">Console link coming by email</span>`;
+  // The console lives on the private ops network: say so, so nobody expects it to open from any device.
+  const consoleNote = open && consoleUrl ? `<p class="m">The console opens on the Lightbound private network, with a passkey on your own device.</p>` : "";
   return (
     `<div class="section-head"><div><p class="k">00_WORKSPACE</p><h1 id="hero-h">Welcome, ${who}.</h1></div><span class="chip tier">${esc(tier.name)}</span></div>${bannerHtml}` +
     `<p class="lead">${esc(account.org ? `${account.org} · ` : "")}${esc(tier.outcome)}</p>` +
-    (consoleBtn ? `<p class="actions">${consoleBtn}</p>` : "") +
+    (consoleBtn ? `<p class="actions">${consoleBtn}</p>${consoleNote}` : "") +
     `<div class="tiles">${billingCard(account, tier)}` +
     (open ? `<article class="tile"><h2 class="label">Pilot</h2>${account.pilot ? pilotTrack(account.pilot) : `<p class="m">Not started. We'll set this up with you.</p>`}</article>` : "") +
     `<article class="tile"><h2 class="label">Space environment</h2>${renderGaussDoor(weather) || `<p class="m">Space-weather data is unavailable right now.</p>`}</article>` +
-    (member ? memberCard(supportUrl) : "") + argo + edu + staff + `</div>` +
+    (member ? memberCard(supportUrl) : "") + argo + edu + staff + turnstone + `</div>` +
     `<div class="two plan-lists"><div><h2 class="label">${open ? "Included" : "What you get"}: ${esc(tier.name)}</h2><ul class="ticks">${list(tier.features)}</ul></div>` +
     (next ? `<div><h2 class="label">Next: ${esc(next.name)}</h2><ul class="locked">${list(next.features.filter((f) => !tier.features.includes(f)))}</ul><p class="m">${esc(next.entry)} Planning range: ${esc(priceLabel(next))}.</p></div>` : "") +
     `</div><p class="actions"><a class="btn ghost" href="mailto:jzwnathan@lightbound.uk?subject=${encodeURIComponent(`Gauss ${tier.name}`)}">Email Josh, the founder</a></p>` +
@@ -255,7 +280,7 @@ async function flash(env, email) {
 }
 
 const signedOut = (respond) =>
-  respond(`<!doctype html><meta charset="utf-8"><title>Sign in · Lightbound</title><link rel="stylesheet" href="/assets/site.css"><main class="vault wrap"><div><p class="k">401_SIGN_IN</p><h1>Please sign in.</h1><p class="muted">The workspace is for approved accounts and Constellation members.</p><p class="actions"><a class="btn" href="/app/">Sign in</a> <a class="btn ghost" href="/gauss/apply/">Apply</a></p></div></main>`,
+  respond(`<!doctype html><meta charset="utf-8"><title>Sign in · Lightbound</title><link rel="stylesheet" href="/assets/site.css"><main class="vault wrap"><div><p class="k">401_SIGN_IN</p><h1>Please sign in.</h1><p class="muted">The workspace is for approved accounts and Constellation members.</p><p class="actions"><a class="btn radiate" href="/app/">Sign in with Argo</a> <a class="btn ghost" href="/gauss/apply/">Apply</a></p></div></main>`,
     401, "text/html; charset=utf-8", APP_HEADERS);
 
 // A new plan or quote starts billing afresh: no earlier invoice, paid year or event can count towards it.
@@ -499,7 +524,7 @@ export async function handleApp(request, env, url, { respond, fillPage, fetchImp
     const callNotice = url.searchParams.get("call") ?? "";
     // Members' opportunities: four cached feeds, plus their own application only while no interests are saved.
     const opps = member ? await memberOpportunities(env, account, latest) : "";
-    return fillPage("/app/", { workspace: () => renderWorkspace({ email: id.email, account, admin, weather, consoleUrl: env.GAUSS_APP_URL || "", supportUrl: env.SUPPORT_URL || "", argo: argoCard(account, { staff: isStaff(env, id.email) }), edu: eduCard(env, account ?? { email: id.email }, id.email, url.searchParams.get("edu") === "start"), staff: isStaff(env, id.email) ? staffCard(env.OPS_URL) : "", applications: mine, notice }) +
+    return fillPage("/app/", { workspace: () => renderWorkspace({ email: id.email, account, admin, weather, consoleUrl: httpsUrl(env.GAUSS_CONSOLE_URL) ? env.GAUSS_CONSOLE_URL : "", supportUrl: env.SUPPORT_URL || "", argo: argoCard(account, { staff: isStaff(env, id.email) }), edu: eduCard(env, account ?? { email: id.email }, id.email, url.searchParams.get("edu") === "start"), staff: isStaff(env, id.email) ? staffCard(env.OPS_URL) : "", turnstone: isCleared(env, id.email) ? turnstoneCard(env.TURNSTONE_URL) : "", live: liveViewCard(env.GAUSS_APP_URL), applications: mine, notice }) +
       (member ? renderCalls({ calls, email: id.email, tz: isZone(account?.tz) ? account.tz : "UTC", notice: callNotice }) : "") + opps }, 200, APP_HEADERS);
   }
   return fail(404, "Not found");

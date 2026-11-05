@@ -12,7 +12,10 @@ import { SECURITY_HEADERS } from "../worker/headers.js";
 import { RECORDED_AT, fixture, makeFetch } from "./fixtures/fetch.mjs";
 import { memoryKV } from "./fixtures/kv.mjs";
 import { makeAccess } from "./fixtures/access.mjs";
-import { accessIdentity, isAdmin, isStaff } from "../worker/auth.js";
+import { accessIdentity, isAdmin, isCleared, isStaff } from "../worker/auth.js";
+import { liveViewCard, renderWorkspace, turnstoneCard } from "../worker/app.js";
+import { liveTarget } from "../worker/index.js";
+import { forRelease } from "../worker/release.js";
 import { getAccount, listApplications, putAccount, saveApplication, senderOf } from "../worker/data.js";
 import { applyEvent, createPortal, formEncode, signPayload, verifySignature } from "../worker/stripe.js";
 import { billingStatus, isAcademicEmail } from "../worker/tiers.js";
@@ -233,8 +236,9 @@ test("routes: live pages are filled in and carry the security headers", async ()
   assert.equal(home.status, 200);
   for (const [k, v] of Object.entries(SECURITY_HEADERS)) assert.equal(home.headers.get(k), v, k);
   const body = await home.text();
-  assert.match(body, /Space weather now/);
-  assert.match(body, /Next launch<\/span><span class="door-big">T−/);
+  // The landing page carries no readouts (Josh, 5 Nov 2026: nothing repeating); they live on the product pages below.
+  assert.doesNotMatch(body, /Space weather now|Next launch/);
+  assert.match(body, /<section id="enter" class="live-gate"/);
   const page = await (await call("/constellation/")).text();
   assert.equal((page.match(/<li class="launch">/g) || []).length, 10);
   assert.match(page, /chip live">Live/);
@@ -285,7 +289,7 @@ test("routes: a fresh deploy fetches once in the background, before the first cr
   globalThis.fetch = f;
   const fresh = { ASSETS, LIVE: memoryKV() };
   const { ctx, settle } = context();
-  const res = await worker.fetch(new Request("https://lightbound.uk/"), fresh, ctx);
+  const res = await worker.fetch(new Request("https://lightbound.uk/gauss/"), fresh, ctx); // the landing page reads no feeds
   assert.equal(res.status, 200, "page still serves while data loads");
   await settle();
   assert.equal(f.calls.length, 6, "a public release: launches, events and four for space weather");
@@ -329,6 +333,11 @@ test("public release: pages offer pilots and an email route; later plans are in 
     const page = await (await call(path)).text();
     assert.doesNotMatch(page, /href="\/app\/|>Sign in<|<!--full-->/, `${path}: sign-in links removed`);
   }
+  // The landing page's one door: the same "Sign in with Argo" button, pointing at the replay, and a line that says so.
+  const home = await (await call("/")).text();
+  assert.match(home, /<a class="btn argo radiate" href="\/gauss\/#replay"><img class="sail" src="\/assets\/marks\/argo-mark-colour-dark\.svg"[^>]*>Sign in with Argo<\/a>/);
+  assert.doesNotMatch(home, /href="\/live"/, "nothing points at the sign-in redirect yet");
+  assert.match(home, /this button plays a replay of the live view/);
   const open = { ...env, EDU_SALES: "open", SUPPORT_URL: "https://buy.stripe.com/test_00abc123" };
   assert.doesNotMatch(await (await send(open, new Request("https://lightbound.uk/education/"))).text(), /\/app\/\?edu=start/, "education stays opening soon");
   assert.doesNotMatch(await (await send(open, new Request("https://lightbound.uk/constellation/"))).text(), /Support Constellation/, "no payment links");
@@ -345,7 +354,7 @@ test("public release: health names the release and the deployed commit, and only
 test("full release: the same pages keep sign-in and the forms", async () => {
   const { env: full } = await appEnv();
   const page = async (path) => (await send(full, new Request(`https://lightbound.uk${path}`))).text();
-  assert.match(await page("/gauss/"), /<!--full--> <a class="btn ghost" href="\/app\/">Sign in<\/a><!--\/full-->/);
+  assert.match(await page("/gauss/"), /<!--full--> <a class="btn ghost radiate" href="\/app\/">Sign in with Argo<\/a><!--\/full-->/);
   assert.match(await page("/gauss/apply/"), /<form class="form" method="post" action="\/api\/apply">/);
   assert.equal((await send(full, new Request("https://lightbound.uk/argo/"))).status, 200);
   assert.equal((await (await send(full, new Request("https://lightbound.uk/api/health"))).json()).release, "full");
@@ -1127,6 +1136,65 @@ test("staff: the operations and training card is for STAFF_EMAILS and admins, wi
   assert.doesNotMatch(await page(e, "visitor@example.test"), /Operations and training/);
   assert.doesNotMatch(await page({ ...e, OPS_URL: "javascript:alert(1)" }, "crew@example.test"), /Operations and training/, "https only");
   assert.doesNotMatch(await page({ ...e, OPS_URL: "" }, "crew@example.test"), /Operations and training/, "hidden until set");
+});
+
+test("one login: Turnstone shows only to TURNSTONE_EMAILS and says no more than the public page", async () => {
+  const { env, access } = await appEnv();
+  const e = { ...env, TURNSTONE_EMAILS: "Cleared@Example.test", ADMIN_EMAILS: "boss@example.test" };
+  assert.equal(isCleared(e, "cleared@example.test"), true);
+  assert.equal(isCleared(e, "boss@example.test"), false, "admins are not cleared automatically");
+  assert.equal(isCleared({ ...e, TURNSTONE_EMAILS: undefined }, "cleared@example.test"), false);
+  const page = async (env2, who) => (await send(env2, await as(access, who, "/app/"))).text();
+  const html = await page(e, "cleared@example.test");
+  assert.match(html, /<h2 class="label">Turnstone<\/h2><p class="big">Classified<\/p>/);
+  assert.match(html, /href="https:\/\/cal\.com\/joshua-nathan-xrnrqh\/30min" rel="noopener">Request a briefing</, "the briefing call until a room exists");
+  assert.doesNotMatch(html, /This account has no Gauss plan yet/);
+  assert.match(await page({ ...e, TURNSTONE_URL: "https://room.example.test/" }, "cleared@example.test"), /href="https:\/\/room\.example\.test\/" rel="noopener">Open the briefing room</);
+  assert.doesNotMatch(await page({ ...e, TURNSTONE_URL: "javascript:alert(1)" }, "cleared@example.test"), /javascript:/, "https only");
+  for (const who of ["visitor@example.test", "boss@example.test", "member@example.test"])
+    assert.doesNotMatch(await page(e, who), /label">Turnstone<|Classified|cleared for/i, `${who}: no Turnstone card (the footer link is public)`);
+  const card = turnstoneCard("");
+  for (const word of ["consult", "security", "hardware", "defence", "defense", "weapon"]) assert.doesNotMatch(card, new RegExp(word, "i"));
+});
+
+test("tailnet ops console: paid plans' console button goes to GAUSS_CONSOLE_URL, never the public viewer", () => {
+  const account = { tier: "fleet_integration", billing: { status: "active" } };
+  const page = (consoleUrl) => renderWorkspace({ email: "fleet@example.test", account, admin: false, weather: null, consoleUrl });
+  const html = page("https://ops.example.test/operator");
+  assert.match(html, /<a class="btn" href="https:\/\/ops\.example\.test\/operator">Open the Gauss console<\/a>/);
+  assert.match(html, /opens on the Lightbound private network, with a passkey on your own device/);
+  assert.match(page(""), /Console link coming by email/, "no console address yet");
+  assert.doesNotMatch(page(""), /private network/);
+});
+
+test("one login: everyone signed in gets the free Gauss live view once GAUSS_APP_URL is https", async () => {
+  const { env, access } = await appEnv();
+  const page = async (env2, who) => (await send(env2, await as(access, who, "/app/"))).text();
+  const e = { ...env, GAUSS_APP_URL: "https://app.example.test/" };
+  const html = await page(e, "visitor@example.test");
+  assert.match(html, /<h2 class="label">Gauss<\/h2><p class="big">Live view<\/p>/);
+  assert.match(html, /<a href="https:\/\/app\.example\.test\/" rel="noopener">Open the live view<\/a>/);
+  assert.doesNotMatch(html, /This account has no Gauss plan yet/);
+  assert.doesNotMatch(await page({ ...e, GAUSS_APP_URL: "" }, "visitor@example.test"), /Open the live view/, "hidden until set");
+  assert.doesNotMatch(await page({ ...e, GAUSS_APP_URL: "http://app.example.test/" }, "visitor@example.test"), /Open the live view/, "https only");
+  assert.equal(liveViewCard("javascript:alert(1)"), "");
+  assert.doesNotMatch(await page({ ...e, GAUSS_CONSOLE_URL: "" }, "visitor@example.test"), /Open the Gauss console/, "the viewer is never the console");
+});
+
+test("live-view gate: /live goes through Access to the app's sign-in once accounts open; the replay until then", async () => {
+  const full = { RELEASE: "full", DATA: {}, GAUSS_APP_URL: "https://app.example.test/" };
+  assert.equal(liveTarget(full), "https://app.example.test/api/auth/argo/sign-in?callbackURL=%2F");
+  assert.equal(liveTarget({ ...full, RELEASE: "public" }), "/gauss/#replay", "public release");
+  assert.equal(liveTarget({ ...full, GAUSS_APP_URL: "" }), "/gauss/#replay", "no app yet");
+  assert.equal(liveTarget({ ...full, GAUSS_APP_URL: "http://app.example.test/" }), "/gauss/#replay", "https only");
+  const wrangler = await readFile(join(dirname(fileURLToPath(import.meta.url)), "..", "wrangler.jsonc"), "utf8");
+  assert.match(wrangler, /"run_worker_first": \[[^\]]*"\/live"/, "Cloudflare runs the Worker for /live (else it 404s)");
+  const home = await (await send({ ASSETS, LIVE: memoryKV(), DATA: memoryKV(), RELEASE: "full", GAUSS_APP_URL: full.GAUSS_APP_URL }, new Request("https://lightbound.uk/"))).text();
+  assert.match(home, /<a class="btn argo radiate" href="\/live"><img class="sail" src="\/assets\/marks\/argo-mark-colour-dark\.svg"[^>]*>Sign in with Argo<\/a>/, "the door opens on /live");
+  assert.doesNotMatch(home, /plays a replay of the live view|href="\/gauss\/#replay">[^<]*<img/, "the public wording and route are gone");
+  const page = '<p><!--full--><a href="/live">in</a><!--/full--><!--public--><a href="/gauss/#replay">r</a><!--/public--></p>';
+  assert.equal(forRelease(page, { RELEASE: "public" }), '<p><!--public--><a href="/gauss/#replay">r</a><!--/public--></p>');
+  assert.equal(forRelease(page, full), '<p><!--full--><a href="/live">in</a><!--/full--></p>');
 });
 
 test("group calls: a member's page reads one cached index, not a KV list per call; the index heals itself", async () => {
