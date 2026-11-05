@@ -71,7 +71,7 @@ MIRROR = '<g transform="matrix(-1 0 0 1 240 0)">'  # mirror about x = 120
 
 # Turnstone wing sweeps, right side: (shoulder, control, tip). The leading feather first; each starts lower and ends
 # shorter, so the three read as one wing caught mid-beat.
-TURNSTONE_WING = [((128, 110), (150, 46), (218, 26)), ((132, 124), (160, 72), (208, 52)), ((136, 138), (166, 98), (198, 78))]
+TURNSTONE_WING = [((126, 108), (148, 50), (222, 20)), ((130, 122), (158, 74), (210, 48)), ((134, 136), (164, 100), (196, 76))]
 
 
 def both(el: str) -> list[str]:
@@ -84,8 +84,10 @@ def turnstone_body(c: dict[str, str], small: bool = False) -> list[str]:
     lightbound brand").
 
     Built from the Lightbound mark system instead of drawn as an illustration: one stroke weight throughout, like the
-    Gauss field lines and the Constellation ring. The orbit ring is the original Turning-tide mark's tide; the head is
-    its Moon point, in signal orange. Three nested sweeps per wing are a wingbeat caught mid-stroke, and the wingtips
+    Gauss field lines and the Constellation ring. The orbit ring is the original Turning-tide mark's tide; its Moon point is
+    replaced by the bird's own head (Josh: "make it resemble the bird a little bit more"): round, with the short upturned
+    wedge bill and the dark eye of the harlequin mask; the breast band is a chevron across the body and the orange is
+    on the short legs, as on the bird. Three nested sweeps per wing are a wingbeat caught mid-stroke, and the wingtips
     break out of the ring: carry hope, go beyond. The body is an almond of two arcs, open, so the bird is implied rather
     than drawn. Where a wing crosses the ring, the ring breaks (a ground-coloured underlay drawn first). `small` is the
     same drawing with a heavier stroke, for 32 px and below.
@@ -101,8 +103,14 @@ def turnstone_body(c: dict[str, str], small: bool = False) -> list[str]:
         out += both(stroke(d, c["cut"], w + 10))  # breaks in the ring where the wings cross it
     for d in wings:
         out += both(stroke(d, c["warm"]))
-    out += both(stroke("M120 100C131 114 133 140 120 164", c["warm"]))  # the body
-    out.append(f'<circle cx="120" cy="82" r="{10 if small else 9}" fill="{c["orange"]}"/>')  # the Moon point
+    out += both(stroke("M120 102C131 116 133 142 120 166", c["warm"]))  # the body
+    out.append(stroke("M108 118L120 128L132 118", c["warm"]))  # the breast band, the turnstone's field mark
+    # The head: round, the short wedge bill turned a touch up, the dark eye of the harlequin mask.
+    out.append(f'<circle cx="120" cy="84" r="{12 if small else 11}" fill="{c["warm"]}"/>')
+    out.append(f'<path d="M110 80L94 78L110 88Z" fill="{c["warm"]}"/>')
+    if not small:
+        out.append(f'<circle cx="115" cy="82" r="3" fill="{c["cut"]}"/>')
+    out.append(stroke("M115 166L110 192M125 166L130 192", c["orange"], w - 2))  # the orange legs, slightly splayed
     return out
 
 

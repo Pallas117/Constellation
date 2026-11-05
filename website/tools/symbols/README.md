@@ -9,7 +9,8 @@ https://claude.ai/artifact/CvWgPQyJio2m5uHPyZZHdv. Copied unchanged; the Lightbo
 - Turnstone v11, 5 Nov (Josh: "a more uniform structure with motion, mystique that embodies the lightbound brand";
   proposed): built from the Lightbound mark system, one stroke weight throughout. The bird is implied inside its orbit
   ring (the original Turning-tide mark's tide): three nested sweeps per wing, a wingbeat caught mid-stroke, breaking
-  out of the ring; an open almond for the body; the head is the Moon point in signal orange. The ring breaks where a
+  out of the ring; an open almond with the breast-band chevron for the body; the head with its short upturned bill and
+  the dark eye of the harlequin mask; short orange legs. The ring breaks where a
   wing crosses it. Square; the badge is the same drawing with a heavier stroke for 32 px and below. Published as -v3.
 - Constellation, refined 4 Nov: navy disc, gold ring broken by five evenly spaced stars, three gold key stars on an
   equilateral triangle with one white star off each. The 3-node icon is for 32 px and under.
