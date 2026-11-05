@@ -1,6 +1,6 @@
 // Server-side HTML for the live sections, plus the launch calendar (.ics). Everything is escaped;
 // the pages stay script-free. Times are always UTC, and every view says how old its data is.
-import { feedState, LUMA } from "./feeds.js";
+import { LAUNCH_CREDIT, LUMA, feedState, launchesSource } from "./feeds.js";
 import { FEATURES, priceLabel, TIERS } from "./tiers.js";
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -115,7 +115,7 @@ export function renderLaunches(rec, now = Date.now()) {
       );
     })
     .join("");
-  return `${top}<ol class="launches">${rows}</ol><p class="src">Source: The Space Devs Launch Library 2 · updated ${esc(at(s.fetchedAt))} · every orbital launch attempt worldwide, times UTC.</p>`;
+  return `${top}<ol class="launches">${rows}</ol><p class="src">Source: ${esc(LAUNCH_CREDIT[launchesSource(rec)])} · updated ${esc(at(s.fetchedAt))} · every orbital launch attempt worldwide, times UTC.</p>`;
 }
 
 /** Constellation page: events from the Constellation calendar on Luma (titles, times and links only). */
@@ -205,7 +205,7 @@ export function renderIcs(rec, now = Date.now()) {
       timed ? `DTSTART:${icsTime(start.toISOString())}` : `DTSTART;VALUE=DATE:${icsDate(l.net)}`,
       timed ? `DTEND:${icsTime(end.toISOString())}` : `DTEND;VALUE=DATE:${icsDate(new Date(start.getTime() + 86_400_000).toISOString())}`,
       `SUMMARY:${icsEsc(title(l))}`, `LOCATION:${icsEsc(l.location)}`,
-      `DESCRIPTION:${icsEsc(`${l.provider}\nStatus: ${l.statusName || l.status}\nTime precision: ${l.precision}\nSource: The Space Devs Launch Library 2 via lightbound.uk/constellation`)}`,
+      `DESCRIPTION:${icsEsc(`${l.provider}\nStatus: ${l.statusName || l.status}\nTime precision: ${l.precision}\nSource: ${LAUNCH_CREDIT[l.source === "rocketlaunch" ? "rocketlaunch" : "ll2"]} via lightbound.uk/constellation`)}`,
       "END:VEVENT");
   }
   lines.push("END:VCALENDAR");
