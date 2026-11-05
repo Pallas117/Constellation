@@ -541,7 +541,7 @@ footer p{margin:0 0 6px}
 
 /* Landing: one quiet row of the three marks after the door. No readouts or copy here: those live on each
    project's own page, and the header and footer already carry the names. */
-.marks{list-style:none;margin:0;padding:0;display:flex;flex-wrap:wrap;gap:24px 56px;align-items:flex-end}
+.marks{list-style:none;margin:0;padding:0;display:flex;flex-wrap:wrap;gap:24px clamp(24px,5vw,56px);align-items:flex-end} /* three abreast from 375px up */
 .marks a{display:inline-flex;flex-direction:column;align-items:flex-start;gap:12px;text-decoration:none;color:var(--muted)}
 .marks img{display:block;height:40px;width:auto;opacity:.78;transition:opacity .25s}
 .marks a:hover,.marks a:focus-visible{color:var(--warm)}
