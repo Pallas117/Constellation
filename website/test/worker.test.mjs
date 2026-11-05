@@ -791,6 +791,19 @@ test("showcase: a listing request is stored and listed for admin; marking it con
   assert.equal(await getAccount(env, "sam@example.test"), null, "no account or membership from a showcase request");
 });
 
+test("WhatsApp group invite: ?via=group fills in who referred them, by form or by email; admin drafts the message", async () => {
+  const { env, access } = await appEnv();
+  const form = await (await send(env, new Request("https://lightbound.uk/constellation/apply/?via=group"))).text();
+  assert.match(form, /name="referrer"[^>]*value="the Constellation WhatsApp group"/);
+  for (const path of ["/constellation/apply/?via=%22%3E%3Cscript%3E", "/constellation/apply/?via=toString", "/gauss/apply/?via=group"])
+    assert.doesNotMatch(await (await send(env, new Request(`https://lightbound.uk${path}`))).text(), /WhatsApp group/, `${path}: only the known code, only on the invitation form`);
+  const byEmail = await (await call("/constellation/apply/?via=group")).text();
+  assert.match(byEmail, /<li>Who invited or referred you \(optional\): the Constellation WhatsApp group<\/li>/);
+  assert.match(byEmail, /subject=Constellation%20invitation%20%C2%B7%20WhatsApp%20group&amp;/);
+  const admin = await (await send(env, await as(access, "boss@example.test", "/app/admin/"))).text();
+  assert.match(admin, /href="https:\/\/wa\.me\/\?text=[^"]*constellation%2Fapply%2F%3Fvia%3Dgroup" rel="noopener noreferrer">Draft the group invite<\/a>/);
+});
+
 test("security: big bodies refused before reading; the Stripe key only ever goes to Stripe; sign-ins never create records", async () => {
   const { env, access } = await appEnv();
   const big = "x=" + "a".repeat(20 * 1024);

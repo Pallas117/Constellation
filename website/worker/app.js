@@ -6,7 +6,7 @@
 import { accessIdentity, isAdmin, isStaff } from "./auth.js";
 import { deleteAccount, getAccount, getApplication, latestApplication, listAccounts, listApplications, putAccount, setApplicationStatus } from "./data.js";
 import { readCapped } from "./body.js";
-import { sameOrigin } from "./forms.js";
+import { GROUP_INVITE_PATH, groupInviteText, sameOrigin } from "./forms.js";
 import { readFeed } from "./feeds.js";
 import { esc, renderEventIcs, renderGaussDoor, supportLink } from "./render.js";
 import { deleteCall, getCall, listCalls, renderCalls, renderCallsAdmin, rsvp, saveCall } from "./calls.js";
@@ -189,7 +189,7 @@ const inviteDraft = (email, name) => {
   return `mailto:${encodeURIComponent(email)}?subject=${encodeURIComponent("Your invitation to Constellation")}&body=${encodeURIComponent(body)}`;
 };
 
-export function renderAdmin({ applications, accounts, details, invited, error, cap = 50 }) {
+export function renderAdmin({ applications, accounts, details, invited, error, cap = 50, origin = "https://lightbound.uk" }) {
   const open = applications.filter((a) => a.status === "new");
   const done = applications.filter((a) => a.status !== "new");
   const card = (a) => {
@@ -227,6 +227,8 @@ export function renderAdmin({ applications, accounts, details, invited, error, c
     `<h2>Invite to Constellation</h2><p class="muted">Free and invite-only. This creates the membership; you send the invitation yourself.</p>` +
     `<form method="post" action="/app/admin/invite" class="inline add"><label class="sr" for="inv-email">Email</label><input id="inv-email" name="email" type="email" placeholder="email@example.com" required> ` +
     `<label class="sr" for="inv-name">Name</label><input id="inv-name" name="name" placeholder="Name" maxlength="100"> <button class="btn">Invite</button></form>` +
+    `<p class="m announce">Friends in the WhatsApp group: <a href="${esc(`https://wa.me/?text=${encodeURIComponent(groupInviteText(origin))}`)}" rel="noopener noreferrer">Draft the group invite</a> ` +
+    `(you choose the group and press send). Their requests arrive here as "referred by ${esc("the Constellation WhatsApp group")}". Link: ${esc(origin + GROUP_INVITE_PATH)}</p>` +
     (accounts.some((u) => u.argo === "requested") ? `<p class="banner" role="status">Gauss Argo setup requested by ${accounts.filter((u) => u.argo === "requested").length}: email each their install link, then press "Mark Argo setup sent" below.</p>` : "") +
     `<h2>Accounts (${accounts.length} of ${cap})</h2><div class="tw"><table class="table"><thead><tr><th>Email</th><th>Plan, quote (£), billing, invoice, pilot, membership</th></tr></thead><tbody>${rows}</tbody></table></div>` +
     `<form method="post" action="/app/admin/account" class="inline add"><label class="sr" for="new-email">Email</label><input id="new-email" name="email" type="email" placeholder="email@company.com" required> ` +
@@ -484,7 +486,7 @@ export async function handleApp(request, env, url, { respond, fillPage, fetchImp
     const invited = invitedEmail ? await getAccount(env, invitedEmail) : null;
     const error = ["quote", "call", "edu"].includes(url.searchParams.get("error")) ? url.searchParams.get("error") : null;
     const calls = await listCalls(env);
-    return fillPage("/app/admin/", { admin: () => renderAdmin({ applications, accounts, details, invited: invited?.community === "member" ? invited : null, error, cap: userCap(env) }) +
+    return fillPage("/app/admin/", { admin: () => renderAdmin({ applications, accounts, details, invited: invited?.community === "member" ? invited : null, error, cap: userCap(env), origin: url.origin }) +
       `<div id="calls">${error === "call" ? `<p class="banner warn" role="alert">Not scheduled: give a title, a future start time and an https link (or none).</p>` : ""}` +
       `${renderCallsAdmin(calls, accounts.filter((a) => a.community === "member").map((a) => a.email), url.origin)}</div>` }, 200, APP_HEADERS);
   }

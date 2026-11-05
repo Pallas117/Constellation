@@ -19,7 +19,7 @@ import { FEEDS, configured, feedState, readFeed, refreshFeeds } from "./feeds.js
 import { renderEduActions, renderEduPlans, renderEvents, renderConstellationDoor, renderEventIcs, renderGaussDoor, renderIcs, renderLaunches, renderPlans, renderSupport, renderWeather } from "./render.js";
 import { eduMode, eduStaffLabel } from "./tiers.js";
 import { plannerParams, renderPlanner } from "./timezones.js";
-import { handleApply, renderApplyForm, renderContact, renderSent } from "./forms.js";
+import { handleApply, renderApplyForm, renderContact, renderSent, viaReferrer } from "./forms.js";
 import { handleApp } from "./app.js";
 import { handleWebhook } from "./stripe.js";
 import { withSecurity } from "./headers.js";
@@ -28,8 +28,10 @@ import { forRelease, isFull } from "./release.js";
 const applyPage = (kind) => () => ({
   apply: (f, t, url, env) => {
     const plan = url.searchParams.get("plan") ?? "";
-    if (!isFull(env)) return renderContact(kind, { plan });
-    return url.searchParams.get("sent") === "1" ? renderSent(kind) : renderApplyForm(kind, { plan });
+    const via = url.searchParams.get("via") ?? "";
+    if (!isFull(env)) return renderContact(kind, { plan, via });
+    const referrer = viaReferrer(kind, via);
+    return url.searchParams.get("sent") === "1" ? renderSent(kind) : renderApplyForm(kind, referrer ? { plan, referrer } : { plan });
   },
 });
 const LIVE_PAGES = {

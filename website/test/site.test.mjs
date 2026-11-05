@@ -6,7 +6,7 @@ import { readFileSync, readdirSync, statSync, existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { APP_CSP, SECURITY_HEADERS } from "../worker/headers.js";
-import { renderApplyForm } from "../worker/forms.js";
+import { groupInviteText, renderApplyForm } from "../worker/forms.js";
 import { renderPlans } from "../worker/render.js";
 import { FEATURES, SHOW_PRICES, TIERS, priceLabel } from "../worker/tiers.js";
 
@@ -535,6 +535,15 @@ test("Constellation showcase: curated, approved by the people listed, free, and 
   assert.match(sec, /href="\/constellation\/projects\/#submit">Ask to be listed/);
   assert.ok(WORKER_ROUTES.includes("/constellation/projects/"), "the Worker fills its form (or the email route)");
   assert.match(text(html["/privacy/"]), /listed in the Constellation showcase/);
+});
+
+test("Constellation: anyone can pass the invitation on in WhatsApp; the link names no one", () => {
+  const join = html["/constellation/"].match(/<section id="join"[\s\S]*?<\/section>/)[0];
+  const href = join.match(/<a class="btn ghost" href="(https:\/\/wa\.me\/\?text=[^"]+)" rel="noopener noreferrer">Invite a friend on WhatsApp<\/a>/)?.[1];
+  assert.ok(href, "WhatsApp invite button");
+  const msg = decodeURIComponent(href.slice("https://wa.me/?text=".length));
+  assert.match(msg, /^Join Constellation, Lightbound's free space community group\. .* https:\/\/lightbound\.uk\/constellation\/apply\/\?via=group$/);
+  assert.equal(msg, groupInviteText("https://lightbound.uk"), "same words as the admin draft");
 });
 
 test("Assured Connectivity: on the Gauss page, what Argo does today, a pilot route, no price or payment", () => {

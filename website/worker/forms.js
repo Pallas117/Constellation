@@ -73,6 +73,15 @@ export const KINDS = Object.freeze({
     button: "Send",
   },
 });
+// Share links carry a fixed code, never a name, so no personal data rides in the URL. "group" is the link
+// posted in the Constellation WhatsApp group (Josh, 5 Nov 2026: friends join from the chat).
+export const VIA = Object.freeze({ group: "the Constellation WhatsApp group" });
+export const GROUP_INVITE_PATH = "/constellation/apply/?via=group";
+export const groupInviteText = (origin) =>
+  `Join Constellation, Lightbound's free space community group. Ask for your invitation here; a person reads every request: ${origin}${GROUP_INVITE_PATH}`;
+/** The answer a share code fills in for "Who invited or referred you", for the invitation form only. */
+export const viaReferrer = (kind, code) => (kind === "constellation" && Object.hasOwn(VIA, code ?? "") ? VIA[code] : "");
+
 /** Where each form's page lives. */
 export const applyPath = (kind) => ({ edu: "/education/apply/", workshop: "/constellation/workshops/", showcase: "/constellation/projects/" })[kind] ?? `/${kind}/apply/`;
 const fieldsOf = (kind) => KINDS[kind].steps.flatMap((st) => st.fields);
@@ -151,12 +160,14 @@ const BY_EMAIL = {
 };
 
 /** The email route: the form's questions, and a mailto link that carries them (and the chosen package), never any answers. */
-export function renderContact(kind, { plan = "" } = {}) {
+export function renderContact(kind, { plan = "", via = "" } = {}) {
   const [title, lead, button, subject] = BY_EMAIL[kind];
   const tier = kind === "gauss" ? (TIERS.find((t) => t.id === plan) ?? TIERS[0]) : null;
-  const asks = fieldsOf(kind).filter((f) => f !== "email").map((f) => [label(kind, f), f === "plan" && tier ? optionLabel(tier) : ""]);
+  const referrer = viaReferrer(kind, via);
+  const asks = fieldsOf(kind).filter((f) => f !== "email").map((f) => [label(kind, f), f === "plan" && tier ? optionLabel(tier) : f === "referrer" ? referrer : ""]);
   const body = `${asks.map(([q, a]) => `${q}: ${a}`).join("\n\n")}\n`;
-  const mailto = `mailto:${CONTACT}?subject=${encodeURIComponent(tier ? `${subject} · ${tier.short}` : subject)}&body=${encodeURIComponent(body)}`;
+  const fullSubject = tier ? `${subject} · ${tier.short}` : referrer ? `${subject} · WhatsApp group` : subject;
+  const mailto = `mailto:${CONTACT}?subject=${encodeURIComponent(fullSubject)}&body=${encodeURIComponent(body)}`;
   return `<div class="sent"><p class="k">BY_EMAIL</p><h2>${esc(title)}</h2><p class="lead">${esc(lead)}</p>` +
     `<ul class="ticks">${asks.map(([q, a]) => `<li>${esc(q)}${a ? `: ${esc(a)}` : ""}</li>`).join("")}</ul>` +
     `<p class="actions"><a class="btn" href="${esc(mailto)}">${esc(button)}</a></p>` +
