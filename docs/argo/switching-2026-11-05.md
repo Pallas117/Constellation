@@ -103,3 +103,35 @@ gap median 61 s, p90 75 s, max 1236 s
 - A network change while a probe is running is classified within the new probe's budget, not after the
   old probe's timeouts.
 - An overlapping tick exits quietly in well under a second and is counted.
+
+## 7. Cloudflare WARP: not by default (decision, 2026-11-05)
+
+What each layer does, from the code:
+
+| Layer | Protects | Against | Evidence |
+|---|---|---|---|
+| Tailscale (WireGuard) | all traffic between team devices and to the Gauss hub | anyone on the Wi-Fi, the Wi-Fi operator | `gausspush.go` only talks to a tailnet address (`tailnetOnly`), relay bundles go hub-to-device over it |
+| TLS (verified, never disabled) | traffic to Claude, GitHub, Cloudflare trace | reading or altering content; the destination hostnames stay visible (SNI) | `probe.go` `directClient`, README security rules |
+| Argo relay (BPv7, HPKE + Ed25519) | files between devices, end to end | the hub itself, a carried folder | `docs/ARGO_DTN.md` |
+| WARP (full tunnel) | the *rest*: which hosts the Mac talks to, DNS, apps without TLS | the Wi-Fi operator and neighbours | `shield.go` |
+
+So on an untrusted Wi-Fi, WARP adds exactly one thing: it hides destinations and non-TLS traffic of
+*other* apps from the local network. It does not make Claude, GitHub or the tailnet safer, and it
+costs: an extra tunnel in the path (two today: WARP under Tailscale), a dependency on Cloudflare
+being reachable (the 19:10-19:22 outage was the uplink itself, which no tunnel fixes), and the
+automatic `warp-cli --accept-tos connect` accepts Cloudflare's terms and reroutes the Mac's egress
+without the person at the keyboard (security review PR #243, finding 6, "policy and ToS problem").
+
+Evidence from today: 0 of the 10 outages were caused or fixed by a tunnel; the credited fixes were
+network switches. `state.json` shows `shield_on` unset on the current public Wi-Fi (WPA2, so the
+shield never fired; the risk class came from this Mac's own sharing services, which WARP does not
+change).
+
+**Recommendation: keep the code, turn the automation off by default.** Done in this change:
+`"wifi_shield": "warp"` in `~/.config/argo/config.json` restores the old behaviour; without it Argo
+says once per untrusted network that WARP would help and how to turn it on. Nothing is uninstalled.
+When WARP is worth turning on by hand: an open or WEP/WPA1 network where you will use apps that are
+not the tailnet, Claude or a browser (anything on plain HTTP, mail clients with old settings), or
+when the network operator must not see which hosts you talk to. Josh decides; Argo will not accept
+terms for him. UNVERIFIED: whether WARP under Tailscale changed any of today's outcomes; nobody
+measured it and the log has no WARP events today.

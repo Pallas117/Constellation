@@ -152,6 +152,9 @@ type Loop struct {
 	Preempt <-chan os.Signal
 	// Tailnet asks the tailnet after a network change or a recovery (tailnet.go). nil: never.
 	Tailnet func(ctx context.Context) TailnetCheck
+	// ShieldWARP lets the Wi-Fi shield run warp-cli itself on untrusted Wi-Fi (config
+	// "wifi_shield": "warp"). Off: advice only (shield.go).
+	ShieldWARP bool
 }
 
 // probe runs one probe. A preemption cancels it and probes again, once: the network changed

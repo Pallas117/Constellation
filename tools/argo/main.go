@@ -40,6 +40,8 @@ type Config struct {
 	GuardSlotGB   float64  `json:"guard_slot_gb,omitempty"`   // RAM one mesh agent slot reserves (default 2)
 	GuardWorkerGB float64  `json:"guard_worker_gb,omitempty"` // RAM one job worker (test file, browser) holds (default 0.5)
 	InboxDir      string   `json:"inbox_dir,omitempty"`       // where received files land; default ~/Downloads/Argo
+	// WiFiShield "warp": Argo may run warp-cli itself on open or weak Wi-Fi (shield.go). Default "": advice only.
+	WiFiShield string `json:"wifi_shield,omitempty"`
 }
 
 func (c Config) peers() []Peer {
@@ -89,7 +91,8 @@ func main() {
 	preempt := make(chan os.Signal, 1)
 	signal.Notify(preempt, syscall.SIGUSR1) // a newer tick saw the network change under this run (tick.go)
 	loop := Loop{Prober: SystemProber{ExitNodes: cfg.ExitNodes, SignalCache: store.path("signal.json")}, Store: store, Fx: realEffects{phone: phone}, AppWatch: true, Preempt: preempt}
-	loop.Tailnet = tailnetKicker(cfg) // read-only `tailscale ping`/`netcheck` after a switch (tailnet.go)
+	loop.Tailnet = tailnetKicker(cfg)          // read-only `tailscale ping`/`netcheck` after a switch (tailnet.go)
+	loop.ShieldWARP = cfg.WiFiShield == "warp" // opt-in since 2026-11-05 (shield.go)
 	flush := func() {
 		if phone != nil {
 			phone.Flush() // deliver alerts queued while offline
