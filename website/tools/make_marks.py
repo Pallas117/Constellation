@@ -87,48 +87,53 @@ def both(path_d: str, fill: str) -> list[str]:
 
 
 def turnstone_body(c: dict[str, str], small: bool = False) -> list[str]:
-    """Turnstone v8 (5 Nov 2026, Josh: "more realistic and less chunky", then "cute but deadly").
+    """Turnstone v9 (5 Nov 2026, Josh: "more realistic and less chunky", "cute but deadly", then "Look again at images
+    of the turnstone bird"), drawn from photos of the ruddy turnstone on Wikimedia Commons.
 
-    The ruddy turnstone landing, drawn from the bird: a big round head sitting low on a plump body, a large eye with a
-    catch-light (cute); four swept blade primaries, a hard angled brow and small talons (deadly). Curved arm and
-    secondaries; the earth-blue rear feathers tucked under the trailing edge; the black breast band, a real field mark;
-    short orange legs; the Book's two-step tide line. `small` drops the catch-light and thickens strokes (the badge).
+    Wings raised in a V, long, narrow and pointed like a sandpiper's, with the dark leading edge in earth blue; the
+    harlequin face: a black band from the bill through the eye to the nape (its top edge angled down to the bill) and
+    the cheek stripe dropping into the black breast band; a catch-light in the masked eye; a plump white belly; short
+    orange legs with talons; the two-step tide line. Exactly symmetric except the head, which looks along the bill.
+    `small` simplifies the leading edge, thickens strokes and enlarges the catch-light (the badge).
     """
-    out: list[str] = []
-    # Wing: grows from inside the shoulder; the arm curves up, the hand ends in four swept blades.
-    wing = ("M122 112C138 96 160 70 184 44C194 34 204 26 218 16"   # leading edge
-            "L210 38L230 30L212 52L232 48L210 64L228 66L202 76"     # four blade primaries, same sweep
-            "C188 92 170 110 150 126C140 126 130 122 122 112Z")      # secondaries back into the body
-    out += both(wing, c["warm"])
-    # Rear feathers: an earth-blue crescent tucked under the trailing edge, one fine cut away.
-    out += both("M202 81C188 97 170 115 152 131C158 135 164 135 168 133C184 119 198 103 208 87Z", c["blue"])
-    # Body: plump, widest low at the breast.
-    out.append(f'<path d="M120 92C138 92 150 108 150 128C150 148 138 164 120 174C102 164 90 148 90 128C90 108 102 92 120 92Z" fill="{c["warm"]}"/>')
-    # Head: big and round, sitting low on the body; bill short, sharp, turned a touch up.
-    out.append(f'<circle cx="120" cy="74" r="19" fill="{c["warm"]}"/>')
-    out.append(f'<path d="M104 72L87 71L103 80Z" fill="{c["warm"]}"/>')
-    # Eye with a catch-light (cute), under a hard angled brow (deadly).
-    out.append(f'<circle cx="112" cy="74" r="{5 if small else 4.6}" fill="{c["cut"]}"/>')
+    o: list[str] = []
+    # Wing raised in a V, long, narrow and pointed like a sandpiper's: white underwing, a short step where the
+    # primaries begin, one sharp tip.
+    o += both("M124 110C140 92 164 64 196 34C204 27 212 21 222 14"
+              "C220 26 216 36 210 44L216 46C206 58 196 70 184 82"
+              "C170 98 156 114 142 128C134 124 128 118 124 110Z", c["warm"])
+    # The dark leading edge of the wing, in earth blue, one fine cut in from the edge.
     if not small:
-        out.append(f'<circle cx="110.6" cy="72.6" r="1.5" fill="{c["warm"]}"/>')
-    out.append(f'<path d="M103 66L122 70L121 73L104 69Z" fill="{c["cut"]}"/>')
-    # Harlequin mask: the dark stripe from the eye down the cheek, and the breast band below.
-    out.append(f'<path d="M98 112C106 117 113 123 120 131C127 123 134 117 142 112L145 118C136 124 128 132 120 143C112 132 104 124 95 118Z" fill="{c["cut"]}"/>')
-    # Short orange legs ending in small talons.
+        o += both("M131 106C146 90 168 64 198 36C206 29 213 23 221 17C214 26 206 34 200 40C172 68 150 92 136 110Z", c["blue"])
+    else:
+        o += both("M130 106C150 86 176 58 220 16C208 34 186 58 138 110Z", c["blue"])
+    # Body: plump, white belly.
+    o.append(f'<path d="M120 94C137 94 148 108 148 127C148 147 137 163 120 172C103 163 92 147 92 127C92 108 103 94 120 94Z" fill="{c["warm"]}"/>')
+    # Head: smaller and rounded, the short dark wedge bill turned a touch up.
+    o.append(f'<path d="M120 60C130 60 136 68 136 77C136 87 129 94 120 94C111 94 104 87 104 77C104 68 110 60 120 60Z" fill="{c["warm"]}"/>')
+    o.append(f'<path d="M106 74L88 73L105 81Z" fill="{c["warm"]}"/>')
+    # Harlequin mask, as on the bird: a black band from the bill through the eye to the nape, its top edge angled down
+    # to the bill (the fierce brow); and the cheek stripe dropping from under the eye into the bib.
+    o.append(f'<path d="M105 71L132 69L134 75L123 76L106 80Z" fill="{c["cut"]}"/>')
+    o.append(f'<path d="M110 79L116 78C117 85 119 91 123 96L116 98C113 92 111 86 110 79Z" fill="{c["cut"]}"/>')
+    # Catch-light in the masked eye: cute.
+    o.append(f'<circle cx="113" cy="74.2" r="{2.2 if small else 1.8}" fill="{c["warm"]}"/>')
+    # Black breast band curving up the sides of the neck, white belly below.
+    o.append(f'<path d="M100 104C106 112 112 118 120 122C128 118 134 112 140 104L146 112C138 122 130 130 120 136C110 130 102 122 94 112Z" fill="{c["cut"]}"/>')
     w = 5 if small else 4
-    out.append(f'<path d="M114 170L112 188M126 170L128 188M112 188L104 194M112 188L114 196M128 188L136 194M128 188L126 196" '
-               f'fill="none" stroke="{c["orange"]}" stroke-width="{w}" stroke-linecap="round" stroke-linejoin="round"/>')
-    out.append(f'<path d="M70 202Q120 197 170 202M92 210Q120 207 148 210" fill="none" stroke="{c["blue"]}" stroke-width="{5 if small else 3.5}" stroke-linecap="round"/>')
-    return out
+    o.append(f'<path d="M114 168L112 186M126 168L128 186M112 186L105 191M112 186L114 193M128 186L135 191M128 186L126 193" '
+             f'fill="none" stroke="{c["orange"]}" stroke-width="{w}" stroke-linecap="round" stroke-linejoin="round"/>')
+    o.append(f'<path d="M72 199Q120 194 168 199M94 207Q120 204 146 207" fill="none" stroke="{c["blue"]}" stroke-width="{5 if small else 3.5}" stroke-linecap="round"/>')
+    return o
 
 
 def turnstone(c: dict[str, str]) -> str:
-    return svg("6 8 228 210", turnstone_body(c))
+    return svg("8 8 224 206", turnstone_body(c))
 
 
 def turnstone_badge(c: dict[str, str]) -> str:
     ring = f'<circle cx="120" cy="112" r="108" fill="{DARK["cut"]}" stroke="{DARK["warm"]}" stroke-width="4"/>'
-    return svg("8 0 224 224", [ring, '<g transform="translate(120 116) scale(.72) translate(-120 -112)">', *turnstone_body(DARK, small=True), "</g>"])
+    return svg("8 0 224 224", [ring, '<g transform="translate(120 114) scale(.74) translate(-120 -112)">', *turnstone_body(DARK, small=True), "</g>"])
 
 
 def star4(cx: float, cy: float, r: float, waist: float, fill: str) -> str:
