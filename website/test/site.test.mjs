@@ -182,7 +182,9 @@ test("live-view gate: a labelled pre-rendered frame behind the Argo door, no scr
   assert.match(gate, /<p class="src">Accounts aren&rsquo;t open yet: until they are, this button plays a replay of the live view\. /);
   assert.doesNotMatch(gate, /href="\/live"|<!--full-->|<!--public-->/, "nothing points at a sign-in route that is not deployed");
   assert.match(html["/gauss/"], /<section id="replay"/, "the replay the door opens on");
-  assert.equal(read("assets/marks/argo-mark-colour-dark.svg").match(/<polygon/g).length, 5, "the Argo sail mark: mast, boom, three sails and the star");
+  const argoMark = read("assets/marks/argo-mark-colour-dark.svg");  // the sail in the wind (Josh, 5 Nov): curved panels
+  assert.equal(argoMark.match(/<path d="M[^"]*C[^"]*Z" fill=/g).length, 3, "the Argo sail mark: three curved sails");
+  assert.equal(argoMark.match(/<polygon/g).length, 1, "the Argo sail mark: and the star");
   assert.match(read("assets/site.css"), /\.btn\.argo\{/, "the door has its own style");
   assert.match(gate, /<svg class="rad-field"[^>]*aria-hidden="true"/, "the radiation field is decoration, hidden from screen readers");
   assert.doesNotMatch(gate, /<script|<iframe|<canvas/);
