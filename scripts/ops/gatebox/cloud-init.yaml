@@ -1,0 +1,79 @@
+#cloud-config
+# Gauss gate server (Oracle Always Free, VM.Standard.A1.Flex, Ubuntu 24.04 aarch64).
+# Pull model: no GitHub runner and no inbound service besides SSH. After it joins the tailnet,
+# port 22 is closed to the internet. The "gate" user's key can only run gauss-gate-run (forced
+# command), which fetches one commit of an allowlisted public repo and runs the gates on it.
+# zram + earlyoom keep a memory spike from freezing the VM (see the end of runcmd).
+# No secrets live here.
+package_update: true
+package_upgrade: true
+packages: [git, build-essential, python3, jq, curl, xz-utils, unattended-upgrades, earlyoom, systemd-zram-generator]
+
+users:
+  - default
+  - name: gate
+    shell: /bin/bash
+    lock_passwd: true
+    ssh_authorized_keys:
+      - 'command="/usr/local/bin/gauss-gate-run",no-port-forwarding,no-X11-forwarding,no-agent-forwarding,no-pty ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDvjuRN/RphHGZOpc8w7dIKNPRK4Bg2zMVLXyRWBdA3C gauss-gatebox@judith'
+
+write_files:
+  - path: /etc/apt/apt.conf.d/52gauss-auto-reboot
+    content: |
+      Unattended-Upgrade::Automatic-Reboot "true";
+      Unattended-Upgrade::Automatic-Reboot-Time "04:30";
+  - path: /etc/ssh/sshd_config.d/90-gauss.conf
+    content: |
+      PasswordAuthentication no
+      KbdInteractiveAuthentication no
+      PermitRootLogin no
+  - path: /usr/local/bin/gauss-gate-run
+    permissions: '0755'
+    content: |
+      #!/bin/bash
+      # gauss-gate-run <owner/repo> <40-char sha>: run the gates on that exact commit, print the log,
+      # exit with the gates' status. Called only via the gate user's forced SSH command.
+      set -uo pipefail
+      read -r repo sha _ <<<"${SSH_ORIGINAL_COMMAND:-$*}"
+      case "$repo" in Pallas117/Constellation) ;; *) echo "repo not allowed: $repo"; exit 64 ;; esac
+      [[ "$sha" =~ ^[0-9a-f]{40}$ ]] || { echo "need a full 40-char sha"; exit 64; }
+      exec 9>/home/gate/.lock; flock -w 3600 9 || { echo "busy"; exit 75; }
+      mirror=/home/gate/mirror/${repo//\//_}.git
+      [ -d "$mirror" ] || git clone -q --mirror "https://github.com/$repo.git" "$mirror"
+      git -C "$mirror" fetch -q origin "+refs/heads/*:refs/heads/*" "+refs/pull/*/head:refs/pull/*/head" || exit 69
+      git -C "$mirror" cat-file -e "$sha^{commit}" 2>/dev/null || { echo "sha not on GitHub: $sha"; exit 65; }
+      work=$(mktemp -d /home/gate/work.XXXXXX); trap 'rm -rf "$work"' EXIT
+      git -C "$mirror" archive "$sha" | tar -x -C "$work"
+      cd "$work" || exit 70
+      echo "gates on $repo@$sha ($(nproc) cpu, $(free -g | awk '/Mem/{print $2}') GB)"
+      start=$SECONDS
+      npm ci --no-audit --no-fund && npm test && npm run quality:full && npm run build
+      rc=$?
+      echo "gates rc=$rc in $((SECONDS - start)) s on $sha"
+      exit $rc
+
+runcmd:
+  # Node 26 LTS (.nvmrc) for arm64, checked against nodejs.org's SHASUMS256 before install.
+  - |
+    set -e; cd /tmp; base=https://nodejs.org/dist/latest-v26.x
+    curl -fsSLO "$base/SHASUMS256.txt"
+    f=$(grep -o 'node-v26[^ ]*-linux-arm64.tar.xz' SHASUMS256.txt | head -1)
+    curl -fsSLO "$base/$f"; grep " $f\$" SHASUMS256.txt | sha256sum -c -
+    mkdir -p /opt/node && tar -xJf "$f" -C /opt/node --strip-components=1
+    ln -sf /opt/node/bin/node /opt/node/bin/npm /opt/node/bin/npx /usr/local/bin/
+  # Tailscale from its signed apt repo (official installer); joining is done interactively later.
+  - curl -fsSL https://tailscale.com/install.sh | sh
+  - install -d -o gate -g gate /home/gate/mirror
+  - systemctl reload ssh || systemctl reload sshd
+  # Memory spikes (dependency install + build on a 6 GB VM): zram gives compressed swap in RAM (half
+  # the RAM, zstd), and earlyoom stops the biggest process before the VM freezes, so a gate fails
+  # visibly (non-zero rc) instead of hanging. ssh and tailscale are never chosen; node/esbuild first.
+  # Written after the packages install so dpkg never sees a conflicting conffile.
+  - |
+    set -e
+    printf '[zram0]\nzram-size = ram / 2\ncompression-algorithm = zstd\nswap-priority = 100\n' > /etc/systemd/zram-generator.conf
+    printf 'vm.swappiness = 150\nvm.page-cluster = 0\n' > /etc/sysctl.d/90-gauss-zram.conf
+    sysctl --system >/dev/null
+    systemctl daemon-reload && systemctl restart systemd-zram-setup@zram0.service
+    echo 'EARLYOOM_ARGS="-m 5 -s 10 -r 3600 --avoid (^|/)(sshd|tailscaled|systemd|systemd-journald)$ --prefer (^|/)(node|esbuild|npm)$"' > /etc/default/earlyoom
+    systemctl enable --now earlyoom && systemctl restart earlyoom
