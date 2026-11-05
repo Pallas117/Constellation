@@ -7,7 +7,7 @@ https://claude.ai/artifact/CvWgPQyJio2m5uHPyZZHdv. Copied unchanged; the Lightbo
 - Lightbound "Black hole": the ray-traced silhouette, flat, 3-stop gradient, ring 7 units (no blur).
 - Gauss Aurora "Radiation belts": two solid belts (outer lime, inner amber), one L 6.4 field line; reads at 16 px.
 - Turnstone v11, 5 Nov (Josh: "a more uniform structure with motion, mystique that embodies the lightbound brand";
-  proposed): built from the Lightbound mark system, one stroke weight throughout. The bird is implied inside its orbit
+  approved by Josh 6 Nov): built from the Lightbound mark system, one stroke weight throughout. The bird is implied inside its orbit
   ring (the original Turning-tide mark's tide): three nested sweeps per wing, a wingbeat caught mid-stroke, breaking
   out of the ring; an open almond with the breast-band chevron for the body; the head with its short upturned bill and
   the dark eye of the harlequin mask; short orange legs. The ring breaks where a
@@ -15,7 +15,7 @@ https://claude.ai/artifact/CvWgPQyJio2m5uHPyZZHdv. Copied unchanged; the Lightbo
 - Constellation, refined 4 Nov: navy disc, gold ring broken by five evenly spaced stars, three gold key stars on an
   equilateral triangle with one white star off each. The 3-node icon is for 32 px and under.
 - Argo, 5-6 Nov (Josh: "Argo could be just a sail", "a sail in the wind", then "one sail", "like a sweeping wind",
-  "wing"): a single crescent sail hoisted at the masthead, its leading edge bellied out like a wing, sharp at head and
+  "wing"; approved 6 Nov): a single crescent sail hoisted at the masthead, its leading edge bellied out like a wing, sharp at head and
   clew, with the sheet back to the mast and Canopus (the lime four-point star) across the mast. It tapers the way the
   Turnstone's wing sweeps do. On a black tile it is the favicon.
 - Gauss Aurora icon, 5 Nov: the symbol's own belts cropped square with a solid warm Earth, for favicons and app icons

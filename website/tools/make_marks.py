@@ -99,8 +99,8 @@ def taper(p0: tuple[float, float], q: tuple[float, float], p1: tuple[float, floa
 
 
 def turnstone_body(c: dict[str, str], small: bool = False) -> list[str]:
-    """Turnstone v11 (5 Nov 2026, Josh: "We need a more uniform structure with motion, mystique that embodies the
-    lightbound brand").
+    """Turnstone v11 (5-6 Nov 2026, Josh: "We need a more uniform structure with motion, mystique that embodies the
+    lightbound brand"; approved 6 Nov).
 
     Built from the Lightbound mark system instead of drawn as an illustration: one stroke weight throughout, like the
     Gauss field lines and the Constellation ring. The orbit ring is the original Turning-tide mark's tide; its Moon point is
@@ -158,7 +158,7 @@ def star4(cx: float, cy: float, r: float, waist: float, fill: str) -> str:
 
 def argo(c: dict[str, str], icon: bool = False) -> str:
     """Argo: one sail like a sweeping wind, a wing (Josh, 5-6 Nov 2026: "Argo could be just a sail", "a sail in the
-    wind", then "I think one sail", "Sail like a sweeping wind", "Wing").
+    wind", then "I think one sail", "Sail like a sweeping wind", "Wing"; approved 6 Nov).
 
     Argo is the ship of the old constellation Argo Navis; its brightest star, Canopus, has been a spacecraft's
     reference star since Mariner 3 and 4 carried the first Canopus star trackers (1964), so the one lime element is the
