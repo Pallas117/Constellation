@@ -32,7 +32,7 @@ const applyPage = (kind) => () => ({
   },
 });
 const LIVE_PAGES = {
-  "/": () => ({ "gauss-door": (f, t) => renderGaussDoor(f.weather, t), "constellation-door": (f, t) => renderConstellationDoor(f.launches, t) }),
+  "/": () => ({}), // the landing page carries no readouts (they live on /gauss/ and /constellation/); filled for the release blocks
   "/gauss/": () => ({ plans: (f, t, url, env) => renderPlans(isFull(env)), "constellation-door": (f, t) => renderConstellationDoor(f.launches, t) }),
   "/constellation/": () => ({
     launches: (f, t) => renderLaunches(f.launches, t),
@@ -50,7 +50,7 @@ const LIVE_PAGES = {
   "/education/": () => ({ "edu-actions": (f, t, url, env) => renderEduActions(eduMode(isFull(env) ? env : {})),
     "edu-plans": (f, t, url, env) => renderEduPlans(eduMode(isFull(env) ? env : {}), eduStaffLabel(env)) }),
 };
-const NEEDS_FEEDS = new Set(["/", "/gauss/", "/constellation/"]);
+const NEEDS_FEEDS = new Set(["/gauss/", "/constellation/"]);
 const ATTRIBUTION = {
   launches: "Data: The Space Devs Launch Library 2 (thespacedevs.com)",
   events: "Events: Constellation on Luma (luma.com/constellation)",

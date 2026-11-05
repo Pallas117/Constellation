@@ -65,26 +65,20 @@ p{margin:0 0 1em}
   border-color:rgba(243,240,232,.32);-webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px)}
 .btn.ghost:hover{border-color:var(--accent);color:#fff}
 
-/* Hero film: the kit's ray-traced black hole. Poster image underneath, so no-JS, reduced motion and
-   slow links all get the still frame. */
-.hero{position:relative;min-height:max(520px,86svh);display:grid;align-items:end;overflow:hidden;border-bottom:1px solid var(--char);isolation:isolate}
+/* Landing: one screen of the kit's ray-traced black hole and the slogan, nothing else (Josh, 5 Nov 2026: empty
+   space, then the descent, then Argo). Poster image underneath, so no-JS, reduced motion and slow links all get
+   the still frame. The slogan sits on the 8px grid at the foot of the screen, left-aligned with the header mark. */
+.hero{position:relative;min-height:max(560px,100svh);display:grid;align-items:end;overflow:hidden;border-bottom:1px solid var(--char);isolation:isolate}
 .hero .poster,.hero .film{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;z-index:-2}
 .hero::after{content:"";position:absolute;inset:0;z-index:-1;background:linear-gradient(180deg,rgba(5,5,5,.55) 0,rgba(5,5,5,0) 22%,rgba(5,5,5,0) 40%,rgba(5,5,5,.92) 88%),linear-gradient(90deg,rgba(5,5,5,.7) 0,rgba(5,5,5,.35) 45%,rgba(5,5,5,0) 70%)}
-.hero-copy{padding-block:120px 40px;display:grid;gap:14px;width:100%}
-.hero-copy>:last-child{margin-bottom:0}
-.hero .wedge{margin:6px 0 0;font-size:clamp(17px,1.6vw,20px);color:rgba(243,240,232,.78);max-width:40ch}
-.hero .wedge a{color:var(--warm)}
-.hero h1{font-size:clamp(56px,9vw,128px);line-height:.95;letter-spacing:-.025em}
-.down{display:inline-flex;align-items:center;gap:10px;margin-top:8px;font:700 12px/1 var(--mono);letter-spacing:.12em;text-transform:uppercase;color:var(--warm);text-decoration:none;padding:10px 0}
-.down::after{content:"\2193";font-size:16px;display:inline-block}
-@media (prefers-reduced-motion:no-preference){.down::after{animation:nudge 2.4s ease-in-out infinite}}
-@keyframes nudge{50%{transform:translateY(4px)}}
+.hero-copy{padding-block:120px 96px;width:100%}
+.hero h1{font-size:clamp(56px,9vw,128px);line-height:.95;letter-spacing:-.025em;margin:0}
 @media (prefers-reduced-motion:reduce){.hero .film{display:none}html{scroll-behavior:auto}}
 /* Portrait screens: the film fills the top of the hero and fades to black, so the copy sits on black. */
 @media (max-aspect-ratio:1/1){
   .hero .poster,.hero .film{height:62%}
   .hero::after{background:linear-gradient(180deg,rgba(5,5,5,.5) 0,rgba(5,5,5,0) 16%,rgba(5,5,5,0) 36%,var(--black) 62%)}
-  .hero-copy{padding-top:56vw}
+  .hero-copy{padding-block:56vw 64px}
   .hero h1{font-size:clamp(44px,13vw,104px)}
 }
 
@@ -438,7 +432,6 @@ footer p{margin:0 0 6px}
   .top nav a.signin{padding:5px 10px}
   .subnav{flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none;padding-bottom:4px;
     -webkit-mask-image:linear-gradient(90deg,var(--black) 82%,transparent);mask-image:linear-gradient(90deg,var(--black) 82%,transparent)} /* the fade says it scrolls */
-  .hero-copy{padding-bottom:28px}
   .btn{flex:1 1 auto;justify-content:center}
 }
 @media (max-width:400px){.top nav .opt{display:none}}
@@ -545,6 +538,16 @@ footer p{margin:0 0 6px}
   }
 }
 @keyframes far-drift{to{background-position:0 520px}}
+
+/* Landing: one quiet row of the three marks after the door. No readouts or copy here: those live on each
+   project's own page, and the header and footer already carry the names. */
+.marks{list-style:none;margin:0;padding:0;display:flex;flex-wrap:wrap;gap:24px 56px;align-items:flex-end}
+.marks a{display:inline-flex;flex-direction:column;align-items:flex-start;gap:12px;text-decoration:none;color:var(--muted)}
+.marks img{display:block;height:40px;width:auto;opacity:.78;transition:opacity .25s}
+.marks a:hover,.marks a:focus-visible{color:var(--warm)}
+.marks a:hover img,.marks a:focus-visible img{opacity:1}
+.marks .label{color:inherit}
+@media (prefers-reduced-motion:reduce){.marks img{transition:none}}
 
 /* Gauss for Education: the classroom's labs and the student start form. */
 .doors-more{margin:22px 0 0;color:var(--muted)}

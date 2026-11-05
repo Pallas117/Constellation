@@ -236,8 +236,9 @@ test("routes: live pages are filled in and carry the security headers", async ()
   assert.equal(home.status, 200);
   for (const [k, v] of Object.entries(SECURITY_HEADERS)) assert.equal(home.headers.get(k), v, k);
   const body = await home.text();
-  assert.match(body, /Space weather now/);
-  assert.match(body, /Next launch<\/span><span class="door-big">T−/);
+  // The landing page carries no readouts (Josh, 5 Nov 2026: nothing repeating); they live on the product pages below.
+  assert.doesNotMatch(body, /Space weather now|Next launch/);
+  assert.match(body, /<section id="enter" class="live-gate"/);
   const page = await (await call("/constellation/")).text();
   assert.equal((page.match(/<li class="launch">/g) || []).length, 10);
   assert.match(page, /chip live">Live/);
@@ -288,7 +289,7 @@ test("routes: a fresh deploy fetches once in the background, before the first cr
   globalThis.fetch = f;
   const fresh = { ASSETS, LIVE: memoryKV() };
   const { ctx, settle } = context();
-  const res = await worker.fetch(new Request("https://lightbound.uk/"), fresh, ctx);
+  const res = await worker.fetch(new Request("https://lightbound.uk/gauss/"), fresh, ctx); // the landing page reads no feeds
   assert.equal(res.status, 200, "page still serves while data loads");
   await settle();
   assert.equal(f.calls.length, 6, "a public release: launches, events and four for space weather");
