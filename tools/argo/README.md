@@ -29,9 +29,10 @@ Optional extras:
   Argo sends an iMessage from this Mac's Messages app to your own handle, so no app or token is needed.
   macOS asks once to let Argo control Messages. Messages carry only the masked title and reason. Alerts
   raised while offline are queued (up to 20) and sent on the next tick with internet. `argo phone off`
-  turns them off. An iMessage to your own number arrives without a banner; for alerts you'll notice, set
-  `"phone_service": "sms"` in `~/.config/argo/config.json` (SMS first via Text Message Forwarding, then
-  iMessage). Messages accepts an SMS before the iPhone sends it, so Argo reads back that one message's
+  turns them off. An iMessage to your own number arrives without a banner; for alerts you'll notice, run
+  `argo phone sms` (SMS first via Text Message Forwarding, then iMessage). SMS is carried by your mobile
+  carrier unencrypted; `argo phone imessage` goes back to iMessage first, end-to-end encrypted by Apple.
+  Messages accepts an SMS before the iPhone sends it, so Argo reads back that one message's
   status (error and sent flags only, never text) for up to 20 s and resends a "Not Delivered" SMS over
   iMessage. This needs Full Disk Access for `~/.local/bin/argo`; `argo phone test` says whether the check is
   on. Without it, alerts behave as before. The background agent needs its own Automation → Messages permission: after every rebuild of the
@@ -41,6 +42,11 @@ Optional extras:
   channel, mask and offline queue, at most once per interval per key. The gauss-awake battery guard
   uses it (battery low, at the sleep floor, charger can't keep up, no cutoff configured), as do
   mesh-heal and Claude Code `Notification` hooks.
+- **What left this Mac.** `argo egress` lists every text Argo sent in the last 7 days (time, masked
+  recipient, size, the masked text, and who carries it) and how much went to your own network (the Gauss
+  report, relay bundles to the hub; both refused unless the URL is this Mac or the tailnet). The log stays on
+  this Mac (`egress.jsonl`, `0600`, rolls over at 512 KB; daily counters in `egress-own.json`, 14 days).
+  `argo egress off` holds third-party sends: texts wait in the local queue (newest 20) until `argo egress on`.
 - **Claude Code status line.** In `~/.claude/settings.json`:
   `"statusLine": {"type": "command", "command": "argo status"}`.
   It reads the cached state only, so it never probes the network and is instant.
@@ -69,13 +75,16 @@ Then remove the `statusLine` and `claude()` lines above if you added them, and r
 | `argo doctor` | Full probe snapshot (secrets masked), the class, and what to do. Changes nothing. |
 | `argo fix` | Runs the loop once in the foreground |
 | `argo report` | Incident counts by class, how many needed a fix and were fixed, how many resolved on their own, last 10 events |
-| `argo phone <handle>\|test\|off` | Set up, test or turn off iMessage alerts to your iPhone |
+| `argo phone <handle>\|test\|off\|imessage\|sms` | Set up, test or turn off alerts to your iPhone; choose iMessage first (end-to-end encrypted) or SMS first (banner on your own number, carried by your carrier) |
+| `argo egress [off\|on]` | What Argo sent off this Mac and where (log kept on this Mac); `off` holds third-party sends locally until `on` |
 | `argo notify [-key K -every D] TITLE MSG` | Send an alert to your iPhone (masked, queued offline, rate-limited per key) |
 | `argo watch` | Run the peer watchdog once (also every tick): restarts the gauss-awake guard or mesh-heal when their heartbeat is stale, max 3 restarts/hour each, then alerts. Override the list with `"watch"` in config.json |
 | `argo devices` | Which watched tailnet devices are offline. Every tick, a phone of yours that has been off the tailnet for 30 min or more gets a text (SMS over its own cellular link) with the fix: open Tailscale, turn on Connect On Demand. At most every 6 h per device. Override the list with `"devices": ["hostname", ...]` in config.json |
 | `argo guard` | Resource guard (below): memory, battery, disk and CPU now and over the last 24 h, who uses memory, what to do. `--json` for scripts |
 | `argo guard admit [-mem GB] [-name JOB] [-wait 10m]` | Exit 0 if a job needing GB may start now, 75 (with the reason) if not. With `-name`, what that job measured replaces `-mem` (below) |
 | `argo guard run [-mem GB] [-max GB] [-name JOB] [-wait 10m] -- cmd` | Runs `cmd` only when admitted, and stops its whole process group if the host reaches **block** or the job holds more than `-max` GB. Measures the job's peak and passes `ARGO_WORKERS` (below). A job that started on AC is paused (SIGSTOP) while the Mac runs on battery and resumed when power returns ("eclipse mode"); paused for 2 h, it is stopped with exit 75 so a queue retries it. Exit 75 when refused or stopped, otherwise `cmd`'s own code |
+| `argo heal [--json]` | Self-healing log: blockers open now with the remedy the library chose for each (`live` = Argo does it, `shadow` = chosen and logged but not run, `person` = needs you), then how long each kind of blocker lasted over 7 days (below) |
+| `argo scale [--json]` | Measured demand this host could not serve over 7 days: per job runs, failures, run and lost (waiting or paused) hours, p90 peak, GB·h, watts, and whether it is `local`, `burst` (a remote runner would return its lost time) or `remote` (needs more RAM than this host has). Sizes the smallest outside runner and lists what is not measured |
 | `argo send [-ttl 72h] DEVICE FILE` | Queue a file for another enrolled device (below): signed, encrypted to that device, kept until it confirms. Works offline |
 | `argo outbox` / `argo inbox` | What you sent and how far it got (queued, at hub, picked up, confirmed); what you received and where it was saved |
 | `argo sync` | Forward and fetch now (every tick does this too) |
@@ -271,6 +280,18 @@ worker over its last runs (median of at least 3 successful runs; 3 W until then;
 `workers`, `base_w`, `avg_w`). A desktop or a host with no draw reading gets no power cap. `argo guard` prints the
 budget on the `power` line, and each report to Gauss carries it in the battery block, so the Mesh page shows
 "9.5 W spare" or "charger 2.8 W short" and a device in deficit or under 5 W of margin is offered light work only.
+
+**Self-healing (slice 2: evidence, no new actions).** Every guard tick turns findings at watch or worse
+into blocker episodes in `heal.jsonl` (this device only, newest 1000 kept): code, start, last seen, peak
+level and the remedy the rules order chose. An episode closes after 3 min without the finding. Remedies
+Argo already runs are `live` (eclipse pause, autoscaled admission, the power budget); the rest are `shadow`
+until a replay of this log shows they would have cleared blockers sooner with no wrong actions. Nothing
+is credited yet. Design: `argo-self-healing-design-2026-10-31.md` in claude-outputs.
+
+**Sizing outside compute.** `argo guard run` now records how long each job waited for admission and sat
+paused (`wait_s`, `pause_s` in `jobs.jsonl`). `argo scale` sums that: lost hours are the demand this host
+turned away, and a job's p90 peak sets the RAM a runner needs. It only reports what ran under the guard;
+GPU training and other unmeasured work are listed as MISSING, not estimated. Run it on each mesh host.
 
 ## Store and forward (delay-tolerant delivery)
 

@@ -1,7 +1,13 @@
 #!/usr/bin/env node
 import 'dotenv/config'
+import { execFile } from 'child_process'
 import fs from 'fs'
+import os from 'os'
 import path from 'path'
+
+// Alerts stay on this machine: alerts.jsonl and the console. With ALERTS_VIA_ARGO=1 each
+// alert also goes to the phone through Argo (`argo notify`): masked, rate-limited, queued
+// while offline and logged on this Mac (`argo egress`). Raw log lines never leave.
 
 const LOG_DIR = path.resolve(process.cwd(), 'data/agents/logs')
 const IN_FILE = path.join(LOG_DIR, 'monitor.jsonl')
@@ -55,9 +61,7 @@ function scanNew() {
                   continue
                 }
                 recentAlerts.set(key, now)
-                // send notifications (if configured)
-                await sendSlack(a)
-                await createLinearIssue(a)
+                await notifyArgo(a)
               } catch (e) {
                 console.error('error emitting alert notifications', e)
               }
@@ -72,40 +76,23 @@ function scanNew() {
   }
 }
 
-const SLACK_WEBHOOK = process.env.SLACK_WEBHOOK_URL || process.env.SLACK_WEBHOOK
-const LINEAR_API_KEY = process.env.LINEAR_API_KEY
-const LINEAR_TEAM_ID = process.env.LINEAR_TEAM_ID
+const VIA_ARGO = process.env.ALERTS_VIA_ARGO === '1'
+const ARGO = process.env.ARGO || path.join(os.homedir(), '.local/bin/argo')
 
-async function sendSlack(alert) {
-  if (!SLACK_WEBHOOK) return
-  try {
-    const body = { text: `Alert: ${alert.type} - ${alert.raw || JSON.stringify(alert)}` }
-    const res = await fetch(SLACK_WEBHOOK, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
-    if (!res.ok) console.error('Slack webhook failed', await res.text())
-    else console.log('Slack notification sent')
-  } catch (e) {
-    console.error('sendSlack error', e)
-  }
+// argoArgs names the alert without the log line it came from.
+function argoArgs(alert) {
+  const what = alert.type === 'latency_spike' ? `link latency ${Number(alert.latencyMs)} ms` : 'the ML forecast failed'
+  return ['notify', '-key', `gauss-${alert.type.replace(/_/g, '-')}`, '-every', '30m', 'Gauss backend', what]
 }
 
-async function createLinearIssue(alert) {
-  if (!LINEAR_API_KEY || !LINEAR_TEAM_ID) return
-  try {
-    const title = `Alert: ${alert.type}`
-    const description = alert.raw || JSON.stringify(alert, null, 2)
-    const query = `mutation IssueCreate($input: IssueCreateInput!) { issueCreate(input: $input) { success, issue { id, url } } }`
-    const input = { title, description, teamId: LINEAR_TEAM_ID }
-    const res = await fetch('https://api.linear.app/graphql', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${LINEAR_API_KEY}` },
-      body: JSON.stringify({ query, variables: { input } })
+function notifyArgo(alert) {
+  if (!VIA_ARGO) return Promise.resolve()
+  return new Promise((resolve) => {
+    execFile(ARGO, argoArgs(alert), { timeout: 60_000 }, (err) => {
+      if (err) console.error('argo notify failed:', err.message)
+      resolve()
     })
-    const j = await res.json()
-    if (j.errors) console.error('Linear API error', j.errors)
-    else console.log('Linear issue created', j.data && j.data.issueCreate && j.data.issueCreate.issue && j.data.issueCreate.issue.url)
-  } catch (e) {
-    console.error('createLinearIssue error', e)
-  }
+  })
 }
 
 console.log('Watching', IN_FILE, '->', OUT_FILE)
