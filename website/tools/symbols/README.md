@@ -6,11 +6,11 @@ https://claude.ai/artifact/CvWgPQyJio2m5uHPyZZHdv. Copied unchanged; the Lightbo
 
 - Lightbound "Black hole": the ray-traced silhouette, flat, 3-stop gradient, ring 7 units (no blur).
 - Gauss Aurora "Radiation belts": two solid belts (outer lime, inner amber), one L 6.4 field line; reads at 16 px.
-- Turnstone v9, 5 Nov (Josh: "more realistic and less chunky", "cute but deadly", "look again at images of the
-  turnstone bird"; proposed), drawn from photos of the ruddy turnstone: long pointed wings raised in a V with the dark
-  leading edge in earth blue; the harlequin mask through the eye, its cheek stripe dropping into the black breast band;
-  a catch-light in the masked eye; plump white belly, short orange legs, the two-step tide line. Published as -v3.
-  Minimum 32 px; below that use the badge.
+- Turnstone v11, 5 Nov (Josh: "a more uniform structure with motion, mystique that embodies the lightbound brand";
+  proposed): built from the Lightbound mark system, one stroke weight throughout. The bird is implied inside its orbit
+  ring (the original Turning-tide mark's tide): three nested sweeps per wing, a wingbeat caught mid-stroke, breaking
+  out of the ring; an open almond for the body; the head is the Moon point in signal orange. The ring breaks where a
+  wing crosses it. Square; the badge is the same drawing with a heavier stroke for 32 px and below. Published as -v3.
 - Constellation, refined 4 Nov: navy disc, gold ring broken by five evenly spaced stars, three gold key stars on an
   equilateral triangle with one white star off each. The 3-node icon is for 32 px and under.
 - Argo, 5 Nov (Josh: "Argo could be just a sail", then "a sail in the wind"; both approved): a square sail seen from the
