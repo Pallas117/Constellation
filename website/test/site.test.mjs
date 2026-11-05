@@ -409,7 +409,10 @@ test("public release: the config holds only what the public pages need, and keep
   assert.equal(raw.match(/REPLACE_[A-Z_]+/g), null, "no placeholders left to deploy");
   assert.match(config.kv_namespaces[0].id, /^[0-9a-f]{32}$/, "the LIVE namespace id");
   for (const route of ["/app", "/app/*", "/argo/", "/api/*"]) assert.ok(config.assets.run_worker_first.includes(route), `${route} must reach the Worker, or its static file would be served`);
-  assert.deepEqual(config.routes, [{ pattern: "lightbound.space", custom_domain: true }], "lightbound.space is the main site (Josh, 2026-11-05)");
+  // Josh, 2026-11-05: the main site is lightbound.space. The route stays commented until the apex and www A records
+  // (DNS-only, tailnet address) are deleted: with them in place Cloudflare refuses the custom domain (code 100117) and
+  // a partial trigger update switches the workers.dev preview off (error 1042) until a redeploy without the route.
+  assert.equal(config.routes, undefined, "lightbound.space is routed once its apex and www A records are gone (uncomment routes, deploy, smoke)");
 });
 
 test("public release: public pages link to sign-in only inside <!--full--> blocks, which the Worker removes", () => {
