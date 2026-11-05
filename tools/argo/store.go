@@ -177,8 +177,27 @@ func (s Store) Append(in Incident) error {
 	}
 	defer f.Close()
 	b, _ := json.Marshal(in)
+	if torn(p) {
+		b = append([]byte{'\n'}, b...) // a run killed mid-write left half a line: don't glue this one to it
+	}
 	_, err = f.Write(append(b, '\n'))
 	return err
+}
+
+// torn: the file doesn't end in a newline.
+func torn(p string) bool {
+	f, err := os.Open(p)
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+	last := make([]byte, 1)
+	fi, err := f.Stat()
+	if err != nil || fi.Size() == 0 {
+		return false
+	}
+	_, err = f.ReadAt(last, fi.Size()-1)
+	return err == nil && last[0] != '\n'
 }
 
 // incidentsMaxBytes caps incidents.jsonl; it was never rotated and every report
