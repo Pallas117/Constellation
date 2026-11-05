@@ -69,6 +69,34 @@ async function readAll(env, ctx) {
   return { launches, weather, events };
 }
 
+// The canonical origin. Plain HTTP and www on the custom domain redirect here (301) in the Worker itself, so the
+// site does not depend on the dashboard's "Always Use HTTPS" toggle. The workers.dev preview and local dev keep
+// their own host, so the smoke check and dev.mjs still work.
+export const CANONICAL_HOST = "lightbound.space";
+export function canonicalRedirect(url) {
+  const host = url.hostname;
+  if (host === CANONICAL_HOST && url.protocol === "https:") return null;
+  if (host !== CANONICAL_HOST && host !== `www.${CANONICAL_HOST}`) return null;
+  return `https://${CANONICAL_HOST}${url.pathname}${url.search}`;
+}
+
+// RFC 9116: where to report a security problem. Served by the Worker (not the asset tree) so it is never cached stale.
+export const SECURITY_TXT_EXPIRES = "2027-05-05T00:00:00.000Z"; // review twice a year with the keys
+const securityTxt = () =>
+  respond(
+    [
+      "Contact: mailto:jzwnathan@lightbound.uk",
+      `Expires: ${SECURITY_TXT_EXPIRES}`,
+      "Preferred-Languages: en",
+      `Canonical: https://${CANONICAL_HOST}/.well-known/security.txt`,
+      `Policy: https://${CANONICAL_HOST}/privacy/`,
+      "",
+    ].join("\n"),
+    200,
+    "text/plain; charset=utf-8",
+    { "cache-control": "public, max-age=3600" },
+  );
+
 const respond = (body, status, type, extra = {}) =>
   new Response(body, { status, headers: withSecurity({ "content-type": type, ...extra }) });
 const json = (obj, status = 200, cache = "public, max-age=300") =>
@@ -152,6 +180,9 @@ export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
     const { pathname } = url;
+    const canonical = canonicalRedirect(url);
+    if (canonical) return respond(null, 301, "text/plain; charset=utf-8", { location: canonical, "cache-control": "public, max-age=3600" });
+    if (pathname === "/.well-known/security.txt") return securityTxt();
     if (pathname.startsWith("/api/")) {
       if (!ALLOWED.has(request.method)) return respond("Method not allowed\n", 405, "text/plain; charset=utf-8", { allow: "GET, HEAD, POST" });
       return api(request, url, env, ctx);
