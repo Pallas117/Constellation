@@ -8,8 +8,8 @@
  * ch. 2). It differs from McIlwain's L computed with the full IGRF most where the real field is
  * least dipolar, which includes the South Atlantic Anomaly, so its confidence is "medium".
  *
- * The South Atlantic Anomaly is not modelled yet (GAU-141): a centred dipole cannot place it,
- * because the anomaly comes from the dipole's offset. The SAA flag therefore reads unknown.
+ * A centred dipole cannot place the South Atlantic Anomaly, because the anomaly comes from the
+ * dipole's offset, so the SAA flag uses the full IGRF-14 field instead (saa.ts, GAU-141).
  *
  * Positions: a supplied ephemeris is taken as geocentric latitude/longitude and altitude above
  * a 6371.2 km sphere; a TLE is propagated with SGP4 (satellite.js, the Vallado et al. 2006
