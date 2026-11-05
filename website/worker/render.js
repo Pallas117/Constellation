@@ -237,7 +237,7 @@ export function renderEduPlans(mode, staffLabel) {
   return `<ol class="plans three">` +
     plan("Students", "Student", "Free", "With your university email, for a year at a time. Renew with the same check.", start("Start free", false), true) +
     plan("Staff and research", "Staff and research", staffLabel, "Month to month: cancel any time, and a full refund if you're not satisfied. For lecturers, teaching assistants and research groups.", staffLabel === "Price TBC" ? `<span class="btn ghost" aria-disabled="true">Price TBC</span>` : start("Start")) +
-    plan("Departments", "Department licence", "Quoted per year", "Every course in a department. Paid by invoice, 30 days to pay.", `<a class="btn ghost" href="/education/apply/">Ask for a quote</a>`) +
+    plan("Departments", "Department licence", "Quoted per year", "Every course in a department, quoted per year.", `<a class="btn ghost" href="/education/apply/">Ask for a quote</a>`) +
     `</ol><p class="note">For teaching and non-commercial research. Gauss is advisory: it shows evidence and never commands a spacecraft.<!--full--> Already signed up? <a href="/app/">Sign in</a>.<!--/full--></p>`;
 }
 

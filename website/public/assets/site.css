@@ -216,7 +216,7 @@ footer p{margin:0 0 6px}
 .form{display:grid;gap:18px;margin-top:32px}
 .field{display:grid;gap:6px}
 .field label{font-weight:600}
-.form input:not([type=checkbox]),.form select,.form textarea,.planner-form input[type=date]{width:100%;font:inherit;color:var(--warm);background:var(--panel);border:1px solid var(--char);border-radius:4px;padding:12px 14px}
+.form input:not([type=checkbox]),.form select,.form textarea,.planner-form input[type=date]{width:100%;font:inherit;color:var(--warm);background:var(--panel);border:1px solid rgba(243,240,232,.45);border-radius:4px;padding:12px 14px}
 .form textarea{resize:vertical;min-height:140px}
 .form input:focus,.form select:focus,.form textarea:focus,.planner-form input:focus{outline:2px solid var(--accent);outline-offset:1px}
 .form [aria-invalid=true]{border-color:var(--amber)}
