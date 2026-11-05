@@ -13,7 +13,9 @@
 *,*::before,*::after{box-sizing:border-box}
 html{-webkit-text-size-adjust:100%;scroll-behavior:smooth;scroll-padding-top:76px}
 ::selection{background:var(--accent);color:var(--black)}
-body{margin:0;background:var(--black);color:var(--warm);font:400 16px/1.55 var(--sans);font-feature-settings:"tnum"}
+body{margin:0;background:var(--black);color:var(--warm);font:400 16px/1.55 var(--sans);font-kerning:normal;text-rendering:optimizeLegibility;font-feature-settings:"kern","liga","calt"}
+/* Tabular figures only where numbers tick or line up (readouts, countdowns, times); prose keeps proportional figures. */
+.big,.door-big,.door-line,.when,time,.call-when{font-variant-numeric:tabular-nums}
 img,video{display:block;max-width:100%}
 button,input,select,textarea{font:inherit}
 button{cursor:pointer}
