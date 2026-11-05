@@ -62,7 +62,7 @@ run() { # run <args...>: gauss-services.sh with the stubs; alerts land in $LOG
     GAUSS_SUDOERS="$T/sudoers" MLX="${MLX:-0}" MLXPORT="${MLXPORT:-8089}" ACTIONS="$T/actions" GAUSS_BALANCE="${GAUSS_BALANCE:-1}" \
     LOADED="${LOADED:-}" HEALTH="${HEALTH:-200}" HEALTH_FILE="${HEALTH_FILE:-}" GAUSS_DEPLOY_WAIT=0 DISKGB="${DISKGB:-50}" \
     GATEFAIL="${GATEFAIL:-}" GAUSS_BY=test-user BOOT="${BOOT:-1000}" GAUSS_DIAG_DIRS="$T/diag" GAUSS_EVENTS_MAX_KB="${GAUSS_EVENTS_MAX_KB:-5120}" \
-    GAUSS_DEV_DRY="${GAUSS_DEV_DRY:-0}" GAUSS_GATES_START=0 HEAVYGIVEUP="${HEAVYGIVEUP:-}" GAUSS_GATES_EXPIRE_H="${GAUSS_GATES_EXPIRE_H:-72}" GAUSS_DEV_API_PORT="${GAUSS_DEV_API_PORT:-3101}" \
+    GAUSS_DEV_DRY="${GAUSS_DEV_DRY:-0}" GAUSS_GATES_START=0 HEAVYGIVEUP="${HEAVYGIVEUP:-}" NPMNET="${NPMNET:-}" GAUSS_GATES_EXPIRE_H="${GAUSS_GATES_EXPIRE_H:-72}" GAUSS_DEV_API_PORT="${GAUSS_DEV_API_PORT:-3101}" \
     SRC="${SRC:-AC Power}" BATT="${BATT:-80%; charging; present: true}" SD="${SD:-0}" FCC="${FCC:-}" ACW="${ACW:-}" \
     LEAKY="${LEAKY:-}" LEAKFP="${LEAKFP:-12 MB}" AVAIL="${AVAIL:-50}" GAUSS_SWAP_LAST="${SWAPLAST:-/dev/null}" \
     ARGOSTATUS="${ARGOSTATUS:-}" LEVEL="${LEVEL:-1}" FREE="${FREE:-50}" SWAPUSED="${SWAPUSED:-1000}" OLD_ARGO="${OLD_ARGO:-}" bash "$SCRIPT" "$@"
@@ -342,6 +342,7 @@ stub npm 'if [ "$1" = run ]; then
   esac
   [ "$GATEFAIL" != "$2" ]; exit
 fi
+[ -n "$NPMNET" ] && [ "$1" = ci ] && { echo "npm error network request to https://registry.npmjs.org/x.tgz failed, reason: read ETIMEDOUT" >&2; exit 1; }
 echo "npm $*" >>"$ACTIONS"; mkdir -p node_modules'
 g() { git -C "$LIVE" -c user.email=t@t -c user.name=t "$@"; }
 head_is() { [ "$(g rev-parse HEAD)" = "$1" ]; }
@@ -381,6 +382,12 @@ out=$(run deploy "$C" 2>&1); rc=$?
 [ $rc = 1 ] && head_is "$Bc" && [[ "$out" == *"Rolled back: live is on ${Bc:0:7}"* ]] && [ "$(alerts)" = "deploy" ] && [[ "$(cat "$FB/ready")" == "$Bc $FB2 "* ]]
 expect "deploy of a bad commit: rolls back by itself and texts the phone; fallback is the last good one" $?
 grep -q "${C:0:7} failed, rolled back to ${Bc:0:7}" "$T/home/Library/Logs/gauss/deploy.log"; expect "deploy log records the rollback" $?
+# Service logs (4 Nov 2026: backend.log 12 MB, never rotated): over the cap, copied to .1 and emptied in place.
+LG="$T/home/Library/Logs/gauss"; head -c 6000000 /dev/zero | tr '\0' 'x' >"$LG/backend.log"; echo small >"$LG/frontend.log"; echo keep >"$LG/memory.tsv.test"
+run awake guard >/dev/null 2>&1
+[ ! -s "$LG/backend.log" ] && [ "$(stat -f %z "$LG/backend.log.1")" = 6000000 ] && [ "$(cat "$LG/frontend.log")" = small ] && [ ! -e "$LG/frontend.log.1" ] && [ -s "$LG/memory.tsv.test" ]
+expect "service logs over 5 MB are rotated to .1 and emptied; small ones and other tools' files are left" $?
+rm -f "$LG/backend.log.1" "$LG/memory.tsv.test"
 ev 'any(e["event"]=="deploy" and e["result"]=="ok" and e["live_sha"]=="'"$Bc"'" and e["from"]=="'"$A"'" and e["fallback_sha"]=="'"$A"'" for e in E)'
 expect "events: a deploy line carries live_sha (the new commit), from and the fallback SHA" $?
 ev '[(e["event"],e["result"],e["live_sha"]) for e in E if e["event"] in ("deploy","rollback")][-2:]==[("deploy","failed","'"$C"'"),("rollback","ok","'"$Bc"'")]'
@@ -488,7 +495,7 @@ rm -f "$GW/stray"
 # gates enqueue/run: a session hands its gate run to the queue and can be archived; one runner
 # works through it oldest first under claude-heavy, skipping trees that already passed.
 # claude-heavy stub: takes the shared gate lock like the real one (owner = its pid), then runs the command.
-printf '%s\n' '#!/bin/bash' 'echo "heavy $*" >>"$ACTIONS"; [ -n "${HEAVYGIVEUP:-}" ] && exit 75' \
+printf '%s\n' '#!/bin/bash' 'echo "heavy $*" >>"$ACTIONS"; { pwd -P 2>/dev/null || echo GONE; } >>"$ACTIONS.cwd"; [ -n "${HEAVYGIVEUP:-}" ] && exit 75' \
   'while [ $# -gt 0 ] && [ "$1" != -- ]; do shift; done; [ $# -gt 0 ] && shift' \
   'L="$HOME/.local/state/gauss-gate.lock"; mkdir -p "${L%/*}"; mkdir "$L" || exit 9; echo "$$ now test" >"$L/owner"' \
   '"$@"; rc=$?; rm -rf "$L"; exit $rc' >"$T/home/.local/bin/claude-heavy"
@@ -508,9 +515,13 @@ expect "gates enqueue: a tree with a passing record is skipped, with a result li
 out=$(cd "$LIVE" && run gates result "$E"); [ $? = 3 ] && [[ "$out" == "QUEUED $(tree_of "$E" | cut -c1-7)"* ]]
 expect "gates result: a queued request says QUEUED (exit 3)" $?
 gated "$C" # C passes by hand while queued: the runner must not run it again
-out=$(run gates run 2>&1); rc=$?
+# Started from a folder that is then removed (4 Nov: a session's temporary worktree): the runner kept it as
+# its working directory and every git call failed ("getcwd: cannot access parent directories").
+gone="$T/gone-cwd"; mkdir -p "$gone"; rm -f "$T/actions.cwd"
+out=$(cd "$gone" && rmdir "$gone" && run gates run 2>&1); rc=$?
 [ $rc = 0 ] && [ "$(cut -d' ' -f2,4 "$GR" | tail -3 | tr '\n' ';')" = "$D PASSED;$E PASSED;$C SKIPPED;" ] && [ -z "$(ls "$GQ")" ]
 expect "gates run: requests run oldest first, one at a time; a tree that passed meanwhile is skipped" $?
+[ -s "$T/actions.cwd" ] && ! grep -q GONE "$T/actions.cwd"; expect "gates run: a removed starting folder doesn't break it (it works from the gates folder)" $?
 [ "$(grep -c '^heavy --wait [0-9]* --name gates --label gate queue' "$T/actions")" = 2 ] && [ "$(grep -c '^npm ci' "$T/actions")" = 1 ]
 expect "gates run: each run is admitted by claude-heavy; one install for runs sharing package-lock.json" $?
 python3 -Ic 'import json,sys; sys.exit(0 if all(json.load(open(f))["passed"] and json.load(open(f))["by"]=="test-user" for f in sys.argv[1:]) else 1)' \
@@ -527,6 +538,12 @@ out=$(HEAVYGIVEUP=1 run gates run --once 2>&1); [[ "$out" == *"still waiting"* ]
   && [ "$(tail -1 "$GR" | cut -d' ' -f2)" != "$F" ]; expect "gates run: when claude-heavy gives up, the request stays queued" $?
 GAUSS_GATES_EXPIRE_H=0 run gates run >/dev/null 2>&1
 [ "$(tail -1 "$GR" | cut -d' ' -f2,4)" = "$F EXPIRED" ] && [ -z "$(ls "$GQ")" ]; expect "gates run: a request waiting past GAUSS_GATES_EXPIRE_H expires" $?
+# 5 Nov 2026: an install timed out on the phone hotspot and the request was dropped as ERROR.
+g checkout -q --detach "$E"; echo net >>"$LIVE/package-lock.json"; g commit -qam lock-net; N=$(g rev-parse HEAD); g checkout -q --detach "$E"
+(cd "$LIVE" && run gates enqueue "$N" >/dev/null 2>&1)
+out=$(NPMNET=1 run gates run --once 2>&1); [[ "$out" == *"lost the network"* ]] && grep -q "sha=$N" "$GQ"/*.req \
+  && ! grep -q " $N " "$GR"; expect "gates run: an install that loses the network keeps the request queued, with no result line" $?
+rm -f "$(grep -l "sha=$N" "$GQ"/*.req)"
 g checkout -q --detach "$E"; echo h1 >"$LIVE/backend/server.ts"; g commit -qam h1; H1=$(g rev-parse HEAD)
 echo h2 >"$LIVE/backend/server.ts"; g commit -qam h2; H2=$(g rev-parse HEAD); g checkout -q --detach "$E"
 (cd "$LIVE" && run gates enqueue "$H1" >/dev/null 2>&1); out=$(cd "$LIVE" && run gates enqueue "$H2" 2>&1)
@@ -658,6 +675,17 @@ P6=$(tc "$N1" f6.txt y); printf 'sha=%s\ntree=%s\nrepo=%s\nqueued=%s\nby=t\npr=7
 out=$(cd "$LIVE" && run gates result "$P6" 2>&1); rc=$?
 [ $rc = 3 ] && [[ "$out" == QUEUED* ]] && [[ "$(cd "$LIVE" && run gates enqueue "$P6" 2>&1)" == *"Already queued"* ]] && [ "$(ls "$GQ" | wc -l | tr -d ' ')" = 1 ]
 expect "train: a request moved to the merged head is found by its tree (gates result says queued; no second request)" $?
+rm -f "$GQ"/*.req
+# 4 Nov: a train head that already passed (held as a draft) and is then marked ready merges without a
+# second run when it still contains main; when main has moved past it, it is queued to sync and re-gate.
+: >"$T/actions"; echo "OPEN train main false CLEAN" >"$GHD/pr13"; git --git-dir="$ORIGIN" update-ref refs/heads/train "$P5"
+out=$(cd "$LIVE" && run gates enqueue "$P5" --pr 13 2>&1)
+grep -qx "gh merge 13 $P5" "$T/actions" && [[ "$out" == *"Merged PR #13"* ]] && [ -z "$(ls "$GQ")" ]
+expect "train: an already-passed head that contains main is merged on re-enqueue, without a second run" $?
+M2=$(tc "$M1" main.txt main-2); g push -q origin "$M2:refs/heads/main" && g fetch -q origin; : >"$T/actions"
+out=$(cd "$LIVE" && run gates enqueue "$P5" --pr 13 2>&1)
+[[ "$out" == *"main has moved past it: queueing"* ]] && [ "$(ls "$GQ" | grep -c '\.req$')" = 1 ] && ! grep -q "gh merge" "$T/actions"
+expect "train: an already-passed head that main moved past is queued to sync, not merged" $?
 rm -f "$GQ"/*.req
 g checkout -q --detach "$prevhead"; g remote remove origin; rm -f "$T/bin/gh" "$T/home/.gitconfig"
 
