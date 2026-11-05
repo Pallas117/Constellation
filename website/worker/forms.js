@@ -1,6 +1,6 @@
 // Applications: "Request an invitation" for Constellation (free, invite-only), the Gauss pilot
-// brief (the sales plan's onboarding: fit, readiness, pilot brief), Gauss for Education and workshop
-// requests. (Gauss Argo has no list any more: it's included for operators and staff.) Plain HTML forms that post to
+// brief (the sales plan's onboarding: fit, readiness, pilot brief), Gauss for Education, workshop requests
+// and showcase submissions (a project or creator for /constellation/projects/). (Gauss Argo has no list any more: it's included for operators and staff.) Plain HTML forms that post to
 // /api/apply, so they work without JavaScript. The server validates everything, drops bots (a
 // hidden honeypot field plus a per-IP hourly limit) and uses post/redirect/get, so a refresh never
 // resubmits. No personal data ever goes into a URL.
@@ -35,6 +35,9 @@ const FIELD = {
   topic: { label: "Workshop", type: "select", options: opts("Ethics", "Resilience", "Tech leadership", "A mix of the three"), required: true },
   format: { label: "Format", type: "select", options: opts("In person", "Online", "Either"), required: true },
   groupSize: { label: "Group size", type: "select", options: opts("Up to 10", "11–30", "31–100", "More than 100"), required: true },
+  entryType: { label: "What you'd like listed", type: "select", options: opts("A project", "A creator or channel"), required: true },
+  title: { label: "Project or channel name", type: "text", max: 120, auto: "off", required: true },
+  showLink: { label: "Its main link (site, channel or repository)", type: "url", max: 300, auto: "url", required: true },
 };
 
 // Gauss follows the onboarding flow in the sales plan: fit, readiness, pilot brief.
@@ -58,6 +61,11 @@ export const KINDS = Object.freeze({
     labels: { org: "Organisation", timeline: "When", note: "What you'd like your team to come away with (optional)" },
     button: "Ask about a workshop",
   },
+  showcase: {
+    steps: [{ fields: ["name", "email", "entryType", "title", "showLink", "message"] }],
+    labels: { message: "What it is and who it's for, in a few sentences" },
+    button: "Send for review",
+  },
   edu: {
     steps: [{ fields: ["name", "email", "institution", "eduRole", "course", "seats", "note"] }],
     labels: { email: "University email", note: "What you'd like to teach or study with it (optional)" },
@@ -65,13 +73,14 @@ export const KINDS = Object.freeze({
   },
 });
 /** Where each form's page lives. */
-export const applyPath = (kind) => ({ edu: "/education/apply/", workshop: "/constellation/workshops/" })[kind] ?? `/${kind}/apply/`;
+export const applyPath = (kind) => ({ edu: "/education/apply/", workshop: "/constellation/workshops/", showcase: "/constellation/projects/" })[kind] ?? `/${kind}/apply/`;
 const fieldsOf = (kind) => KINDS[kind].steps.flatMap((st) => st.fields);
 
 const label = (kind, f) => KINDS[kind].labels[f] ?? FIELD[f].label;
 const SHORT = { name: "name", email: "email", org: "company", role: "role", referrer: "referral", link: "link", missionType: "mission type", stage: "programme stage",
   groundStack: "ground stack", dataAccess: "evidence", plan: "package", timeline: "target start", message: "message", consent: "privacy agreement",
-  interest: "what you'd like", platform: "platform", devices: "devices", note: "note", institution: "university or school", eduRole: "role", course: "course", seats: "how many people", topic: "workshop", format: "format", groupSize: "group size" };
+  interest: "what you'd like", platform: "platform", devices: "devices", note: "note", institution: "university or school", eduRole: "role", course: "course", seats: "how many people", topic: "workshop", format: "format", groupSize: "group size",
+  entryType: "what to list", title: "name of the project or channel", showLink: "main link" };
 
 function control(kind, f, value, error) {
   const d = FIELD[f];
@@ -111,6 +120,7 @@ const SENT = {
   gauss: ["Thank you. Your pilot brief is with the Lightbound team.", "If it's a fit, we'll reply with a fixed quote. Once approved, you sign in to pay and start.", "/gauss/", "Back to Gauss"],
   constellation: ["Thank you. Your request is with the Constellation team.", "Membership is free and by invitation. If it's a fit, you'll receive an invitation by email.", "/constellation/", "Back to Constellation"],
   workshop: ["Thank you. Your workshop request is with the Constellation team.", "A person reads every request and replies with a proposal for your team.", "/constellation/", "Back to Constellation"],
+  showcase: ["Thank you. Your listing is with the Constellation team.", "A person reads every one. If it's a fit, we email you the exact listing to approve before anything goes up.", "/constellation/", "Back to Constellation"],
   edu: ["Thank you. Your request is with the Gauss for Education team.", "With a university email you can start now: sign in with that address. Otherwise we'll review your request; for a department licence we'll reply with a yearly quote.", "/education/", "Back to Gauss for Education"],
 };
 
@@ -119,6 +129,7 @@ const NEXT = {
   gauss: ["/gauss/evidence/", "See a sample evidence report"],
   constellation: ["https://luma.com/constellation", "Follow Constellation on Luma"],
   workshop: ["https://luma.com/constellation", "See dates on Luma"],
+  showcase: ["/constellation/projects/#listed", "See the showcase"],
   edu: ["/education/#labs", "See the labs"],
 };
 
@@ -134,6 +145,7 @@ const BY_EMAIL = {
   gauss: ["Send your pilot brief by email.", "Answer these in an email. A person reads every brief and replies with whether a replay pilot fits, and a fixed quote if it does.", "Email your pilot brief", "Gauss brief"],
   constellation: ["Ask for an invitation by email.", "Membership is free and by invitation. Answer these in an email; a person reads every request.", "Email your request", "Constellation invitation"],
   workshop: ["Ask about a workshop by email.", "Answer these in an email and a person replies with a proposal for your team.", "Email your request", "Constellation workshop"],
+  showcase: ["Send your listing by email.", "Answer these in an email. A person reads every one; if it's a fit, we email you the exact listing to approve before anything goes up.", "Email your listing", "Constellation showcase"],
   edu: ["Tell us about your course by email.", "Gauss for Education is opening soon. Answer these in an email and we'll be in touch.", "Email us", "Gauss for Education"],
 };
 
@@ -164,7 +176,7 @@ export function validate(kind, form) {
     else if (d.type === "select" && !d.options.some(([v]) => v === raw)) errors[f] = "Please choose an option.";
     else if (f === "name" && raw.length < 2) errors[f] = "At least 2 characters.";
     else if (f === "email" && !/^[^@\s<>]+@[^@\s<>]+\.[^@\s<>]{2,}$/.test(raw)) errors[f] = "Please enter a valid email address.";
-    else if (f === "link" && raw && !/^https?:\/\/[^\s<>"]+\.[^\s<>"]+$/i.test(raw)) errors[f] = "Please enter a full link starting with https://";
+    else if ((f === "link" || f === "showLink") && raw && !/^https?:\/\/[^\s<>"]+\.[^\s<>"]+$/i.test(raw)) errors[f] = "Please enter a full link starting with https://";
     else if (f === "message" && raw.length < d.min) errors[f] = `Please write at least ${d.min} characters.`;
   }
   if (form.get("consent") !== "yes") errors.consent = "Please agree, so we can keep your application to review it.";

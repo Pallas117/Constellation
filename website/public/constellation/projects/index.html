@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; img-src 'self'; media-src 'self'; font-src 'self'; base-uri 'none'; form-action 'self'">
+<meta name="theme-color" content="#050505">
+<meta name="referrer" content="strict-origin-when-cross-origin">
+<meta name="description" content="Projects and creators from the Constellation space community, each chosen by a person and approved by the people it&rsquo;s about.">
+<meta property="og:title" content="Projects and creators · Constellation">
+<meta property="og:description" content="Projects and creators from the Constellation space community, each chosen by a person and approved by the people it&rsquo;s about.">
+<meta property="og:url" content="https://lightbound.uk/constellation/projects/">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Lightbound">
+<meta property="og:image" content="https://lightbound.uk/assets/media/blackhole-poster.jpg">
+<meta property="og:image:alt" content="A black hole&rsquo;s ring of light, from the Lightbound brand film">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="canonical" href="https://lightbound.uk/constellation/projects/">
+<title>Projects and creators · Constellation</title>
+<link rel="preload" href="/assets/fonts/plex-sans-600.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/assets/site.css">
+<link rel="icon" href="/assets/marks/constellation-icon-colour-dark-v2.svg" type="image/svg+xml">
+</head>
+<body class="page brand-constellation">
+<a class="skip" href="#main">Skip to content</a>
+<header class="top">
+  <div class="wrap bar">
+  <a class="brand" href="/" aria-label="Lightbound, home"><picture><source media="(max-width: 560px)" srcset="/assets/marks/lightbound-mark-colour-dark.svg"><img src="/assets/marks/lightbound-horizontal-colour-dark.svg" alt="Lightbound" width="188" height="40"></picture></a>
+  <nav aria-label="Main">
+    <a href="/gauss/">Gauss</a>
+    <a href="/constellation/" aria-current="page">Constellation</a>
+    <a href="/turnstone/" class="opt">Turnstone</a>
+    <a href="mailto:jzwnathan@lightbound.uk" class="signin">Contact</a>
+  </nav>
+  </div>
+</header>
+
+<main id="main">
+<section class="page-hero tight" aria-labelledby="hero-h">
+  <div class="wrap narrow">
+    <p class="k">02_CONSTELLATION · SHOWCASE</p>
+    <h1 id="hero-h">Projects and creators from the community.</h1>
+    <p class="lead">What Constellation members build, and the creators who explain space to everyone else. A person chooses every listing, and the people it&rsquo;s about approve its wording before it goes up.</p>
+    <p class="actions"><a class="btn" href="#submit">Ask to be listed</a> <a class="btn ghost" href="/constellation/">Back to Constellation</a></p>
+  </div>
+</section>
+
+<section id="listed" aria-labelledby="listed-h">
+  <div class="wrap">
+    <p class="label">01_LISTED</p>
+    <h2 id="listed-h">The showcase.</h2>
+    <!-- One <li class="listing" id="slug"> per approved listing, newest first:
+         <h3>Name</h3><p class="k">PROJECT | CREATOR</p><p>Approved wording.</p>
+         <p><a href="https://..." rel="noopener noreferrer">Visit</a> · <a href="#slug">Share this listing</a></p>
+         Add one only after its makers have approved the exact wording by email (site test checks the shape). -->
+    <ul class="steps listings" aria-label="Listings"></ul>
+    <p class="lead">No listings yet. The first go up as their makers approve them.</p>
+  </div>
+</section>
+
+<section id="how" aria-labelledby="how-h">
+  <div class="wrap">
+    <p class="label">02_HOW_IT_WORKS</p>
+    <h2 id="how-h">How a listing goes up.</h2>
+    <ol class="steps">
+      <li><h3>Tell us</h3><p>A project you or your team made, or the channel, podcast or newsletter where you cover space. You don&rsquo;t have to be a member yet.</p></li>
+      <li><h3>A person reads it</h3><p>We list work that&rsquo;s real, made by people in the community or made for it, and honest about what it is.</p></li>
+      <li><h3>You approve the wording</h3><p>We email you the exact listing. Nothing goes up until you say yes.</p></li>
+      <li><h3>Share it</h3><p>Every listing has its own link to share. Ask and it comes down, no questions.</p></li>
+    </ol>
+    <p class="note">Listing is free, and no one can buy a place or a higher spot.</p>
+  </div>
+</section>
+
+<section id="submit" class="tight" aria-labelledby="submit-h">
+  <div class="wrap narrow">
+    <p class="label">03_ASK_TO_BE_LISTED</p>
+    <h2 id="submit-h">Ask to be listed.</h2>
+    <!--live:apply--><form class="form" method="post" action="/api/apply"><input type="hidden" name="kind" value="showcase"><div class="field"><label for="f-name">Name</label><input id="f-name" name="name" required type="text" maxlength="100" autocomplete="name" value=""></div><div class="field"><label for="f-email">Email</label><input id="f-email" name="email" required type="email" maxlength="254" autocomplete="email" value=""></div><div class="field"><label for="f-entryType">What you&#39;d like listed</label><select id="f-entryType" name="entryType" required><option value="A project" selected>A project</option><option value="A creator or channel">A creator or channel</option></select></div><div class="field"><label for="f-title">Project or channel name</label><input id="f-title" name="title" required type="text" maxlength="120" autocomplete="off" value=""></div><div class="field"><label for="f-showLink">Its main link (site, channel or repository)</label><input id="f-showLink" name="showLink" required type="url" maxlength="300" autocomplete="url" value=""></div><div class="field"><label for="f-message">What it is and who it&#39;s for, in a few sentences</label><textarea id="f-message" name="message" required rows="6" minlength="20" maxlength="2000"></textarea></div><div class="hp" aria-hidden="true"><label for="f-website">Leave this empty</label><input id="f-website" name="website" tabindex="-1" autocomplete="off"></div><label class="check"><input type="checkbox" name="consent" value="yes" required> <span>Lightbound may keep this for up to 180 days to review it. <a href="/privacy/">Privacy</a></span></label><p class="actions"><button class="btn" type="submit">Send for review</button></p></form><!--/live:apply-->
+  </div>
+</section>
+</main>
+<footer class="wrap">
+  <div class="cols">
+    <div>
+      <p>Lightbound Limited · registered in England and Wales, company no. 14573199 · 30A Commercial Street, Harrogate, HG1 1AX</p>
+    </div>
+    <nav aria-label="Footer"><a href="/gauss/">Gauss</a><a href="/constellation/">Constellation</a><a href="/turnstone/">Turnstone</a><a href="mailto:jzwnathan@lightbound.uk">Contact</a><a href="/privacy/">Privacy</a><a href="/terms/">Terms</a></nav>
+  </div>
+</footer>
+</body>
+</html>

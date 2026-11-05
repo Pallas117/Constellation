@@ -307,7 +307,7 @@ test("public release: sign-in, the workspace, Argo, form posts and the webhook a
 });
 
 test("public release: each form's page asks by email instead, and carries the package but never any answers", async () => {
-  for (const path of ["/gauss/apply/", "/constellation/apply/", "/education/apply/", "/constellation/workshops/"]) {
+  for (const path of ["/gauss/apply/", "/constellation/apply/", "/education/apply/", "/constellation/workshops/", "/constellation/projects/"]) {
     const page = await (await call(path)).text();
     assert.doesNotMatch(page, /<form|action="\/api\/apply"/, `${path}: no form`);
     assert.match(page, /<p class="k">BY_EMAIL<\/p>/, path);
@@ -772,6 +772,23 @@ test("workshops: a team's request is stored and listed for admin; marking it con
   await send(env, await formPost(access, "boss@example.test", "/app/admin/decide", { id: app.id, decision: "approve" }));
   assert.equal((await listApplications(env))[0].status, "approved");
   assert.equal(await getAccount(env, "ana@example.test"), null, "no account or membership from a workshop request");
+});
+
+test("showcase: a listing request is stored and listed for admin; marking it contacted creates no account or listing", async () => {
+  const { env, access } = await appEnv();
+  const bad = await send(env, post("/api/apply", { kind: "showcase", name: "Sam Example", email: "sam@example.test", entryType: "A project", title: "Orbit Notes", showLink: "orbit-notes", message: "A weekly newsletter on what launched and why it matters.", consent: "yes" }));
+  assert.equal(bad.status, 422);
+  assert.match(await bad.text(), /Please enter a full link starting with https:\/\//);
+  const res = await send(env, post("/api/apply", { kind: "showcase", name: "Sam Example", email: "sam@example.test", entryType: "A creator or channel", title: "Orbit Notes", showLink: "https://orbit-notes.example", message: "A weekly newsletter on what launched and why it matters.", consent: "yes" }));
+  assert.equal(res.headers.get("location"), "/constellation/projects/?sent=1");
+  assert.match(await (await send(env, new Request("https://lightbound.uk/constellation/projects/?sent=1"))).text(), /we email you the exact listing to approve before anything goes up/);
+  const admin = await (await send(env, await as(access, "boss@example.test", "/app/admin/"))).text();
+  assert.match(admin, /SHOWCASE · A creator or channel/);
+  assert.match(admin, /Orbit Notes · https:\/\/orbit-notes\.example/);
+  const [app] = await listApplications(env);
+  await send(env, await formPost(access, "boss@example.test", "/app/admin/decide", { id: app.id, decision: "approve" }));
+  assert.equal((await listApplications(env))[0].status, "approved");
+  assert.equal(await getAccount(env, "sam@example.test"), null, "no account or membership from a showcase request");
 });
 
 test("security: big bodies refused before reading; the Stripe key only ever goes to Stripe; sign-ins never create records", async () => {

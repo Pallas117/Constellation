@@ -18,7 +18,8 @@ const PAGES = { "/": "index.html", "/gauss/": "gauss/index.html", "/constellatio
   "/gauss/apply/": "gauss/apply/index.html", "/constellation/apply/": "constellation/apply/index.html", "/privacy/": "privacy/index.html",
   "/app/": "app/index.html", "/app/admin/": "app/admin/index.html", "/gauss/evidence/": "gauss/evidence/index.html",
   "/constellation/time/": "constellation/time/index.html", "/argo/": "argo/index.html",
-  "/education/": "education/index.html", "/education/apply/": "education/apply/index.html", "/constellation/workshops/": "constellation/workshops/index.html", "/terms/": "terms/index.html" };
+  "/education/": "education/index.html", "/education/apply/": "education/apply/index.html", "/constellation/workshops/": "constellation/workshops/index.html", "/terms/": "terms/index.html",
+  "/constellation/projects/": "constellation/projects/index.html" };
 const html = Object.fromEntries(Object.entries(PAGES).map(([route, f]) => [route, read(f)]));
 // wrangler.jsonc, read as JSON once its whole-line comments are gone.
 const WRANGLER_RAW = readFileSync(join(pub, "..", "wrangler.jsonc"), "utf8");
@@ -363,16 +364,16 @@ test("Constellation: events from its Luma calendar, then workshops on ethics, re
   }
   assert.match(workshops, /href="\/constellation\/workshops\/">Bring a workshop to your team/);
   const labels = [...page.matchAll(/<p class="label">(\d\d)_/g)].map((m) => Number(m[1]));
-  assert.deepEqual(labels, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11], "section numbers run in order");
+  assert.deepEqual(labels, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12], "section numbers run in order");
   assert.match(html["/constellation/workshops/"], /<input type="hidden" name="kind" value="workshop">/);
   assert.match(html["/constellation/workshops/"], /<body class="page brand-constellation">/);
   assert.match(html["/privacy/"], /a workshop for your team/);
 });
 
 test("Constellation is free and invite-only: no prices, no payment, invitation wording", () => {
-  for (const route of ["/constellation/", "/constellation/apply/", "/constellation/workshops/"]) {
+  for (const route of ["/constellation/", "/constellation/apply/", "/constellation/workshops/", "/constellation/projects/"]) {
     assert.doesNotMatch(text(html[route]), /£|\$\d|stripe|price|pay /i, `${route}: no pricing`);
-    if (route === "/constellation/workshops/") continue;
+    if (route === "/constellation/workshops/" || route === "/constellation/projects/") continue;
     assert.match(text(html[route]), /free/i);
     assert.match(text(html[route]), /invit/i);
   }
@@ -509,6 +510,30 @@ test("Constellation: friends' logos are local files shown as supplied, named, an
   assert.match(page, /href="\/constellation\/time\/">Plan across time zones/);
   assert.match(html["/constellation/time/"], /<body class="page brand-constellation">/);
   assert.match(html["/constellation/time/"], /<!--live:planner-->/);
+});
+
+test("Constellation showcase: curated, approved by the people listed, free, and linked from Constellation", () => {
+  const page = html["/constellation/projects/"];
+  const fallback = page.match(/<!--live:apply-->([\s\S]*?)<!--\/live:apply-->/)[1];
+  assert.equal(fallback, renderApplyForm("showcase"), "static form drifted from forms.js");
+  assert.match(fallback, /<input type="hidden" name="kind" value="showcase">/);
+  assert.match(page, /<body class="page brand-constellation">/);
+  const t = text(page);
+  for (const want of [/A person chooses every listing/, /approve its wording before it goes up/, /Nothing goes up until you say yes/,
+    /Ask and it comes down/, /no one can buy a place or a higher spot/]) assert.match(t, want);
+  // Each listing: its own share link, a type, approved wording, and an outbound link that doesn't leak the referrer.
+  const list = page.match(/<ul class="steps listings" aria-label="Listings">([\s\S]*?)<\/ul>/)[1];
+  for (const [li, id] of list.matchAll(/<li class="listing" id="([a-z0-9-]+)">[\s\S]*?<\/li>/g)) {
+    assert.match(li, /<h3>[^<]+<\/h3><p class="k">(PROJECT|CREATOR)<\/p><p>[^<]{20,}<\/p>/, id);
+    assert.match(li, /<a href="https:\/\/[^"]+" rel="noopener noreferrer">Visit<\/a>/, id);
+    assert.ok(li.includes(`<a href="#${id}">Share this listing</a>`), id);
+  }
+  if (!/<li class="listing"/.test(list)) assert.match(t, /No listings yet/, "an empty showcase says so");
+  const sec = html["/constellation/"].match(/<section id="showcase"[\s\S]*?<\/section>/)[0];
+  assert.match(sec, /href="\/constellation\/projects\/">See the showcase/);
+  assert.match(sec, /href="\/constellation\/projects\/#submit">Ask to be listed/);
+  assert.ok(WORKER_ROUTES.includes("/constellation/projects/"), "the Worker fills its form (or the email route)");
+  assert.match(text(html["/privacy/"]), /listed in the Constellation showcase/);
 });
 
 test("Assured Connectivity: on the Gauss page, what Argo does today, a pilot route, no price or payment", () => {

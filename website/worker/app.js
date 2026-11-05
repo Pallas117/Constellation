@@ -196,15 +196,15 @@ export function renderAdmin({ applications, accounts, details, invited, error, c
     const d = details[a.id] ?? {};
     const planId = tierById(a.plan) ? a.plan : "pilot";
     const facts = [d.org, d.role, d.topic, d.format, d.groupSize ? `group: ${d.groupSize}` : "", d.institution, d.eduRole, d.course, d.seats ? `${d.seats} (people)` : "", d.missionType, d.stage, d.groundStack, d.dataAccess, d.timeline, d.interest, d.platform, d.devices ? `${d.devices} devices` : "",
-      d.referrer ? `referred by ${d.referrer}` : "", d.link].filter(Boolean).join(" · ");
+      d.referrer ? `referred by ${d.referrer}` : "", d.link, d.title, d.showLink].filter(Boolean).join(" · ");
     const decide = a.status === "new"
       ? `<form method="post" action="/app/admin/decide" class="inline"><input type="hidden" name="id" value="${esc(a.id)}">` +
         (a.kind === "gauss" ? `${tierSelect(planId)} ${quoteInput(0)} ${invoiceCheck(false, `inv-${esc(a.id)}`)}` : a.kind === "constellation" ? `<input type="hidden" name="community" value="member">` : a.kind === "edu" ? `${quoteInput(0)} ` : "") +
-        `<button class="btn" name="decision" value="approve">${{ gauss: "Approve with quote", constellation: "Invite", argo: "Mark handled", edu: "Approve for self-serve", workshop: "Mark contacted" }[a.kind] ?? "Approve"}</button> ` +
+        `<button class="btn" name="decision" value="approve">${{ gauss: "Approve with quote", constellation: "Invite", argo: "Mark handled", edu: "Approve for self-serve", workshop: "Mark contacted", showcase: "Mark contacted" }[a.kind] ?? "Approve"}</button> ` +
         (a.kind === "edu" ? `<button class="btn ghost" name="decision" value="department">Department licence at this yearly quote</button> ` : "") +
         `<button class="btn ghost" name="decision" value="decline">Decline</button></form>`
       : `<span class="tag${a.status === "approved" ? " go" : ""}">${esc(a.status)}</span>`;
-    const kicker = { gauss: `GAUSS · ${tierById(a.plan)?.name ?? a.plan ?? ""}`, constellation: "CONSTELLATION · INVITATION REQUEST", argo: "ARGO · EARLY-ACCESS LIST (CLOSED)", edu: `EDUCATION · ${d.eduRole ?? ""}`, workshop: `WORKSHOP · ${d.topic ?? ""}` }[a.kind] ?? a.kind;
+    const kicker = { gauss: `GAUSS · ${tierById(a.plan)?.name ?? a.plan ?? ""}`, constellation: "CONSTELLATION · INVITATION REQUEST", argo: "ARGO · EARLY-ACCESS LIST (CLOSED)", edu: `EDUCATION · ${d.eduRole ?? ""}`, workshop: `WORKSHOP · ${d.topic ?? ""}`, showcase: `SHOWCASE · ${d.entryType ?? ""}` }[a.kind] ?? a.kind;
     return `<li class="app-card"><div class="app-head"><span class="label">${esc(kicker)}</span><time datetime="${esc(a.at)}">${esc(day(a.at))}</time></div>` +
       `<h3>${esc(a.name)} <span class="muted">${esc(a.email)}</span></h3>${facts ? `<p class="m">${esc(facts)}</p>` : ""}` +
       (d.message || d.note ? `<p class="msg">${esc(d.message || d.note)}</p>` : "") + decide + `</li>`;
@@ -415,7 +415,7 @@ export async function handleApp(request, env, url, { respond, fillPage, fetchImp
         const edu = { ...(prev.edu ?? {}), approvedAt: new Date().toISOString(),
           ...(department ? { plan: "department", quote: Math.round(pounds * 100), institution: app.institution ?? null, seats: app.seats ?? null, billing: { status: "due" } } : {}) };
         await putAccount(env, { ...prev, name: prev.name ?? app.name, org: prev.org ?? app.institution ?? null, edu }, id.email);
-      } else if (approve && !["workshop", "argo"].includes(app.kind)) { // workshop requests and old Argo list entries are leads: no account change
+      } else if (approve && !["workshop", "showcase", "argo"].includes(app.kind)) { // workshop requests, showcase submissions and old Argo list entries are leads: no account change
         const prev = (await getAccount(env, app.email)) ?? { email: app.email };
         const base = { ...prev, name: prev.name ?? app.name, org: prev.org ?? app.org ?? null };
         await putAccount(env, app.kind === "gauss"

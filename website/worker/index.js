@@ -7,6 +7,7 @@
 //   /constellation/time/    public time-zone planner for group calls (no data stored)
 //   /education/             Gauss for Education; its buttons follow EDU_SALES and EDU_STAFF_PRICE
 //   /constellation/workshops/  ask for an ethics, resilience or tech-leadership workshop for a team
+//   /constellation/projects/   the curated showcase of members' projects and creators, and the form to be listed
 //   /app/*                  signed-in workspace and admin (Cloudflare Access in front; see app.js)
 //   /argo/                  Gauss Argo, for operators and staff
 //   /api/*                  launches.json, launches.ics, space-weather.json, health, POST apply,
@@ -46,6 +47,7 @@ const LIVE_PAGES = {
   "/constellation/apply/": applyPage("constellation"),
   "/education/apply/": applyPage("edu"),
   "/constellation/workshops/": applyPage("workshop"),
+  "/constellation/projects/": applyPage("showcase"),
   // Gauss for Education stays "opening soon" in a public release: starting needs a sign-in.
   "/education/": () => ({ "edu-actions": (f, t, url, env) => renderEduActions(eduMode(isFull(env) ? env : {})),
     "edu-plans": (f, t, url, env) => renderEduPlans(eduMode(isFull(env) ? env : {}), eduStaffLabel(env)) }),
