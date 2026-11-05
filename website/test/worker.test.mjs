@@ -1187,3 +1187,26 @@ test("launches: when LL2 is rate-limited the free RocketLaunch.Live list keeps t
   assert.match(renderLaunches(back, RECORDED_AT + 120 * MIN), /Source: The Space Devs Launch Library 2/);
   assert.throws(() => normaliseRocketLaunch({ result: [] }), /no usable launches/);
 });
+
+test("canonical origin: plain HTTP and www on the custom domain redirect to https://lightbound.space; the preview keeps its host", async () => {
+  const { canonicalRedirect, SECURITY_TXT_EXPIRES } = await import("../worker/index.js");
+  assert.equal(canonicalRedirect(new URL("http://lightbound.space/gauss/?x=1")), "https://lightbound.space/gauss/?x=1");
+  assert.equal(canonicalRedirect(new URL("https://www.lightbound.space/constellation/")), "https://lightbound.space/constellation/");
+  assert.equal(canonicalRedirect(new URL("http://www.lightbound.space/")), "https://lightbound.space/");
+  assert.equal(canonicalRedirect(new URL("https://lightbound.space/")), null);
+  assert.equal(canonicalRedirect(new URL("http://lightbound-site.jzwnathan.workers.dev/")), null, "the preview is not redirected");
+  assert.equal(canonicalRedirect(new URL("http://127.0.0.1:8788/")), null, "local dev is not redirected");
+  const env = { LIVE: memoryKV() };
+  const ctx = { waitUntil() {} };
+  const r = await worker.fetch(new Request("http://lightbound.space/gauss/"), env, ctx);
+  assert.equal(r.status, 301);
+  assert.equal(r.headers.get("location"), "https://lightbound.space/gauss/");
+  assert.equal(r.headers.get("strict-transport-security"), "max-age=31536000; includeSubDomains", "security headers on the redirect too");
+  const s = await worker.fetch(new Request("https://lightbound.space/.well-known/security.txt"), env, ctx);
+  assert.equal(s.status, 200);
+  assert.equal(s.headers.get("content-type"), "text/plain; charset=utf-8");
+  const body = await s.text();
+  assert.match(body, /^Contact: mailto:jzwnathan@lightbound\.uk$/m);
+  assert.match(body, /^Canonical: https:\/\/lightbound\.space\/\.well-known\/security\.txt$/m);
+  assert.ok(Date.parse(SECURITY_TXT_EXPIRES) > Date.now() + 90 * 86_400_000, "security.txt expiry is at least 90 days away");
+});
