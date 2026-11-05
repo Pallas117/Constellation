@@ -1,0 +1,64 @@
+{"time":"2026-11-05T11:31:24.681469+08:00","event":"open","class":"PORT_BLOCK","fingerprint":"4667da6bd814","detail":"api.anthropic.com:443 timeout"}
+{"time":"2026-11-05T11:31:24.681469+08:00","event":"attempt","class":"PORT_BLOCK","fingerprint":"4667da6bd814","actions":["switch-network"]}
+{"time":"2026-11-05T11:49:49.345543+08:00","event":"resolved","class":"PORT_BLOCK","fingerprint":"4667da6bd814","detail":"cleared by itself"}
+{"time":"2026-11-05T12:49:45.225163+08:00","event":"open","class":"OFFLINE","fingerprint":"4667da6bd814","detail":"no default route"}
+{"time":"2026-11-05T12:49:45.225163+08:00","event":"attempt","class":"OFFLINE","fingerprint":"4667da6bd814","actions":["usual-blip","wait"]}
+{"time":"2026-11-05T12:51:48.669914+08:00","event":"superseded","class":"OFFLINE","fingerprint":"4667da6bd814"}
+{"time":"2026-11-05T12:51:48.669914+08:00","event":"open","class":"DNS","fingerprint":"4667da6bd814","detail":"cannot resolve api.anthropic.com: lookup api.anthropic.com: i/o timeout"}
+{"time":"2026-11-05T12:51:48.669914+08:00","event":"attempt","class":"DNS","fingerprint":"4667da6bd814","actions":["flush-dns","check-magicdns"]}
+{"time":"2026-11-05T12:55:36.772144+08:00","event":"attempt","class":"DNS","fingerprint":"4667da6bd814","actions":["check-magicdns","flush-dns"]}
+{"time":"2026-11-05T13:01:00.44489+08:00","event":"attempt","class":"DNS","fingerprint":"4667da6bd814","actions":["check-magicdns","flush-dns"]}
+{"time":"2026-11-05T13:01:00.44489+08:00","event":"escalated","class":"DNS","fingerprint":"4667da6bd814","detail":"DNS persists after 4 attempts. Tailscale's DNS is stuck while the network's DNS works. Toggle Tailscale off and on, or for now:"}
+{"time":"2026-11-05T13:10:31.859798+08:00","event":"superseded","class":"DNS","fingerprint":"4667da6bd814"}
+{"time":"2026-11-05T13:10:31.859798+08:00","event":"open","class":"PORT_BLOCK","fingerprint":"4667da6bd814","detail":"api.anthropic.com:443 timeout"}
+{"time":"2026-11-05T13:12:32.911274+08:00","event":"superseded","class":"PORT_BLOCK","fingerprint":"4667da6bd814"}
+{"time":"2026-11-05T13:12:32.911274+08:00","event":"open","class":"OFFLINE","fingerprint":"4667da6bd814","detail":"no default route"}
+{"time":"2026-11-05T13:12:32.911274+08:00","event":"relay","class":"OFFLINE","fingerprint":"4667da6bd814","detail":"sent through the iPhone relay"}
+{"time":"2026-11-05T13:14:36.076769+08:00","event":"superseded","class":"OFFLINE","fingerprint":"4667da6bd814"}
+{"time":"2026-11-05T13:14:36.076769+08:00","event":"open","class":"PORT_BLOCK","fingerprint":"4667da6bd814","detail":"api.anthropic.com:443 timeout"}
+{"time":"2026-11-05T13:22:10.847561+08:00","event":"resolved","class":"PORT_BLOCK","fingerprint":"4667da6bd814","detail":"cleared by itself"}
+{"time":"2026-11-05T13:23:58.633291+08:00","event":"open","class":"OFFLINE","fingerprint":"4667da6bd814","detail":"no default route"}
+{"time":"2026-11-05T13:23:58.633291+08:00","event":"attempt","class":"OFFLINE","fingerprint":"4667da6bd814","actions":["usual-blip","wait"]}
+{"time":"2026-11-05T13:24:13.738626+08:00","event":"resolved","class":"OFFLINE","fingerprint":"4667da6bd814","detail":"cleared by itself"}
+{"time":"2026-11-05T13:26:29.883042+08:00","event":"open","class":"OFFLINE","fingerprint":"0ceeba196cc6","detail":"no default route"}
+{"time":"2026-11-05T13:26:29.883042+08:00","event":"attempt","class":"OFFLINE","fingerprint":"0ceeba196cc6","actions":["usual-blip","wifi-rejoin"]}
+{"time":"2026-11-05T13:27:50.045945+08:00","event":"superseded","class":"OFFLINE","fingerprint":"0ceeba196cc6"}
+{"time":"2026-11-05T13:27:50.045945+08:00","event":"open","class":"DNS","fingerprint":"0ceeba196cc6","detail":"cannot resolve api.anthropic.com: lookup api.anthropic.com: i/o timeout"}
+{"time":"2026-11-05T13:27:50.045945+08:00","event":"attempt","class":"DNS","fingerprint":"0ceeba196cc6","actions":["flush-dns","check-magicdns"]}
+{"time":"2026-11-05T13:29:51.702746+08:00","event":"attempt","class":"DNS","fingerprint":"0ceeba196cc6","actions":["flush-dns","check-magicdns"]}
+{"time":"2026-11-05T13:34:42.959758+08:00","event":"resolved","class":"DNS","fingerprint":"0ceeba196cc6","detail":"cleared by itself"}
+{"time":"2026-11-05T15:01:41.858983+08:00","event":"open","class":"OFFLINE","fingerprint":"4667da6bd814","detail":"no default route"}
+{"time":"2026-11-05T15:01:41.858983+08:00","event":"attempt","class":"OFFLINE","fingerprint":"4667da6bd814","actions":["usual-blip","wait"]}
+{"time":"2026-11-05T15:03:42.903726+08:00","event":"superseded","class":"OFFLINE","fingerprint":"4667da6bd814"}
+{"time":"2026-11-05T15:03:42.903726+08:00","event":"open","class":"DNS","fingerprint":"4667da6bd814","detail":"cannot resolve api.anthropic.com: lookup api.anthropic.com: i/o timeout"}
+{"time":"2026-11-05T15:03:42.903726+08:00","event":"attempt","class":"DNS","fingerprint":"4667da6bd814","actions":["flush-dns","check-magicdns"]}
+{"time":"2026-11-05T15:06:52.048186+08:00","event":"resolved","class":"DNS","fingerprint":"4667da6bd814","detail":"cleared by itself"}
+{"time":"2026-11-05T15:40:04.597614+08:00","event":"open","class":"PORT_BLOCK","fingerprint":"0ceeba196cc6","detail":"api.anthropic.com:443 timeout"}
+{"time":"2026-11-05T15:40:04.597614+08:00","event":"attempt","class":"PORT_BLOCK","fingerprint":"0ceeba196cc6","actions":["switch-network"]}
+{"time":"2026-11-05T15:42:14.442812+08:00","event":"attempt","class":"PORT_BLOCK","fingerprint":"0ceeba196cc6","actions":["switch-network"]}
+{"time":"2026-11-05T15:43:47.190111+08:00","event":"resolved","class":"PORT_BLOCK","fingerprint":"0ceeba196cc6","fix":"switch-network"}
+{"time":"2026-11-05T16:48:51.197078+08:00","event":"open","class":"OFFLINE","fingerprint":"4667da6bd814","detail":"no default route"}
+{"time":"2026-11-05T16:48:51.197078+08:00","event":"attempt","class":"OFFLINE","fingerprint":"4667da6bd814","actions":["usual-blip","wait"]}
+{"time":"2026-11-05T16:49:37.704773+08:00","event":"resolved","class":"OFFLINE","fingerprint":"4667da6bd814","detail":"cleared by itself"}
+{"time":"2026-11-05T17:03:44.258021+08:00","event":"open","class":"DNS","fingerprint":"0ceeba196cc6","detail":"cannot resolve api.anthropic.com: lookup api.anthropic.com: i/o timeout"}
+{"time":"2026-11-05T17:03:44.258021+08:00","event":"attempt","class":"DNS","fingerprint":"0ceeba196cc6","actions":["flush-dns","check-magicdns"]}
+{"time":"2026-11-05T17:05:44.580108+08:00","event":"attempt","class":"DNS","fingerprint":"0ceeba196cc6","actions":["flush-dns","check-magicdns"]}
+{"time":"2026-11-05T17:07:07.232567+08:00","event":"superseded","class":"DNS","fingerprint":"0ceeba196cc6"}
+{"time":"2026-11-05T17:07:07.232567+08:00","event":"open","class":"OFFLINE","fingerprint":"0ceeba196cc6","detail":"no default route"}
+{"time":"2026-11-05T17:08:13.112046+08:00","event":"attempt","class":"OFFLINE","fingerprint":"0ceeba196cc6","actions":["usual-blip","wifi-rejoin","wifi-join"]}
+{"time":"2026-11-05T17:09:51.874823+08:00","event":"relay","class":"OFFLINE","fingerprint":"0ceeba196cc6","detail":"sent through the iPhone relay"}
+{"time":"2026-11-05T17:13:58.281919+08:00","event":"superseded","class":"OFFLINE","fingerprint":"0ceeba196cc6"}
+{"time":"2026-11-05T17:13:58.281919+08:00","event":"open","class":"PORT_BLOCK","fingerprint":"0ceeba196cc6","detail":"api.anthropic.com:443 timeout"}
+{"time":"2026-11-05T17:13:58.281919+08:00","event":"attempt","class":"PORT_BLOCK","fingerprint":"0ceeba196cc6","actions":["switch-network"]}
+{"time":"2026-11-05T17:13:58.281919+08:00","event":"escalated","class":"PORT_BLOCK","fingerprint":"0ceeba196cc6","detail":"PORT_BLOCK persists after 4 attempts. Switch to a Malaysian SIM or local Wi-Fi (Hong Kong eSIMs exit in HK, which Anthropic does not serve)."}
+{"time":"2026-11-05T17:15:38.810192+08:00","event":"resolved","class":"PORT_BLOCK","fingerprint":"0ceeba196cc6","fix":"switch-network"}
+{"time":"2026-11-05T19:13:50.099528+08:00","event":"open","class":"OFFLINE","fingerprint":"4667da6bd814","detail":"no default route"}
+{"time":"2026-11-05T19:13:50.099528+08:00","event":"attempt","class":"OFFLINE","fingerprint":"4667da6bd814","actions":["usual-blip","wait"]}
+{"time":"2026-11-05T19:15:56.081282+08:00","event":"attempt","class":"OFFLINE","fingerprint":"4667da6bd814","actions":["usual-blip","wait"]}
+{"time":"2026-11-05T19:17:57.037671+08:00","event":"superseded","class":"OFFLINE","fingerprint":"4667da6bd814"}
+{"time":"2026-11-05T19:17:57.037671+08:00","event":"open","class":"PORT_BLOCK","fingerprint":"4667da6bd814","detail":"api.anthropic.com:443 timeout; captive.apple.com timeout too (uplink stalled)"}
+{"time":"2026-11-05T19:17:57.037671+08:00","event":"attempt","class":"PORT_BLOCK","fingerprint":"4667da6bd814","actions":["usual-blip","switch-network"]}
+{"time":"2026-11-05T19:21:52.991947+08:00","event":"resolved","class":"PORT_BLOCK","fingerprint":"4667da6bd814","detail":"cleared by itself"}
+{"time":"2026-11-05T19:24:55.241792+08:00","event":"open","class":"OFFLINE","fingerprint":"4667da6bd814","detail":"no default route"}
+{"time":"2026-11-05T19:24:55.241792+08:00","event":"attempt","class":"OFFLINE","fingerprint":"4667da6bd814","actions":["usual-blip","wifi-join","wifi-rejoin"]}
+{"time":"2026-11-05T19:25:04.906806+08:00","event":"resolved","class":"OFFLINE","fingerprint":"4667da6bd814","detail":"cleared by itself"}

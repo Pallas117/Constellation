@@ -18,6 +18,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 )
@@ -55,38 +56,87 @@ func (p SystemProber) Probe(ctx context.Context) Snapshot {
 		}
 	}
 	s.StaleProcs = staleProcs(ctx)
-	s.Tailscale = parseTailscale(run(ctx, tailscaleCLI(), "status", "--json"), p.ExitNodes)
+	// `tailscale status` can hang when tailscaled is wedged (mesh-heal.log 2026-11-05 18:55
+	// "CLI/daemon unresponsive"); it runs beside the network checks, not before them.
+	ts := make(chan Tailscale, 1)
+	go func() { ts <- parseTailscale(run(ctx, tailscaleCLI(), "status", "--json"), p.ExitNodes) }()
+	if s.Online {
+		realNetChecks().run(ctx, &s, probeBudget)
+	}
+	s.Tailscale = <-ts
 	s.Tailscale.MeshHealOpen = meshHealCircuitOpen(time.Now())
-	if !s.Online {
-		return s
-	}
-
-	// 8 s, not 4: system DNS goes through Tailscale (100.100.100.100), which on a
-	// flapping hotspot can take several seconds while the link settles.
-	dctx, cancel := context.WithTimeout(ctx, dnsTimeout)
-	_, err := net.DefaultResolver.LookupHost(dctx, "api.anthropic.com")
-	cancel()
-	if err != nil {
-		s.DNS = Result{Err: ErrDNS, Detail: err.Error()}
-		s.DNSDirectOK = directLookup(ctx, "api.anthropic.com")
-	} else {
-		s.DNS = Result{OK: true}
-	}
-	s.Captive = probeCaptive(ctx)
-	s.API = httpProbe(ctx, apiURL)
-	if r, body := httpGet(ctx, traceURL); r.OK {
-		s.PublicIP, s.Loc = parseTrace(body)
-	}
 	return s
+}
+
+// probeBudget bounds the network part of one probe. Before 2026-11-05 the checks ran one after
+// another, so a stalled uplink cost tailscale 8 + DNS 8 + direct DNS 4 + captive 10 + API 10 +
+// trace 10 = 50 s per probe and every blocking tick outlived the 60 s LaunchAgent interval
+// (docs/argo/switching-2026-11-05.md). They now run together under one deadline.
+const probeBudget = 12 * time.Second
+
+// netChecks are the checks that need the network, as functions so tests can stall them.
+type netChecks struct {
+	lookup func(ctx context.Context, host string) error // system resolver
+	direct func(ctx context.Context, host string) bool  // 1.1.1.1, bypassing the system resolver
+	get    func(ctx context.Context, u string) (Result, string)
+}
+
+func realNetChecks() netChecks {
+	return netChecks{
+		lookup: func(ctx context.Context, host string) error {
+			_, err := net.DefaultResolver.LookupHost(ctx, host)
+			return err
+		},
+		direct: directLookup,
+		get:    httpGet,
+	}
+}
+
+// run fills the network part of the snapshot: captive portal, DNS, the API and the trace, all at
+// once under one deadline. Captive starts first (plain HTTP, the cheapest and the one Classify
+// reads first after Online); DNS keeps its own 8 s: system DNS goes through Tailscale
+// (100.100.100.100), which on a flapping hotspot can take seconds while the link settles.
+func (c netChecks) run(ctx context.Context, s *Snapshot, budget time.Duration) {
+	ctx, cancel := context.WithTimeout(ctx, budget)
+	defer cancel()
+	var wg sync.WaitGroup
+	start := func(f func()) {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			f()
+		}()
+	}
+	start(func() { s.Captive = probeCaptiveWith(ctx, c.get) })
+	start(func() {
+		dctx, cancel := context.WithTimeout(ctx, dnsTimeout)
+		defer cancel()
+		if err := c.lookup(dctx, "api.anthropic.com"); err != nil {
+			s.DNS = Result{Err: ErrDNS, Detail: err.Error()}
+			s.DNSDirectOK = c.direct(ctx, "api.anthropic.com")
+		} else {
+			s.DNS = Result{OK: true}
+		}
+	})
+	start(func() { s.API, _ = c.get(ctx, apiURL) })
+	start(func() {
+		if r, body := c.get(ctx, traceURL); r.OK {
+			s.PublicIP, s.Loc = parseTrace(body)
+		}
+	})
+	wg.Wait()
 }
 
 // directClient never uses a proxy: Argo measures the network itself, and
 // dead proxies are reported separately. TLS verification is always on.
+// Every stage has a short limit so a stalled uplink is known within seconds.
 func directClient() *http.Client {
 	tr := &http.Transport{
-		Proxy:               nil,
-		TLSHandshakeTimeout: 6 * time.Second,
-		TLSClientConfig:     &tls.Config{MinVersion: tls.VersionTLS12},
+		Proxy:                 nil,
+		DialContext:           (&net.Dialer{Timeout: 4 * time.Second}).DialContext,
+		TLSHandshakeTimeout:   5 * time.Second,
+		ResponseHeaderTimeout: 6 * time.Second,
+		TLSClientConfig:       &tls.Config{MinVersion: tls.VersionTLS12},
 	}
 	return &http.Client{
 		Transport:     tr,
@@ -118,13 +168,8 @@ func httpGet(ctx context.Context, u string) (Result, string) {
 	return Result{OK: true, Status: resp.StatusCode, ConnectMs: connMs}, string(body)
 }
 
-func httpProbe(ctx context.Context, u string) Result {
-	r, _ := httpGet(ctx, u)
-	return r
-}
-
-func probeCaptive(ctx context.Context) Result {
-	r, body := httpGet(ctx, captiveURL)
+func probeCaptiveWith(ctx context.Context, get func(context.Context, string) (Result, string)) Result {
+	r, body := get(ctx, captiveURL)
 	if !r.OK {
 		return r // network errors are classified elsewhere; not proof of a portal
 	}
