@@ -17,6 +17,7 @@ import type { LayerVisibility } from "@/components/types";
 import type { RadiationDataPoint } from "@/lib/types/radiation";
 import mockSolarStormData from "@/data/mock_solar_storm.json";
 import { beltVisuals, liveDrivers, standoffIfReference } from "@/lib/physics/live-drivers";
+import { SIMULATED_STORM_TEXT } from "@/lib/physics/storm-narration";
 import { useNow } from "@/hooks/useNow";
 import { useDocumentTitle } from "@/hooks/useDocumentTitle";
 import { CHECK_LABEL, checkStatus, hudTone, scaleStatus } from "@/lib/readout-status";
@@ -160,8 +161,6 @@ const HeliophysicsDashboard = () => {
   const toggleStorm = () => {
     const next = !simulateStorm;
     setSimulateStorm(next);
-    // The RAG panel listens for this to narrate the scenario.
-    window.dispatchEvent(new CustomEvent("simulate-g4-storm", { detail: next }));
   };
 
   const chooseView = (v: SceneView) => {
@@ -302,6 +301,12 @@ const HeliophysicsDashboard = () => {
                   <SheetTitle>How far out the shield stands</SheetTitle>
                   <SheetDescription>{geoLine}.</SheetDescription>
                 </SheetHeader>
+                {simulateStorm && (
+                  <section aria-label="Simulated scenario" className="mt-4 rounded-md border border-caution/50 bg-caution/10 p-3">
+                    <p className="brand-label text-caution">Simulated scenario</p>
+                    <p className="mt-1 whitespace-pre-wrap text-sm leading-relaxed text-foreground">{SIMULATED_STORM_TEXT}</p>
+                  </section>
+                )}
                 <dl className="mt-4">
                   <Readout label="Magnetopause standoff" value={fmt(fieldModel?.r0)} unit="RE" tone={geoExposed ? "risk" : "default"} />
                   {r0Range && (
@@ -418,10 +423,13 @@ const HeliophysicsDashboard = () => {
                     hint={densityNote ?? undefined}
                   />
                   <Readout label="Measured" value={next?.observedAt ? `${utc(next.observedAt)} UTC` : "—"} hint={latest?.spacecraft} />
-                  <Readout label="Reaches Earth" value={etaUtc ? `≈ ${etaUtc} UTC` : "—"} hint={`~${travelMin} min at this speed`} />
+                  <Readout label="Reaches Earth" value={etaUtc ? `≈ ${etaUtc} UTC` : "—"} hint={travelMin === "—" ? undefined : `~${travelMin} min at this speed`} />
                   <Readout
                     label="MMS reconnection confidence"
                     value={mms.latest?.quality.confidence != null ? String(mms.latest.quality.confidence) : "—"}
+                    // Say why it's empty instead of a bare dash: feed failing, sign-in needed, or no data yet.
+                    hint={mms.error ?? (mms.status === "waiting" ? "Waiting for the MMS feed" : !mms.latest ? "No MMS data yet" : undefined)}
+                    tone={mms.error ? "caution" : "default"}
                   />
                 </dl>
 

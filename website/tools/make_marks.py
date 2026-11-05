@@ -18,8 +18,8 @@ import math
 from pathlib import Path
 
 OUT = Path(__file__).resolve().parent / "symbols"
-DARK = {"navy": "#081c4d", "gold": "#b0906f", "ring": "#b0906f", "warm": "#f3f0e8", "blue": "#318ada", "orange": "#f0782a", "cut": "#050505"}
-LIGHT = {**DARK, "ring": "#86684a", "warm": "#050505", "blue": "#2170b7", "orange": "#b44f0d", "cut": "#ffffff"}
+DARK = {"star": "#ccff00", "navy": "#081c4d", "gold": "#b0906f", "ring": "#b0906f", "warm": "#f3f0e8", "blue": "#318ada", "orange": "#f0782a", "cut": "#050505"}
+LIGHT = {**DARK, "star": "#3f7a26", "ring": "#86684a", "warm": "#050505", "blue": "#2170b7", "orange": "#b44f0d", "cut": "#ffffff"}
 # On light grounds the disc stays navy, so its stars keep the dark-theme colours; only the ring outside it changes.
 LIGHT_DISC = {"gold": DARK["gold"], "star": DARK["warm"]}
 
@@ -104,6 +104,69 @@ def turnstone_badge(c: dict[str, str]) -> str:
     return svg("6 0 228 228", [ring, f'<g transform="translate(120 114) scale(.74) translate(-120 -112)">', *turnstone_body(DARK), "</g>"])
 
 
+def star4(cx: float, cy: float, r: float, waist: float, fill: str) -> str:
+    """A four-point star: long points on the axes, the waist between them."""
+    pts = [polar(cx, cy, r if i % 2 == 0 else waist, -90 + 45 * i) for i in range(8)]
+    return poly(pts, fill)
+
+
+def argo(c: dict[str, str], icon: bool = False, star: bool = True) -> str:
+    """Argo: a square sail full of wind, steering by Canopus (Josh, 5 Nov: "Argo could be just a sail"; approved the same day).
+
+    Argo is the ship of the old constellation Argo Navis; its brightest star, Canopus, has been a spacecraft's
+    reference star since Mariner 3 and 4 carried the first Canopus star trackers (1964). So the one lime element is the
+    star the sail is set by. Three panels with real gaps (no ground-coloured cuts, so it sits on any surface), each
+    wider than the last down to the belly, the foot tucked back in: the billow from straight edges only, like the
+    Turnstone; every seam dips at the mast, so the cloth reads as filled. The yard stands clear of the sail; the mast shows through the gaps. Square, so one drawing is both the
+    mark and the favicon; the icon only opens the gaps so they survive 16 px.
+    """
+    gap = 10 if icon else 7
+    # (y, half-width) down the sail's edge: top, belly, foot. Panels split the height into thirds.
+    edge = [(52, 46), (132, 62), (172, 56)]
+
+    def half(y: float) -> float:
+        (y0, w0), (y1, w1) = (edge[0], edge[1]) if y <= edge[1][0] else (edge[1], edge[2])
+        return w0 + (w1 - w0) * (y - y0) / (y1 - y0)
+
+    cuts = [52 + (172 - 52) * k / 3 for k in range(4)]
+    body = [f'<path d="M108 24V196" fill="none" stroke="{c["warm"]}" stroke-width="7"/>',  # the mast
+            poly([(56, 34), (160, 34), (160, 42), (56, 42)], c["warm"])]  # the yard
+    sag = 12  # each seam dips at the mast: the cloth filled from behind, still drawn with straight edges
+    for i in range(3):
+        y0, y1 = cuts[i] + (gap / 2 if i else 0), cuts[i + 1] - (gap / 2 if i < 2 else 0)
+        mid = [edge[1][0]] if y0 < edge[1][0] < y1 else []
+        ys = [y0, *mid, y1]
+        right = [(108 + half(y), y) for y in ys]
+        left = [(108 - half(y), y) for y in reversed(ys)]
+        body.append(poly([(108, y0 + sag), *right, (108, y1 + sag), *left], c["warm"]))
+    if star:
+        body.append(star4(190, 46, 30 if icon else 24, 7 if icon else 5, c["star"]))
+    return svg("28 12 196 196", body)
+
+
+def body_of(svg_text: str) -> str:
+    return svg_text.split(">", 1)[1].rsplit("</svg>", 1)[0]
+
+
+def tile(inner: str, view_box: str, size: int = 64, pad: float = 6, ground: str = "#050505") -> str:
+    """An app icon / favicon: a symbol centred on a black rounded square (radius 14 of 64)."""
+    return (f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {size} {size}"><rect width="{size}" height="{size}" rx="14" fill="{ground}"/>'
+            f'<svg x="{pad}" y="{pad}" width="{size - 2 * pad}" height="{size - 2 * pad}" viewBox="{view_box}">{inner}</svg></svg>\n')
+
+
+def gauss_icon() -> str:
+    """Gauss Aurora at favicon size, from the Design System symbol: its two belts, and Earth as a solid warm disc.
+
+    The full mark is 2.45:1 wide, so in a square it fell to 6 px tall and its L = 6.4 field line and 4-unit Earth outline
+    vanished. The icon keeps only what reads at 16 px and crops to the belts.
+    """
+    import re
+    src = (OUT / "gauss-aurora-symbol-colour-dark.svg").read_text(encoding="utf-8")
+    belts = "".join(re.findall(r'<path d="[^"]+" fill="#(?:ccff00|e7b14a)"></path>', src))
+    inner = belts + '<circle cx="320" cy="200" r="36" fill="#f3f0e8"/>'
+    return tile(inner, "146 126 348 148", pad=4)
+
+
 FILES = {
     "constellation-symbol-colour-dark.svg": constellation(DARK),
     "constellation-symbol-colour-light.svg": constellation(LIGHT, light=True),
@@ -111,6 +174,10 @@ FILES = {
     "turnstone-symbol-colour-dark.svg": turnstone(DARK),
     "turnstone-symbol-colour-light.svg": turnstone(LIGHT),
     "turnstone-badge-symbol-colour-dark.svg": turnstone_badge(DARK),
+    "argo-symbol-colour-dark.svg": argo(DARK),
+    "argo-symbol-colour-light.svg": argo(LIGHT),
+    "argo-icon-symbol-colour-dark.svg": tile(body_of(argo(DARK, icon=True)), "28 12 196 196"),
+    "gauss-aurora-icon-colour-dark.svg": gauss_icon(),
 }
 
 if __name__ == "__main__":

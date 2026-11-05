@@ -553,7 +553,7 @@ test("invoices: only where an admin allows them; Stripe emails one invoice; paid
   const sent = await (await send(env, await as(access, "fleet@example.test", "/app/?invoice=sent"))).text();
   assert.match(sent, /Invoice sent to fleet@example\.test\./);
   assert.match(sent, /href="https:\/\/invoice\.stripe\.com\/i\/test_1"/);
-  assert.match(sent, /Console link coming by email/, "open while the invoice is within its terms");
+  assert.match(sent, /console link is coming by email/, "open while the invoice is within its terms");
   assert.equal((await withFetch(stripe, async () => send(env, await formPost(access, "fleet@example.test", "/app/invoice")))).headers.get("location"), "/app/");
   assert.equal(stripe.calls.length, 5, "one invoice at a time");
   // Overdue: locked until paid.
@@ -610,7 +610,7 @@ test("stripe webhook: verified events unlock, renew, fail and cancel plans; forg
   const page = await (await send(env, await as(access, "fleet@example.test", "/app/"))).text();
   assert.match(page, /Renews yearly/);
   assert.match(page, /action="\/app\/billing"/);
-  assert.match(page, /Console link coming by email/, "unlocked once paid");
+  assert.match(page, /console link is coming by email/, "unlocked once paid");
   await hook("customer.subscription.updated", { id: "sub_1", status: "past_due", customer: "cus_1", metadata: meta }, t0 + 10);
   assert.equal(await status(), "past_due");
   await hook("customer.subscription.updated", { id: "sub_1", status: "active", customer: "cus_1", metadata: meta }, t0 + 5);
