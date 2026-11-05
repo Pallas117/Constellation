@@ -18,11 +18,12 @@ const requirements: EnvRequirement[] = [
   { key: "CYBERTIGER_MAX_EVENTS", required: false, description: "In-memory security event cap" },
   { key: "LOCAL_INFER_URL", required: false, description: "ML inference service URL" },
   { key: "TRAINING_SCRIPT_PATH", required: false, description: "Model training script path" },
+  { key: "DEVICE_AUTH_SECRET", required: false, description: "Device-proof HMAC key, 32+ random chars; device proofs are disabled while unset" },
 ];
 
-function maskSecret(value: string): string {
-  if (value.length <= 10) return "********";
-  return `${value.slice(0, 4)}...${value.slice(-4)}`;
+// Never print any part of a secret: even a prefix and suffix narrow it down.
+function maskSecret(): string {
+  return "********";
 }
 
 let hasMissingRequired = false;
@@ -38,7 +39,7 @@ for (const item of requirements) {
     const value = raw!.trim();
     const looksSecret =
       item.key.includes("KEY") || item.key.includes("TOKEN") || item.key.includes("SECRET");
-    valuePreview = looksSecret ? maskSecret(value) : value;
+    valuePreview = looksSecret ? maskSecret() : value;
   }
 
   console.log(`${marker} ${item.key}=${valuePreview}  (${item.description})`);

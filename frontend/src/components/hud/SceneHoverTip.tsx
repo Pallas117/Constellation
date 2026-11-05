@@ -1,6 +1,6 @@
 import { useSceneHover, type HoverTarget } from "@/components/scene/scene-hover";
 import type { MagnetosphereModelInfo } from "@/components/scene/Magnetosphere";
-import { fmt, signed } from "./Hud";
+import { fmt, signed } from "./format";
 
 /** Geostationary orbit radius, Re. */
 export const GEO_RE = 6.6;
@@ -12,7 +12,7 @@ interface Described {
 }
 
 /** What the HUD says about the object under the pointer, from the model the scene drew. */
-export function describeTarget(
+function describeTarget(
   target: HoverTarget,
   model: MagnetosphereModelInfo | null,
   live: boolean,

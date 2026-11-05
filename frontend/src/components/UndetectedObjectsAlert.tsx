@@ -1,3 +1,6 @@
+/** @jsxRuntime automatic */
+// Bare `node --import tsx --test` runs miss tsconfig.app.json's react-jsx; this keeps them working.
+
 /**
  * UndetectedObjectsAlert — untracked spacecraft candidates for the operator
  * console's telemetry column. Shows only what the detection alert contains.

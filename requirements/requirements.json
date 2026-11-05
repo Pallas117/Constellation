@@ -1,6 +1,6 @@
 {
   "$comment": "Constellation requirements baseline (GAU-120). NASA SP-2016-6105 Rev 2 §6.2/§5.3. Methods: T test, A analysis, I inspection, D demonstration. T evidence = exact test names; A/I/D evidence = repo paths. Verified by `npm run verify`.",
-  "version": "1.3.0",
+  "version": "1.14.0",
   "requirements": [
     {
       "id": "REQ-ING-001",
@@ -13,7 +13,8 @@
       "verifiedBy": [
         "latest feed: points older than 15 min are served flagged stale (GAU-15)",
         "freshness tier follows measurement age, not fetch cadence (GAU-44)",
-        "data expires at 15 min without drifting values toward a baseline"
+        "data expires at 15 min without drifting values toward a baseline",
+        "ingest: an L1 data gap leaves the geomagnetic level known while NOAA Kp is current (GAU-138)"
       ]
     },
     {
@@ -69,6 +70,23 @@
       ]
     },
     {
+      "id": "REQ-ING-006",
+      "title": "Historical replay through the live pipeline",
+      "statement": "The system shall replay archived storm inputs through the same ingest, sense-check and nowcast code that runs live, on a fixed clock with no input served before it was published, without publishing to the live feed, and shall reproduce its golden output from the same inputs.",
+      "rationale": "Radiation-study row 9 and M1 PR-03 groundwork (GAU-138, GAU-59): claims about past storms must come from the code that runs live, reproducibly.",
+      "parent": "GAU-138",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "replay: the cached storms replay to their golden output, record for record (GAU-138)",
+        "replay: May 2024 reaches G5 and Oct 2024 G4 through the live pipeline (GAU-138)",
+        "replay: Jan 2026 reaches S4, with S2–S3 under G0 for hours before the geomagnetic storm (GAU-138)",
+        "replay: never publishes to the live feed (GAU-138)",
+        "archive: a row is served only once its interval has ended, so nothing leaks from the future (GAU-138)",
+        "archive: archived GSM is rotated to GSE with the live code; RTSW fills reach the parser as null (GAU-138)"
+      ]
+    },
+    {
       "id": "REQ-DI-001",
       "title": "Unknown is never nominal",
       "statement": "A missing, stale or failed input shall be reported as unknown and shall never be rendered as nominal, live, healthy or zero.",
@@ -81,8 +99,17 @@
         "a feed response that omits its tier is not shown as live (GAU-114)",
         "HUD never shows stale or missing data as fresh",
         "unavailable placeholder is deterministic and never claims to be live",
-        "offline fallback is an explicit unknown, never a canned assessment (GAU-44)",
-        "JAXA: catalog reachability is not reported as a healthy data feed (GAU-55)"
+        "an unconfigured memory service is reported, not faked",
+        "JAXA: catalog reachability is not reported as a healthy data feed (GAU-55)",
+        "a missing, stale or wrong-channel proton reading is unknown, not S0",
+        "a missing, wrong-band or fill X-ray reading is unknown, not R0",
+        "NOAA: an HTTP failure is unknown, keeps the last real time, and names the product, not the URL (GAU-63)",
+        "NOAA: a newest L1 sample 30 min old is reported, but not as healthy (GAU-63)",
+        "NOAA: Kp fill values are skipped, never read as a quiet Kp 0 (GAU-63)",
+        "ESA: a Swarm sample 30 h old is returned but not healthy (GAU-63)",
+        "MMS: survey data older than 90 days is returned but not healthy (GAU-63)",
+        "NOAA alerts: a payload that isn't the alerts format is unknown (null), not 'no alerts' (GAU-63)",
+        "GAU-63: a point with no measurement time yields no observations, never ones stamped now"
       ]
     },
     {
@@ -109,7 +136,8 @@
       "owner": "Josh",
       "verifiedBy": [
         "modelled Dst is labelled with its method and inputs; a measured Dst says so (GAU-84)",
-        "tick uses measured Kyoto Dst while fresh, and the model once it is stale (GAU-116)"
+        "tick uses measured Kyoto Dst while fresh, and the model once it is stale (GAU-116)",
+        "ingest: a velocity assumed from the speed, or a locally rotated field, is labelled as derived (GAU-63)"
       ]
     },
     {
@@ -156,6 +184,31 @@
       ]
     },
     {
+      "id": "REQ-DI-007",
+      "title": "Inputs are sense-checked",
+      "statement": "The system shall check each L1 magnetic-field sample, whether the L1 plasma speed follows large changes in the field, the GOES proton spectrum and channels, and the GOES X-ray channel for physical consistency, and shall cross-check its own R, S and G levels against NOAA's published scales; a failed check shall be reported with its reason without silently dropping the sample, and a check with no current input shall read unknown, not pass.",
+      "rationale": "Radiation-study build order step 1 (GAU-134): sense-checks stop wrong conclusions before any analysis is built on them.",
+      "parent": "GAU-136",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "field: Bt below the magnitude of its own components is flagged with a reason",
+        "field: GSE and GSM magnitudes that differ are flagged; a frame change can't alter |B|",
+        "plasma: a speed that holds while |B| triples to over 20 nT is flagged as not tracking (GAU-153)",
+        "plasma: a field that doubles at a steady speed, or a shock that moves the speed, is not flagged",
+        "plasma: too few samples in the window is unknown, not pass",
+        "replay: the stuck ACE speed in Jan 2026 is flagged and lowers confidence; May and Oct 2024 never flag it (GAU-153)",
+        "protons: a spectrum that rises with energy is flagged with both channels",
+        "channels: a fill as the newest sample is flagged; older fills are reported, not hidden",
+        "channels: a flat-lined channel is flagged as saturated or stuck",
+        "GOES X-rays: NOAA's electron-contamination mark on the newest sample is flagged (GAU-136)",
+        "NOAA scales: agreement passes; a disagreement is flagged with both values and Gauss's basis",
+        "NOAA scales: missing or over an hour old is unknown, never agreement",
+        "ingest: every point carries its sense-checks; an inconsistent newest field sample lowers confidence (GAU-136)",
+        "SWPC feeds: only HTTPS JSON on services.swpc.noaa.gov is fetched"
+      ]
+    },
+    {
       "id": "REQ-PHY-001",
       "title": "Correct coordinate frames",
       "statement": "GSE/GSM transforms shall rotate about the shared X axis with the dipole tilt, and the IMF shall come from L1 monitors only.",
@@ -198,6 +251,22 @@
         "Dst: weak southward IMF gives a modest equilibrium, never the -400 clamp",
         "Dst: strong driving deepens over hours and relaxes back after",
         "nowcast: constant input keeps Bz's sign and value across ticks (no component-mean shift)"
+      ]
+    },
+    {
+      "id": "REQ-PHY-004",
+      "title": "L1 structure candidates for operators",
+      "statement": "The system shall detect L1 structure candidates (interplanetary shocks, ICMEs, high-speed streams, sustained southward driving and a magnetopause inside geostationary orbit) over the last 24 h of L1 data, and shall present each to operators with a confidence label, never as a confirmed event, on an operator-only route.",
+      "rationale": "Radiation-study row 6 (GAU-139), shown to operators by GAU-154; validated on a pre-registered holdout (docs/L1_STRUCTURES_HOLDOUT.md).",
+      "parent": "GAU-154",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "l1 structures: a clean fast-forward shock is found at the jump, with its arrival at Earth",
+        "l1 structures: a cold, low-beta ejecta with a strong field is an ICME candidate; a hot sheath is not",
+        "SWPC adapter: structure candidates cover all the L1 hours it reads, not just the point's 3 h (GAU-154)",
+        "operator console: L1 candidates are listed newest first with their confidence; recent non-low ones need attention (GAU-154)",
+        "role matrix"
       ]
     },
     {
@@ -361,6 +430,224 @@
         "deploy: healthy release is activated and recorded; dry run changes nothing (GAU-123)",
         "deploy: an unhealthy release rolls back automatically (GAU-123)",
         "rollback: returns to the previous healthy release (GAU-123)"
+      ]
+    },
+    {
+      "id": "REQ-OPS-004",
+      "title": "Watchdog restart budget",
+      "statement": "The awake guard shall restart a watched job (Argo, mesh-heal, or a live service after two failed health checks in a row) at most 3 times per job in any rolling hour, and shall then send a phone alert instead of restarting it.",
+      "rationale": "A job that dies on start needs a person: unbounded restarts hide the fault and churn the 8 GB host (GAU-158).",
+      "parent": "GAU-158",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "stale Argo and mesh-heal: both restarted",
+        "backend down once: wait for a second failure",
+        "backend down twice: restarted",
+        "a recovery resets the strike count",
+        "4th restart in an hour: alert instead of kicking",
+        "restarts over an hour old don't count: restarted again, no alert",
+        "no fallback prepared: out of restarts only alerts"
+      ]
+    },
+    {
+      "id": "REQ-OPS-005",
+      "title": "Failover to the prepared fallback",
+      "statement": "When a live service still fails its health check after its 3 restarts in an hour and a valid fallback is prepared, the awake guard shall replace live with the fallback on the same ports (:3001, :8080), URLs, data and .env, and send a phone alert; while the fallback serves, the guard shall restart only the fallback and shall not fail over again; `fallback off` shall restore live with a fresh restart budget.",
+      "rationale": "A cold standby of the last known-good build keeps the operator URLs serving when live can't restart itself; failback stays a person's decision so live and fallback can't flap (GAU-158).",
+      "parent": "GAU-158",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "fallback status: ready although its path has a space",
+        "a corrupt, cut-short or orphaned fallback record reads as none prepared: no half failover, still alerts",
+        "out of restarts and still down: fails over to the fallback and texts the phone",
+        "status shows the fallback is serving",
+        "on fallback: the guard restarts the fallback, never fails over again",
+        "on fallback and out of restarts: alerts only, no restart loop, no flip back to live",
+        "fallback off: live back, fresh restarts for it",
+        "fallback plists: live's ports, URLs, data and .env; prepare never loads them"
+      ]
+    },
+    {
+      "id": "REQ-OPS-006",
+      "title": "Dev layer isolated from live",
+      "statement": "The dev layer shall refuse the live and fallback checkouts and live's ports (:3001, :8080), and shall start its backend and site with their own ports, data directory, public URL and API target set explicitly, so that it cannot bind live's ports, write live's data or send its API calls to live.",
+      "rationale": "R&D runs on the same host as live; a dev server must never take live's ports, data or API (GAU-158).",
+      "parent": "GAU-158",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "dev refuses the live checkout",
+        "dev refuses the fallback checkout",
+        "dev refuses the fallback checkout (path with a space)",
+        "dev refuses live's ports",
+        "dev runs on :5174 and :3101",
+        "dev start: its own ports, data and API target, set explicitly, never live's"
+      ]
+    },
+    {
+      "id": "REQ-OPS-007",
+      "title": "No heavy installs under memory pressure",
+      "statement": "`fallback prepare`, `deploy` and `dev` shall refuse, before installing, building or starting anything, when the kernel memory pressure level is warn or higher.",
+      "rationale": "npm ci was killed under memory pressure on 2026-10-19 (scripts/ops/gauss-services.sh); on the 8 GB host an install or a dev server at warn puts the live services at risk (GAU-158).",
+      "parent": "GAU-158",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "prepare refuses at memory pressure warn",
+        "deploy refuses at memory pressure warn",
+        "dev refuses at memory pressure warn"
+      ]
+    },
+    {
+      "id": "REQ-WM-001",
+      "title": "Deterministic, tamper-evident world records",
+      "statement": "Every world-state record shall have a deterministic id and a SHA-256 checksum over its canonical content, and validation shall reject records whose content, id or schema do not match.",
+      "rationale": "GAU-39 acceptance: deterministic IDs and checksums for every record; replays must be comparable.",
+      "parent": "GAU-39",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "GAU-39: ids and checksums are deterministic, and tampering is detected",
+        "GAU-39: replay of a storm gives identical records, an onset event, an advisory and a transition"
+      ]
+    },
+    {
+      "id": "REQ-WM-002",
+      "title": "State reconstructable from bounded observations",
+      "statement": "World state shall be reconstructable from a bounded, time-windowed observation sequence, independent of input order, using no stale or future observations, and without mutating operational data.",
+      "rationale": "GAU-39 acceptance; exploratory coupling must not alter operational state.",
+      "parent": "GAU-39",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "GAU-39: state is reconstructed from a bounded window; stale and future observations are not used",
+        "GAU-39: reconstruction is order-independent and does not mutate its inputs",
+        "GAU-39: live world state uses only the needed window of the feed, newest first"
+      ]
+    },
+    {
+      "id": "REQ-WM-003",
+      "title": "Provenance on every world value",
+      "statement": "Every world-state value shall state whether it is measured, derived or unknown, with the observations or variables and method it rests on; missing inputs shall yield unknown, never a default.",
+      "rationale": "GAU-39 acceptance: every derived value has provenance and truth state (GAU-63 invariant).",
+      "parent": "GAU-39",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "GAU-39: observations carry only measured values, with unit, frame, platform and evidence",
+        "GAU-39: derived values carry method and inputs; unknown inputs give unknown, never a default",
+        "GAU-39: a lost source becomes a source-lost event, not silently carried",
+        "GAU-39: a forecast is a hypothesis resolved against observed state"
+      ]
+    },
+    {
+      "id": "REQ-TR-001",
+      "title": "Inference trust records",
+      "statement": "For each inference the system shall return the space environment at the inference time, with each field's source, product URL, observed time, fetched time, age, confidence, method and limitations, and a verdict that is unknown whenever a required input is missing, stale or conflicting and is never consistent by default; a record shall carry no wording about harm to hardware or the odds of a wrong output.",
+      "rationale": "PR-01 Inference Trust Record API, ICP-1 P0 (GAU-57): the buyer-facing product rests on provenance on every datum and fail-closed verdicts.",
+      "parent": "GAU-57",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "trust record: a missing reading is unknown, never consistent (GAU-57)",
+        "trust record: a stale input is unknown, even when its level was quiet (GAU-57)",
+        "trust record: conflicting inputs are unknown: NOAA disagrees, or the proton spectrum is impossible (GAU-57)",
+        "trust record: every field carries source, product URL, observed and fetched times, age, confidence and limitations (GAU-57)",
+        "trust record: no wording about harm to hardware or odds of error, in any record (GAU-57)",
+        "trust record: p95 well under 500 ms over a full day of 5 s history (GAU-57)",
+        "trust record: through the replayed 19 Jan 2026 storm, S1 is consistent and S2 under G0 is degraded (GAU-57)",
+        "trust records API: an invalid inference is a 400 listing every error, nothing guessed (GAU-57)",
+        "trust records API: a batch returns records for valid items and the errors for the rest (GAU-57)",
+        "trust records API: a server without an environment history says so, never an empty record (GAU-57)",
+        "TLE: an epoch more than 7 days from the inference is not used (GAU-57)",
+        "trust record: an ephemeris and a TLE that disagree are conflicting inputs, so both read unknown (GAU-57)",
+        "TLE: format, catalogue number and the modulo-10 checksum are checked; satellite.js checks none of them (GAU-57)"
+      ]
+    },
+    {
+      "id": "REQ-TR-002",
+      "title": "Customer log ingest",
+      "statement": "The system shall read a customer's inference log (CSV, JSON or JSONL) through a declared, versioned column mapping into trust-record requests, shall reject and report every malformed, out-of-order or duplicate row with its reason rather than drop it, shall attach to every accepted row its file hash, row number and mapping version, and shall produce identical output from identical input.",
+      "rationale": "PR-03a (GAU-66): the replay pilot on customer logs (GAU-59) must account for every row it was given.",
+      "parent": "GAU-66",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "ingest: valid rows become requests with file hash, row number and mapping version (GAU-66)",
+        "ingest: malformed, duplicate and out-of-order rows are rejected with reasons, never dropped (GAU-66)",
+        "ingest: the same bytes and mapping give the same result; a changed byte changes the hash (GAU-66)",
+        "ingest: a mapping naming a missing column, or an invalid mapping, fails the whole file with the reason (GAU-66)",
+        "ingest: an ingested log becomes trust records that carry their provenance, through the replayed storm (GAU-66)"
+      ]
+    },
+    {
+      "id": "REQ-TR-003",
+      "title": "South Atlantic Anomaly context",
+      "statement": "For each inference with a position the system shall report the IGRF-14 field strength at the spacecraft and flag the South Atlantic Anomaly as core (|B| at most 21,000 nT) or extended (at most 26,000 nT), citing the thresholds; it shall report the flag as unknown, with the reason, outside 300–450 km altitude or outside IGRF-14 validity (2015–2030), and an inference inside the SAA shall be degraded context.",
+      "rationale": "GAU-141 (SWx P2): trapped-proton exposure in low orbit is concentrated in the SAA; an operator needs to know whether an inference was made there, from a published definition rather than a hand-drawn box.",
+      "parent": "GAU-141",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "IGRF-14: agrees with an independent implementation to 0.001 nT, surface to 800 km (GAU-141)",
+        "IGRF-14: a pure dipole matches its closed form; the official check value; validity 2015–2030 (GAU-141)",
+        "SAA: along six days of an ISS orbit, NICER's SAA lies inside the extended tier and the core inside NICER's (GAU-141)",
+        "SAA: the thresholds and the altitude band are applied as published (GAU-141)",
+        "trust record: an inference inside the SAA is degraded context, with |B| and the tier (GAU-141)"
+      ]
+    },
+    {
+      "id": "REQ-TR-004",
+      "title": "Evidence packs",
+      "statement": "For an analysis window the system shall produce an evidence pack holding the trust records, the hashes of the stored inputs, the software and policy versions, every unused log row with its reason, a verdict summary and limitations; the records shall be hash-chained and the pack hashed so that a changed, reordered or missing record is detected; the same stored inputs and code shall give the same pack and PDF byte for byte; and the limitations shall always state that the pack describes the environment, not the spacecraft, with no regulatory claim in Gauss-authored text.",
+      "rationale": "PR-04 Evidence pack export, ICP-1 P0 (GAU-60): customer QA, insurers and regulators need one reproducible, tamper-evident report per window; signing the pack hash follows in GAU-67.",
+      "parent": "GAU-60",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "evidence pack: from a log and a replayed storm, every row accounted for, and the same stored inputs give the same pack and PDF (GAU-60)",
+        "evidence pack: any change is detected: a record, its hash, the chain, the order, a dropped record (GAU-60)",
+        "evidence pack: the wording rules hold even when the hashes are recomputed (GAU-60)",
+        "evidence pack: refuses records outside the window, from another log or policy, or rows not accounted for (GAU-60)",
+        "evidence pack: packs chain, each starting from the previous pack's hash (GAU-60)",
+        "evidence pack PDF: a valid PDF (cross-reference offsets, pages) carrying the pack hash and limitations (GAU-60)"
+      ]
+    },
+    {
+      "id": "REQ-TR-005",
+      "title": "Trust-record usage metering",
+      "statement": "The system shall log every trust record it returns to a customer, once, with the issuing API key, spacecraft and UTC month, in an append-only log that refuses updates and deletes; shall return no records when that log cannot be written; and shall export per-spacecraft, per-month counts as CSV that adds up to the records returned, with fields safe to open in a spreadsheet.",
+      "rationale": "GAU-70: pilots are invoiced per spacecraft-month and per 1,000 trust records (ICP commercial hooks); per-call metering counts a 100-record batch as one call, so it can't support that, and the invoice must reconcile with what was issued.",
+      "parent": "GAU-70",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "trust metering: every record returned is logged once, by spacecraft and month; rejected items are not (GAU-70)",
+        "trust metering: the log is append-only; the database refuses updates and deletes (GAU-70)",
+        "trust metering: if the usage log can't be written, no records are returned (GAU-70)",
+        "trust metering: the CSV export reconciles with the records issued and is safe to open in a spreadsheet (GAU-70)"
+      ]
+    },
+    {
+      "id": "REQ-TR-006",
+      "title": "Evidence and release signing",
+      "statement": "The system shall sign each evidence pack (its pack hash and chain head) and each release file with an Ed25519 key whose public half is published in a keyring, with the key id and signing time in the signed statement; a customer shall be able to check a pack and its PDF offline with one documented command; changing any record, the signature, the key id or the signing time shall fail that check; a pack signed before its key was retired shall pass with a note saying the key is retired, and one signed after retirement or by a revoked key shall fail; a private key file inside the repository or readable by other users shall be refused, and the keyring shall refuse private key material. A private key file may be locked to its owner's fingerprint through the Mac's Secure Enclave, where it shall unlock only through that enclave key after Touch ID, or under its owner's geometry pattern (8 to 24 of the 16 vertices of a tesseract); a locked key shall unlock only with that pattern, a changed lock header shall fail, and the local pattern page shall answer only its own address and origin, with the nonce it served. The scope is signing, authentication and their key management only, with no confidentiality encryption of data.",
+      "rationale": "PR-04a (GAU-67): REQ-TR-004 gives integrity only; customers, insurers and regulators also need to know Gauss made the pack, and releases need the same. Export control (REG-04) keeps it to signing so Cat 5 Pt 2 stays out of scope.",
+      "parent": "GAU-67",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "signing: a signed pack verifies against the keyring without changing its pack hash; changing a record, the signature, the key id or the signing time fails (GAU-67)",
+        "signing: key rotation: a pack signed before its key was retired verifies and says the key is retired; after retirement, or by a revoked key, it fails (GAU-67)",
+        "signing: release files get a detached signature; a changed byte fails, and pack and release keys and signatures can't stand in for each other (GAU-67)",
+        "signing keys: the keyring refuses private key material, a key id that is not its key's fingerprint and bad dates; a key file must be outside the repository and readable only by its owner (GAU-67)",
+        "trust CLI: make a key, publish it, sign a pack and PDF, and check both offline with one command; a rewritten pack, a missing signature or a revoked key exits 1, a retired key passes with a note (GAU-67)",
+        "key lock: a key locked under a tesseract pattern unlocks only with that pattern; a changed header, a weak pattern and a damaged file are refused, and the key is never stored in the clear (GAU-67)",
+        "key lock page: the one-time pattern page answers only its own address and origin, needs the nonce it served, unlocks once and closes after five misses (GAU-67)",
+        "trust CLI: lock a key under a pattern and remove the unlocked file, sign with it from the terminal, refuse a wrong pattern, and make a key that is locked from the start (GAU-67)",
+        "touch id lock: a key locked to its owner's Secure Enclave key unlocks only through that key; another person's enclave, a changed header or a damaged file fails, and the key is never stored in the clear (GAU-67)"
       ]
     }
   ]

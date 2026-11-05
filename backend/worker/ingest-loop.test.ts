@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { IngestionWorker } from "./ingest-loop.js";
+import { IngestionWorker, liveIngestSources } from "./ingest-loop.js";
+import type { CanonicalSpaceWeatherPoint } from "../types.js";
 
 type WorkerInternals = {
   shouldFetch: (key: string, cadenceMs: number) => boolean;
@@ -64,14 +65,17 @@ test("caps coupling window length to prevent unbounded memory growth", () => {
   assert.equal(worker.couplingWindow[179], 249);
 });
 
-type TimedWorker = {
+// The public methods keep their real types; `lastFetch` and `ticking` are private fields the tests drive.
+type TimedWorker = Pick<IngestionWorker, "tick" | "getPipelineLatency" | "start" | "stop"> & {
   lastFetch: Map<string, number>;
   ticking: boolean;
-  tick: () => Promise<{ pipeline?: { status: string; stages: Array<{ stage: string; lastMs: number; errors: number }> } }>;
-  getPipelineLatency: () => { ticks: number; skippedTicks: number };
-  start: () => void;
-  stop: () => void;
 };
+
+async function tickPoint(worker: TimedWorker): Promise<CanonicalSpaceWeatherPoint> {
+  const { canonicalPoint } = await worker.tick();
+  assert.ok(canonicalPoint, "tick produced a canonical point");
+  return canonicalPoint;
+}
 
 async function withSlowFetch<T>(delayMs: number, fn: () => Promise<T>): Promise<T> {
   const realFetch = globalThis.fetch;
@@ -118,7 +122,7 @@ test("interval never stacks a tick on one still running", async () => {
     intervalFn = fn;
     return realSetInterval(() => undefined, 1_000_000);
   }) as typeof setInterval;
-  worker.tick = async () => ({}); // the first (retrying) tick
+  worker.tick = async () => ({ canonicalPoint: null, mmsVector: null, sourceStatus: [], auroraMap: null }); // the first (retrying) tick
   try {
     worker.start();
     worker.ticking = true; // pretend a slow tick is in flight
@@ -131,17 +135,48 @@ test("interval never stacks a tick on one still running", async () => {
   }
 });
 
-test("tick attaches only current GOES particle readings to the canonical point (GAU-112)", async () => {
-  const worker = new IngestionWorker() as unknown as TimedWorker & {
-    goes: unknown;
-    tick: () => Promise<{ canonicalPoint: { particles?: { protons: unknown; electrons: unknown } } }>;
+test("stop() cancels a pending start-up retry, so it never ticks after a restart (GAU-208)", async () => {
+  const worker = new IngestionWorker() as unknown as TimedWorker;
+  const realSetTimeout = globalThis.setTimeout;
+  const realSetInterval = globalThis.setInterval;
+  const retries: Array<() => void> = [];
+  globalThis.setTimeout = ((fn: () => void) => {
+    retries.push(fn);
+    return realSetTimeout(() => undefined, 1_000_000);
+  }) as typeof setTimeout;
+  globalThis.setInterval = (() => realSetInterval(() => undefined, 1_000_000)) as typeof setInterval;
+  let ticks = 0;
+  worker.tick = async () => {
+    ticks++;
+    throw new Error("upstream down");
   };
+  const realError = console.error;
+  console.error = () => undefined;
+  try {
+    worker.start();
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(ticks, 1);
+    assert.equal(retries.length, 1, "a retry was scheduled");
+    worker.stop();
+    retries[0]!(); // even if the timer still fired, a stopped worker must not tick
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(ticks, 1);
+  } finally {
+    worker.stop();
+    globalThis.setTimeout = realSetTimeout;
+    globalThis.setInterval = realSetInterval;
+    console.error = realError;
+  }
+});
+
+test("tick attaches only current GOES particle readings to the canonical point (GAU-112)", async () => {
+  const worker = new IngestionWorker() as unknown as TimedWorker & { goes: unknown };
   const now = Date.now();
-  for (const key of ["noaa", "esa", "jaxa", "mms", "lasp", "goes", "kyoto-dst", "ml-forecast"]) worker.lastFetch.set(key, now);
+  for (const key of ["noaa", "esa", "jaxa", "mms", "lasp", "goes", "kyoto-dst", "swpc-products", "ml-forecast"]) worker.lastFetch.set(key, now);
   const fresh = { value: 0.25, energy: ">=10 MeV", satellite: "GOES-18", timestamp: new Date(now - 5 * 60_000).toISOString() };
   const old = { value: 150, energy: ">=2 MeV", satellite: "GOES-19", timestamp: new Date(now - 45 * 60_000).toISOString() };
   worker.goes = { protons: fresh, electrons: old };
-  const { canonicalPoint } = await worker.tick();
+  const canonicalPoint = await tickPoint(worker);
   assert.deepEqual(canonicalPoint.particles, { protons: fresh, electrons: null });
 });
 
@@ -174,19 +209,16 @@ test("the worker exposes its last forecast for the API to serve (GAU-115)", () =
 });
 
 test("tick uses measured Kyoto Dst while fresh, and the model once it is stale (GAU-116)", async () => {
-  const worker = new IngestionWorker() as unknown as TimedWorker & {
-    kyotoDst: unknown;
-    tick: () => Promise<{ canonicalPoint: { indices: { dst: number; dstMethod?: string } } }>;
-  };
+  const worker = new IngestionWorker() as unknown as TimedWorker & { kyotoDst: unknown };
   const now = Date.now();
-  for (const key of ["noaa", "esa", "jaxa", "mms", "lasp", "goes", "kyoto-dst", "ml-forecast"]) worker.lastFetch.set(key, now);
+  for (const key of ["noaa", "esa", "jaxa", "mms", "lasp", "goes", "kyoto-dst", "swpc-products", "ml-forecast"]) worker.lastFetch.set(key, now);
   worker.kyotoDst = { dst: -123, timestamp: new Date(now - 30 * 60_000).toISOString() };
-  const measured = (await worker.tick()).canonicalPoint.indices;
+  const measured = (await tickPoint(worker)).indices;
   assert.equal(measured.dst, -123);
   if ("dstMethod" in measured) assert.equal(measured.dstMethod, "measured"); // once #50 is merged
 
   worker.kyotoDst = { dst: -123, timestamp: new Date(now - 3 * 3_600_000).toISOString() };
-  const modelled = (await worker.tick()).canonicalPoint.indices;
+  const modelled = (await tickPoint(worker)).indices;
   assert.notEqual(modelled.dst, -123, "a 3 h old reading is not used as current");
 });
 
@@ -198,11 +230,9 @@ test("FMEA: a failed telemetry write is counted and reported, and the tick still
   const file = path.join(dir, "telemetry.jsonl");
   await fs.rm(file, { force: true, recursive: true });
   await fs.mkdir(file); // a directory where the file should be: every append fails with EISDIR
-  const worker = new IngestionWorker() as unknown as TimedWorker & {
-    tick: () => Promise<{ canonicalPoint: unknown; pipeline?: { stages: Array<{ stage: string; errors: number }> } }>;
-  };
+  const worker = new IngestionWorker() as unknown as TimedWorker;
   const now = Date.now();
-  for (const key of ["noaa", "esa", "jaxa", "mms", "lasp", "goes", "kyoto-dst", "ml-forecast"]) worker.lastFetch.set(key, now);
+  for (const key of ["noaa", "esa", "jaxa", "mms", "lasp", "goes", "kyoto-dst", "swpc-products", "ml-forecast"]) worker.lastFetch.set(key, now);
   const before = bedrock.failedWrites;
   try {
     const result = await worker.tick();
@@ -211,5 +241,32 @@ test("FMEA: a failed telemetry write is counted and reported, and the tick still
     assert.equal(result.pipeline?.stages.find((s) => s.stage === "persist")?.errors, 1, "persist stage reports the error");
   } finally {
     await fs.rm(file, { recursive: true, force: true });
+  }
+});
+
+test("GAU-228: GAUSS_LASP=0 / GAUSS_MMS=0 leave those sources out of the live worker: not fetched, not reported", async () => {
+  assert.equal(liveIngestSources({ mms: true, lasp: true }), undefined, "default: every source, as before");
+  assert.deepEqual(liveIngestSources({ mms: false, lasp: false }), ["noaa", "kyoto-dst", "goes", "swpc-products", "esa", "jaxa"]);
+  const sources = liveIngestSources({ mms: true, lasp: false });
+  assert.ok(sources?.includes("mms") && !sources.includes("lasp"));
+
+  const worker = new IngestionWorker(undefined, { sources, publish: false, respectLink: false }) as unknown as TimedWorker;
+  const now = Date.now();
+  // Everything else was fetched just now, so LASP is the only source due this tick.
+  for (const key of ["noaa", "esa", "jaxa", "mms", "goes", "kyoto-dst", "swpc-products", "ml-forecast"]) worker.lastFetch.set(key, now);
+  const urls: string[] = [];
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = (async (input: string | URL | Request) => {
+    urls.push(input instanceof Request ? input.url : String(input));
+    return new Response("unavailable", { status: 503 });
+  }) as typeof fetch;
+  try {
+    const result = await worker.tick();
+    assert.deepEqual(urls.filter((u) => u.includes("lasp.colorado.edu")), [], "LASP was not polled");
+    const reported = result.sourceStatus.map((s) => s.source);
+    assert.ok(!reported.includes("mms-lasp"), "a source switched off is not reported as failing");
+    assert.ok(reported.includes("mms-cdaweb") && reported.includes("noaa-swpc"), reported.join(", "));
+  } finally {
+    globalThis.fetch = realFetch;
   }
 });

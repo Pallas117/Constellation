@@ -19,11 +19,10 @@
  * it, so the GPU builds its pipelines and uploads buffers before the scene is shown
  * (the first visible frames took 100-200 ms of GPU time on a cold visit).
  */
-import { useEffect, useMemo, useRef } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import { useThree } from '@react-three/fiber';
 import * as THREE from 'three';
-import { makeTracerMaterial } from './Magnetosphere';
-import { createGlowMaterial } from './RadiationDataOverlayLOD';
+import { createGlowMaterial, makeTracerMaterial } from './point-materials';
 
 /** Don't hold the scene back forever if a driver never reports completion. */
 const MAX_WAIT_MS = 20_000;
@@ -123,7 +122,9 @@ export function ShaderWarmup({ onReady }: { onReady: () => void }) {
   );
 
   const onReadyRef = useRef(onReady);
-  onReadyRef.current = onReady;
+  useLayoutEffect(() => {
+    onReadyRef.current = onReady;
+  });
 
   useEffect(() => {
     const { gl, scene, camera } = get();

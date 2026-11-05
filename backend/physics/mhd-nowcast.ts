@@ -2,6 +2,7 @@ import { createRequire } from "module";
 const require = createRequire(import.meta.url);
 
 import type { CanonicalSpaceWeatherPoint, QualityFlags, UncertaintyEnvelope } from "../types.js";
+import { bootSwitches } from "../lib/boot-switches.js";
 import {
   clamp,
   cross,
@@ -12,13 +13,23 @@ import {
   type Vector3,
 } from "./coordinates.js";
 
-let nativeMhd: any = null;
-try {
-  // Attempt to load the native C++ physics core if compiled
-  nativeMhd = require("../../build/Release/mhd_native.node");
-  console.log("[backend] Native C++ MHD kernel legacy bridge initialized");
-} catch (e) {
-  // Fallback to pure TS
+/** The optional C++ kernel (build/Release/mhd_native.node); each export falls back to TS. */
+interface NativeMhd {
+  dynamicPressureNpa?: (densityCm3: number, speedKmS: number) => number;
+  newellCoupling?: (speedKmS: number, btNt: number, byNt: number, bzNt: number) => number;
+}
+
+// Parked (GAU-228): no install builds the kernel any more (package.json "gypfile": false) and the
+// TypeScript formulas give the same numbers (GAU-133 test). Opt in: npm run build:native, then
+// GAUSS_NATIVE_MHD=1. Off, a build/ left from an older install is never loaded, so it can't go stale.
+let nativeMhd: NativeMhd | null = null;
+if (bootSwitches().nativeMhd) {
+  try {
+    nativeMhd = require("../../build/Release/mhd_native.node");
+    console.log("[backend] Native C++ MHD kernel legacy bridge initialized");
+  } catch {
+    console.warn("[backend] GAUSS_NATIVE_MHD=1 but the native MHD kernel is not built (npm run build:native); using TypeScript");
+  }
 }
 
 const MU0 = 4e-7 * Math.PI;
@@ -38,7 +49,8 @@ export interface MhdInput {
   /** Published GSM components, used as-is when present. */
   velocityGsm?: Vector3 | null;
   magneticFieldGsm?: Vector3 | null;
-  kp?: number;
+  /** Planetary Kp (0–9); null or absent when no source has a reading. Never defaulted (GAU-230). */
+  kp?: number | null;
   dst?: number;
   /**
    * The solar wind reaching Earth now (L1 values one travel time ago). Dst responds
@@ -53,7 +65,7 @@ export interface MhdState {
   magneticField: Vector3;
 }
 
-function dynamicPressureNpa(densityCm3: number, speedKmS: number): number {
+export function dynamicPressureNpa(densityCm3: number, speedKmS: number): number {
   if (nativeMhd?.dynamicPressureNpa) {
     return nativeMhd.dynamicPressureNpa(densityCm3, speedKmS);
   }
@@ -64,12 +76,13 @@ function toTeslasFromNt(nt: number): number {
   return nt * 1e-9;
 }
 
-function newellCoupling(speedKmS: number, btNt: number, byNt: number, bzNt: number): number {
+export function newellCoupling(speedKmS: number, btNt: number, byNt: number, bzNt: number): number {
   if (nativeMhd?.newellCoupling) {
     return nativeMhd.newellCoupling(speedKmS, btNt, byNt, bzNt);
   }
   const thetaClock = Math.atan2(byNt, bzNt);
-  const sinTerm = Math.sin(thetaClock / 2);
+  // Newell et al. (2007) use |sin(θc/2)|: atan2 gives θc in (−π, π], so By < 0 would flip the sign.
+  const sinTerm = Math.abs(Math.sin(thetaClock / 2));
   const speedTerm = Math.pow(Math.max(speedKmS, 0), 4 / 3);
   const btTerm = Math.pow(Math.max(btNt, 0), 2 / 3);
   return speedTerm * btTerm * Math.pow(Math.max(sinTerm, 0), 8 / 3);
@@ -84,7 +97,8 @@ function akasofuEpsilon(speedKmS: number, btNt: number, byNt: number, bzNt: numb
 }
 
 /** Ballistic L1 -> Earth travel time from the sunward flow component. */
-function propagationDelaySeconds(vxKmS: number): number {
+/** Ballistic L1-to-Earth delay (1.5e6 km at the bulk speed, clamped to 250–2000 km/s). */
+export function propagationDelaySeconds(vxKmS: number): number {
   return L1_DISTANCE_KM / clamp(Math.abs(vxKmS), 250, 2000);
 }
 
@@ -133,20 +147,27 @@ function inducedElectricFieldMvM(velocityKmS: Vector3, magneticNt: Vector3): Vec
   return vec(minus.x * 1000, minus.y * 1000, minus.z * 1000);
 }
 
-function shueStandoffDistanceRe(dynamicPressure: number, bzNt: number): number {
+/** Shue et al. (1998) subsolar magnetopause distance in Re, clamped to 4–25 Re. */
+export function shueStandoffDistanceRe(dynamicPressure: number, bzNt: number): number {
   const r0 =
     (10.22 + 1.29 * Math.tanh(0.184 * (bzNt + 8.14))) * Math.pow(Math.max(dynamicPressure, 0.05), -1 / 6.6);
   return clamp(r0, 4, 25);
 }
 
+/**
+ * Storm tier from the IMF (GSM Bz, nT), Newell coupling and the geomagnetic response. The
+ * response is Kp >= 5 or a Dst falling at 20 nT/h or more; with Kp unknown (null) only the
+ * Dst slope counts, so a missing Kp can neither raise nor hold the tier (GAU-230).
+ */
 function stormTier(
   bzNt: number,
-  kp: number,
+  kp: number | null,
   newell: number,
   newellP75: number,
   dstSlopeNtPerHr: number,
 ): { stormTier: "quiet" | "watch" | "warning" | "severe"; reason: string } {
-  if (bzNt <= -10 && (kp >= 5 || dstSlopeNtPerHr <= -20)) {
+  const kpResponse = kp !== null && kp >= 5;
+  if (bzNt <= -10 && (kpResponse || dstSlopeNtPerHr <= -20)) {
     return { stormTier: "severe", reason: "Strong southward IMF with geomagnetic response" };
   }
   if (bzNt <= -5 && newell >= newellP75) {
@@ -206,7 +227,8 @@ export function computeCanonicalPoint(
 
   const newell = newellCoupling(speed, bt, state.magneticField.y, state.magneticField.z);
   const epsilon = akasofuEpsilon(speed, bt, state.magneticField.y, state.magneticField.z);
-  const kp = clamp(input.kp ?? 2, 0, 9);
+  // Unknown stays unknown: no reading from any source is null, never a quiet-time 2 (GAU-63/GAU-230).
+  const kp = typeof input.kp === "number" && Number.isFinite(input.kp) ? clamp(input.kp, 0, 9) : null;
   const dtMs = previousTimestamp ? Date.parse(input.timestamp) - Date.parse(previousTimestamp) : Number.NaN;
   const dtHours = Number.isFinite(dtMs) ? dtMs / 3_600_000 : null;
   const earth = input.atEarth ?? { speed, bzGsm: state.magneticField.z, pdyn };

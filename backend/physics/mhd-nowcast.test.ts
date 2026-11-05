@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createRequire } from "node:module";
 import test from "node:test";
 import { vec } from "./coordinates.js";
 import { computeCanonicalPoint, DST_MODEL_METHOD, estimateDst, type MhdInput } from "./mhd-nowcast.js";
@@ -65,6 +66,64 @@ test("modelled Dst is labelled with its method and inputs; a measured Dst says s
   const { encodeCanonicalPoint, decodeCanonicalPoint } = await import("../lib/proto.js");
   const point = computeCanonicalPoint(input, [], null).point;
   const decoded = await decodeCanonicalPoint(await encodeCanonicalPoint(point));
-  assert.equal(decoded.indices.dstMethod, DST_MODEL_METHOD);
-  assert.deepEqual([...decoded.indices.dstDerivedFrom], modelled.dstDerivedFrom);
+  const indices = decoded.indices as { dstMethod?: unknown; dstDerivedFrom?: unknown };
+  assert.equal(indices.dstMethod, DST_MODEL_METHOD);
+  assert.deepEqual(indices.dstDerivedFrom, modelled.dstDerivedFrom);
 });
+
+test("GAU-230: no Kp reading is null on the point and never raises the storm tier; the Dst slope still can", () => {
+  // Strong southward IMF (GSM Bz -15 nT): Kp >= 5 or a falling Dst makes it severe.
+  const strong = (kp: number | null | undefined): MhdInput => ({
+    timestamp: "2026-10-12T00:00:00Z",
+    source: "fusion",
+    density: 8,
+    velocityGse: vec(-600, 0, 0),
+    magneticFieldGse: vec(1, 2, -15),
+    magneticFieldGsm: vec(1, 2, -15),
+    kp,
+    dst: -40,
+  });
+  assert.equal(computeCanonicalPoint(strong(6), [], null).point.alerts.stormTier, "severe", "Kp 6 is a geomagnetic response");
+  for (const missing of [null, undefined, Number.NaN]) {
+    const { point } = computeCanonicalPoint(strong(missing), [], null);
+    assert.equal(point.indices.kp, null, `Kp ${missing} is unknown, not 2`);
+    assert.notEqual(point.alerts.stormTier, "severe", "an unknown Kp is not a geomagnetic response");
+  }
+  // Dst falling 30 nT/h over the last hour is a response on its own, Kp or not.
+  const falling = computeCanonicalPoint({ ...strong(null), dst: -70 }, [], -40, "2026-10-11T23:00:00Z").point;
+  assert.equal(falling.indices.kp, null);
+  assert.equal(falling.alerts.stormTier, "severe");
+});
+
+// GAU-133: when the native kernel is built it must agree with the TypeScript formulas.
+// It used to compute in float32 and diverged after about 7 significant digits.
+type NativeMhd = {
+  dynamicPressureNpa(densityCm3: number, speedKmS: number): number;
+  newellCoupling(speedKmS: number, btNt: number, byNt: number, bzNt: number): number;
+};
+let nativeKernel: NativeMhd | null = null;
+try {
+  nativeKernel = createRequire(import.meta.url)("../../build/Release/mhd_native.node") as NativeMhd;
+} catch {
+  nativeKernel = null;
+}
+
+test(
+  "GAU-133: native MHD kernel matches the TypeScript formulas to double precision",
+  { skip: nativeKernel ? false : "native kernel not built" },
+  () => {
+    const kernel = nativeKernel;
+    assert.ok(kernel);
+    const close = (a: number, b: number) => Math.abs(a - b) <= 1e-12 * Math.max(1, Math.abs(b));
+    for (const [n, v] of [[5, 450], [7.6, 408], [0.3, 812.4], [42.1, 301.7]]) {
+      const expected = 1.6726e-6 * n * v * v;
+      assert.ok(close(kernel.dynamicPressureNpa(n, v), expected), `dynamic pressure n=${n} v=${v}`);
+    }
+    for (const [v, bt, by, bz] of [[450, 6.2, -3.0, -5.4], [612.3, 11.7, 4.1, -10.9], [380, 2.1, 1.2, 1.7]]) {
+      const theta = Math.atan2(by, bz);
+      const expected = Math.pow(v, 4 / 3) * Math.pow(bt, 2 / 3) * Math.pow(Math.abs(Math.sin(theta / 2)), 8 / 3);
+      assert.ok(expected > 0, `southward IMF couples whatever the sign of By (by=${by})`);
+      assert.ok(close(kernel.newellCoupling(v, bt, by, bz), expected), `Newell coupling v=${v} bt=${bt}`);
+    }
+  },
+);

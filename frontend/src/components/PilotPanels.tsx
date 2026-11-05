@@ -16,7 +16,12 @@ const OFFERS: Array<{ interest: PilotInterest; icon: typeof Database; title: str
     icon: ShieldCheck,
     title: "Assured Connectivity",
     body: "Keep a distributed operations team reachable on hotspots and public Wi-Fi, inside an approved-country policy.",
-    points: ["Argo agent on each laptop", "Team status in the operator console", "Alerts when a network breaks"],
+    points: [
+      "Argo agent on Mac laptops and Linux hosts",
+      "Self-healing network, power, memory and disk",
+      "Wi-Fi security checks and phone alerts",
+      "Team status in the operator console",
+    ],
   },
 ];
 

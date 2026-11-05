@@ -1,12 +1,16 @@
 import { authClient } from "@/lib/auth-client";
 
+function field(value: unknown, key: string): unknown {
+  return typeof value === "object" && value !== null ? (value as Record<string, unknown>)[key] : undefined;
+}
+
 export async function getAccessToken(): Promise<string | null> {
   try {
     const sessionResp = await authClient.getSession();
     // Normalize shapes: support session, data.session, or returned directly
-    const maybeSession = (sessionResp as any)?.session ?? (sessionResp as any)?.data?.session ?? sessionResp;
-    const token = maybeSession?.access_token ?? maybeSession?.access_token ?? maybeSession?.session?.access_token ?? null;
-    return token ?? null;
+    const maybeSession = field(sessionResp, "session") ?? field(field(sessionResp, "data"), "session") ?? sessionResp;
+    const token = field(maybeSession, "access_token") ?? field(field(maybeSession, "session"), "access_token");
+    return typeof token === "string" ? token : null;
   } catch {
     return null;
   }

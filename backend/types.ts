@@ -139,7 +139,8 @@ export interface CanonicalSpaceWeatherPoint {
     dynamicPressure: number;
   };
   indices: {
-    kp: number;
+    /** Planetary Kp (0–9), or null when no source has given a Kp reading: unknown is never a default (GAU-63/GAU-230). */
+    kp: number | null;
     dst: number;
     /** "measured", or the model that derived dst (no source here measures Dst). GAU-63/GAU-84. */
     dstMethod: string;
@@ -148,7 +149,11 @@ export interface CanonicalSpaceWeatherPoint {
     /** "estimated-1m" (current) or "planetary-3h" (lags up to 3 h). */
     kpKind?: "estimated-1m" | "planetary-3h";
     kpObservedAt?: string | null;
+    /** Hour of the measured Kyoto Dst; absent when dst is modelled. */
+    dstObservedAt?: string | null;
   };
+  /** Values not measured as published, with the method and inputs (GAU-63). Empty when all were measured. */
+  derived?: DerivedField[];
   coupling: {
     newell: number;
     epsilon: number;
@@ -158,9 +163,22 @@ export interface CanonicalSpaceWeatherPoint {
     etaEarthArrival: string;
   };
   alerts: {
+    /** Bz-driven geomagnetic nowcast (mhd-nowcast stormTier). */
     stormTier: "quiet" | "watch" | "warning" | "severe";
     reason: string;
+    /** NOAA S-scale from GOES ≥10 MeV protons: the radiation stream (bit errors, detector hits). */
+    radiation?: ScaleReading;
+    /** NOAA G-scale from planetary Kp: the geomagnetic stream (induced currents, drag, GNSS/HF). */
+    geomagnetic?: ScaleReading;
+    /** NOAA R-scale from GOES 0.1–0.8 nm X-rays: radio blackouts (dayside HF, GNSS). GAU-136. */
+    radioBlackout?: ScaleReading;
   };
+  /** Measured GOES long-band X-ray flux; null when missing or older than 15 min. GAU-136. */
+  xray?: XrayReading | null;
+  /** Input sense-checks for this point; a flagged input carries its reason. GAU-136. */
+  senseChecks?: SenseCheck[];
+  /** NOAA's own alerts, watches and warnings from the last 24 h, newest first; null when unreadable. GAU-136. */
+  noaaAlerts?: NoaaAlert[] | null;
   quality: QualityFlags;
   /** Measured GOES particle flux; null per channel when missing or older than 30 min. */
   particles?: {
@@ -224,6 +242,60 @@ export interface SphericalHarmonicCoefficients {
   powerSpectrum: Array<{ l: number; cL: number }>;
 }
 
+/** A level on a NOAA space-weather scale (physics/noaa-scales.ts). */
+export interface ScaleReading {
+  /** 0 = below the scale; null = unknown (input missing or stale), never "no storm". */
+  level: 0 | 1 | 2 | 3 | 4 | 5 | null;
+  /** "S2", "G0", or "S?" / "G?" when unknown. */
+  label: string;
+  /** What the level was read from, in words, e.g. "GOES >=10 MeV protons 152 pfu". */
+  basis: string;
+  /** When the input was measured (UTC); null when there was none. */
+  observedAt: string | null;
+}
+
+/**
+ * One sense-check on the inputs behind a point (GAU-136). A failed check is reported with
+ * its reason and the sample stays visible; nothing is dropped silently.
+ */
+export interface DerivedField {
+  /** Canonical field, e.g. "velocity". */
+  field: string;
+  method: string;
+  /** Published inputs it was obtained from. */
+  derivedFrom: string[];
+}
+
+export interface SenseCheck {
+  id: "l1-field-magnitude" | "l1-plasma-tracking" | "goes-proton-spectrum" | "goes-proton-channels" | "goes-xray" | "noaa-scales";
+  /** "unknown" when there was nothing current to check, never "pass". */
+  status: "pass" | "flag" | "unknown";
+  reason: string;
+  /** Newest sample the check covered (UTC); null when there was none. */
+  observedAt: string | null;
+  /** Samples checked and flagged, for checks over a window. */
+  checked?: number;
+  flagged?: number;
+}
+
+export interface XrayReading {
+  /** GOES 0.1–0.8 nm (1–8 Å) irradiance, W m^-2. */
+  value: number;
+  band: string;
+  /** Flare class of the current flux, e.g. "B5.7", "M1.2", "X23". */
+  flareClass: string;
+  satellite: string | null;
+  /** Measurement time (UTC). */
+  timestamp: string;
+}
+
+export interface NoaaAlert {
+  productId: string;
+  issuedAt: string;
+  /** The ALERT/WARNING/WATCH/SUMMARY line as NOAA wrote it. */
+  headline: string;
+}
+
 export interface ParticleReading {
   /** Integral flux, particles cm^-2 s^-1 sr^-1 (pfu for protons). */
   value: number;
@@ -255,8 +327,10 @@ export interface NowcastInferenceResponse {
   horizonMinutes: number;
   predictions: Array<{
     timestamp: string;
-    geomagneticPerturbation: number;
-    auroraIntensity: number;
+    /** null when an input it needs is unknown (e.g. no Kp reading), never computed from a default (GAU-230). */
+    geomagneticPerturbation: number | null;
+    /** 0–1; null when an input it needs is unknown (e.g. no Kp reading). */
+    auroraIntensity: number | null;
     /** null when the method has no calibrated confidence. */
     confidence: number | null;
   }>;

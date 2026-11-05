@@ -1,165 +1,155 @@
 # Space Scene Radiation Visualization
 
-This document describes the updated `SpaceScene` component with integrated radiation data visualization.
+This document describes how `SpaceScene` (`frontend/src/components/scene/SpaceScene.tsx`) draws orbit rings and radiation data points.
 
 ## Overview
 
-The `SpaceScene` component has been enhanced to display:
-1. **3D Earth Globe** - Rotating Earth with atmosphere glow
-2. **Orbit Rings** - Visual rings for LEO, MEO, and GEO orbits
-3. **Radiation Data Overlay** - WebGL-based visualization of radiation measurements as glowing dots/contours
+Besides Earth, the belts, the magnetosphere and the field lines, `SpaceScene` can show:
+1. **Orbit Rings** - Visual rings for LEO, MEO, and GEO orbits
+2. **Radiation Data Overlay** - WebGL points for `RadiationDataPoint`s, drawn as glowing dots
+
+**Where the data comes from today:** the only caller that passes radiation data is `/heliophysics` (`pages/HeliophysicsDashboard.tsx`). It passes the six-point mock storm in `frontend/src/data/mock_solar_storm.json` while "simulate storm" is on, and nothing otherwise. `GaussGlobe` (the public dashboard and `SpaceWeatherVisualization`) passes no `data`, so the overlay isn't mounted there. No live radiation feed exists yet; the live feeds the scene does use (solar wind drivers, MMS vectors) are described in [DATA_FETCHING_OPTIMIZATION.md](DATA_FETCHING_OPTIMIZATION.md).
 
 ## Components
 
-### `SpaceScene` (Updated)
+### `SpaceScene`
 
-The main scene component now accepts radiation data props:
+The radiation-related props (see the file for the full list):
 
 ```tsx
 interface SpaceSceneProps {
   layers: LayerVisibility;
-  magnetopauseCompression: number;
-  beltIntensity: number;
-  reconnectionStrength: number;
-  canvasRef: React.RefObject<HTMLCanvasElement>;
-  /** NEW: Radiation data points to visualize */
+  // ...scene props (magnetopauseCompression, beltIntensity, solarWindDrivers, view, ...)
+  /** Radiation data points to visualize */
   data?: RadiationDataPoint[];
-  /** NEW: Orbit types to display (LEO, MEO, GEO) */
+  /** Orbit types to display (LEO, MEO, GEO); default all three */
   orbitFilter?: string[];
+  /** Callback when a radiation data point is clicked */
+  onDataPointClick?: (point: RadiationDataPoint) => void;
+  /** Use RadiationDataOverlayLOD (default: true) */
+  enableLOD?: boolean;
+  /** Manual LOD level (0-3); leave undefined for automatic LOD */
+  lodLevel?: number;
+  /** Encoding mode for radiation data: 'color' (default), 'size', or 'both' */
+  encodingMode?: 'color' | 'size' | 'both';
 }
 ```
 
+The overlay is mounted only when `data` is non-empty. The scene mounts in stages, so the orbit rings and the overlay appear after Earth, the belts and the magnetosphere.
+
 ### `OrbitRings`
 
-Renders wireframe circles at appropriate altitudes for LEO (400 km), MEO (20,000 km), and GEO (35,786 km).
+Renders wireframe circles at fixed altitudes for LEO (400 km), MEO (20,000 km), and GEO (35,786 km).
 
 **Features:**
-- Color-coded rings (blue tones)
-- Opacity based on filter selection
+- Color-coded rings (blue to violet)
+- Rings in `orbitFilter` are drawn at opacity 0.5, the others at 0.2
 - Subtle rotation animation
-- Filtered by `orbitFilter` prop
 
-### `RadiationDataOverlay`
+### `RadiationDataOverlay` and `RadiationDataOverlayLOD`
 
-WebGL-based component that renders radiation measurements as glowing dots on the orbit rings.
+Both render radiation data points as one `THREE.Points` object with a custom glow shader. `SpaceScene` uses `RadiationDataOverlayLOD` unless `enableLOD={false}`.
 
-**Features:**
-- **Performance**: Uses instanced rendering with shaders
-- **Color Coding**: Blue (low flux) → Yellow → Red (high flux)
-- **Glowing Effect**: Animated pulsing glow using custom shaders
-- **Size Scaling**: Dot size proportional to flux value (logarithmic scale)
-- **Position Calculation**: Uses altitude, latitude/longitude, or L-shell for positioning
+**Features (both):**
+- **Filtering**: Points whose `orbitType` isn't in `orbitFilter` are dropped
+- **Color Coding**: Blue (low flux) → pale green → Red (high flux); see [Color Mapping](#color-mapping)
+- **Size Encoding**: Dot size always grows with flux (same log normalization as the colors); `size` and `both` modes use a wider size range so size alone can carry flux
+- **Glowing Effect**: Pulsing glow in the fragment shader, additive blending, no depth writes
+- **Position Calculation**: Uses latitude/longitude, or falls back to an L-shell-based placement
 
-**Technical Details:**
-- Custom shader material with vertex and fragment shaders
-- Additive blending for glow effect
-- Logarithmic color mapping for better visualization
-- Automatic min/max normalization
+**`RadiationDataOverlayLOD` adds:**
+- Four LOD levels that cap the point count and shrink the points (see [Performance Considerations](#performance-considerations))
+- Automatic LOD from camera distance, checked every 100 ms, when `lodLevel` is undefined
+- Uniform downsampling (every n-th point) when the data exceeds the level's cap
+- `createGlowMaterial`, exported so `ShaderWarmup` can compile the shader before the first storm toggle
 
 ## Usage Example
 
+How `/heliophysics` wires it (abridged):
+
 ```tsx
 import { SpaceScene } from '@/components/scene/SpaceScene';
-import { useRadiationData } from '@/hooks/useRadiationData';
-import { toDataPoint } from '@/lib/utils/radiation';
+import type { RadiationDataPoint } from '@/lib/types/radiation';
+import mockSolarStormData from '@/data/mock_solar_storm.json';
 
-function MyRadiationVisualization() {
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const [orbitFilter, setOrbitFilter] = useState<string[]>(['LEO', 'MEO', 'GEO']);
+const STORM_RADIATION = mockSolarStormData as unknown as RadiationDataPoint[];
 
-  // Fetch radiation data
-  const { filteredMeasurements } = useRadiationData({
-    realTime: true,
-    sources: ['nasa-omni'],
-  });
-
-  // Convert to data points
-  const radiationData = useMemo(() => {
-    return filteredMeasurements.map(toDataPoint);
-  }, [filteredMeasurements]);
-
-  return (
-    <SpaceScene
-      layers={{
-        earth: true,
-        belts: true,
-        magnetosphere: true,
-        fieldLines: true,
-        orbitRings: true,
-        radiationData: true,
-      }}
-      magnetopauseCompression={0.8}
-      beltIntensity={0.5}
-      reconnectionStrength={0.3}
-      canvasRef={canvasRef}
-      data={radiationData}
-      orbitFilter={orbitFilter}
-    />
-  );
-}
+<SpaceScene
+  layers={layers}
+  magnetopauseCompression={visual.magnetopauseCompression}
+  beltIntensity={visual.beltIntensity}
+  reconnectionStrength={visual.reconnectionStrength}
+  canvasRef={canvasRef}
+  data={simulateStorm ? STORM_RADIATION : undefined}
+  orbitFilter={['LEO', 'MEO', 'GEO']}
+/>
 ```
 
 ## Data Format
 
-The component expects `RadiationDataPoint[]`:
+The overlays take `RadiationDataPoint[]` from `frontend/src/lib/types/radiation.ts`:
 
 ```tsx
 interface RadiationDataPoint {
-  timestamp: string;
-  flux: number; // particles/(cm²·s·sr·MeV)
+  timestamp: string; // ISO 8601
+  flux: number;
   altitude: number; // km
   L_shell: number;
   latitude?: number; // degrees
   longitude?: number; // degrees
-  orbitType: 'LEO' | 'MEO' | 'GEO';
-  particleType: 'proton' | 'electron' | 'alpha' | 'heavy_ion';
-  energyRange: { min: number; max: number };
+  orbitType: OrbitType; // 'LEO' | 'MEO' | 'GEO'
+  particleType: ParticleType; // 'proton' | 'electron' | 'alpha' | 'heavy_ion'
+  energyRange: EnergyRange; // { min, max } in MeV
+  radiationZone?: RadiationZone; // 'inner-belt-low' ... 'magnetosphere'
 }
 ```
 
+The type doesn't fix a unit for `flux`, and the overlays don't need one: they only compare points within the same dataset. The mock storm values are illustrative, not measurements. Whoever adds a real source should state the flux unit (differential vs integral, per sr or omnidirectional) where the data enters; the `space-radiation-physics` skill lists the units.
+
 ## Color Mapping
 
-Radiation intensity is color-coded using a logarithmic scale:
+Radiation intensity is color-coded on a logarithmic scale, normalized to the dataset's own minimum and maximum flux (after orbit filtering and any LOD downsampling):
 
-- **Blue** (`#0000ff`): Low flux (minimum in dataset)
-- **Cyan** (`#00ffff`): Low-medium
-- **Yellow** (`#ffff00`): Medium-high
-- **Red** (`#ff0000`): High flux (maximum in dataset)
+- **Blue** (`#0000ff`): Lowest flux in the dataset
+- **Pale green** (`#80ff80`): Geometric middle of the range
+- **Red** (`#ff0000`): Highest flux in the dataset
 
-The color interpolation uses logarithmic normalization to better represent the wide range of flux values typically seen in space radiation data.
+Red channel = t, blue = 1 − t, green peaks at t = 0.5, where t is the log-normalized flux. If every point has the same flux, all points get the middle color. Colors are therefore relative: the same flux can be blue in one dataset and red in another. In `size` mode the points are a fixed light blue and only the size carries flux.
 
 ## Performance Considerations
 
 ### WebGL Optimization
 
-1. **Instanced Rendering**: All data points are rendered in a single draw call using `THREE.Points`
-2. **Shader-based**: Custom shaders for efficient rendering
+1. **Single draw call**: All data points are one `THREE.Points` object
+2. **Shader-based**: Custom shaders for the glow and pulse
 3. **Buffer Attributes**: Position, color, and size data stored in GPU buffers
-4. **Additive Blending**: Efficient glow effect without additional passes
+4. **Additive Blending**: Glow without extra passes
 
-### Recommended Data Limits
+### LOD levels (`RadiationDataOverlayLOD`)
 
-- **Optimal**: < 10,000 points
-- **Acceptable**: 10,000 - 50,000 points
-- **May need optimization**: > 50,000 points
+| LOD | Camera distance (scene units, 1 = Earth radius) | Max points | Point size |
+|-----|-----------------------------------------|------------|------------|
+| 0   | ≤ 5                                     | Unlimited  | 0.10       |
+| 1   | 5–10                                    | 50,000     | 0.08       |
+| 2   | 10–15                                   | 20,000     | 0.06       |
+| 3   | > 15                                    | 5,000      | 0.04       |
 
-For large datasets, consider:
-- Downsampling data
-- Using time-based filtering
-- Implementing level-of-detail (LOD) based on zoom level
+The `maxPoints` prop on the component overrides the level's cap. Nothing in the app measures frame rate to pick a level; distance is the only input.
 
 ## Layer Visibility
 
-Control visibility of scene elements:
+The radiation and orbit layers are on unless set to `false`:
 
 ```tsx
-const layers = {
-  earth: true,           // 3D Earth globe
+const layers: LayerVisibility = {
+  earth: true,
   belts: true,           // Van Allen belts
-  magnetosphere: true,   // Magnetosphere visualization
-  fieldLines: true,      // Magnetic field lines
-  orbitRings: true,      // Orbit rings (LEO, MEO, GEO)
-  radiationData: true,   // Radiation data overlay
+  magnetosphere: true,
+  fieldLines: true,
+  mhdWaves: false,
+  mmsReconnection: true,
+  orbitRings: true,      // optional; omitted means shown
+  radiationData: true,   // optional; omitted means shown
 };
 ```
 
@@ -173,57 +163,26 @@ orbitFilter={['LEO', 'MEO', 'GEO']}
 
 // Show only LEO
 orbitFilter={['LEO']}
-
-// Show LEO and GEO
-orbitFilter={['LEO', 'GEO']}
 ```
+
+The filter drops points from the overlay and dims the unselected orbit rings.
 
 ## Position Calculation
 
-The component calculates 3D positions using the following priority:
+Positions are in Earth radii (radius = 1 + altitude / 6371 km):
 
-1. **Latitude/Longitude** (if available): Direct geographic positioning
-2. **L-shell + Altitude**: Distributes points around orbit based on L-shell parameter
-3. **Default**: Uses orbit altitude with 45° inclination
+1. **Latitude/Longitude** (if both are present): Direct geographic positioning
+2. **Otherwise**: An angle derived from `L_shell` on a ring inclined 45°, at the point's altitude. This only spreads points out; it is not a physical L-shell mapping.
 
-## Example Component
+## Click Handling
 
-See `src/components/scene/RadiationScene.example.tsx` for a complete example implementation with:
-- Data fetching using `useRadiationData`
-- Layer toggles
-- Orbit filtering
-- Status display
-- Color legend
-
-## Integration with Existing Components
-
-The updated `SpaceScene` is backward compatible. Existing usage will continue to work:
-
-```tsx
-// Old usage (still works)
-<SpaceScene
-  layers={layers}
-  magnetopauseCompression={compression}
-  beltIntensity={intensity}
-  reconnectionStrength={strength}
-  canvasRef={canvasRef}
-/>
-
-// New usage with radiation data
-<SpaceScene
-  {...existingProps}
-  data={radiationData}
-  orbitFilter={['LEO', 'MEO', 'GEO']}
-/>
-```
+`onDataPointClick` on `SpaceScene` is passed to the overlay as `onPointClick`. A pointer-down raycasts against the points and reports the nearest one within a small threshold. No page passes the callback at the moment.
 
 ## Future Enhancements
 
 Potential improvements:
+- A live radiation source (e.g. GOES integral proton and electron flux) to replace the mock storm
+- Fixed, physically labelled color scale instead of per-dataset normalization
 - Contour/isosurface rendering for continuous fields
 - Time-based animation of data points
 - Interactive tooltips showing flux values
-- Heat map texture on orbit rings
-- Particle trails showing movement
-- Level-of-detail (LOD) system for large datasets
-

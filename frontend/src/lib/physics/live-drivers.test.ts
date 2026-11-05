@@ -72,6 +72,13 @@ describe('liveDrivers', () => {
     assert.equal(liveDrivers(null, NOW).mode, 'none');
   });
 
+  it('treats a point missing quality, indices or plasma as no data instead of crashing', () => {
+    const partial = { timestamp: new Date(NOW).toISOString(), solarWind: { speed: 400 } } as unknown as CanonicalSpaceWeatherPoint;
+    const r = liveDrivers(partial, NOW);
+    assert.equal(r.mode, 'none');
+    assert.equal(r.drivers, undefined);
+  });
+
   it('fails closed on an unparseable measurement time', () => {
     assert.equal(liveDrivers(reading(0, { observedAt: 'nope' }), NOW).mode, 'none');
   });
@@ -83,6 +90,15 @@ describe('liveDrivers', () => {
 
   it('clamps a reading stamped in the future to zero age', () => {
     assert.equal(liveDrivers(reading(-1), NOW).ageMin, 0);
+  });
+
+  it('keeps a missing Kp unknown: drivers carry kp null, never 2 (GAU-230)', () => {
+    const noKp = { indices: { kp: null } } as unknown as Partial<CanonicalSpaceWeatherPoint>;
+    const live = liveDrivers(reading(2, { ...noKp, arriving: arriving(1) }), NOW);
+    assert.equal(live.mode, 'live', 'the measured solar wind still drives the scene');
+    assert.equal(live.kp, null);
+    assert.deepEqual(live.drivers, { bz: -3.7, by: -2, pdyn: 0.33, kp: null });
+    assert.equal(liveDrivers(reading(2, noKp), NOW).drivers?.kp, null);
   });
 
   it('simulates G4 regardless of the feed', () => {
@@ -106,6 +122,11 @@ describe('beltVisuals', () => {
     assert.ok(Math.abs(v.magnetopauseCompression - 0.92) < 1e-12);
     assert.ok(Math.abs(v.beltIntensity - (2 / 9 + 0.2)) < 1e-12);
     assert.equal(v.reconnectionStrength, 0);
+  });
+
+  it('adds no Kp term when live drivers have no Kp reading (GAU-230)', () => {
+    const v = beltVisuals({ bz: 0, by: 0, pdyn: 2, kp: null });
+    assert.ok(Math.abs(v.beltIntensity - 0.2) < 1e-12, 'not the Kp-2 reference');
   });
 
   it('saturates under a severe storm', () => {

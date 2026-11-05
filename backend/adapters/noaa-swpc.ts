@@ -1,5 +1,7 @@
-import type { Vector3 } from "../physics/coordinates.js";
+import { gseToGsm, magnitude, type Vector3 } from "../physics/coordinates.js";
+import { detectL1Structures, type L1Sample as StructureSample, type L1Structures } from "../physics/l1-structures.js";
 import type { DataSource, SourceStatus } from "../types.js";
+import { freshnessMs } from "../../shared/policy/freshness.js";
 import { buildL1Series, checkDensity, type DensityCheck, type L1Sample } from "./rtsw-series.js";
 
 const SOURCE: DataSource = "noaa-swpc";
@@ -12,6 +14,9 @@ const RTSW_MAG_URL = "https://services.swpc.noaa.gov/json/rtsw/rtsw_mag_1m.json"
 const KP_1M_URL = "https://services.swpc.noaa.gov/json/planetary_k_index_1m.json";
 const KP_URL = "https://services.swpc.noaa.gov/products/noaa-planetary-k-index.json";
 const OVATION_URL = "https://services.swpc.noaa.gov/json/ovation_aurora_latest.json";
+
+/** A newest L1 sample older than this is not current: the source is unhealthy (same bound as the ingest tick). */
+export const RTSW_MAX_AGE_MS = freshnessMs("l1_solar_wind");
 
 /** The L1 history kept for propagation: the slowest plausible wind (200 km/s) takes 2.1 h. */
 const SERIES_KEEP_MS = 3 * 3_600_000;
@@ -40,7 +45,41 @@ export interface NOAAReadout {
   series?: L1Sample[];
   /** Set when another L1 spacecraft disagrees on density by more than 2x. */
   densityCheck?: DensityCheck | null;
+  /** True when no velocity vector was published and the flow was assumed anti-sunward from the speed. */
+  velocityAssumed?: boolean;
   ovation: unknown | null;
+}
+
+/** Structure candidates over the active spacecraft's last 24 h of L1 data (GAU-139, shown to operators by GAU-154). */
+export interface LiveL1Structures {
+  generatedAt: string;
+  spacecraft: string;
+  /** Oldest and newest L1 minute the detectors saw (UTC). */
+  from: string;
+  to: string;
+  structures: L1Structures;
+}
+
+let latestStructures: LiveL1Structures | null = null;
+
+/** The L1 series as detector input: Bt where published, else |B|; GSM Bz, converted locally when SWPC gave only GSE. */
+export function structureSamples(series: L1Sample[]): StructureSample[] {
+  return series.map((s) => {
+    const time = new Date(s.t).toISOString();
+    return {
+      time,
+      speedKmS: s.speed,
+      densityCm3: s.density,
+      btNt: s.bt ?? magnitude(s.magneticFieldGse),
+      bzGsmNt: (s.magneticFieldGsm ?? gseToGsm(s.magneticFieldGse, time)).z,
+      temperatureK: s.temperature ?? null,
+    };
+  });
+}
+
+/** The latest structure candidates, or null before the first successful RTSW fetch. */
+export function getL1Structures(): LiveL1Structures | null {
+  return latestStructures;
 }
 
 let latestStatus: SourceStatus = {
@@ -62,10 +101,14 @@ const finite = (v: unknown): number | null => {
 async function fetchJson(url: string): Promise<unknown> {
   const response = await fetch(url, { signal: AbortSignal.timeout(8000) });
   if (!response.ok) {
-    throw new Error(`${url} returned HTTP ${response.status}`);
+    // Name the product, never the URL: status messages are shown in the UI and logged.
+    throw new Error(`NOAA SWPC ${new URL(url).pathname.split("/").pop()} returned HTTP ${response.status}`);
   }
   return response.json();
 }
+
+/** Kp is 0–9. Anything else is a fill or a fault, and is skipped rather than clamped to a quiet value. */
+const kpInRange = (kp: number | null): number | null => (kp !== null && kp >= 0 && kp <= 9 ? kp : null);
 
 /** SWPC time_tags are UTC but carry no zone ("2026-10-10 12:00:00.000"); make that explicit. */
 export function swpcTimeToIso(value: unknown): string | null {
@@ -83,9 +126,9 @@ export function latestKp(data: unknown): KpReading | null {
   if (!Array.isArray(data)) return null;
   for (let i = data.length - 1; i >= 0; i -= 1) {
     const row = data[i];
-    const kp = Array.isArray(row) ? finite(row[1]) : row && typeof row === "object" ? finite((row as Rec).Kp) : null;
+    const kp = kpInRange(Array.isArray(row) ? finite(row[1]) : row && typeof row === "object" ? finite((row as Rec).Kp) : null);
     const time = Array.isArray(row) ? row[0] : row && typeof row === "object" ? (row as Rec).time_tag : null;
-    if (kp !== null) return { value: Math.min(9, Math.max(0, kp)), observedAt: swpcTimeToIso(time), kind: "planetary-3h" };
+    if (kp !== null) return { value: kp, observedAt: swpcTimeToIso(time), kind: "planetary-3h" };
   }
   return null;
 }
@@ -97,16 +140,18 @@ export function latestKp1m(data: unknown): KpReading | null {
   for (const row of data) {
     if (!row || typeof row !== "object" || Array.isArray(row)) continue;
     const rec = row as Rec;
-    const kp = finite(rec.estimated_kp) ?? finite(rec.kp_index);
+    const kp = kpInRange(finite(rec.estimated_kp) ?? finite(rec.kp_index));
     const time = swpcTimeToIso(rec.time_tag);
     if (kp === null || !time) continue;
     if (!best || Date.parse(time) > Date.parse(best.time)) best = { kp, time };
   }
-  return best ? { value: Math.min(9, Math.max(0, best.kp)), observedAt: best.time, kind: "estimated-1m" } : null;
+  return best ? { value: best.kp, observedAt: best.time, kind: "estimated-1m" } : null;
 }
 
 /** A completed 3-hour Kp older than this (interval start) no longer describes now. */
-const KP_3H_MAX_AGE_MS = 6 * 3_600_000;
+const KP_3H_MAX_AGE_MS = freshnessMs("kp_planetary_3h");
+/** A running estimate older than this has stopped updating (it is published every minute). */
+const KP_1M_MAX_AGE_MS = freshnessMs("kp_estimated_1m");
 
 /**
  * Kp for now: the higher of the running estimate for the current 3-hour interval and
@@ -114,16 +159,21 @@ const KP_3H_MAX_AGE_MS = 6 * 3_600_000;
  * it restarts near 0 each interval (0.33 at 09:39 UT on 2026-10-12, after a 06-09 UT
  * interval of 3.33): alone it under-reads for much of every interval. The completed value
  * alone lags a rise by up to 3 h. Taking the higher never under-reports activity.
+ * An estimate that has stopped updating gives way to a recent completed value, which
+ * stays current for longer (GAU-212).
  */
 export function currentKp(estimate: KpReading | null, completed: KpReading | null, nowMs: number): KpReading | null {
   const start = completed?.observedAt ? Date.parse(completed.observedAt) : NaN;
   const recent = completed && Number.isFinite(start) && nowMs - start <= KP_3H_MAX_AGE_MS ? completed : null;
   if (!estimate) return recent ?? completed;
   if (!recent) return estimate;
+  const estimatedAt = estimate.observedAt ? Date.parse(estimate.observedAt) : NaN;
+  const updating = Number.isFinite(estimatedAt) && nowMs - estimatedAt <= KP_1M_MAX_AGE_MS;
+  if (!updating) return recent;
   return estimate.value > recent.value ? estimate : recent;
 }
 
-export async function fetchNoaaReadout(): Promise<NOAAReadout | null> {
+export async function fetchNoaaReadout(nowMs = Date.now()): Promise<NOAAReadout | null> {
   try {
     const [windData, magData, kp1mData, kpData, ovation] = await Promise.all([
       fetchJson(RTSW_WIND_URL),
@@ -135,22 +185,37 @@ export async function fetchNoaaReadout(): Promise<NOAAReadout | null> {
 
     const all = buildL1Series(windData, magData);
     const latest = all.at(-1);
-    const kp = currentKp(latestKp1m(kp1mData), latestKp(kpData), all.at(-1)?.t ?? Date.now());
+    // Judge how recent the completed Kp is against now, not against the newest L1 sample.
+    const kp = currentKp(latestKp1m(kp1mData), latestKp(kpData), nowMs);
     if (!latest) throw new Error("NOAA RTSW: no complete, plausible wind+mag record");
     if (!kp) throw new Error("NOAA Kp: no valid value");
 
     const timestamp = new Date(latest.t).toISOString();
     const series = all.filter((x) => x.t > latest.t - SERIES_KEEP_MS);
+    // The detectors need hours of context (an ICME candidate lasts at least 4 h), so they see all
+    // 24 h SWPC publishes, not the 3 h the point keeps.
+    latestStructures = {
+      generatedAt: new Date(nowMs).toISOString(),
+      spacecraft: latest.spacecraft,
+      from: new Date(all[0].t).toISOString(),
+      to: timestamp,
+      structures: detectL1Structures(structureSamples(all)),
+    };
     const densityCheck = checkDensity(windData, latest.spacecraft, latest.t);
+    const ageMs = nowMs - latest.t;
+    const current = ageMs <= RTSW_MAX_AGE_MS;
+    const disagreement = densityCheck
+      ? `; density disagrees with ${densityCheck.reference} ` +
+        `(${densityCheck.density.toFixed(2)} vs ${densityCheck.referenceDensity.toFixed(2)} cm^-3)`
+      : "";
     latestStatus = {
       source: SOURCE,
       lastSeen: timestamp,
-      latencySeconds: Math.max(0, (Date.now() - latest.t) / 1000),
-      healthy: true,
-      message: densityCheck
-        ? `NOAA SWPC RTSW OK (${latest.spacecraft}); density disagrees with ${densityCheck.reference} ` +
-          `(${densityCheck.density.toFixed(2)} vs ${densityCheck.referenceDensity.toFixed(2)} cm^-3)`
-        : `NOAA SWPC RTSW OK (${latest.spacecraft})`,
+      latencySeconds: Math.max(0, ageMs / 1000),
+      healthy: current,
+      message: current
+        ? `NOAA SWPC RTSW OK (${latest.spacecraft})${disagreement}`
+        : `NOAA SWPC RTSW: newest complete L1 sample (${latest.spacecraft}) is ${Math.round(ageMs / 60_000)} min old${disagreement}`,
     };
 
     return {
@@ -166,6 +231,7 @@ export async function fetchNoaaReadout(): Promise<NOAAReadout | null> {
       kpReading: kp,
       series,
       densityCheck,
+      velocityAssumed: latest.velocityAssumed === true,
       // No measured Dst here: SWPC does not publish it in these products, so the nowcast
       // derives its own model estimate rather than receiving a Kp-synthesised value.
       ovation,
@@ -175,7 +241,7 @@ export async function fetchNoaaReadout(): Promise<NOAAReadout | null> {
       source: SOURCE,
       lastSeen: latestStatus.lastSeen,
       latencySeconds: latestStatus.lastSeen
-        ? Math.max(0, (Date.now() - Date.parse(latestStatus.lastSeen)) / 1000)
+        ? Math.max(0, (nowMs - Date.parse(latestStatus.lastSeen)) / 1000)
         : null,
       healthy: false,
       message: error instanceof Error ? error.message : "NOAA fetch failed",

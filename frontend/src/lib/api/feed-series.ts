@@ -37,9 +37,22 @@ export function lookbackSince(
 }
 
 /**
+ * The pushed points a poll hasn't caught up with yet: those newer than `base`'s newest. Returns
+ * `pushed` itself when nothing changes, so React keeps the same state. Without this the pushed
+ * list grew into a second 24 h copy of the feed (GAU-208).
+ */
+export function pendingAfter<T extends Timestamped>(pushed: readonly T[], base: readonly T[] | null): T[] {
+  if (pushed.length === 0 || !base || base.length === 0) return pushed as T[];
+  const newest = time(base[base.length - 1]);
+  const keepFrom = pushed.findIndex((p) => time(p) > newest);
+  if (keepFrom === 0) return pushed as T[];
+  return keepFrom === -1 ? [] : pushed.slice(keepFrom);
+}
+
+/**
  * Append the points newer than the newest one held, then trim to the window.
- * Returns `prev` itself when nothing new arrived. Held points are immutable:
- * a re-sent timestamp never replaces one already shown.
+ * Returns `prev` itself when nothing new arrived (an empty series when `prev` is
+ * null). Held points are immutable: a re-sent timestamp never replaces one already shown.
  */
 export function mergeSeries<T extends Timestamped>(
   prev: readonly T[] | null,
@@ -58,7 +71,9 @@ export function mergeSeries<T extends Timestamped>(
       return true;
     })
     .sort((a, b) => time(a) - time(b));
-  if (fresh.length === 0 && prev) return prev as T[];
+  // Nothing new: `prev` itself, or an empty series when nothing is held yet (the history
+  // panel can mount before both its backfill and the first live point, GAU-150).
+  if (fresh.length === 0) return prev ? (prev as T[]) : [];
 
   const all = held.length > 0 ? [...held, ...fresh] : fresh;
   const cutoff = time(all[all.length - 1]) - windowMs;

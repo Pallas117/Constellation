@@ -113,6 +113,16 @@ export async function mockUiApis(page: Page, options?: { auth?: boolean }): Prom
     });
   };
 
+  // Hermetic: anything not mocked below gets a 404 here, not the server's proxy (which
+  // playwright.config.ts points at a closed port, never the live backend on :3001).
+  // Registered first, so every specific mock below takes precedence.
+  await page.route(
+    (url) => /^\/(api|ws|functions)\//.test(url.pathname),
+    async (route) => {
+      await fulfillCorsJson(route, { error: "not mocked" }, 404);
+    },
+  );
+
   await page.route("**/api/feed/space-weather/latest", async (route) => {
     await fulfillCorsJson(route, MOCK_CANONICAL_POINT);
   });
@@ -151,15 +161,11 @@ export async function mockUiApis(page: Page, options?: { auth?: boolean }): Prom
     await fulfillCorsJson(route, { ok: true, chunkCount: 42 });
   });
 
-  await page.route("**/api/rag/index**", async (route) => {
-    await fulfillCorsJson(route, { ok: true });
-  });
-
   await page.route("**/api/rag/query**", async (route) => {
     await fulfillCorsJson(route, {
       ok: true,
       answer: "Synthetic answer from Playwright mock.",
-      sources: [{ filePath: "/tmp/mock-source.pdf", score: 0.98 }],
+      sources: [{ filePath: "public/mock-source.md", chunkId: "c1", score: 0.98, sourceSha256: null, verified: true }],
     });
   });
 }

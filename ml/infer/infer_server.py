@@ -14,6 +14,17 @@ from typing import Any, Dict, List, Optional, Tuple
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from kp_model import HORIZON_HOURS, WINDOW_HOURS, KpForecaster, feature_vector, hourly_row  # noqa: E402
 
+# Requests are a few KB of feed points; anything far larger is refused before it is read.
+MAX_BODY_BYTES = int(os.environ.get("INFER_MAX_BODY_BYTES", str(1024 * 1024)))
+
+
+class RequestRejected(Exception):
+  def __init__(self, status: int, message: str) -> None:
+    super().__init__(message)
+    self.status = status
+    self.message = message
+
+
 # No trained model is loaded: this server runs a fixed formula and says so.
 MODEL_VERSION = "heuristic-nowcast-v0"
 METHOD = "heuristic"
@@ -32,7 +43,9 @@ def infer(payload: Dict[str, Any]) -> Dict[str, Any]:
   speed = float(sw.get("speed", 400.0))
   density = float(sw.get("density", 5.0))
   bz = float(b.get("z", 0.0))
-  kp = float(idx.get("kp", 2.0))
+  # No Kp reading (null or absent) is unknown: both outputs start from Kp, so they are None, not
+  # computed from an assumed Kp 2 (GAU-230).
+  kp = _num(idx.get("kp"))
   newell = float(coupling.get("newell", 0.0))
 
   steps = max(1, min(24, horizon // 5))
@@ -42,8 +55,8 @@ def infer(payload: Dict[str, Any]) -> Dict[str, Any]:
   for i in range(steps):
     minutes = (i + 1) * 5
     driver = max(0.0, -bz) * 0.45 + (speed - 350.0) * 0.004 + density * 0.05 + newell / 8000.0
-    perturb = kp * 8.0 + driver * 12.0
-    aurora = max(0.0, min(1.0, (kp / 9.0) * 0.7 + driver * 0.03))
+    perturb = None if kp is None else kp * 8.0 + driver * 12.0
+    aurora = None if kp is None else max(0.0, min(1.0, (kp / 9.0) * 0.7 + driver * 0.03))
 
     predictions.append(
       {
@@ -190,27 +203,36 @@ class Handler(BaseHTTPRequestHandler):
       return
     self._json(404, {"error": "Not found"})
 
+  def _read_json(self, default: str) -> Any:
+    raw_length = self.headers.get("Content-Length")
+    try:
+      length = int(raw_length) if raw_length is not None else 0
+    except ValueError:
+      raise RequestRejected(400, "Invalid Content-Length") from None
+    if length < 0:
+      raise RequestRejected(400, "Invalid Content-Length")
+    if length > MAX_BODY_BYTES:
+      # Don't read (or keep) a connection carrying a body we won't accept.
+      self.close_connection = True
+      raise RequestRejected(413, "Request body too large")
+    return json.loads(self.rfile.read(length).decode("utf-8") or default)
+
   def do_POST(self) -> None:
-    if self.path == "/infer-anomaly":
-      try:
-        length = int(self.headers.get("Content-Length", "0"))
-        payload = json.loads(self.rfile.read(length).decode("utf-8") or "{}")
-        self._json(200, anomaly(payload if isinstance(payload, dict) else {}))
-      except Exception as exc:  # noqa: BLE001
-        self._json(400, {"error": type(exc).__name__})
-      return
-    if self.path != "/infer":
+    if self.path not in ("/infer", "/infer-anomaly"):
       self._json(404, {"error": "Not found"})
       return
-
     try:
-      length = int(self.headers.get("Content-Length", "0"))
-      raw = self.rfile.read(length)
-      payload = json.loads(raw.decode("utf-8"))
-      result = infer(payload)
-      self._json(200, result)
+      if self.path == "/infer-anomaly":
+        payload = self._read_json("{}")
+        self._json(200, anomaly(payload if isinstance(payload, dict) else {}))
+      else:
+        self._json(200, infer(self._read_json("")))
+    except RequestRejected as rejected:
+      self._json(rejected.status, {"error": rejected.message})
     except Exception as exc:  # noqa: BLE001
-      self._json(400, {"error": str(exc)})
+      # Details stay in the server log; the caller only learns the error class.
+      print(f"[infer] {self.path} failed: {exc!r}", file=sys.stderr, flush=True)
+      self._json(400, {"error": type(exc).__name__})
 
 
 def main() -> None:

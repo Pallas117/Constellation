@@ -114,3 +114,14 @@ test("arriving now: null when the series doesn't reach back one travel time, or 
   assert.equal(arrivingNow(series, T0 + 29 * 60_000, noConvert), null, "30 min of data, 50 min travel");
   assert.equal(arrivingNow(series, T0 + 6 * 3_600_000, noConvert), null, "series ended hours ago");
 });
+
+test("RTSW series: the proton temperature is carried; fills and missing values read null (GAU-154)", () => {
+  const t = (i: number) => tag(T0 + i * 60_000);
+  const wind = [
+    { time_tag: t(0), source: "SOLAR1", active: true, proton_speed: 450, proton_density: 4, proton_temperature: 95_000 },
+    { time_tag: t(1), source: "SOLAR1", active: true, proton_speed: 450, proton_density: 4, proton_temperature: -9999 },
+    { time_tag: t(2), source: "SOLAR1", active: true, proton_speed: 450, proton_density: 4 },
+  ];
+  const mag = [0, 1, 2].map((i) => ({ time_tag: t(i), source: "SOLAR1", active: true, bt: 5, bx_gse: 3, by_gse: 0, bz_gse: -4, bx_gsm: 3, by_gsm: 0.5, bz_gsm: -3.97 }));
+  assert.deepEqual(buildL1Series(wind, mag).map((s) => s.temperature), [95_000, null, null]);
+});

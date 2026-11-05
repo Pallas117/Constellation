@@ -3,7 +3,7 @@ import type { CanonicalSpaceWeatherPoint } from "@/lib/types/space-weather";
 import { getAccessToken } from "@/lib/api/auth";
 import { useFeedSession, usePolledFeed, type FeedStatus } from "@/hooks/usePolledFeed";
 import { wsOrigin } from "@/lib/api/base-url";
-import { lookbackSince, mergeSeries, SERIES_MAX_POINTS } from "@/lib/api/feed-series";
+import { lookbackSince, mergeSeries, pendingAfter, SERIES_MAX_POINTS, SERIES_WINDOW_MS } from "@/lib/api/feed-series";
 import { isCanonicalPoint } from "@/lib/dataProcessing";
 
 // Signed in: the 24 h, 5 s feed (`user` role). Signed out: only the public
@@ -33,19 +33,26 @@ const parseSeries = (json: unknown): CanonicalSpaceWeatherPoint[] => {
 
 const parseLatest = (json: unknown): CanonicalSpaceWeatherPoint[] => (isCanonicalPoint(json) ? [json] : []);
 
-// Backfill 24 h once, then ask only for points newer than the last one held.
-const seriesPath = (path: string, held: CanonicalSpaceWeatherPoint[] | null) =>
-  `${path}?lookback=${lookbackSince(held, Date.now())}&limit=${SERIES_MAX_POINTS}`;
+// Backfill once, then ask only for points newer than the last one held.
+const seriesPathFor = (backfillMs: number) => (path: string, held: CanonicalSpaceWeatherPoint[] | null) =>
+  `${path}?lookback=${lookbackSince(held, Date.now(), backfillMs)}&limit=${SERIES_MAX_POINTS}`;
 const latestPath = (path: string) => path;
+const NO_POINTS: CanonicalSpaceWeatherPoint[] = [];
 
 export interface SolarWind5sOptions {
   /** false: latest point only, once a minute, even when signed in (the landing). */
   history?: boolean;
+  /**
+   * How far back the first request reaches (default 24 h). A page that only needs
+   * the live drivers asks for minutes, keeping a multi-MB parse out of its boot.
+   */
+  backfillMs?: number;
 }
 
-export function useSolarWind5s({ history = true }: SolarWind5sOptions = {}): SolarWind5sState {
+export function useSolarWind5s({ history = true, backfillMs = SERIES_WINDOW_MS }: SolarWind5sOptions = {}): SolarWind5sState {
   const session = useFeedSession();
   const full = history && session.signedIn;
+  const seriesPath = useMemo(() => seriesPathFor(backfillMs), [backfillMs]);
   const feed = usePolledFeed({
     path: session.resolved ? (full ? FEED_ENDPOINT : PUBLIC_LATEST_ENDPOINT) : null,
     intervalMs: full ? POLL_INTERVAL_MS : PUBLIC_POLL_INTERVAL_MS,
@@ -55,13 +62,22 @@ export function useSolarWind5s({ history = true }: SolarWind5sOptions = {}): Sol
     restartKey: session.userKey,
   });
 
-  const [points, setPoints] = useState<CanonicalSpaceWeatherPoint[]>([]);
+  // Points pushed over the websocket since the last poll; the polled series is the base.
+  const [pushed, setPushed] = useState<CanonicalSpaceWeatherPoint[]>([]);
   const [source, setSource] = useState<"polling" | "websocket">("polling");
   const wsRef = useRef<WebSocket | null>(null);
-
-  useEffect(() => {
-    if (feed.data) setPoints(feed.data);
-  }, [feed.data]);
+  const points = useMemo(
+    () => (pushed.length > 0 ? mergeSeries(feed.data, pushed) : feed.data ?? NO_POINTS),
+    [feed.data, pushed],
+  );
+  // Each poll catches up with what was pushed: keep only the points it doesn't hold yet. Done
+  // while rendering when the polled series changes (React's "adjust state when an input
+  // changes"), not in an effect, so it costs no extra render pass.
+  const [polled, setPolled] = useState(feed.data);
+  if (polled !== feed.data) {
+    setPolled(feed.data);
+    setPushed((prev) => pendingAfter(prev, feed.data));
+  }
 
   useEffect(() => {
     const wsEnabled = String(import.meta.env.VITE_HELIO_WS_ENABLED ?? "false") === "true";
@@ -97,7 +113,7 @@ export function useSolarWind5s({ history = true }: SolarWind5sOptions = {}): Sol
             return;
           }
           const payload = message.payload;
-          setPoints((prev) => mergeSeries(prev, [payload]));
+          setPushed((prev) => mergeSeries(prev, [payload]));
         } catch {
           // Ignore malformed websocket payloads.
         }

@@ -20,6 +20,7 @@ const (
 	PortBlock    Class = "PORT_BLOCK"
 	Region       Class = "REGION"
 	WPADRisk     Class = "WPAD_RISK"
+	WiFiRisk     Class = "WIFI_RISK"
 )
 
 // Error kinds recorded by probes. Kept as strings so fixtures stay readable.
@@ -41,6 +42,8 @@ type Result struct {
 	Status int    `json:"status,omitempty"`
 	Err    string `json:"err,omitempty"`
 	Detail string `json:"detail,omitempty"`
+	// ConnectMs is the TCP connect time on a direct request: one network round trip.
+	ConnectMs int `json:"connect_ms,omitempty"`
 }
 
 // Proxy is one proxy setting found in the environment or system config.
@@ -68,21 +71,32 @@ type Tailscale struct {
 // Snapshot is everything one probe pass learned. Fixtures in testdata/ are
 // recorded Snapshots, so classification is tested without touching the network.
 type Snapshot struct {
-	Time       time.Time   `json:"time"`
-	Online     bool        `json:"online"`
-	Gateway    string      `json:"gateway,omitempty"`
-	GatewayMAC string      `json:"gateway_mac,omitempty"`
-	PublicIP   string      `json:"public_ip,omitempty"`
-	Loc        string      `json:"loc,omitempty"`
-	DNS        Result      `json:"dns"`
-	API        Result      `json:"api"` // api.anthropic.com, direct (no proxy)
-	Web        Result      `json:"web"` // legacy fixtures only; claude.ai 403s non-browsers so it is not probed
-	Captive    Result      `json:"captive"`
-	WPAD       bool        `json:"wpad"`
-	PAC        bool        `json:"pac"`
-	Proxies    []Proxy     `json:"proxies,omitempty"`
-	StaleProcs []StaleProc `json:"stale_procs,omitempty"`
-	Tailscale  Tailscale   `json:"tailscale"`
+	Time   time.Time `json:"time"`
+	Online bool      `json:"online"`
+	// DNSDirectOK: the system lookup failed but 1.1.1.1 answered directly.
+	DNSDirectOK    bool        `json:"dns_direct_ok,omitempty"`
+	Gateway        string      `json:"gateway,omitempty"`
+	GatewayMAC     string      `json:"gateway_mac,omitempty"`
+	PublicIP       string      `json:"public_ip,omitempty"`
+	Loc            string      `json:"loc,omitempty"`
+	DNS            Result      `json:"dns"`
+	API            Result      `json:"api"`           // api.anthropic.com, direct (no proxy)
+	Web            *Result     `json:"web,omitempty"` // legacy fixtures only; claude.ai 403s non-browsers so it is not probed (omitted, so doctor never shows a failed web check)
+	Captive        Result      `json:"captive"`
+	WPAD           bool        `json:"wpad"`
+	WiFiSec        string      `json:"wifi_security,omitempty"` // ipconfig's Security, e.g. WPA2_PSK; "" when not on Wi-Fi
+	WiFiDevice     string      `json:"wifi_device,omitempty"`   // e.g. en0; recorded when offline (rejoin.go)
+	WiFiPower      string      `json:"wifi_power,omitempty"`    // On/Off; recorded when offline
+	JoinCandidates []Candidate `json:"-"`                       // saved/allowlisted networks in range, best first (GAU-234); names stay in memory
+	Exposed        []string    `json:"exposed,omitempty"`       // sharing services this Mac answers on its LAN address
+	PAC            bool        `json:"pac"`
+	Proxies        []Proxy     `json:"proxies,omitempty"`
+	StaleProcs     []StaleProc `json:"stale_procs,omitempty"`
+	Tailscale      Tailscale   `json:"tailscale"`
+	Warp           Warp        `json:"warp,omitempty"`       // Cloudflare WARP, for the Wi-Fi shield (shield.go)
+	Neighbours     []Neighbour `json:"neighbours,omitempty"` // ARP table on the default interface (neighbours.go)
+	Inbound        []Inbound   `json:"inbound,omitempty"`    // LAN devices connected to this Mac's sharing services
+	Signal         *WiFiSignal `json:"signal,omitempty"`     // Wi-Fi only; read at most every signalEvery
 }
 
 // Classify picks the most fundamental failure first: there is no point
@@ -94,6 +108,9 @@ func Classify(s Snapshot) (Class, string) {
 	case s.Captive.Err == ErrPortal:
 		return Captive, "captive.apple.com did not return Success"
 	case s.DNS.Err != "" || s.API.Err == ErrDNS:
+		if s.DNSDirectOK {
+			return DNS, "the local resolver (Tailscale MagicDNS) is not answering; 1.1.1.1 resolves api.anthropic.com, so the network itself is fine"
+		}
 		return DNS, "cannot resolve api.anthropic.com: " + firstNonEmpty(s.DNS.Detail, s.API.Detail)
 	}
 	for _, p := range s.Proxies {
@@ -122,12 +139,24 @@ func Classify(s Snapshot) (Class, string) {
 	if s.WPAD || s.PAC {
 		return WPADRisk, "automatic proxy discovery/PAC is on; a hostile network can redirect traffic"
 	}
+	if weakWiFi(s.WiFiSec) {
+		return WiFiRisk, "Wi-Fi security is " + s.WiFiSec + ": anyone nearby can read or alter unencrypted traffic"
+	}
+	if len(s.Exposed) > 0 {
+		return WiFiRisk, "this " + hostNoun + " accepts connections from everyone on this network: " + strings.Join(s.Exposed, ", ")
+	}
 	return OK, fmt.Sprintf("api reachable (HTTP %d), loc=%s", s.API.Status, orUnknown(s.Loc))
 }
 
-// Blocking reports whether Claude cannot work. WPAD_RISK is a warning only,
+// weakWiFi: open, WEP and WPA1 networks. WPA2, WPA3 and OWE are fine; "" is not Wi-Fi.
+func weakWiFi(sec string) bool {
+	u := strings.ToUpper(strings.TrimSpace(sec))
+	return u == "NONE" || u == "OPEN" || strings.Contains(u, "WEP") || strings.HasPrefix(u, "WPA_") || u == "WPA"
+}
+
+// Blocking reports whether Claude cannot work. WPAD_RISK and WIFI_RISK are warnings only,
 // and "" (no previous check) is not a failure.
-func (c Class) Blocking() bool { return c != "" && c != OK && c != WPADRisk }
+func (c Class) Blocking() bool { return c != "" && c != OK && c != WPADRisk && c != WiFiRisk }
 
 func firstNonEmpty(v ...string) string {
 	for _, s := range v {

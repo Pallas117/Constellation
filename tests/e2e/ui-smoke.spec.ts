@@ -71,14 +71,11 @@ test("smoke: control rail and centered LLM chat interactions", async ({ page }) 
 
   await expect(page.getByText(/42 knowledge chunks/i)).toBeVisible();
 
-  await page.getByRole("button", { name: /rebuild index/i }).click();
-  await expect(page.getByText(/42 knowledge chunks/i)).toBeVisible();
-
   await page
     .getByRole("textbox", { name: /question for the knowledge base/i })
     .fill("What is the synthetic status?");
   await page.getByRole("button", { name: /^ask$/i }).click();
 
   await expect(page.getByText(/synthetic answer from playwright mock/i)).toBeVisible();
-  await expect(page.getByText(/\/tmp\/mock-source\.pdf/i)).toBeVisible();
+  await expect(page.getByText("public/mock-source.md")).toBeVisible();
 });

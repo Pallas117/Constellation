@@ -1,0 +1,266 @@
+{
+  "scores": [
+    {
+      "id": "feb-2025",
+      "kind": "storm",
+      "shock": null,
+      "icme": {
+        "hit": true,
+        "startErrorMin": -3
+      },
+      "falseShocks": [],
+      "falseIcmes": [],
+      "fieldOnly": [],
+      "insideIcme": {
+        "minutes": 719,
+        "medianTemperatureRatio": 0.56,
+        "medianProtonBeta": 0,
+        "medianBtNt": 10.76,
+        "shareLowTemperature": 0.41,
+        "shareLowBeta": 1,
+        "shareStrongField": 1
+      }
+    },
+    {
+      "id": "apr-2025",
+      "kind": "storm",
+      "shock": {
+        "hit": true,
+        "arrivalErrorMin": 5.8
+      },
+      "icme": {
+        "hit": false,
+        "startErrorMin": null
+      },
+      "falseShocks": [],
+      "falseIcmes": [],
+      "fieldOnly": [],
+      "insideIcme": {
+        "minutes": 719,
+        "medianTemperatureRatio": 0.67,
+        "medianProtonBeta": 0.24,
+        "medianBtNt": 18.48,
+        "shareLowTemperature": 0.19,
+        "shareLowBeta": 0.06,
+        "shareStrongField": 1
+      }
+    },
+    {
+      "id": "jun1-2025",
+      "kind": "storm",
+      "shock": {
+        "hit": true,
+        "arrivalErrorMin": 5.8
+      },
+      "icme": {
+        "hit": true,
+        "startErrorMin": 21
+      },
+      "falseShocks": [],
+      "falseIcmes": [],
+      "fieldOnly": [],
+      "insideIcme": {
+        "minutes": 719,
+        "medianTemperatureRatio": 0.8,
+        "medianProtonBeta": 0.01,
+        "medianBtNt": 22.04,
+        "shareLowTemperature": 0.15,
+        "shareLowBeta": 0.91,
+        "shareStrongField": 0.99
+      }
+    },
+    {
+      "id": "jun4-2025",
+      "kind": "storm",
+      "shock": {
+        "hit": true,
+        "arrivalErrorMin": 6.1
+      },
+      "icme": {
+        "hit": false,
+        "startErrorMin": null
+      },
+      "falseShocks": [],
+      "falseIcmes": [],
+      "fieldOnly": [],
+      "insideIcme": {
+        "minutes": 719,
+        "medianTemperatureRatio": 0.65,
+        "medianProtonBeta": 0.16,
+        "medianBtNt": 6.17,
+        "shareLowTemperature": 0.22,
+        "shareLowBeta": 0.22,
+        "shareStrongField": 0.41
+      }
+    },
+    {
+      "id": "jun11-2025",
+      "kind": "storm",
+      "shock": {
+        "hit": false,
+        "arrivalErrorMin": null
+      },
+      "icme": {
+        "hit": false,
+        "startErrorMin": null
+      },
+      "falseShocks": [],
+      "falseIcmes": [],
+      "fieldOnly": [],
+      "insideIcme": {
+        "minutes": 719,
+        "medianTemperatureRatio": 0.61,
+        "medianProtonBeta": 0.18,
+        "medianBtNt": 9.2,
+        "shareLowTemperature": 0.34,
+        "shareLowBeta": 0.18,
+        "shareStrongField": 0.89
+      }
+    },
+    {
+      "id": "sep-2025",
+      "kind": "storm",
+      "shock": {
+        "hit": true,
+        "arrivalErrorMin": 1.1
+      },
+      "icme": {
+        "hit": true,
+        "startErrorMin": 100
+      },
+      "falseShocks": [],
+      "falseIcmes": [],
+      "fieldOnly": [],
+      "insideIcme": {
+        "minutes": 719,
+        "medianTemperatureRatio": 0.25,
+        "medianProtonBeta": 0.02,
+        "medianBtNt": 19.8,
+        "shareLowTemperature": 0.84,
+        "shareLowBeta": 0.82,
+        "shareStrongField": 0.99
+      }
+    },
+    {
+      "id": "nov7-2025",
+      "kind": "storm",
+      "shock": {
+        "hit": true,
+        "arrivalErrorMin": 3.1
+      },
+      "icme": {
+        "hit": false,
+        "startErrorMin": null
+      },
+      "falseShocks": [],
+      "falseIcmes": [],
+      "fieldOnly": [],
+      "insideIcme": {
+        "minutes": 719,
+        "medianTemperatureRatio": 0.85,
+        "medianProtonBeta": 0.29,
+        "medianBtNt": 9.5,
+        "shareLowTemperature": 0.25,
+        "shareLowBeta": 0.04,
+        "shareStrongField": 0.99
+      }
+    },
+    {
+      "id": "nov12-2025",
+      "kind": "storm",
+      "shock": {
+        "hit": true,
+        "arrivalErrorMin": -2.4
+      },
+      "icme": {
+        "hit": false,
+        "startErrorMin": -183
+      },
+      "falseShocks": [
+        "2025-11-11T22:12:00.000Z",
+        "2025-11-12T11:02:00.000Z"
+      ],
+      "falseIcmes": [],
+      "fieldOnly": [],
+      "insideIcme": {
+        "minutes": 719,
+        "medianTemperatureRatio": 3.05,
+        "medianProtonBeta": 0,
+        "medianBtNt": 36.8,
+        "shareLowTemperature": 0.19,
+        "shareLowBeta": 0.93,
+        "shareStrongField": 1
+      }
+    },
+    {
+      "id": "dec-2025",
+      "kind": "storm",
+      "shock": {
+        "hit": false,
+        "arrivalErrorMin": null
+      },
+      "icme": {
+        "hit": true,
+        "startErrorMin": 6
+      },
+      "falseShocks": [],
+      "falseIcmes": [],
+      "fieldOnly": [],
+      "insideIcme": {
+        "minutes": 719,
+        "medianTemperatureRatio": 0.42,
+        "medianProtonBeta": 0.02,
+        "medianBtNt": 18.6,
+        "shareLowTemperature": 0.66,
+        "shareLowBeta": 0.94,
+        "shareStrongField": 1
+      }
+    },
+    {
+      "id": "mar10-2025",
+      "kind": "quiet",
+      "shock": null,
+      "icme": null,
+      "falseShocks": [],
+      "falseIcmes": [],
+      "fieldOnly": [],
+      "insideIcme": null
+    },
+    {
+      "id": "mar20-2025",
+      "kind": "quiet",
+      "shock": null,
+      "icme": null,
+      "falseShocks": [],
+      "falseIcmes": [],
+      "fieldOnly": [],
+      "insideIcme": null
+    },
+    {
+      "id": "aug10-2025",
+      "kind": "quiet",
+      "shock": null,
+      "icme": null,
+      "falseShocks": [],
+      "falseIcmes": [],
+      "fieldOnly": [],
+      "insideIcme": null
+    }
+  ],
+  "totals": {
+    "shocks": {
+      "expected": 8,
+      "hit": 6,
+      "missed": 2,
+      "falseAlarms": 2
+    },
+    "icmes": {
+      "expected": 9,
+      "hit": 4,
+      "missed": 5,
+      "falseAlarms": 0
+    },
+    "quietDays": 3,
+    "quietDayFalseAlarms": 0
+  }
+}

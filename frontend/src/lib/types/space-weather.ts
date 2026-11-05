@@ -38,6 +38,43 @@ export interface DensityDisagreement {
   minutes: number;
 }
 
+/** A level on a NOAA space-weather scale, from the backend (physics/noaa-scales.ts). */
+export interface ScaleReading {
+  /** 0 = below the scale; null = unknown (input missing or stale), never "no storm". */
+  level: 0 | 1 | 2 | 3 | 4 | 5 | null;
+  /** "S2", "G0", or "S?" / "G?" when unknown. */
+  label: string;
+  /** What the level was read from, e.g. "GOES >=10 MeV protons 152 pfu". */
+  basis: string;
+  observedAt: string | null;
+}
+
+/** One input sense-check (GAU-136); mirrors backend/types.ts. */
+export interface SenseCheck {
+  id: "l1-field-magnitude" | "l1-plasma-tracking" | "goes-proton-spectrum" | "goes-proton-channels" | "goes-xray" | "noaa-scales";
+  /** "unknown" when there was nothing current to check, never "pass". */
+  status: "pass" | "flag" | "unknown";
+  reason: string;
+  observedAt: string | null;
+  checked?: number;
+  flagged?: number;
+}
+
+export interface XrayReading {
+  /** GOES 0.1–0.8 nm irradiance, W m^-2. */
+  value: number;
+  band: string;
+  flareClass: string;
+  satellite: string | null;
+  timestamp: string;
+}
+
+export interface NoaaAlert {
+  productId: string;
+  issuedAt: string;
+  headline: string;
+}
+
 export interface CanonicalSpaceWeatherPoint {
   /** When the point was issued (5 s ingest tick). */
   timestamp: string;
@@ -72,11 +109,15 @@ export interface CanonicalSpaceWeatherPoint {
     dynamicPressure: number;
   };
   indices: {
-    kp: number;
+    /** Planetary Kp (0–9); null when no source has a Kp reading (unknown, never 0 or 2; GAU-230). */
+    kp: number | null;
     dst: number;
     kpKind?: "estimated-1m" | "planetary-3h";
     kpObservedAt?: string | null;
+    dstObservedAt?: string | null;
   };
+  /** Values not measured as published, with the method and inputs (GAU-63). */
+  derived?: Array<{ field: string; method: string; derivedFrom: string[] }>;
   coupling: {
     newell: number;
     epsilon: number;
@@ -86,9 +127,22 @@ export interface CanonicalSpaceWeatherPoint {
     etaEarthArrival: string;
   };
   alerts: {
+    /** Bz-driven geomagnetic nowcast. */
     stormTier: "quiet" | "watch" | "warning" | "severe";
     reason: string;
+    /** NOAA S-scale from GOES ≥10 MeV protons: the radiation stream (bit errors, detector hits). */
+    radiation?: ScaleReading;
+    /** NOAA G-scale from planetary Kp: the geomagnetic stream. */
+    geomagnetic?: ScaleReading;
+    /** NOAA R-scale from GOES X-rays: radio blackouts. */
+    radioBlackout?: ScaleReading;
   };
+  /** GOES long-band X-ray flux; null when missing or older than 15 min. */
+  xray?: XrayReading | null;
+  /** Input sense-checks; a flagged input carries its reason. */
+  senseChecks?: SenseCheck[];
+  /** NOAA alerts from the last 24 h, newest first; null when unreadable. */
+  noaaAlerts?: NoaaAlert[] | null;
   /** Measured GOES particle flux; null per channel when missing or older than 30 min. */
   particles?: {
     protons: ParticleReading | null;

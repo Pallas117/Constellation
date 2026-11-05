@@ -85,8 +85,8 @@ function matMulVec(m: number[][], v: Vector3): Vector3 {
 }
 
 // Geomagnetic (centred dipole) north pole, IGRF-14 epoch 2025.
-const DIPOLE_POLE_LAT_DEG = 80.8;
-const DIPOLE_POLE_LON_DEG = -72.8;
+export const DIPOLE_POLE_LAT_DEG = 80.8;
+export const DIPOLE_POLE_LON_DEG = -72.8;
 
 interface FrameAngles {
   /** GEO -> GEI: <theta, Z> */

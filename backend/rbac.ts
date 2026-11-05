@@ -11,8 +11,9 @@ import { roleSatisfies, type AuthenticatedRequest, type AuthRole } from "./auth.
  * (backend/rbac.test.ts fails if a route is added without a policy).
  * Routers may add finer checks on top, e.g. device ownership.
  * Not listed because they never reach this middleware: /api/auth/* (better-auth),
- * /api/sso-options (public, registered first), POST /api/mesh/report
- * (Argo device token) and /api/v1/* (organisation API keys; plan, quota and
+ * /api/sso-options (public, registered first), the Argo device-token routes
+ * (POST /api/mesh/report, /api/mesh/bundles*, GET /api/mesh/directory,
+ * POST /api/mesh/keys; backend/mesh/router.ts) and /api/v1/* (organisation API keys; plan, quota and
  * metering in backend/commerce/), all registered before session auth.
  */
 export type Access = "public" | AuthRole;
@@ -31,6 +32,7 @@ export const API_POLICY: ReadonlyArray<{ method: string; path: string; access: A
   { method: "GET", path: "/feed/mms/reconnection", access: "user" },
   { method: "GET", path: "/feed/mms/reconnection/latest", access: "user" },
   { method: "GET", path: "/feed/sources/status", access: "user" },
+  { method: "GET", path: "/world/state", access: "user" }, // typed world state, read-only (GAU-39)
   { method: "GET", path: "/system/pipeline", access: "user" }, // operator-view data-flow HUD (GAU-110)
   { method: "GET", path: "/forecast/anomaly", access: "user" },
 
@@ -58,10 +60,10 @@ export const API_POLICY: ReadonlyArray<{ method: string; path: string; access: A
 
   // Operators: console tools
   { method: "GET", path: "/rag/status", access: "operator" },
-  { method: "POST", path: "/rag/index", access: "operator" },
   { method: "POST", path: "/rag/query", access: "operator" },
   { method: "GET", path: "/security/cybertiger/status", access: "operator" },
   { method: "GET", path: "/system/tpm", access: "operator" }, // TPM values (GAU-122); /health has the public summary
+  { method: "GET", path: "/swx/structures", access: "operator" }, // L1 structure candidates (GAU-154)
   { method: "POST", path: "/ai/nowcast/infer", access: "operator" },
   { method: "GET", path: "/device/swap/plan", access: "operator" },
   { method: "POST", path: "/device/swap/rebalance", access: "operator" },

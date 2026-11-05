@@ -6,11 +6,20 @@ import { Link, useNavigate, useLocation } from "react-router-dom";
 import { Github, LogIn } from "lucide-react";
 import { apiBase } from "@/lib/api/base-url";
 import { safeRedirectPath } from "@/lib/safe-redirect";
+import { useDocumentTitle } from "@/hooks/useDocumentTitle";
+
+const SSO_FAILED_MESSAGE = "Single sign-on failed. Use your Lightbound Google Workspace account.";
 
 export default function Login() {
+  useDocumentTitle("Sign in");
+
+  const location = useLocation();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [error, setError] = useState("");
+  // A failed SSO round trip lands back here with ?error.
+  const [error, setError] = useState(() =>
+    new URLSearchParams(location.search).has("error") ? SSO_FAILED_MESSAGE : "",
+  );
   const [sso, setSso] = useState<{ google: boolean; github: boolean; domain: string | null }>({
     google: false,
     github: false,
@@ -18,7 +27,6 @@ export default function Login() {
   });
   const anySso = sso.google || sso.github;
   const navigate = useNavigate();
-  const location = useLocation();
   const { data: session } = useSession();
 
   // Deep links return to where they were going; otherwise land by role below.
@@ -60,10 +68,7 @@ export default function Login() {
       .then((res) => (res.ok ? res.json() : null))
       .then((options) => options && setSso({ google: Boolean(options.google), github: Boolean(options.github), domain: options.domain ?? null }))
       .catch(() => undefined);
-    if (new URLSearchParams(location.search).has("error")) {
-      setError("Single sign-on failed. Use your Lightbound Google Workspace account.");
-    }
-  }, [location.search]);
+  }, []);
 
   const handleSso = async (provider: "google" | "github") => {
     setError("");
@@ -161,7 +166,7 @@ export default function Login() {
 
         <Link
           to="/"
-          className="mt-6 block text-center text-sm text-muted-foreground transition-colors hover:text-foreground"
+          className="mt-4 block py-2 text-center text-sm text-muted-foreground transition-colors hover:text-foreground"
         >
           ← Back to the live landing page
         </Link>

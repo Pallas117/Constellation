@@ -3,15 +3,24 @@ import react from "@vitejs/plugin-react-swc";
 import path from "path";
 import { componentTagger } from "lovable-tagger";
 
+// `gauss-services.sh dev` runs a dev checkout beside the live install: it moves the
+// dev server off :8080 (GAUSS_DEV_WEB_PORT) and points /api and /ws at the dev
+// backend (GAUSS_API_TARGET), so development never reaches the live backend.
+const API_TARGET = process.env.GAUSS_API_TARGET || "http://127.0.0.1:3001";
+
 // https://vitejs.dev/config/
 export default defineConfig(({ mode }) => ({
   root: __dirname,
   publicDir: path.resolve(__dirname, "./public"),
   server: {
     host: "127.0.0.1",
-    port: 8080,
+    port: Number(process.env.GAUSS_DEV_WEB_PORT || 8080),
     strictPort: true,
     cors: false,
+    proxy: {
+      "/api": { target: API_TARGET, changeOrigin: false },
+      "/ws": { target: API_TARGET.replace(/^http/, "ws"), ws: true, changeOrigin: false },
+    },
   },
   // Always-on install (scripts/ops/gauss-services.sh): served on loopback only,
   // and shared with the tailnet through `tailscale serve`, which sends the
@@ -24,10 +33,12 @@ export default defineConfig(({ mode }) => ({
     // Same-origin API (VITE_HELIO_PROXY_URL=same-origin, see lib/api/base-url.ts):
     // forward /api and /ws to the backend so http://127.0.0.1:8080 works on this
     // Mac too. tailscale serve does the same for the tailnet name. The Host
-    // header is kept so the backend sees the origin the browser used.
+    // header is kept so the backend sees the origin the browser used. The live
+    // install leaves GAUSS_API_TARGET unset (:3001); the e2e suite points it at
+    // a closed port so no test can reach a real backend.
     proxy: {
-      "/api": { target: "http://127.0.0.1:3001", changeOrigin: false },
-      "/ws": { target: "ws://127.0.0.1:3001", ws: true, changeOrigin: false },
+      "/api": { target: API_TARGET, changeOrigin: false },
+      "/ws": { target: API_TARGET.replace(/^http/, "ws"), ws: true, changeOrigin: false },
     },
   },
   plugins: [react(), mode === "development" && componentTagger()].filter(Boolean),

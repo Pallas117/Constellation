@@ -1,4 +1,5 @@
 import type { DataSource, SourceStatus } from "../types.js";
+import { freshnessMs } from "../../shared/policy/freshness.js";
 
 const SOURCE: DataSource = "kyoto-dst";
 
@@ -7,7 +8,7 @@ const SOURCE: DataSource = "kyoto-dst";
 const KYOTO_DST_URL = "https://services.swpc.noaa.gov/products/kyoto-dst.json";
 
 /** Hourly values: past this age (one missed hour) the reading is unknown and the model is used. */
-export const DST_MAX_AGE_MS = 2 * 60 * 60 * 1000;
+export const DST_MAX_AGE_MS = freshnessMs("dst_kyoto");
 
 export interface DstReading {
   dst: number;
@@ -81,7 +82,10 @@ export async function fetchKyotoDst(nowMs = Date.now()): Promise<DstReading | nu
     latestStatus = {
       source: SOURCE,
       lastSeen: latestStatus.lastSeen,
-      latencySeconds: latestStatus.latencySeconds,
+      // The data keeps ageing while fetches fail: never report the last fetch's age as current.
+      latencySeconds: latestStatus.lastSeen
+        ? Math.max(0, Math.round((nowMs - Date.parse(latestStatus.lastSeen)) / 1000))
+        : null,
       healthy: false,
       message: error instanceof Error && error.name === "TimeoutError"
         ? "Kyoto Dst feed timed out"

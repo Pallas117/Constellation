@@ -1,14 +1,16 @@
 services:
   neo4j:
-    image: neo4j:latest
+    # Pinned: bump deliberately, not on whatever `latest` happens to be.
+    image: neo4j:5.26
     container_name: gauss-neo4j
+    # Loopback only; the backend is the only client.
     ports:
-      - "7474:7474"
-      - "7687:7687"
+      - "127.0.0.1:7474:7474"
+      - "127.0.0.1:7687:7687"
     environment:
-      - NEO4J_AUTH=neo4j/password
+      # No default password: set NEO4J_PASS (same variable the backend reads).
+      - NEO4J_AUTH=neo4j/${NEO4J_PASS:?set NEO4J_PASS}
       - NEO4J_PLUGINS=["apoc"]
-      - NEO4J_dbms_security_procedures_unrestricted=apoc.*
     volumes:
       - neo4j_data:/data
       - neo4j_logs:/logs

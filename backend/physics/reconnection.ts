@@ -26,6 +26,8 @@ export interface MMSSpacecraftSample {
   timestamp: string;
   positionGsmRe: Vector3;
   magneticFieldNt: Vector3;
+  /** How the position was obtained when it isn't a published sample at the B time (GAU-63). */
+  positionMethod?: string;
 }
 
 interface Matrix3 {

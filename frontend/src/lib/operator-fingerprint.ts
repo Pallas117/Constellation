@@ -1,5 +1,5 @@
 /**
- * Operator Device Fingerprinting — privacy-first, localStorage-only.
+ * Operator Device Fingerprinting.
  *
  * Builds a fingerprint from hardware signals available without permissions:
  *   - GPU renderer string
@@ -9,11 +9,10 @@
  *   - Touch support
  *   - Camera/mic device count (enumerated without labels if no permission)
  *
- * The fingerprint is stored as a SHA-256 hex hash in localStorage.
- * Nothing is transmitted over the network.
+ * The signals are hashed with SHA-256. Nothing is stored in the browser;
+ * registerDeviceWithLogin (lib/device-auth.ts) sends the hash and the signals
+ * to /api/device/register after sign-in.
  */
-
-const STORAGE_KEY = "gauss_op_fingerprint";
 
 export interface DeviceFingerprint {
   hash: string;
@@ -60,30 +59,4 @@ export async function buildFingerprint(): Promise<DeviceFingerprint> {
     .join("");
 
   return { hash, buildAt: new Date().toISOString(), signals };
-}
-
-/** Returns true if the given fingerprint matches a stored trusted device */
-export function verifyFingerprint(fp: DeviceFingerprint): boolean {
-  try {
-    const stored = localStorage.getItem(STORAGE_KEY);
-    if (!stored) return false;
-    const record = JSON.parse(stored) as { hash: string };
-    return record.hash === fp.hash;
-  } catch {
-    return false;
-  }
-}
-
-/** Store a new trusted device fingerprint after successful authentication */
-export function learnDevice(fp: DeviceFingerprint): void {
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify({ hash: fp.hash, learnedAt: new Date().toISOString() }));
-  } catch { /* storage unavailable */ }
-}
-
-/** Remove all stored trusted device fingerprints (security wipe) */
-export function forgetDevice(): void {
-  try {
-    localStorage.removeItem(STORAGE_KEY);
-  } catch { /* storage unavailable */ }
 }

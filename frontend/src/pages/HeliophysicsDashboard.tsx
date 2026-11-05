@@ -1,34 +1,42 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { lazy, Suspense, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { ChevronDown, Info, Layers, PanelRight, RotateCcw, Video, Zap } from "lucide-react";
 import { LayerToggles } from "@/components/ui/LayerToggles";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
-import { SpaceScene, SCENE_VIEWS, type SceneView } from "@/components/scene/SpaceScene";
+import { SpaceScene } from "@/components/scene/SpaceScene";
+import { SCENE_VIEWS, type SceneView } from "@/components/scene/scene-views";
 import type { MagnetosphereModelInfo } from "@/components/scene/Magnetosphere";
-import { FeedStatus, HudButton, HudCluster, HudStat, SceneKey, fmt, signed, type Tone } from "@/components/hud/Hud";
+import { FeedStatus, HudButton, HudCluster, HudStat, SceneKey, type Tone } from "@/components/hud/Hud";
+import { fmt, signed } from "@/components/hud/format";
 import { GEO_RE, SceneHoverTip } from "@/components/hud/SceneHoverTip";
-import { AuroraCastMap } from "@/components/heliophysics/AuroraCastMap";
-import { SolarWindSpeedChart } from "@/components/heliophysics/SolarWindSpeedChart";
-import { useAuroraMap } from "@/hooks/useAuroraMap";
 import { useMMSReconnection } from "@/hooks/useMMSReconnection";
 import { useSolarWind5s } from "@/hooks/useSolarWind5s";
+import { useNearViewport } from "@/hooks/useNearViewport";
 import type { LayerVisibility } from "@/components/types";
 import type { RadiationDataPoint } from "@/lib/types/radiation";
 import mockSolarStormData from "@/data/mock_solar_storm.json";
 import { beltVisuals, liveDrivers, standoffIfReference } from "@/lib/physics/live-drivers";
 import { useNow } from "@/hooks/useNow";
+import { useDocumentTitle } from "@/hooks/useDocumentTitle";
+import { CHECK_LABEL, checkStatus, hudTone, scaleStatus } from "@/lib/readout-status";
 
 const VIEW_KEYS = Object.keys(SCENE_VIEWS) as SceneView[];
+// Below the fold: its own chunk (with the charting library), loaded when scrolled to.
+const HistorySection = lazy(() => import("@/components/heliophysics/HistorySection"));
+/** The scene and HUD need only the latest point; the 24 h history fetches its own. */
+const LIVE_BACKFILL_MS = 15 * 60_000;
 const STORM_RADIATION = mockSolarStormData as unknown as RadiationDataPoint[];
 
 const bzTone = (bz: number | undefined): Tone =>
   bz === undefined ? "default" : bz <= -10 ? "risk" : bz < 0 ? "caution" : "default";
 const pdynTone = (p: number | undefined): Tone =>
   p === undefined ? "default" : p >= 8 ? "risk" : p >= 4 ? "caution" : "default";
-const kpTone = (kp: number | undefined): Tone =>
-  kp === undefined ? "default" : kp >= 7 ? "risk" : kp >= 5 ? "caution" : "default";
+const kpTone = (kp: number | null | undefined): Tone =>
+  kp == null ? "default" : kp >= 7 ? "risk" : kp >= 5 ? "caution" : "default";
 const utc = (t: string | number) => new Date(t).toISOString().slice(11, 16);
+/** "18 Oct 17:24" (UTC): alerts span a day, so the time alone is ambiguous. */
+const dayUtc = (t: string) => `${new Date(t).toLocaleDateString("en-GB", { day: "numeric", month: "short", timeZone: "UTC" })} ${utc(t)}`;
 
 /* ------------------------------------------------------------------------- */
 /* Details drawer: the full readouts and method, for touch and deep reading  */
@@ -52,6 +60,8 @@ function Readout({ label, value, unit, tone = "default", hint }: { label: string
 /* ------------------------------------------------------------------------- */
 
 const HeliophysicsDashboard = () => {
+  useDocumentTitle("Heliophysics");
+
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [layers, setLayers] = useState<LayerVisibility>({
     earth: true,
@@ -66,9 +76,10 @@ const HeliophysicsDashboard = () => {
   const [modelInfo, setModelInfo] = useState<MagnetosphereModelInfo | null>(null);
   const [simulateStorm, setSimulateStorm] = useState(false);
 
-  const solarWind = useSolarWind5s();
+  const solarWind = useSolarWind5s({ backfillMs: LIVE_BACKFILL_MS });
   const mms = useMMSReconnection();
-  const aurora = useAuroraMap();
+  const historyRef = useRef<HTMLElement>(null);
+  const showHistory = useNearViewport(historyRef);
   const latest = solarWind.latest;
   const now = useNow(60_000);
 
@@ -102,6 +113,13 @@ const HeliophysicsDashboard = () => {
       : "—";
   const etaUtc = next?.etaEarth ? utc(next.etaEarth) : null;
   const stormTier = !simulateStorm ? latest?.alerts.stormTier : undefined;
+  // The two NOAA storm streams, kept apart: radiation (S) and geomagnetic (G) (GAU-135).
+  const radiation = !simulateStorm ? latest?.alerts.radiation : undefined;
+  const geomagnetic = !simulateStorm ? latest?.alerts.geomagnetic : undefined;
+  // Radio blackouts (R) and the input sense-checks, with NOAA's own alerts as a cross-check (GAU-136).
+  const radioBlackout = !simulateStorm ? latest?.alerts.radioBlackout : undefined;
+  const senseChecks = !simulateStorm ? (latest?.senseChecks ?? []) : [];
+  const noaaAlerts = !simulateStorm ? latest?.noaaAlerts : undefined;
   const driversLine = simulateStorm
     ? "Simulated drivers"
     : arriving
@@ -127,7 +145,9 @@ const HeliophysicsDashboard = () => {
       ? "NOAA's running estimate for the current 3-hour interval, updated each minute."
       : live.kp?.kind === "planetary-3h"
         ? "The last completed 3-hour interval: this interval's running estimate is lower so far."
-        : "";
+        : drivers && kpValue === null
+          ? "No Kp reading from any source: unknown, so no auroral oval is drawn."
+          : "";
   const geoLine =
     geoExposed === null
       ? "GEO exposure unknown"
@@ -193,7 +213,7 @@ const HeliophysicsDashboard = () => {
         {/* Top edge: identity and feed left, controls right */}
         <header className="pointer-events-none absolute inset-x-0 top-0 z-10 flex items-start justify-between gap-3 p-3 md:p-4">
           <div className="flex min-w-0 flex-col items-start gap-1.5">
-            <Link to="/" className="brand-label pointer-events-auto text-[10px]">
+            <Link to="/" className="brand-label pointer-events-auto inline-flex min-h-6 items-center text-[10px]">
               Gauss Aurora<span className="hidden sm:inline"> · Heliophysics</span>
             </Link>
             <h1 className="text-sm font-semibold leading-tight text-foreground/90 md:text-base">
@@ -293,7 +313,7 @@ const HeliophysicsDashboard = () => {
                     />
                   )}
                   <Readout label="Bow shock nose" value={fmt(fieldModel?.bowShock)} unit="RE" />
-                  <Readout label="Aurora equatorward edge" value={fmt(fieldModel?.oval.equatorward, 0)} unit="° MLAT" />
+                  <Readout label="Aurora equatorward edge" value={fmt(fieldModel?.oval?.equatorward, 0)} unit="° MLAT" />
                   <Readout label="Dipole tilt" value={signed(tiltDeg)} unit="°" hint="Toward the Sun, from the UTC clock" />
                   <Readout label="Field lines open to the solar wind" value={openPct} unit="%" />
                 </dl>
@@ -317,6 +337,72 @@ const HeliophysicsDashboard = () => {
                     hint={arriving ? `${arriving.spacecraft}, ${travelMin} min upstream` : "Not yet propagated"}
                   />
                 </dl>
+
+                <p className="brand-label mt-6">Storm levels · NOAA</p>
+                <dl className="mt-2">
+                  <Readout
+                    label="Radiation (S)"
+                    value={radiation?.level != null ? radiation.label : "—"}
+                    tone={radiation ? hudTone(scaleStatus(radiation).tone) : "default"}
+                    hint={radiation?.basis ?? "No current GOES proton reading"}
+                  />
+                  <Readout
+                    label="Geomagnetic (G)"
+                    value={geomagnetic?.level != null ? geomagnetic.label : "—"}
+                    tone={geomagnetic ? hudTone(scaleStatus(geomagnetic).tone) : "default"}
+                    hint={geomagnetic?.basis ?? "No current NOAA Kp reading"}
+                  />
+                  <Readout
+                    label="Radio blackout (R)"
+                    value={radioBlackout?.level != null ? radioBlackout.label : "—"}
+                    tone={radioBlackout ? hudTone(scaleStatus(radioBlackout).tone) : "default"}
+                    hint={radioBlackout?.basis ?? "No current GOES X-ray reading"}
+                  />
+                </dl>
+                <p className="mt-2 text-xs text-muted-foreground">
+                  Radiation storms (particles), geomagnetic storms (field) and radio blackouts (X-rays) are separate hazards with different effects, and any one can happen without the others.
+                </p>
+
+                {!simulateStorm && (
+                  <>
+                    <p className="brand-label mt-6">Data checks</p>
+                    <dl className="mt-2">
+                      {senseChecks.length === 0 ? (
+                        <Readout label="Input checks" value="Unknown" tone="caution" hint="No checks on this reading" />
+                      ) : (
+                        senseChecks.map((check) => {
+                          const status = checkStatus(check);
+                          return (
+                            <Readout
+                              key={check.id}
+                              label={CHECK_LABEL[check.id] ?? check.id}
+                              value={status.word}
+                              tone={hudTone(status.tone)}
+                              hint={check.reason}
+                            />
+                          );
+                        })
+                      )}
+                    </dl>
+                    <p className="brand-label mt-4">NOAA alerts · 24 h</p>
+                    {noaaAlerts == null ? (
+                      <p className="mt-2 text-xs text-caution">Unknown: NOAA alerts could not be read.</p>
+                    ) : noaaAlerts.length === 0 ? (
+                      <p className="mt-2 text-xs text-muted-foreground">No NOAA alerts, watches or warnings in the last 24 h.</p>
+                    ) : (
+                      <ul className="mt-2 space-y-1.5">
+                        {noaaAlerts.map((a) => (
+                          <li key={a.productId} className="text-xs text-muted-foreground">
+                            <span className="font-mono text-foreground">{dayUtc(a.issuedAt)} UTC</span> {a.headline}
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                    <p className="mt-2 text-xs text-muted-foreground">
+                      NOAA&apos;s own scales and alerts are a cross-check on the levels above, not their source.
+                    </p>
+                  </>
+                )}
 
                 <p className="brand-label mt-6">Next from L1{stormTier ? ` · ${stormTier}` : ""}</p>
                 <dl className="mt-2">
@@ -390,7 +476,7 @@ const HeliophysicsDashboard = () => {
               <HudStat
                 className="hidden sm:block"
                 label="Aurora edge"
-                value={fmt(fieldModel?.oval.equatorward, 0)}
+                value={fmt(fieldModel?.oval?.equatorward, 0)}
                 unit="° MLAT"
                 detail="Equatorward edge of the auroral oval, from Kp."
               />
@@ -448,11 +534,12 @@ const HeliophysicsDashboard = () => {
                 detail={`Planetary geomagnetic activity, 0–9. 5 and above is a storm (G1+). ${kpNote}`}
               />
               <HudStat
-                className="hidden sm:block"
-                label="By"
-                value={signed(next?.by)}
-                unit="nT"
-                detail="Dawn–dusk IMF (GSM). Twists the open field lines and shifts the cusps."
+                label="Radiation"
+                value={radiation?.level != null ? radiation.label : "—"}
+                tone={radiation ? hudTone(scaleStatus(radiation).tone) : "default"}
+                detail={`NOAA radiation-storm level (S-scale) from GOES ≥10 MeV protons. Particle radiation drives bit errors and detector hits; it is a separate hazard from the geomagnetic storm above and can happen without one. ${
+                  simulateStorm ? "The simulation covers the geomagnetic stream only." : radiation?.basis ?? "No current proton reading."
+                }`}
               />
               <HudStat
                 className="hidden sm:block"
@@ -475,20 +562,23 @@ const HeliophysicsDashboard = () => {
 
         <a
           href="#history"
-          className="pointer-events-auto absolute bottom-4 left-1/2 z-10 hidden -translate-x-1/2 items-center gap-1 rounded-full px-3 py-1 font-mono text-[9px] uppercase tracking-[0.14em] text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring lg:inline-flex"
+          className="pointer-events-auto absolute bottom-4 left-1/2 z-10 hidden -translate-x-1/2 items-center gap-1 rounded-full min-h-6 px-3 py-1 font-mono text-[9px] uppercase tracking-[0.14em] text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring lg:inline-flex"
         >
           24 h history <ChevronDown size={12} aria-hidden="true" />
         </a>
       </section>
 
-      <section id="history" aria-label="History" className="mx-auto grid max-w-[1600px] gap-4 p-4 md:p-6 lg:grid-cols-2">
-        <SolarWindSpeedChart
-          points={solarWind.points}
-          loading={solarWind.loading}
-          error={solarWind.error}
-          source={solarWind.source}
-        />
-        <AuroraCastMap map={aurora.map} loading={aurora.loading} error={aurora.error} />
+      <section
+        id="history"
+        ref={historyRef}
+        aria-label="History"
+        className="mx-auto grid min-h-[360px] max-w-[1600px] gap-4 p-4 md:p-6 lg:grid-cols-2"
+      >
+        {showHistory && (
+          <Suspense fallback={<p className="text-sm text-muted-foreground">Loading the 24 h history…</p>}>
+            <HistorySection livePoints={solarWind.points} source={solarWind.source} />
+          </Suspense>
+        )}
       </section>
     </main>
   );

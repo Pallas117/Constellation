@@ -61,7 +61,7 @@ export function ReasoningStream() {
       <GaussRagPanel />
       <ForecastBanner />
       <p className="text-center font-mono text-[11px] text-muted-foreground">
-        Sources: NOAA SWPC · NASA DSCOVR · ML storm forecast
+        Sources: NOAA SWPC real-time solar wind (L1) · ML storm forecast
       </p>
     </div>
   );

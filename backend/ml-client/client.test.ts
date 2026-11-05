@@ -61,6 +61,18 @@ test("heuristic nowcast is deterministic, labelled, and claims no confidence (GA
   });
 });
 
+test("heuristic nowcast: no Kp reading means unknown outputs, never a Kp-2 baseline (GAU-230)", () => {
+  const now = Date.parse("2026-10-12T00:00:00Z");
+  const noKp = { ...point, indices: { kp: null } } as unknown as CanonicalSpaceWeatherPoint;
+  for (const sequence of [[noKp], [], [{ ...point, indices: undefined } as unknown as CanonicalSpaceWeatherPoint]]) {
+    const out = heuristicNowcast({ horizonMinutes: 60, sequence }, now);
+    assert.ok(out.predictions.length > 0, "the horizon is still answered");
+    assert.ok(out.predictions.every((p) => p.geomagneticPerturbation === null && p.auroraIntensity === null));
+  }
+  const known = heuristicNowcast({ horizonMinutes: 60, sequence: [point] }, now).predictions[0];
+  assert.ok(typeof known.geomagneticPerturbation === "number" && known.geomagneticPerturbation > 4 * 8, "Kp 4 still drives it");
+});
+
 test("inference server failures become unavailable with no URL in the reason (GAU-111)", async () => {
   const url = "http://127.0.0.1:65530";
   await withEnv(url, async () => {
@@ -113,7 +125,9 @@ test("the real inference server serves the promoted Kp model, honestly (GAU-113)
   });
   t.after(() => server.kill());
   const port = await new Promise<number>((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error("inference server did not start")), 10_000);
+    // Startup is about 1 s alone, but under the full suite at memory pressure a cold Python import
+    // overran 10 s (2026-10-21). This test is about serving honestly, not startup speed.
+    const timer = setTimeout(() => reject(new Error("inference server did not start within 30 s")), 30_000);
     server.stdout!.on("data", (chunk: Buffer) => {
       const m = /listening on [\d.]+:(\d+)/.exec(chunk.toString());
       if (m) {
@@ -158,10 +172,29 @@ test("the real inference server serves the promoted Kp model, honestly (GAU-113)
     assert.equal(nowcast.method, "heuristic");
     assert.equal(nowcast.modelVersion, "heuristic-nowcast-v0");
     assert.ok(nowcast.predictions.every((p) => p.confidence === null));
+    // GAU-230: a point with no Kp is answered with unknown outputs, not a 500 or a Kp-2 baseline.
+    const noKp = await inferNowcast({ horizonMinutes: 30, sequence: [{ ...point, indices: { kp: null } } as unknown as CanonicalSpaceWeatherPoint] });
+    assert.ok(noKp.predictions.length > 0);
+    assert.ok(noKp.predictions.every((p) => p.geomagneticPerturbation === null && p.auroraIntensity === null));
   });
 });
 
 test("Kp model unit tests (python)", { skip: !hasPython && "python3 not found" }, () => {
   const result = spawnSync("python3", ["-I", "ml/tests/test_kp_model.py"], { encoding: "utf8" });
+  assert.equal(result.status, 0, result.stderr);
+});
+
+test("inference server request handling (python)", { skip: !hasPython && "python3 not found" }, () => {
+  const result = spawnSync("python3", ["-I", "ml/tests/test_infer_server.py"], { encoding: "utf8" });
+  assert.equal(result.status, 0, result.stderr);
+});
+
+test("nightly incremental count and skip-if-unchanged (python)", { skip: !hasPython && "python3 not found" }, () => {
+  const result = spawnSync("python3", ["-I", "ml/tests/test_nightly.py"], { encoding: "utf8" });
+  assert.equal(result.status, 0, result.stderr);
+});
+
+test("OMNI matrix cache and zero-copy windows match the old results exactly (python)", { skip: !hasPython && "python3 not found" }, () => {
+  const result = spawnSync("python3", ["-I", "ml/tests/test_omni_matrix.py"], { encoding: "utf8" });
   assert.equal(result.status, 0, result.stderr);
 });

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { classifyResponse, startPolling, type PollOutcome } from "@/lib/api/feed-poller";
 import { useSession } from "@/lib/auth-client";
 import { apiBase } from "@/lib/api/base-url";
@@ -54,19 +54,18 @@ export function usePolledFeed<T>({
   const [status, setStatus] = useState<FeedStatus>("waiting");
   const [error, setError] = useState<string | null>(null);
   const parseRef = useRef(parse);
-  parseRef.current = parse;
   const nextPathRef = useRef(nextPath);
-  nextPathRef.current = nextPath;
   const reduceRef = useRef(reduce);
-  reduceRef.current = reduce;
+  // Layout effects run before the polling effect below, so a poll never sees stale callbacks.
+  useLayoutEffect(() => {
+    parseRef.current = parse;
+    nextPathRef.current = nextPath;
+    reduceRef.current = reduce;
+  });
   const heldRef = useRef<T | null>(null);
 
   useEffect(() => {
-    if (!path) {
-      setStatus(disabledStatus);
-      setError(disabledStatus === "sign-in-required" ? signInMessage : null);
-      return;
-    }
+    if (!path) return;
     let mounted = true;
     const base = getBackendBaseUrl();
     // A new route or user starts from nothing, so an incremental feed backfills again.
@@ -115,8 +114,17 @@ export function usePolledFeed<T>({
       mounted = false;
       stop();
     };
-  }, [path, intervalMs, maxBackoffMs, disabledStatus, signInMessage, restartKey]);
+  }, [path, intervalMs, maxBackoffMs, signInMessage, restartKey]);
 
+  // With no path nothing is polled, so the status comes from the options, not the last poll.
+  if (!path) {
+    return {
+      data,
+      status: disabledStatus,
+      loading: disabledStatus === "waiting",
+      error: disabledStatus === "sign-in-required" ? signInMessage : null,
+    };
+  }
   return { data, status, loading: status === "waiting", error };
 }
 

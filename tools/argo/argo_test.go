@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -50,6 +51,21 @@ func TestClassifyEveryFailureClass(t *testing.T) {
 		if got != want {
 			t.Errorf("%s: got %s (%s), want %s", file, got, reason, want)
 		}
+	}
+}
+
+// The web check is no longer probed, so doctor must not print it as a failure ("web": {"ok": false}).
+// Legacy fixtures that recorded it still load.
+func TestDoctorOmitsTheUnprobedWebCheck(t *testing.T) {
+	b, err := json.Marshal(Snapshot{Online: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(b), `"web"`) {
+		t.Fatalf("snapshot JSON shows the unprobed web check: %s", b)
+	}
+	if s := fixture(t, "my_sim_ok.json"); s.Web == nil {
+		t.Fatal("a legacy fixture's recorded web result no longer loads")
 	}
 }
 
@@ -208,16 +224,27 @@ func (p *seqProber) Probe(context.Context) Snapshot {
 }
 
 type fakeFx struct {
-	now     time.Time
-	notes   []string
-	opened  []string
-	openErr error
+	now       time.Time
+	notes     []string
+	opened    []string
+	openErr   error
+	ran       []string
+	relayed   []string
+	relayFail bool
 }
 
 func (f *fakeFx) Notify(title, msg string) { f.notes = append(f.notes, title) }
 func (f *fakeFx) Open(u string) error      { f.opened = append(f.opened, u); return f.openErr }
-func (f *fakeFx) Sleep(time.Duration)      {}
-func (f *fakeFx) Now() time.Time           { return f.now }
+func (f *fakeFx) Run(name string, args ...string) error {
+	f.ran = append(f.ran, name+" "+strings.Join(args, " "))
+	return nil
+}
+func (f *fakeFx) Sleep(time.Duration) {}
+func (f *fakeFx) NotifyOffline(title, msg string) bool {
+	f.relayed = append(f.relayed, title)
+	return !f.relayFail
+}
+func (f *fakeFx) Now() time.Time { return f.now }
 
 func newLoop(t *testing.T, snaps ...Snapshot) (Loop, *fakeFx) {
 	fx := &fakeFx{now: time.Date(2026, 10, 9, 8, 0, 0, 0, time.UTC)}
@@ -336,7 +363,7 @@ func TestHotspotOnWrongSIMAlertsOnce(t *testing.T) {
 func TestSkipTickOnlyWhenNothingCanHaveChanged(t *testing.T) {
 	now := time.Now()
 	home := State{Class: OK, CheckedAt: now.Add(-time.Minute), Gateway: "192.168.1.254", GatewayMAC: "24:2f:d0:c5:e6:9e"}
-	if !skipTick(home, "192.168.1.254", "24:2f:d0:c5:e6:9e", now) {
+	if !skipTick(home, "192.168.1.254", "24:2f:d0:c5:e6:9e", now, false) {
 		t.Error("same home network, checked 1 min ago: should skip")
 	}
 	cases := map[string]struct {
@@ -350,9 +377,42 @@ func TestSkipTickOnlyWhenNothingCanHaveChanged(t *testing.T) {
 		"5 minutes old":       {State{Class: OK, CheckedAt: now.Add(-5 * time.Minute), Gateway: "192.168.1.254", GatewayMAC: "24:2f:d0:c5:e6:9e"}, "192.168.1.254", "24:2f:d0:c5:e6:9e"},
 	}
 	for name, c := range cases {
-		if skipTick(c.st, c.gw, c.mac, now) {
+		if skipTick(c.st, c.gw, c.mac, now, false) {
 			t.Errorf("%s: must run a full check", name)
 		}
+	}
+	// On the hotspot and on battery, a healthy link is probed every 2.5 min, not every minute.
+	hs := State{Class: OK, CheckedAt: now.Add(-time.Minute), Gateway: "172.20.10.1"}
+	if !skipTick(hs, "172.20.10.1", "", now, true) {
+		t.Error("hotspot on battery, healthy, checked 1 min ago: should skip")
+	}
+	hs.CheckedAt = now.Add(-3 * time.Minute)
+	if skipTick(hs, "172.20.10.1", "", now, true) {
+		t.Error("hotspot on battery, checked 3 min ago: must run")
+	}
+	hs.CheckedAt, hs.Class = now.Add(-time.Minute), Offline
+	if skipTick(hs, "172.20.10.1", "", now, true) {
+		t.Error("hotspot on battery while broken: must run")
+	}
+}
+
+func TestLockFromDeadProcessIsTaken(t *testing.T) {
+	s := Store{Dir: t.TempDir()}
+	// A killed run: fresh lock file naming a PID that doesn't exist.
+	if err := os.WriteFile(s.path("lock"), []byte("999999\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	unlock, err := s.Lock()
+	if err != nil {
+		t.Fatalf("lock from a dead process: %v", err)
+	}
+	unlock()
+	// A live holder (this test process) still excludes.
+	if err := os.WriteFile(s.path("lock"), []byte(fmt.Sprintf("%d\n", os.Getpid())), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Lock(); err == nil {
+		t.Fatal("lock held by a live process was taken")
 	}
 }
 
@@ -394,5 +454,55 @@ func TestWeeklySummarySendsOncePerWeekNotOnInstall(t *testing.T) {
 	maybeSendWeekly(s, p, t0.Add(7*24*time.Hour+time.Hour))
 	if len(sent) != 1 || !strings.Contains(sent[0], "Argo weekly") {
 		t.Fatalf("want exactly one weekly message, got %v", sent)
+	}
+}
+
+func countNotes(notes []string, title string) int {
+	n := 0
+	for _, s := range notes {
+		if s == title {
+			n++
+		}
+	}
+	return n
+}
+
+// The breaker reopens every 30 min; before 2026-10-18 each reopening texted again (71 texts in a week).
+func TestEscalationTextsOnceThenEveryTwoHours(t *testing.T) {
+	l, fx := newLoop(t, fixture(t, "port_block.json"))
+	ctx := context.Background()
+	tick := func(d time.Duration) { fx.now = fx.now.Add(d); l.Tick(ctx) }
+	tick(0)
+	for i := 1; i < maxAttempts; i++ {
+		tick(backoffMax)
+	}
+	if got := countNotes(fx.notes, "Argo needs you"); got != 1 {
+		t.Fatalf("first escalation: %d texts, want 1: %v", got, fx.notes)
+	}
+	for i := 0; i < 3; i++ { // three more breaker cycles inside 2 h
+		tick(breakerCooldwn + time.Minute)
+	}
+	if got := countNotes(fx.notes, "Argo needs you"); got != 1 {
+		t.Fatalf("repeat escalations inside 2 h: %d texts, want 1", got)
+	}
+	tick(escalateEvery)
+	if got := countNotes(fx.notes, "Argo needs you"); got != 2 {
+		t.Fatalf("after 2 h: %d texts, want a reminder (2)", got)
+	}
+}
+
+// A Mac with no network cannot send a text; queued ones arrived stale once it was back.
+func TestOfflineNeverTexts(t *testing.T) {
+	l, fx := newLoop(t, fixture(t, "offline.json"))
+	ctx := context.Background()
+	for i := 0; i < 2*maxAttempts; i++ {
+		l.Tick(ctx)
+		fx.now = fx.now.Add(breakerCooldwn + time.Minute)
+	}
+	if len(fx.notes) != 0 {
+		t.Fatalf("OFFLINE sent texts: %v", fx.notes)
+	}
+	if n := len(l.Store.Incidents()); n == 0 {
+		t.Fatal("OFFLINE incidents should still be recorded")
 	}
 }

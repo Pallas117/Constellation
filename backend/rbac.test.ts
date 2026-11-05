@@ -50,6 +50,7 @@ test("role matrix", () => {
     ["GET", "/mesh/devices", "staff"],
     ["DELETE", "/mesh/devices/judith", "staff"],
     ["POST", "/rag/query", "operator"],
+    ["GET", "/swx/structures", "operator"], // L1 structure candidates (GAU-154)
     ["GET", "/security/cybertiger/events", "admin"],
     ["POST", "/ai/nowcast/train", "admin"],
   ];

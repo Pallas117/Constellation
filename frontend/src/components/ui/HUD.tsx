@@ -1,6 +1,6 @@
 import type { InterpolatedData } from '@/hooks/useSpaceWeather';
 import { StatusBadge } from '@/components/brand/StatusBadge';
-import { bzStatus, feedState, FEED_LABEL, kpStatus, speedStatus, type ReadoutStatus } from '@/lib/readout-status';
+import { bzStatus, feedState, FEED_LABEL, kpStatus, scaleStatus, speedStatus, type ReadoutStatus } from '@/lib/readout-status';
 
 interface HUDProps {
   data: InterpolatedData;
@@ -47,11 +47,19 @@ export const HUD = ({ data }: HUDProps) => {
           unit="nT"
           status={measured ? bzStatus(data.imfBz) : null}
         />
-        <DataRow label="Kp" value={fixed(data.kpIndex)} unit="/ 9" status={measured ? kpStatus(data.kpIndex) : null} />
+        {/* No Kp reading is "—" like unmeasured flux below, never 0 or 2 (GAU-230). */}
+        <DataRow
+          label="Kp"
+          value={data.kpIndex === null ? '—' : fixed(data.kpIndex)}
+          unit="/ 9"
+          status={measured && data.kpIndex !== null ? kpStatus(data.kpIndex) : null}
+        />
         <DataRow
           label="Proton flux"
           value={measured && data.protonFlux != null ? data.protonFlux.toFixed(1) : '—'}
           unit="pfu"
+          // The radiation stream (NOAA S-scale), separate from the geomagnetic Kp above.
+          status={measured && data.radiation ? scaleStatus(data.radiation) : null}
         />
       </dl>
       <p className="mt-2 font-mono text-[11px] text-muted-foreground">

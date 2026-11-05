@@ -3,7 +3,7 @@
  * Rendered as wireframe circles at appropriate altitudes
  */
 
-import { useMemo, useRef } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 
@@ -50,15 +50,6 @@ export const OrbitRings = ({ visible, orbitFilter }: OrbitRingsProps) => {
   const geoGeometry = useMemo(() => createOrbitGeometry(geoRadius), [geoRadius]);
 
   // Orbit ring materials with subtle glow
-  const orbitMaterial = useMemo(() => {
-    return new THREE.LineBasicMaterial({
-      color: '#4a90e2',
-      transparent: true,
-      opacity: 0.3,
-      linewidth: 1,
-    });
-  }, []);
-
   const leoMaterial = useMemo(() => {
     return new THREE.LineBasicMaterial({
       color: '#60a5fa',
@@ -86,6 +77,19 @@ export const OrbitRings = ({ visible, orbitFilter }: OrbitRingsProps) => {
     });
   }, [orbitFilter]);
 
+  // Free the GPU buffers of replaced or unmounted rings (GAU-208), as VanAllenBelts does.
+  useEffect(() => () => leoGeometry.dispose(), [leoGeometry]);
+  useEffect(() => () => meoGeometry.dispose(), [meoGeometry]);
+  useEffect(() => () => geoGeometry.dispose(), [geoGeometry]);
+  useEffect(
+    () => () => {
+      leoMaterial.dispose();
+      meoMaterial.dispose();
+      geoMaterial.dispose();
+    },
+    [leoMaterial, meoMaterial, geoMaterial],
+  );
+
   // Subtle rotation animation - only animate rings that are in the filter
   useFrame((state) => {
     const time = state.clock.elapsedTime;
@@ -100,8 +104,6 @@ export const OrbitRings = ({ visible, orbitFilter }: OrbitRingsProps) => {
       geoRef.current.rotation.y = time * 0.005;
     }
   });
-
-  if (!visible) return null;
 
   // Create Line objects
   const leoLine = useMemo(() => {
@@ -118,6 +120,8 @@ export const OrbitRings = ({ visible, orbitFilter }: OrbitRingsProps) => {
     if (!orbitFilter.includes('GEO')) return null;
     return new THREE.Line(geoGeometry, geoMaterial);
   }, [geoGeometry, geoMaterial, orbitFilter]);
+
+  if (!visible) return null;
 
   return (
     <group>

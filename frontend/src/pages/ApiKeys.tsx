@@ -6,6 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { PilotRequestDialog } from "@/components/PilotRequestDialog";
 import { BACKEND_URL, commerceApi, type Org, type Usage } from "@/lib/api/commerce";
+import { useDocumentTitle } from "@/hooks/useDocumentTitle";
 
 const fmt = (iso: string | null) => (iso ? new Date(iso).toLocaleString() : "—");
 
@@ -152,6 +153,8 @@ function OrgKeys({ org, onChange }: { org: Org; onChange: () => void }) {
 
 /** API keys and usage for the organisations the signed-in user belongs to. */
 const ApiKeys = () => {
+  useDocumentTitle("API keys");
+
   const [orgs, setOrgs] = useState<Org[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const load = useCallback(() => {
@@ -170,7 +173,7 @@ const ApiKeys = () => {
       <section className="px-4 py-6 sm:px-8">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
           <div>
-            <p className="text-sm uppercase tracking-[0.3em] text-primary/80">Data API</p>
+            <p className="brand-label">00_DATA_API</p>
             <h1 className="mt-2 text-3xl font-semibold tracking-tight">API keys</h1>
             <p className="mt-3 max-w-2xl text-sm text-muted-foreground">
               Keys let your systems read Gauss's refined feeds from <span className="font-mono">/api/v1/data</span>. Every call is counted

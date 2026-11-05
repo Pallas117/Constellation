@@ -10,6 +10,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/http/httptrace"
 	"net/url"
 	"os"
 	"os/exec"
@@ -38,37 +39,36 @@ var proxyVars = []string{"HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy
 // SystemProber probes the real machine. Every external command has a timeout
 // and nothing is fetched or executed from the network.
 type SystemProber struct {
-	ExitNodes map[string]string // tailscale hostname → country, from config
+	ExitNodes   map[string]string // tailscale hostname → country, from config
+	SignalCache string            // file caching the Wi-Fi signal reading; "" reads every probe
 }
 
 func (p SystemProber) Probe(ctx context.Context) Snapshot {
 	s := Snapshot{Time: time.Now().UTC()}
-	s.Gateway, s.Online = parseDefaultRoute(run(ctx, "route", "-n", "get", "default"))
-	if s.Online {
-		s.GatewayMAC = parseARP(run(ctx, "arp", "-n", s.Gateway))
-	}
-	s.WPAD, s.PAC = parseScutilAuto(run(ctx, "scutil", "--proxy"))
-	for _, pr := range parseScutilProxies(run(ctx, "scutil", "--proxy")) {
-		pr.Alive = dialAlive(pr.URL)
-		s.Proxies = append(s.Proxies, pr)
+	hostProbe(ctx, &s) // OS-specific: route, gateway MAC, Wi-Fi, system proxies (host_*.go)
+	if s.Online && s.WiFiSec != "" {
+		s.Signal = cachedSignal(p.SignalCache, s.GatewayMAC, time.Now(), func() *WiFiSignal { return parseSignal(wifiSignalInfo(ctx)) })
 	}
 	for _, v := range proxyVars {
 		if u := os.Getenv(v); u != "" {
 			s.Proxies = append(s.Proxies, Proxy{Source: "env:" + v, URL: maskURL(u), Alive: dialAlive(u)})
 		}
 	}
-	s.StaleProcs = findStaleProcs(run(ctx, "ps", "-E", "-ww", "-x", "-o", "pid=,command="), dialAlive)
+	s.StaleProcs = staleProcs(ctx)
 	s.Tailscale = parseTailscale(run(ctx, tailscaleCLI(), "status", "--json"), p.ExitNodes)
 	s.Tailscale.MeshHealOpen = meshHealCircuitOpen(time.Now())
 	if !s.Online {
 		return s
 	}
 
-	dctx, cancel := context.WithTimeout(ctx, 4*time.Second)
+	// 8 s, not 4: system DNS goes through Tailscale (100.100.100.100), which on a
+	// flapping hotspot can take several seconds while the link settles.
+	dctx, cancel := context.WithTimeout(ctx, dnsTimeout)
 	_, err := net.DefaultResolver.LookupHost(dctx, "api.anthropic.com")
 	cancel()
 	if err != nil {
 		s.DNS = Result{Err: ErrDNS, Detail: err.Error()}
+		s.DNSDirectOK = directLookup(ctx, "api.anthropic.com")
 	} else {
 		s.DNS = Result{OK: true}
 	}
@@ -96,7 +96,17 @@ func directClient() *http.Client {
 }
 
 func httpGet(ctx context.Context, u string) (Result, string) {
-	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	var connStart time.Time
+	var connMs int
+	trace := &httptrace.ClientTrace{
+		ConnectStart: func(string, string) { connStart = time.Now() },
+		ConnectDone: func(_, _ string, err error) {
+			if err == nil && !connStart.IsZero() {
+				connMs = max(1, int(time.Since(connStart).Milliseconds()))
+			}
+		},
+	}
+	req, _ := http.NewRequestWithContext(httptrace.WithClientTrace(ctx, trace), http.MethodGet, u, nil)
 	req.Header.Set("User-Agent", "argo/"+version)
 	resp, err := directClient().Do(req)
 	if err != nil {
@@ -105,7 +115,7 @@ func httpGet(ctx context.Context, u string) (Result, string) {
 	}
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
-	return Result{OK: true, Status: resp.StatusCode}, string(body)
+	return Result{OK: true, Status: resp.StatusCode, ConnectMs: connMs}, string(body)
 }
 
 func httpProbe(ctx context.Context, u string) Result {
@@ -331,6 +341,22 @@ func meshHealCircuitOpen(now time.Time) bool {
 }
 
 // ---- helpers ----
+
+const dnsTimeout = 8 * time.Second
+
+// directLookup asks 1.1.1.1 directly, bypassing the system resolver order. When it
+// answers and the system lookup did not, the network is fine and the failing layer
+// is the local resolver (usually Tailscale's MagicDNS), so flushing caches won't help.
+func directLookup(ctx context.Context, host string) bool {
+	r := &net.Resolver{PreferGo: true, Dial: func(ctx context.Context, network, _ string) (net.Conn, error) {
+		var d net.Dialer
+		return d.DialContext(ctx, network, "1.1.1.1:53")
+	}}
+	c, cancel := context.WithTimeout(ctx, 4*time.Second)
+	defer cancel()
+	addrs, err := r.LookupHost(c, host)
+	return err == nil && len(addrs) > 0
+}
 
 func run(ctx context.Context, name string, args ...string) string {
 	c, cancel := context.WithTimeout(ctx, 8*time.Second)

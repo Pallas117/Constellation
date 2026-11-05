@@ -10,6 +10,7 @@
  */
 import { vec, type Vector3 } from "../physics/coordinates.js";
 import type { ArrivingSolarWind, DensityDisagreement } from "../types.js";
+import { freshnessMs } from "../../shared/policy/freshness.js";
 
 type Rec = Record<string, unknown>;
 
@@ -27,6 +28,12 @@ export interface L1Sample {
   magneticFieldGse: Vector3;
   /** Published GSM field when present; null to convert locally. */
   magneticFieldGsm: Vector3 | null;
+  /** Published Bt (mean of the 1-s magnitudes), nT; null when absent. Sense-checked, GAU-136. */
+  bt?: number | null;
+  /** True when no velocity vector was published and velocityGse was assumed anti-sunward (GAU-63). */
+  velocityAssumed?: boolean;
+  /** Proton temperature, K; null when not published or a fill. For structure detection (GAU-154). */
+  temperature?: number | null;
 }
 
 /**
@@ -47,13 +54,17 @@ const PAIR_TOLERANCE_MS = 90_000;
 export const L1_DISTANCE_KM = 1_500_000;
 /** Window for the driver means, as the magnetopause models were fitted. */
 export const MEAN_WINDOW_MS = 5 * 60_000;
-/** A propagated sample older than this at Earth means the series has a gap. */
-const ARRIVAL_MAX_AGE_MS = 15 * 60_000;
+/** A propagated sample older than this at Earth means the series has a gap (the L1 bound). */
+const ARRIVAL_MAX_AGE_MS = freshnessMs("l1_solar_wind");
 
 const finite = (v: unknown): number | null => {
   if (v === null || v === undefined || v === "") return null;
   const n = Number(v);
   return Number.isFinite(n) ? n : null;
+};
+const positive = (v: unknown): number | null => {
+  const x = finite(v);
+  return x !== null && x > 0 ? x : null;
 };
 
 /** SWPC time_tags are UTC but carry no zone ("2026-10-10 12:00:00.000"). */
@@ -80,6 +91,9 @@ interface WindRec {
   speed: number;
   velocityGse: Vector3;
   velocityGsm: Vector3 | null;
+  velocityAssumed: boolean;
+  /** Proton temperature, K; null when absent or a fill. */
+  temperature: number | null;
 }
 
 interface MagRec {
@@ -88,6 +102,7 @@ interface MagRec {
   active: boolean;
   gse: Vector3;
   gsm: Vector3 | null;
+  bt: number | null;
 }
 
 export function parseWind(data: unknown): WindRec[] {
@@ -102,15 +117,18 @@ export function parseWind(data: unknown): WindRec[] {
     if (t === null || density === null || speed === null) continue;
     if (density < PLAUSIBLE.densityMin || density > PLAUSIBLE.densityMax) continue;
     if (speed < PLAUSIBLE.speedMin || speed > PLAUSIBLE.speedMax) continue;
+    const published = triple(rec, "proton_v", "gse");
     out.push({
       t,
       source: String(rec.source ?? "unknown"),
       active: rec.active === true,
       density,
       speed,
-      // Without a published vector the bulk flow is taken as anti-sunward along X.
-      velocityGse: triple(rec, "proton_v", "gse") ?? vec(-speed, 0, 0),
+      // Without a published vector the bulk flow is taken as anti-sunward along X, and labelled so.
+      velocityGse: published ?? vec(-speed, 0, 0),
       velocityGsm: triple(rec, "proton_v", "gsm"),
+      velocityAssumed: published === null,
+      temperature: positive(rec.proton_temperature),
     });
   }
   return out.sort((a, b) => a.t - b.t);
@@ -126,7 +144,14 @@ export function parseMag(data: unknown): MagRec[] {
     const gse = triple(rec, "b", "gse");
     if (t === null || !gse) continue;
     if (Math.hypot(gse.x, gse.y, gse.z) > PLAUSIBLE.fieldMaxNt) continue;
-    out.push({ t, source: String(rec.source ?? "unknown"), active: rec.active === true, gse, gsm: triple(rec, "b", "gsm") });
+    out.push({
+      t,
+      source: String(rec.source ?? "unknown"),
+      active: rec.active === true,
+      gse,
+      gsm: triple(rec, "b", "gsm"),
+      bt: finite(rec.bt),
+    });
   }
   return out.sort((a, b) => a.t - b.t);
 }
@@ -183,6 +208,9 @@ export function buildL1Series(windData: unknown, magData: unknown): L1Sample[] {
       velocityGsm: w.velocityGsm,
       magneticFieldGse: m.gse,
       magneticFieldGsm: m.gsm,
+      temperature: w.temperature,
+      bt: m.bt,
+      velocityAssumed: w.velocityAssumed,
     });
   }
   return series;

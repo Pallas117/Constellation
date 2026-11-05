@@ -68,7 +68,9 @@ export async function fetchMmsBurstWindows(nowMs = Date.now()): Promise<MMSBurst
     latestStatus = {
       source: SOURCE,
       lastSeen: newest ?? latestStatus.lastSeen,
-      latencySeconds: newest ? Math.max(0, Math.round((nowMs - Date.parse(newest)) / 1000)) : latestStatus.latencySeconds,
+      latencySeconds: (newest ?? latestStatus.lastSeen) !== null
+        ? Math.max(0, Math.round((nowMs - Date.parse((newest ?? latestStatus.lastSeen)!)) / 1000))
+        : null,
       healthy: windows.length > 0,
       message:
         windows.length > 0
@@ -81,7 +83,10 @@ export async function fetchMmsBurstWindows(nowMs = Date.now()): Promise<MMSBurst
     latestStatus = {
       source: SOURCE,
       lastSeen: latestStatus.lastSeen,
-      latencySeconds: latestStatus.latencySeconds,
+      // The data keeps ageing while fetches fail: never report the last fetch's age as current.
+      latencySeconds: latestStatus.lastSeen
+        ? Math.max(0, Math.round((nowMs - Date.parse(latestStatus.lastSeen)) / 1000))
+        : null,
       healthy: false,
       message: error instanceof Error ? error.message : "MMS LASP fetch failed",
     };
