@@ -1065,6 +1065,11 @@ gates_run() { # gates_run [--once]: work through the queue, oldest first, then e
       [ "$once" = --once ] && return 0
       sleep "${GAUSS_GATES_RETRY_S:-60}"; continue
     fi
+    if [ "$rc" = 76 ] && [ -f "$req" ]; then # the install lost the network: same request, after a pause
+      echo "$(date '+%F %T') ${sha:0:7} install lost the network; trying again in ${GAUSS_GATES_NET_RETRY_S:-600} s."
+      [ "$once" = --once ] && return 0
+      sleep "${GAUSS_GATES_NET_RETRY_S:-600}"; continue
+    fi
     if [ -f "$req" ]; then # run-one died before it could say why
       gates_result "$sha" "$tree" ERROR "gate run exited $rc without a result (log: $LOGS/gates-runner.log)"; rm -f "$req"
     fi
@@ -1105,8 +1110,14 @@ gates_run_one() { # gates_run_one <request>: check out, install if the lockfile 
   [ -f "$co/package-lock.json" ] && lock=$(install_key "$co") || { gates_fail "no package-lock.json at ${sha:0:7}"; return 1; }
   if [ "$(cat "$co/node_modules/.gauss-lock" 2>/dev/null)" != "$lock" ]; then
     echo "Installing dependencies in $co ..."
-    (cd "$co" && PATH="$(dirname "$NODE"):$PATH" npm ci --no-audit --no-fund >"$GATES_DIR/runs/$sha.install.log" 2>&1) \
-      || { gates_fail "npm ci failed (log: $GATES_DIR/runs/$sha.install.log)"; return 1; }
+    if ! (cd "$co" && PATH="$(dirname "$NODE"):$PATH" npm ci --no-audit --no-fund >"$GATES_DIR/runs/$sha.install.log" 2>&1); then
+      # A dropped download (5 Nov 2026: read ETIMEDOUT on the phone hotspot) isn't the commit's fault:
+      # the request stays first in line and the runner tries again later.
+      if grep -Eq 'ETIMEDOUT|ECONNRESET|ECONNREFUSED|ENOTFOUND|EAI_AGAIN|ENETUNREACH|network request to' "$GATES_DIR/runs/$sha.install.log"; then
+        echo "npm ci lost the network for ${sha:0:7} (log: $GATES_DIR/runs/$sha.install.log): it stays queued."; return 76
+      fi
+      gates_fail "npm ci failed (log: $GATES_DIR/runs/$sha.install.log)"; return 1
+    fi
     echo "$lock" >"$co/node_modules/.gauss-lock"
   fi
   # The native MHD kernel: npm ci no longer builds it (package.json "gypfile": false, GAU-228) and the
