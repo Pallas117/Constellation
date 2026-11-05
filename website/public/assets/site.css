@@ -626,6 +626,20 @@ footer p{margin:0 0 6px}
 @keyframes radiate-ring{0%{outline:2px solid rgb(var(--violet));outline-offset:0}100%{outline:2px solid rgb(var(--violet) / 0);outline-offset:32px}}
 @media (prefers-reduced-motion:reduce){.btn.radiate:hover::before,.btn.radiate:focus-visible::before{opacity:.8;inset:-6px}}
 
+/* The one door into Gauss (Josh, 5 Nov 2026): "Sign in with Argo" carries the Argo sail on a smoked ground inside an
+   ember-to-violet rim, warm white text (16:1 on the ground). The only button on the site built this way, so it reads as
+   the door. On hover and focus the rim becomes the turning disk and the button radiates (above); with reduced motion
+   the rim stays still and the focus ring is the site's. The public release shows the same button pointing at the replay. */
+.btn.argo{--smoke:rgb(10 8 16 / .86);gap:10px;padding:0 22px 0 16px;color:var(--warm);border-color:transparent;background-color:transparent;
+  background-image:var(--sheen),linear-gradient(var(--smoke),var(--smoke)),linear-gradient(100deg,rgb(var(--ember) / .95),rgb(var(--violet) / .95));
+  background-origin:border-box;background-clip:padding-box,padding-box,border-box;background-size:250% 100%,100% 100%,100% 100%;background-position:130% 0,0 0,0 0;background-repeat:no-repeat}
+.btn.argo .sail{width:24px;height:24px;flex:none}
+.btn.argo:hover,.btn.argo:focus-visible{color:#fff;background-color:transparent;
+  background-image:var(--sheen),linear-gradient(var(--smoke),var(--smoke)),var(--disk-rim);background-position:-30% 0,0 0,0 0}
+@media (prefers-reduced-motion:no-preference){
+  .btn.argo.radiate:hover,.btn.argo.radiate:focus-visible{animation:disk-turn 7s linear infinite,radiate-ring 1.7s .55s cubic-bezier(.15,.6,.3,1) infinite}
+}
+
 /* The sign-in card's radiation field: Earth's belts holding trapped particles that bounce along the field lines
    (the same physics as the descent). Dim at rest, bright on hover; particles hidden with reduced motion. */
 .rad-field{display:block;width:100%;height:auto;max-height:104px;margin:-4px 0 12px;opacity:.5;transition:opacity .45s}

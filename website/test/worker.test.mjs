@@ -332,6 +332,11 @@ test("public release: pages offer pilots and an email route; later plans are in 
     const page = await (await call(path)).text();
     assert.doesNotMatch(page, /href="\/app\/|>Sign in<|<!--full-->/, `${path}: sign-in links removed`);
   }
+  // The landing page's one door: the same "Sign in with Argo" button, pointing at the replay, and a line that says so.
+  const home = await (await call("/")).text();
+  assert.match(home, /<a class="btn argo radiate" href="\/gauss\/#replay"><img class="sail" src="\/assets\/marks\/argo-mark-colour-dark\.svg"[^>]*>Sign in with Argo<\/a>/);
+  assert.doesNotMatch(home, /href="\/live"/, "nothing points at the sign-in redirect yet");
+  assert.match(home, /this button plays a replay of the live view/);
   const open = { ...env, EDU_SALES: "open", SUPPORT_URL: "https://buy.stripe.com/test_00abc123" };
   assert.doesNotMatch(await (await send(open, new Request("https://lightbound.uk/education/"))).text(), /\/app\/\?edu=start/, "education stays opening soon");
   assert.doesNotMatch(await (await send(open, new Request("https://lightbound.uk/constellation/"))).text(), /Support Constellation/, "no payment links");
@@ -1183,6 +1188,9 @@ test("live-view gate: /live goes through Access to the app's sign-in once accoun
   assert.equal(liveTarget({ ...full, GAUSS_APP_URL: "http://app.example.test/" }), "/gauss/#replay", "https only");
   const wrangler = await readFile(join(dirname(fileURLToPath(import.meta.url)), "..", "wrangler.jsonc"), "utf8");
   assert.match(wrangler, /"run_worker_first": \[[^\]]*"\/live"/, "Cloudflare runs the Worker for /live (else it 404s)");
+  const home = await (await send({ ASSETS, LIVE: memoryKV(), DATA: memoryKV(), RELEASE: "full", GAUSS_APP_URL: full.GAUSS_APP_URL }, new Request("https://lightbound.uk/"))).text();
+  assert.match(home, /<a class="btn argo radiate" href="\/live"><img class="sail" src="\/assets\/marks\/argo-mark-colour-dark\.svg"[^>]*>Sign in with Argo<\/a>/, "the door opens on /live");
+  assert.doesNotMatch(home, /plays a replay of the live view|href="\/gauss\/#replay">[^<]*<img/, "the public wording and route are gone");
   const page = '<p><!--full--><a href="/live">in</a><!--/full--><!--public--><a href="/gauss/#replay">r</a><!--/public--></p>';
   assert.equal(forRelease(page, { RELEASE: "public" }), '<p><!--public--><a href="/gauss/#replay">r</a><!--/public--></p>');
   assert.equal(forRelease(page, full), '<p><!--full--><a href="/live">in</a><!--/full--></p>');

@@ -176,9 +176,15 @@ test("live-view gate: a labelled pre-rendered frame behind a sign-in card, no sc
   for (const f of ["gauss-live-wide.webp", "gauss-live-tall.webp"]) assert.ok(size(`/assets/media/${f}`) < 250_000, `${f} stays small`);
   assert.match(gate, /loading="lazy"/, "never competes with the hero for first paint");
   assert.match(gate, /a frame from the Gauss live view, not live data/, "a still is never passed off as live");
-  assert.match(gate, /<!--full--><a class="btn radiate" href="\/live">Sign in with Argo<\/a><!--\/full-->/);
+  // One door, both releases: the Argo sail on the button; /live (Access, then the app's Argo sign-in) once accounts
+  // open, the replay until then, and the public line says so (worker/release.js strips the other block).
+  const sail = '<img class="sail" src="/assets/marks/argo-mark-colour-dark.svg" alt="" width="24" height="24" decoding="async">';
+  assert.match(gate, new RegExp(`<!--full--><a class="btn argo radiate" href="/live">${sail}Sign in with Argo</a><!--/full-->`));
+  assert.match(gate, new RegExp(`<!--public--><a class="btn argo radiate" href="/gauss/#replay">${sail}Sign in with Argo</a><!--/public-->`));
+  assert.match(gate, /<!--public-->Accounts aren&rsquo;t open yet: until they are, this button plays a replay of the live view\. <!--\/public-->/);
+  assert.equal(read("assets/marks/argo-mark-colour-dark.svg").match(/<polygon/g).length, 5, "the Argo sail mark: mast, boom, three sails and the star");
+  assert.match(read("assets/site.css"), /\.btn\.argo\{/, "the door has its own style");
   assert.match(gate, /<svg class="rad-field"[^>]*aria-hidden="true"/, "the radiation field is decoration, hidden from screen readers");
-  assert.match(gate, /<!--public--><a class="btn" href="\/gauss\/#replay">Watch a replay<\/a><!--\/public-->/);
   assert.doesNotMatch(gate, /<script|<iframe|<canvas/);
   assert.deepEqual([...home.matchAll(/class="k">(\d\d_[A-Z_]+)</g)].map((m) => m[1]), ["00_LIGHTBOUND", "01_LIVE_VIEW", "02_ENTER"], "section kickers in order");
   assert.match(home, />03_CONTACT</);
