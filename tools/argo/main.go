@@ -256,6 +256,11 @@ func main() {
 		err = phoneSetup(os.Args[2:], cfg)
 	case "egress": // what Argo sent off this Mac and where; `off|on` holds or releases third-party sends
 		err = egressCmd(os.Args[2:], store, phone, os.Stdout, time.Now())
+	case "dns": // DNS guard (dns.go): desired state vs public DNS; `plan` lists the API requests; `apply` is gated
+		var code int
+		if code, err = dnsCmd(os.Args[2:], store, phone, realDNSEnv(), os.Stdout, time.Now()); err == nil && code != 0 {
+			os.Exit(code)
+		}
 	case "enroll":
 		if err = enroll(os.Args[2:]); err == nil {
 			err = verifyEnroll(ctx, loadConfig(), store, loop.Prober)
@@ -269,7 +274,7 @@ func main() {
 	case "version":
 		fmt.Println("argo", version)
 	default:
-		fmt.Fprintln(os.Stderr, "usage: argo [status|doctor|fix|report|on|off|preflight|run -- cmd|phone <handle>|test|off|imessage|sms|notify TITLE MSG|egress [off|on]|thirdparty [list|check|accept|seen]|guard [admit|run]|heal [--json]|scale [--json]|watch|summary [--send]|enroll URL DEVICE|install|uninstall|version]\n       argo [send [-ttl D] DEVICE FILE|outbox|inbox|sync|keys [list|publish|trust DEVICE]|mule export|import DIR|link]")
+		fmt.Fprintln(os.Stderr, "usage: argo [status|doctor|fix|report|on|off|preflight|run -- cmd|phone <handle>|test|off|imessage|sms|notify TITLE MSG|egress [off|on]|dns check|plan [--zone Z] [--json] [--alert]|thirdparty [list|check|accept|seen]|guard [admit|run]|heal [--json]|scale [--json]|watch|summary [--send]|enroll URL DEVICE|install|uninstall|version]\n       argo [send [-ttl D] DEVICE FILE|outbox|inbox|sync|keys [list|publish|trust DEVICE]|mule export|import DIR|link]")
 		os.Exit(2)
 	}
 	if err != nil {
