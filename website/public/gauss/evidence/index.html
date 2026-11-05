@@ -43,9 +43,9 @@
     <p class="lead">The shape of what a pilot delivers, filled with synthetic data. It is not a mission record. Your report covers your own telemetry and inference logs.</p>
     <dl class="report-head">
       <div><dt>Scope</dt><dd>One asset group, one historical replay, one near-live feed</dd></div>
-      <div><dt>Window</dt><dd>Six hours around a G3 geomagnetic storm with an S2 proton event (synthetic)</dd></div>
+      <div><dt>Window</dt><dd>About a day and a half around a G3 geomagnetic storm with an S2 proton event (synthetic)</dd></div>
       <div><dt>Inputs</dt><dd>CCSDS packets with an XTCE dictionary, an onboard-AI inference log, public NOAA space-weather data</dd></div>
-      <div><dt>Acceptance outcome</dt><dd>Every inference produced from stale or corrupted inputs is flagged before anyone acts on it</dd></div>
+      <div><dt>Acceptance outcome</dt><dd>Every inference produced from stale or corrupted inputs is flagged in the report</dd></div>
     </dl>
   </div>
 </section>
@@ -97,7 +97,7 @@
   <div class="wrap">
     <p class="label">04_PROVENANCE</p>
     <h2 id="prov-h">Every value, traceable.</h2>
-    <p class="lead">Each exported decision carries its source, time, freshness and uncertainty. A sample row:</p>
+    <p class="lead">In the export being built, each decision carries its source, time, freshness and uncertainty. A sample row:</p>
     <div class="tw"><table class="table mono">
       <thead><tr><th>record</th><th>source</th><th>received</th><th>age</th><th>state</th><th>policy</th><th>reason</th></tr></thead>
       <tbody><tr><td>pkt-0412</td><td>CCSDS APID 0x2A1</td><td>03:14:07Z</td><td>2 s</td><td>degraded</td><td>degrade</td><td>bit-error rate above window limit during the S2 proton event</td></tr></tbody>

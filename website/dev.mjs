@@ -17,7 +17,7 @@ import { putAccount, saveApplication } from "./worker/data.js";
 import { saveCall } from "./worker/calls.js";
 import { signPayload } from "./worker/stripe.js";
 import { esc } from "./worker/render.js";
-import { gbp } from "./worker/tiers.js";
+import { usd } from "./worker/tiers.js";
 import { fixtureFetch } from "./test/fixtures/fetch.mjs";
 import { PROGRAMMES_URL } from "./test/fixtures/opportunities.mjs";
 import { memoryKV } from "./test/fixtures/kv.mjs";
@@ -231,7 +231,7 @@ async function stripeStandIn(req, url, send) {
       if (subscription) await deliver("customer.subscription.created", { id: subscription, status: "active", customer: cs.customer, metadata: meta });
       return send(303, { location: cs.success });
     }
-    const price = cs.product ? `$${cs.amount / 100} a month` : `${gbp(cs.amount)}${cs.yearly ? " a year" : ""}`;
+    const price = cs.product ? `$${cs.amount / 100} a month` : `${usd(cs.amount)}${cs.yearly ? " a year" : ""}`;
     return html(standInPage("Checkout", `<h1>${esc(cs.name)}</h1><p class="lead">${esc(price)} · ${esc(cs.email)}</p>
 <form method="post" action="/__stripe/checkout/${cs.id}/pay"><p class="actions"><button class="btn">Pay (test)</button> <a class="btn ghost" href="${esc(cs.cancel)}">Cancel</a></p></form>`));
   }
@@ -243,7 +243,7 @@ async function stripeStandIn(req, url, send) {
       return send(303, { location: "/app/" });
     }
     const due = inv.due_date ? new Date(inv.due_date * 1000).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }) : "";
-    return html(standInPage("Invoice", `<h1>${esc(inv.description)}</h1><p class="lead">${esc(gbp(inv.amount))} · ${esc(inv.metadata.email)}${due ? ` · due ${esc(due)}` : ""} · ${esc(inv.status)}</p>` +
+    return html(standInPage("Invoice", `<h1>${esc(inv.description)}</h1><p class="lead">${esc(usd(inv.amount))} · ${esc(inv.metadata.email)}${due ? ` · due ${esc(due)}` : ""} · ${esc(inv.status)}</p>` +
       (inv.status === "open" ? `<div class="actions"><form method="post" action="/__stripe/invoice/${inv.id}/pay" class="inline"><button class="btn">Pay invoice (test)</button></form>` +
         `<form method="post" action="/__stripe/invoice/${inv.id}/void" class="inline"><button class="btn ghost">Void (test)</button></form></div>` : "") +
       `<p class="actions"><a class="btn ghost" href="/app/">Back to Lightbound</a></p>`));

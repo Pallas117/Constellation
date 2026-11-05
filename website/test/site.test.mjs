@@ -18,7 +18,7 @@ const PAGES = { "/": "index.html", "/gauss/": "gauss/index.html", "/constellatio
   "/gauss/apply/": "gauss/apply/index.html", "/constellation/apply/": "constellation/apply/index.html", "/privacy/": "privacy/index.html",
   "/app/": "app/index.html", "/app/admin/": "app/admin/index.html", "/gauss/evidence/": "gauss/evidence/index.html",
   "/constellation/time/": "constellation/time/index.html", "/argo/": "argo/index.html",
-  "/education/": "education/index.html", "/education/apply/": "education/apply/index.html", "/constellation/workshops/": "constellation/workshops/index.html", "/terms/": "terms/index.html" };
+  "/education/": "education/index.html", "/education/apply/": "education/apply/index.html", "/constellation/workshops/": "constellation/workshops/index.html", "/terms/": "terms/index.html", "/press/": "press/index.html" };
 const html = Object.fromEntries(Object.entries(PAGES).map(([route, f]) => [route, read(f)]));
 // wrangler.jsonc, read as JSON once its whole-line comments are gone.
 const WRANGLER_RAW = readFileSync(join(pub, "..", "wrangler.jsonc"), "utf8");
@@ -252,7 +252,7 @@ test("apply pages: the static form is exactly what the Worker renders, and posts
 
 test("plans: packages and prices follow the sales plan; honest features only", () => {
   // Gauss Aurora repo, docs/SALES_FEATURE_LIST_AND_ONBOARDING.md (21 Aug 2026), "Commercial packages".
-  const expected = { pilot: "£20k–£40k per pilot", fleet_integration: "£60k–£125k a year", mission_integration: "£120k–£300k one-off", flight_candidate_adapter: "£750k–£2.5m one-off" };
+  const expected = { pilot: "$25k–$50k per pilot", fleet_integration: "$80k–$160k a year", mission_integration: "$150k–$400k one-off", flight_candidate_adapter: "$1m–$3.3m one-off" };
   assert.equal(SHOW_PRICES, true);
   assert.deepEqual(Object.fromEntries(TIERS.map((t) => [t.id, priceLabel(t)])), expected);
   assert.deepEqual(TIERS.map((t) => t.billing), ["payment", "subscription", "invoice", "invoice"]);
@@ -483,7 +483,7 @@ test("GAU-137: bit errors follow the proton (S) level, link gaps the geomagnetic
   assert.doesNotMatch(text(evidence), /bit-error[^.]*\bG[1-5]\b/i, "bit errors never pinned on a G level");
   assert.match(text(evidence), /public NOAA space-weather data/);
   assert.doesNotMatch(text(evidence), /space-weather scales/);
-  assert.match(text(gauss), /elevated space-weather conditions \(proton, electron and geomagnetic levels\)/);
+  assert.match(text(gauss), /elevated space-weather conditions \(solar radiation S, geomagnetic G and radio-blackout R levels\)/);
   assert.match(text(gauss), /Being built for the first pilots: ingest of your own logs, output flagging and the evidence export/);
   assert.match(text(gauss), /Yamcs \(pilot integration\)/);
   assert.match(text(gauss), /ONNX \(pilot integration\)/);
@@ -536,4 +536,25 @@ test("traffic: every indexable page has share cards and is in the sitemap; robot
   assert.equal(ld["@graph"][0].name, "Lightbound Limited");
   assert.deepEqual(ld["@graph"][0].sameAs, ["https://luma.com/constellation"]);
   for (const [route, page] of Object.entries(html)) if (route !== "/") assert.doesNotMatch(page, /<script/, `${route}: no data blocks elsewhere`);
+});
+
+test("press: quotable facts and story angles, honest limits, a contact route, linked from the Gauss page", () => {
+  const press = html["/press/"];
+  assert.match(text(press), /company no\. 14573199/);
+  assert.match(text(press), /advisory/i);
+  assert.match(text(press), /What we won't say/);
+  assert.match(press, /href="mailto:jzwnathan@lightbound\.uk\?subject=Press"/);
+  assert.match(text(press), /synthetic/i, "says the replay is synthetic");
+  assert.doesNotMatch(text(press), /consultancy|defen[cs]e/i, "nothing that hints at what Turnstone does");
+  assert.match(html["/gauss/"], /href="\/press\/"/, "reachable from the Gauss page");
+});
+
+test("home: origins show where the names come from, with linked sources and no invented family detail", () => {
+  const home = readFileSync(new URL("../public/index.html", import.meta.url), "utf8");
+  const origins = home.match(/<section id="origins"[\s\S]*?<\/section>/)?.[0] ?? "";
+  assert.equal((origins.match(/<li data-k=/g) ?? []).length, 3);
+  assert.match(origins, /1801 · PALERMO[\s\S]*1802 · BREMEN[\s\S]*1939&ndash;1945/);
+  for (const a of origins.match(/<a href="https:[^>]+>/g) ?? []) assert.match(a, /rel="noopener noreferrer"/);
+  assert.match(origins, /href="\/press\/#names"/);
+  assert.doesNotMatch(origins, /dwarf planet|invented|Piazzi Smyth/i, "Pallas is not a dwarf planet; Gauss did not invent elimination");
 });

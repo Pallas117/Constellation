@@ -7,7 +7,9 @@
 // Constellation is not here: it is free and by invitation.
 
 export const SHOW_PRICES = true;
-export const CURRENCY = "gbp";
+// US dollars (Josh, 3 Nov 2026: one currency everywhere). The ranges were the sales plan's pounds at $1.34 to the pound
+// (ECB reference rate, 2 Nov 2026), rounded.
+export const CURRENCY = "usd";
 
 export const FEATURES = Object.freeze({
   replay: "Replay of your telemetry against the space environment it met (CCSDS, XTCE, Yamcs-shaped data)",
@@ -32,7 +34,7 @@ export const TIERS = Object.freeze([
     short: "Pilot",
     stage: "Start here",
     outcome: "One asset group, one historical replay, one live or near-live feed, one measurable acceptance outcome.",
-    price: { min: 20_000, max: 40_000, unit: "per pilot" },
+    price: { min: 25_000, max: 50_000, unit: "per pilot" },
     billing: "payment", // one Stripe payment
     features: ["replay", "feed", "acceptance", "provenance", "correlation", "review"],
     entry: "Bounded and paid: about 30 days, at a fixed price agreed from your scope before you pay.",
@@ -43,7 +45,7 @@ export const TIERS = Object.freeze([
     short: "Fleet Integration",
     stage: "Now",
     outcome: "Recurring mission-data quality, provenance, radiation correlation and evidence exports.",
-    price: { min: 60_000, max: 125_000, unit: "a year" },
+    price: { min: 80_000, max: 160_000, unit: "a year" },
     billing: "subscription", // annual Stripe subscription
     features: ["recurring", "provenance", "correlation", "states", "exports", "evidence"],
     entry: "Usually follows a pilot. Billed yearly.",
@@ -54,7 +56,7 @@ export const TIERS = Object.freeze([
     short: "Mission integration",
     stage: "Project",
     outcome: "Your archive, mission dictionary, Yamcs and ground integration, and acceptance work.",
-    price: { min: 120_000, max: 300_000, unit: "one-off" },
+    price: { min: 150_000, max: 400_000, unit: "one-off" },
     billing: "invoice", // invoiced by milestone
     features: ["archive", "ground", "acceptance", "evidence"],
     entry: "Scoped with your team and invoiced by milestone.",
@@ -65,7 +67,7 @@ export const TIERS = Object.freeze([
     short: "Flight adapter",
     stage: "Gated",
     outcome: "Target-processor and mission-specific validation, after hardware and operator gates.",
-    price: { min: 750_000, max: 2_500_000, unit: "one-off" },
+    price: { min: 1_000_000, max: 3_300_000, unit: "one-off" },
     billing: "invoice",
     features: ["adapter", "evidence"],
     entry: "Only with a named mission, target processor, mission dictionary, hardware evidence and operator authority.",
@@ -74,14 +76,14 @@ export const TIERS = Object.freeze([
 
 export const tierById = (id) => TIERS.find((t) => t.id === id) ?? null;
 
-/** £20k, £125k, £2.5m */
-export const gbpShort = (pounds) => (pounds >= 1_000_000 ? `£${+(pounds / 1_000_000).toFixed(2)}m` : `£${Math.round(pounds / 1000)}k`);
-/** £28,000 from pence */
-export const gbp = (pence) => `£${(pence / 100).toLocaleString("en-GB", { minimumFractionDigits: pence % 100 ? 2 : 0 })}`;
-export const priceLabel = (t) => (SHOW_PRICES ? `${gbpShort(t.price.min)}–${gbpShort(t.price.max)} ${t.price.unit}` : "Priced per scope");
-/** Short form for tight spaces (the plan picker on a phone): "Pilot · £20k–£40k". */
-export const optionLabel = (t) => `${t.short} · ${gbpShort(t.price.min)}–${gbpShort(t.price.max)}${t.billing === "subscription" ? " a year" : ""}`;
-export const quoteInRange = (t, pounds) => Number.isFinite(pounds) && pounds >= t.price.min && pounds <= t.price.max;
+/** $25k, $160k, $3.3m */
+export const usdShort = (dollars) => (dollars >= 1_000_000 ? `$${+(dollars / 1_000_000).toFixed(2)}m` : `$${Math.round(dollars / 1000)}k`);
+/** $28,000 from cents */
+export const usd = (cents) => `$${(cents / 100).toLocaleString("en-US", { minimumFractionDigits: cents % 100 ? 2 : 0 })}`;
+export const priceLabel = (t) => (SHOW_PRICES ? `${usdShort(t.price.min)}–${usdShort(t.price.max)} ${t.price.unit}` : "Priced per scope");
+/** Short form for tight spaces (the plan picker on a phone): "Pilot · $25k–$50k". */
+export const optionLabel = (t) => `${t.short} · ${usdShort(t.price.min)}–${usdShort(t.price.max)}${t.billing === "subscription" ? " a year" : ""}`;
+export const quoteInRange = (t, dollars) => Number.isFinite(dollars) && dollars >= t.price.min && dollars <= t.price.max;
 
 /** Where a pilot is up to; shown to the customer, set by an admin. */
 export const PILOT_STEPS = Object.freeze(["Scoping", "Data-sharing agreement", "Data received", "Replay running", "Evidence report delivered"]);
@@ -108,7 +110,7 @@ export const ARGO = Object.freeze({ id: "argo", name: "Gauss Argo" });
 
 // Gauss for Education (prototype; Josh, 2026-10-20). Students: free for a year at a time, with a university email.
 // Staff and research groups: monthly by card at EDU_STAFF_PRICE (US cents, wrangler.jsonc vars); empty means the price is
-// TBC and there is no checkout. Departments: a yearly licence, quoted by an admin and paid by invoice in pounds.
+// TBC and there is no checkout. Departments: a yearly licence, quoted by an admin and paid by invoice in dollars.
 // It is an academic licence, never a trial of the Gauss packages (sales plan).
 export const EDU = Object.freeze({ id: "edu", name: "Gauss for Education", currency: "usd", interval: "month" });
 export const eduMode = (env) => (["off", "open"].includes(env?.EDU_SALES) ? env.EDU_SALES : "off");

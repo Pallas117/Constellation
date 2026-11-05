@@ -23,6 +23,7 @@ closed until `RELEASE: "full"`. See "Launch" and "Opening accounts later".
 | `/app/` | Signed-in workspace: quote and payment (card, or an invoice where you allow it), billing state, pilot progress, space weather, Constellation membership, members' opportunities, and the staff link for the team. |
 | `/app/admin/` | For `ADMIN_EMAILS`: approve with a quote, set plan, billing, pilot step; invite Constellation members (free). |
 | `/constellation/time/` | Public time-zone planner. Pick a date and up to 8 zones to see the local hour everywhere, with the hours that suit everyone outlined. A picked hour comes with a calendar file. No data is stored. |
+| `/press/` | Press and creators (GAU-37): quotable one-liner and paragraph, story angles, what we won't say, interviews and creator collaborations, marks. Linked from the Gauss contact section. |
 | `/privacy/` | What is kept, why, for how long, and how to have it deleted. |
 | `/pilot`, `/sales` | Redirects into the Gauss flow (the entry points named in the sales plan), via `public/_redirects`. |
 | `/api/launches`, `/api/launches.ics`, `/api/space-weather`, `/api/health` | JSON, a calendar feed and a health check. |
@@ -79,15 +80,17 @@ customer ── Manage billing ──► Stripe billing portal (cards, invoices,
 ```
 
 **Packages and prices** come from the sales plan ("Gauss Aurora sales feature list and onboarding
-flow", Gauss Aurora repo `docs/SALES_FEATURE_LIST_AND_ONBOARDING.md`, 21 Aug 2026). They live in
-`worker/tiers.js`:
+flow", Gauss Aurora repo `docs/SALES_FEATURE_LIST_AND_ONBOARDING.md`, 21 Aug 2026), converted from pounds to US dollars
+(Josh, 3 Nov 2026: one currency everywhere) at $1.34 to the pound (ECB reference rate, 2 Nov 2026) and rounded. Charges and
+invoices are in USD; a UK Stripe account paying out in pounds adds a currency-conversion fee (check Stripe's UK pricing
+before the first charge). They live in `worker/tiers.js`:
 
 | Package | Range | Paid how |
 |---|---|---|
-| Design-partner pilot | £20k–£40k per pilot | One Stripe payment, or one invoice if allowed |
-| Fleet Integration | £60k–£125k a year | Yearly Stripe subscription, or a yearly invoice if allowed |
-| Mission integration | £120k–£300k one-off | Invoiced by milestone |
-| Flight Candidate Adapter (gated) | £750k–£2.5m one-off | Invoiced by milestone |
+| Design-partner pilot | $25k–$50k per pilot | One Stripe payment, or one invoice if allowed |
+| Fleet Integration | $80k–$160k a year | Yearly Stripe subscription, or a yearly invoice if allowed |
+| Mission integration | $150k–$400k one-off | Invoiced by milestone |
+| Flight Candidate Adapter (gated) | $1m–$3.3m one-off | Invoiced by milestone |
 
 Each customer pays a fixed quote that you set inside the range when you approve them. The public
 pages and the workspace don't say how payment is taken (a test checks); the privacy notice still
@@ -199,7 +202,7 @@ and not available until an outside security review and legal checks. A test keep
   `https://lightbound.uk/terms/` in Stripe's public business details. Checkout fails until that's set.
 - **UK VAT:**
   - Lightbound must register once UK taxable turnover passes £90,000 in 12 months (gov.uk, VAT Notice 700/1). Three
-    Gauss pilots at £20k–£40k would do it.
+    Gauss pilots near the top of $25k–$50k (about £19k–£37k each at $1.34 to the pound) would do it.
   - The standard rate is 20% (gov.uk/vat-rates).
   - Prices shown to UK consumers should include VAT once registered (UNVERIFIED: check with the accountant).
   - Self-serve plans are UK-only for now: a UK seller owes EU VAT from the first sale to an EU consumer (see Gauss
