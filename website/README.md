@@ -415,7 +415,9 @@ npx wrangler@4 kv namespace create LIVE    # done 23 Oct 2026: its id is in wran
 npx wrangler@4 secret put LL2_API_KEY      # optional: paste the Launch Library 2 key when asked
 ```
 
-**The launch feed needs an LL2 key in practice.** Launch Library 2 allows 15 anonymous calls an hour, and the
+**Without an LL2 key the launch feed falls back to RocketLaunch.Live.** When LL2 fails (429 or down) the cron fetches RocketLaunch.Live's free "next five" list (no key; credited on the page and in the calendar as "Data by RocketLaunch.Live", which is its one condition) and the feed stays live with fewer launches. A key is still better: twelve launches with status and orbit.
+
+**The launch feed needs an LL2 key for the full list.** Launch Library 2 allows 15 anonymous calls an hour, and the
 Worker shares Cloudflare's outbound IPs with other users who use them up: the first preview (24 Oct 2026) got
 HTTP 429 on every refresh, while the same URL answered from a home connection. With `LL2_API_KEY` set (a key from
 The Space Devs' Patreon), the Worker sends `Authorization: Token <key>` to `ll.thespacedevs.com` and to no other

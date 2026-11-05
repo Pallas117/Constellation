@@ -6,7 +6,7 @@ import { existsSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import worker from "../worker/index.js";
-import { FEEDS, feedState, ll2Auth, normaliseEvents, normaliseLaunches, normaliseNews, normaliseProgrammes, normaliseUkri, normaliseUksa, normaliseWeather, parseCsv, programmesUrl, readFeed, refreshFeeds } from "../worker/feeds.js";
+import { FEEDS, feedState, launchesSource, ll2Auth, normaliseEvents, normaliseLaunches, normaliseNews, normaliseProgrammes, normaliseRocketLaunch, normaliseUkri, normaliseUksa, normaliseWeather, parseCsv, programmesUrl, readFeed, refreshFeeds } from "../worker/feeds.js";
 import { countdown, esc, renderConstellationDoor, renderEventIcs, renderEvents, renderGaussDoor, renderIcs, renderLaunches, renderWeather, whenText } from "../worker/render.js";
 import { SECURITY_HEADERS } from "../worker/headers.js";
 import { RECORDED_AT, fixture, makeFetch } from "./fixtures/fetch.mjs";
@@ -110,7 +110,7 @@ test("events: Luma's calendar becomes titles, times and public links only; cance
 test("refresh: an upstream failure keeps the last good data and records the error", async () => {
   const env = { LIVE: memoryKV() };
   await refreshFeeds(env, { fetchImpl: makeFetch(), now: RECORDED_AT });
-  const r = await refreshFeeds(env, { fetchImpl: makeFetch({ launches: 429, scales: 503 }), now: RECORDED_AT + 60 * MIN });
+  const r = await refreshFeeds(env, { fetchImpl: makeFetch({ launches: 429, launchesFallback: 503, scales: 503 }), now: RECORDED_AT + 60 * MIN });
   assert.deepEqual(core(r), { launches: "failed: ll.thespacedevs.com HTTP 429", weather: "failed: services.swpc.noaa.gov HTTP 503", events: "fresh" });
   const rec = await readFeed(env, "launches");
   assert.equal(rec.data.length, 10, "old data kept");
@@ -150,7 +150,7 @@ test("refresh: the optional LL2 key goes to LL2 only, in its Token header, and n
   // Failures (a 429, or a redirect it refused to follow) are recorded without the key.
   for (const [status, why] of [[429, "rate limited"], [301, "redirect not followed"]]) {
     const env = { LIVE: memoryKV(), LL2_API_KEY: key };
-    const r = await refreshFeeds(env, { fetchImpl: makeFetch({ launches: status }), now: RECORDED_AT });
+    const r = await refreshFeeds(env, { fetchImpl: makeFetch({ launches: status, launchesFallback: 503 }), now: RECORDED_AT });
     assert.equal(r.launches, `failed: ll.thespacedevs.com HTTP ${status}`, why);
     assert.ok(!JSON.stringify([r, await readFeed(env, "launches")]).includes(key), `${why}: the key is never stored or logged`);
   }
@@ -1147,4 +1147,37 @@ test("group calls: a member's page reads one cached index, not a KV list per cal
   assert.equal((await listCalls(env, t0 + 5 * 60_000)).find((c) => c.id === a.id).rsvps.length, 1);
   assert.equal((await listCalls(env, t0 + 11 * 60_000)).find((c) => c.id === a.id).rsvps.length, 2, "rebuilt from the keys after 10 minutes");
   assert.equal(await rsvp(env, a.id, "third@example.test", true, t0), "full", "capacity is checked against the keys, not the cache");
+});
+
+test("launches: when LL2 is rate-limited the free RocketLaunch.Live list keeps the page live, credited; LL2 wins when back", async () => {
+  const env = { LIVE: memoryKV() };
+  const limited = makeFetch({ launches: 429 });
+  const r = await refreshFeeds(env, { fetchImpl: limited, now: RECORDED_AT });
+  assert.equal(r.launches, "updated", "the fallback filled the feed");
+  assert.deepEqual(limited.calls.filter((c) => c.startsWith("launches")), ["launches", "launchesFallback"]);
+  const rec = await readFeed(env, "launches");
+  assert.equal(launchesSource(rec), "rocketlaunch");
+  assert.equal(rec.data.length, 2);
+  assert.deepEqual(rec.data.map((l) => [l.id, l.precision, l.location]), [
+    ["rl-9001", "MIN", "Example Spaceport, Exampleland"],
+    ["rl-9002", "MON", "Example Range, Exampleland"],
+  ]);
+  const html = renderLaunches(rec, RECORDED_AT);
+  assert.match(html, /Source: Data by RocketLaunch\.Live/, "the credit RocketLaunch.Live asks for");
+  assert.doesNotMatch(html, /Launch Library/);
+  assert.match(renderIcs(rec, RECORDED_AT).replace(/\r\n /g, ""), /Source: Data by RocketLaunch\.Live via lightbound\.uk/, "unfolded calendar lines");
+
+  const both = makeFetch({ launches: 429, launchesFallback: 503 });
+  const r2 = await refreshFeeds(env, { fetchImpl: both, now: RECORDED_AT + 60 * MIN });
+  assert.match(r2.launches, /^failed: /, "both down: LL2's error is reported and the previous data kept");
+  assert.equal(launchesSource(await readFeed(env, "launches")), "rocketlaunch");
+
+  const fine = makeFetch();
+  const r3 = await refreshFeeds(env, { fetchImpl: fine, now: RECORDED_AT + 120 * MIN });
+  assert.equal(r3.launches, "updated");
+  assert.deepEqual(fine.calls.filter((c) => c.startsWith("launches")), ["launches"], "no fallback call while LL2 answers");
+  const back = await readFeed(env, "launches");
+  assert.equal(launchesSource(back), "ll2");
+  assert.match(renderLaunches(back, RECORDED_AT + 120 * MIN), /Source: The Space Devs Launch Library 2/);
+  assert.throws(() => normaliseRocketLaunch({ result: [] }), /no usable launches/);
 });
