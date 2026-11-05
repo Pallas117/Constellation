@@ -22,6 +22,8 @@ HERE = Path(__file__).resolve().parent
 OUT = HERE.parent / "public" / "assets" / "marks"
 WARM, MUTED, GOLD, LIME = "#f3f0e8", "#a9aba6", "#b0906f", "#ccff00"
 
+# Marks are cached for a week (public/_headers), so a changed lockup gets a new published name.
+PUBLISHED = {"constellation": "constellation-horizontal-colour-dark-v2.svg"}
 LOCKUPS = {
     # name: (symbol file, wordmark segments [(text, colour)], tracking, subline or None, subline colour, accessible name)
     # Turnstone is endorsed ("a Lightbound company"); Constellation carries no Lightbound badge (Brand Book, architecture).
@@ -81,7 +83,7 @@ def main(kit: Path) -> None:
         svg = (f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {width:g} {SYMBOL:g}" width="{width:g}" height="{SYMBOL:g}" '
                f'role="img" aria-label="{label}"><title>{label}</title>'
                f'{nested_symbol((HERE / "symbols" / symbol).read_text(encoding="utf-8"))}{"".join(paths)}</svg>\n')
-        (HERE / "symbols" if name == "turnstone" else OUT).joinpath(f"{name}-horizontal-colour-dark.svg").write_text(svg, encoding="utf-8")
+        (HERE / "symbols" if name == "turnstone" else OUT).joinpath(PUBLISHED.get(name, f"{name}-horizontal-colour-dark.svg")).write_text(svg, encoding="utf-8")
         print(f"{name}: {width:g} x {SYMBOL:g}, {len(svg)} bytes")
 
 
