@@ -527,7 +527,7 @@ test("GAU-137: bit errors follow the proton (S) level, link gaps the geomagnetic
   assert.doesNotMatch(text(evidence), /bit-error[^.]*\bG[1-5]\b/i, "bit errors never pinned on a G level");
   assert.match(text(evidence), /public NOAA space-weather data/);
   assert.doesNotMatch(text(evidence), /space-weather scales/);
-  assert.match(text(gauss), /elevated space-weather conditions \(proton, electron and geomagnetic levels\)/);
+  assert.match(text(gauss), /elevated space-weather conditions \(proton and geomagnetic levels\)/); // no electron level in the trust record on main
   assert.match(text(gauss), /Being built for the first pilots: ingest of your own logs, output flagging and the evidence export/);
   assert.match(text(gauss), /Yamcs \(pilot integration\)/);
   assert.match(text(gauss), /ONNX \(pilot integration\)/);

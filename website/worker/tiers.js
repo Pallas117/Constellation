@@ -10,7 +10,7 @@ export const SHOW_PRICES = true;
 export const CURRENCY = "gbp";
 
 export const FEATURES = Object.freeze({
-  replay: "Replay of your telemetry against the space environment it met (CCSDS, XTCE, Yamcs-shaped data)",
+  replay: "Replay of your inference logs and telemetry exports against the space environment they met",
   feed: "One live or near-live feed",
   acceptance: "One measurable acceptance outcome, agreed before day one",
   provenance: "Provenance, freshness and uncertainty on every exported decision",
