@@ -31,6 +31,7 @@ import (
 	"strings"
 	"time"
 	"unicode"
+	"unicode/utf8"
 )
 
 const (
@@ -367,8 +368,9 @@ func safeName(name string) string {
 		return c
 	}, name)
 	name = strings.TrimLeft(name, ". ")
-	for len(name) > 128 {
-		name = name[:len(name)-1]
+	for len(name) > 128 { // cut whole runes, so the name stays valid UTF-8
+		_, size := utf8.DecodeLastRuneInString(name)
+		name = name[:len(name)-size]
 	}
 	if name == "" {
 		return "file"

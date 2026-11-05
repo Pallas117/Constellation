@@ -361,8 +361,24 @@ func directLookup(ctx context.Context, host string) bool {
 func run(ctx context.Context, name string, args ...string) string {
 	c, cancel := context.WithTimeout(ctx, 8*time.Second)
 	defer cancel()
-	out, _ := exec.CommandContext(c, name, args...).Output()
+	out, _ := exec.CommandContext(c, toolPath(name), args...).Output()
 	return string(out)
+}
+
+// toolPath resolves a system tool to its fixed path (sysTools, per OS) when
+// that file exists, so a PATH entry put first by a shell hook or a package
+// can't stand in for osascript, open, launchctl or the probing tools. Other
+// names, and absolute paths, pass through to the normal PATH lookup.
+func toolPath(name string) string {
+	if filepath.IsAbs(name) {
+		return name
+	}
+	if p, ok := sysTools[name]; ok {
+		if fi, err := os.Stat(p); err == nil && !fi.IsDir() {
+			return p
+		}
+	}
+	return name
 }
 
 // tailscaleCLI finds the CLI even under launchd's minimal PATH. The app's

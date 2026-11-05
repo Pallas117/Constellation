@@ -48,15 +48,15 @@ func realWatchFx(phone *Phone, s Store) watchFx {
 			}
 			return fi.ModTime(), true
 		},
-		loaded: func(l string) bool { return exec.Command("launchctl", "print", domain+"/"+l).Run() == nil },
+		loaded: func(l string) bool { return exec.Command(toolPath("launchctl"), "print", domain+"/"+l).Run() == nil },
 		running: func(l string) bool {
-			out, _ := exec.Command("launchctl", "print", domain+"/"+l).Output()
+			out, _ := exec.Command(toolPath("launchctl"), "print", domain+"/"+l).Output()
 			return strings.Contains(string(out), "state = running")
 		},
 		// No -k: a stale heartbeat with the job not running only needs a start.
 		// -k killed mesh-heal mid-heal (between Wi-Fi off and on) right after
 		// wake, when every heartbeat is stale (watch.json 2026-10-28 11:14-11:17).
-		kick: func(l string) error { return exec.Command("launchctl", "kickstart", domain+"/"+l).Run() },
+		kick: func(l string) error { return exec.Command(toolPath("launchctl"), "kickstart", domain+"/"+l).Run() },
 		notify: func(key, title, msg string) {
 			if phone != nil && shouldNotify(s, key, time.Hour, time.Now()) {
 				phone.Send(title, msg, time.Now())
