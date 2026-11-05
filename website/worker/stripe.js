@@ -1,6 +1,6 @@
 // Stripe: hosted Checkout for the pilot (one payment) and Fleet Integration (yearly subscription),
 // invoices with 30 days to pay for accounts an admin allows them on, Stripe's hosted billing portal,
-// and signed webhooks that unlock the workspace. Card details never touch lightbound.uk. The two keys live in Worker secrets
+// and signed webhooks that unlock the workspace. Card details never touch lightbound.space. The two keys live in Worker secrets
 // (STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET), never in config, URLs or logs.
 import { getAccount, putAccount } from "./data.js";
 import { readCapped } from "./body.js";

@@ -1,4 +1,4 @@
-// UI audit harness for lightbound.uk: starts the offline preview (synthetic data, emulated sign-in and Stripe) unless
+// UI audit harness for lightbound.space: starts the offline preview (synthetic data, emulated sign-in and Stripe) unless
 // BASE is given, opens every page at 375 and 1280 px, and fails on any finding:
 //   WCAG AA text contrast, tap targets of at least 24 px, no sideways overflow, one h1 and no skipped heading levels,
 //   labelled form controls in the brand style (not the browser default), alt on images, unique ids, and no console errors.

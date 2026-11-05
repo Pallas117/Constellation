@@ -1,4 +1,4 @@
-// Live feeds for lightbound.uk: upcoming launches (The Space Devs Launch Library 2), space weather
+// Live feeds for lightbound.space: upcoming launches (The Space Devs Launch Library 2), space weather
 // (NOAA SWPC) and Constellation's events (its public Luma calendar). A cron trigger refreshes them into KV every 15 minutes. Pages and the API only ever read
 // KV, so visitor traffic never reaches the upstream services (LL2 allows 15 anonymous calls an hour; see ll2Auth).
 // A failed refresh keeps the last good data and records the error; /api/health reports both.
@@ -44,7 +44,7 @@ export const FEEDS = Object.freeze({
   programmes: { key: "feed:programmes", refreshMin: 180, staleMin: 2880, optional: true, members: true, needs: "PROGRAMMES_CSV_URL" },
 });
 
-const UA = "lightbound.uk-site/1 (+https://lightbound.uk)";
+const UA = "lightbound.space-site/1 (+https://lightbound.space)";
 const MIN = 60_000;
 
 const clean = (v, max = 140) => (typeof v === "string" ? v.replace(/\s+/g, " ").trim().slice(0, max) : "");
