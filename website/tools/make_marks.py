@@ -81,7 +81,7 @@ CUT = 7  # the one negative-space width in the Turnstone (v7)
 
 
 def turnstone_body(c: dict[str, str]) -> list[str]:
-    """Turnstone v7 (5 Nov 2026, Josh: "upgrade turnstone logos to be more professional").
+    """Turnstone v7 (5 Nov 2026, Josh: "upgrade turnstone logos to be more professional"; approved the same day).
 
     v6's identity, drawn as one silhouette instead of eleven shards: the head sits on the body, and each wing grows from
     the shoulder as the Brand Book describes it, warm front feathers ending in three wingtip blades, then the earth-blue
@@ -127,7 +127,7 @@ def star4(cx: float, cy: float, r: float, waist: float, fill: str) -> str:
 
 def argo(c: dict[str, str], icon: bool = False) -> str:
     """Argo: a square sail in the wind, set by Canopus (Josh, 5 Nov 2026: "Argo could be just a sail", then "a sail in
-    the wind").
+    the wind"; approved the same day).
 
     Argo is the ship of the old constellation Argo Navis; its brightest star, Canopus, has been a spacecraft's
     reference star since Mariner 3 and 4 carried the first Canopus star trackers (1964). So the one lime element is the
