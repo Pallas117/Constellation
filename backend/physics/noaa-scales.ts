@@ -38,6 +38,21 @@ export const kpFreshnessKey = (kind: KpKind): FreshnessKey => (kind === "planeta
 /** Maximum age of a Kp reading of `kind`, in ms. */
 export const kpMaxAgeMs = (kind: KpKind): number => freshnessMs(kpFreshnessKey(kind));
 
+/**
+ * A Kp reading only while it is within its product's freshness bound at `nowMs`, else null
+ * (GAU-232). The nowcast, the storm tier and forecast scoring use this, so a Kp of 6 from
+ * yesterday can't hold a severe tier: past the bound Kp is unknown and the tier falls back to
+ * Bz and the Dst slope (GAU-230).
+ */
+export function currentKpReading<R extends { value: number; observedAt: string | null; kind: NonNullable<KpKind> }>(
+  reading: R | null | undefined,
+  nowMs: number,
+): R | null {
+  if (!reading?.observedAt || !Number.isFinite(reading.value)) return null;
+  const age = nowMs - Date.parse(reading.observedAt);
+  return Number.isFinite(age) && age <= kpMaxAgeMs(reading.kind) ? reading : null;
+}
+
 const UNKNOWN = (scale: "S" | "G" | "R", basis: string, observedAt: string | null = null): ScaleReading => ({
   level: null,
   label: `${scale}?`,
