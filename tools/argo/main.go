@@ -86,7 +86,9 @@ func main() {
 	}
 	cfg, store := loadConfig(), DefaultStore()
 	phone := newPhoneFor(cfg)
-	loop := Loop{Prober: SystemProber{ExitNodes: cfg.ExitNodes, SignalCache: store.path("signal.json")}, Store: store, Fx: realEffects{phone: phone}, AppWatch: true}
+	preempt := make(chan os.Signal, 1)
+	signal.Notify(preempt, syscall.SIGUSR1) // a newer tick saw the network change under this run (tick.go)
+	loop := Loop{Prober: SystemProber{ExitNodes: cfg.ExitNodes, SignalCache: store.path("signal.json")}, Store: store, Fx: realEffects{phone: phone}, AppWatch: true, Preempt: preempt}
 	flush := func() {
 		if phone != nil {
 			phone.Flush() // deliver alerts queued while offline
@@ -112,9 +114,20 @@ func main() {
 			defer cancel()
 			f(c)
 		}
-		_ = withLock(store, func() { watchPeers(cfg.peers(), store, realWatchFx(phone, store), time.Now()) })
+		// One lock for the whole tick. Another run (a tick that outlived the minute, `argo fix`,
+		// the phone) means: leave quietly, and if the gateway moved tell it to re-probe (tick.go).
+		unlock, err := store.Lock()
+		if err != nil {
+			phase(5*time.Second, func(c context.Context) {
+				gw, _ := localGateway(c)
+				tickBusy(store, gw, time.Now(), syscall.Kill)
+			})
+			return nil
+		}
+		defer unlock()
+		watchPeers(cfg.peers(), store, realWatchFx(phone, store), time.Now())
 		thirdpartyTick(tpFilesIn(configDir()), phone, time.Now()) // texts once per new third-party change; two small file reads
-		_ = withLock(store, func() { phase(20*time.Second, func(c context.Context) { guardTick(c, store, cfg, phone, time.Now()) }) })
+		phase(20*time.Second, func(c context.Context) { guardTick(c, store, cfg, phone, time.Now()) })
 		phase(30*time.Second, func(c context.Context) { relayTick(c, cfg, store, phone) }) // store-and-forward (relay.go); takes its own lock
 		var skip bool
 		phase(10*time.Second, func(c context.Context) {
@@ -124,12 +137,11 @@ func main() {
 		if skip {
 			return nil
 		}
-		return withLock(store, func() {
-			flush()
-			phase(60*time.Second, func(c context.Context) { loop.Tick(c) })
-			watchDevices(ctx, cfg.Devices, store, phone, time.Now())
-			maybeSendWeekly(store, phone, time.Now())
-		})
+		flush()
+		phase(60*time.Second, func(c context.Context) { loop.Tick(c) })
+		watchDevices(ctx, cfg.Devices, store, phone, time.Now())
+		maybeSendWeekly(store, phone, time.Now())
+		return nil
 	}
 
 	var err error

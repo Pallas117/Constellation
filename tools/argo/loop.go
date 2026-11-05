@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 	"time"
@@ -146,6 +147,41 @@ type Loop struct {
 	// AppWatch turns on the app data watch (leak.go); only the real agent sets it, so tests
 	// never run lsof or nettop.
 	AppWatch bool
+	// Preempt delivers SIGUSR1 from a newer tick that saw the default gateway change while this
+	// run was probing (tick.go). The probe in flight is cancelled and run once more. nil: never.
+	Preempt <-chan os.Signal
+}
+
+// probe runs one probe. A preemption cancels it and probes again, once: the network changed
+// under the old probe, so its timeouts would only have described the network we left.
+func (l Loop) probe(ctx context.Context) Snapshot {
+	if l.Preempt == nil {
+		return l.Prober.Probe(ctx)
+	}
+	for again := true; ; again = false {
+		pctx, cancel := context.WithCancel(ctx)
+		hit, done := make(chan struct{}), make(chan struct{})
+		go func() {
+			select {
+			case <-l.Preempt:
+				cancel()
+				close(hit)
+			case <-done:
+			}
+		}()
+		snap := l.Prober.Probe(pctx)
+		close(done)
+		cancel()
+		select {
+		case <-hit:
+			if again {
+				l.say("network changed during the probe; probing again")
+				continue
+			}
+		default:
+		}
+		return snap
+	}
 }
 
 func (l Loop) say(format string, args ...any) {
@@ -159,13 +195,13 @@ func (l Loop) Tick(ctx context.Context) State {
 		l.leakWatch(ctx)
 	}
 	st := l.Store.Load()
-	snap := l.Prober.Probe(ctx)
+	snap := l.probe(ctx)
 	class, reason := Classify(snap)
 	// A network switch leaves a few seconds with no route or DNS. Confirm a
 	// new failure once before alerting, so every switch isn't an incident.
 	if class.Blocking() && class != st.Class {
 		l.Fx.Sleep(settleDelay)
-		snap = l.Prober.Probe(ctx)
+		snap = l.probe(ctx)
 		class, reason = Classify(snap)
 	}
 	now := l.Fx.Now()
@@ -308,7 +344,7 @@ func (l Loop) Tick(ctx context.Context) State {
 			settle = wifiRejoinSettle // joining a network and getting an address takes longer than a page opening
 		}
 		l.Fx.Sleep(settle)
-		if c2, _ := Classify(l.Prober.Probe(ctx)); !c2.Blocking() {
+		if c2, _ := Classify(l.probe(ctx)); !c2.Blocking() {
 			l.resolve(&st, class, l.Fx.Now(), st.LastFix, fp)
 			st.Class, st.Reason = c2, "recovered"
 			l.finish(st)
