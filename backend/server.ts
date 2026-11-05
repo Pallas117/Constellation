@@ -293,7 +293,7 @@ app.post("/api/pilot-requests", createPilotRequestHandler(commerce));
 // Mesh & Network page: onboarding for everyone signed in, team status for operators.
 app.use("/api/mesh", mesh.ui);
 
-// RAG endpoints: status for any signed-in user, index/query for operators.
+// RAG endpoints: operators only (status and query; API_POLICY in rbac.ts).
 // Knowledge memory: the Cosmic Brain sidecar (backend/memory/client.ts, docs/memory-sidecar.md).
 // Nothing here is mocked: when the service is down the reply says so, never a canned count or
 // answer. Indexing is an operator task on the memory host and has no route here.
@@ -325,7 +325,7 @@ app.post("/api/rag/query", async (req: express.Request, res: express.Response) =
   res.json({ ok: true, answer: result.answer, sources: result.sources });
 });
 
-// Device lifecycle endpoints (requires operator session)
+// Device lifecycle endpoints: any signed-in user, for their own devices (API_POLICY in rbac.ts)
 app.use("/api/device", deviceRegistryRouter);
 
 app.get("/api/feed/space-weather/5s", async (req: AuthenticatedRequest, res) => {

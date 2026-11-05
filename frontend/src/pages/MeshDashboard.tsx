@@ -184,6 +184,9 @@ const MeshDashboard = () => {
                 {revokeError}
               </p>
             )}
+            {canEnroll && !devices && !error && (
+              <p role="status" className="font-mono text-sm text-muted-foreground">Loading devices…</p>
+            )}
             {canEnroll && devices && devices.length === 0 && (
               <p className="text-sm text-muted-foreground">No devices yet. Enroll this laptop below.</p>
             )}

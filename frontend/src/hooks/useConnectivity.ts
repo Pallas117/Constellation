@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useSyncExternalStore } from 'react';
 import { apiBase } from "@/lib/api/base-url";
 
 export type ConnectivityMode = 'CLOUD' | 'SAT' | 'AIRGAP';
@@ -9,44 +9,43 @@ export interface ConnectivityStatus {
   lastChecked: string;
 }
 
-export const useConnectivity = () => {
-  // Not measured yet: no latency and no check time, so nothing reads as a measured "0 ms". The mode stays CLOUD
-  // (the hooks that switch to fallbacks on AIRGAP shouldn't do so before the first answer).
-  const [status, setStatus] = useState<ConnectivityStatus>({
-    mode: 'CLOUD',
-    latencyMs: -1,
-    lastChecked: '',
-  });
+const POLL_MS = 30_000;
 
-  useEffect(() => {
-    let cancelled = false;
-    const fetchStatus = async () => {
-      try {
-        const proxyUrl = apiBase();
-        const response = await fetch(`${proxyUrl}/api/system/connectivity`);
-        if (response.ok) {
-          const data = await response.json();
-          if (!cancelled) setStatus(data);
-        }
-      } catch (err) {
-        // If server unreachable, assume AIRGAP
-        if (cancelled) return;
-        setStatus(prev => ({
-          ...prev,
-          mode: 'AIRGAP',
-          latencyMs: -1,
-          lastChecked: new Date().toISOString(),
-        }));
-      }
-    };
+// Not measured yet: no latency and no check time, so nothing reads as a measured "0 ms". The mode stays CLOUD
+// (the hooks that switch to fallbacks on AIRGAP shouldn't do so before the first answer).
+let status: ConnectivityStatus = { mode: 'CLOUD', latencyMs: -1, lastChecked: '' };
+const listeners = new Set<() => void>();
+let timer: ReturnType<typeof setInterval> | null = null;
 
-    void fetchStatus();
-    const interval = setInterval(fetchStatus, 30000); // 30s sync
-    return () => {
-      cancelled = true;
-      clearInterval(interval);
-    };
-  }, []);
+function set(next: ConnectivityStatus) {
+  status = next;
+  for (const l of listeners) l();
+}
 
-  return status;
-};
+async function check() {
+  try {
+    const response = await fetch(`${apiBase()}/api/system/connectivity`);
+    if (response.ok) set((await response.json()) as ConnectivityStatus);
+  } catch {
+    // Server unreachable: treat the link as down (AIRGAP).
+    set({ ...status, mode: 'AIRGAP', latencyMs: -1, lastChecked: new Date().toISOString() });
+  }
+}
+
+/** One poll for the whole page: the HUD, the space-weather and the space-object hooks used to run three. */
+function subscribe(listener: () => void) {
+  listeners.add(listener);
+  if (!timer) {
+    void check();
+    timer = setInterval(() => void check(), POLL_MS);
+  }
+  return () => {
+    listeners.delete(listener);
+    if (listeners.size === 0 && timer) {
+      clearInterval(timer);
+      timer = null;
+    }
+  };
+}
+
+export const useConnectivity = (): ConnectivityStatus => useSyncExternalStore(subscribe, () => status);

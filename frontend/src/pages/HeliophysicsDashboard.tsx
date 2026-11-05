@@ -427,6 +427,9 @@ const HeliophysicsDashboard = () => {
                   <Readout
                     label="MMS reconnection confidence"
                     value={mms.latest?.quality.confidence != null ? String(mms.latest.quality.confidence) : "—"}
+                    // Say why it's empty instead of a bare dash: feed failing, sign-in needed, or no data yet.
+                    hint={mms.error ?? (mms.status === "waiting" ? "Waiting for the MMS feed" : !mms.latest ? "No MMS data yet" : undefined)}
+                    tone={mms.error ? "caution" : "default"}
                   />
                 </dl>
 

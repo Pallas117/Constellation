@@ -1,4 +1,4 @@
-import { getAuthHeaders } from "./auth";
+import { apiBase } from "./base-url";
 import { HttpFailure } from "./http-error";
 
 export interface DeviceSwapAssignment {
@@ -19,12 +19,12 @@ export interface DeviceSwapPlan {
   summary: Record<string, number>;
 }
 
-const DEVICE_SWAP_PLAN_URL = "/api/device/swap/plan";
-const DEVICE_SWAP_REBALANCE_URL = "/api/device/swap/rebalance";
+// apiBase(), like every other call, so these work without the dev proxy; the session cookie authenticates.
+const DEVICE_SWAP_PLAN_URL = `${apiBase()}/api/device/swap/plan`;
+const DEVICE_SWAP_REBALANCE_URL = `${apiBase()}/api/device/swap/rebalance`;
 
 export async function getDeviceSwapPlan(): Promise<DeviceSwapPlan> {
-  const headers = await getAuthHeaders();
-  const response = await fetch(DEVICE_SWAP_PLAN_URL, { headers });
+  const response = await fetch(DEVICE_SWAP_PLAN_URL, { credentials: "include" });
   if (!response.ok) {
     throw new HttpFailure("Couldn't load the SWAP plan", response.status);
   }
@@ -40,10 +40,10 @@ export async function requestDeviceSwapRebalance(payload: {
   requiredPowerWatts?: number;
   thermalThresholdC?: number;
 } = {}): Promise<DeviceSwapPlan> {
-  const headers = await getAuthHeaders();
   const response = await fetch(DEVICE_SWAP_REBALANCE_URL, {
     method: "POST",
-    headers: { "Content-Type": "application/json", ...headers },
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
   });
 
