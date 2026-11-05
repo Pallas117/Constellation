@@ -520,7 +520,8 @@ test("Constellation showcase: curated, approved by the people listed, free, and 
   assert.match(page, /<body class="page brand-constellation">/);
   const t = text(page);
   for (const want of [/A person chooses every listing/, /approve its wording before it goes up/, /Nothing goes up until you say yes/,
-    /Ask and it comes down/, /no one can buy a place or a higher spot/, /Ask to join in the same form; membership is free/]) assert.match(t, want);
+    /Ask and it comes down/, /never ranked: newest first, and no one can buy a place/, /We don&rsquo;t list weapons, targeting or work that harms people/,
+    /never says where you live or where you&rsquo;re from unless you want it to/, /Ask to join in the same form; membership is free/]) assert.match(t, want);
   assert.match(fallback, /<option value="Please invite me to join too">/, "non-members can ask to join while asking to be listed");
   // Each listing: its own share link, a type, approved wording, and an outbound link that doesn't leak the referrer.
   const list = page.match(/<ul class="steps listings" aria-label="Listings">([\s\S]*?)<\/ul>/)[1];
@@ -528,6 +529,11 @@ test("Constellation showcase: curated, approved by the people listed, free, and 
     assert.match(li, /<h3>[^<]+<\/h3><p class="k">(PROJECT|CREATOR)<\/p><p>[^<]{20,}<\/p>/, id);
     assert.match(li, /<a href="https:\/\/[^"]+" rel="noopener noreferrer">Visit<\/a>/, id);
     assert.ok(li.includes(`<a href="#${id}">Share this listing</a>`), id);
+    // "Works with" links only to other listings on this page, and the other listing links back.
+    for (const [, other] of li.matchAll(/<p class="with">Works with[^<]*(?:<a href="#([a-z0-9-]+)">[^<]+<\/a>[^<]*)+<\/p>/g)) {
+      const back = list.match(new RegExp(`<li class="listing" id="${other}">[\\s\\S]*?<\\/li>`))?.[0];
+      assert.ok(back && back.includes(`href="#${id}"`), `${id} works with ${other}: both say so`);
+    }
   }
   if (!/<li class="listing"/.test(list)) assert.match(t, /No listings yet/, "an empty showcase says so");
   const sec = html["/constellation/"].match(/<section id="showcase"[\s\S]*?<\/section>/)[0];
