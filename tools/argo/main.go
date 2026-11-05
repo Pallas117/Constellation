@@ -89,6 +89,7 @@ func main() {
 	preempt := make(chan os.Signal, 1)
 	signal.Notify(preempt, syscall.SIGUSR1) // a newer tick saw the network change under this run (tick.go)
 	loop := Loop{Prober: SystemProber{ExitNodes: cfg.ExitNodes, SignalCache: store.path("signal.json")}, Store: store, Fx: realEffects{phone: phone}, AppWatch: true, Preempt: preempt}
+	loop.Tailnet = tailnetKicker(cfg) // read-only `tailscale ping`/`netcheck` after a switch (tailnet.go)
 	flush := func() {
 		if phone != nil {
 			phone.Flush() // deliver alerts queued while offline
@@ -147,7 +148,8 @@ func main() {
 	var err error
 	switch cmd {
 	case "status":
-		fmt.Println(statusLine(store.Load(), time.Now()) + guardStatus(store.loadGuard(), time.Now()) + gaussStatus(store, time.Now()))
+		st := store.Load()
+		fmt.Println(statusLine(st, time.Now()) + guardStatus(store.loadGuard(), time.Now()) + gaussStatus(store, time.Now()) + switchLine(st, time.Now()))
 	case "doctor":
 		err = doctor(ctx, loop.Prober)
 	case "fix":

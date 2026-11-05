@@ -53,7 +53,8 @@ type State struct {
 	Tailscale     Tailscale      `json:"tailscale"`
 	Gateway       string         `json:"gateway,omitempty"`
 	GatewayMAC    string         `json:"gateway_mac,omitempty"`
-	Net           NetScore       `json:"net"` // privacy, speed and signal at the last check (netscore.go)
+	Net           NetScore       `json:"net"`              // privacy, speed and signal at the last check (netscore.go)
+	Switch        *SwitchInfo    `json:"switch,omitempty"` // last network change or recovery and the tailnet's answer (tailnet.go)
 	// IncidentFP is the network the open incident belongs to; Notified says whether
 	// it was announced yet, NotifyDue when it will be if this network's usual
 	// recovery time passes first (loop.go).

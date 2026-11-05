@@ -150,6 +150,8 @@ type Loop struct {
 	// Preempt delivers SIGUSR1 from a newer tick that saw the default gateway change while this
 	// run was probing (tick.go). The probe in flight is cancelled and run once more. nil: never.
 	Preempt <-chan os.Signal
+	// Tailnet asks the tailnet after a network change or a recovery (tailnet.go). nil: never.
+	Tailnet func(ctx context.Context) TailnetCheck
 }
 
 // probe runs one probe. A preemption cancels it and probes again, once: the network changed
@@ -218,12 +220,24 @@ func (l Loop) Tick(ctx context.Context) State {
 		}
 	}
 	prev, prevPublicIP := st.Class, st.PublicIP
+	prevFP, prevGW := st.Fingerprint, st.Gateway
 	st.Fingerprint, st.Loc, st.CheckedAt, st.Tailscale = fp, snap.Loc, now, snap.Tailscale
 	if fp != "" {
 		l.watchNeighbours(&st, snap, fp, prevPublicIP) // before Gateway/GatewayMAC move on
 	}
 	st.Gateway, st.GatewayMAC, st.PublicIP = snap.Gateway, snap.GatewayMAC, snap.PublicIP
 	st.Net = ScoreNet(snap)
+	// A new network, or the link back after an outage: ask the tailnet now, not next tick.
+	if l.Tailnet != nil && snap.Online && fp != "" && !class.Blocking() && (fp != prevFP || snap.Gateway != prevGW || prev.Blocking()) {
+		chk := l.Tailnet(ctx)
+		from := prevFP
+		if fp == prevFP {
+			from = ""
+		}
+		st.Switch = &SwitchInfo{At: now, From: from, To: fp, Tailnet: chk, StoreForward: !chk.Answered(),
+			Avail7d: netAvailability(l.Store.Incidents(), st, fp, now)}
+		l.say("switch:%s", switchLine(st, now))
+	}
 	if fp != "" {
 		l.shield(ctx, &st, snap, fp)
 	}
