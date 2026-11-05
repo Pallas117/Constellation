@@ -804,6 +804,26 @@ test("WhatsApp group invite: ?via=group fills in who referred them, by form or b
   assert.match(admin, /href="https:\/\/wa\.me\/\?text=[^"]*constellation%2Fapply%2F%3Fvia%3Dgroup" rel="noopener noreferrer">Draft the group invite<\/a>/);
 });
 
+test("members' WhatsApp group: only approved members and their invitation see the link; a bad value is ignored", async () => {
+  const { env, access } = await appEnv();
+  const GROUP = "https://chat.whatsapp.com/AbCdEfGhIjKlMnOp123456";
+  const withGroup = { ...env, CONSTELLATION_GROUP_URL: GROUP };
+  await putAccount(env, { email: "member@example.test", community: "member" }, "test");
+  const member = await (await send(withGroup, await as(access, "member@example.test", "/app/"))).text();
+  assert.ok(member.includes(`<a href="${GROUP}" rel="noopener noreferrer">Join the members' WhatsApp group</a>`));
+  assert.match(member, /Please keep this link to yourself; to bring a friend, send them the <a href="\/constellation\/apply\/\?via=group">invitation link<\/a>/);
+  const stranger = await (await send(withGroup, await as(access, "someone@example.test", "/app/"))).text();
+  assert.ok(!stranger.includes("chat.whatsapp.com"), "signed in but not a member: no group link");
+  for (const bad of ["https://evil.example/join", "http://chat.whatsapp.com/AbCdEfGhIjKlMnOp123456", 'https://chat.whatsapp.com/x"><script>'])
+    assert.ok(!(await (await send({ ...env, CONSTELLATION_GROUP_URL: bad }, await as(access, "member@example.test", "/app/"))).text()).includes(bad), bad);
+  for (const route of ["/", "/constellation/", "/constellation/apply/?via=group", "/constellation/projects/"])
+    assert.ok(!(await (await send(withGroup, new Request(`https://lightbound.uk${route}`))).text()).includes("chat.whatsapp.com"), `${route}: never public`);
+  const res = await send(withGroup, await formPost(access, "boss@example.test", "/app/admin/invite", { email: "friend@example.test", name: "Friend" }));
+  const admin = await (await send(withGroup, await as(access, "boss@example.test", res.headers.get("location")))).text();
+  const draft = decodeURIComponent(admin.match(/href="mailto:[^"]*body=([^"]+)">Draft the invitation email/)[1].replace(/&#39;/g, "'").replace(/&amp;/g, "&"));
+  assert.ok(draft.includes(`Join the members' WhatsApp group: ${GROUP}`), "the invitation carries the group link");
+});
+
 test("security: big bodies refused before reading; the Stripe key only ever goes to Stripe; sign-ins never create records", async () => {
   const { env, access } = await appEnv();
   const big = "x=" + "a".repeat(20 * 1024);

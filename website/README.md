@@ -385,6 +385,16 @@ ranges; the `run_worker_first` routes from `wrangler.jsonc`; an in-memory KV; an
 - **Before you publish, check the tab** for anything you wouldn't want members to read: it is reachable by
   anyone who has its link. `/api/health` shows `programmes: not configured` until the secret is set.
 
+**Members' WhatsApp group.** Approved Constellation members see a "Join the members' WhatsApp group" link in
+`/app/`, and the admin's invitation email draft includes it. Anyone holding a WhatsApp invite link can join the
+group, so it is a Worker secret, never in this repo or on a public page (a site test checks):
+`npx wrangler@4 secret put CONSTELLATION_GROUP_URL` and paste the `https://chat.whatsapp.com/…` link. Only that
+form of link is used; anything else is ignored and members see "shared with members directly" instead. For a
+second check inside WhatsApp, turn on the group's "Approve new participants" setting, so each person who opens
+the link waits for an admin there too. To bring friends in, post `https://lightbound.uk/constellation/apply/?via=group`
+in the chat (not the group link): their requests arrive "referred by the Constellation WhatsApp group" and a
+person invites them. If the group link leaks, reset it in WhatsApp and put the new one in the secret.
+
 **Staff link.** People in `STAFF_EMAILS` (and admins) see an "Operations and training" card in `/app/` that
 links to `OPS_URL`: the staff site, built from the private UI-UX-Gauss repo, with its own Worker and its own
 Cloudflare Access application (a staff-only email policy). Set `STAFF_EMAILS` as a secret

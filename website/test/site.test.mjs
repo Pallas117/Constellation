@@ -537,6 +537,11 @@ test("Constellation showcase: curated, approved by the people listed, free, and 
   assert.match(text(html["/privacy/"]), /listed in the Constellation showcase/);
 });
 
+test("the members' WhatsApp group link is never in the site or its config", () => {
+  for (const f of walk(pub)) if (/\.(html|txt|xml|js|json)$/.test(f)) assert.ok(!readFileSync(f, "utf8").includes("chat.whatsapp.com"), f);
+  assert.ok(!WRANGLER_RAW.includes("chat.whatsapp.com") && !/CONSTELLATION_GROUP_URL"\s*:/.test(WRANGLER_RAW), "a secret, not a var");
+});
+
 test("Constellation: anyone can pass the invitation on in WhatsApp; the link names no one", () => {
   const join = html["/constellation/"].match(/<section id="join"[\s\S]*?<\/section>/)[0];
   const href = join.match(/<a class="btn ghost" href="(https:\/\/wa\.me\/\?text=[^"]+)" rel="noopener noreferrer">Invite a friend on WhatsApp<\/a>/)?.[1];
