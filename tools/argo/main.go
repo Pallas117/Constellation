@@ -197,6 +197,12 @@ func main() {
 	case "run":
 		err = runStripped(os.Args[2:])
 	case "report":
+		if len(os.Args) > 2 && os.Args[2] == "--outages" { // one line per outage: classes, how long, what was credited
+			for _, l := range linkOutageLines(linkOutages(store.Incidents())) {
+				fmt.Println(l)
+			}
+			break
+		}
 		report(store.Incidents())
 	case "off":
 		err = os.WriteFile(store.path("disabled"), nil, 0o600)
