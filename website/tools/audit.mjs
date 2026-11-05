@@ -1,7 +1,7 @@
 // UI audit harness for lightbound.uk: starts the offline preview (synthetic data, emulated sign-in and Stripe) unless
 // BASE is given, opens every page at 375 and 1280 px, and fails on any finding:
 //   WCAG AA text contrast, tap targets of at least 24 px, no sideways overflow, one h1 and no skipped heading levels,
-//   labelled form controls, alt on images, unique ids, and no console errors.
+//   labelled form controls in the brand style (not the browser default), alt on images, unique ids, and no console errors.
 // usage: npm run audit:website [-- name,name...]       (BASE=https://... to audit a deployed site; OUT=dir for screenshots)
 //        RELEASE=public npm run audit:website         (the public release: /argo/ and /app/ must answer 404, no sign-in)
 import { createRequire } from "node:module";
@@ -49,7 +49,7 @@ function audit() {
   const lum = (c) => { const [r, g, b] = c.map((v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; }); return 0.2126 * r + 0.7152 * g + 0.0722 * b; };
   const parse = (s) => { const m = s.match(/rgba?\(([^)]+)\)/); if (!m) return null; const p = m[1].split(/[ ,/]+/).filter(Boolean).map(Number); return { c: p.slice(0, 3), a: p[3] ?? 1 }; };
   const bgOf = (el) => { let c = [5, 5, 5]; const chain = []; for (let e = el; e; e = e.parentElement) chain.push(e); for (const e of chain.reverse()) { const p = parse(getComputedStyle(e).backgroundColor); if (p && p.a > 0) c = c.map((v, i) => v * (1 - p.a) + p.c[i] * p.a); } return c; };
-  const issues = { contrast: [], targets: [], overflow: [], headings: [], labels: [], alt: [], ids: [] };
+  const issues = { contrast: [], targets: [], overflow: [], headings: [], labels: [], controls: [], alt: [], ids: [] };
   for (const el of document.querySelectorAll("body *")) {
     const cs = getComputedStyle(el);
     if (cs.visibility === "hidden" || cs.display === "none" || +cs.opacity === 0) continue;
@@ -75,6 +75,9 @@ function audit() {
   for (const c of document.querySelectorAll("input:not([type=hidden]), select, textarea")) {
     if (c.closest(".hp")) continue;
     if (!((c.id && document.querySelector(`label[for="${c.id}"]`)) || c.closest("label") || c.getAttribute("aria-label"))) issues.labels.push(c.name || c.id);
+    // The browser's own field look (inset border, square corners) means no brand rule reached it
+    const cs = getComputedStyle(c);
+    if (!["checkbox", "radio"].includes(c.type) && (/inset|outset/.test(cs.borderTopStyle) || cs.borderTopLeftRadius === "0px")) issues.controls.push(`${c.type || c.tagName.toLowerCase()} ${c.name || c.id}`);
   }
   for (const img of document.querySelectorAll("img")) if (!img.hasAttribute("alt")) issues.alt.push(img.getAttribute("src"));
   const seen = new Set();

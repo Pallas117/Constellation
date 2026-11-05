@@ -216,9 +216,9 @@ footer p{margin:0 0 6px}
 .form{display:grid;gap:18px;margin-top:32px}
 .field{display:grid;gap:6px}
 .field label{font-weight:600}
-.form input:not([type=checkbox]),.form select,.form textarea{width:100%;font:inherit;color:var(--warm);background:var(--panel);border:1px solid var(--char);border-radius:4px;padding:12px 14px}
+.form input:not([type=checkbox]),.form select,.form textarea,.planner-form input[type=date]{width:100%;font:inherit;color:var(--warm);background:var(--panel);border:1px solid var(--char);border-radius:4px;padding:12px 14px}
 .form textarea{resize:vertical;min-height:140px}
-.form input:focus,.form select:focus,.form textarea:focus{outline:2px solid var(--accent);outline-offset:1px}
+.form input:focus,.form select:focus,.form textarea:focus,.planner-form input:focus{outline:2px solid var(--accent);outline-offset:1px}
 .form [aria-invalid=true]{border-color:var(--amber)}
 .err{color:var(--amber);font-size:14px;margin:0}
 .form-errors{border:1px solid rgba(231,177,74,.5);border-radius:8px;padding:12px 14px;color:var(--amber)}
@@ -473,16 +473,25 @@ footer p{margin:0 0 6px}
     .descent-art{height:100%;max-height:none;overflow:visible}
     .descent-steps{max-width:660px;width:100%;margin:0 auto;min-height:7.6em;gap:0}
     .descent-steps li{grid-area:1/1;animation:d-step linear both;animation-timeline:--descent}
-    .descent-steps li:nth-child(1){animation-name:d-step-first;animation-range:contain 0% contain 18%}
-    .descent-steps li:nth-child(2){animation-range:contain 16% contain 40%}
-    .descent-steps li:nth-child(3){animation-range:contain 38% contain 60%}
-    .descent-steps li:nth-child(4){animation-range:contain 58% contain 80%}
-    .descent-steps li:nth-child(5){animation-name:d-step-last;animation-range:contain 78% contain 90%}
+    /* Ranges meet end to end, so a caption has faded out before the next fades in (no overlapping text). */
+    .descent-steps li:nth-child(1){animation-name:d-step-first;animation-range:contain 0% contain 17%}
+    .descent-steps li:nth-child(2){animation-range:contain 17% contain 39%}
+    .descent-steps li:nth-child(3){animation-range:contain 39% contain 59%}
+    .descent-steps li:nth-child(4){animation-range:contain 59% contain 79%}
+    .descent-steps li:nth-child(5){animation-name:d-step-last;animation-range:contain 79% contain 90%}
     .descent-steps li:focus-within{opacity:1!important;visibility:visible!important;transform:none!important}
     .descent-note{text-align:center}
     @media (max-width:560px){.descent-art{transform:scale(1.4)}}
     .d-bh{display:inline;transform-origin:0 0;animation:d-shrink linear both;animation-timeline:--descent;animation-range:contain 0% contain 30%}
     .d-bh image{animation:d-out linear both;animation-timeline:--descent;animation-range:contain 2% contain 20%}
+    /* One black hole on screen at a time: the hero's film fades as the descent rises, then the descent's own
+       black hole fades in as the stage pins. Without timeline-scope the hero keeps its film; the art still waits. */
+    .descent-art{animation:d-in linear both;animation-timeline:--descent;animation-range:entry 60% entry 100%}
+    @supports (timeline-scope:--descent){
+      main{timeline-scope:--descent}
+      .hero{border-image:none;border-bottom-color:transparent}
+      .hero .poster,.hero .film{animation:d-out linear both;animation-timeline:--descent;animation-range:entry 25% entry 60%}
+    }
     .d-earth{animation:d-in linear both;animation-timeline:--descent;animation-range:contain 14% contain 26%}
     .d-halo{animation:d-in linear both;animation-timeline:--descent;animation-range:contain 24% contain 30%}
     .d-lines path{stroke-dasharray:1;animation:d-draw linear both;animation-timeline:--descent;animation-range:contain 22% contain 46%}
@@ -541,3 +550,46 @@ footer p{margin:0 0 6px}
 /* Primary link buttons point onward; the arrow eases forward on hover (form buttons and outlines stay plain). */
 .actions > a.btn:not(.ghost)::after{content:"\2192";display:inline-block;transition:transform .2s cubic-bezier(.2,.7,.2,1)}
 @media (prefers-reduced-motion:no-preference){.actions > a.btn:not(.ghost):hover::after{transform:translateX(3px)}}
+
+/* Experiment (Josh, 4 Nov 2026): "purple glow with glassified effect over hover", then "make the glow like the
+   accretion disk black hole imagery glow, from purple or orange". On hover and focus only:
+   - the rim becomes an accretion disk: a hot gold-white core running into orange, then mauve and violet, turning slowly;
+   - the glow is lopsided like a real disk (Doppler beaming: the approaching side is brighter), orange low-left,
+     violet high-right;
+   - the card turns to frosted glass, and a sheen sweeps across it.
+   At rest everything is quiet and solid (glass blur at rest cost a slow phone ~0.7 s of first paint).
+   The Brand Book bars glows outside marks and photos: keeping this means amending it. */
+@property --disk{syntax:"<angle>";inherits:false;initial-value:0deg}
+:root{--hot:255 222 170;--ember:240 120 42;--mauve:203 182 214;--violet:142 108 196;--smoke:rgb(13 16 16 / .88);
+  --sheen:linear-gradient(115deg,rgb(255 255 255 / 0) 35%,rgb(var(--hot) / .16) 50%,rgb(255 255 255 / 0) 65%);
+  --disk-rim:conic-gradient(from var(--disk),rgb(var(--hot)),rgb(var(--ember)) 16%,rgb(var(--violet)) 40%,rgb(var(--mauve)) 55%,rgb(var(--violet)) 70%,rgb(var(--ember)) 86%,rgb(var(--hot)));
+  --disk-glow:-16px 10px 44px -14px rgb(var(--ember) / .85),16px -10px 44px -14px rgb(var(--violet) / .9),0 0 70px -24px rgb(var(--hot) / .55)}
+.btn,.door,.tile,.friend,.subnav a,.live-card{transition:background-position .7s cubic-bezier(.2,.7,.2,1),border-color .25s,box-shadow .4s cubic-bezier(.2,.7,.2,1),color .2s,transform .25s}
+
+/* Rest: smoked panels, sheen parked off to the right. Layers: sheen, smoke (padding box), rim (border box). */
+.door,.tile,.friend,.btn.ghost,.subnav a,.live-card{background-image:var(--sheen),linear-gradient(var(--smoke),var(--smoke)),linear-gradient(var(--char),var(--char));
+  background-origin:border-box;background-clip:padding-box,padding-box,border-box;background-size:250% 100%,100% 100%,100% 100%;background-position:130% 0,0 0,0 0;background-repeat:no-repeat;
+  border-color:transparent}
+.btn.ghost,.subnav a{--smoke:rgb(5 5 5 / .55);background-image:var(--sheen),linear-gradient(var(--smoke),var(--smoke)),linear-gradient(rgb(var(--mauve) / .3),rgb(var(--mauve) / .3))}
+.live-card{--smoke:rgb(5 5 5 / .78);position:relative}
+.live-card::before{content:"";position:absolute;inset:-1px;padding:1px;border-radius:inherit;background:var(--disk-rim);opacity:0;transition:opacity .4s;pointer-events:none;
+  -webkit-mask:linear-gradient(#fff 0 0) content-box,linear-gradient(#fff 0 0);-webkit-mask-composite:xor;mask:linear-gradient(#fff 0 0) content-box exclude,linear-gradient(#fff 0 0)}
+.live-card:hover::before,.live-card:focus-within::before{opacity:1}
+.live-card:hover,.live-card:focus-within{--smoke:rgb(10 8 16 / .62);-webkit-backdrop-filter:blur(16px) saturate(160%);backdrop-filter:blur(16px) saturate(160%)}
+
+/* Hover and focus: the disk lights up. */
+.door:hover,.door:focus-visible,.tile:hover,.tile:focus-within,.friend:hover,.friend:focus-visible,
+.btn.ghost:hover,.btn.ghost:focus-visible,.subnav a:hover,.subnav a:focus-visible{
+  background-image:var(--sheen),linear-gradient(var(--smoke),var(--smoke)),var(--disk-rim);background-position:-30% 0,0 0,0 0;
+  box-shadow:var(--disk-glow),inset 0 1px 0 rgb(255 255 255 / .14);color:#fff}
+.live-card:hover,.live-card:focus-within{background-position:-30% 0,0 0,0 0;box-shadow:var(--disk-glow),inset 0 1px 0 rgb(255 255 255 / .14)}
+.door:hover,.door:focus-visible,.tile:hover,.tile:focus-within,.friend:hover,.friend:focus-visible,.btn.ghost:hover,.btn.ghost:focus-visible,.subnav a:hover,.subnav a:focus-visible{
+  --smoke:rgb(14 11 20 / .93)}
+.btn:not(.ghost):not([aria-disabled=true]):hover,.btn:not(.ghost):not([aria-disabled=true]):focus-visible{box-shadow:0 0 0 1px rgb(var(--hot) / .7),var(--disk-glow)}
+.live-card{box-shadow:-20px 14px 70px -30px rgb(var(--ember) / .6),20px -14px 70px -30px rgb(var(--violet) / .7)}
+.door::after{background:linear-gradient(90deg,rgb(var(--ember)),rgb(var(--violet)))}  /* the hover underline joins the disk */
+@media (prefers-reduced-motion:no-preference){
+  .door:hover,.door:focus-visible,.tile:hover,.tile:focus-within,.friend:hover,.btn.ghost:hover,.subnav a:hover,.live-card:hover::before{animation:disk-turn 7s linear infinite}
+}
+@keyframes disk-turn{to{--disk:360deg}}
+@media (prefers-reduced-motion:reduce){.btn,.door,.tile,.friend,.subnav a,.live-card{transition:none}}

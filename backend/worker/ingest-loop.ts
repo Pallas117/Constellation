@@ -165,6 +165,7 @@ export class IngestionWorker {
   private lastMeasurementAt: string | null = null;
   private ticking = false;
   private loggedCloudDisabled = false;
+  private loggedAirgap = false; // once per AIRGAP spell, not every tick (57k lines in backend.log, 4 Nov 2026)
   /** Live skill of served forecasts vs persistence (TPM forecast_skill, FMEA FM-09). GAU-122. */
   readonly forecastSkill = new ForecastSkillTracker();
   readonly timing = new PipelineTimer();
@@ -544,9 +545,11 @@ export class IngestionWorker {
         fetches.push(this.timedFetch("lasp", fetchMmsBurstWindows));
       }
       await Promise.all(fetches);
-    } else {
+    } else if (!this.loggedAirgap) {
+      this.loggedAirgap = true;
       console.log("[IngestionWorker] AIRGAP mode active. Bypassing external API fetches.");
     }
+    if (link.mode !== "AIRGAP") this.loggedAirgap = false;
     if (this.noaa?.timestamp) this.lastMeasurementAt = this.noaa.timestamp;
 
     if (this.options.forecast !== false && this.shouldFetch("ml-forecast", 300000)) {
