@@ -1,13 +1,17 @@
 import { useCallback, useEffect, useState } from "react";
 import { getDeviceSwapPlan, requestDeviceSwapRebalance, type DeviceSwapPlan } from "@/lib/api/device-swap";
+import { HttpFailure } from "@/lib/api/http-error";
+import { stopsPolling } from "@/lib/mesh-onboarding";
 
-type PlanResult = { plan: DeviceSwapPlan; error: null } | { plan: null; error: string };
+type PlanResult = { plan: DeviceSwapPlan; error: null; stop?: false } | { plan: null; error: string; stop: boolean };
 
 async function loadPlan(): Promise<PlanResult> {
   try {
     return { plan: await getDeviceSwapPlan(), error: null };
   } catch (err) {
-    return { plan: null, error: err instanceof Error ? err.message : "Unable to fetch SWAP plan" };
+    // A 401/403 ends polling: CyberTiger counts them and blocks the address.
+    const stop = err instanceof HttpFailure && stopsPolling(err.status);
+    return { plan: null, error: err instanceof Error ? err.message : "Unable to fetch SWAP plan", stop };
   }
 }
 
@@ -17,6 +21,7 @@ export function useDeviceSwapPlan() {
   const [error, setError] = useState<string | null>(null);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [rebalanceMessage, setRebalanceMessage] = useState<string | null>(null);
+  const [rebalanceFailed, setRebalanceFailed] = useState(false);
 
   const applyPlan = useCallback((result: PlanResult) => {
     if (result.plan) {
@@ -33,19 +38,18 @@ export function useDeviceSwapPlan() {
     applyPlan(await loadPlan());
   }, [applyPlan]);
 
+  // The button shows its own pending state; a failed rebalance is reported beside it and leaves the plan on screen.
   const rebalance = useCallback(async () => {
-    setLoading(true);
     setRebalanceMessage(null);
+    setRebalanceFailed(false);
     try {
       const nextPlan = await requestDeviceSwapRebalance();
       setPlan(nextPlan);
       setLastUpdated(new Date());
-      setRebalanceMessage("SWAP rebalance executed successfully.");
+      setRebalanceMessage(`Rebalanced at ${new Date().toLocaleTimeString()}.`);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Unable to rebalance SWAP network");
-      setRebalanceMessage(null);
-    } finally {
-      setLoading(false);
+      setRebalanceMessage(err instanceof Error ? err.message : "Couldn't rebalance the SWAP network.");
+      setRebalanceFailed(true);
     }
   }, []);
 
@@ -54,10 +58,12 @@ export function useDeviceSwapPlan() {
     let cancelled = false;
     const poll = async () => {
       const result = await loadPlan();
-      if (!cancelled) applyPlan(result);
+      if (cancelled) return;
+      applyPlan(result);
+      if (result.stop) window.clearInterval(interval);
     };
-    void poll();
     const interval = window.setInterval(poll, 60000);
+    void poll();
     return () => {
       cancelled = true;
       window.clearInterval(interval);
@@ -70,6 +76,7 @@ export function useDeviceSwapPlan() {
     error,
     lastUpdated,
     rebalanceMessage,
+    rebalanceFailed,
     fetchPlan,
     rebalance,
   };

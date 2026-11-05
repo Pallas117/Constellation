@@ -9,6 +9,7 @@ import { useDocumentTitle } from "@/hooks/useDocumentTitle";
 import { useNow } from "@/hooks/useNow";
 import { batteryLabel, copyText, deviceStage, enrollCommand, guardLine, STAGE_HELP, STALE_MS } from "@/lib/mesh-onboarding";
 import { bytesLabel, stabilityScore, stabilityTone, windowLine } from "@/lib/link-stability";
+import { ConfirmButton } from "@/components/ui/confirm-button";
 const PLATFORM_LABEL: Record<string, string> = { macos: "macOS", linux: "Linux", windows: "Windows", ios: "iPhone", android: "Android" };
 // Mirrors hostingVerdict in backend/mesh/store.ts.
 const HOSTING_LABEL: Record<string, string> = {
@@ -258,9 +259,7 @@ const MeshDashboard = () => {
                           <td className="py-3 pr-4 text-muted-foreground">{ago(d.last?.receivedAt)}</td>
                           <td className="py-3 text-right">
                             {(canRevokeAny || d.owner === me) && (
-                              <Button size="sm" variant="ghost" onClick={() => void onRevoke(d.name)}>
-                                Revoke
-                              </Button>
+                              <ConfirmButton size="sm" variant="ghost" label="Revoke" confirmLabel="Revoke device?" pendingLabel="Revoking…" onConfirm={() => onRevoke(d.name)} />
                             )}
                           </td>
                         </tr>

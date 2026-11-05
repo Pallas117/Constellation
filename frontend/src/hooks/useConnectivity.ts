@@ -10,10 +10,12 @@ export interface ConnectivityStatus {
 }
 
 export const useConnectivity = () => {
+  // Not measured yet: no latency and no check time, so nothing reads as a measured "0 ms". The mode stays CLOUD
+  // (the hooks that switch to fallbacks on AIRGAP shouldn't do so before the first answer).
   const [status, setStatus] = useState<ConnectivityStatus>({
     mode: 'CLOUD',
-    latencyMs: 0,
-    lastChecked: new Date().toISOString(),
+    latencyMs: -1,
+    lastChecked: '',
   });
 
   useEffect(() => {
