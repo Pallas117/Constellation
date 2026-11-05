@@ -423,7 +423,7 @@ const HeliophysicsDashboard = () => {
                     hint={densityNote ?? undefined}
                   />
                   <Readout label="Measured" value={next?.observedAt ? `${utc(next.observedAt)} UTC` : "—"} hint={latest?.spacecraft} />
-                  <Readout label="Reaches Earth" value={etaUtc ? `≈ ${etaUtc} UTC` : "—"} hint={`~${travelMin} min at this speed`} />
+                  <Readout label="Reaches Earth" value={etaUtc ? `≈ ${etaUtc} UTC` : "—"} hint={travelMin === "—" ? undefined : `~${travelMin} min at this speed`} />
                   <Readout
                     label="MMS reconnection confidence"
                     value={mms.latest?.quality.confidence != null ? String(mms.latest.quality.confidence) : "—"}

@@ -46,7 +46,8 @@ export function useDeviceSwapPlan() {
       const nextPlan = await requestDeviceSwapRebalance();
       setPlan(nextPlan);
       setLastUpdated(new Date());
-      setRebalanceMessage(`Rebalanced at ${new Date().toLocaleTimeString()}.`);
+      const at = new Date().toISOString().slice(11, 19);
+      setRebalanceMessage(nextPlan.message ? `${nextPlan.message} (${at} UTC).` : `Rebalanced at ${at} UTC.`);
     } catch (err) {
       setRebalanceMessage(err instanceof Error ? err.message : "Couldn't rebalance the SWAP network.");
       setRebalanceFailed(true);

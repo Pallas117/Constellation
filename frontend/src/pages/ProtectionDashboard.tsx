@@ -122,7 +122,7 @@ const ProtectionDashboard = () => {
 
             <p className="text-sm leading-6 text-muted-foreground">{risk.description}</p>
             {/* The reading's own measurement time, not when the SWAP plan was last fetched. */}
-            <p className="text-xs text-muted-foreground">Feed source: {solarWind.source} · Measured {latest ? new Date(latest.observedAt ?? latest.timestamp).toLocaleTimeString() : "—"}</p>
+            <p className="text-xs text-muted-foreground">Feed source: {solarWind.source} · Measured {latest ? `${new Date(latest.observedAt ?? latest.timestamp).toISOString().slice(11, 19)} UTC` : "—"}</p>
           </CardContent>
         </Card>
 

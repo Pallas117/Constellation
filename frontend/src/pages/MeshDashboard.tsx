@@ -332,9 +332,10 @@ const MeshDashboard = () => {
             <ol className="space-y-4">
               {steps.map((step, i) => (
                 <li key={step.id} className="space-y-1">
-                  <p className="text-sm font-medium">
+                  {/* A div, not a p: Badge renders a div, which can't sit inside a paragraph. */}
+                  <div className="text-sm font-medium">
                     {i + 1}. {step.title} {step.pending && <Badge variant="outline">pending</Badge>}
-                  </p>
+                  </div>
                   {step.command && <pre className="overflow-x-auto rounded bg-muted p-2 text-xs">{step.command}</pre>}
                   <p className="text-xs text-muted-foreground">{step.detail}</p>
                 </li>

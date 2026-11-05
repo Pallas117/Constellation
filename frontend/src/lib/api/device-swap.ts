@@ -39,7 +39,7 @@ export async function requestDeviceSwapRebalance(payload: {
   requiredComputePercent?: number;
   requiredPowerWatts?: number;
   thermalThresholdC?: number;
-} = {}): Promise<DeviceSwapPlan> {
+} = {}): Promise<DeviceSwapPlan & { message?: string }> {
   const response = await fetch(DEVICE_SWAP_REBALANCE_URL, {
     method: "POST",
     credentials: "include",
@@ -52,12 +52,16 @@ export async function requestDeviceSwapRebalance(payload: {
   }
 
   const json = await response.json();
-  if (!json?.ok || !json?.assignments) {
+  // The route answers { ok, plan: { timestamp, assignments, summary }, message } (device-registry.ts); reading
+  // `assignments` at the top level failed every rebalance with "Invalid SWAP rebalance response".
+  const plan = json?.plan;
+  if (!json?.ok || !Array.isArray(plan?.assignments)) {
     throw new Error(json?.error || "Invalid SWAP rebalance response");
   }
   return {
-    timestamp: json.timestamp ?? new Date().toISOString(),
-    assignments: json.assignments,
-    summary: json.summary ?? {},
+    timestamp: plan.timestamp ?? new Date().toISOString(),
+    assignments: plan.assignments,
+    summary: plan.summary ?? {},
+    message: typeof json.message === "string" ? json.message : undefined,
   };
 }
