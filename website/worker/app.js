@@ -125,7 +125,8 @@ export function eduCard(env, account, email, start = false) {
 }
 
 function memberCard(supportUrl = "") {
-  return `<article class="tile"><h2 class="label">Constellation</h2><p class="big">Member</p><p class="t">Free, by invitation.</p>` +
+  // Wears Constellation's own navy and gold (Brand Book), so membership never reads as part of Gauss.
+  return `<article class="tile brand-constellation"><div class="tile-head"><h2 class="label">Constellation</h2><img src="/assets/marks/constellation-icon-colour-dark-v2.svg" alt="" width="32" height="32"></div><p class="big">Member</p><p class="t">Free, by invitation.</p>` +
     `<p class="m">Community channels are shared with members directly. Launch calendar: <a href="/api/launches.ics">subscribe</a>.</p>` +
     (supportLink(supportUrl) ? `<p class="m"><a href="${esc(supportUrl)}" rel="noopener">Support Constellation</a> (optional)</p>` : "") +
     `<p class="m"><a href="/constellation/">Constellation</a></p></article>`;

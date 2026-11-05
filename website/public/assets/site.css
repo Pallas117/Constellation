@@ -342,6 +342,7 @@ footer p{margin:0 0 6px}
 .brand-constellation{--accent:#B0906F;--accent2:#B0906F;--panel:#081C4D;--char:#1C3470;--muted:#A9ABA6}
 .brand-constellation h1,.brand-constellation h2,.brand-constellation h3{font-weight:500}
 .brand-constellation .k,.brand-constellation .label{letter-spacing:.2em}
+.tile.brand-constellation .label{color:var(--accent)}
 .brand-constellation main a:not(.btn):not(.door),.brand-turnstone main a:not(.btn){text-decoration-color:var(--accent2)}
 .brand-constellation .btn.ghost:hover,.brand-turnstone .btn.ghost:hover{border-color:var(--accent2);color:var(--accent2)}
 .motto{margin:6px 0 14px;color:var(--accent);font-weight:500;font-size:clamp(16px,1.6vw,19px)}
@@ -387,6 +388,8 @@ footer p{margin:0 0 6px}
 .call-what .m{color:var(--muted);font-size:15px;margin:0;overflow-wrap:anywhere}
 .call-act{display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:end}
 .call-act .btn{min-height:38px;padding:0 14px;font-size:14px}
+/* Four actions in an auto column squeezed the title to a few words, so they take their own row below 1100 px. */
+@media (max-width:1100px){.call{grid-template-columns:200px 1fr}.call-act{grid-column:1/-1;justify-content:start}}
 @media (max-width:760px){.call{grid-template-columns:1fr}.call-act{justify-content:start}}
 .call-form{max-width:760px}
 .opps{margin-top:40px}

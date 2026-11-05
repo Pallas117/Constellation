@@ -270,3 +270,33 @@ test("GAU-228: GAUSS_LASP=0 / GAUSS_MMS=0 leave those sources out of the live wo
     globalThis.fetch = realFetch;
   }
 });
+
+test("tick: a 7 h old completed Kp of 6 is unknown and can't make the tier severe (GAU-232)", async () => {
+  const now = Date.now();
+  const run = async (kpHoursAgo: number) => {
+    const worker = new IngestionWorker() as unknown as TimedWorker & { noaa: unknown; kpReading: unknown };
+    for (const key of ["noaa", "esa", "jaxa", "mms", "lasp", "goes", "kyoto-dst", "swpc-products", "ml-forecast"]) worker.lastFetch.set(key, now);
+    const kpReading = { value: 6, kind: "planetary-3h", observedAt: new Date(now - kpHoursAgo * 3_600_000).toISOString() };
+    const field = { x: 2, y: 1, z: -12 };
+    worker.noaa = {
+      timestamp: new Date(now - 60_000).toISOString(),
+      spacecraft: "ACE",
+      density: 8,
+      velocityGse: { x: -600, y: 0, z: 0 },
+      velocityGsm: { x: -600, y: 0, z: 0 },
+      magneticFieldGse: field,
+      magneticFieldGsm: field,
+      kp: 6,
+      kpReading,
+      densityCheck: null,
+    };
+    worker.kpReading = kpReading;
+    return tickPoint(worker);
+  };
+  const stale = await run(7);
+  assert.equal(stale.indices.kp, null, "past the 6 h bound Kp is unknown");
+  assert.notEqual(stale.alerts.stormTier, "severe", "Bz -12 alone, with no Dst fall, is not severe");
+  const current = await run(2);
+  assert.equal(current.indices.kp, 6);
+  assert.equal(current.alerts.stormTier, "severe", "a current Kp 6 with Bz -12 is");
+});
