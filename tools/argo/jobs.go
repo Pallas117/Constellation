@@ -32,6 +32,10 @@ type JobRun struct {
 	Workers int     `json:"workers,omitempty"`
 	BaseW   float64 `json:"base_w,omitempty"`
 	AvgW    float64 `json:"avg_w,omitempty"`
+	// Time lost to the host (scale.go): seconds it waited for admission and seconds it sat paused
+	// in eclipse. This is the demand the host could not serve, the number that sizes outside compute.
+	WaitSecs  int `json:"wait_s,omitempty"`
+	PauseSecs int `json:"pause_s,omitempty"`
 }
 
 const (
