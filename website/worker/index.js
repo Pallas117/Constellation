@@ -1,4 +1,4 @@
-// lightbound.uk edge Worker. Static files are served by Cloudflare straight from public/ (free, no
+// lightbound.space edge Worker. Static files are served by Cloudflare straight from public/ (free, no
 // Worker run). The Worker runs only for the routes in wrangler.jsonc "run_worker_first":
 //   /                       landing: the Gauss door shows space weather now, Constellation the next launch
 //   /gauss/                 plans (from tiers.js) and the Constellation door's next launch
@@ -120,7 +120,7 @@ async function api(request, url, env, ctx) {
       const start = Date.parse(url.searchParams.get("start") ?? "");
       if (!Number.isFinite(start) || Math.abs(start - now) > 400 * 86_400_000) return json({ error: "start must be an ISO time within 400 days" }, 400, "no-store");
       return respond(renderEventIcs({ uid: `slot-${start}`, start: new Date(start).toISOString(), minutes: 60, summary: "Constellation group call",
-        description: "Time picked with the Constellation time-zone planner: https://lightbound.uk/constellation/time/" }, now), 200, "text/calendar; charset=utf-8",
+        description: "Time picked with the Constellation time-zone planner: https://lightbound.space/constellation/time/" }, now), 200, "text/calendar; charset=utf-8",
         { "cache-control": "public, max-age=86400", "content-disposition": 'attachment; filename="constellation-call.ics"' });
     }
     case "/api/launches.ics":

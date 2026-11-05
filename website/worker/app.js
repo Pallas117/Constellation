@@ -185,7 +185,7 @@ const invoiceCheck = (on, id) => `<label class="check" for="${id}"><input id="${
 const communitySelect = (cur) => `<select name="community" aria-label="Constellation">${opt("", "Not a member", cur)}${opt("member", "Constellation member", cur)}</select>`;
 
 const inviteDraft = (email, name) => {
-  const body = `Hello${name ? ` ${name}` : ""},\n\nYou're invited to Constellation, Lightbound's space community group. Membership is free.\n\nSign in with this email address at https://lightbound.uk/app/ (we'll email you a one-time code; there's no password).\n\nJoshua`;
+  const body = `Hello${name ? ` ${name}` : ""},\n\nYou're invited to Constellation, Lightbound's space community group. Membership is free.\n\nSign in with this email address at https://lightbound.space/app/ (we'll email you a one-time code; there's no password).\n\nJoshua`;
   return `mailto:${encodeURIComponent(email)}?subject=${encodeURIComponent("Your invitation to Constellation")}&body=${encodeURIComponent(body)}`;
 };
 
@@ -465,7 +465,7 @@ export async function handleApp(request, env, url, { respond, fillPage, fetchImp
     if (!call) return fail(404, "Not found");
     const booked = admin || !!(await env.DATA.get(`rsvp:${call.id}:${id.email}`));
     const body = renderEventIcs({ uid: `call-${call.id}`, start: call.start, minutes: call.minutes, summary: `Constellation: ${call.title}`,
-      description: [call.notes, booked && call.link ? `Join: ${call.link}` : "Book a seat at https://lightbound.uk/app/ to get the link."].filter(Boolean).join("\n"),
+      description: [call.notes, booked && call.link ? `Join: ${call.link}` : "Book a seat at https://lightbound.space/app/ to get the link."].filter(Boolean).join("\n"),
       url: booked && call.link ? call.link : "" });
     return respond(body, 200, "text/calendar; charset=utf-8", { ...APP_HEADERS, "content-disposition": 'attachment; filename="constellation-call.ics"' });
   }

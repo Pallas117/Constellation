@@ -203,7 +203,7 @@ export function renderIcs(rec, now = Date.now()) {
       timed ? `DTSTART:${icsTime(start.toISOString())}` : `DTSTART;VALUE=DATE:${icsDate(l.net)}`,
       timed ? `DTEND:${icsTime(end.toISOString())}` : `DTEND;VALUE=DATE:${icsDate(new Date(start.getTime() + 86_400_000).toISOString())}`,
       `SUMMARY:${icsEsc(title(l))}`, `LOCATION:${icsEsc(l.location)}`,
-      `DESCRIPTION:${icsEsc(`${l.provider}\nStatus: ${l.statusName || l.status}\nTime precision: ${l.precision}\nSource: The Space Devs Launch Library 2 via lightbound.uk/constellation`)}`,
+      `DESCRIPTION:${icsEsc(`${l.provider}\nStatus: ${l.statusName || l.status}\nTime precision: ${l.precision}\nSource: The Space Devs Launch Library 2 via lightbound.space/constellation`)}`,
       "END:VEVENT");
   }
   lines.push("END:VCALENDAR");

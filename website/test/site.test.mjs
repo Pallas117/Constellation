@@ -1,4 +1,4 @@
-// Static-site checks for lightbound.uk:  npm run test:website
+// Static-site checks for lightbound.space:  npm run test:website
 // GAU-12 claim rules on /gauss/, brand and security rules everywhere, Turnstone stays secret, size budgets.
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -143,7 +143,7 @@ test("security: strict CSP, no scripts, no inline styles or handlers, nothing lo
     const code = page.replace(/<script type="application\/ld\+json">([^<]*)<\/script>/g, (m, json) => (JSON.parse(json), ""));
     assert.doesNotMatch(code, /<script|\son\w+="|\sstyle=/i, `${route}: script or inline style`);
     for (const [, url] of page.matchAll(/(?:\ssrc|srcset|<link[^>]*\shref)="(https?:[^"]+)"/g))
-      assert.match(url, /^https:\/\/lightbound\.uk\//, `${route}: third-party resource ${url}`);
+      assert.match(url, /^https:\/\/lightbound\.space\//, `${route}: third-party resource ${url}`);
   }
 });
 
@@ -409,7 +409,7 @@ test("public release: the config holds only what the public pages need, and keep
   assert.equal(raw.match(/REPLACE_[A-Z_]+/g), null, "no placeholders left to deploy");
   assert.match(config.kv_namespaces[0].id, /^[0-9a-f]{32}$/, "the LIVE namespace id");
   for (const route of ["/app", "/app/*", "/argo/", "/api/*"]) assert.ok(config.assets.run_worker_first.includes(route), `${route} must reach the Worker, or its static file would be served`);
-  assert.equal(config.routes, undefined, "lightbound.uk is routed only with Josh's go-ahead");
+  assert.deepEqual(config.routes, [{ pattern: "lightbound.space", custom_domain: true }], "lightbound.space is the main site (Josh, 2026-11-05)");
 });
 
 test("public release: public pages link to sign-in only inside <!--full--> blocks, which the Worker removes", () => {
@@ -447,7 +447,7 @@ test("brand: Constellation pages are navy and gold, carry the motto and values, 
     assert.match(html[route], /<body class="page brand-constellation">/, route);
     assert.match(html[route], /<link rel="icon" href="\/assets\/marks\/constellation-icon-colour-dark-v2\.svg"/, route);
     // The legal line ("operated by Lightbound Limited") stays; no endorsement badge or "from Lightbound" framing.
-    assert.doesNotMatch(text(html[route]), /a Lightbound company|from Lightbound(?!\.uk)|by Lightbound(?! Limited)/i, `${route}: no company badge`);
+    assert.doesNotMatch(text(html[route]), /a Lightbound company|from Lightbound(?!\.(?:uk|space))|by Lightbound(?! Limited)/i, `${route}: no company badge`);
   }
   assert.match(text(html["/constellation/"]), /Per aspera ad astra: through adversity we go beyond\./);
   for (const v of ["Intentionality", "Radical integrity", "Accountability", "The Golden Rule"]) assert.ok(text(html["/constellation/"]).includes(v), v);
@@ -540,7 +540,7 @@ test("traffic: every indexable page has share cards and is in the sitemap; robot
     assert.match(page, /<meta name="twitter:card" content="summary_large_image">/, route);
   }
   assert.ok(!listed.some((u) => /\/(turnstone|argo|app)\//.test(u)), "secret, unpromoted and signed-in pages never listed");
-  assert.match(read("robots.txt"), /^Disallow: \/app\/$[\s\S]*^Sitemap: https:\/\/lightbound\.uk\/sitemap\.xml$/m);
+  assert.match(read("robots.txt"), /^Disallow: \/app\/$[\s\S]*^Sitemap: https:\/\/lightbound\.space\/sitemap\.xml$/m);
   const ld = JSON.parse(html["/"].match(/<script type="application\/ld\+json">([^<]*)<\/script>/)[1]);
   assert.equal(ld["@graph"][0].name, "Lightbound Limited");
   assert.deepEqual(ld["@graph"][0].sameAs, ["https://luma.com/constellation"]);
