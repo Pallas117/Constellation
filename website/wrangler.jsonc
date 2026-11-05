@@ -34,5 +34,5 @@
   "observability": { "enabled": true }
   // When the workers.dev preview passes the smoke check, uncomment to serve lightbound.space (adds proxied A/AAAA
   // records only; the Google Workspace MX records are not touched). Needs Josh's go-ahead: it's the DNS change.
-  // ,"routes": [{ "pattern": "lightbound.space", "custom_domain": true }]
+  ,"routes": [{ "pattern": "lightbound.space", "custom_domain": true }]
 }

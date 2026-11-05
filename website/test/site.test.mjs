@@ -412,7 +412,7 @@ test("public release: the config holds only what the public pages need, and keep
   // Josh, 2026-11-05: the main site is lightbound.space. The route stays commented until the apex and www A records
   // (DNS-only, tailnet address) are deleted: with them in place Cloudflare refuses the custom domain (code 100117) and
   // a partial trigger update switches the workers.dev preview off (error 1042) until a redeploy without the route.
-  assert.equal(config.routes, undefined, "lightbound.space is routed once its apex and www A records are gone (uncomment routes, deploy, smoke)");
+  assert.deepEqual(config.routes, [{ pattern: "lightbound.space", custom_domain: true }], "lightbound.space is the main site (Josh deleted the apex record, 2026-11-05)");
 });
 
 test("public release: public pages link to sign-in only inside <!--full--> blocks, which the Worker removes", () => {
