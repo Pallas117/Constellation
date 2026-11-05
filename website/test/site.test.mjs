@@ -409,7 +409,7 @@ test("public release: the config holds only what the public pages need, and keep
   assert.equal(raw.match(/REPLACE_[A-Z_]+/g), null, "no placeholders left to deploy");
   assert.match(config.kv_namespaces[0].id, /^[0-9a-f]{32}$/, "the LIVE namespace id");
   for (const route of ["/app", "/app/*", "/argo/", "/api/*"]) assert.ok(config.assets.run_worker_first.includes(route), `${route} must reach the Worker, or its static file would be served`);
-  assert.equal(config.routes, undefined, "lightbound.uk is routed only with Josh's go-ahead");
+  assert.deepEqual(config.routes, [{ pattern: "lightbound.uk", custom_domain: true }], "lightbound.uk is the only route (Josh's go-ahead, 2026-11-05)");
 });
 
 test("public release: public pages link to sign-in only inside <!--full--> blocks, which the Worker removes", () => {
