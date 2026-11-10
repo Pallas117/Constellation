@@ -34,6 +34,9 @@ type Phone struct {
 	// sendRelay is for alerts sent while this Mac has no network (GAU-233): SMS first, so Messages
 	// hands it to the iPhone over Continuity instead of holding an iMessage it can't deliver.
 	sendRelay func(to, text string) error
+	// Policy decides which alerts text now and which wait for the digest (attention.go).
+	// Nil sends everything, as before.
+	Policy *Attention
 }
 
 func newPhone(to, device string) *Phone {
@@ -55,6 +58,7 @@ func newPhoneFor(cfg Config) *Phone {
 	p := newPhone(cfg.PhoneTo, cfg.Device)
 	if p != nil {
 		p.sendRelay = smsFirst
+		p.Policy = newAttention(filepath.Dir(p.Queue), cfg.QuietHours)
 	}
 	if p != nil && strings.EqualFold(cfg.PhoneService, "sms") && strings.HasPrefix(p.To, "+") {
 		p.send, p.Route = smsFirst, "sms-first"
@@ -155,12 +159,21 @@ func iMessage(to, text string) error {
 // instead of holding the tick for the ~2 min AppleEvent default.
 const sendTimeout = 30 * time.Second
 
-// Send delivers any queued alerts first, then this one; failures are queued.
+// Send is SendAlert with the level worked out from the title.
 func (p *Phone) Send(title, msg string, at time.Time) {
-	text := fmt.Sprintf("%s on %s (%s)\n%s", Mask(title), p.Device, at.Local().Format("15:04"), Mask(msg))
+	p.SendAlert(Alert{Title: title, Msg: msg}, at)
+}
+
+// SendAlert delivers any queued alerts first, then this one; failures are queued.
+// The attention policy may hold it for the digest instead.
+func (p *Phone) SendAlert(a Alert, at time.Time) {
+	text := fmt.Sprintf("%s on %s (%s)\n%s", Mask(a.Title), p.Device, at.Local().Format("15:04"), Mask(a.Msg))
 	if unlock, err := p.queueLock(); err == nil {
 		defer unlock()
 	} // still best-effort deliver if the lock is stuck
+	if p.Policy != nil && !p.Policy.admit(a, at.Local()) {
+		return // held: goes out with the next digest
+	}
 	if egressHeld(filepath.Dir(p.Queue)) {
 		p.writeQueue(append(p.readQueue(), text)) // held on this Mac until `argo egress on`
 		return
@@ -187,14 +200,22 @@ func (p *Phone) SendRelay(title, msg string, at time.Time) bool {
 }
 
 // Flush retries queued alerts; called every tick so offline alerts arrive once back online.
-func (p *Phone) Flush() {
+func (p *Phone) Flush() { p.flushAt(time.Now()) }
+
+func (p *Phone) flushAt(now time.Time) {
 	if egressHeld(filepath.Dir(p.Queue)) {
 		return
 	}
 	if unlock, err := p.queueLock(); err == nil {
 		defer unlock()
 	}
-	if q := p.readQueue(); len(q) > 0 {
+	q := p.readQueue()
+	if p.Policy != nil {
+		if d := p.Policy.digest(now.Local()); d != "" {
+			q = append(q, fmt.Sprintf("Argo digest on %s (%s)\n%s", p.Device, now.Local().Format("15:04"), d))
+		}
+	}
+	if len(q) > 0 {
 		p.deliver(q)
 	}
 }
