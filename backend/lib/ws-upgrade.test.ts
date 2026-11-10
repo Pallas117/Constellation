@@ -6,27 +6,45 @@ import { routeUpgrades } from "./ws-upgrade.js";
 
 type Probe = { opened: boolean; messages: string[]; status: number | null; closeCode: number | null; openAfter: boolean };
 
-/** Connect, wait `holdMs`, and report what happened; a 400 shows up as `status`. */
-function probe(url: string, holdMs = 150): Promise<Probe> {
+/**
+ * Connect, wait until the connection is decided (open, refused or failed), hold it for `holdMs`,
+ * and report what happened; a 400 shows up as `status`.
+ *
+ * The hold starts when the outcome is known, not when the probe starts: on a loaded machine the
+ * handshake alone can take longer than a fixed hold (seen in the gate run of 2026-11-10, "a opened"
+ * false after 150 ms), which says nothing about the routing under test.
+ */
+function probe(url: string, holdMs = 150, connectDeadlineMs = 5_000): Promise<Probe> {
   return new Promise((resolve) => {
     const result: Probe = { opened: false, messages: [], status: null, closeCode: null, openAfter: false };
     const ws = new WebSocket(url);
-    ws.on("open", () => (result.opened = true));
+    let holding = false;
+    const hold = () => {
+      if (holding) return;
+      holding = true;
+      clearTimeout(deadline);
+      setTimeout(() => {
+        // Snapshot before terminate(): our own close (1006) must not land in the result while
+        // Promise.all still waits for the other probe, which happens when the timers fire apart.
+        const seen: Probe = { ...result, messages: [...result.messages], openAfter: ws.readyState === WebSocket.OPEN };
+        ws.terminate();
+        resolve(seen);
+      }, holdMs);
+    };
+    const deadline = setTimeout(hold, connectDeadlineMs);
+    ws.on("open", () => {
+      result.opened = true;
+      hold();
+    });
     ws.on("message", (data) => result.messages.push(String(data)));
     ws.on("unexpected-response", (_req, res) => {
       result.status = res.statusCode ?? null;
       res.resume();
       ws.terminate();
+      hold();
     });
-    ws.on("error", () => {});
+    ws.on("error", hold);
     ws.on("close", (code) => (result.closeCode = code));
-    setTimeout(() => {
-      // Snapshot before terminate(): our own close (1006) must not land in the result while
-      // Promise.all still waits for the other probe, which happens when the timers fire apart.
-      const seen: Probe = { ...result, messages: [...result.messages], openAfter: ws.readyState === WebSocket.OPEN };
-      ws.terminate();
-      resolve(seen);
-    }, holdMs);
   });
 }
 
