@@ -137,9 +137,9 @@ func runPosture(ctx context.Context, goos string, e postureEnv) Posture {
 	return p
 }
 
-// worst combines parts of one item: fail beats unknown beats warn beats ok.
+// worstStatus combines parts of one item: fail beats unknown beats warn beats ok.
 // Unknown outranks warn so a part that could not be read is never hidden.
-func worst(statuses ...string) string {
+func worstStatus(statuses ...string) string {
 	rank := map[string]int{postureOK: 0, postureWarn: 1, postureUnknown: 2, postureFail: 3}
 	out := postureOK
 	for _, s := range statuses {
@@ -189,13 +189,6 @@ func tailKeyItem(ctx context.Context, e postureEnv) PostureItem {
 		return item(id, postureWarn, fmt.Sprintf("This device's tailnet key expires in %d day%s", days, plural(days)), fix)
 	}
 	return item(id, postureOK, fmt.Sprintf("Key valid for %d more days", days), "")
-}
-
-func plural(n int) string {
-	if n == 1 {
-		return ""
-	}
-	return "s"
 }
 
 // updateStateMaxAge: an update check older than this no longer proves Argo is current.

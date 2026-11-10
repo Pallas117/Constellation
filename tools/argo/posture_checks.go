@@ -159,7 +159,7 @@ func linuxEncrypted(e postureEnv, sysPath string, depth int) string {
 		if !reBlockName.MatchString(name) {
 			return postureUnknown
 		}
-		out = worst(out, linuxEncrypted(e, "/sys/class/block/"+name, depth+1))
+		out = worstStatus(out, linuxEncrypted(e, "/sys/class/block/"+name, depth+1))
 	}
 	return out
 }
@@ -184,7 +184,7 @@ func linuxDisk(e postureEnv) PostureItem {
 		if status == "" {
 			status = s
 		} else {
-			status = worst(status, s)
+			status = worstStatus(status, s)
 		}
 	}
 	switch status {

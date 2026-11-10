@@ -444,8 +444,8 @@ func TestPostureWorst(t *testing.T) {
 		{[]string{postureWarn, postureUnknown}, postureUnknown},
 		{[]string{postureUnknown, postureFail, postureOK}, postureFail},
 	} {
-		if got := worst(c.in...); got != c.want {
-			t.Errorf("worst(%v) = %s", c.in, got)
+		if got := worstStatus(c.in...); got != c.want {
+			t.Errorf("worstStatus(%v) = %s", c.in, got)
 		}
 	}
 }
