@@ -1,7 +1,8 @@
 name: Argo (Go)
 
-# Checks for tools/argo, the standalone Go module. Until this workflow existed
-# Argo had no CI of its own: only `go test -short` inside the local ops gate.
+# Optional second runner for tools/argo. The check itself is tools/argo/check.sh,
+# which the local gate (npm run test:ops) and tools/argo/ci-local.sh also run, so
+# Argo's CI does not depend on GitHub Actions being available.
 
 on:
   pull_request:
@@ -27,9 +28,6 @@ jobs:
     name: Format, vet, build, test
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    defaults:
-      run:
-        working-directory: tools/argo
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -42,32 +40,7 @@ jobs:
           go-version-file: tools/argo/go.mod
           cache: false # standard library only: nothing to cache
 
-      - name: Standard library only
-        run: |
-          if [ -s go.sum ]; then
-            echo "tools/argo must not have dependencies (go.sum is not empty)"; exit 1
-          fi
-          if grep -qE '^\s*require\b' go.mod; then
-            echo "tools/argo must not have dependencies (go.mod has a require)"; exit 1
-          fi
-
-      - name: gofmt
-        run: |
-          out="$(gofmt -l .)"
-          if [ -n "$out" ]; then echo "Not gofmt-clean:"; echo "$out"; exit 1; fi
-
-      - name: go vet (Linux and macOS)
-        run: |
-          go vet ./...
-          GOOS=darwin GOARCH=arm64 go vet ./...
-
-      - name: Build (linux/amd64, linux/arm64, darwin/arm64)
-        run: |
-          GOOS=linux GOARCH=amd64 go build -o /dev/null .
-          GOOS=linux GOARCH=arm64 go build -o /dev/null .
-          GOOS=darwin GOARCH=arm64 go build -o /dev/null .
-
-      - name: Tests with the race detector
+      - name: Check (same script as the local gate)
         env:
           ARGO_NO_DESKTOP: "1"
-        run: go test -race ./...
+        run: bash tools/argo/check.sh
