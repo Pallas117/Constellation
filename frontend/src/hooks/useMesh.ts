@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { apiBase } from "@/lib/api/base-url";
 import { describeHttpFailure, HttpFailure } from "@/lib/api/http-error";
-import { stopsPolling, type BatteryReading, type GuardReading } from "@/lib/mesh-onboarding";
+import { stopsPolling, type BatteryReading, type GuardReading, type PostureReading } from "@/lib/mesh-onboarding";
 import type { LinkReport } from "@/lib/link-stability";
 
 const POLL_INTERVAL_MS = 30_000;
@@ -26,6 +26,7 @@ export interface MeshReport {
   net?: MeshNet;
   link?: LinkReport;
   guard?: MeshGuard;
+  posture?: PostureReading; // `argo posture` statuses (backend/mesh/store.ts MeshPosture, GAU-238)
 }
 
 /** Argo's resource guard decision (backend/mesh/store.ts MeshGuard, GAU-195). */

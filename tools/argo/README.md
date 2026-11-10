@@ -93,6 +93,8 @@ Then remove the `statusLine` and `claude()` lines above if you added them, and r
 | `argo link` | Link stability: availability, drops and recovery times over 24 h and 7 days |
 | `argo thirdparty [list\|check\|accept] [-json]` | Third parties (below): every outside service as a node with what it can see, its scopes, where its credential lives and where to revoke it. `check` exits 3 when a node is new, changed, removed, unregistered or can see local-class data |
 | `argo thirdparty seen [TOOL]` | Credits one use of a tool (or a Claude Code hook's JSON on stdin) to its node, or records the service as unregistered. Always exits 0 |
+| `argo posture [--json]` | Read-only device security checks against the draft baseline (below): disk encryption, firewall, automatic updates, system integrity, tailnet key expiry, Argo version, sharing services. Each is `ok`, `warn`, `fail` or `unknown`, with a one-line fix. Changes nothing |
+| `argo update [check\|apply]` | Signed Argo releases (below). `check` (default) says whether a newer signed release exists; `apply` installs it. Nothing updates by itself, and nothing works until a release key is pinned |
 | `argo off` / `argo on` | Pauses or resumes the LaunchAgent ticks |
 | `argo preflight` | Fast local check for dead proxies and stuck Claude daemons (exit 1 if found) |
 | `argo run -- cmd` | Runs `cmd` with dead proxy variables removed |
@@ -364,6 +366,33 @@ log: A = MTBF / (MTBF + MTTR), computed as 1 − down/observed. They also carry 
 95th-percentile outage, and the time between drops. Time asleep counts as observed and up unless an incident was
 open. The 7-day figure is the stability score on `/mesh`. Example from this Mac on 2026-10-23:
 `Link stability 83/100 · 24 h: 84.3% up over 24.0 h, 24 drops, typical outage 3 min (p95 63 min)`.
+
+## Device security posture and updates
+
+**`argo posture`** checks this device against `docs/DEVICE_SECURITY_BASELINE.md` (a DRAFT until Josh approves it).
+It only reads settings: no admin rights, no changes, no Tailscale command that changes anything. A check that cannot
+be read is `unknown`, never `ok`. The output has no serial numbers, addresses, host or user names. The tick re-runs
+it about hourly and the mesh report carries one status per item (nothing else), which `/mesh` shows as a
+"Security:" line under the device name. Linux checks are untested on a real Linux host so far.
+
+```
+$ argo posture
+ok       Disk encryption             FileVault is on
+fail     Firewall                    The macOS firewall is off
+         fix: Turn it on in System Settings > Network > Firewall
+```
+
+**`argo update`** is described in `docs/ARGO_UPDATE.md` (design and threat model). In short: a release manifest
+(JSON) with a detached Ed25519 signature is verified against the release public key compiled into Argo before
+anything in it is trusted; expired manifests, versions that are not newer, other platforms, and downloads whose size
+or SHA-256 differ are refused; fetching is https (or plain http on this machine or the tailnet only), with no
+redirects and no proxies. `apply` downloads next to the binary, runs the new build once, keeps the old one as
+`argo.prev`, replaces the binary with one rename and puts the old one back if the new one fails.
+
+- **No release key is pinned yet**, so today `argo update` prints that and fetches nothing, and `apply` refuses.
+- **Nothing applies by itself.** The tick only checks, at most daily, once a key is pinned.
+- **macOS:** `apply` also needs `--reset-mac-permissions`, because replacing the binary resets Argo's Messages and
+  Full Disk Access grants until Argo has a stable signing identity. Run `argo phone test` afterwards.
 
 ## Third parties
 

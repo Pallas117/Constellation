@@ -36,7 +36,25 @@ export interface MeshReport {
   net?: MeshNet;
   link?: MeshLink;
   guard?: MeshGuard;
+  posture?: MeshPosture;
 }
+
+/**
+ * Device security posture from `argo posture` (tools/argo/posture.go, GAU-238):
+ * one status per baseline item (docs/DEVICE_SECURITY_BASELINE.md) and when it
+ * was checked. Statuses only: no detail text, no identifiers. Argo sends it
+ * about hourly, so the store keeps the last one between reports.
+ */
+export const POSTURE_ITEMS = ["disk", "firewall", "updates", "integrity", "tailkey", "argo", "sharing"] as const;
+export type PostureItem = (typeof POSTURE_ITEMS)[number];
+export const POSTURE_STATUSES = ["ok", "warn", "fail", "unknown"] as const;
+export type PostureStatus = (typeof POSTURE_STATUSES)[number];
+export interface MeshPosture {
+  at: string;
+  items: Partial<Record<PostureItem, PostureStatus>>;
+}
+/** A posture older than this no longer describes the device and is dropped. */
+export const POSTURE_MAX_AGE_MS = 3 * 60 * 60 * 1000;
 
 /**
  * Link stability from Argo's incident log (tools/argo/linkstats.go), for the
@@ -328,6 +346,28 @@ export function parseGuard(value: unknown): MeshGuard | undefined {
   return { at, level, admission, slots, headroomGB, reasons, warnMin, swapRiseGB, minToFloor };
 }
 
+/**
+ * Argo's posture block: only known items with known statuses are kept; an
+ * unknown item or status is dropped alone. A bad, future (over 10 min) or
+ * stale check time, or no valid item at all, drops the block.
+ */
+export function parsePosture(value: unknown, now = new Date()): MeshPosture | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const p = value as Record<string, unknown>;
+  const at = typeof p.at === "string" && p.at.length <= 40 ? p.at : "";
+  const t = Date.parse(at);
+  if (Number.isNaN(t) || t > now.getTime() + 10 * 60 * 1000 || t < now.getTime() - POSTURE_MAX_AGE_MS) return undefined;
+  if (!p.items || typeof p.items !== "object" || Array.isArray(p.items)) return undefined;
+  const raw = p.items as Record<string, unknown>;
+  const items: MeshPosture["items"] = {};
+  for (const id of POSTURE_ITEMS) {
+    const s = Object.hasOwn(raw, id) ? raw[id] : undefined;
+    if (POSTURE_STATUSES.includes(s as PostureStatus)) items[id] = s as PostureStatus;
+  }
+  if (Object.keys(items).length === 0) return undefined;
+  return { at: new Date(t).toISOString(), items };
+}
+
 const WHY_RE = /^[A-Za-z0-9 ()/,.-]{1,80}$/;
 const int = (value: unknown, min: number, max: number) =>
   typeof value === "number" && Number.isInteger(value) && value >= min && value <= max ? value : null;
@@ -389,6 +429,7 @@ export function parseReport(body: unknown, now = new Date()): MeshReport | null 
     ...(parseNet(b.net) ? { net: parseNet(b.net) } : {}),
     ...(parseLink(b.link) ? { link: parseLink(b.link) } : {}),
     ...(parseGuard(b.guard) ? { guard: parseGuard(b.guard) } : {}),
+    ...(parsePosture(b.posture, now) ? { posture: parsePosture(b.posture, now) } : {}),
   };
 }
 
@@ -445,6 +486,9 @@ export class MeshStore {
   }
 
   record(device: MeshDevice, report: MeshReport): void {
+    // Argo sends posture about hourly: carry the last one forward until it is too old to stand for the device.
+    const prev = device.last?.posture;
+    if (!report.posture && prev && Date.parse(report.receivedAt) - Date.parse(prev.at) <= POSTURE_MAX_AGE_MS) report.posture = prev;
     device.last = report;
     delete device.rejectedAt;
     this.persist();
