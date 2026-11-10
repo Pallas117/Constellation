@@ -197,7 +197,7 @@ Use semantic versioning:
 
 ### What It Does
 - **Security Compliance Check**: Validates CORS, rate limiting, auth enforcement
-- **RBAC Smoke Tests**: Tests viewer/operator/admin role access flows
+- **RBAC Tests**: role matrix and 401/403 enforcement, run in process by `npm test` (not part of this workflow)
 - **Headers Validation**: Ensures security headers configured
 - **Rate Limiting Validation**: Verifies rate limit config exists
 - **Auto-comments PRs** with compliance status
@@ -205,7 +205,7 @@ Use semantic versioning:
 ### Files
 - `.github/workflows/compliance-gate.yml` — Compliance checks on every PR
 - `backend/scripts/security-compliance-check.ts` — Compliance validation logic
-- `backend/scripts/rbac-smoke.ts` — RBAC role tests
+- `backend/rbac.test.ts`, `backend/server.access.test.ts` — RBAC tests (run by `npm test`)
 
 ### How to Use
 
@@ -221,16 +221,19 @@ npm run check:security-compliance
 # ...
 ```
 
-#### RBAC Smoke Tests (Requires Supabase)
+#### RBAC Tests
 ```bash
-npm run test:rbac
+npm test
 
-# Tests:
-# - Viewer can read public data ✅
-# - Operator can manage APIs ✅
-# - Admin can manage users ✅
-# - Unauthorized blocked ✅
+# In process (temp data dir, test server on a random port), including:
+# - every API route has an access policy (deny by default otherwise)
+# - role matrix: user < staff < operator < admin
+# - no session → 401, role too low → 403, allowed role passes
+# - email sign-up cannot choose its own role
 ```
+
+Never point RBAC checks at the live backend (:3001): CyberTiger counts 401/403s
+and auto-blocks the client address.
 
 #### What Triggers Compliance Gate
 - Every **pull request** (comment added with results)
@@ -291,7 +294,6 @@ npm run audit:adherence
 - **Triggers**: Every PR, every push to main
 - **Jobs**:
   - `security-compliance`: Run compliance check script
-  - `rbac-smoke-test`: RBAC role tests
   - `headers-validation`: Check security headers in code
   - `rate-limit-config`: Verify rate limiting configured
   - `status-check`: Aggregate all results
@@ -319,7 +321,7 @@ npm run lint                           # TypeScript type check
 npm run security:audit                 # npm audit
 npm run security:secrets               # TruffleHog scan
 npm run check:security-compliance      # Compliance check
-npm run test:rbac                      # RBAC tests
+npm test                               # unit/integration tests, including RBAC
 ```
 
 ### Review Dependabot PR
