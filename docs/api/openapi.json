@@ -4,7 +4,7 @@
     "title": "Gauss pilot API",
     "version": "0.1.0",
     "summary": "The HTTP routes a Fleet Integration pilot calls: refined space-weather data and PR-01 trust records by organisation API key, organisation key and usage self-service by signed-in session, and the public health summary.",
-    "description": "Each operation states its access in `security` and in `x-gauss-access`:\n\n- `/api/v1/*` (`api-key`): an organisation API key, `Authorization: Bearer gk_…`. Mounted before session auth (backend/commerce/routers.ts, createDataApiRouter). The organisation's plan must include API access; each key has a per-minute limit and each organisation a daily quota. Successful calls (status < 400) are metered by route template, never by query string.\n- `/api/orgs/*` (`user`): a signed-in Gauss session with at least the `user` role (backend/rbac.ts, API_POLICY). The router also requires membership of the organisation; operators and admins may read any organisation's usage. Organisations, plans and members are managed by an admin with `npm run org`.\n- `GET /health` (`public`): no credentials; `x-public-reason` says why.\n\nEvery `/api` request first passes CyberTiger, the server's intrusion guard. It answers 429 when the client IP is over its per-IP rate limit or blocked, and 400 when a request matches an attack signature, with `{ \"error\", \"requestId\" }`. Repeated 401 and 403 responses from one IP block that IP for a while, so fix credentials rather than retrying. Every `/api` response carries an `x-request-id` header; quote it when reporting a problem.\n\nUnknown values are never filled with guesses: each schema says how it shows them (null, `unknown`, or quality flags on a carried-forward point). Fields may be added within 0.x; ignore fields you don't know.\n\nErrors are JSON `{ \"error\": \"…\" }`. A request body that is not valid JSON, or is over 2 MB, is answered 500 by the server's error handler, not 400.\n\nNot covered: sign-in (`/api/auth/*`, served by better-auth); customer-log ingest and evidence packs (PR-03a and PR-04 are command-line tools, `npm run trust:ingest` and `npm run trust:verify`, with no HTTP routes); admin tooling. backend/commerce/openapi.test.ts fails if a pilot route and this file drift apart."
+    "description": "Each operation states its access in `security` and in `x-gauss-access`:\n\n- `/api/v1/*` (`api-key`): an organisation API key, `Authorization: Bearer gk_…`. Mounted before session auth (backend/commerce/routers.ts, createDataApiRouter). The organisation's plan must include API access; each key has a per-minute limit and each organisation a daily quota. Successful calls (status < 400) are metered by route template, never by query string.\n- `/api/orgs/*` (`user`): a signed-in Gauss session with at least the `user` role (backend/rbac.ts, API_POLICY). The router also requires membership of the organisation; operators and admins may read any organisation's usage. Organisations, plans and members are managed by an admin with `npm run org`.\n- `GET /health` (`public`): no credentials; `x-public-reason` says why.\n\nEvery `/api` request first passes CyberTiger, the server's intrusion guard. It answers 429 when the client IP is over its per-IP rate limit or blocked, and 400 when a request matches an attack signature, with `{ \"error\", \"requestId\" }`. Repeated 401 and 403 responses from one IP block that IP for a while, so fix credentials rather than retrying. Every `/api` response carries an `x-request-id` header; quote it when reporting a problem.\n\nUnknown values are never filled with guesses: each schema says how it shows them (null, `unknown`, or quality flags on a carried-forward point). Fields may be added within 0.x; ignore fields you don't know.\n\nErrors are JSON `{ \"error\": \"…\" }`. A request body that is not valid JSON is answered 400 `{ \"error\": \"invalid JSON\" }`, and one over 2 MB is answered 413. Both are answered before CyberTiger and before credentials are checked, so they carry no `x-request-id` and do not count toward the IP block.\n\nNot covered: sign-in (`/api/auth/*`, served by better-auth); customer-log ingest and evidence packs (PR-03a and PR-04 are command-line tools, `npm run trust:ingest` and `npm run trust:verify`, with no HTTP routes); admin tooling. backend/commerce/openapi.test.ts fails if a pilot route and this file drift apart."
   },
   "servers": [{ "url": "/", "description": "The Gauss backend origin (default http://127.0.0.1:3001)" }],
   "security": [{ "apiKey": [] }],
@@ -114,14 +114,15 @@
             }
           },
           "400": {
-            "description": "Invalid single inference (with `errors`), a batch outside 1..100 items, or CyberTiger refused the request (with `requestId`)",
+            "description": "The body was not valid JSON (`invalid JSON`), an invalid single inference (with `errors`), a batch outside 1..100 items, or CyberTiger refused the request (with `requestId`)",
             "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
           },
           "401": { "$ref": "#/components/responses/Unauthorized" },
           "403": { "$ref": "#/components/responses/PlanForbidden" },
+          "413": { "$ref": "#/components/responses/BodyTooLarge" },
           "429": { "$ref": "#/components/responses/RateLimited" },
           "500": {
-            "description": "The usage log for invoicing could not be written, so no records were issued; safe to retry. Also returned when the body is not valid JSON or is over 2 MB.",
+            "description": "The usage log for invoicing could not be written, so no records were issued; safe to retry.",
             "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
           },
           "503": {
@@ -159,12 +160,15 @@
         "requestBody": { "required": false, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CreateKeyRequest" } } } },
         "responses": {
           "201": { "description": "The new key, shown once", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CreatedKey" } } } },
-          "400": { "$ref": "#/components/responses/GuardRefused" },
+          "400": {
+            "description": "The body was not valid JSON (`invalid JSON`), or CyberTiger refused the request because it matched an attack signature (with `requestId`)",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+          },
           "401": { "$ref": "#/components/responses/SessionRequired" },
           "403": { "$ref": "#/components/responses/PlanForbidden" },
           "404": { "$ref": "#/components/responses/OrgNotFound" },
-          "429": { "$ref": "#/components/responses/GuardLimited" },
-          "500": { "$ref": "#/components/responses/BodyUnreadable" }
+          "413": { "$ref": "#/components/responses/BodyTooLarge" },
+          "429": { "$ref": "#/components/responses/GuardLimited" }
         }
       }
     },
@@ -289,8 +293,8 @@
         "description": "No such organisation, or you are not a member. The two look the same so organisation ids can't be probed.",
         "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
       },
-      "BodyUnreadable": {
-        "description": "The request body was not valid JSON or was over 2 MB (the server's error handler answers 500 for these)",
+      "BodyTooLarge": {
+        "description": "The request body was over 2 MB: `{ \"error\": \"request body too large\" }`. Send fewer items per request.",
         "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
       }
     },
