@@ -46,6 +46,9 @@ Optional extras:
   never text by themselves. Whatever is held is never dropped: it arrives as one "Argo digest" when quiet hours end,
   or 3 h after the first held alert. `argo attention replay` shows what the policy would have done with the texts
   already sent.
+- **Texts that fail are not silent.** If Messages stops accepting texts (for example after a rebuild, until Allow is
+  clicked), `argo status` says since when and how many are waiting or lost, a desktop banner appears after 10 min,
+  and the first text after recovery says how many alerts were lost.
   channel, mask and offline queue, at most once per interval per key. The gauss-awake battery guard
   uses it (battery low, at the sleep floor, charger can't keep up, no cutoff configured), as do
   mesh-heal and Claude Code `Notification` hooks.

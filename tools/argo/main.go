@@ -136,7 +136,7 @@ func main() {
 	var err error
 	switch cmd {
 	case "status":
-		fmt.Println(statusLine(store.Load(), time.Now()) + guardStatus(store.loadGuard(), time.Now()) + gaussStatus(store, time.Now()))
+		fmt.Println(statusLine(store.Load(), time.Now()) + guardStatus(store.loadGuard(), time.Now()) + gaussStatus(store, time.Now()) + phoneStatus(store.Dir, time.Now()))
 	case "doctor":
 		err = doctor(ctx, loop.Prober)
 	case "fix":

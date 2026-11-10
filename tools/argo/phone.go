@@ -228,6 +228,9 @@ func (p *Phone) deliver(pending []string) {
 		}
 	}
 	p.writeQueue(failed)
+	if note := p.noteDelivery(len(failed), max(0, len(failed)-maxQueued), time.Now()); note != "" && p.sendLogged(note) != nil {
+		p.writeQueue([]string{note})
+	}
 }
 
 // sendLogged sends one text and records it in the egress log once it has left.

@@ -258,3 +258,49 @@ func TestAttentionReplay(t *testing.T) {
 		t.Errorf("replay:\n%s", out)
 	}
 }
+
+// Texts that stop leaving the Mac must not fail silently (5 Nov 2026).
+func TestPhoneHealthNoticesFailingTexts(t *testing.T) {
+	var sent, banners []string
+	online := false
+	p := testPhone(t, func(_, text string) error {
+		if !online {
+			return errors.New("not allowed to send Apple events to Messages")
+		}
+		sent = append(sent, text)
+		return nil
+	})
+	old := desktopBanner
+	desktopBanner = func(title, _ string) { banners = append(banners, title) }
+	defer func() { desktopBanner = old }()
+	dir := filepath.Dir(p.Queue)
+	if phoneStatus(dir, time.Now()) != "" {
+		t.Fatal("healthy phone should add nothing to status")
+	}
+	for i := 0; i < maxQueued+5; i++ {
+		p.Send("Gauss: data is stale", "No new data.", time.Now())
+	}
+	h := loadPhoneHealth(dir)
+	if h.FailSince.IsZero() || h.Queued != maxQueued || h.Dropped != 5 {
+		t.Fatalf("health %+v", h)
+	}
+	if s := phoneStatus(dir, time.Now()); !strings.Contains(s, "texts NOT reaching the phone") || !strings.Contains(s, "5 lost") {
+		t.Errorf("status %q", s)
+	}
+	if len(banners) != 0 {
+		t.Error("no banner in the first 10 minutes")
+	}
+	p.noteDelivery(maxQueued, 0, h.FailSince.Add(phoneFailBanner))
+	p.noteDelivery(maxQueued, 0, h.FailSince.Add(2*phoneFailBanner))
+	if len(banners) != 1 {
+		t.Errorf("banners %q, want exactly one", banners)
+	}
+	online = true
+	p.Flush()
+	if len(sent) != maxQueued+1 || !strings.Contains(sent[maxQueued], "5 alerts were lost") {
+		t.Fatalf("sent %d, last %q", len(sent), sent[len(sent)-1])
+	}
+	if phoneStatus(dir, time.Now()) != "" || len(p.readQueue()) != 0 {
+		t.Error("recovery should clear the health record and the queue")
+	}
+}
