@@ -65,6 +65,7 @@ run() { # run <args...>: gauss-services.sh with the stubs; alerts land in $LOG
     GAUSS_DEV_DRY="${GAUSS_DEV_DRY:-0}" GAUSS_GATES_START=0 HEAVYGIVEUP="${HEAVYGIVEUP:-}" NPMNET="${NPMNET:-}" GAUSS_GATEBOX="${GAUSS_GATEBOX:-}" GAUSS_GATEBOX_KEY="$T/gatebox-key" GBRC="${GBRC:-}" GAUSS_GATES_EXPIRE_H="${GAUSS_GATES_EXPIRE_H:-72}" GAUSS_DEV_API_PORT="${GAUSS_DEV_API_PORT:-3101}" \
     SRC="${SRC:-AC Power}" BATT="${BATT:-80%; charging; present: true}" SD="${SD:-0}" FCC="${FCC:-}" ACW="${ACW:-}" \
     LEAKY="${LEAKY:-}" LEAKFP="${LEAKFP:-12 MB}" AVAIL="${AVAIL:-50}" GAUSS_SWAP_LAST="${SWAPLAST:-/dev/null}" \
+    GATEENV="${GATEENV:-}" GATES_PYTHON="${GATES_PYTHON:-}" ${GATELEAK:+ALLOWED_ORIGINS=https://live.example MESH_STORE_PATH=/live/data/mesh/devices.json COMMERCE_DB_PATH=/live/data/commerce/commerce.db GAUSS_BEDROCK_DIR=/live/data/bedrock NODE_ENV=production} \
     ARGOSTATUS="${ARGOSTATUS:-}" LEVEL="${LEVEL:-1}" FREE="${FREE:-50}" SWAPUSED="${SWAPUSED:-1000}" OLD_ARGO="${OLD_ARGO:-}" bash "$SCRIPT" "$@"
 }
 expect() { # expect <name> <condition-exit-code>
@@ -330,6 +331,7 @@ out=$(run fallback prepare "$DEV" 2>&1); [[ "$out" == *"is not the current fallb
 stub node 'if [[ " $* " == *" build "* ]]; then mkdir -p frontend/dist && touch frontend/dist/index.html; fi'
 # npm run <gate> prints what the real gates print (counts parsed by `gates record`); GATEFAIL=<gate> fails one
 stub npm 'if [ "$1" = run ]; then
+  [ -n "$GATEENV" ] && { env | grep -E "^(ALLOWED_ORIGINS|MESH_STORE_PATH|COMMERCE_DB_PATH|GAUSS_BEDROCK_DIR|NODE_ENV)=" ; echo "PATH=$PATH"; } >>"$GATEENV"
   case "$2" in
     test:ops) echo "gauss-services: 99 passed, 0 failed"; echo "ok  	argo	1.0s" ;;
     test|build) echo "$2 is not a gate: verify runs it" >&2; exit 9 ;;
@@ -491,6 +493,13 @@ kept="$WD/gates/logs/$(basename "$rec" .json)"
 expect "gates record: a failed gate's output is kept beside the record, passing gates' is not" $?
 touch "$GW/stray"; out=$(run gates record "$GW" 2>&1); [[ "$out" == *"uncommitted or untracked"* ]]; expect "gates record refuses a dirty checkout" $?
 rm -f "$GW/stray"
+# The runner inherits the LaunchAgent's env (live data paths, live origins, launchd PATH): gates must not.
+mkdir -p "$T/py"; printf '#!/bin/sh\nexit 0\n' >"$T/py/python3"; chmod +x "$T/py/python3"   # "has numpy"
+GATEENV="$T/gate-env"; rm -f "$GATEENV"
+out=$(GATELEAK=1 GATEENV="$GATEENV" GATES_PYTHON="$T/py/python3" run gates record "$GW" 2>&1)
+[ -s "$GATEENV" ] && ! grep -qE "^(ALLOWED_ORIGINS|MESH_STORE_PATH|COMMERCE_DB_PATH|GAUSS_BEDROCK_DIR|NODE_ENV)=" "$GATEENV" \
+  && grep -qF ":$T/py:" "$GATEENV"
+expect "gates record: gates run without the services' env (live data paths, origins) and with a python3 that has numpy" $?
 
 # gates enqueue/run: a session hands its gate run to the queue and can be archived; one runner
 # works through it oldest first under claude-heavy, skipping trees that already passed.
