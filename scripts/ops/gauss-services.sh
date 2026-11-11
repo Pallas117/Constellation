@@ -796,6 +796,7 @@ gate_lock_ours() {
 # live data paths (a test must never write live mesh/commerce data), the live ALLOWED_ORIGINS
 # (server.access.test.ts expects the defaults) and launchd's PATH, whose /usr/bin/python3 has no
 # numpy (5 ml tests). 2026-11-11: gates 8aa759a and 5294132 failed on exactly that, not on code.
+# Gates also run at nice 10 (GATES_NICE): Josh works on this Mac while they run, so his apps come first.
 GATES_SCRUB_ENV=(ALLOWED_ORIGINS GAUSS_PUBLIC_URL BETTER_AUTH_URL MESH_STORE_PATH COMMERCE_DB_PATH GAUSS_BEDROCK_DIR NODE_ENV)
 gates_python_dir() { # the directory of the first python3 that can import numpy (GATES_PYTHON first), or nothing
   local p
@@ -822,7 +823,7 @@ gates_record() { # gates_record <checkout-dir>: run the gates on a clean checkou
   for g in "${GATES[@]}"; do
     gate_lock
     echo "gate $g ..."
-    rc=0; (cd "$dir" && env "${scrub[@]}" PATH="$(dirname "$NODE")${pydir:+:$pydir}:$PATH" npm run "$g" >"$tmp/$g.log" 2>&1) || rc=$?
+    rc=0; (cd "$dir" && nice -n "${GATES_NICE:-10}" env "${scrub[@]}" PATH="$(dirname "$NODE")${pydir:+:$pydir}:$PATH" npm run "$g" >"$tmp/$g.log" 2>&1) || rc=$?
     if [ "$GATES_HOLD" = 1 ]; then rmdir "$GATE_LOCK" 2>/dev/null || true; fi; GATES_HOLD=0
     echo "$rc" >"$tmp/$g.rc"
   done
