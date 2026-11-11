@@ -9,7 +9,7 @@ import {
 } from "../adapters/goes-particles.js";
 import { fetchSwpcProducts, type SwpcProducts } from "../adapters/swpc-products.js";
 import { checkFieldMagnitude, checkPlasmaTracking, compareScales, expireCheck, fieldSampleProblem } from "../lib/sense-checks.js";
-import { geomagneticStorm, radiationStorm, radioBlackout } from "../physics/noaa-scales.js";
+import { currentKpReading, geomagneticStorm, radiationStorm, radioBlackout } from "../physics/noaa-scales.js";
 import { getJaxaStatus, probeJaxaCatalog } from "../adapters/jaxa-erg.js";
 import { fetchKyotoDst, freshDst, getKyotoDstStatus, type DstReading } from "../adapters/kyoto-dst.js";
 import { fetchMmsCdawebSamples, getMmsCdawebStatus } from "../adapters/mms-cdaweb.js";
@@ -101,7 +101,17 @@ export function forecastWindow(
 }
 
 /** The sources a worker can fetch. */
-export type IngestSource = "noaa" | "kyoto-dst" | "goes" | "swpc-products" | "esa" | "jaxa" | "mms" | "lasp";
+export const INGEST_SOURCES = ["noaa", "kyoto-dst", "goes", "swpc-products", "esa", "jaxa", "mms", "lasp"] as const;
+export type IngestSource = (typeof INGEST_SOURCES)[number];
+
+/**
+ * The live worker's sources (GAU-228): every source unless GAUSS_MMS=0 or GAUSS_LASP=0 (backend/lib/
+ * boot-switches.ts) leaves MMS CDAWeb (10 min) or LASP (60 s) polling out. undefined = all, the default.
+ */
+export function liveIngestSources(switches: { mms: boolean; lasp: boolean }): IngestSource[] | undefined {
+  if (switches.mms && switches.lasp) return undefined;
+  return INGEST_SOURCES.filter((s) => (s !== "mms" || switches.mms) && (s !== "lasp" || switches.lasp));
+}
 
 /**
  * How a worker runs. The defaults are the live service. A historical replay (GAU-138) runs the
@@ -155,6 +165,7 @@ export class IngestionWorker {
   private lastMeasurementAt: string | null = null;
   private ticking = false;
   private loggedCloudDisabled = false;
+  private loggedAirgap = false; // once per AIRGAP spell, not every tick (57k lines in backend.log, 4 Nov 2026)
   /** Live skill of served forecasts vs persistence (TPM forecast_skill, FMEA FM-09). GAU-122. */
   readonly forecastSkill = new ForecastSkillTracker();
   readonly timing = new PipelineTimer();
@@ -280,7 +291,8 @@ export class IngestionWorker {
         magneticFieldGse: noaa.magneticFieldGse,
         velocityGsm: noaa.velocityGsm ?? null,
         magneticFieldGsm: noaa.magneticFieldGsm ?? null,
-        kp: noaa.kp,
+        // Only a Kp within its freshness bound; an old one is unknown (GAU-232).
+        kp: currentKpReading(noaa.kpReading, Date.parse(timestamp))?.value ?? null,
         // Measured Kyoto Dst while it is under 2 h old; otherwise the nowcast's labelled model
         // estimate (O'Brien & McPherron) takes over. GAU-116.
         dst: freshDst(this.kyotoDst, Date.parse(timestamp)),
@@ -301,8 +313,9 @@ export class IngestionWorker {
       magneticFieldGse: b,
       velocityGsm: v,
       magneticFieldGsm: b,
-      // No Kp from any source is unknown (null), not a quiet-time 2 (GAU-230).
-      kp: this.kpReading?.value ?? prev?.indices.kp ?? null,
+      // No current Kp from any source is unknown (null), not a quiet-time 2 (GAU-230), and not
+      // the last point's Kp of whatever age (GAU-232).
+      kp: currentKpReading(this.kpReading, Date.parse(timestamp))?.value ?? null,
       dst: freshDst(this.kyotoDst, Date.parse(timestamp)),
     };
   }
@@ -418,19 +431,16 @@ export class IngestionWorker {
     if (officialOnly) {
       console.log('[IngestionWorker] OFFICIAL_SOURCES_ONLY=true — preferring official data adapters (NOAA/MMS)');
     }
+    // MMS switched off (GAUSS_MMS=0 / GAUSS_LASP=0) is left out, never reported as a source that failed.
+    const mms = [
+      ...(this.wants("mms") ? [getMmsCdawebStatus()] : []),
+      ...(this.wants("lasp") ? [getMmsLaspStatus()] : []),
+    ];
     if (officialOnly) {
-      return [getNoaaStatus(), getGoesStatus(), getKyotoDstStatus(), getMmsCdawebStatus(), getMmsLaspStatus()];
+      return [getNoaaStatus(), getGoesStatus(), getKyotoDstStatus(), ...mms];
     }
 
-    return [
-      getNoaaStatus(),
-      getGoesStatus(),
-      getKyotoDstStatus(),
-      getEsaStatus(),
-      getJaxaStatus(),
-      getMmsCdawebStatus(),
-      getMmsLaspStatus(),
-    ];
+    return [getNoaaStatus(), getGoesStatus(), getKyotoDstStatus(), getEsaStatus(), getJaxaStatus(), ...mms];
   }
 
   private async isAuroraRpcSignatureError(error: unknown): Promise<boolean> {
@@ -535,9 +545,11 @@ export class IngestionWorker {
         fetches.push(this.timedFetch("lasp", fetchMmsBurstWindows));
       }
       await Promise.all(fetches);
-    } else {
+    } else if (!this.loggedAirgap) {
+      this.loggedAirgap = true;
       console.log("[IngestionWorker] AIRGAP mode active. Bypassing external API fetches.");
     }
+    if (link.mode !== "AIRGAP") this.loggedAirgap = false;
     if (this.noaa?.timestamp) this.lastMeasurementAt = this.noaa.timestamp;
 
     if (this.options.forecast !== false && this.shouldFetch("ml-forecast", 300000)) {
@@ -549,7 +561,7 @@ export class IngestionWorker {
         );
         // Score every served forecast later against observed Kp; persistence = Kp measured now.
         const f = this.latestForecast;
-        const kpNow = this.noaa?.kp;
+        const kpNow = currentKpReading(this.noaa?.kpReading, Date.parse(nowIso))?.value;
         if (f?.available && typeof kpNow === "number" && freshnessTier(this.noaa?.timestamp ?? null, Date.parse(nowIso)) <= 1) {
           this.forecastSkill.record(Date.parse(nowIso), f.horizonHours, f.predictedKpMax, kpNow);
         }
@@ -565,9 +577,10 @@ export class IngestionWorker {
       // Past the cap the readout is unknown, not "last known"; inputs fall back to the
       // previous canonical state and the point is flagged stale.
       this.noaa = null;
-    } else if (typeof this.noaa?.kp === "number") {
+    } else {
       // Resolve due forecasts only against a current measured Kp.
-      this.forecastSkill.resolve(Date.parse(nowIso), this.noaa.kp);
+      const kpNow = currentKpReading(this.noaa?.kpReading, Date.parse(nowIso));
+      if (kpNow) this.forecastSkill.resolve(Date.parse(nowIso), kpNow.value);
     }
     const mhdInput = this.blendInputs(nowIso);
     // The solar wind reaching Earth now, from the L1 history one travel time back.
@@ -584,9 +597,10 @@ export class IngestionWorker {
     );
     point.spacecraft = this.noaa?.spacecraft ?? this.latestCanonical?.spacecraft;
     point.arriving = arriving;
-    if (this.kpReading) {
-      point.indices.kpKind = this.kpReading.kind;
-      point.indices.kpObservedAt = this.kpReading.observedAt;
+    const kpShown = currentKpReading(this.kpReading, Date.parse(nowIso));
+    if (kpShown) {
+      point.indices.kpKind = kpShown.kind;
+      point.indices.kpObservedAt = kpShown.observedAt;
     }
     if (point.indices.dstMethod === "measured" && this.kyotoDst) point.indices.dstObservedAt = this.kyotoDst.timestamp;
     point.derived = this.derivedFields();

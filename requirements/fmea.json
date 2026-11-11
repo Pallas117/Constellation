@@ -316,9 +316,12 @@
         "fallback status: ready although its path has a space",
         "dev refuses the fallback checkout (path with a space)",
         "a corrupt, cut-short or orphaned fallback record reads as none prepared: no half failover, still alerts",
-        "deploy: a fallback that fails to rebuild stops the deploy and is not left marked ready"
+        "deploy: a fallback that fails to rebuild stops the deploy and is not left marked ready",
+        "standby checkout gone: texted while live still runs",
+        "standby record corrupt: texted",
+        "standby checkout moved after it was prepared: texted"
       ],
-      "gap": "Nothing texts when the standby goes bad: it shows in status and check, or as a 'keeps failing' alert only once the failover is needed"
+      "gap": "A moved checkout is texted but still used if a failover comes before someone re-prepares it (serving something beats serving nothing); the text is at most every 6 h"
     },
     {
       "id": "FM-22",
@@ -373,10 +376,11 @@
         "deploy of a bad commit: rolls back by itself and texts the phone; fallback is the last good one",
         "deploy and rollback both fail: switches to the fallback (kept, not replaced by an unhealthy live)",
         "deploy: a fallback that fails to rebuild stops the deploy and is not left marked ready",
-        "deploy with no fallback prepared or given: warns, deploys, leaves none",
+        "deploy with no fallback prepared or given: refused, live unchanged",
+        "deploy --no-fallback: warns, deploys, leaves none",
         "fallback status: none prepared is a warning"
       ],
-      "gap": "With no fallback prepared and no path given, deploy warns and goes ahead, leaving none; a failed refresh of the current fallback stops the deploy but leaves no fallback until `fallback prepare` succeeds"
+      "gap": "A person can still deploy with none (--no-fallback, or --emergency); a failed refresh of the current fallback stops the deploy but leaves no fallback until `fallback prepare` succeeds (texted as FM-21)"
     }
   ]
 }

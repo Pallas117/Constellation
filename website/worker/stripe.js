@@ -1,6 +1,6 @@
 // Stripe: hosted Checkout for the pilot (one payment) and Fleet Integration (yearly subscription),
 // invoices with 30 days to pay for accounts an admin allows them on, Stripe's hosted billing portal,
-// and signed webhooks that unlock the workspace. Card details never touch lightbound.uk. The two keys live in Worker secrets
+// and signed webhooks that unlock the workspace. Card details never touch lightbound.space. The two keys live in Worker secrets
 // (STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET), never in config, URLs or logs.
 import { getAccount, putAccount } from "./data.js";
 import { readCapped } from "./body.js";
@@ -63,7 +63,7 @@ export async function createInvoice(env, account, fetchImpl = fetch) {
   return sendInvoice(env, account, { amount: account.quote, currency: CURRENCY, description, meta: { email: account.email, plan: tier.id } }, fetchImpl);
 }
 
-/** A department's yearly education licence, at the quote an admin approved, invoiced in pounds. */
+/** A department's yearly education licence, at the quote an admin approved, invoiced in dollars. */
 export const eduInvoiceable = (account) => account?.edu?.plan === "department" && Number.isInteger(account.edu.quote) && account.edu.quote > 0;
 export async function createEduInvoice(env, account, fetchImpl = fetch) {
   if (!eduInvoiceable(account)) throw new Error("No department licence quote on this account");

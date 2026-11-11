@@ -1,11 +1,12 @@
-"""Horizontal lockups for all four brands, built to the Lightbound Brand Book's lockup rule.
+"""Horizontal lockups for all four brands and Argo, built to the Lightbound Brand Book's lockup rule.
 
 Brand Book, "Logo system (refined, 16 Oct)": symbol 56 px, wordmark IBM Plex Sans Medium 22 px caps, 20 px gap;
-sublines JetBrains Mono 9 px. Tracking: Lightbound 24 %, Gauss 16 %, Turnstone 32 %, Constellation 20 %.
+sublines JetBrains Mono 9 px. Tracking: Lightbound 24 %, Gauss 16 %, Turnstone 32 %, Constellation 20 %; Argo (the
+sign-in, approved 5 Nov) takes Lightbound's 24 %, as it signs people in to the whole Lightbound workspace.
 Text is outlined, so no font is needed. Gauss keeps the kit lockup's two-tone "GAUSS AURORA" (AURORA in lime).
 
 usage: <python with fonttools> website/tools/make_lockups.py <Lightbound Brand Kit dir>
-Reads website/tools/symbols/*.svg. Writes the Lightbound, Gauss and Constellation lockups to website/public/assets/marks/
+Reads website/tools/symbols/*.svg. Writes the Lightbound, Gauss, Constellation and Argo lockups to website/public/assets/marks/
 and the Turnstone lockup to website/tools/symbols/ (reference only: the site shows Turnstone as mark + text wordmark).
 """
 from __future__ import annotations
@@ -22,6 +23,8 @@ HERE = Path(__file__).resolve().parent
 OUT = HERE.parent / "public" / "assets" / "marks"
 WARM, MUTED, GOLD, LIME = "#f3f0e8", "#a9aba6", "#b0906f", "#ccff00"
 
+# Marks are cached for a week (public/_headers), so a changed lockup gets a new published name.
+PUBLISHED = {"constellation": "constellation-horizontal-colour-dark-v2.svg"}
 LOCKUPS = {
     # name: (symbol file, wordmark segments [(text, colour)], tracking, subline or None, subline colour, accessible name)
     # Turnstone is endorsed ("a Lightbound company"); Constellation carries no Lightbound badge (Brand Book, architecture).
@@ -29,6 +32,7 @@ LOCKUPS = {
     "gauss-aurora": ("gauss-aurora-symbol-colour-dark.svg", [("GAUSS ", WARM), ("AURORA", LIME)], 0.16, None, None, "Gauss Aurora"),
     "turnstone": ("turnstone-symbol-colour-dark.svg", [("TURNSTONE", WARM)], 0.32, "A LIGHTBOUND COMPANY", MUTED, "Turnstone, a Lightbound company"),
     "constellation": ("constellation-symbol-colour-dark.svg", [("CONSTELLATION", WARM)], 0.20, "SPACE COMMUNITY GROUP", GOLD, "Constellation, space community group"),
+    "argo": ("argo-symbol-colour-dark.svg", [("ARGO", WARM)], 0.24, None, None, "Argo"),
 }
 SYMBOL, GAP, WORD_PX, SUB_PX, SUB_TRACK, LINE_GAP = 56.0, 20.0, 22.0, 9.0, 0.14, 7.0
 
@@ -81,7 +85,7 @@ def main(kit: Path) -> None:
         svg = (f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {width:g} {SYMBOL:g}" width="{width:g}" height="{SYMBOL:g}" '
                f'role="img" aria-label="{label}"><title>{label}</title>'
                f'{nested_symbol((HERE / "symbols" / symbol).read_text(encoding="utf-8"))}{"".join(paths)}</svg>\n')
-        (HERE / "symbols" if name == "turnstone" else OUT).joinpath(f"{name}-horizontal-colour-dark.svg").write_text(svg, encoding="utf-8")
+        (HERE / "symbols" if name == "turnstone" else OUT).joinpath(PUBLISHED.get(name, f"{name}-horizontal-colour-dark.svg")).write_text(svg, encoding="utf-8")
         print(f"{name}: {width:g} x {SYMBOL:g}, {len(svg)} bytes")
 
 

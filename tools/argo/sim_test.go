@@ -279,12 +279,16 @@ func TestSimDelayTolerantDelivery(t *testing.T) {
 	direct := directOnly(tr, start)
 	naive := runRelaySim(t, tr, start, "relay, hub trusted (no recheck, no re-receipt)", func(r *Relay) { r.NoHubRecheck, r.NoResendReceipt = true, true })
 	full := runRelaySim(t, tr, start, "relay, end-to-end (Argo default)", func(*Relay) {})
+	linked := runRelaySim(t, tr, start, "relay, end-to-end, link keys (GAU-199)", func(r *Relay) { r.LinkPath = filepath.Join(t.TempDir(), "links.key") })
 	t.Logf("seed %d, %d files over %d days, %d hub wipes", seed, simFiles, simDays, len(tr.wipes))
-	for _, r := range []simResult{direct, naive, full} {
+	for _, r := range []simResult{direct, naive, full, linked} {
 		t.Log(r.row())
 	}
 	if full.delivered != simFiles || full.receipted != simFiles || full.duplicates != 0 {
 		t.Fatalf("the full relay must deliver every file once, with a receipt: %s", full.row())
+	}
+	if linked.delivered != simFiles || linked.receipted != simFiles || linked.duplicates != 0 {
+		t.Fatalf("link keys must not cost delivery: %s", linked.row())
 	}
 	// On the default seed the wipes hit bundles in flight (59/60 delivered, 57/60
 	// receipts for the hub-trusting variant); other seeds may miss them all.
