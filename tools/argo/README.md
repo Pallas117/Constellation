@@ -46,6 +46,10 @@ Optional extras:
   never text by themselves. Whatever is held is never dropped: it arrives as one "Argo digest" when quiet hours end,
   or 3 h after the first held alert. `argo attention replay` shows what the policy would have done with the texts
   already sent.
+- **Fallback handle.** `argo phone fallback you@icloud.com` (best an Apple ID email) gets an alert by iMessage
+  whenever sending to the main handle fails, for example while the SIM is expired; `argo phone fallback off`
+  removes it. It catches failures Messages reports at once. An SMS that Messages accepts and the iPhone fails
+  later is only caught by the delivery check (Full Disk Access for `~/.local/bin/argo`).
 - **Texts that fail are not silent.** If Messages stops accepting texts (for example after a rebuild, until Allow is
   clicked), `argo status` says since when and how many are waiting or lost, a desktop banner appears after 10 min,
   and the first text after recovery says how many alerts were lost.

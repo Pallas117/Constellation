@@ -34,7 +34,10 @@ type Config struct {
 	ExitNodes map[string]string `json:"exit_nodes,omitempty"` // tailscale hostname → country (MY/SG only)
 	PhoneTo   string            `json:"phone_to,omitempty"`   // your own iMessage handle for phone alerts
 	// "sms" sends SMS first: iMessages to your own number arrive silently, with no banner.
-	PhoneService  string   `json:"phone_service,omitempty"`
+	PhoneService string `json:"phone_service,omitempty"`
+	// A second handle (best an Apple ID email) that gets an alert by iMessage when the first
+	// one fails, e.g. while the SIM is expired. Set with `argo phone fallback <email>`.
+	PhoneFallback string   `json:"phone_fallback,omitempty"`
 	Watch         []Peer   `json:"watch,omitempty"`           // LaunchAgents Argo keeps alive; default: awake guard + mesh-heal
 	Devices       []string `json:"devices,omitempty"`         // tailnet hostnames to watch; default: this user's phones
 	GuardSlotGB   float64  `json:"guard_slot_gb,omitempty"`   // RAM one mesh agent slot reserves (default 2)
