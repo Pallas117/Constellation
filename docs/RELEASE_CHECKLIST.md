@@ -26,7 +26,7 @@ Pre-release builds:
    - RBAC is covered by `npm test` (part of `npm run audit:adherence`), in process; never run
      role checks against the live backend, where CyberTiger auto-blocks on 401/403s.
 4. Data/backend gates:
-   - Supabase migrations are applied in the target environment.
+   - auth tables are migrated in the target environment (`npm run auth:migrate`).
    - backend starts and `/health` responds.
    - release preflight executes the backend and verifies `/health` in runtime.
 5. CI gates:

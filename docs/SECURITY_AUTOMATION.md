@@ -385,9 +385,6 @@ git push origin v1.0.0
 ## Environment Variables
 
 No new environment variables needed. Uses existing:
-- `SUPABASE_URL`
-- `SUPABASE_ANON_KEY`
-- `SUPABASE_SERVICE_ROLE_KEY`
 - `AUTH_REQUIRED`
 - `CYBERTIGER_ENABLED`
 

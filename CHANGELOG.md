@@ -40,6 +40,9 @@ Before tagging, move these entries under `## [0.1.0] - <date>`.
 - `npm run alerts:watch` keeps alerts on the machine; raw log lines no longer go to Slack or Linear, and phone alerts
   through Argo are opt-in (`ALERTS_VIA_ARGO=1`) (#215). Wrangler usage metrics are off for the website (#215).
 
+### Removed
+- Unused Supabase and Neo4j leftovers: the `@supabase/supabase-js` and `neo4j-driver` packages, the client modules nothing imported, the Supabase-era `setup:rbac` / `test:rbac` scripts (roles: `npm run auth:set-role`; RBAC tests: `npm test`), the Neo4j seed script and compose file, and their env names (#136).
+
 ### Fixed
 
 - No fabricated output: no random values presented as model output (#45), no invented GEO objects (#46), canonical

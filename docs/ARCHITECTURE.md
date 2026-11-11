@@ -246,11 +246,6 @@ src/
 └── pages/
     └── Index.tsx
 
-supabase/
-└── functions/
-    └── spaceweather/
-        └── index.ts            # Edge function
-
 docs/
 ├── ARCHITECTURE.md             # This file
 ├── SHADER_SPEC.md              # Shader design specification
