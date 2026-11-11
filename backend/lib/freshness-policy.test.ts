@@ -57,6 +57,7 @@ const TEST_FILE = /\.(?:test|spec)\.[cm]?[jt]sx?$/;
 /** `file:CONSTANT` pairs that keep a literal on purpose, each with the reason. */
 const ALLOWED: Record<string, string> = {
   "backend/mesh/store.ts:MESH_STALE_MS": "mesh device-report staleness, not a measurement (out of scope)",
+  "backend/mesh/store.ts:POSTURE_MAX_AGE_MS": "age of Argo's device security posture report (GAU-238), not a measurement (out of scope)",
   "frontend/src/components/MeshStatusPill.tsx:STALE_MS": "mesh device-report staleness, not a measurement (out of scope)",
   "frontend/src/lib/mesh-onboarding.ts:STALE_MS": "mesh device-report staleness, not a measurement (out of scope)",
   "frontend/src/hooks/useSpaceWeather.ts:STALENESS_RECHECK_MS": "how often the UI re-checks ages, not an age limit",
