@@ -222,8 +222,9 @@ since is lost).
   provider outage); `disk_free` = free space or move old archives elsewhere; `persist_failures` =
   disk or permissions on `GAUSS_BEDROCK_DIR`; `loop_liveness` or `tick_p95` = CPU starved;
   `memory_rss` = restart and report it.
-- **500 on a POST:** "Internal server error" means the body was not valid JSON or was over 2 MB;
-  "Could not record usage" means the commerce database is not writable (disk, permissions);
+- **400 "invalid JSON" or 413 on a POST:** the body was not valid JSON, or was over 2 MB (send
+  fewer items per request). These are answered before the key is checked.
+- **500 on a POST:** "Could not record usage" means the commerce database is not writable (disk, permissions);
   nothing was issued, so retrying is safe.
 - **`git checkout` refuses because of `data/bedrock/telemetry.jsonl`:** the backend is writing
   inside the checkout. Stop it, copy the file into your data directory, set `GAUSS_BEDROCK_DIR`,
