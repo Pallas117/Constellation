@@ -305,7 +305,7 @@ func TestAssessTrends(t *testing.T) {
 	}
 	cur.Batt = &Battery{Present: true, Pct: 50, OnAC: true}
 	if a := assess(drainHist[:len(drainHist)-1], cur); !a.ChargerBehind || a.Level != LevelRisk {
-		t.Errorf("charger behind: %+v", a)
+		t.Errorf("charger behind, floor 1.3 h away (30 %%/h from 50 %%): want risk: %+v", a)
 	}
 }
 
@@ -725,5 +725,21 @@ func TestAdmitUsesAvailableAtNormal(t *testing.T) {
 	}
 	if yes, _ := admit(assess(hist, cur), 1); yes {
 		t.Error("admitted 1 GB on 0.5 GB headroom with paging unknown")
+	}
+}
+
+// TestSlowChargerIsAWatchAndDoesNotCapRAM (2 Nov, Josh: "the 8W should be fine"): an 8 W
+// charger losing 4 %/h at 40 % is ~7.5 h from the floor, so a 1.8 GB gate may start.
+func TestSlowChargerIsAWatchAndDoesNotCapRAM(t *testing.T) {
+	if h := float64(40-batteryFloorPct) / 4; h < chargerBehindRiskH {
+		t.Fatalf("test premise: %.1f h to the floor", h)
+	}
+	slow := Assessment{Level: LevelWatch, HeadroomGB: 3, Findings: []Finding{{Resource: "battery", Code: "charger-behind", Level: LevelWatch}}}
+	if ok, why := admit(slow, 1.8); !ok {
+		t.Fatalf("a slow charger capped a 1.8 GB gate: %s", why)
+	}
+	onBatt := Assessment{Level: LevelWatch, HeadroomGB: 3, Findings: []Finding{{Resource: "battery", Code: "on-battery", Level: LevelWatch}}}
+	if ok, _ := admit(onBatt, 1.8); ok {
+		t.Fatal("running on battery must keep the light-work cap")
 	}
 }
