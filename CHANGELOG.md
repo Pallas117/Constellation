@@ -28,9 +28,26 @@ Before tagging, move these entries under `## [0.1.0] - <date>`.
 - Verification: a requirements baseline, verification matrix and local `npm run verify` gate (#64); deploys only from
   verified tags, with a health check and automatic rollback (#69).
 - Release records: `npm run release:sbom` writes CycloneDX SBOMs for the runtime npm dependencies and Gauss Argo,
-  third-party notices, and a licence check that fails on copyleft or unknown licences (GAU-69).
+  third-party notices, and a licence check that fails on copyleft or unknown licences (#140).
 - Argo egress log: `argo egress` shows what Argo sent off the device and where, kept on the device; `argo egress off`
   holds third-party sends until `on`; `argo phone imessage|sms` chooses who carries alerts (#215).
+- Evidence packs: one per analysis window, as hash-chained JSON plus a deterministic PDF, holding the trust records
+  and the SHA-256 of each stored input (#131).
+- Trust-record metering per spacecraft-month: every record returned to a customer is logged in an append-only table
+  (the database refuses updates and deletes), with CSV export (#170).
+- An OpenAPI 3.1 spec for the `/api/v1` data API with a drift test (#147), now covering every pilot route, plus a
+  customer install and runbook guide (#193).
+- Telemetry retention: archive-first trimming that verifies the archive before touching the live file (#121), run
+  daily to keep about 3 days live and every archive (#179).
+- Gauss Argo: delay-tolerant file sharing between enrolled devices over Bundle Protocol v7, signed and end-to-end
+  encrypted, through the Gauss hub (#153); RFC 9173 security contexts for working with standard DTN nodes (#158) and
+  per-link keys on the relay (#210); per-network privacy, speed and signal scores (#134); a resource guard with memory
+  and battery risk levels (#150), learned job sizing (#162, #183), pause on battery (#185) and a power budget (#204);
+  rejoining when offline and choosing the best saved network in range (#202, #207); an app data watch (#191); and
+  self-healing blocker episodes (#234).
+- Operations: a structured ops event log (#144); deploys only from `origin/main` with a gate record for the exact
+  tree, a deploy history (#146) and a kept fallback (#221); a detached gate queue and merge train (#182, #218).
+- Verification: ops behaviour in the VCRM and FMEA, REQ-OPS-004..007 and FM-20..24 (#155).
 
 ### Changed
 
@@ -39,6 +56,13 @@ Before tagging, move these entries under `## [0.1.0] - <date>`.
 - Strict type checking and ESLint over the frontend, backend, tests and scripts (#87, #91, #102).
 - `npm run alerts:watch` keeps alerts on the machine; raw log lines no longer go to Slack or Linear, and phone alerts
   through Argo are opt-in (`ALERTS_VIA_ARGO=1`) (#215). Wrangler usage metrics are off for the website (#215).
+- One freshness policy, `shared/policy/freshness.json`, sets the maximum age of every measured quantity on every
+  surface, where 18 places had their own numbers (#190).
+- Node 26 LTS, as Node 25 reached end of life (#208).
+- Lower memory and CPU: duplicate feed buffers dropped (#181), the aurora grid reused while its inputs are unchanged
+  (#192), the backend run as prebuilt JavaScript (#194), and indexed feed lookbacks with a streamed 24 h backfill
+  (#225).
+- Argo sail mark, Gauss app icon and console mark, and the Brand Book colours in the app (#235).
 
 ### Fixed
 
@@ -52,6 +76,16 @@ Before tagging, move these entries under `## [0.1.0] - <date>`.
 - Telemetry store: bounded tail reads, corrupt lines skipped, buffer reloaded on restart (#59).
 - Live-feed WebSockets stay connected: one upgrade router instead of two servers that each rejected the other's
   sockets (#163).
+- The protobuf feed keeps every field, with unknown values absent rather than zero, in double precision (#184).
+- Kp: a missing value stays unknown, never 2 (#195); a stale value expires in the nowcast, and NOAA L1 data is kept
+  when Kp is missing (#232).
+- Newell coupling was zero whenever IMF By was negative (#174).
+- One lost ping no longer stops every external data fetch, and the link log records only changes (#228).
+- Memory: stalled feed sockets are detected, ingest retries cancel, and GPU buffers are released (#171).
+- Operator app: pollers stop on 401/403 instead of tripping CyberTiger, readouts say only what they know, and
+  revoking an API key or device and rebalancing SWAP ask for confirmation (#236); two misleading lines of app copy
+  corrected (#201).
+- End-to-end tests run against the production build with no network (#137).
 
 ### Security
 
@@ -60,6 +94,7 @@ Before tagging, move these entries under `## [0.1.0] - <date>`.
 - Device authentication fails closed without its secret (#39), uses one canonical proof timestamp (#40) and accepts
   each proof once (#41).
 - Graph client input validation, safer Neo4j defaults and inference request limits (#72).
-- Dependencies with known vulnerabilities updated; Gauss Argo built with Go 1.26.10 (#135).
+- Dependencies with known vulnerabilities updated; Gauss Argo built with Go 1.26.10 (#135); zod 4 and body-parser
+  for high-severity advisories (#226); grouped Dependabot updates with a cooldown (#176).
 - Fonts are served by the site, not Google: no visitor's address goes to a third party and no outside request can
   stall a page load. Their OFL-1.1 licence ships beside them and the release licence check recognises it (#142).
