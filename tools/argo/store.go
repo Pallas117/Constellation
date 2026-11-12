@@ -53,7 +53,8 @@ type State struct {
 	Tailscale     Tailscale      `json:"tailscale"`
 	Gateway       string         `json:"gateway,omitempty"`
 	GatewayMAC    string         `json:"gateway_mac,omitempty"`
-	Net           NetScore       `json:"net"` // privacy, speed and signal at the last check (netscore.go)
+	Net           NetScore       `json:"net"`              // privacy, speed and signal at the last check (netscore.go)
+	Switch        *SwitchInfo    `json:"switch,omitempty"` // last network change or recovery and the tailnet's answer (tailnet.go)
 	// IncidentFP is the network the open incident belongs to; Notified says whether
 	// it was announced yet, NotifyDue when it will be if this network's usual
 	// recovery time passes first (loop.go).
@@ -211,16 +212,34 @@ func (s Store) Incidents() []Incident {
 // failed with "another argo run is in progress", the heartbeat went stale and
 // the guard kicked Argo again (awake.log 2026-10-27 11:51-11:54).
 func lockHolderDead(p string) bool {
-	b, err := os.ReadFile(p)
-	if err != nil {
-		return false
-	}
-	pid, err := strconv.Atoi(strings.TrimSpace(string(b)))
-	if err != nil || pid <= 0 {
+	pid, _ := parseLock(p)
+	if pid <= 0 {
 		return false
 	}
 	return errors.Is(syscall.Kill(pid, 0), syscall.ESRCH)
 }
+
+// lockPreempt is the second line of the lock file: the holder handles SIGUSR1 as "the network
+// changed under you; drop the probe and look again" (tick.go, loop.go). A holder without it (an
+// older binary) must never be signalled: an unhandled SIGUSR1 kills the process.
+const lockPreempt = "preempt"
+
+// parseLock reads a lock file: the holder's pid, and whether it accepts preemption.
+func parseLock(p string) (pid int, preemptable bool) {
+	b, err := os.ReadFile(p)
+	if err != nil {
+		return 0, false
+	}
+	lines := strings.Split(strings.TrimSpace(string(b)), "\n")
+	pid, err = strconv.Atoi(strings.TrimSpace(lines[0]))
+	if err != nil || pid <= 0 {
+		return 0, false
+	}
+	return pid, len(lines) > 1 && strings.TrimSpace(lines[1]) == lockPreempt
+}
+
+// lockHolder is who holds the lock now (0 when nobody).
+func (s Store) lockHolder() (pid int, preemptable bool) { return parseLock(s.path("lock")) }
 
 // Lock is an O_EXCL lock file; a lock from a dead process, or older than 10
 // minutes, is from a killed run.
@@ -232,7 +251,7 @@ func (s Store) Lock() (func(), error) {
 	for i := 0; i < 2; i++ {
 		f, err := os.OpenFile(p, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 		if err == nil {
-			fmt.Fprintf(f, "%d\n", os.Getpid())
+			fmt.Fprintf(f, "%d\n%s\n", os.Getpid(), lockPreempt)
 			f.Close()
 			return func() { os.Remove(p) }, nil
 		}

@@ -73,6 +73,7 @@ const shieldSettle = 5 * time.Second
 
 // shield runs every tick, before the class decides anything else. Josh (1 Nov): switch
 // automatically, so it changes WARP's mode itself and puts the old mode back afterwards.
+// Since 5 Nov that automation is opt-in (Loop.ShieldWARP; see below).
 func (l Loop) shield(ctx context.Context, st *State, snap Snapshot, fp string) {
 	w, n := snap.Warp, st.Networks[fp]
 	untrusted := weakWiFi(snap.WiFiSec) || n.suspect(l.Fx.Now()) // spoofing signs count as untrusted
@@ -85,6 +86,27 @@ func (l Loop) shield(ctx context.Context, st *State, snap Snapshot, fp string) {
 			_ = warp("mode", st.ShieldPrevMode)
 		}
 		st.ShieldOn, st.ShieldPrevMode, st.ShieldWasConnected = false, "", false
+	}
+	// Off by default since 2026-11-05 (security review finding 6): `warp-cli --accept-tos connect`
+	// accepts Cloudflare's terms for the user and reroutes the Mac's egress by itself, and
+	// Tailscale already encrypts the team's traffic. With "wifi_shield": "warp" in config.json
+	// the automation below runs as before; otherwise Argo says once per network when WARP would
+	// help and leaves the choice to the person.
+	if !l.ShieldWARP {
+		if st.ShieldOn { // turned on by an earlier Argo: put it back as it was
+			restore()
+			l.say("shield: automatic WARP is off; WARP put back as it was")
+		}
+		if untrusted && w.Installed && !w.Connected && !n.ShieldAdvised && !n.NoShield {
+			n.ShieldAdvised = true
+			l.Fx.Notify("Argo: open Wi-Fi", "This Wi-Fi is "+snap.WiFiSec+". Traffic to the team is already encrypted by Tailscale. "+
+				"Cloudflare WARP would also hide the rest from this network. Argo no longer turns it on by itself: run `warp-cli connect`, "+
+				"or set \"wifi_shield\": \"warp\" in ~/.config/argo/config.json to let Argo do it on networks like this one.")
+		}
+		if fp != "" {
+			st.Networks[fp] = n
+		}
+		return
 	}
 	switch {
 	case st.ShieldOn && !untrusted: // back on a protected network

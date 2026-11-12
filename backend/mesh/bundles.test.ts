@@ -66,6 +66,11 @@ test("link stability is range-checked; a bad window drops the whole block", () =
   assert.ok(parseLink({ d1: notMeasured, d7: notMeasured }));
   const report = parseReport({ class: "OK", checkedAt: "2026-10-23T09:00:00Z", link: { d1: w, d7: w, extra: "dropped" } });
   assert.equal(JSON.stringify(report?.link).includes("extra"), false);
+  // The tailnet answer after a switch: kept only when both the latency and the path are in range.
+  assert.deepEqual(parseLink({ d1: w, d7: w, tailnetMs: 123, tailnetVia: "relay" }), { d1: w, d7: w, tailnetMs: 123, tailnetVia: "relay" });
+  assert.deepEqual(parseLink({ d1: w, d7: w, tailnetMs: -1 }), { d1: w, d7: w }, "no answer: no tailnet fields");
+  assert.deepEqual(parseLink({ d1: w, d7: w, tailnetMs: 12, tailnetVia: "DERP(sin)" }), { d1: w, d7: w }, "unknown path dropped");
+  assert.deepEqual(parseLink({ d1: w, d7: w, tailnetMs: 70_000, tailnetVia: "direct" }), { d1: w, d7: w }, "latency out of range dropped");
 });
 
 test("the mailbox enforces source, destination, lifetime and dedup, and keeps tombstones", () => {

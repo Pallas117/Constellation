@@ -40,6 +40,8 @@ type Config struct {
 	GuardSlotGB   float64  `json:"guard_slot_gb,omitempty"`   // RAM one mesh agent slot reserves (default 2)
 	GuardWorkerGB float64  `json:"guard_worker_gb,omitempty"` // RAM one job worker (test file, browser) holds (default 0.5)
 	InboxDir      string   `json:"inbox_dir,omitempty"`       // where received files land; default ~/Downloads/Argo
+	// WiFiShield "warp": Argo may run warp-cli itself on open or weak Wi-Fi (shield.go). Default "": advice only.
+	WiFiShield string `json:"wifi_shield,omitempty"`
 }
 
 func (c Config) peers() []Peer {
@@ -86,7 +88,11 @@ func main() {
 	}
 	cfg, store := loadConfig(), DefaultStore()
 	phone := newPhoneFor(cfg)
-	loop := Loop{Prober: SystemProber{ExitNodes: cfg.ExitNodes, SignalCache: store.path("signal.json")}, Store: store, Fx: realEffects{phone: phone}, AppWatch: true}
+	preempt := make(chan os.Signal, 1)
+	signal.Notify(preempt, syscall.SIGUSR1) // a newer tick saw the network change under this run (tick.go)
+	loop := Loop{Prober: SystemProber{ExitNodes: cfg.ExitNodes, SignalCache: store.path("signal.json")}, Store: store, Fx: realEffects{phone: phone}, AppWatch: true, Preempt: preempt}
+	loop.Tailnet = tailnetKicker(cfg)          // read-only `tailscale ping`/`netcheck` after a switch (tailnet.go)
+	loop.ShieldWARP = cfg.WiFiShield == "warp" // opt-in since 2026-11-05 (shield.go)
 	flush := func() {
 		if phone != nil {
 			phone.Flush() // deliver alerts queued while offline
@@ -112,9 +118,20 @@ func main() {
 			defer cancel()
 			f(c)
 		}
-		_ = withLock(store, func() { watchPeers(cfg.peers(), store, realWatchFx(phone, store), time.Now()) })
+		// One lock for the whole tick. Another run (a tick that outlived the minute, `argo fix`,
+		// the phone) means: leave quietly, and if the gateway moved tell it to re-probe (tick.go).
+		unlock, err := store.Lock()
+		if err != nil {
+			phase(5*time.Second, func(c context.Context) {
+				gw, _ := localGateway(c)
+				tickBusy(store, gw, time.Now(), syscall.Kill)
+			})
+			return nil
+		}
+		defer unlock()
+		watchPeers(cfg.peers(), store, realWatchFx(phone, store), time.Now())
 		thirdpartyTick(tpFilesIn(configDir()), phone, time.Now()) // texts once per new third-party change; two small file reads
-		_ = withLock(store, func() { phase(20*time.Second, func(c context.Context) { guardTick(c, store, cfg, phone, time.Now()) }) })
+		phase(20*time.Second, func(c context.Context) { guardTick(c, store, cfg, phone, time.Now()) })
 		phase(30*time.Second, func(c context.Context) { relayTick(c, cfg, store, phone) }) // store-and-forward (relay.go); takes its own lock
 		var skip bool
 		phase(10*time.Second, func(c context.Context) {
@@ -124,18 +141,18 @@ func main() {
 		if skip {
 			return nil
 		}
-		return withLock(store, func() {
-			flush()
-			phase(60*time.Second, func(c context.Context) { loop.Tick(c) })
-			watchDevices(ctx, cfg.Devices, store, phone, time.Now())
-			maybeSendWeekly(store, phone, time.Now())
-		})
+		flush()
+		phase(60*time.Second, func(c context.Context) { loop.Tick(c) })
+		watchDevices(ctx, cfg.Devices, store, phone, time.Now())
+		maybeSendWeekly(store, phone, time.Now())
+		return nil
 	}
 
 	var err error
 	switch cmd {
 	case "status":
-		fmt.Println(statusLine(store.Load(), time.Now()) + guardStatus(store.loadGuard(), time.Now()) + gaussStatus(store, time.Now()))
+		st := store.Load()
+		fmt.Println(statusLine(st, time.Now()) + guardStatus(store.loadGuard(), time.Now()) + gaussStatus(store, time.Now()) + switchLine(st, time.Now()))
 	case "doctor":
 		err = doctor(ctx, loop.Prober)
 	case "fix":
@@ -197,6 +214,12 @@ func main() {
 	case "run":
 		err = runStripped(os.Args[2:])
 	case "report":
+		if len(os.Args) > 2 && os.Args[2] == "--outages" { // one line per outage: classes, how long, what was credited
+			for _, l := range linkOutageLines(linkOutages(store.Incidents())) {
+				fmt.Println(l)
+			}
+			break
+		}
 		report(store.Incidents())
 	case "off":
 		err = os.WriteFile(store.path("disabled"), nil, 0o600)
