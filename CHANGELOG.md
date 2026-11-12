@@ -19,6 +19,9 @@ Before tagging, move these entries under `## [0.1.0] - <date>`.
 - Ed25519 signing of evidence packs and release files, with one offline verify command for customers (#161), and the
   first published evidence-pack and release keys (#197), which can be locked under a pattern drawn on a rotating
   tesseract (#200).
+- Processor radiation profiles with cited proton test data (Jetson TX2, Xavier NX, AGX Xavier Industrial, Orin NX) and a
+  modelled upset-risk band in trust records, relative to the orbit's quiet-time average; unknown without a cited
+  profile (#160).
 - Customer inference-log ingest (CSV, JSON, JSONL) with per-row provenance; every row is accepted or rejected with a
   reason (#126).
 - Space weather: separate radiation (S) and geomagnetic (G) storm streams (#101), a sense-check layer with a NOAA
