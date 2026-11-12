@@ -62,8 +62,8 @@ run() { # run <args...>: gauss-services.sh with the stubs; alerts land in $LOG
   env -i PATH="$T/bin:/usr/bin:/bin" HOME="$T/home" ARGO="$T/bin/argo" LOG="$T/log" KICKS="$T/kicks" GAUSS_PUBLIC_URL=http://127.0.0.1:8080 \
     GAUSS_SUDOERS="$T/sudoers" MLX="${MLX:-0}" MLXPORT="${MLXPORT:-8089}" ACTIONS="$T/actions" GAUSS_BALANCE="${GAUSS_BALANCE:-1}" \
     LOADED="${LOADED:-}" HEALTH="${HEALTH:-200}" HEALTH_FILE="${HEALTH_FILE:-}" GAUSS_DEPLOY_WAIT=0 DISKGB="${DISKGB:-50}" \
-    GATEFAIL="${GATEFAIL:-}" GAUSS_BY=test-user BOOT="${BOOT:-1000}" WAKE="${WAKE:-1000}" GAUSS_DIAG_DIRS="$T/diag" GAUSS_EVENTS_MAX_KB="${GAUSS_EVENTS_MAX_KB:-5120}" \
-    GAUSS_DEV_DRY="${GAUSS_DEV_DRY:-0}" GAUSS_GATES_START=0 HEAVYGIVEUP="${HEAVYGIVEUP:-}" NPMNET="${NPMNET:-}" GAUSS_GATEBOX="${GAUSS_GATEBOX:-}" GAUSS_GATEBOX_KEY="$T/gatebox-key" GBRC="${GBRC:-}" GAUSS_GATES_EXPIRE_H="${GAUSS_GATES_EXPIRE_H:-72}" GAUSS_DEV_API_PORT="${GAUSS_DEV_API_PORT:-3101}" \
+    GATEFAIL="${GATEFAIL:-}" MOVEMAIN="${MOVEMAIN:-}" GAUSS_BY=test-user BOOT="${BOOT:-1000}" GAUSS_DIAG_DIRS="$T/diag" GAUSS_EVENTS_MAX_KB="${GAUSS_EVENTS_MAX_KB:-5120}" \
+    WAKE="${WAKE:-1000}" GAUSS_DEV_DRY="${GAUSS_DEV_DRY:-0}" GAUSS_GATES_START=0 HEAVYGIVEUP="${HEAVYGIVEUP:-}" NPMNET="${NPMNET:-}" GAUSS_GATEBOX="${GAUSS_GATEBOX:-}" GAUSS_FLEET_MEMORY="${GAUSS_FLEET_MEMORY:-}" GAUSS_GATEBOX_KEY="$T/gatebox-key" GBRC="${GBRC:-}" GAUSS_GATES_EXPIRE_H="${GAUSS_GATES_EXPIRE_H:-72}" GAUSS_DEV_API_PORT="${GAUSS_DEV_API_PORT:-3101}" \
     SRC="${SRC:-AC Power}" BATT="${BATT:-80%; charging; present: true}" SD="${SD:-0}" FCC="${FCC:-}" ACW="${ACW:-}" \
     LEAKY="${LEAKY:-}" LEAKFP="${LEAKFP:-12 MB}" AVAIL="${AVAIL:-50}" GAUSS_SWAP_LAST="${SWAPLAST:-/dev/null}" \
     GATEENV="${GATEENV:-}" GATES_PYTHON="${GATES_PYTHON:-}" ${GATELEAK:+ALLOWED_ORIGINS=https://live.example MESH_STORE_PATH=/live/data/mesh/devices.json COMMERCE_DB_PATH=/live/data/commerce/commerce.db GAUSS_BEDROCK_DIR=/live/data/bedrock NODE_ENV=production} \
@@ -338,6 +338,7 @@ out=$(run fallback prepare "$DEV" 2>&1); [[ "$out" == *"is not the current fallb
 stub node 'if [[ " $* " == *" build "* ]]; then mkdir -p frontend/dist && touch frontend/dist/index.html; fi'
 # npm run <gate> prints what the real gates print (counts parsed by `gates record`); GATEFAIL=<gate> fails one
 stub npm 'if [ "$1" = run ]; then
+  [ "$2" = verify ] && [ -n "$MOVEMAIN" ] && [ -f "$MOVEMAIN" ] && { sh "$MOVEMAIN"; rm -f "$MOVEMAIN"; } # main moves mid-run
   [ -n "$GATEENV" ] && { env | grep -E "^(ALLOWED_ORIGINS|MESH_STORE_PATH|COMMERCE_DB_PATH|GAUSS_BEDROCK_DIR|NODE_ENV)=" ; echo "PATH=$PATH"; } >>"$GATEENV"
   case "$2" in
     test:ops) echo "gauss-services: 99 passed, 0 failed"; echo "ok  	argo	1.0s" ;;
@@ -674,7 +675,8 @@ case "\$1 \$2" in
   "pr view") read -r st br base dr ms <"$GHD/pr\$3" || exit 1
     echo "\$st \$(git --git-dir="$ORIGIN" rev-parse "refs/heads/\$br") \$br \$base \$dr \$ms" ;;
   "pr merge") echo "gh merge \$3 \${@: -1}" >>"\$ACTIONS"; exit \${GHMERGEFAIL:-0} ;;
-  "pr list") base=\$(printf '%s\n' "\$@" | grep -A1 -x -- --base | tail -1); cat "$GHD/children-\$base" 2>/dev/null ;;
+  "pr list") base=\$(printf '%s\n' "\$@" | grep -A1 -x -- --base | tail -1)
+    if [ -n "\$base" ]; then cat "$GHD/children-\$base" 2>/dev/null; else cat "$GHD/open" 2>/dev/null; fi ;;
   "pr edit") echo "gh retarget \$3" >>"\$ACTIONS" ;;
   *) exit 1 ;;
 esac
@@ -733,8 +735,60 @@ M2=$(tc "$M1" main.txt main-2); g push -q origin "$M2:refs/heads/main" && g fetc
 out=$(cd "$LIVE" && run gates enqueue "$P5" --pr 13 2>&1)
 [[ "$out" == *"main has moved past it: queueing"* ]] && [ "$(ls "$GQ" | grep -c '\.req$')" = 1 ] && ! grep -q "gh merge" "$T/actions"
 expect "train: an already-passed head that main moved past is queued to sync, not merged" $?
+# 12 Nov: the runner dropped such a request as SKIPPED (its tree had passed) before the train step,
+# so the PR never landed. It must merge main in, gate the new head and merge it.
+: >"$T/actions"; run gates run >/dev/null 2>&1; N5=$(git --git-dir="$ORIGIN" rev-parse refs/heads/train)
+[ "$N5" != "$P5" ] && grep -q "^[^ ]* $P5 [^ ]* MOVED merged main into PR #13" "$GR" && grep -qx "gh merge 13 $N5" "$T/actions" \
+  && ! grep -q "^[^ ]* $P5 [^ ]* SKIPPED already passed: PASSED" <(tail -3 "$GR") && [ -z "$(ls "$GQ")" ]
+expect "train: the runner syncs and merges an already-passed train head instead of skipping it" $?
 rm -f "$GQ"/*.req
+# 12 Nov: merging one PR moved main under the next one's run; it sat HELD until a person re-queued it.
+M3=$(tc "$M2" main.txt main-3); g push -q origin "$M3:refs/heads/side"; g push -q origin "$M2:refs/heads/main"; g fetch -q origin
+P7=$(tc "$M2" f7.txt f7); g push -q origin "$P7:refs/heads/req7" && g fetch -q origin; echo "OPEN req7 main false CLEAN" >"$GHD/pr21"
+printf 'git --git-dir="%s" update-ref refs/heads/main %s\n' "$ORIGIN" "$M3" >"$T/movemain.sh"
+(cd "$LIVE" && run gates enqueue "$P7" --pr 21 >/dev/null 2>&1); : >"$T/actions"
+MOVEMAIN="$T/movemain.sh" run gates run >/dev/null 2>&1; N7=$(git --git-dir="$ORIGIN" rev-parse refs/heads/req7)
+grep -q "^[^ ]* $P7 [^ ]* HELD passed, not merged: main moved during the run" "$GR" && grep -q "^[^ ]* $P7 [^ ]* REQUEUED PR #21 re-queued at the front" "$GR" \
+  && ! grep -qx "gh merge 21 $P7" "$T/actions"
+expect "train: a head main moved past during its run is re-queued at the front, not left HELD" $?
+[ "$N7" != "$P7" ] && git --git-dir="$ORIGIN" merge-base --is-ancestor "$M3" "$N7" && grep -q "^[^ ]* $P7 [^ ]* MOVED merged main into PR #21" "$GR" \
+  && grep -qx "gh merge 21 $N7" "$T/actions" && [ -z "$(ls "$GQ")" ]
+expect "train: the re-queued head gets main merged in, passes and is merged in the same pass" $?
+# Queue tooling: reorder by PR, list the queue by PR, list passes that wait for a person.
+P8=$(tc "$M3" f8.txt f8); P9=$(tc "$M3" f9.txt f9); g push -q origin "$P8:refs/heads/q8" "$P9:refs/heads/q9" && g fetch -q origin
+(cd "$LIVE" && run gates enqueue "$P8" --pr 31 >/dev/null 2>&1; run gates enqueue "$P9" --pr 32 >/dev/null 2>&1)
+out=$(run gates priority 32 front 2>&1); first=$(ls "$GQ" | sort | sed -n 1p)
+grep -qx "pr=32" "$GQ/$first" && [[ "$out" == *"Moved 1 request(s) for 32 to the front"* ]] && [[ "$(sed -n 1p <<<"$(run gates queue)")" == *"#32"* ]]
+expect "gates priority: a PR moves to the front, and gates queue lists requests in run order by PR" $?
+out=$(run gates priority 31 back 2>&1); last=$(ls "$GQ" | sort | tail -1); grep -qx "pr=31" "$GQ/$last"
+expect "gates priority: a PR moves to the back" $?
+out=$(run gates priority 99 front 2>&1); [ $? = 1 ] && [[ "$out" == *"Nothing queued for 99"* ]]; expect "gates priority: an unknown PR is refused" $?
+rm -f "$GQ"/*.req
+printf '%s 13 true CLEAN Brand refresh\n%s 21 false CLEAN Already merged head\n' "$N5" "$P8" >"$GHD/open"
+out=$(cd "$LIVE" && run gates waiting 2>&1)
+[[ "$out" == *"#13 ${N5:0:7} draft, CLEAN: Brand refresh"* ]] && [[ "$out" == *"next: mark it ready (gh pr ready 13)"* ]] && [[ "$out" != *"#21 "* ]]
+expect "gates waiting: lists open PRs whose head passed (with the next step), and nothing that hasn't" $?
+rm -f "$GHD/open"
 g checkout -q --detach "$prevhead"; g remote remove origin; rm -f "$T/bin/gh" "$T/home/.gitconfig"
+
+# Fleet memory watch (GAU-240): the guard texts when another mesh device's memory is at risk or
+# critical, from the file the hub keeps; stale states, this Mac and junk are ignored.
+FM="$T/fleet-memory.json"; fmnow=$(date -u +%Y-%m-%dT%H:%M:%SZ); fmold=$(date -u -v-1H +%Y-%m-%dT%H:%M:%SZ); fmme=$(hostname -s | tr '[:upper:]' '[:lower:]')
+printf '{"at":"%s","staleAfterMs":900000,"devices":[{"name":"devbox","state":"critical","why":["memory pressure critical"],"reportedAt":"%s"},{"name":"labbox","state":"risk","why":["swap climbing at warn","<b>x</b>"],"reportedAt":"%s"},{"name":"oldbox","state":"critical","why":["memory pressure critical"],"reportedAt":"%s"},{"name":"%s","state":"critical","why":["memory pressure critical"],"reportedAt":"%s"},{"name":"calm","state":"ok","why":[],"reportedAt":"%s"},{"name":"Bad Name;x","state":"critical","why":[],"reportedAt":"%s"}]}' \
+  "$fmnow" "$fmnow" "$fmnow" "$fmold" "$fmme" "$fmnow" "$fmnow" "$fmnow" >"$FM"
+GAUSS_FLEET_MEMORY="$FM" run awake guard
+[[ " $(alerts) " == *" mesh-mem-devbox "* ]] && [[ " $(alerts) " == *" mesh-mem-labbox "* ]] && grep -q "devbox is out of memory" "$T/log" && grep -q "labbox is short of memory" "$T/log"
+expect "fleet memory: a device at risk or critical is texted, once per device" $?
+[[ " $(alerts) " != *"mesh-mem-oldbox"* ]] && [[ " $(alerts) " != *"mesh-mem-$fmme "* ]] && [[ " $(alerts) " != *"mesh-mem-calm"* ]] && ! grep -q "Bad Name" "$T/log" && ! grep -q "<b>" "$T/log"
+expect "fleet memory: a stale state, this Mac, an ok device and unchecked text are never texted" $?
+ev 'any(e["event"] == "fleet-memory" and e["label"] == "devbox" and e.get("state") == "critical" for e in E)'
+expect "fleet memory: each finding is an ops event" $?
+fmev() { python3 -Ic 'import json,sys; print(sum(1 for l in open(sys.argv[1]) if json.loads(l).get("event") == "fleet-memory"))' "$EV" 2>/dev/null || echo 0; }
+n1=$(fmev); GAUSS_FLEET_MEMORY="$FM" run awake guard
+[ "$(fmev)" = "$n1" ] && [[ " $(alerts) " != *"mesh-mem-"* ]]; expect "fleet memory: within 2 h a device still at risk adds no event and no text" $?
+echo '{not json' >"$FM"; GAUSS_FLEET_MEMORY="$FM" run awake guard; rc=$?
+[ $rc = 0 ] && [[ " $(alerts) " != *"mesh-mem-"* ]]; expect "fleet memory: an unreadable file is ignored and the guard carries on" $?
+GAUSS_FLEET_MEMORY="$T/none.json" run awake guard; [ $? = 0 ] && [[ " $(alerts) " != *"mesh-mem-"* ]]; expect "fleet memory: no file, no alert" $?
 
 # balance (GAU-126): shed optional load, undo it when conditions recover
 acts() { tr '\n' ';' <"$T/actions" | sed 's/;$//'; }

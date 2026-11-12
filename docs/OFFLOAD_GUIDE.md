@@ -17,8 +17,6 @@ Create/edit the `.env` file on the Kali machine:
 PROXY_PORT=3001
 PROXY_HOST=0.0.0.0  # Allow external connections
 ALLOWED_ORIGINS=*    # Or your client machine's IP/port
-SUPABASE_URL=...
-SUPABASE_SERVICE_ROLE_KEY=...
 LOCAL_INFER_URL=http://localhost:8000
 ```
 
