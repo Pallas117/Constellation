@@ -18,6 +18,8 @@ export interface PolledFeed<T> {
   status: FeedStatus;
   loading: boolean;
   error: string | null;
+  /** Consecutive failed polls since the last success (0 while healthy). */
+  failures: number;
 }
 
 export interface PolledFeedOptions<T> {
@@ -53,6 +55,7 @@ export function usePolledFeed<T>({
   const [data, setData] = useState<T | null>(null);
   const [status, setStatus] = useState<FeedStatus>("waiting");
   const [error, setError] = useState<string | null>(null);
+  const [failures, setFailures] = useState(0);
   const parseRef = useRef(parse);
   const nextPathRef = useRef(nextPath);
   const reduceRef = useRef(reduce);
@@ -70,6 +73,7 @@ export function usePolledFeed<T>({
     const base = getBackendBaseUrl();
     // A new route or user starts from nothing, so an incremental feed backfills again.
     heldRef.current = null;
+    setFailures(0);
 
     const poll = async (signal: AbortSignal): Promise<PollOutcome> => {
       const url = `${base}${nextPathRef.current?.(path, heldRef.current) ?? path}`;
@@ -92,7 +96,9 @@ export function usePolledFeed<T>({
       poll,
       policy: { baseMs: intervalMs, maxMs: maxBackoffMs },
       onSchedule: (delay, outcome) => {
-        if (!mounted || outcome.kind === "ok" || delay === null) return;
+        if (!mounted) return;
+        setFailures((n) => (outcome.kind === "ok" ? 0 : n + 1));
+        if (outcome.kind === "ok" || delay === null) return;
         setStatus("backing-off");
         setError(
           outcome.kind === "rate-limited"
@@ -122,9 +128,10 @@ export function usePolledFeed<T>({
       status: disabledStatus,
       loading: disabledStatus === "waiting",
       error: disabledStatus === "sign-in-required" ? signInMessage : null,
+      failures: 0,
     };
   }
-  return { data, status, loading: status === "waiting", error };
+  return { data, status, loading: status === "waiting", error, failures };
 }
 
 /** Signed-in state for choosing which feeds a page may poll. */

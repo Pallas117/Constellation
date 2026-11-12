@@ -1,10 +1,17 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useState } from "react";
 import { apiBase } from "@/lib/api/base-url";
 import { describeHttpFailure, HttpFailure } from "@/lib/api/http-error";
-import { stopsPolling, type BatteryReading, type GuardReading } from "@/lib/mesh-onboarding";
+import {
+  MESH_ONBOARDING_PATH,
+  MESH_POLL_INTERVAL_MS,
+  meshDevicesPath,
+  parseMeshDevices,
+  parseMeshOnboarding,
+  type MeshOnboarding,
+} from "@/lib/api/mesh";
+import type { BatteryReading, GuardReading } from "@/lib/mesh-onboarding";
 import type { LinkReport } from "@/lib/link-stability";
-
-const POLL_INTERVAL_MS = 30_000;
+import { usePolledFeed, useFeedSession } from "./usePolledFeed";
 
 function getBaseUrl(): string {
   return apiBase();
@@ -91,100 +98,36 @@ function api(path: string, init: RequestInit = {}) {
   });
 }
 
-interface MeshState {
-  steps: OnboardingStep[];
-  devices: MeshDevice[] | null;
-  canEnroll: boolean;
-  canSeeTeam: boolean;
-  canRevokeAny: boolean;
-  me: string | null;
-  error: string | null;
-  /** Set after a 401/403: polling has stopped until the page is reloaded (CyberTiger counts them). */
-  stopped: boolean;
-}
+const MESH_SIGN_IN_MESSAGE = "Couldn't load the mesh: sign in with a staff account.";
 
-const INITIAL_MESH_STATE: MeshState = {
-  steps: [],
-  devices: null,
-  canEnroll: false,
-  canSeeTeam: false,
-  canRevokeAny: false,
-  me: null,
-  error: null,
-  stopped: false,
-};
-
-const errorMessage = (err: unknown) => (err instanceof Error ? err.message : "Mesh request failed");
-const stoppedBy = (err: unknown) => err instanceof HttpFailure && stopsPolling(err.status);
-
-type Update = (prev: MeshState) => MeshState;
-
-/** One poll of the onboarding info (and the device list when allowed), as an update to the held state. */
-async function loadMesh(): Promise<{ update: Update; stopped: boolean }> {
-  let info;
-  try {
-    const onboarding = await api("/onboarding");
-    if (!onboarding.ok) throw new HttpFailure("Couldn't load the mesh", onboarding.status);
-    info = await onboarding.json();
-  } catch (err) {
-    const error = errorMessage(err);
-    const stopped = stoppedBy(err);
-    return { update: (prev) => ({ ...prev, error, stopped }), stopped };
-  }
-  const next = {
-    steps: info.steps,
-    canEnroll: info.canEnroll === true,
-    canSeeTeam: info.canSeeTeam === true,
-    canRevokeAny: info.canRevokeAny === true,
-    me: typeof info.me === "string" ? info.me : null,
-    error: null,
-  };
-  // Only call /devices when allowed: 403s count as auth failures in CyberTiger.
-  // Staff get their own devices back; operators get the whole team.
-  if (info.canEnroll !== true) return { update: (prev) => ({ ...prev, ...next }), stopped: false };
-  try {
-    const res = await api("/devices");
-    if (!res.ok) throw new HttpFailure("Couldn't load your devices", res.status);
-    const devices: MeshDevice[] = (await res.json()).devices;
-    return { update: (prev) => ({ ...prev, ...next, devices }), stopped: false };
-  } catch (err) {
-    const error = errorMessage(err);
-    const stopped = stoppedBy(err);
-    return { update: (prev) => ({ ...prev, ...next, error, stopped }), stopped };
-  }
-}
-
+/**
+ * Two feeds on the shared poller: onboarding always, the device list only when onboarding
+ * says the caller may enrol (403s count as auth failures in CyberTiger). A 401/403 stops
+ * that feed (`stopped`) until the page is reloaded or the session changes.
+ */
 export function useMesh() {
-  const [state, setState] = useState<MeshState>(INITIAL_MESH_STATE);
-  const stoppedRef = useRef(false);
+  const { userKey } = useFeedSession();
+  // Bumped after enrol/revoke: restarting the feeds fetches straight away.
+  const [refreshKey, setRefreshKey] = useState(0);
+  const restartKey = `${userKey}:${refreshKey}`;
 
-  const refresh = useCallback(async () => {
-    const { update, stopped } = await loadMesh();
-    stoppedRef.current ||= stopped;
-    setState(update);
-  }, []);
+  const onboardingFeed = usePolledFeed<MeshOnboarding>({
+    path: MESH_ONBOARDING_PATH,
+    intervalMs: MESH_POLL_INTERVAL_MS,
+    parse: parseMeshOnboarding,
+    signInMessage: MESH_SIGN_IN_MESSAGE,
+    restartKey,
+  });
+  const onboarding = onboardingFeed.data;
+  const devicesFeed = usePolledFeed<MeshDevice[]>({
+    path: meshDevicesPath(onboardingFeed.status === "live", onboarding),
+    intervalMs: MESH_POLL_INTERVAL_MS,
+    parse: parseMeshDevices,
+    signInMessage: MESH_SIGN_IN_MESSAGE,
+    restartKey,
+  });
 
-  useEffect(() => {
-    let cancelled = false;
-    const poll = async (initial = false) => {
-      // A hidden tab has nobody to show it to; an expired session in a forgotten tab
-      // was the way this page could get a teammate's address blocked.
-      if (stoppedRef.current || (!initial && document.visibilityState === "hidden")) return;
-      const { update, stopped } = await loadMesh();
-      if (cancelled) return;
-      if (stopped) {
-        stoppedRef.current = true;
-        clearInterval(timer);
-      }
-      setState(update);
-    };
-    const timer = setInterval(() => void poll(), POLL_INTERVAL_MS);
-    void poll(true);
-    return () => {
-      cancelled = true;
-      clearInterval(timer);
-    };
-  }, []);
+  const refresh = useCallback(() => setRefreshKey((n) => n + 1), []);
 
   /** Returns the one-time device token, or throws. */
   const enroll = useCallback(
@@ -209,7 +152,14 @@ export function useMesh() {
     [refresh],
   );
 
-  const { steps, devices, me, canEnroll, canSeeTeam, canRevokeAny, error, stopped } = state;
+  const steps = onboarding?.steps ?? [];
+  const canEnroll = onboarding?.canEnroll ?? false;
+  const canSeeTeam = onboarding?.canSeeTeam ?? false;
+  const canRevokeAny = onboarding?.canRevokeAny ?? false;
+  const me = onboarding?.me ?? null;
+  const devices = devicesFeed.data;
+  const error = onboardingFeed.error ?? devicesFeed.error;
+  const stopped = onboardingFeed.status === "sign-in-required" || devicesFeed.status === "sign-in-required";
   return { steps, devices, me, canEnroll, canSeeTeam, canRevokeAny, error, stopped, enroll, revoke };
 }
 
