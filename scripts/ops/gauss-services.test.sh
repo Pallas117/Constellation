@@ -62,7 +62,7 @@ run() { # run <args...>: gauss-services.sh with the stubs; alerts land in $LOG
     GAUSS_SUDOERS="$T/sudoers" MLX="${MLX:-0}" MLXPORT="${MLXPORT:-8089}" ACTIONS="$T/actions" GAUSS_BALANCE="${GAUSS_BALANCE:-1}" \
     LOADED="${LOADED:-}" HEALTH="${HEALTH:-200}" HEALTH_FILE="${HEALTH_FILE:-}" GAUSS_DEPLOY_WAIT=0 DISKGB="${DISKGB:-50}" \
     GATEFAIL="${GATEFAIL:-}" GAUSS_BY=test-user BOOT="${BOOT:-1000}" GAUSS_DIAG_DIRS="$T/diag" GAUSS_EVENTS_MAX_KB="${GAUSS_EVENTS_MAX_KB:-5120}" \
-    GAUSS_DEV_DRY="${GAUSS_DEV_DRY:-0}" GAUSS_GATES_START=0 HEAVYGIVEUP="${HEAVYGIVEUP:-}" NPMNET="${NPMNET:-}" GAUSS_GATEBOX="${GAUSS_GATEBOX:-}" GAUSS_GATEBOX_KEY="$T/gatebox-key" GBRC="${GBRC:-}" GAUSS_GATES_EXPIRE_H="${GAUSS_GATES_EXPIRE_H:-72}" GAUSS_DEV_API_PORT="${GAUSS_DEV_API_PORT:-3101}" \
+    GAUSS_DEV_DRY="${GAUSS_DEV_DRY:-0}" GAUSS_GATES_START=0 HEAVYGIVEUP="${HEAVYGIVEUP:-}" NPMNET="${NPMNET:-}" GAUSS_GATEBOX="${GAUSS_GATEBOX:-}" GAUSS_FLEET_MEMORY="${GAUSS_FLEET_MEMORY:-}" GAUSS_GATEBOX_KEY="$T/gatebox-key" GBRC="${GBRC:-}" GAUSS_GATES_EXPIRE_H="${GAUSS_GATES_EXPIRE_H:-72}" GAUSS_DEV_API_PORT="${GAUSS_DEV_API_PORT:-3101}" \
     SRC="${SRC:-AC Power}" BATT="${BATT:-80%; charging; present: true}" SD="${SD:-0}" FCC="${FCC:-}" ACW="${ACW:-}" \
     LEAKY="${LEAKY:-}" LEAKFP="${LEAKFP:-12 MB}" AVAIL="${AVAIL:-50}" GAUSS_SWAP_LAST="${SWAPLAST:-/dev/null}" \
     GATEENV="${GATEENV:-}" GATES_PYTHON="${GATES_PYTHON:-}" ${GATELEAK:+ALLOWED_ORIGINS=https://live.example MESH_STORE_PATH=/live/data/mesh/devices.json COMMERCE_DB_PATH=/live/data/commerce/commerce.db GAUSS_BEDROCK_DIR=/live/data/bedrock NODE_ENV=production} \
@@ -728,6 +728,25 @@ out=$(cd "$LIVE" && run gates enqueue "$P5" --pr 13 2>&1)
 expect "train: an already-passed head that main moved past is queued to sync, not merged" $?
 rm -f "$GQ"/*.req
 g checkout -q --detach "$prevhead"; g remote remove origin; rm -f "$T/bin/gh" "$T/home/.gitconfig"
+
+# Fleet memory watch (GAU-240): the guard texts when another mesh device's memory is at risk or
+# critical, from the file the hub keeps; stale states, this Mac and junk are ignored.
+FM="$T/fleet-memory.json"; fmnow=$(date -u +%Y-%m-%dT%H:%M:%SZ); fmold=$(date -u -v-1H +%Y-%m-%dT%H:%M:%SZ); fmme=$(hostname -s | tr '[:upper:]' '[:lower:]')
+printf '{"at":"%s","staleAfterMs":900000,"devices":[{"name":"devbox","state":"critical","why":["memory pressure critical"],"reportedAt":"%s"},{"name":"labbox","state":"risk","why":["swap climbing at warn","<b>x</b>"],"reportedAt":"%s"},{"name":"oldbox","state":"critical","why":["memory pressure critical"],"reportedAt":"%s"},{"name":"%s","state":"critical","why":["memory pressure critical"],"reportedAt":"%s"},{"name":"calm","state":"ok","why":[],"reportedAt":"%s"},{"name":"Bad Name;x","state":"critical","why":[],"reportedAt":"%s"}]}' \
+  "$fmnow" "$fmnow" "$fmnow" "$fmold" "$fmme" "$fmnow" "$fmnow" "$fmnow" >"$FM"
+GAUSS_FLEET_MEMORY="$FM" run awake guard
+[[ " $(alerts) " == *" mesh-mem-devbox "* ]] && [[ " $(alerts) " == *" mesh-mem-labbox "* ]] && grep -q "devbox is out of memory" "$T/log" && grep -q "labbox is short of memory" "$T/log"
+expect "fleet memory: a device at risk or critical is texted, once per device" $?
+[[ " $(alerts) " != *"mesh-mem-oldbox"* ]] && [[ " $(alerts) " != *"mesh-mem-$fmme "* ]] && [[ " $(alerts) " != *"mesh-mem-calm"* ]] && ! grep -q "Bad Name" "$T/log" && ! grep -q "<b>" "$T/log"
+expect "fleet memory: a stale state, this Mac, an ok device and unchecked text are never texted" $?
+ev 'any(e["event"] == "fleet-memory" and e["label"] == "devbox" and e.get("state") == "critical" for e in E)'
+expect "fleet memory: each finding is an ops event" $?
+fmev() { python3 -Ic 'import json,sys; print(sum(1 for l in open(sys.argv[1]) if json.loads(l).get("event") == "fleet-memory"))' "$EV" 2>/dev/null || echo 0; }
+n1=$(fmev); GAUSS_FLEET_MEMORY="$FM" run awake guard
+[ "$(fmev)" = "$n1" ] && [[ " $(alerts) " != *"mesh-mem-"* ]]; expect "fleet memory: within 2 h a device still at risk adds no event and no text" $?
+echo '{not json' >"$FM"; GAUSS_FLEET_MEMORY="$FM" run awake guard; rc=$?
+[ $rc = 0 ] && [[ " $(alerts) " != *"mesh-mem-"* ]]; expect "fleet memory: an unreadable file is ignored and the guard carries on" $?
+GAUSS_FLEET_MEMORY="$T/none.json" run awake guard; [ $? = 0 ] && [[ " $(alerts) " != *"mesh-mem-"* ]]; expect "fleet memory: no file, no alert" $?
 
 # balance (GAU-126): shed optional load, undo it when conditions recover
 acts() { tr '\n' ';' <"$T/actions" | sed 's/;$//'; }
