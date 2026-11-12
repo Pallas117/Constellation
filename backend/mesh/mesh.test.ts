@@ -11,11 +11,15 @@ import {
   GUARD_LEVELS,
   MESH_CLASSES,
   MeshStore,
+  POSTURE_ITEMS,
+  POSTURE_MAX_AGE_MS,
+  POSTURE_STATUSES,
   assessHosting,
   hostingVerdict,
   parseBattery,
   parsePower,
   parseGuard,
+  parsePosture,
   parseHost,
   parseNet,
   parseReport,
@@ -362,6 +366,67 @@ test("Gauss knows every guard code, level and admission Argo can send", () => {
   assert.ok(levels, "guard.go level names changed");
   assert.deepEqual([...GUARD_LEVELS], ["ok", "watch", "risk", "block"]);
   for (const a of GUARD_ADMISSIONS) assert.ok(go.includes(`next.Admission = "${a}"`), `Argo never sends admission ${a}`);
+});
+
+const postureNow = new Date("2026-11-10T12:30:00Z");
+const postureItems = { disk: "ok", firewall: "fail", updates: "ok", integrity: "ok", tailkey: "warn", argo: "unknown", sharing: "ok" };
+
+test("Argo's posture block is allowlisted: known items and statuses only, with a sane check time", () => {
+  const at = "2026-11-10T12:00:00Z";
+  assert.deepEqual(parsePosture({ at, items: postureItems }, postureNow), { at: "2026-11-10T12:00:00.000Z", items: postureItems });
+  // Anything else Argo (or an attacker) adds is dropped: extra items, detail text, identifiers.
+  const noisy = { at, items: { ...postureItems, serial: "C02XXXX", "<script>": "ok", __proto__: "ok" }, detail: "FileVault is Off", host: "judith" };
+  assert.deepEqual(parsePosture(noisy, postureNow), { at: "2026-11-10T12:00:00.000Z", items: postureItems });
+  // A bad status drops that item alone; statuses are never coerced.
+  assert.deepEqual(parsePosture({ at, items: { disk: "ok", firewall: "OK", updates: "great", integrity: 1, tailkey: null, argo: ["ok"], sharing: { status: "ok" } } }, postureNow)!.items, { disk: "ok" });
+  for (const bad of [
+    undefined,
+    null,
+    "ok",
+    [],
+    {},
+    { at },
+    { at, items: [] },
+    { at, items: "ok" },
+    { at, items: {} },
+    { at, items: { disk: "passed" } },
+    { at: "soon", items: postureItems },
+    { at: 1762776000000, items: postureItems },
+    { at: "2026-11-10T12:00:00Z".padEnd(41, " "), items: postureItems },
+    { at: "2026-11-10T12:41:00Z", items: postureItems }, // more than 10 min in the future
+    { at: "2026-11-10T09:29:00Z", items: postureItems }, // older than 3 h
+  ]) {
+    assert.equal(parsePosture(bad, postureNow), undefined, JSON.stringify(bad));
+  }
+  const r = parseReport({ ...okReport, posture: { at, items: postureItems } }, postureNow)!;
+  assert.deepEqual(r.posture!.items, postureItems);
+  assert.equal(parseReport(okReport, postureNow)!.posture, undefined, "older Argo: no block");
+  assert.equal(parseReport({ ...okReport, posture: { at, items: { disk: "<b>" } } }, postureNow)!.posture, undefined, "a bad block never fails the report");
+});
+
+test("Gauss knows every posture item and status Argo can send", () => {
+  const go = readFileSync(new URL("../../tools/argo/posture.go", import.meta.url), "utf8");
+  const ids = go.match(/var postureIDs = \[\]string\{([^}]+)\}/);
+  assert.ok(ids, "posture.go postureIDs line changed");
+  assert.deepEqual(ids![1].split(",").map((s) => s.trim().replace(/"/g, "")), [...POSTURE_ITEMS]);
+  for (const s of POSTURE_STATUSES) assert.ok(new RegExp(`posture\\w+\\s*= "${s}"`).test(go), `Argo never sends status ${s}`);
+});
+
+test("posture arrives about hourly: the last one is kept between reports until it is too old", () => {
+  const store = new MeshStore(null);
+  const enrolled = store.enroll("judith", "staff@example.com");
+  assert.ok("device" in enrolled);
+  const device = enrolled.device;
+  const at = "2026-11-10T12:00:00Z";
+  store.record(device, parseReport({ ...okReport, posture: { at, items: postureItems } }, postureNow)!);
+  assert.deepEqual(store.list(postureNow)[0].last!.posture!.items, postureItems);
+  store.record(device, parseReport(okReport, new Date("2026-11-10T12:31:00Z"))!);
+  assert.equal(store.list(postureNow)[0].last!.posture!.at, "2026-11-10T12:00:00.000Z", "kept from the earlier report");
+  const newer = { at: "2026-11-10T13:00:00Z", items: { ...postureItems, firewall: "ok" } };
+  store.record(device, parseReport({ ...okReport, posture: newer }, new Date("2026-11-10T13:00:30Z"))!);
+  assert.equal(store.list(postureNow)[0].last!.posture!.items.firewall, "ok", "a newer block replaces it");
+  store.record(device, parseReport(okReport, new Date(Date.parse(newer.at) + POSTURE_MAX_AGE_MS + 60_000))!);
+  assert.equal(store.list(postureNow)[0].last!.posture, undefined, "dropped once older than 3 h");
 });
 
 test("a refused report is remembered (at most once a minute) so the page can say why a device looks silent", async () => {

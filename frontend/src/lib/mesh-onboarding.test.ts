@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { batteryLabel, copyText, deviceStage, enrollCommand, guardLine, isTailnetHost, stopsPolling } from "./mesh-onboarding";
+import { batteryLabel, copyText, deviceStage, enrollCommand, guardLine, isTailnetHost, postureLine, stopsPolling } from "./mesh-onboarding";
 
 test("the mesh page stops polling on 401 and 403, never on other failures", () => {
   assert.equal(stopsPolling(401), true);
@@ -45,6 +45,17 @@ test("battery and guard lines read plainly", () => {
   assert.equal(batteryLabel({ level: 90, charging: true, lowPower: false }), "90% charging", "phones say only whether they charge");
   assert.equal(guardLine({ admission: "limited", slots: 1, headroomGB: 2.4 }), "Argo guard: light work only · 1 agent slot · 2.4 GB free");
   assert.equal(guardLine({ admission: "closed", slots: 0, headroomGB: 0 }), "Argo guard: closed to new work · 0 agent slots · 0 GB free");
+});
+
+test("the security line counts passing checks and names the rest; a check not read never counts as ok", () => {
+  const at = "2026-11-10T12:00:00Z";
+  const ok = { disk: "ok", firewall: "ok", updates: "ok", integrity: "ok", tailkey: "ok", argo: "ok", sharing: "ok" } as const;
+  assert.equal(postureLine({ at, items: ok }), "Security: 7 of 7 checks ok");
+  assert.equal(
+    postureLine({ at, items: { ...ok, firewall: "fail", disk: "fail", sharing: "warn", argo: "unknown" } }),
+    "Security: 3 of 7 checks ok · failing: disk encryption, firewall · warning: sharing services · not read: Argo version",
+  );
+  assert.equal(postureLine({ at, items: { tailkey: "unknown" } }), "Security: 0 of 1 checks ok · not read: tailnet key", "a partial block counts only what was sent");
 });
 
 test("copying falls back to manual when the page has no clipboard", async () => {
