@@ -62,9 +62,10 @@ run() { # run <args...>: gauss-services.sh with the stubs; alerts land in $LOG
     GAUSS_SUDOERS="$T/sudoers" MLX="${MLX:-0}" MLXPORT="${MLXPORT:-8089}" ACTIONS="$T/actions" GAUSS_BALANCE="${GAUSS_BALANCE:-1}" \
     LOADED="${LOADED:-}" HEALTH="${HEALTH:-200}" HEALTH_FILE="${HEALTH_FILE:-}" GAUSS_DEPLOY_WAIT=0 DISKGB="${DISKGB:-50}" \
     GATEFAIL="${GATEFAIL:-}" GAUSS_BY=test-user BOOT="${BOOT:-1000}" GAUSS_DIAG_DIRS="$T/diag" GAUSS_EVENTS_MAX_KB="${GAUSS_EVENTS_MAX_KB:-5120}" \
-    GAUSS_DEV_DRY="${GAUSS_DEV_DRY:-0}" GAUSS_GATES_START=0 HEAVYGIVEUP="${HEAVYGIVEUP:-}" NPMNET="${NPMNET:-}" GAUSS_GATEBOX="${GAUSS_GATEBOX:-}" GAUSS_GATEBOX_TRUST="${GAUSS_GATEBOX_TRUST:-}" GAUSS_GATEBOX_KEY="$T/gatebox-key" GBRC="${GBRC:-}" GAUSS_GATES_EXPIRE_H="${GAUSS_GATES_EXPIRE_H:-72}" GAUSS_DEV_API_PORT="${GAUSS_DEV_API_PORT:-3101}" \
+    GAUSS_DEV_DRY="${GAUSS_DEV_DRY:-0}" GAUSS_GATES_START=0 HEAVYGIVEUP="${HEAVYGIVEUP:-}" NPMNET="${NPMNET:-}" GAUSS_GATEBOX="${GAUSS_GATEBOX:-}" GAUSS_GATEBOX_TRUST="${GAUSS_GATEBOX_TRUST:-}" GAUSS_FLEET_MEMORY="${GAUSS_FLEET_MEMORY:-}" GAUSS_GATEBOX_KEY="$T/gatebox-key" GBRC="${GBRC:-}" GAUSS_GATES_EXPIRE_H="${GAUSS_GATES_EXPIRE_H:-72}" GAUSS_DEV_API_PORT="${GAUSS_DEV_API_PORT:-3101}" \
     SRC="${SRC:-AC Power}" BATT="${BATT:-80%; charging; present: true}" SD="${SD:-0}" FCC="${FCC:-}" ACW="${ACW:-}" \
     LEAKY="${LEAKY:-}" LEAKFP="${LEAKFP:-12 MB}" AVAIL="${AVAIL:-50}" GAUSS_SWAP_LAST="${SWAPLAST:-/dev/null}" \
+    GATEENV="${GATEENV:-}" GATES_PYTHON="${GATES_PYTHON:-}" ${GATELEAK:+ALLOWED_ORIGINS=https://live.example MESH_STORE_PATH=/live/data/mesh/devices.json COMMERCE_DB_PATH=/live/data/commerce/commerce.db GAUSS_BEDROCK_DIR=/live/data/bedrock NODE_ENV=production} \
     ARGOSTATUS="${ARGOSTATUS:-}" LEVEL="${LEVEL:-1}" FREE="${FREE:-50}" SWAPUSED="${SWAPUSED:-1000}" OLD_ARGO="${OLD_ARGO:-}" bash "$SCRIPT" "$@"
 }
 expect() { # expect <name> <condition-exit-code>
@@ -330,6 +331,7 @@ out=$(run fallback prepare "$DEV" 2>&1); [[ "$out" == *"is not the current fallb
 stub node 'if [[ " $* " == *" build "* ]]; then mkdir -p frontend/dist && touch frontend/dist/index.html; fi'
 # npm run <gate> prints what the real gates print (counts parsed by `gates record`); GATEFAIL=<gate> fails one
 stub npm 'if [ "$1" = run ]; then
+  [ -n "$GATEENV" ] && { env | grep -E "^(ALLOWED_ORIGINS|MESH_STORE_PATH|COMMERCE_DB_PATH|GAUSS_BEDROCK_DIR|NODE_ENV)=" ; echo "PATH=$PATH"; } >>"$GATEENV"
   case "$2" in
     test:ops) echo "gauss-services: 99 passed, 0 failed"; echo "ok  	argo	1.0s" ;;
     test|build) echo "$2 is not a gate: verify runs it" >&2; exit 9 ;;
@@ -491,6 +493,13 @@ kept="$WD/gates/logs/$(basename "$rec" .json)"
 expect "gates record: a failed gate's output is kept beside the record, passing gates' is not" $?
 touch "$GW/stray"; out=$(run gates record "$GW" 2>&1); [[ "$out" == *"uncommitted or untracked"* ]]; expect "gates record refuses a dirty checkout" $?
 rm -f "$GW/stray"
+# The runner inherits the LaunchAgent's env (live data paths, live origins, launchd PATH): gates must not.
+mkdir -p "$T/py"; printf '#!/bin/sh\nexit 0\n' >"$T/py/python3"; chmod +x "$T/py/python3"   # "has numpy"
+GATEENV="$T/gate-env"; rm -f "$GATEENV"
+out=$(GATELEAK=1 GATEENV="$GATEENV" GATES_PYTHON="$T/py/python3" run gates record "$GW" 2>&1)
+[ -s "$GATEENV" ] && ! grep -qE "^(ALLOWED_ORIGINS|MESH_STORE_PATH|COMMERCE_DB_PATH|GAUSS_BEDROCK_DIR|NODE_ENV)=" "$GATEENV" \
+  && grep -qF ":$T/py:" "$GATEENV"
+expect "gates record: gates run without the services' env (live data paths, origins) and with a python3 that has numpy" $?
 
 # gates enqueue/run: a session hands its gate run to the queue and can be archived; one runner
 # works through it oldest first under claude-heavy, skipping trees that already passed.
@@ -771,6 +780,25 @@ out=$(gbt run gates result status 2>&1); [[ "$out" == *"a pass lets the train me
 expect "gates result status: says when a gatebox pass is trusted for merging" $?
 rm -f "$GQ"/*.req
 g checkout -q --detach "$prevhead"; g remote remove origin; rm -f "$T/bin/gh" "$T/home/.gitconfig"
+
+# Fleet memory watch (GAU-240): the guard texts when another mesh device's memory is at risk or
+# critical, from the file the hub keeps; stale states, this Mac and junk are ignored.
+FM="$T/fleet-memory.json"; fmnow=$(date -u +%Y-%m-%dT%H:%M:%SZ); fmold=$(date -u -v-1H +%Y-%m-%dT%H:%M:%SZ); fmme=$(hostname -s | tr '[:upper:]' '[:lower:]')
+printf '{"at":"%s","staleAfterMs":900000,"devices":[{"name":"devbox","state":"critical","why":["memory pressure critical"],"reportedAt":"%s"},{"name":"labbox","state":"risk","why":["swap climbing at warn","<b>x</b>"],"reportedAt":"%s"},{"name":"oldbox","state":"critical","why":["memory pressure critical"],"reportedAt":"%s"},{"name":"%s","state":"critical","why":["memory pressure critical"],"reportedAt":"%s"},{"name":"calm","state":"ok","why":[],"reportedAt":"%s"},{"name":"Bad Name;x","state":"critical","why":[],"reportedAt":"%s"}]}' \
+  "$fmnow" "$fmnow" "$fmnow" "$fmold" "$fmme" "$fmnow" "$fmnow" "$fmnow" >"$FM"
+GAUSS_FLEET_MEMORY="$FM" run awake guard
+[[ " $(alerts) " == *" mesh-mem-devbox "* ]] && [[ " $(alerts) " == *" mesh-mem-labbox "* ]] && grep -q "devbox is out of memory" "$T/log" && grep -q "labbox is short of memory" "$T/log"
+expect "fleet memory: a device at risk or critical is texted, once per device" $?
+[[ " $(alerts) " != *"mesh-mem-oldbox"* ]] && [[ " $(alerts) " != *"mesh-mem-$fmme "* ]] && [[ " $(alerts) " != *"mesh-mem-calm"* ]] && ! grep -q "Bad Name" "$T/log" && ! grep -q "<b>" "$T/log"
+expect "fleet memory: a stale state, this Mac, an ok device and unchecked text are never texted" $?
+ev 'any(e["event"] == "fleet-memory" and e["label"] == "devbox" and e.get("state") == "critical" for e in E)'
+expect "fleet memory: each finding is an ops event" $?
+fmev() { python3 -Ic 'import json,sys; print(sum(1 for l in open(sys.argv[1]) if json.loads(l).get("event") == "fleet-memory"))' "$EV" 2>/dev/null || echo 0; }
+n1=$(fmev); GAUSS_FLEET_MEMORY="$FM" run awake guard
+[ "$(fmev)" = "$n1" ] && [[ " $(alerts) " != *"mesh-mem-"* ]]; expect "fleet memory: within 2 h a device still at risk adds no event and no text" $?
+echo '{not json' >"$FM"; GAUSS_FLEET_MEMORY="$FM" run awake guard; rc=$?
+[ $rc = 0 ] && [[ " $(alerts) " != *"mesh-mem-"* ]]; expect "fleet memory: an unreadable file is ignored and the guard carries on" $?
+GAUSS_FLEET_MEMORY="$T/none.json" run awake guard; [ $? = 0 ] && [[ " $(alerts) " != *"mesh-mem-"* ]]; expect "fleet memory: no file, no alert" $?
 
 # balance (GAU-126): shed optional load, undo it when conditions recover
 acts() { tr '\n' ';' <"$T/actions" | sed 's/;$//'; }
