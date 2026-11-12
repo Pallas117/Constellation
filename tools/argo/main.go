@@ -22,6 +22,11 @@ import (
 )
 
 const version = "0.1.0"
+
+// commit is the source commit, stamped by install.sh (-X main.commit=<sha>) so `argo version`
+// says which code runs and a deploy can tell whether the installed Argo is behind.
+var commit = "dev"
+
 const label = "uk.lightbound.argo"
 
 //go:embed launchd/uk.lightbound.argo.plist
@@ -49,12 +54,26 @@ func (c Config) peers() []Peer {
 	return c.Watch
 }
 
+// saveConfig writes config.json atomically (temp file + rename), so a crash or a full disk
+// mid-write never leaves a half file, and keeps the previous good copy as config.json.good.
 func saveConfig(c Config) error {
 	if err := os.MkdirAll(configDir(), 0o700); err != nil {
 		return err
 	}
-	b, _ := json.MarshalIndent(c, "", "  ")
-	return os.WriteFile(filepath.Join(configDir(), "config.json"), b, 0o600)
+	b, err := json.MarshalIndent(c, "", "  ")
+	if err != nil {
+		return err
+	}
+	p := filepath.Join(configDir(), "config.json")
+	if old, err := os.ReadFile(p); err == nil && json.Valid(old) {
+		_ = os.WriteFile(p+".good", old, 0o600)
+	}
+	tmp := p + ".tmp"
+	if err := os.WriteFile(tmp, b, 0o600); err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
+	return os.Rename(tmp, p)
 }
 
 // loopInterval parses ARGO_INTERVAL ("60s", "2m"); default 60s, never under 15s.
@@ -71,12 +90,30 @@ func loopInterval(v string) time.Duration {
 
 func configDir() string { return filepath.Join(home(), ".config/argo") }
 
+// loadConfig never fails: a config.json that doesn't parse (a hand edit with a typo, a torn
+// write) falls back to the last good copy, with a warning, rather than silently to defaults,
+// which would drop the phone handle, the Gauss URL and the watch list.
 func loadConfig() Config {
-	var c Config
-	if b, err := os.ReadFile(filepath.Join(configDir(), "config.json")); err == nil {
-		_ = json.Unmarshal(b, &c)
+	c, err := readConfig(filepath.Join(configDir(), "config.json"))
+	if err == nil {
+		return c
 	}
-	return c
+	if !errors.Is(err, os.ErrNotExist) {
+		fmt.Fprintln(os.Stderr, "argo: config.json unreadable ("+err.Error()+"); using the last good copy")
+	}
+	if good, gerr := readConfig(filepath.Join(configDir(), "config.json.good")); gerr == nil {
+		return good
+	}
+	return Config{}
+}
+
+func readConfig(p string) (Config, error) {
+	var c Config
+	b, err := os.ReadFile(p)
+	if err != nil {
+		return c, err
+	}
+	return c, json.Unmarshal(b, &c)
 }
 
 func main() {
@@ -267,7 +304,7 @@ func main() {
 	case "send", "outbox", "inbox", "sync", "keys", "mule", "link":
 		err = relayMain(cmd, os.Args[2:], cfg, store, phone, os.Stdout)
 	case "version":
-		fmt.Println("argo", version)
+		fmt.Println("argo", version, commit)
 	default:
 		fmt.Fprintln(os.Stderr, "usage: argo [status|doctor|fix|report|on|off|preflight|run -- cmd|phone <handle>|test|off|imessage|sms|notify TITLE MSG|egress [off|on]|thirdparty [list|check|accept|seen]|guard [admit|run]|heal [--json]|scale [--json]|watch|summary [--send]|enroll URL DEVICE|install|uninstall|version]\n       argo [send [-ttl D] DEVICE FILE|outbox|inbox|sync|keys [list|publish|trust DEVICE]|mule export|import DIR|link]")
 		os.Exit(2)
