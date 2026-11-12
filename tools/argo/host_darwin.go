@@ -54,19 +54,40 @@ func localGateway(ctx context.Context) (string, string) {
 	return gw, parseARP(run(ctx, "arp", "-n", gw))
 }
 
+// sysTools pins the macOS tools Argo runs to their system paths (toolPath).
+var sysTools = map[string]string{
+	"osascript":       "/usr/bin/osascript",
+	"open":            "/usr/bin/open",
+	"launchctl":       "/bin/launchctl",
+	"route":           "/sbin/route",
+	"arp":             "/usr/sbin/arp",
+	"ipconfig":        "/usr/sbin/ipconfig",
+	"scutil":          "/usr/sbin/scutil",
+	"networksetup":    "/usr/sbin/networksetup",
+	"netstat":         "/usr/sbin/netstat",
+	"lsof":            "/usr/sbin/lsof",
+	"nettop":          "/usr/bin/nettop",
+	"ps":              "/bin/ps",
+	"sysctl":          "/usr/sbin/sysctl",
+	"pmset":           "/usr/bin/pmset",
+	"ioreg":           "/usr/sbin/ioreg",
+	"vm_stat":         "/usr/bin/vm_stat",
+	"system_profiler": "/usr/sbin/system_profiler",
+}
+
 func desktopNotify(title, msg string) {
 	// Message is passed as an argv item, never interpolated into AppleScript.
-	_ = exec.Command("osascript",
+	_ = exec.Command(toolPath("osascript"),
 		"-e", "on run argv", "-e", "display notification (item 2 of argv) with title (item 1 of argv)", "-e", "end run",
 		title, msg).Run()
 }
 
-func openURL(u string) error { return exec.Command("open", u).Run() }
+func openURL(u string) error { return exec.Command(toolPath("open"), u).Run() }
 
 func messagesSend(service, to, text string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), sendTimeout)
 	defer cancel()
-	out, err := exec.CommandContext(ctx, "osascript",
+	out, err := exec.CommandContext(ctx, toolPath("osascript"),
 		"-e", "on run argv",
 		"-e", `tell application "Messages"`,
 		"-e", "set svc to 1st account whose service type = "+service, // constant, not user input

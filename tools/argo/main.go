@@ -549,7 +549,7 @@ func install() error {
 }
 
 func uninstall(s Store) error {
-	if exec.Command("launchctl", "print", fmt.Sprintf("gui/%d/%s", os.Getuid(), label)).Run() == nil {
+	if exec.Command(toolPath("launchctl"), "print", fmt.Sprintf("gui/%d/%s", os.Getuid(), label)).Run() == nil {
 		return fmt.Errorf("the LaunchAgent is still loaded; first run:\n  launchctl bootout gui/%d/%s", os.Getuid(), label)
 	}
 	for _, p := range []string{plistPath(), s.Dir, configDir()} {

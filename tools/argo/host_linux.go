@@ -14,6 +14,10 @@ import (
 	"time"
 )
 
+// sysTools is empty on Linux: distributions place tools differently, and the
+// container build reads /proc instead of running them.
+var sysTools = map[string]string{}
+
 // Linux host probing for the container build (GalacticOS and other Linux
 // hosts). Route and ARP come from /proc, so the image needs no tools; there is
 // no Messages app, so alerts are log lines on stdout and phone texts are off.
