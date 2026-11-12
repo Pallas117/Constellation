@@ -263,7 +263,57 @@ export interface MeshDevice {
   rejectedAt?: string;
 }
 
-export type MeshDeviceView = Omit<MeshDevice, "tokenHash" | "keys"> & { hosting: HostingVerdict; hostingWhy: string[]; keyFingerprint?: string };
+export type MeshDeviceView = Omit<MeshDevice, "tokenHash" | "keys"> & {
+  hosting: HostingVerdict;
+  hostingWhy: string[];
+  memory: MemoryState;
+  memoryWhy: string[];
+  keyFingerprint?: string;
+};
+
+/**
+ * Fleet memory watch (GAU-240): where each device's memory stands, from what its Argo already
+ * reports (guard finding codes, kernel pressure). Nothing is inferred: a stale report, a phone or
+ * an Argo without a memory reading is "unknown", never "ok".
+ * critical = the device may freeze or kill processes soon; risk = it is heading there.
+ */
+export const MEMORY_STATES = ["ok", "watch", "risk", "critical", "unknown"] as const;
+export type MemoryState = (typeof MEMORY_STATES)[number];
+const MEMORY_RANK: Record<MemoryState, number> = { unknown: -1, ok: 0, watch: 1, risk: 2, critical: 3 };
+const MEM_CRITICAL: readonly GuardCode[] = ["mem-critical", "mem-paging"];
+const MEM_RISK: readonly GuardCode[] = ["mem-warn-sustained", "swap-rising", "swap-high"];
+const MEM_WATCH: readonly GuardCode[] = ["mem-warn", "mem-warn-coping", "no-headroom"];
+
+export function assessMemory(last: MeshReport | undefined, now = new Date()): { state: MemoryState; why: string[] } {
+  if (!last) return { state: "unknown", why: ["no report yet"] };
+  if (last.platform && PHONES.has(last.platform)) return { state: "unknown", why: ["phones don't report memory"] };
+  const age = now.getTime() - Date.parse(last.receivedAt);
+  if (!(age <= MESH_STALE_MS)) return { state: "unknown", why: [`no report for ${Math.round(age / 60_000)} min`] };
+  const g = last.guard && Math.abs(Date.parse(last.receivedAt) - Date.parse(last.guard.at)) <= MESH_STALE_MS ? last.guard : undefined;
+  const pressure = last.host?.pressure ?? "";
+  if (!g && !pressure) return { state: "unknown", why: ["no memory reading in the report"] };
+  const codes = g?.reasons ?? [];
+  const texts = (set: readonly GuardCode[]) => codes.filter((c) => set.includes(c)).map((c) => GUARD_CODE_TEXT[c]);
+  const critical = texts(MEM_CRITICAL);
+  if (pressure === "critical" && critical.length === 0) critical.push("memory pressure critical");
+  if (critical.length > 0) return { state: "critical", why: critical };
+  const risk = texts(MEM_RISK);
+  // "No spare RAM" alone is a full machine, not a failing one, unless Argo itself rates the host at risk.
+  if (codes.includes("no-headroom") && (g?.level === "risk" || g?.level === "block")) risk.push(GUARD_CODE_TEXT["no-headroom"]);
+  if (risk.length > 0) return { state: "risk", why: risk };
+  const watch = texts(MEM_WATCH);
+  if (pressure === "warn" && watch.length === 0) watch.push("memory pressure at warn");
+  if (watch.length > 0) return { state: "watch", why: watch };
+  return { state: "ok", why: [] };
+}
+
+/** One line per device in the derived file a local watcher reads (scripts/ops/gauss-services.sh, awake guard). */
+export interface FleetMemoryEntry {
+  name: string;
+  state: MemoryState;
+  why: string[];
+  reportedAt: string | null;
+}
 
 const NAME_RE = /^[a-z0-9][a-z0-9-]{0,62}$/;
 const MAX_TEXT = 200;
@@ -444,10 +494,39 @@ export class MeshStore {
     return undefined;
   }
 
-  record(device: MeshDevice, report: MeshReport): void {
+  /**
+   * Stores the report. Returns the device's memory state when this report made it worse and it is
+   * now at risk or critical, so the caller can log it once per change, not once per report.
+   */
+  record(device: MeshDevice, report: MeshReport, now = new Date()): { state: MemoryState; why: string[] } | undefined {
+    const before = assessMemory(device.last, now).state;
     device.last = report;
     delete device.rejectedAt;
     this.persist();
+    this.writeFleetMemory(now);
+    const after = assessMemory(report, now);
+    return MEMORY_RANK[after.state] >= MEMORY_RANK.risk && MEMORY_RANK[after.state] > MEMORY_RANK[before] ? after : undefined;
+  }
+
+  /** Every device's memory state now, worst first. */
+  fleetMemory(now = new Date()): FleetMemoryEntry[] {
+    this.reloadIfChanged();
+    return [...this.devices.values()]
+      .map((d) => ({ name: d.name, ...assessMemory(d.last, now), reportedAt: d.last?.receivedAt ?? null }))
+      .sort((a, b) => MEMORY_RANK[b.state] - MEMORY_RANK[a.state] || a.name.localeCompare(b.name));
+  }
+
+  /**
+   * fleet-memory.json beside the device store: states and reasons only (no tokens, no network
+   * details), so the Mac's watchdog can text about a device at risk without an API session. The
+   * reader must check reportedAt itself: a file nobody rewrites says nothing about now.
+   */
+  private writeFleetMemory(now: Date): void {
+    if (!this.file) return;
+    const out = path.join(path.dirname(this.file), "fleet-memory.json");
+    const tmp = `${out}.tmp`;
+    fs.writeFileSync(tmp, JSON.stringify({ at: now.toISOString(), staleAfterMs: MESH_STALE_MS, devices: this.fleetMemory(now) }, null, 2), { mode: 0o600 });
+    fs.renameSync(tmp, out);
   }
 
   /**
@@ -467,7 +546,8 @@ export class MeshStore {
       .map(({ tokenHash: _hidden, keys, ...rest }) => {
         const l = rest.last;
         const { verdict, why } = assessHosting(l?.host, l?.platform, { battery: l?.battery, guard: l?.guard, receivedAt: l?.receivedAt, now });
-        return { ...rest, hosting: verdict, hostingWhy: why, ...(keys ? { keyFingerprint: keyFingerprint(keys) } : {}) };
+        const memory = assessMemory(l, now);
+        return { ...rest, hosting: verdict, hostingWhy: why, memory: memory.state, memoryWhy: memory.why, ...(keys ? { keyFingerprint: keyFingerprint(keys) } : {}) };
       })
       .sort((a, b) => a.name.localeCompare(b.name));
   }

@@ -528,6 +528,54 @@ swap_fast() { # swap_fast <swap MB>: swap grew SWAP_FAST_GB+ since a reading <= 
   [ -n "$prev_t" ] && [ $((now - prev_t)) -le 150 ] && [ $(($1 - ${prev_s:-0})) -ge $((SWAP_FAST_GB * 1024)) ]
 }
 
+# Fleet memory watch (GAU-240): the hub classifies each mesh device's memory from what its Argo
+# reports and keeps the result in fleet-memory.json beside the device store (backend/mesh/store.ts).
+# This reads that file each minute, no API session and no tokens, and texts when ANOTHER device is at
+# risk or critical: once per device per 2 h. This Mac has its own memory alerts below. A state older
+# than the file's staleAfterMs says nothing about now and is ignored.
+FLEET_MEMORY="${GAUSS_FLEET_MEMORY:-}" # default: beside the live backend's MESH_STORE_PATH
+fleet_memory_watch() {
+  local f=$FLEET_MEMORY store me name state why
+  if [ -z "$f" ]; then
+    store=$(plutil -extract EnvironmentVariables.MESH_STORE_PATH raw -o - "$AGENTS/uk.lightbound.gauss-backend.plist" 2>/dev/null) || return 0
+    [ -n "$store" ] || return 0
+    f="$(dirname "$store")/fleet-memory.json"
+  fi
+  [ -f "$f" ] || return 0
+  me=$(hostname -s 2>/dev/null | tr '[:upper:]' '[:lower:]' || true)
+  while IFS=$'\t' read -r name state why; do
+    [ -n "$name" ] && [ "$name" != "$me" ] || continue
+    # Same 2 h window as the text (alert_event's stamp): one event and one text per device, not one a minute.
+    [ -n "$(find "$WATCH_DIR/alerts/mesh-mem-$name" -mmin -120 2>/dev/null)" ] && continue
+    event fleet-memory "$name" "memory $state: $why" device="$name" state="$state"
+    if [ "$state" = critical ]; then
+      phone -key "mesh-mem-$name" -every 2h "Gauss: $name is out of memory" \
+        "$name reports: $why. It may freeze or stop programs. Close apps or sessions on it now."
+    else
+      phone -key "mesh-mem-$name" -every 2h "Gauss: $name is short of memory" \
+        "$name reports: $why. It is not recovering by itself yet. Close unused apps or sessions on it when you can."
+    fi
+  done < <(python3 -Ic '
+import datetime, json, re, sys
+try:
+    d = json.load(open(sys.argv[1]))
+    stale = float(d.get("staleAfterMs", 900000)) / 1000
+    now = datetime.datetime.now(datetime.timezone.utc)
+    for e in d.get("devices", []):
+        name, state, at = e.get("name"), e.get("state"), e.get("reportedAt")
+        if state not in ("risk", "critical") or not isinstance(name, str) or not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,62}", name) or not isinstance(at, str):
+            continue
+        age = (now - datetime.datetime.fromisoformat(at.replace("Z", "+00:00"))).total_seconds()
+        if not -120 <= age <= stale:
+            continue
+        why = "; ".join(w for w in e.get("why", []) if isinstance(w, str) and re.fullmatch(r"[A-Za-z0-9 ()/,.:+-]{1,80}", w))[:200]
+        print("%s\t%s\t%s" % (name, state, why or "memory " + state))
+except Exception:
+    pass
+' "$f" 2>/dev/null || true)
+  return 0
+}
+
 memory_alerts() { # memory_alerts <pressure level> <swap used MB>
   local level=$1 swap=$2 avail; avail=$(mem_available)
   if [ "$level" -ge "$MEM_ALERT_LEVEL" ] || [ "$avail" -lt "$AVAIL_MIN" ]; then
@@ -1523,6 +1571,7 @@ awake_guard() { # run every minute by the awake agent
   local level swap free; read -r level swap free < <(memory_stats)
   memory_alerts "$level" "$swap"
   memory_sample "$level" "$swap"
+  fleet_memory_watch || true
   disk_alerts "$(disk_free_gb)" "$swap"
   rotate_logs
   balance || true
