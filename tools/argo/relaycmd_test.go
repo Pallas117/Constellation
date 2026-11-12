@@ -75,7 +75,7 @@ func TestRelayCommandsCarryAFileWithoutAHub(t *testing.T) {
 		t.Fatalf("outbox = %q", out)
 	}
 	toBob := filepath.Join(t.TempDir(), "to-bob")
-	if out := alice.must("mule", "export", toBob); !strings.Contains(out, "wrote 1 bundle ") {
+	if out := alice.must("mule", "export", toBob); !strings.Contains(out, "wrote 2 bundles ") {
 		t.Fatalf("alice export = %q", out)
 	}
 
@@ -104,7 +104,7 @@ func TestRelayCommandsCarryAFileWithoutAHub(t *testing.T) {
 	// Bob's receipt goes back the same way and confirms delivery at Alice.
 	back := filepath.Join(t.TempDir(), "back")
 	bob.must("mule", "export", back)
-	if out := alice.must("mule", "import", back); !strings.Contains(out, "confirmed 1") {
+	if out := alice.must("mule", "import", back); !strings.Contains(out, "confirmed 2") {
 		t.Fatalf("alice receipt import = %q", out)
 	}
 	if out := alice.must("outbox"); !strings.Contains(out, "1/1 confirmed") {

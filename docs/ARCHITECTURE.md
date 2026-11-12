@@ -20,21 +20,18 @@ A lightweight, real-time 3D visualization of Earth's magnetosphere and Van Allen
                                     │
                                     ▼
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                        BACKEND EDGE FUNCTION                                 │
-│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────┐ │
-│  │   Fetcher   │→ │  Validator  │→ │ Normalizer  │→ │   Cache Manager     │ │
-│  │  (parallel) │  │  (schema)   │  │  (units)    │  │  (2min TTL)         │ │
-│  └─────────────┘  └─────────────┘  └─────────────┘  └─────────────────────┘ │
-│                                                              │               │
-│  ┌─────────────────────────────────────────────────────────┐ │               │
-│  │              Spike Rejection (±4σ filter)               │←┘               │
-│  └─────────────────────────────────────────────────────────┘                 │
-│                              │                                               │
-│                              ▼                                               │
-│  ┌─────────────────────────────────────────────────────────────────────────┐│
-│  │                    Compact JSON Output                                   ││
-│  │  { timestamp, solarWind, bz, belts, kp, flags: { stale, source } }      ││
-│  └─────────────────────────────────────────────────────────────────────────┘│
+│              EXPRESS BACKEND (backend/server.ts, port 3001)                 │
+│                                                                             │
+│  IngestionWorker (backend/worker/ingest-loop.ts, 5 s tick)                  │
+│    NOAA, Kyoto Dst, GOES, SWPC products, ESA, JAXA, MMS, LASP adapters      │
+│                              │                                              │
+│                              ▼                                              │
+│  In-memory canonical feed (backend/state.ts)                                │
+│    + bedrock local store fallback (backend/lib/local-db.ts)                 │
+│                              │                                              │
+│                              ▼                                              │
+│  GET /api/feed/space-weather/latest  (public in API_POLICY, backend/rbac.ts)│
+│    → CanonicalSpaceWeatherPoint + freshness; 404 until the first point      │
 └─────────────────────────────────────────────────────────────┬───────────────┘
                                                               │
                                                               │ HTTPS + CORS
@@ -72,16 +69,15 @@ A lightweight, real-time 3D visualization of Earth's magnetosphere and Van Allen
 
 ## Component Breakdown
 
-### Backend (Edge Function)
+### Backend (Express)
 
 | Component | Responsibility |
 |-----------|----------------|
-| `spaceweather/index.ts` | Main handler, CORS, request routing |
-| Data Fetcher | Parallel fetch from NOAA/NASA APIs |
-| Schema Validator | Zod-based validation of API responses |
-| Normalizer | Unit conversion to standard format |
-| Spike Filter | ±4σ outlier rejection |
-| Cache Manager | In-memory cache with 2-minute TTL |
+| `backend/server.ts` | Express app, routes (`GET /api/feed/space-weather/latest` and siblings), WebSocket feed |
+| `backend/rbac.ts` | `API_POLICY` allowlist: unlisted routes 404, no session 401, wrong role 403 |
+| `backend/worker/ingest-loop.ts` | `IngestionWorker`: polls the source adapters on a 5 s tick, builds canonical points |
+| `backend/state.ts` | In-memory canonical feed (`getLatestCanonical`) |
+| `backend/lib/local-db.ts` | Bedrock local store, fallback when memory is empty |
 
 ### Frontend
 
@@ -145,36 +141,30 @@ interface VisualizationState {
 ## Sequence Diagram: Data Refresh Cycle
 
 ```
-┌──────────┐     ┌──────────────┐     ┌────────────┐     ┌──────────┐
-│ Frontend │     │ Edge Function│     │  NOAA API  │     │ NASA API │
-└────┬─────┘     └──────┬───────┘     └─────┬──────┘     └────┬─────┘
-     │                  │                   │                 │
-     │  GET /spaceweather                   │                 │
-     │─────────────────>│                   │                 │
-     │                  │                   │                 │
-     │                  │  Check Cache      │                 │
-     │                  │  (if fresh, return cached)          │
-     │                  │                   │                 │
-     │                  │  Parallel Fetch   │                 │
-     │                  │──────────────────>│                 │
-     │                  │──────────────────────────────────-->│
-     │                  │                   │                 │
-     │                  │<──────────────────│                 │
-     │                  │<────────────────────────────────────│
-     │                  │                   │                 │
-     │                  │  Validate + Normalize               │
-     │                  │  Apply Spike Filter                 │
-     │                  │  Update Cache                       │
-     │                  │                   │                 │
-     │<─────────────────│                   │                 │
-     │  JSON Response   │                   │                 │
-     │                  │                   │                 │
-     │  Start Interpolation                 │                 │
-     │  (8-12 sec EMA)  │                   │                 │
-     │                  │                   │                 │
-     │  Update 3D Scene │                   │                 │
-     │  (60fps render)  │                   │                 │
-     │                  │                   │                 │
+┌──────────┐     ┌──────────────┐     ┌────────────────┐     ┌─────────────┐
+│ Frontend │     │ Express API  │     │IngestionWorker │     │ Source APIs │
+└────┬─────┘     └──────┬───────┘     └───────┬────────┘     └──────┬──────┘
+     │                  │                     │  every 5 s tick     │
+     │                  │                     │  (per-source rate)  │
+     │                  │                     │────────────────────>│
+     │                  │                     │<────────────────────│
+     │                  │  canonical point    │                     │
+     │                  │  to memory feed     │                     │
+     │                  │<────────────────────│                     │
+     │                  │                     │                     │
+     │  GET /api/feed/space-weather/latest    │                     │
+     │─────────────────>│                     │                     │
+     │                  │  latest from memory │                     │
+     │                  │  (bedrock fallback) │                     │
+     │<─────────────────│                     │                     │
+     │  JSON (point + freshness), or 404      │                     │
+     │                  │                     │                     │
+     │  Start Interpolation                   │                     │
+     │  (8-12 sec EMA)  │                     │                     │
+     │                  │                     │                     │
+     │  Update 3D Scene │                     │                     │
+     │  (60fps render)  │                     │                     │
+     │                  │                     │                     │
 ```
 
 ---
@@ -245,11 +235,6 @@ src/
 │   └── utils.ts
 └── pages/
     └── Index.tsx
-
-supabase/
-└── functions/
-    └── spaceweather/
-        └── index.ts            # Edge function
 
 docs/
 ├── ARCHITECTURE.md             # This file

@@ -31,10 +31,12 @@ KIT_MARKS: list[str] = []  # all marks now come from tools/symbols (the kit keep
 SYMBOLS = {
     "lightbound-symbol-colour-dark.svg": "lightbound-mark-colour-dark.svg",
     "gauss-aurora-symbol-colour-dark.svg": "gauss-aurora-mark-colour-dark.svg",
-    "turnstone-symbol-colour-dark.svg": "turnstone-mark-colour-dark.svg",
-    "turnstone-badge-symbol-colour-dark.svg": "turnstone-badge-colour-dark.svg",
-    "constellation-symbol-colour-dark.svg": "constellation-mark-colour-dark.svg",
-    "constellation-icon-symbol-colour-dark.svg": "constellation-icon-colour-dark.svg",
+    "turnstone-symbol-colour-dark.svg": "turnstone-mark-colour-dark-v2.svg",
+    "turnstone-badge-symbol-colour-dark.svg": "turnstone-badge-colour-dark-v2.svg",
+    "constellation-symbol-colour-dark.svg": "constellation-mark-colour-dark-v2.svg",
+    "constellation-icon-symbol-colour-dark.svg": "constellation-icon-colour-dark-v2.svg",
+    "argo-symbol-colour-dark.svg": "argo-mark-colour-dark.svg",
+    "argo-icon-symbol-colour-dark.svg": "argo-icon-colour-dark.svg",
 }
 # Source -> (published name, new family or None to keep the font's own name).
 FONTS = {"IBMPlexSans-Regular.ttf": ("plex-sans-400.woff2", "Lightbound Sans"),

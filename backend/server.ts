@@ -16,12 +16,13 @@ import {
 import { CyberTigerDaemon } from "./cybertiger/daemon.js";
 import { inferNowcast, triggerTraining } from "./ml-client/client.js";
 import {
+  canonicalSince,
   getAuroraMap,
   getCanonicalFeed,
   getLatestCanonical,
   getLatestMms,
-  getMmsFeed,
   getSourceStatus,
+  mmsSince,
   seedCanonical,
 } from "./state.js";
 import type {
@@ -30,6 +31,7 @@ import type {
   IngestionTickResult,
   NowcastInferenceRequest,
 } from "./types.js";
+import { bodyErrorResponse } from "./lib/body-errors.js";
 import { withFreshness } from "./lib/freshness.js";
 import { canSend, sweepDeadSockets, trackLiveness, WS_HEARTBEAT_MS } from "./lib/socket-keepalive.js";
 import { IngestionWorker, liveIngestSources } from "./worker/ingest-loop.js";
@@ -42,6 +44,7 @@ import { bedrock } from "./lib/local-db.js";
 import { routeUpgrades } from "./lib/ws-upgrade.js";
 import { retentionFromEnv, startTelemetryRetention } from "./lib/telemetry-retention.js";
 import { queryLimit } from "./lib/query-limit.js";
+import { auroraMapReply, encodedReply, sendJsonList } from "./lib/json-response.js";
 import { diskFreeBytes, overall, readTpms } from "./lib/tpm.js";
 import { SPACE_OBJECT_CATALOG } from "./lib/space-object-catalog.js";
 import { auth, ssoAllowedDomain, ssoGithubEnabled, ssoGoogleEnabled } from "./better-auth.js";
@@ -155,15 +158,9 @@ function parseLookback(value: unknown, fallbackMs: number): number {
   return total > 0 ? total : fallbackMs;
 }
 
-function filterByLookback<T extends { timestamp: string }>(
-  points: T[],
-  lookbackMs: number,
-  limit: number,
-): T[] {
-  const threshold = Date.now() - lookbackMs;
-  const filtered = points.filter((point) => Date.parse(point.timestamp) >= threshold);
-  return filtered.slice(Math.max(0, filtered.length - limit));
-}
+// Lookback queries on the live buffers: a binary search over their measurement times (state.ts).
+const canonicalLookback = (lookbackMs: number, limit: number) => canonicalSince(Date.now() - lookbackMs, limit);
+const mmsLookback = (lookbackMs: number, limit: number) => mmsSince(Date.now() - lookbackMs, limit);
 
 async function fetchCanonicalFromDb(
   lookbackMs: number,
@@ -270,7 +267,7 @@ app.use(
     },
     history: async (lookbackMs, limit) => {
       const fromDb = await fetchCanonicalFromDb(lookbackMs, limit);
-      return fromDb ? { source: "database", points: fromDb } : { source: "memory", points: filterByLookback(getCanonicalFeed(), lookbackMs, limit) };
+      return fromDb ? { source: "database", points: fromDb } : { source: "memory", points: canonicalLookback(lookbackMs, limit) };
     },
     sources: () => getSourceStatus(),
     // Trust records read the in-memory feed (~28 h at 5 s), longer than any plan's lookback.
@@ -297,7 +294,7 @@ app.post("/api/pilot-requests", createPilotRequestHandler(commerce));
 // Mesh & Network page: onboarding for everyone signed in, team status for operators.
 app.use("/api/mesh", mesh.ui);
 
-// RAG endpoints: status for any signed-in user, index/query for operators.
+// RAG endpoints: operators only (status and query; API_POLICY in rbac.ts).
 // Knowledge memory: the Cosmic Brain sidecar (backend/memory/client.ts, docs/memory-sidecar.md).
 // Nothing here is mocked: when the service is down the reply says so, never a canned count or
 // answer. Indexing is an operator task on the memory host and has no route here.
@@ -329,7 +326,7 @@ app.post("/api/rag/query", async (req: express.Request, res: express.Response) =
   res.json({ ok: true, answer: result.answer, sources: result.sources });
 });
 
-// Device lifecycle endpoints (requires operator session)
+// Device lifecycle endpoints: any signed-in user, for their own devices (API_POLICY in rbac.ts)
 app.use("/api/device", deviceRegistryRouter);
 
 app.get("/api/feed/space-weather/5s", async (req: AuthenticatedRequest, res) => {
@@ -338,7 +335,7 @@ app.get("/api/feed/space-weather/5s", async (req: AuthenticatedRequest, res) => 
   const token = req.auth?.token;
 
   const fromDb = await fetchCanonicalFromDb(lookbackMs, limit, token);
-  const points = fromDb ?? filterByLookback(getCanonicalFeed(), lookbackMs, limit);
+  const points = fromDb ?? canonicalLookback(lookbackMs, limit);
 
   // LEVEL 4 REDUNDANCY: Bedrock Fallback if both DB and Memory are insufficient
   if (points.length === 0) {
@@ -350,11 +347,8 @@ app.get("/api/feed/space-weather/5s", async (req: AuthenticatedRequest, res) => 
     }
   }
 
-  res.json({
-    source: "memory",
-    count: points.length,
-    points,
-  });
+  // The 24 h backfill is ~56 MB: streamed in chunks (same bytes) so it doesn't stall other requests.
+  await sendJsonList(res, { source: "memory", count: points.length }, "points", points);
 });
 
 app.get("/api/feed/space-weather/latest", async (req: AuthenticatedRequest, res) => {
@@ -431,7 +425,7 @@ app.get("/api/feed/mms/reconnection", async (req: AuthenticatedRequest, res) => 
   const token = req.auth?.token;
 
   const fromDb = await fetchMmsFromDb(lookbackMs, limit, token);
-  const vectors = fromDb ?? filterByLookback(getMmsFeed(), lookbackMs, limit);
+  const vectors = fromDb ?? mmsLookback(lookbackMs, limit);
 
   // LEVEL 4 REDUNDANCY: Bedrock Fallback for MMS
   if (vectors.length === 0) {
@@ -478,11 +472,15 @@ app.get("/api/feed/aurora/map", async (req: AuthenticatedRequest, res) => {
     return;
   }
 
-  res.json({
-    projection,
-    requestedTimestamp: timestamp,
-    ...map,
-  });
+  // ~5 MB of JSON every 5 s per tab: serialised and compressed once per map, not per poll.
+  // If-None-Match on an unchanged map gets a 304 (Express checks req.fresh).
+  const encoding = req.acceptsEncodings("br") === "br" ? "br" : req.acceptsEncodings("gzip") === "gzip" ? "gzip" : "identity";
+  const reply = encodedReply(auroraMapReply(map, projection, timestamp), encoding);
+  res.setHeader("Vary", "Accept-Encoding");
+  res.setHeader("ETag", reply.etag);
+  res.setHeader("Content-Type", "application/json; charset=utf-8");
+  if (reply.encoding !== "identity") res.setHeader("Content-Encoding", reply.encoding);
+  res.send(reply.body);
 });
 
 app.get("/api/feed/sources/status", (req: AuthenticatedRequest, res) => {
@@ -838,7 +836,17 @@ export async function stopBackend(): Promise<void> {
   backendStarted = false;
 }
 
-app.use((error: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+app.use((error: unknown, req: express.Request, res: express.Response, _next: express.NextFunction) => {
+  // GAU-231: a bad request body is the client's mistake (400/413/415), not a server fault.
+  // express.json() runs before the security headers, so set the one a JSON answer needs here.
+  const bodyError = bodyErrorResponse(error);
+  if (bodyError) {
+    // Never log the error itself: body-parser attaches the raw body to it.
+    console.warn(`[backend] rejected request body: ${bodyError.status} ${bodyError.error} (${req.method} ${req.path})`);
+    res.setHeader("x-content-type-options", "nosniff");
+    res.status(bodyError.status).json({ error: bodyError.error });
+    return;
+  }
   console.error("[backend] unhandled error", error);
   res.status(500).json({ error: "Internal server error" });
 });

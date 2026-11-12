@@ -39,7 +39,8 @@ export interface NOAAReadout {
   velocityGsm?: Vector3 | null;
   magneticFieldGse: Vector3;
   magneticFieldGsm?: Vector3 | null;
-  kp: number;
+  /** Null when neither Kp product had a valid value: the L1 values still stand (GAU-232). */
+  kp: number | null;
   kpReading?: KpReading;
   /** The last 3 h of validated 1-minute L1 samples, oldest first. */
   series?: L1Sample[];
@@ -188,7 +189,6 @@ export async function fetchNoaaReadout(nowMs = Date.now()): Promise<NOAAReadout 
     // Judge how recent the completed Kp is against now, not against the newest L1 sample.
     const kp = currentKp(latestKp1m(kp1mData), latestKp(kpData), nowMs);
     if (!latest) throw new Error("NOAA RTSW: no complete, plausible wind+mag record");
-    if (!kp) throw new Error("NOAA Kp: no valid value");
 
     const timestamp = new Date(latest.t).toISOString();
     const series = all.filter((x) => x.t > latest.t - SERIES_KEEP_MS);
@@ -214,7 +214,7 @@ export async function fetchNoaaReadout(nowMs = Date.now()): Promise<NOAAReadout 
       latencySeconds: Math.max(0, ageMs / 1000),
       healthy: current,
       message: current
-        ? `NOAA SWPC RTSW OK (${latest.spacecraft})${disagreement}`
+        ? `NOAA SWPC RTSW OK (${latest.spacecraft})${disagreement}${kp ? "" : "; no valid Kp (unknown)"}`
         : `NOAA SWPC RTSW: newest complete L1 sample (${latest.spacecraft}) is ${Math.round(ageMs / 60_000)} min old${disagreement}`,
     };
 
@@ -227,8 +227,8 @@ export async function fetchNoaaReadout(nowMs = Date.now()): Promise<NOAAReadout 
       // RTSW publishes native GSE and GSM components; no local conversion is needed.
       magneticFieldGse: latest.magneticFieldGse,
       magneticFieldGsm: latest.magneticFieldGsm,
-      kp: kp.value,
-      kpReading: kp,
+      kp: kp?.value ?? null,
+      kpReading: kp ?? undefined,
       series,
       densityCheck,
       velocityAssumed: latest.velocityAssumed === true,

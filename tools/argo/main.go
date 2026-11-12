@@ -269,10 +269,30 @@ func main() {
 		if code, err = guardCmd(os.Args[2:], store, cfg, os.Stdout); err == nil && code != 0 {
 			os.Exit(code)
 		}
+	case "heal": // self-healing: open blockers, the remedy chosen for each, how long each kind lasted (heal.go)
+		days := 7
+		g := store.loadGuard()
+		stats := healStats(store.healEpisodes(), time.Now().Add(-time.Duration(days)*24*time.Hour))
+		if len(os.Args) > 2 && os.Args[2] == "--json" {
+			b, _ := json.MarshalIndent(map[string]any{"open": g.Open, "stats": stats}, "", "  ")
+			fmt.Println(string(b))
+		} else {
+			fmt.Print(healText(g.Open, stats, days, time.Now()))
+		}
+	case "scale": // measured demand this host could not serve, to size outside compute (scale.go)
+		p := scalePlan(store.jobRuns(), store.guardHistory(), 7, time.Now())
+		if len(os.Args) > 2 && os.Args[2] == "--json" {
+			b, _ := json.MarshalIndent(p, "", "  ")
+			fmt.Println(string(b))
+		} else {
+			fmt.Print(scaleText(p))
+		}
 	case "notify": // for mesh-heal, the awake guard and Claude Code hooks
 		err = notifyCmd(os.Args[2:], phone, store, time.Now())
 	case "phone":
 		err = phoneSetup(os.Args[2:], cfg)
+	case "egress": // what Argo sent off this Mac and where; `off|on` holds or releases third-party sends
+		err = egressCmd(os.Args[2:], store, phone, os.Stdout, time.Now())
 	case "enroll":
 		if err = enroll(os.Args[2:]); err == nil {
 			err = verifyEnroll(ctx, loadConfig(), store, loop.Prober)
@@ -286,7 +306,7 @@ func main() {
 	case "version":
 		fmt.Println("argo", version, commit)
 	default:
-		fmt.Fprintln(os.Stderr, "usage: argo [status|doctor|fix|report|on|off|preflight|run -- cmd|phone <handle>|test|off|notify TITLE MSG|guard [admit|run]|watch|summary [--send]|enroll URL DEVICE|install|uninstall|version]\n       argo [send [-ttl D] DEVICE FILE|outbox|inbox|sync|keys [list|publish|trust DEVICE]|mule export|import DIR|link]")
+		fmt.Fprintln(os.Stderr, "usage: argo [status|doctor|fix|report|on|off|preflight|run -- cmd|phone <handle>|test|off|imessage|sms|notify TITLE MSG|egress [off|on]|thirdparty [list|check|accept|seen]|guard [admit|run]|heal [--json]|scale [--json]|watch|summary [--send]|enroll URL DEVICE|install|uninstall|version]\n       argo [send [-ttl D] DEVICE FILE|outbox|inbox|sync|keys [list|publish|trust DEVICE]|mule export|import DIR|link]")
 		os.Exit(2)
 	}
 	if err != nil {

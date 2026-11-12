@@ -113,6 +113,7 @@ func sendReport(cfg Config, st State) (int, error) {
 		return 0, err
 	}
 	resp.Body.Close()
+	countOwnEgress(DefaultStore().Dir, "gauss report", u.Host, len(body), time.Now())
 	return resp.StatusCode, nil
 }
 

@@ -16,7 +16,8 @@ import (
 // Phone alerts are iMessages from this Mac's Messages app to the user's own
 // handle, so they reach the iPhone with no tokens or third-party apps. Only
 // the masked title and reason are sent. Alerts that fail (e.g. offline) are
-// queued and sent on the next successful alert or tick.
+// queued and sent on the next successful alert or tick. Each text sent is
+// logged on this Mac (egress.go); `argo egress off` holds them in the queue.
 
 const maxQueued = 20
 
@@ -28,6 +29,7 @@ type Phone struct {
 	To     string
 	Queue  string // jsonl file of pending alerts
 	Device string
+	Route  string                      // "imessage-first" or "sms-first", for the egress log
 	send   func(to, text string) error // replaced in tests
 	// sendRelay is for alerts sent while this Mac has no network (GAU-233): SMS first, so Messages
 	// hands it to the iPhone over Continuity instead of holding an iMessage it can't deliver.
@@ -42,7 +44,7 @@ func newPhone(to, device string) *Phone {
 		device, _ = os.Hostname()
 		device = strings.TrimSuffix(device, ".local")
 	}
-	return &Phone{To: to, Queue: filepath.Join(DefaultStore().Dir, "phone-queue.jsonl"), Device: device, send: iMessage}
+	return &Phone{To: to, Queue: filepath.Join(DefaultStore().Dir, "phone-queue.jsonl"), Device: device, Route: "imessage-first", send: iMessage}
 }
 
 // newPhoneFor builds the phone from config, choosing the send order.
@@ -55,7 +57,7 @@ func newPhoneFor(cfg Config) *Phone {
 		p.sendRelay = smsFirst
 	}
 	if p != nil && strings.EqualFold(cfg.PhoneService, "sms") && strings.HasPrefix(p.To, "+") {
-		p.send = smsFirst
+		p.send, p.Route = smsFirst, "sms-first"
 	}
 	return p
 }
@@ -159,6 +161,10 @@ func (p *Phone) Send(title, msg string, at time.Time) {
 	if unlock, err := p.queueLock(); err == nil {
 		defer unlock()
 	} // still best-effort deliver if the lock is stuck
+	if egressHeld(filepath.Dir(p.Queue)) {
+		p.writeQueue(append(p.readQueue(), text)) // held on this Mac until `argo egress on`
+		return
+	}
 	p.deliver(append(p.readQueue(), text))
 }
 
@@ -182,6 +188,9 @@ func (p *Phone) SendRelay(title, msg string, at time.Time) bool {
 
 // Flush retries queued alerts; called every tick so offline alerts arrive once back online.
 func (p *Phone) Flush() {
+	if egressHeld(filepath.Dir(p.Queue)) {
+		return
+	}
 	if unlock, err := p.queueLock(); err == nil {
 		defer unlock()
 	}
@@ -193,11 +202,20 @@ func (p *Phone) Flush() {
 func (p *Phone) deliver(pending []string) {
 	var failed []string
 	for _, t := range pending {
-		if len(failed) > 0 || p.send(p.To, t) != nil {
+		if len(failed) > 0 || p.sendLogged(t) != nil {
 			failed = append(failed, t) // keep order: stop at the first failure
 		}
 	}
 	p.writeQueue(failed)
+}
+
+// sendLogged sends one text and records it in the egress log once it has left.
+func (p *Phone) sendLogged(text string) error {
+	if err := p.send(p.To, text); err != nil {
+		return err
+	}
+	logEgress(filepath.Dir(p.Queue), EgressEntry{At: time.Now(), Via: "messages", Route: p.Route, To: maskHandle(p.To), Bytes: len(text), Text: text})
+	return nil
 }
 
 func (p *Phone) readQueue() []string {
@@ -234,10 +252,10 @@ func (p *Phone) writeQueue(q []string) {
 	_ = os.WriteFile(p.Queue, b.Bytes(), 0o600)
 }
 
-// phoneSetup: `argo phone <+60123456789|you@icloud.com>`, `argo phone test`, `argo phone off`.
+// phoneSetup: `argo phone <+60123456789|you@icloud.com>`, `argo phone test|off`, `argo phone imessage|sms`.
 func phoneSetup(args []string, cfg Config) error {
 	if len(args) != 1 {
-		return errors.New("usage: argo phone <your iMessage phone (+60...) or email> | test | off")
+		return errors.New("usage: argo phone <your iMessage phone (+60...) or email> | test | off | imessage | sms")
 	}
 	switch args[0] {
 	case "test":
@@ -245,7 +263,7 @@ func phoneSetup(args []string, cfg Config) error {
 		if p == nil {
 			return errors.New("no phone configured; run `argo phone <your number or Apple ID email>`")
 		}
-		if err := p.send(p.To, fmt.Sprintf("Argo test from %s: phone alerts are working.", p.Device)); err != nil {
+		if err := p.sendLogged(fmt.Sprintf("Argo test from %s: phone alerts are working.", p.Device)); err != nil {
 			return err
 		}
 		fmt.Println("sent a test alert to", p.To)
@@ -261,6 +279,16 @@ func phoneSetup(args []string, cfg Config) error {
 	case "off":
 		cfg.PhoneTo = ""
 		fmt.Println("phone alerts off.")
+		return saveConfig(cfg)
+	case "imessage", "sms": // who carries the text: Apple end to end, or the mobile carrier
+		cfg.PhoneService = ""
+		if args[0] == "sms" {
+			if !strings.HasPrefix(cfg.PhoneTo, "+") {
+				return errors.New("SMS needs a phone number; run `argo phone +60...` first")
+			}
+			cfg.PhoneService = "sms"
+		}
+		fmt.Println(routeNote[map[string]string{"imessage": "imessage-first", "sms": "sms-first"}[args[0]]] + ".")
 		return saveConfig(cfg)
 	}
 	if !handleRe.MatchString(args[0]) {

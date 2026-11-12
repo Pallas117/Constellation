@@ -11,6 +11,11 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 BIN=${ARGO_BIN:-$HOME/.local/bin/argo}
+# Never from an agent or an unattended job: a rebuilt ~/.local/bin/argo resets the macOS Messages
+# and Full Disk Access grants. The default target needs a person at a terminal.
+if [ -z "${ARGO_BIN:-}" ] && [ ! -t 0 ]; then
+  echo "refusing: installing ~/.local/bin/argo needs a person at a terminal (or ARGO_BIN=/other/path)" >&2; exit 1
+fi
 KEEP=${ARGO_KEEP_BACKUPS:-3}
 sha=$(git rev-parse --short=12 HEAD)
 [ -z "$(git status --porcelain -- .)" ] || sha="$sha-dirty"

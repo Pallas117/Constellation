@@ -26,3 +26,30 @@ test("backend harness starts and responds to /health", async (t) => {
     await stopBackend();
   });
 });
+
+test("backend answers a bad request body with 400 or 413, not 500, and does not count it against the IP (GAU-231)", async (t) => {
+  const { server, host, port } = await startBackend({ port: testPort });
+  const address = server.address();
+  const url = `http://${host}:${typeof address === "object" && address?.port ? address.port : port}`;
+  t.after(async () => {
+    await stopBackend();
+  });
+  const post = (path: string, body: string) => fetch(`${url}${path}`, { method: "POST", headers: { "content-type": "application/json" }, body });
+
+  // The pilot route most likely to get a bad body. No key is sent: the body is read first.
+  const invalid = await post("/api/v1/data/trust/records", '{"time": ');
+  assert.equal(invalid.status, 400);
+  assert.deepEqual(await invalid.json(), { error: "invalid JSON" });
+  assert.equal(invalid.headers.get("x-content-type-options"), "nosniff");
+
+  const oversized = await post("/api/v1/data/trust/records", JSON.stringify({ pad: "x".repeat(2 * 1024 * 1024) }));
+  assert.equal(oversized.status, 413);
+  assert.deepEqual(await oversized.json(), { error: "request body too large" });
+
+  // A client retrying a malformed body must not get its IP blocked: the guard counts only 401/403.
+  for (let i = 0; i < 40; i += 1) await post("/api/v1/data/trust/records", "{");
+  const health = await fetch(`${url}/health`);
+  assert.equal(health.status, 200);
+  const unauthenticated = await post("/api/v1/data/trust/records", "{}");
+  assert.equal(unauthenticated.status, 401, "still answered by the API, not blocked (429)");
+});
