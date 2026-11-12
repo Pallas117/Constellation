@@ -41,6 +41,12 @@ export interface PolledFeedOptions<T> {
 }
 
 /** Poll a Gauss backend feed with backoff; see lib/api/feed-poller.ts. */
+/**
+ * Which polling run a failure count belongs to: a new route or restartKey starts a new run at zero.
+ * Kept with the count, so the count resets without a setState inside the effect (react-hooks lint).
+ */
+const runKeyOf = (path: string | null | undefined, restartKey: string | undefined) => `${path ?? ""}\u0000${restartKey ?? ""}`;
+
 export function usePolledFeed<T>({
   path,
   intervalMs,
@@ -55,7 +61,7 @@ export function usePolledFeed<T>({
   const [data, setData] = useState<T | null>(null);
   const [status, setStatus] = useState<FeedStatus>("waiting");
   const [error, setError] = useState<string | null>(null);
-  const [failures, setFailures] = useState(0);
+  const [failed, setFailed] = useState<{ run: string; n: number }>({ run: "", n: 0 });
   const parseRef = useRef(parse);
   const nextPathRef = useRef(nextPath);
   const reduceRef = useRef(reduce);
@@ -73,7 +79,7 @@ export function usePolledFeed<T>({
     const base = getBackendBaseUrl();
     // A new route or user starts from nothing, so an incremental feed backfills again.
     heldRef.current = null;
-    setFailures(0);
+    const run = runKeyOf(path, restartKey);
 
     const poll = async (signal: AbortSignal): Promise<PollOutcome> => {
       const url = `${base}${nextPathRef.current?.(path, heldRef.current) ?? path}`;
@@ -97,7 +103,7 @@ export function usePolledFeed<T>({
       policy: { baseMs: intervalMs, maxMs: maxBackoffMs },
       onSchedule: (delay, outcome) => {
         if (!mounted) return;
-        setFailures((n) => (outcome.kind === "ok" ? 0 : n + 1));
+        setFailed((prev) => ({ run, n: outcome.kind === "ok" ? 0 : (prev.run === run ? prev.n : 0) + 1 }));
         if (outcome.kind === "ok" || delay === null) return;
         setStatus("backing-off");
         setError(
@@ -131,6 +137,7 @@ export function usePolledFeed<T>({
       failures: 0,
     };
   }
+  const failures = failed.run === runKeyOf(path, restartKey) ? failed.n : 0;
   return { data, status, loading: status === "waiting", error, failures };
 }
 
