@@ -127,9 +127,9 @@ func Classify(s Snapshot) (Class, string) {
 	case ErrTLSUntrusted:
 		return TLSIntercept, "api.anthropic.com certificate not trusted: " + s.API.Detail
 	case ErrTimeout, ErrRefused:
-		return PortBlock, "api.anthropic.com:443 " + s.API.Err
+		return PortBlock, "api.anthropic.com:443 " + s.API.Err + uplinkNote(s)
 	case ErrOther:
-		return PortBlock, "api.anthropic.com unreachable: " + s.API.Detail
+		return PortBlock, "api.anthropic.com unreachable: " + s.API.Detail + uplinkNote(s)
 	}
 	if s.API.Status == 403 {
 		return Region, fmt.Sprintf("api.anthropic.com returned 403 (exit loc=%s)", orUnknown(s.Loc))
@@ -147,6 +147,26 @@ func Classify(s Snapshot) (Class, string) {
 		return WiFiRisk, "this " + hostNoun + " accepts connections from everyone on this network: " + strings.Join(s.Exposed, ", ")
 	}
 	return OK, fmt.Sprintf("api reachable (HTTP %d), loc=%s", s.API.Status, orUnknown(s.Loc))
+}
+
+// uplinkStalled: Apple's connectivity check failed on the network too, so a
+// PORT_BLOCK is the whole uplink stalling (a shared Wi-Fi or a phone losing
+// data), not something blocking Claude.
+func uplinkStalled(s Snapshot) bool {
+	switch s.Captive.Err {
+	case ErrTimeout, ErrRefused, ErrOther:
+		return true
+	}
+	return false
+}
+
+// uplinkNote goes into the incident detail, so the log shows which kind of
+// PORT_BLOCK it was.
+func uplinkNote(s Snapshot) string {
+	if uplinkStalled(s) {
+		return "; captive.apple.com " + s.Captive.Err + " too (uplink stalled)"
+	}
+	return ""
 }
 
 // weakWiFi: open, WEP and WPA1 networks. WPA2, WPA3 and OWE are fine; "" is not Wi-Fi.
