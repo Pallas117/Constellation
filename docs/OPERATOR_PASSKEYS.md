@@ -49,6 +49,22 @@ After the touch, operators and admins draw a path through the 16 lettered vertic
 - Offline: the server stores scrypt (N = 2^15, about 0.1 s and 32 MiB per check, at most two at once) over HMAC-SHA256 keyed with a pepper derived from the auth secret (HKDF), salted per operator and bound to their user ID. A copy of the auth database alone can't be searched. Rotating `BETTER_AUTH_SECRET` signs everyone out and makes operators set a new pattern.
 - Logs carry user IDs and outcomes, never patterns.
 
+## The pattern as a sensor
+
+The pattern also watches for snooping (`backend/pattern/sensor.ts`, Josh 2026-11-04). Everything it sees goes into CyberTiger's event log (type `pattern.sensor`, admin view) and, when it matters, to Josh's phone through Argo (`argo notify`: masked, queued offline, at most one text per kind and operator every 15 minutes). Logs and texts carry user IDs and addresses, never patterns.
+
+| What it notices | When it raises the alarm | What happens |
+|---|---|---|
+| Wrong drawings (computer or phone) | The second within 15 minutes for one operator | Logged; at their next drawing the operator sees "Since your last sign-in: 2 wrong drawings…" |
+| A lockout (5 misses) | Always | Pattern locked for 15 minutes |
+| Unknown phone codes | 3 from one address within 10 minutes | Logged; codes are 128 random bits, so there is nothing to guess |
+| The duress pattern | At once, critical | See below |
+| Unusual data access by an operator session | More than 300 requests a minute, or more than 30 different routes in 5 minutes | The session's drawing is cleared: the console asks for the pattern again, with a line saying why |
+
+**Duress pattern.** An operator can add a second pattern (`/setup?duress=1`, or the account page) to draw only if someone forces them to sign in. It must differ from the real one. Drawn at the computer or on the phone, it is answered exactly like the real one, so whoever is watching sees a normal sign-in. The session is marked (`duressAt`, never readable by it); every operator and admin route answers **503 "in maintenance"**; the pattern and duress routes refuse changes; and a passkey step-up keeps the mark. Nothing the session can read says a duress pattern exists. With a duress pattern set, every check computes both hashes, so the time taken says nothing either.
+
+**Tuning.** The access thresholds are several times what the console does (it polls at most every 5 s and uses about 15 routes); `PATTERN_WATCH_RATE` and `PATTERN_WATCH_BREADTH` move them. `PATTERN_ALERTS=log` (or `off`) keeps alarms off the phone; `ARGO_BIN` points at another Argo. A session is flagged at most every 10 minutes.
+
 **Forgotten pattern.** An admin clears it on the account page (*Roles* → *Clear*, with a passkey touch); the operator sets a new one at their next sign-in. An admin who forgets their own: `npm run auth:clear-pattern -- <email>` at the Mac.
 
 ## The operator geometry

@@ -29,8 +29,8 @@ export interface AuthContext {
   token: string;
   /** When this session was opened by a verified passkey touch (epoch ms), else null. Step-up reads it. */
   passkeyAt?: number | null;
-  /** The operator pattern (backend/pattern/): whether the user has one, and when this session drew it. */
-  pattern?: { set: boolean; verifiedAt: number | null };
+  /** The operator pattern (backend/pattern/): whether the user has one, when this session drew it, and whether that was the duress pattern. */
+  pattern?: { set: boolean; verifiedAt: number | null; duress?: boolean };
 }
 
 /** `P` types `req.params`; pass the route's params, e.g. `AuthenticatedRequest<{ id: string }>` for "/:id". */
@@ -147,6 +147,7 @@ function contextFromSession(sessionResponse: SessionResponse): AuthContext | nul
     pattern: {
       set: toMillis((sessionResponse.user as { patternSetAt?: unknown }).patternSetAt) !== null,
       verifiedAt: toMillis((sessionResponse.session as { patternAt?: unknown }).patternAt),
+      duress: toMillis((sessionResponse.session as { duressAt?: unknown }).duressAt) !== null,
     },
   };
 }

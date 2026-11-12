@@ -105,3 +105,6 @@ Before tagging, move these entries under `## [0.1.0] - <date>`.
   admin changes such as role changes, one-click and idle sign-out, rate-limited passkey routes, and a per-operator
   tesseract shown as a recognition cue, not a factor; then an operator pattern drawn on that tesseract, on the computer
   or on a phone by QR code, with a guided setup, a five-miss lockout and admin recovery (#211).
+- The operator pattern as a snooping sensor: alarms on wrong drawings, lockouts and probed phone codes, a duress
+  pattern that signs in quietly to a console in maintenance and raises the alarm, and a watch that makes unusual
+  operator data access draw the pattern again (#224).

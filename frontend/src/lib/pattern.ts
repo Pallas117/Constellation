@@ -56,6 +56,10 @@ export interface PatternStatus {
   /** Where phones open the pad, or null when drawing on a phone is off. */
   padOrigin: string | null;
   request: { state: PadState; expiresAt: number } | null;
+  /** A duress pattern is set (backend/pattern/sensor.ts). */
+  duressSet: boolean;
+  /** What the sensor saw since the last good drawing: wrong drawings, probed phone codes, unusual access. */
+  notice: { misses: number; probes: number; unusual: number; lastIp: string | null; lastAt: number | null };
 }
 
 export type PadState = "waiting" | "approved" | "failed" | "expired";
@@ -87,6 +91,22 @@ export async function verifyPattern(pattern: readonly number[]): Promise<DrawRes
 
 /** The request for setting the pattern; send it through fetchWithStepUp (it needs a fresh passkey touch). */
 export const setPatternRequest = (pattern: readonly number[]): [string, RequestInit] => [`${apiBase()}/api/operator-pattern`, json({ pattern })];
+
+/** Setting or removing the duress pattern: through fetchWithStepUp too. */
+export const setDuressRequest = (pattern: readonly number[]): [string, RequestInit] => [`${apiBase()}/api/operator-pattern/duress`, json({ pattern })];
+export const clearDuressRequest = (): [string, RequestInit] => [`${apiBase()}/api/operator-pattern/duress`, { method: "DELETE" }];
+
+/** The line the pattern page shows when the sensor saw something since the last good drawing, or null. */
+export function noticeText(notice: PatternStatus["notice"] | undefined, timeOf: (ms: number) => string): string | null {
+  if (!notice) return null;
+  const parts: string[] = [];
+  if (notice.unusual) parts.push("this session read data unlike the console, so it needs your pattern again");
+  if (notice.misses) parts.push(`${notice.misses} wrong ${notice.misses === 1 ? "drawing" : "drawings"}`);
+  if (notice.probes) parts.push(`${notice.probes} unknown phone ${notice.probes === 1 ? "code" : "codes"} tried`);
+  if (!parts.length) return null;
+  const when = notice.lastAt ? `, last at ${timeOf(notice.lastAt)}${notice.lastIp ? ` from ${notice.lastIp}` : ""}` : "";
+  return `Since your last sign-in: ${parts.join("; ")}${when}. Not you? Tell an admin.`;
+}
 
 export async function openPadRequest(): Promise<{ id: string; expiresAt: number; padUrl: string }> {
   return read(await fetch(`${apiBase()}/api/operator-pattern/requests`, { method: "POST" }));

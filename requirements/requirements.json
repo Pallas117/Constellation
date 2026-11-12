@@ -1,6 +1,6 @@
 {
   "$comment": "Constellation requirements baseline (GAU-120). NASA SP-2016-6105 Rev 2 §6.2/§5.3. Methods: T test, A analysis, I inspection, D demonstration. T evidence = exact test names; A/I/D evidence = repo paths. Verified by `npm run verify`.",
-  "version": "1.16.0",
+  "version": "1.17.0",
   "requirements": [
     {
       "id": "REQ-ING-001",
@@ -306,7 +306,8 @@
       "evidence": [
         "ml/models/README.md",
         "ml/models/promoted.json"
-      ]
+      ],
+      "verifiedBy": []
     },
     {
       "id": "REQ-PER-001",
@@ -413,9 +414,27 @@
         "five misses lock an operator's pattern for 15 minutes; a match resets the count",
         "phone requests are one-time: two minutes, five tries, one approval",
         "a phone draws the pattern for the computer's session through a one-time QR code",
-        "a step-up keeps the operator pattern this browser already drew, and a fresh sign-in does not get it",
+        "a step-up keeps the operator pattern (and any duress mark) this browser already drew, and a fresh sign-in does not get it",
         "admins clear another operator's forgotten pattern with a fresh touch, never their own",
         "the frontend pad uses the same pattern rules as the server"
+      ]
+    },
+    {
+      "id": "REQ-SEC-005",
+      "title": "Operator pattern as a snooping sensor",
+      "statement": "The operator pattern shall record wrong drawings, lockouts, unknown phone codes, duress drawings and unusual data access by operator sessions in the security event log and raise an alarm when they cross set thresholds; a duress drawing shall be answered like a good one while marking the session, keeping operator and admin routes in maintenance (503) and surviving a passkey step-up; unusual access shall clear the session's drawing so the pattern must be drawn again.",
+      "rationale": "Josh, 2026-11-04: use the pattern as a sensor for strange data activity and snooping, with alerts on probing, a duress pattern and a watch on data access.",
+      "parent": "GAU-235",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "the pattern sensor raises an alarm at the second wrong drawing in 15 minutes, a lockout, or probed phone codes",
+        "a duress drawing raises a critical alarm at once and never shows in the operator's own notice",
+        "an operator session that reads like bulk collection must draw the pattern again",
+        "a duress pattern signs in like the real one, marks the session silently and raises the alarm",
+        "wrong drawings and probed phone codes reach the sensor; the operator sees them at the next drawing",
+        "a session signed in with the duress pattern sees operator and admin routes as in maintenance (503), viewer routes as usual",
+        "a step-up keeps the operator pattern (and any duress mark) this browser already drew, and a fresh sign-in does not get it"
       ]
     },
     {
@@ -440,7 +459,8 @@
       "owner": "Josh",
       "evidence": [
         "docs/adr/swarm-not-an-imf-source.md"
-      ]
+      ],
+      "verifiedBy": []
     },
     {
       "id": "REQ-OPS-002",

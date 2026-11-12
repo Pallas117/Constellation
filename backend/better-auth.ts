@@ -89,6 +89,8 @@ export const auth = betterAuth({
             passkeyCredentialId: { type: "string", required: false, input: false },
             // Set only by drawing the operator pattern (backend/pattern/router.ts).
             patternAt: { type: "date", required: false, input: false },
+            // Set when the drawing was the duress pattern (backend/pattern/sensor.ts); never shown to the session.
+            duressAt: { type: "date", required: false, input: false },
         },
     },
     plugins: [
@@ -135,11 +137,15 @@ export const auth = betterAuth({
                 const fresh = ctx.context.newSession;
                 const previous = await ctx.getSignedCookie(ctx.context.authCookies.sessionToken.name, ctx.context.secret);
                 if (fresh && previous && previous !== fresh.session.token) {
-                    // A step-up keeps the pattern this browser already drew for the same operator.
+                    // A step-up keeps the pattern this browser already drew for the same operator,
+                    // and a duress mark with it: a fresh touch must never wash the alarm away.
                     const before = await ctx.context.internalAdapter.findSession(previous);
-                    const drewAt = (before?.session as { patternAt?: unknown } | undefined)?.patternAt;
-                    if (before?.user.id === fresh.user.id && drewAt) {
-                        await ctx.context.internalAdapter.updateSession(fresh.session.token, { patternAt: drewAt } as Record<string, unknown>);
+                    const was = before?.session as { patternAt?: unknown; duressAt?: unknown } | undefined;
+                    if (before?.user.id === fresh.user.id && (was?.patternAt || was?.duressAt)) {
+                        await ctx.context.internalAdapter.updateSession(fresh.session.token, {
+                            ...(was?.patternAt ? { patternAt: was.patternAt } : {}),
+                            ...(was?.duressAt ? { duressAt: was.duressAt } : {}),
+                        } as Record<string, unknown>);
                     }
                     await ctx.context.internalAdapter.deleteSession(previous);
                 }
@@ -152,10 +158,11 @@ export const auth = betterAuth({
                 before: async (session, ctx) => {
                     // Only a verified passkey sign-in marks a session; strip the
                     // fields from every other session so nothing else can set them.
-                    const { passkeyAt: _at, passkeyCredentialId: _credential, patternAt: _drew, ...rest } = session as typeof session & {
+                    const { passkeyAt: _at, passkeyCredentialId: _credential, patternAt: _drew, duressAt: _duress, ...rest } = session as typeof session & {
                         passkeyAt?: unknown;
                         passkeyCredentialId?: unknown;
                         patternAt?: unknown;
+                        duressAt?: unknown;
                     };
                     const credentialId = ctx?.path === PASSKEY_SIGN_IN_PATH ? passkeyCredentialFrom(ctx.body) : null;
                     return { data: credentialId ? { ...rest, passkeyAt: new Date(), passkeyCredentialId: credentialId } : rest };
@@ -202,10 +209,16 @@ export async function ensureAuthSchema(): Promise<string[]> {
     return changes;
 }
 
-/** Marks a session as having drawn the operator pattern (backend/pattern/router.ts). */
-export async function markSessionPattern(sessionToken: string, at: Date): Promise<void> {
+/** Marks a session as having drawn the operator pattern (backend/pattern/router.ts); null clears it. */
+export async function markSessionPattern(sessionToken: string, at: Date | null): Promise<void> {
     const { internalAdapter } = await auth.$context;
     await internalAdapter.updateSession(sessionToken, { patternAt: at } as Record<string, unknown>);
+}
+
+/** Marks a session as signed in under duress (backend/pattern/sensor.ts). */
+export async function markSessionDuress(sessionToken: string, at: Date): Promise<void> {
+    const { internalAdapter } = await auth.$context;
+    await internalAdapter.updateSession(sessionToken, { duressAt: at } as Record<string, unknown>);
 }
 
 /** Records on the user when their operator pattern was set, or null after it is cleared. */
