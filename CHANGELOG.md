@@ -64,6 +64,9 @@ Before tagging, move these entries under `## [0.1.0] - <date>`.
   (#225).
 - Argo sail mark, Gauss app icon and console mark, and the Brand Book colours in the app (#235).
 
+### Removed
+- Unused Supabase and Neo4j leftovers: the `@supabase/supabase-js` and `neo4j-driver` packages, the client modules nothing imported, the Supabase-era `setup:rbac` / `test:rbac` scripts (roles: `npm run auth:set-role`; RBAC tests: `npm test`), the Neo4j seed script and compose file, and their env names (#136).
+
 ### Fixed
 
 - API: a request body that is not valid JSON answers 400, and one over 2 MB answers 413, where both were 500; a

@@ -193,17 +193,17 @@ sha256sum -c checksums.txt
 - Runs on every pull request and push to main
 - **Jobs**:
   1. `security-compliance`: Run compliance check script
-  2. `rbac-smoke-test`: RBAC role validation
-  3. `headers-validation`: Security headers verification
-  4. `rate-limit-config`: Rate limiting config validation
-  5. `status-check`: Aggregate all results
+  2. `headers-validation`: Security headers verification
+  3. `rate-limit-config`: Rate limiting config validation
+  4. `status-check`: Aggregate all results
+
+  (The `rbac-smoke-test` job was removed in GAU-181: RBAC is tested in process by `npm test`.)
 
 **Compliance Checks**:
 - ✅ CORS configured
 - ✅ Rate limiting enabled
 - ✅ Auth required
 - ✅ Security headers (X-Content-Type-Options, X-Frame-Options, Referrer-Policy)
-- ✅ RBAC roles functional (viewer/operator/admin)
 
 **PR Comments**:
 - Automatically comments on every PR with compliance status
@@ -215,7 +215,7 @@ sha256sum -c checksums.txt
 ```bash
 # Run locally before pushing
 npm run check:security-compliance      # Compliance check
-npm run test:rbac                      # RBAC tests
+npm test                               # Unit/integration tests, including RBAC
 npm run security:full                  # All checks together
 
 # Or individual checks:
@@ -233,7 +233,7 @@ npm run lint                           # Type checking
 - ✅ Auto-commenting PRs with compliance status
 - ✅ Headers validation job
 - ✅ Rate limiting configuration check
-- ✅ RBAC smoke tests integration
+- ✅ RBAC smoke tests integration (removed in GAU-181; RBAC is tested in process by `npm test`)
 - ✅ Status aggregation for all checks
 
 ---
@@ -285,7 +285,7 @@ npm run security:full                   # All checks together
 - [x] SBOM generation (CycloneDX)
 - [x] SLSA v1.0 provenance
 - [x] Security compliance gating
-- [x] RBAC smoke tests integration
+- [x] RBAC smoke tests integration (removed in GAU-181; RBAC is tested in process by `npm test`)
 - [x] Headers + rate limiting validation
 - [x] PR auto-commenting with results
 - [x] CodeQL code analysis
