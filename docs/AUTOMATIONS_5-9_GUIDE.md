@@ -58,9 +58,8 @@ Automate release validation, build verification, version detection, and changelo
 - `.github/workflows/release-pipeline.yml`
 
 ### Checks
-- Full adherence audit
+- Full adherence audit (its `npm test` step includes the in-process RBAC tests)
 - Security compliance check
-- RBAC smoke tests
 - Type checking and build
 - Upload build artifacts
 - Auto version bump based on conventional commit messages
