@@ -152,6 +152,9 @@
     "three-mesh-bvh": "^0.8.0",
     "express": {
       "qs": "^6.16.1"
+    },
+    "lovable-tagger": {
+      "esbuild": "^0.28.2"
     }
   }
 }
