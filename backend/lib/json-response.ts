@@ -1,7 +1,8 @@
 import { createHash } from "node:crypto";
 import { once } from "node:events";
-import { brotliCompressSync, constants as zlibConstants, gzipSync } from "node:zlib";
-import type { Response } from "express";
+import { promisify } from "node:util";
+import { brotliCompress, brotliCompressSync, constants as zlibConstants, gzip, gzipSync } from "node:zlib";
+import type { Request, Response } from "express";
 
 const JSON_TYPE = "application/json; charset=utf-8";
 
@@ -88,6 +89,49 @@ export function auroraMapReply(
 }
 
 export type ReplyEncoding = "br" | "gzip" | "identity";
+
+/** Below this a reply goes out uncompressed: the saving is smaller than the work. */
+export const COMPRESS_MIN_BYTES = 1024;
+const brotliAsync = promisify(brotliCompress);
+const gzipAsync = promisify(gzip);
+
+/**
+ * Sends `value` as JSON, compressed with brotli or gzip when the client accepts it and the body is
+ * at least COMPRESS_MIN_BYTES. Compression runs on the libuv thread pool, not the event loop.
+ * For the paid data API: a 720-point history is 2.3 MB of JSON and 35 KB gzipped (67x, measured on
+ * the live feed 2026-11-11), and egress is what an API customer costs us. Use it only for bodies
+ * that hold no secrets next to attacker-chosen text (BREACH).
+ * Never rejects (Express 4 doesn't catch async handlers): a body that can't be serialised gets a
+ * 500, and a compression failure falls back to the uncompressed body.
+ */
+export async function sendJsonCompressed(req: Request, res: Response, value: unknown): Promise<void> {
+  let raw: Buffer;
+  try {
+    raw = Buffer.from(JSON.stringify(value));
+  } catch (err) {
+    console.error("[json] reply could not be serialised:", err instanceof Error ? err.message : err);
+    if (!res.headersSent) res.status(500).json({ error: "Internal error" });
+    return;
+  }
+  res.setHeader("Content-Type", JSON_TYPE);
+  res.setHeader("Vary", "Accept-Encoding");
+  const encoding = raw.length >= COMPRESS_MIN_BYTES ? req.acceptsEncodings("br", "gzip") : false;
+  let body = raw;
+  try {
+    if (encoding === "br") {
+      body = await brotliAsync(raw, { params: { [zlibConstants.BROTLI_PARAM_QUALITY]: 4, [zlibConstants.BROTLI_PARAM_SIZE_HINT]: raw.length } });
+    } else if (encoding === "gzip") {
+      body = await gzipAsync(raw, { level: 6 });
+    }
+  } catch (err) {
+    console.error("[json] compression failed; sending uncompressed:", err instanceof Error ? err.message : err);
+    body = raw;
+  }
+  if (res.destroyed || res.writableEnded) return;
+  if (body !== raw) res.setHeader("Content-Encoding", encoding as string);
+  res.setHeader("Content-Length", String(body.length));
+  res.end(body);
+}
 
 /** The last compressed reply per encoding (tabs asking for br and gzip don't evict each other). */
 const compressed = new Map<ReplyEncoding, { etag: string; body: Buffer }>();
