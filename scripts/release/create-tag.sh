@@ -37,7 +37,7 @@ if git rev-parse "${TAG}" >/dev/null 2>&1; then
   exit 1
 fi
 
-if git ls-remote --tags origin "refs/tags/${TAG}" | grep -q "${TAG}"; then
+if git ls-remote --tags origin "refs/tags/${TAG}" | grep -c "${TAG}" >/dev/null; then
   echo "Error: tag already exists on origin: ${TAG}" >&2
   exit 1
 fi

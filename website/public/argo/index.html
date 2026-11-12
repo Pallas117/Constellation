@@ -9,11 +9,11 @@
 <title>Gauss Argo · connectivity that heals itself</title>
 <meta name="description" content="Gauss Argo finds and fixes broken networks on its own, the way a spacecraft handles faults: detect, classify, fix, verify, learn. Included for Gauss operators.">
 <meta name="robots" content="noindex">
-<link rel="canonical" href="https://lightbound.uk/argo/">
+<link rel="canonical" href="https://lightbound.space/argo/">
 <link rel="preload" href="/assets/fonts/plex-sans-600.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="/assets/site.css">
 <link rel="icon" href="/favicon.ico" sizes="any">
-<link rel="icon" href="/assets/marks/argo-glyph-provisional.svg" type="image/svg+xml">
+<link rel="icon" href="/assets/marks/argo-icon-colour-dark.svg" type="image/svg+xml">
 </head>
 <body class="page">
 <a class="skip" href="#main">Skip to content</a>
@@ -32,7 +32,7 @@
 <main id="main">
 <section class="page-hero starfield" aria-labelledby="hero-h">
   <div class="wrap">
-    <img class="mark-lg vt-argo" src="/assets/marks/argo-glyph-provisional.svg" alt="" width="72" height="72">
+    <img class="mark-lg vt-argo" src="/assets/marks/argo-mark-colour-dark.svg" alt="" width="72" height="72">
     <p class="k">GAUSS_ARGO · BUILT LIKE A SPACECRAFT</p>
     <h1 id="hero-h">Connectivity that heals itself.</h1>
     <p class="lead">Gauss watches your mission data. Gauss Argo looks after the machines your team works from: it runs each one the way a spacecraft runs itself. When the network breaks, it works out why, applies the smallest fix, checks that the fix worked, and remembers what worked on each network.</p>
@@ -52,12 +52,12 @@
         <li>A Wi&#8209;Fi sign-in page in the way</li>
         <li>Names that won&rsquo;t resolve (DNS)</li>
         <li>A dead proxy, or a background service that has stalled</li>
-        <li>Ports your work needs, blocked</li>
+        <li>A blocked path to a service you depend on</li>
       </ul>
       <ul class="ticks">
         <li>A network reading your encrypted traffic: Argo flags it and never turns certificate checks off</li>
-        <li>Traffic leaving from a country your team hasn&rsquo;t approved</li>
-        <li>Open or weakly secured Wi&#8209;Fi (open, WEP or WPA1), a Mac sharing its files or screen on it, and proxy auto-discovery traps. Argo advises; it never changes your settings.</li>
+        <li>Traffic leaving from a country you didn&rsquo;t expect</li>
+        <li>Open or weakly secured Wi&#8209;Fi (open, WEP or WPA1), a Mac sharing its files or screen on it, and proxy auto-discovery traps. Argo advises; it never changes your sharing or security settings.</li>
       </ul>
     </div>
   </div>
@@ -71,7 +71,7 @@
       <li><h3>Detect</h3><p>Checks the network every minute, with a fuller probe every few minutes.</p></li>
       <li><h3>Classify</h3><p>Names the fault, so the fix fits the cause instead of restarting everything.</p></li>
       <li><h3>Fix</h3><p>Tries the least invasive fix first. Anything needing an administrator is shown for you to run; it never runs on its own.</p></li>
-      <li><h3>Verify and learn</h3><p>Checks the fix worked and remembers it for that network, which is recognised by a fingerprint: the raw IP and router address are never stored.</p></li>
+      <li><h3>Verify and learn</h3><p>Checks the fix worked and remembers it for that network, which is recognised by a fingerprint: reports carry that hash, never the raw IP or router address.</p></li>
     </ol>
     <p class="note">On a Mac, when it can&rsquo;t fix something, Gauss Argo texts your phone once, then at most every two hours. Each device can also report its state to the Gauss console, so a team can see who is cut off.</p>
   </div>
@@ -123,7 +123,7 @@
     <p class="label">05_WHERE_IT_RUNS</p>
     <h2 id="where-h">Mac today, Linux in a container.</h2>
     <div class="two">
-      <div><h3>Now</h3><ul class="ticks"><li>macOS, as your own background agent</li><li>Linux, as a 9.5&nbsp;MB container (non-root, read-only) for ground stations and edge machines</li></ul></div>
+      <div><h3>Now</h3><ul class="ticks"><li>macOS, as your own background agent</li><li>Linux, as a small non-root container for ground stations and edge machines</li></ul></div>
       <div><h3>Not yet</h3><ul class="crosses"><li>Windows</li><li>iPhone and Android (phones are watched today, not healed)</li><li>Direct device-to-device transfers (files go through the Gauss hub or a carried drive today)</li></ul></div>
     </div>
   </div>
@@ -142,7 +142,7 @@
   <div class="wrap">
     <p class="label">07_ACCESS</p>
     <h2 id="price-h">Included with Gauss.</h2>
-    <p class="lead">Gauss Argo is included for operators, meaning teams with a paid Gauss plan, and for the Lightbound team. There&rsquo;s nothing extra to buy. Sign in, request setup from your workspace, and we&rsquo;ll email your install link and setup steps. For an operations team, <a href="mailto:jzwnathan@lightbound.uk?subject=Assured%20Connectivity%20pilot">ask about an Assured Connectivity pilot</a>: it adds guards that shed optional load when a Mac runs short of power, memory or disk, and team status in the Gauss console.</p><p class="actions"><a class="btn" href="/app/">Sign in</a> <a class="btn ghost" href="/gauss/#plans">See the Gauss plans</a></p>
+    <p class="lead">Gauss Argo is included for operators, meaning teams with a paid Gauss plan, and for the Lightbound team. There&rsquo;s nothing extra to buy. Sign in, request setup from your workspace, and we&rsquo;ll email your install link and setup steps. For an operations team, <a href="mailto:jzwnathan@lightbound.uk?subject=Assured%20Connectivity%20pilot">ask about an Assured Connectivity pilot</a>: it adds guards that hold optional work back when a Mac runs short of power, memory or disk, and team status in the Gauss console.</p><p class="actions"><a class="btn" href="/app/">Sign in</a> <a class="btn ghost" href="/gauss/#plans">See the Gauss plans</a></p>
   </div>
 </section>
 
@@ -159,7 +159,7 @@
         <span class="go">Enter Gauss</span>
       </a></li>
       <li><a class="door" href="/constellation/">
-        <img class="mark vt-constellation" src="/assets/marks/constellation-mark-colour-dark.svg" alt="" width="72" height="72" loading="lazy" decoding="async">
+        <img class="mark vt-constellation" src="/assets/marks/constellation-mark-colour-dark-v2.svg" alt="" width="72" height="72" loading="lazy" decoding="async">
         <span class="label">02_CONSTELLATION</span>
         <h3>Constellation</h3>
         <p>The space community. Free, by invitation.</p>
