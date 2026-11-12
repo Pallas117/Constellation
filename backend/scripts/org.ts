@@ -53,7 +53,7 @@ switch (cmd) {
     org(id);
     store.setPlan(id, plan);
     const limits = PLANS[plan];
-    console.log(`${id} is now ${plan}: API ${limits.api ? `on, ${limits.requestsPerMinute}/min per key, ${limits.requestsPerDay}/day` : "off"}.`);
+    console.log(`${id} is now ${plan}: API ${limits.api ? `on, ${limits.requestsPerMinute}/min per key, ${limits.requestsPerDay}/day, ${limits.pointsPerDay} points/day` : "off"}.`);
     break;
   }
   case "add-member":
