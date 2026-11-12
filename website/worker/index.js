@@ -1,6 +1,6 @@
-// lightbound.uk edge Worker. Static files are served by Cloudflare straight from public/ (free, no
+// lightbound.space edge Worker. Static files are served by Cloudflare straight from public/ (free, no
 // Worker run). The Worker runs only for the routes in wrangler.jsonc "run_worker_first":
-//   /                       landing: the Gauss door shows space weather now, Constellation the next launch
+//   /                       landing: release blocks only (no readouts; those live on /gauss/ and /constellation/)
 //   /gauss/                 plans (from tiers.js) and the Constellation door's next launch
 //   /constellation/         launch schedule, space weather, and the Gauss door's readout
 //   /gauss/apply/, /constellation/apply/   application forms (plan preselected, "received" state)
@@ -32,7 +32,7 @@ const applyPage = (kind) => () => ({
   },
 });
 const LIVE_PAGES = {
-  "/": () => ({ "gauss-door": (f, t) => renderGaussDoor(f.weather, t), "constellation-door": (f, t) => renderConstellationDoor(f.launches, t) }),
+  "/": () => ({}), // the landing page carries no readouts (they live on /gauss/ and /constellation/); filled for the release blocks
   "/gauss/": () => ({ plans: (f, t, url, env) => renderPlans(isFull(env)), "constellation-door": (f, t) => renderConstellationDoor(f.launches, t) }),
   "/constellation/": () => ({
     launches: (f, t) => renderLaunches(f.launches, t),
@@ -50,9 +50,9 @@ const LIVE_PAGES = {
   "/education/": () => ({ "edu-actions": (f, t, url, env) => renderEduActions(eduMode(isFull(env) ? env : {})),
     "edu-plans": (f, t, url, env) => renderEduPlans(eduMode(isFull(env) ? env : {}), eduStaffLabel(env)) }),
 };
-const NEEDS_FEEDS = new Set(["/", "/gauss/", "/constellation/"]);
+const NEEDS_FEEDS = new Set(["/gauss/", "/constellation/"]);
 const ATTRIBUTION = {
-  launches: "Data: The Space Devs Launch Library 2 (thespacedevs.com)",
+  launches: "Data: The Space Devs Launch Library 2 (thespacedevs.com); when LL2 is unavailable, Data by RocketLaunch.Live (rocketlaunch.live)",
   events: "Events: Constellation on Luma (luma.com/constellation)",
   weather: "Data: NOAA Space Weather Prediction Center (swpc.noaa.gov)",
 };
@@ -68,6 +68,34 @@ async function readAll(env, ctx) {
   }
   return { launches, weather, events };
 }
+
+// The canonical origin. Plain HTTP and www on the custom domain redirect here (301) in the Worker itself, so the
+// site does not depend on the dashboard's "Always Use HTTPS" toggle. The workers.dev preview and local dev keep
+// their own host, so the smoke check and dev.mjs still work.
+export const CANONICAL_HOST = "lightbound.space";
+export function canonicalRedirect(url) {
+  const host = url.hostname;
+  if (host === CANONICAL_HOST && url.protocol === "https:") return null;
+  if (host !== CANONICAL_HOST && host !== `www.${CANONICAL_HOST}`) return null;
+  return `https://${CANONICAL_HOST}${url.pathname}${url.search}`;
+}
+
+// RFC 9116: where to report a security problem. Served by the Worker (not the asset tree) so it is never cached stale.
+export const SECURITY_TXT_EXPIRES = "2027-05-05T00:00:00.000Z"; // review twice a year with the keys
+const securityTxt = () =>
+  respond(
+    [
+      "Contact: mailto:jzwnathan@lightbound.uk",
+      `Expires: ${SECURITY_TXT_EXPIRES}`,
+      "Preferred-Languages: en",
+      `Canonical: https://${CANONICAL_HOST}/.well-known/security.txt`,
+      `Policy: https://${CANONICAL_HOST}/privacy/`,
+      "",
+    ].join("\n"),
+    200,
+    "text/plain; charset=utf-8",
+    { "cache-control": "public, max-age=3600" },
+  );
 
 const respond = (body, status, type, extra = {}) =>
   new Response(body, { status, headers: withSecurity({ "content-type": type, ...extra }) });
@@ -120,7 +148,7 @@ async function api(request, url, env, ctx) {
       const start = Date.parse(url.searchParams.get("start") ?? "");
       if (!Number.isFinite(start) || Math.abs(start - now) > 400 * 86_400_000) return json({ error: "start must be an ISO time within 400 days" }, 400, "no-store");
       return respond(renderEventIcs({ uid: `slot-${start}`, start: new Date(start).toISOString(), minutes: 60, summary: "Constellation group call",
-        description: "Time picked with the Constellation time-zone planner: https://lightbound.uk/constellation/time/" }, now), 200, "text/calendar; charset=utf-8",
+        description: "Time picked with the Constellation time-zone planner: https://lightbound.space/constellation/time/" }, now), 200, "text/calendar; charset=utf-8",
         { "cache-control": "public, max-age=86400", "content-disposition": 'attachment; filename="constellation-call.ics"' });
     }
     case "/api/launches.ics":
@@ -152,6 +180,9 @@ export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
     const { pathname } = url;
+    const canonical = canonicalRedirect(url);
+    if (canonical) return respond(null, 301, "text/plain; charset=utf-8", { location: canonical, "cache-control": "public, max-age=3600" });
+    if (pathname === "/.well-known/security.txt") return securityTxt();
     if (pathname.startsWith("/api/")) {
       if (!ALLOWED.has(request.method)) return respond("Method not allowed\n", 405, "text/plain; charset=utf-8", { allow: "GET, HEAD, POST" });
       return api(request, url, env, ctx);

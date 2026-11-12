@@ -73,9 +73,8 @@ export function usePolledFeed<T>({
 
     const poll = async (signal: AbortSignal): Promise<PollOutcome> => {
       const url = `${base}${nextPathRef.current?.(path, heldRef.current) ?? path}`;
-      // The backend authenticates by the better-auth session cookie only. Don't
-      // call getAuthHeaders() here: it costs a /get-session round trip per poll
-      // and better-auth sessions carry no bearer token.
+      // The backend authenticates by the better-auth session cookie only; better-auth
+      // sessions carry no bearer token, so there is no Authorization header to add.
       const response = await fetch(url, { signal, credentials: "include" });
       const outcome = classifyResponse(response);
       if (outcome.kind === "ok" && mounted) {

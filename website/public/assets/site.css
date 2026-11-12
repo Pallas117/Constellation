@@ -65,28 +65,48 @@ p{margin:0 0 1em}
   border-color:rgba(243,240,232,.32);-webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px)}
 .btn.ghost:hover{border-color:var(--accent);color:#fff}
 
-/* Hero film: the kit's ray-traced black hole. Poster image underneath, so no-JS, reduced motion and
-   slow links all get the still frame. */
-.hero{position:relative;min-height:max(520px,86svh);display:grid;align-items:end;overflow:hidden;border-bottom:1px solid var(--char);isolation:isolate}
-.hero .poster,.hero .film{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;z-index:-2}
-.hero::after{content:"";position:absolute;inset:0;z-index:-1;background:linear-gradient(180deg,rgba(5,5,5,.55) 0,rgba(5,5,5,0) 22%,rgba(5,5,5,0) 40%,rgba(5,5,5,.92) 88%),linear-gradient(90deg,rgba(5,5,5,.7) 0,rgba(5,5,5,.35) 45%,rgba(5,5,5,0) 70%)}
-.hero-copy{padding-block:120px 40px;display:grid;gap:14px;width:100%}
-.hero-copy>:last-child{margin-bottom:0}
-.hero .wedge{margin:6px 0 0;font-size:clamp(17px,1.6vw,20px);color:rgba(243,240,232,.78);max-width:40ch}
-.hero .wedge a{color:var(--warm)}
-.hero h1{font-size:clamp(56px,9vw,128px);line-height:.95;letter-spacing:-.025em}
-.down{display:inline-flex;align-items:center;gap:10px;margin-top:8px;font:700 12px/1 var(--mono);letter-spacing:.12em;text-transform:uppercase;color:var(--warm);text-decoration:none;padding:10px 0}
-.down::after{content:"\2193";font-size:16px;display:inline-block}
-@media (prefers-reduced-motion:no-preference){.down::after{animation:nudge 2.4s ease-in-out infinite}}
-@keyframes nudge{50%{transform:translateY(4px)}}
+/* Landing (Josh, 5 Nov 2026): black space and the slogan first; then, as you scroll, the black hole pulls you in.
+   The kit's ray-traced black hole (poster under the film, so no-JS, reduced motion and slow links get the still frame)
+   starts small and far behind the slogan. The hero is tall and its stage pins while the hole grows, the stars rush
+   past and the slogan recedes; then the descent rises over it and takes the ring. Without scroll-driven animations, or with
+   reduced motion, it is one screen: the still frame at full size and the slogan. The slogan sits on the 8px grid at the
+   foot of the screen, left-aligned with the header mark. The hole's edge is a mask, not a halo. */
+.hero{position:relative;border-bottom:1px solid var(--char);isolation:isolate}
+.hero-stage{position:relative;min-height:max(560px,100svh);display:grid;align-items:end;overflow:hidden;isolation:isolate;--hole:50% 44%}
+.hero .poster,.hero .film{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;z-index:-2;transform-origin:var(--hole)}
+.hero-stage::after{content:"";position:absolute;inset:0;z-index:-1;background:linear-gradient(180deg,rgba(5,5,5,.55) 0,rgba(5,5,5,0) 22%,rgba(5,5,5,0) 40%,rgba(5,5,5,.92) 88%),linear-gradient(90deg,rgba(5,5,5,.7) 0,rgba(5,5,5,.35) 45%,rgba(5,5,5,0) 70%)}
+.hero-copy{padding-block:120px 96px;width:100%;transform-origin:0 100%}
+.hero h1{font-size:clamp(56px,9vw,128px);line-height:.95;letter-spacing:-.025em;margin:0}
 @media (prefers-reduced-motion:reduce){.hero .film{display:none}html{scroll-behavior:auto}}
 /* Portrait screens: the film fills the top of the hero and fades to black, so the copy sits on black. */
 @media (max-aspect-ratio:1/1){
+  .hero-stage{--hole:50% 36%;--hole-w:120%} /* the disc runs off the narrow screen; no side fade */
   .hero .poster,.hero .film{height:62%}
-  .hero::after{background:linear-gradient(180deg,rgba(5,5,5,.5) 0,rgba(5,5,5,0) 16%,rgba(5,5,5,0) 36%,var(--black) 62%)}
-  .hero-copy{padding-top:56vw}
+  .hero-stage::after{background:linear-gradient(180deg,rgba(5,5,5,.5) 0,rgba(5,5,5,0) 16%,rgba(5,5,5,0) 36%,var(--black) 62%)}
+  .hero-copy{padding-block:56vw 64px}
   .hero h1{font-size:clamp(44px,13vw,104px)}
 }
+/* The pull. Scroll-driven, no script: over the hero's first screen of scroll the hole grows from a distant point to
+   full size (its edge soft-masked, so no rectangle shows while it is small), a plane of stars rushes outward past
+   the viewer, and the slogan recedes. Reduced motion keeps the still frame above. */
+@supports (animation-timeline:view()){
+  @media (prefers-reduced-motion:no-preference){
+    .hero{height:220svh;view-timeline:--hero block}
+    .hero-stage{position:sticky;top:0;height:100svh;min-height:0}
+    .hero .poster,.hero .film{animation:pull linear both;animation-timeline:--hero;animation-range:contain 0% contain 100%;
+      -webkit-mask-image:radial-gradient(ellipse var(--hole-w,72%) 78% at var(--hole),var(--black) 38%,transparent 100%);mask-image:radial-gradient(ellipse var(--hole-w,72%) 78% at var(--hole),var(--black) 38%,transparent 100%)}
+    .hero-stage::before{content:"";position:absolute;inset:-40%;z-index:-3;pointer-events:none;transform-origin:var(--hole);opacity:.6;
+      background-size:380px 380px;background-image:radial-gradient(1px 1px at 12% 18%,rgba(243,240,232,.85),transparent 70%),
+      radial-gradient(1px 1px at 68% 42%,rgba(243,240,232,.7),transparent 70%),radial-gradient(1.4px 1.4px at 38% 76%,rgba(243,240,232,.8),transparent 70%),
+      radial-gradient(1px 1px at 86% 12%,rgba(243,240,232,.6),transparent 70%),radial-gradient(1px 1px at 24% 58%,rgba(243,240,232,.5),transparent 70%),
+      radial-gradient(1px 1px at 54% 92%,rgba(243,240,232,.6),transparent 70%);
+      animation:rush linear both;animation-timeline:--hero;animation-range:contain 0% contain 100%}
+    .hero-copy{animation:recede linear both;animation-timeline:--hero;animation-range:contain 20% contain 70%}
+  }
+}
+@keyframes pull{from{transform:scale(.18);opacity:.7}to{transform:none;opacity:1}}
+@keyframes rush{from{transform:scale(.55)}to{transform:scale(1.9);opacity:.15}}
+@keyframes recede{to{transform:scale(.9);opacity:0}}
 
 /* Sections */
 section{padding-block:clamp(48px,6vw,80px);border-bottom:1px solid var(--char);border-image:linear-gradient(90deg,transparent,var(--char) 16%,var(--char) 84%,transparent) 1}
@@ -135,6 +155,8 @@ section.tight{padding-block:48px}
 .tile .big{font-size:clamp(28px,4vw,40px);font-weight:600;line-height:1.1;margin:6px 0 2px}
 .tile .t{margin:0;font-weight:600}
 .tile .m{margin:0;color:var(--muted);font-size:15px}
+.tile-head{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap}
+.tile .src{font:400 11px/1.4 var(--mono);letter-spacing:.08em;text-transform:uppercase;margin-top:6px}
 .tile a{margin-top:10px;font-size:15px}
 .lvl-1{color:var(--amber)}.lvl-3{color:var(--danger)}
 .src{margin:18px 0 0;color:var(--muted);font-size:13px}
@@ -205,7 +227,7 @@ footer{padding-block:48px;color:var(--muted);font-size:14px}
 footer .cols{display:flex;flex-wrap:wrap;justify-content:space-between;gap:24px}
 footer nav{display:flex;flex-wrap:wrap;gap:8px 20px}
 footer nav a{color:var(--muted);display:inline-block;padding:10px 0}
-footer p{margin:0 0 6px}
+footer p{margin:0 0 8px;max-width:72ch}
 
 /* Sign-in pill in the header */
 .top nav a.signin{border:1px solid rgba(243,240,232,.4);border-radius:4px;padding:6px 14px;color:var(--warm);white-space:nowrap;background:rgba(243,240,232,.04)}
@@ -216,7 +238,7 @@ footer p{margin:0 0 6px}
 .form{display:grid;gap:18px;margin-top:32px}
 .field{display:grid;gap:6px}
 .field label{font-weight:600}
-.form input:not([type=checkbox]),.form select,.form textarea,.planner-form input[type=date]{width:100%;font:inherit;color:var(--warm);background:var(--panel);border:1px solid var(--char);border-radius:4px;padding:12px 14px}
+.form input:not([type=checkbox]),.form select,.form textarea,.planner-form input[type=date]{width:100%;font:inherit;color:var(--warm);background:var(--panel);border:1px solid rgba(243,240,232,.45);border-radius:4px;padding:12px 14px}
 .form textarea{resize:vertical;min-height:140px}
 .form input:focus,.form select:focus,.form textarea:focus,.planner-form input:focus{outline:2px solid var(--accent);outline-offset:1px}
 .form [aria-invalid=true]{border-color:var(--amber)}
@@ -340,6 +362,7 @@ footer p{margin:0 0 6px}
 .brand-constellation{--accent:#B0906F;--accent2:#B0906F;--panel:#081C4D;--char:#1C3470;--muted:#A9ABA6}
 .brand-constellation h1,.brand-constellation h2,.brand-constellation h3{font-weight:500}
 .brand-constellation .k,.brand-constellation .label{letter-spacing:.2em}
+.tile.brand-constellation .label{color:var(--accent)}
 .brand-constellation main a:not(.btn):not(.door),.brand-turnstone main a:not(.btn){text-decoration-color:var(--accent2)}
 .brand-constellation .btn.ghost:hover,.brand-turnstone .btn.ghost:hover{border-color:var(--accent2);color:var(--accent2)}
 .motto{margin:6px 0 14px;color:var(--accent);font-weight:500;font-size:clamp(16px,1.6vw,19px)}
@@ -385,6 +408,8 @@ footer p{margin:0 0 6px}
 .call-what .m{color:var(--muted);font-size:15px;margin:0;overflow-wrap:anywhere}
 .call-act{display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:end}
 .call-act .btn{min-height:38px;padding:0 14px;font-size:14px}
+/* Four actions in an auto column squeezed the title to a few words, so they take their own row below 1100 px. */
+@media (max-width:1100px){.call{grid-template-columns:200px 1fr}.call-act{grid-column:1/-1;justify-content:start}}
 @media (max-width:760px){.call{grid-template-columns:1fr}.call-act{justify-content:start}}
 .call-form{max-width:760px}
 .opps{margin-top:40px}
@@ -438,7 +463,6 @@ footer p{margin:0 0 6px}
   .top nav a.signin{padding:5px 10px}
   .subnav{flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none;padding-bottom:4px;
     -webkit-mask-image:linear-gradient(90deg,var(--black) 82%,transparent);mask-image:linear-gradient(90deg,var(--black) 82%,transparent)} /* the fade says it scrolls */
-  .hero-copy{padding-bottom:28px}
   .btn{flex:1 1 auto;justify-content:center}
 }
 @media (max-width:400px){.top nav .opt{display:none}}
@@ -481,7 +505,8 @@ footer p{margin:0 0 6px}
     .descent-steps li:nth-child(5){animation-name:d-step-last;animation-range:contain 79% contain 90%}
     .descent-steps li:focus-within{opacity:1!important;visibility:visible!important;transform:none!important}
     .descent-note{text-align:center}
-    @media (max-width:560px){.descent-art{transform:scale(1.4)}}
+    @media (max-width:560px){.descent-art{transform:scale(1.4)}
+      .descent-steps{padding-top:24px;background:linear-gradient(180deg,rgb(5 5 5 / 0),var(--black) 24px)}}
     .d-bh{display:inline;transform-origin:0 0;animation:d-shrink linear both;animation-timeline:--descent;animation-range:contain 0% contain 30%}
     .d-bh image{animation:d-out linear both;animation-timeline:--descent;animation-range:contain 2% contain 20%}
     /* One black hole on screen at a time: the hero's film fades as the descent rises, then the descent's own
@@ -490,7 +515,10 @@ footer p{margin:0 0 6px}
     @supports (timeline-scope:--descent){
       main{timeline-scope:--descent}
       .hero{border-image:none;border-bottom-color:transparent}
-      .hero .poster,.hero .film{animation:d-out linear both;animation-timeline:--descent;animation-range:entry 25% entry 60%}
+      /* The descent rises over the pinned hero (the hole is still growing), so the hero's hole cross-fades into the
+         descent's own ring in place: no dark gap between the two movements. */
+      .descent{margin-top:-80svh}
+      .hero .poster,.hero .film{animation:pull linear both,d-out linear both;animation-timeline:--hero,--descent;animation-range:contain 0% contain 100%,entry 50% entry 80%}
     }
     .d-earth{animation:d-in linear both;animation-timeline:--descent;animation-range:contain 14% contain 26%}
     .d-halo{animation:d-in linear both;animation-timeline:--descent;animation-range:contain 24% contain 30%}
@@ -510,6 +538,25 @@ footer p{margin:0 0 6px}
 @keyframes d-step-first{0%,70%{opacity:1;visibility:visible}100%{opacity:0;visibility:hidden}}
 @keyframes d-step-last{from{opacity:0;visibility:hidden;transform:translateY(10px)}to{opacity:1;visibility:visible;transform:none}}
 
+/* Live-view gate (landing): after the descent, a pre-rendered frame of the Gauss live view (tools/capture_live_view.py)
+   fills the screen behind a smoked-glass sign-in card. An image, not the app: it shows at once, and nothing live is
+   sent before sign-in. The frame settles in as you scroll; with reduced motion it is simply there. */
+.live-gate{position:relative;min-height:100svh;display:grid;place-items:center;padding:96px clamp(16px,4vw,40px);overflow:hidden;isolation:isolate}
+.live-frame,.live-frame img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;z-index:-2}
+.live-gate::before{content:"";position:absolute;inset:0;z-index:-1;background:linear-gradient(180deg,var(--black) 0,rgba(5,5,5,.12) 24%,rgba(5,5,5,.12) 76%,var(--black) 100%)}
+.live-card{max-width:440px;width:100%;padding:clamp(24px,3vw,32px);border:1px solid rgba(243,240,232,.16);border-radius:10px;background-color:rgba(5,5,5,.8);
+  background-image:linear-gradient(180deg,rgba(243,240,232,.06),rgba(243,240,232,0) 60%);-webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px)}
+.live-card h2{margin:.3em 0 .4em}
+.live-card p{color:rgba(243,240,232,.86)}
+.live-card .src{margin:16px 0 0;color:var(--muted);font-size:13px;line-height:1.5}
+@supports (animation-timeline:view()){
+  @media (prefers-reduced-motion:no-preference){
+    .live-frame img{animation:live-settle linear both;animation-timeline:view();animation-range:entry 0% cover 50%}
+    .live-card{animation:d-in linear both;animation-timeline:view();animation-range:entry 40% cover 45%}
+  }
+}
+@keyframes live-settle{from{opacity:0;transform:scale(1.08)}to{opacity:1;transform:none}}
+
 /* Starfield (landing): two planes of faint stars behind the descent and the doors. They scroll with the page while the
    descent's stage stays put, and the far plane drifts at a different rate, so the scene reads as deep space. */
 .starfield{position:relative;isolation:isolate}
@@ -527,8 +574,18 @@ footer p{margin:0 0 6px}
 }
 @keyframes far-drift{to{background-position:0 520px}}
 
+/* Landing: one quiet row of the three marks after the door. No readouts or copy here: those live on each
+   project's own page, and the header and footer already carry the names. */
+.marks{list-style:none;margin:0;padding:0;display:flex;flex-wrap:wrap;gap:24px clamp(24px,5vw,56px);align-items:flex-end} /* three abreast from 375px up */
+.marks a{display:inline-flex;flex-direction:column;align-items:flex-start;gap:16px;padding-block:4px;text-decoration:none;color:var(--muted)}
+.marks img{display:block;height:44px;width:auto;opacity:.78;transition:opacity .25s}
+.marks a:hover,.marks a:focus-visible{color:var(--warm)}
+.marks a:hover img,.marks a:focus-visible img{opacity:1}
+.marks .label{color:inherit}
+@media (prefers-reduced-motion:reduce){.marks img{transition:none}}
+
 /* Gauss for Education: the classroom's labs and the student start form. */
-.doors-more{margin:22px 0 0;color:var(--muted)}
+.doors-more{margin:24px 0 0;color:var(--muted);max-width:64ch}
 .labs{list-style:none;margin:28px 0 0;padding:0;display:grid;gap:16px}
 .lab{border:1px solid var(--char);border-radius:var(--radius);padding:24px;background:linear-gradient(180deg,rgba(243,240,232,.04),rgba(243,240,232,0) 42%),var(--panel)}
 .lab h2{margin:.35em 0 .3em}
@@ -593,3 +650,45 @@ footer p{margin:0 0 6px}
 }
 @keyframes disk-turn{to{--disk:360deg}}
 @media (prefers-reduced-motion:reduce){.btn,.door,.tile,.friend,.subnav a,.live-card{transition:none}}
+
+/* Sign-in buttons radiate (Josh, 4 Nov 2026: "make the sign in buttons more enticing ... like the expression of
+   radiation"). On hover and focus, waves leave the button like radiation from a source: an ember ring, then a violet
+   one, staggered, in the accretion-light colours. Quiet at rest; with reduced motion, one still ring. No script. */
+.btn.radiate{position:relative;isolation:isolate}
+.btn.radiate::before{content:"";position:absolute;inset:0;border-radius:inherit;border:2px solid rgb(var(--ember));opacity:0;pointer-events:none}
+@media (prefers-reduced-motion:no-preference){
+  .btn.radiate:hover::before,.btn.radiate:focus-visible::before{animation:radiate-wave 1.7s cubic-bezier(.15,.6,.3,1) infinite}
+  .btn.radiate:hover{animation:radiate-ring 1.7s .55s cubic-bezier(.15,.6,.3,1) infinite} /* hover only: on focus the site's ring stays */
+}
+@keyframes radiate-wave{0%{inset:0;opacity:1;border-radius:4px}100%{inset:-30px -44px;opacity:0;border-radius:36px}}
+@keyframes radiate-ring{0%{outline:2px solid rgb(var(--violet));outline-offset:0}100%{outline:2px solid rgb(var(--violet) / 0);outline-offset:32px}}
+@media (prefers-reduced-motion:reduce){.btn.radiate:hover::before,.btn.radiate:focus-visible::before{opacity:.8;inset:-6px}}
+
+/* The one door into Gauss (Josh, 5 Nov 2026): "Sign in with Argo" carries the Argo sail on a smoked ground inside an
+   ember-to-violet rim, warm white text (16:1 on the ground). The only button on the site built this way, so it reads as
+   the door. On hover and focus the rim becomes the turning disk and the button radiates (above); with reduced motion
+   the rim stays still and the focus ring is the site's. The public release shows the same button pointing at the replay. */
+.btn.argo{--smoke:rgb(10 8 16 / .86);gap:10px;padding:0 22px 0 16px;color:var(--warm);border-color:transparent;background-color:transparent;
+  background-image:var(--sheen),linear-gradient(var(--smoke),var(--smoke)),linear-gradient(100deg,rgb(var(--ember) / .95),rgb(var(--violet) / .95));
+  background-origin:border-box;background-clip:padding-box,padding-box,border-box;background-size:250% 100%,100% 100%,100% 100%;background-position:130% 0,0 0,0 0;background-repeat:no-repeat}
+.btn.argo .sail{width:24px;height:24px;flex:none}
+.btn.argo:hover,.btn.argo:focus-visible{color:#fff;background-color:transparent;
+  background-image:var(--sheen),linear-gradient(var(--smoke),var(--smoke)),var(--disk-rim);background-position:-30% 0,0 0,0 0}
+@media (prefers-reduced-motion:no-preference){
+  .btn.argo.radiate:hover{animation:disk-turn 7s linear infinite,radiate-ring 1.7s .55s cubic-bezier(.15,.6,.3,1) infinite}
+  .btn.argo.radiate:focus-visible{animation:disk-turn 7s linear infinite}
+}
+
+/* The sign-in card's radiation field: Earth's belts holding trapped particles that bounce along the field lines
+   (the same physics as the descent). Dim at rest, bright on hover; particles hidden with reduced motion. */
+.rad-field{display:block;width:100%;height:auto;max-height:104px;margin:-4px 0 12px;opacity:.5;transition:opacity .45s}
+.rad-field .fl{fill:none;stroke:rgb(243 240 232 / .35);stroke-width:1}
+.rad-field .belt{fill:rgb(var(--ember) / .16);transition:fill .45s}
+.rad-field .belt.out{fill:rgb(var(--violet) / .12)}
+.rad-field .earth{fill:var(--panel);stroke:rgb(var(--mauve) / .7);stroke-width:1.2}
+.rad-field .rp{fill:rgb(var(--hot))}
+.rad-field .rp.v{fill:rgb(var(--violet))}
+.live-card:hover .rad-field,.live-card:focus-within .rad-field{opacity:1}
+.live-card:hover .rad-field .belt,.live-card:focus-within .rad-field .belt{fill:rgb(var(--ember) / .32)}
+.live-card:hover .rad-field .belt.out,.live-card:focus-within .rad-field .belt.out{fill:rgb(var(--violet) / .26)}
+@media (prefers-reduced-motion:reduce){.rad-field .rp{display:none}}

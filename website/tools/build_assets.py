@@ -35,6 +35,8 @@ SYMBOLS = {
     "turnstone-badge-symbol-colour-dark.svg": "turnstone-badge-colour-dark-v2.svg",
     "constellation-symbol-colour-dark.svg": "constellation-mark-colour-dark-v2.svg",
     "constellation-icon-symbol-colour-dark.svg": "constellation-icon-colour-dark-v2.svg",
+    "argo-symbol-colour-dark.svg": "argo-mark-colour-dark.svg",
+    "argo-icon-symbol-colour-dark.svg": "argo-icon-colour-dark.svg",
 }
 # Source -> (published name, new family or None to keep the font's own name).
 FONTS = {"IBMPlexSans-Regular.ttf": ("plex-sans-400.woff2", "Lightbound Sans"),

@@ -137,6 +137,16 @@ GATES_SRC="$GATES_DIR/runner.src"      # sha= blob= from= at=: the commit the ru
 HEAVY="${GAUSS_HEAVY:-$HOME/.local/bin/claude-heavy}"
 GATES_WAIT_MIN="${GAUSS_GATES_WAIT_MIN:-120}" # one claude-heavy wait; the runner asks again when it gives up
 GATES_EXPIRE_H="${GAUSS_GATES_EXPIRE_H:-72}"   # a request still waiting after this is dropped (EXPIRED)
+# Gatebox (GAU-207 sizing, GAU-223): an Oracle Always Free VM on the tailnet runs the Linux-portable
+# gates (npm ci, npm test, quality:full, build) on the exact commit, fetched from public GitHub, through
+# the gate user's forced command (scripts/ops/gatebox/cloud-init.yaml). The ops tests and the VCRM need
+# macOS, so a deploy record still comes from this Mac; the gatebox screens first, so a commit that fails
+# there is FAILED without taking this Mac's memory (16 of 70 guarded gate runs failed, 29 Oct-5 Nov,
+# `argo scale`). Off unless a host is set: GAUSS_GATEBOX or one line in $WATCH_DIR/gatebox (a tailnet name).
+GATEBOX="${GAUSS_GATEBOX:-$(head -1 "$WATCH_DIR/gatebox" 2>/dev/null || true)}"
+GATEBOX_KEY="${GAUSS_GATEBOX_KEY:-$HOME/.ssh/gauss-gate}"
+GATEBOX_HOSTS="$WATCH_DIR/gatebox.known_hosts" # the gatebox's host key, pinned on first contact over the tailnet
+GATEBOX_REPO="Pallas117/Constellation"         # the only repo gauss-gate-run accepts
 # balance: safe, reversible load shedding (GAU-126). GAUSS_BALANCE=0 turns it off.
 BALANCE="${GAUSS_BALANCE:-1}"
 LOCAL_CODER="${GAUSS_LOCAL_CODER:-$HOME/.local/bin/local-coder}"   # optional on-device model server
@@ -518,6 +528,54 @@ swap_fast() { # swap_fast <swap MB>: swap grew SWAP_FAST_GB+ since a reading <= 
   [ -n "$prev_t" ] && [ $((now - prev_t)) -le 150 ] && [ $(($1 - ${prev_s:-0})) -ge $((SWAP_FAST_GB * 1024)) ]
 }
 
+# Fleet memory watch (GAU-240): the hub classifies each mesh device's memory from what its Argo
+# reports and keeps the result in fleet-memory.json beside the device store (backend/mesh/store.ts).
+# This reads that file each minute, no API session and no tokens, and texts when ANOTHER device is at
+# risk or critical: once per device per 2 h. This Mac has its own memory alerts below. A state older
+# than the file's staleAfterMs says nothing about now and is ignored.
+FLEET_MEMORY="${GAUSS_FLEET_MEMORY:-}" # default: beside the live backend's MESH_STORE_PATH
+fleet_memory_watch() {
+  local f=$FLEET_MEMORY store me name state why
+  if [ -z "$f" ]; then
+    store=$(plutil -extract EnvironmentVariables.MESH_STORE_PATH raw -o - "$AGENTS/uk.lightbound.gauss-backend.plist" 2>/dev/null) || return 0
+    [ -n "$store" ] || return 0
+    f="$(dirname "$store")/fleet-memory.json"
+  fi
+  [ -f "$f" ] || return 0
+  me=$(hostname -s 2>/dev/null | tr '[:upper:]' '[:lower:]' || true)
+  while IFS=$'\t' read -r name state why; do
+    [ -n "$name" ] && [ "$name" != "$me" ] || continue
+    # Same 2 h window as the text (alert_event's stamp): one event and one text per device, not one a minute.
+    [ -n "$(find "$WATCH_DIR/alerts/mesh-mem-$name" -mmin -120 2>/dev/null)" ] && continue
+    event fleet-memory "$name" "memory $state: $why" device="$name" state="$state"
+    if [ "$state" = critical ]; then
+      phone -key "mesh-mem-$name" -every 2h "Gauss: $name is out of memory" \
+        "$name reports: $why. It may freeze or stop programs. Close apps or sessions on it now."
+    else
+      phone -key "mesh-mem-$name" -every 2h "Gauss: $name is short of memory" \
+        "$name reports: $why. It is not recovering by itself yet. Close unused apps or sessions on it when you can."
+    fi
+  done < <(python3 -Ic '
+import datetime, json, re, sys
+try:
+    d = json.load(open(sys.argv[1]))
+    stale = float(d.get("staleAfterMs", 900000)) / 1000
+    now = datetime.datetime.now(datetime.timezone.utc)
+    for e in d.get("devices", []):
+        name, state, at = e.get("name"), e.get("state"), e.get("reportedAt")
+        if state not in ("risk", "critical") or not isinstance(name, str) or not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,62}", name) or not isinstance(at, str):
+            continue
+        age = (now - datetime.datetime.fromisoformat(at.replace("Z", "+00:00"))).total_seconds()
+        if not -120 <= age <= stale:
+            continue
+        why = "; ".join(w for w in e.get("why", []) if isinstance(w, str) and re.fullmatch(r"[A-Za-z0-9 ()/,.:+-]{1,80}", w))[:200]
+        print("%s\t%s\t%s" % (name, state, why or "memory " + state))
+except Exception:
+    pass
+' "$f" 2>/dev/null || true)
+  return 0
+}
+
 memory_alerts() { # memory_alerts <pressure level> <swap used MB>
   local level=$1 swap=$2 avail; avail=$(mem_available)
   if [ "$level" -ge "$MEM_ALERT_LEVEL" ] || [ "$avail" -lt "$AVAIL_MIN" ]; then
@@ -782,6 +840,20 @@ gate_lock_ours() {
   return 1
 }
 
+# The detached runner is started by the awake LaunchAgent, so it inherits the services' environment:
+# live data paths (a test must never write live mesh/commerce data), the live ALLOWED_ORIGINS
+# (server.access.test.ts expects the defaults) and launchd's PATH, whose /usr/bin/python3 has no
+# numpy (5 ml tests). 2026-11-11: gates 8aa759a and 5294132 failed on exactly that, not on code.
+GATES_SCRUB_ENV=(ALLOWED_ORIGINS GAUSS_PUBLIC_URL BETTER_AUTH_URL MESH_STORE_PATH COMMERCE_DB_PATH GAUSS_BEDROCK_DIR NODE_ENV)
+gates_python_dir() { # the directory of the first python3 that can import numpy (GATES_PYTHON first), or nothing
+  local p
+  for p in "${GATES_PYTHON:-}" /Library/Frameworks/Python.framework/Versions/Current/bin/python3 \
+    /opt/homebrew/bin/python3 /usr/local/bin/python3 "$(command -v python3 2>/dev/null)"; do
+    [ -n "$p" ] && [ -x "$p" ] && "$p" -Ic 'import numpy' >/dev/null 2>&1 && { dirname "$p"; return 0; }
+  done
+  return 1
+}
+
 gates_record() { # gates_record <checkout-dir>: run the gates on a clean checkout and record the result by tree
   local dir sha tree g rc
   dir=$(cd "${1:?usage: $0 gates record <checkout-dir>}" && pwd) || return 1
@@ -792,10 +864,13 @@ gates_record() { # gates_record <checkout-dir>: run the gates on a clean checkou
   GATES_TMP=$(mktemp -d); local tmp=$GATES_TMP # global: the EXIT trap runs after this function's locals are gone
   # Release the lock on exit only while holding it: an interrupted wait must not free another agent's lock.
   trap '[ "${GATES_HOLD:-0}" = 1 ] && rmdir "$GATE_LOCK" 2>/dev/null; rm -rf "$GATES_TMP"' EXIT
+  local pydir scrub=() v
+  pydir=$(gates_python_dir) || { pydir=""; echo "warning: no python3 with numpy found; the ml tests will fail" >&2; }
+  for v in "${GATES_SCRUB_ENV[@]}"; do scrub+=(-u "$v"); done
   for g in "${GATES[@]}"; do
     gate_lock
     echo "gate $g ..."
-    rc=0; (cd "$dir" && PATH="$(dirname "$NODE"):$PATH" npm run "$g" >"$tmp/$g.log" 2>&1) || rc=$?
+    rc=0; (cd "$dir" && env "${scrub[@]}" PATH="$(dirname "$NODE")${pydir:+:$pydir}:$PATH" npm run "$g" >"$tmp/$g.log" 2>&1) || rc=$?
     if [ "$GATES_HOLD" = 1 ]; then rmdir "$GATE_LOCK" 2>/dev/null || true; fi; GATES_HOLD=0
     echo "$rc" >"$tmp/$g.rc"
   done
@@ -1021,6 +1096,33 @@ gates_start() { # start the one runner, detached from this session (own session 
   echo "Gate runner started (log: $LOGS/gates-runner.log)."
 }
 
+gates_prescreen() { # gates_prescreen <sha> <tree>: 0 when the gatebox failed the commit (result written); else 1: gate it here
+  local sha=$1 tree=$2 log rc=0 last
+  [ -n "$GATEBOX" ] || return 1
+  [[ "$GATEBOX" =~ ^[A-Za-z0-9][A-Za-z0-9.-]*$ ]] || { echo "gatebox: not a host name: $GATEBOX; gating here"; return 1; }
+  [ -r "$GATEBOX_KEY" ] || { echo "gatebox: no key at $GATEBOX_KEY; gating here"; return 1; }
+  mkdir -p "$GATES_DIR/logs"; log="$GATES_DIR/logs/gatebox-${sha:0:12}.log"
+  echo "$(date '+%F %T') gatebox $GATEBOX: screening ${sha:0:7} ..."
+  # BatchMode: never a prompt. The host key is pinned in its own file on first contact (the tailnet has
+  # already authenticated the machine); a changed key is refused, and the run falls back to this Mac.
+  ssh -i "$GATEBOX_KEY" -o IdentitiesOnly=yes -o BatchMode=yes -o ConnectTimeout=15 -o ServerAliveInterval=30 \
+    -o ServerAliveCountMax=4 -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile="$GATEBOX_HOSTS" \
+    "gate@$GATEBOX" "$GATEBOX_REPO $sha" >"$log" 2>&1 </dev/null || rc=$?
+  last=$(grep -E '^gates rc=' "$log" | tail -1)
+  # gauss-gate-run prints "gates rc=N in S s on <sha>" after the gates; without that line (ssh 255, busy 75,
+  # sha not on GitHub 65, fetch 69, a killed run) the gatebox said nothing about the commit.
+  if [ "$rc" = 0 ] && [[ "$last" == "gates rc=0 "* ]]; then
+    echo "$(date '+%F %T') gatebox passed ${sha:0:7} ($last); full gates here next"; return 1
+  fi
+  if [ "$rc" -ge 1 ] && [ "$rc" -le 63 ] && [[ "$last" == "gates rc=$rc "* ]]; then
+    event gates-gatebox gates "failed on the gatebox" sha="$sha" rc:="$rc" host="$GATEBOX"
+    gates_result "$sha" "$tree" FAILED "on gatebox $GATEBOX (npm ci, test, quality:full, build): $last; log $log"
+    return 0
+  fi
+  echo "$(date '+%F %T') gatebox could not screen ${sha:0:7} (exit $rc: $(tail -1 "$log" 2>/dev/null)); gating here"
+  return 1
+}
+
 gates_run() { # gates_run [--once]: work through the queue, oldest first, then exit; --once: stop after one wait that gave up
   local once=${1:-} self req sha tree queued rc pid me
   self="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
@@ -1053,6 +1155,7 @@ gates_run() { # gates_run [--once]: work through the queue, oldest first, then e
       gates_result "$sha" "$tree" SKIPPED "already passed: $(gates_summary "$GATES_DIR/$tree.json")"
       rm -f "$req"; continue
     fi
+    if gates_prescreen "$sha" "$tree"; then rm -f "$req"; tail -1 "$GATES_RESULTS"; continue; fi
     echo "$(date '+%F %T') gates ${sha:0:7} ..."
     rc=0
     if [ -x "$HEAVY" ]; then
@@ -1250,6 +1353,7 @@ gates_status() {
     echo "queued: $(req_get "$f" sha | cut -c1-7) by $(req_get "$f" by) since $(date -r "$(req_get "$f" queued)" '+%F %H:%M')"
   done
   [ $n -gt 0 ] || echo "queue: empty"
+  if [ -n "$GATEBOX" ]; then echo "gatebox: $GATEBOX screens each request first"; else echo "gatebox: off (all gates run here)"; fi
   tail -5 "$GATES_RESULTS" 2>/dev/null || true
 }
 
@@ -1467,6 +1571,7 @@ awake_guard() { # run every minute by the awake agent
   local level swap free; read -r level swap free < <(memory_stats)
   memory_alerts "$level" "$swap"
   memory_sample "$level" "$swap"
+  fleet_memory_watch || true
   disk_alerts "$(disk_free_gb)" "$swap"
   rotate_logs
   balance || true
