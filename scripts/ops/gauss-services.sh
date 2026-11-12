@@ -17,6 +17,7 @@
 #   scripts/ops/gauss-services.sh deploy <commit> [fallback-dir] [--emergency <reason>] [--no-fallback]   switch live to <commit>; rolls back by itself if it doesn't come up
 #   scripts/ops/gauss-services.sh gates record <checkout-dir>|list   run the five gates on a clean checkout; deploy needs a passing record
 #   scripts/ops/gauss-services.sh gates enqueue <checkout-dir>|<commit>   hand a gate run to the queue; the session can then be archived
+#   scripts/ops/gauss-services.sh gates queue | priority <pr|sha> front|back | waiting   see/reorder the train, list passes waiting for a person
 #   scripts/ops/gauss-services.sh gates result <checkout-dir>|<commit>|status   the queue's one-line result (exit 0 passed, 1 failed, 3 queued)
 #   scripts/ops/gauss-services.sh events [--since 2h] [--json]     timeline: watchdog, failover, deploys, alerts, boots (events.jsonl)
 #
@@ -1076,7 +1077,7 @@ gates_prescreen() { # gates_prescreen <sha> <tree>: 0 when the gatebox failed th
 }
 
 gates_run() { # gates_run [--once]: work through the queue, oldest first, then exit; --once: stop after one wait that gave up
-  local once=${1:-} self req sha tree queued rc pid me
+  local once=${1:-} self req sha tree queued rc pid me pr repo
   self="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
   # Never the folder it was started from: that is a session's checkout, often a temporary worktree removed
   # while the runner lives on (4 Nov: every git call then failed with getcwd errors).
@@ -1104,8 +1105,23 @@ gates_run() { # gates_run [--once]: work through the queue, oldest first, then e
       rm -f "$req"; continue
     fi
     if gate_record "$tree" >/dev/null; then # passed meanwhile (another request, or by hand)
-      gates_result "$sha" "$tree" SKIPPED "already passed: $(gates_summary "$GATES_DIR/$tree.json")"
-      rm -f "$req"; continue
+      pr=$(req_get "$req" pr)
+      if [ -z "$pr" ]; then
+        gates_result "$sha" "$tree" SKIPPED "already passed: $(gates_summary "$GATES_DIR/$tree.json")"
+        rm -f "$req"; continue
+      fi
+      # A train request whose head already passed still has to land (12 Nov: #265 passed, main moved,
+      # the re-queue was dropped here as SKIPPED and never merged). Merge main in first; if that left
+      # the tree unchanged, merge without a second run, else gate the new head as usual below.
+      train_sync "$req" || { tail -1 "$GATES_RESULTS"; continue; }
+      sha=$(req_get "$req" sha); tree=$(req_get "$req" tree)
+      if gate_record "$tree" >/dev/null; then
+        repo=$(req_get "$req" repo)
+        gates_result "$sha" "$tree" SKIPPED "already passed: going straight to the merge"
+        rm -f "$req"
+        train_merge "$pr" "$sha" "$tree" "$repo" || true
+        tail -1 "$GATES_RESULTS"; continue
+      fi
     fi
     if gates_prescreen "$sha" "$tree"; then rm -f "$req"; tail -1 "$GATES_RESULTS"; continue; fi
     echo "$(date '+%F %T') gates ${sha:0:7} ..."
@@ -1268,6 +1284,9 @@ train_merge() { # train_merge <pr> <sha> <tree> <repo>: merge a PR that just pas
   fi
   if [ -n "$why" ]; then
     gates_result "$sha" "$tree" HELD "passed, not merged: $why"
+    # 12 Nov: merging one PR moved main under the next one's run, which then sat HELD until a person
+    # re-queued it. Re-queue it at the front instead (train_sync merges main in), at most 3 times a day.
+    [[ "$why" == "main moved during the run"* ]] && train_requeue "$pr" "$sha" "$tree" "$repo"
     return 1
   fi
   if gh pr merge "$pr" --repo "$TRAIN_REPO" --merge --match-head-commit "$sha" >/dev/null 2>&1; then
@@ -1294,6 +1313,80 @@ gates_show_result() { # gates_show_result <checkout-dir>|<commit>: the latest li
   [ -n "$line" ] || { echo "No gate result or request for $arg."; return 1; }
   echo "$line"
   case $(echo "$line" | cut -d' ' -f4) in PASSED|MERGED|HELD) return 0 ;; SKIPPED) [[ "$line" == *" already passed: "* ]] ;; *) return 1 ;; esac
+}
+
+train_requeue() { # train_requeue <pr> <sha> <tree> <repo>: put a passed head main moved past back at the front
+  local pr=$1 sha=$2 tree=$3 repo=$4 n f
+  n=$(awk -v since="$(date -u -v-24H +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -d '24 hours ago' +%Y-%m-%dT%H:%M:%SZ)" -v k="REQUEUED PR #$pr " \
+    '$1 >= since && index($0, k)' "$GATES_RESULTS" 2>/dev/null | wc -l | tr -d ' ')
+  if [ "${n:-0}" -ge 3 ]; then
+    gates_result "$sha" "$tree" HELD "PR #$pr was re-queued 3 times today as main kept moving: a person decides"
+    return 1
+  fi
+  gates_queued "$tree" >/dev/null && return 0
+  mkdir -p "$GATES_QUEUE"
+  # "1" + time sorts before every request queued the usual way (they start with the 10-digit epoch
+  # 17...), so it runs next; the queued= line keeps the real time for expiry.
+  f="$GATES_QUEUE/1$(python3 -Ic 'import time; print("%.6f" % time.time())')-$tree.req"
+  printf 'sha=%s\ntree=%s\nrepo=%s\nnode=%s\nby=%s\nqueued=%s\npr=%s\n' "$sha" "$tree" "$repo" "$NODE" "merge-train" "$(date +%s)" "$pr" >"$f.tmp" && mv "$f.tmp" "$f"
+  gates_result "$sha" "$tree" REQUEUED "PR #$pr re-queued at the front: main moved during its run"
+}
+
+# Queue tooling (Josh 12 Nov, "make some tooling to improve this process"): see the queue by PR,
+# move a PR to the front or back, and list the passes that wait for a person.
+gates_pr_heads() { # one line per open PR: "<head sha> <number> <draft true|false> <merge state> <title>"
+  gh pr list --repo "$TRAIN_REPO" --state open --limit 100 --json number,headRefOid,isDraft,mergeStateStatus,title \
+    -q '.[] | "\(.headRefOid) \(.number) \(.isDraft) \(.mergeStateStatus) \(.title)"' 2>/dev/null
+}
+
+gates_queue() { # gates queue: the queue in run order, with each request's PR
+  local f i=0 sha pr heads line
+  heads=$(gates_pr_heads || true) # GitHub unreachable: list without PR details
+  [ -n "$(ls "$GATES_QUEUE" 2>/dev/null | grep '\.req$')" ] || { echo "queue: empty"; return 0; }
+  while IFS= read -r f; do
+    i=$((i + 1)); sha=$(req_get "$GATES_QUEUE/$f" sha); pr=$(req_get "$GATES_QUEUE/$f" pr)
+    line=""; [ -n "$pr" ] && line=$(awk -v n="$pr" '$2 == n' <<<"$heads")
+    printf '%2d  %s  %-6s %s\n' "$i" "${sha:0:7}" "${pr:+#$pr}" \
+      "$(if [ -z "$pr" ]; then echo "(gates only: a person merges)"; elif [ -z "$line" ]; then echo "(PR not open)"
+         else read -r _h _n dr ms title <<<"$line"; printf '%s%s %s' "$([ "$dr" = true ] && echo 'draft, ')" "$ms" "$title" | cut -c1-80; fi)"
+  done < <(ls "$GATES_QUEUE" | grep '\.req$' | sort)
+}
+
+gates_priority() { # gates priority <pr number|sha> front|back: move that request in the queue
+  local key=${1:?usage: $0 gates priority <pr|sha> front|back} where=${2:-front} f b n=0 head
+  case "$where" in front) head=1$(date +%s) ;; back) head=9$(date +%s) ;; *) echo "usage: $0 gates priority <pr|sha> front|back" >&2; return 2 ;; esac
+  while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    b=$(basename "$f")
+    mv "$f" "$GATES_QUEUE/$head.$(printf '%06d' "$n")-${b#*-}"; n=$((n + 1))
+  done < <(grep -l -E "^(pr=$key|sha=$key)" "$GATES_QUEUE"/*.req 2>/dev/null)
+  [ $n -gt 0 ] || { echo "Nothing queued for $key." >&2; return 1; }
+  echo "Moved $n request(s) for $key to the $where."
+  gates_queue
+}
+
+gates_waiting() { # gates waiting: open PRs whose head passed its gates and that wait for a person
+  local repo heads sha num draft ms title tree last n=0 contains
+  repo=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || { echo "Run this from a checkout of the repository." >&2; return 1; }
+  git --git-dir="$repo" fetch -q origin 2>/dev/null || true
+  heads=$(gates_pr_heads || true) # GitHub unreachable: list without PR details
+  while read -r sha num draft ms title; do
+    [ -n "$sha" ] || continue
+    tree=$(git --git-dir="$repo" rev-parse "$sha^{tree}" 2>/dev/null) || continue
+    gate_record "$tree" >/dev/null || continue
+    gates_queued "$tree" >/dev/null && continue
+    n=$((n + 1))
+    last=$(awk -v s="$sha" '$2 == s' "$GATES_RESULTS" 2>/dev/null | tail -1 | cut -d' ' -f4-)
+    contains=no; git --git-dir="$repo" merge-base --is-ancestor refs/remotes/origin/main "$sha" 2>/dev/null && contains=yes
+    printf '#%s %s %s%s: %s\n' "$num" "${sha:0:7}" "$([ "$draft" = true ] && echo 'draft, ')" "$ms" "$(echo "$title" | cut -c1-70)"
+    printf '    %s\n' "${last:-passed}"
+    if [ "$draft" = true ]; then echo "    next: mark it ready (gh pr ready $num), then: $0 gates enqueue $sha --pr $num"
+    elif [ "$ms" = DIRTY ]; then echo "    next: it conflicts with main: merge main into it by hand, then enqueue the new head with --pr $num"
+    elif [ "$contains" = no ]; then echo "    next: main moved past it: $0 gates enqueue $sha --pr $num"
+    elif [ "$ms" = CLEAN ]; then echo "    next (your call): gh pr merge $num --repo $TRAIN_REPO --merge --match-head-commit $sha"
+    else echo "    next: GitHub says $ms; fix that first"; fi
+  done <<<"$heads"
+  [ $n -gt 0 ] || echo "Nothing passed and waiting."
 }
 
 gates_status() {
@@ -1886,6 +1979,9 @@ case "${1:-}" in
       run) gates_run "${3:-}" ;;
       run-one) gates_run_one "${3:?}" ;;
       result) if [ "${3:-}" = status ]; then gates_status; else gates_show_result "${3:-}"; fi ;;
+      queue) gates_queue ;;
+      priority) gates_priority "${3:-}" "${4:-front}" ;;
+      waiting) gates_waiting ;;
       *) for f in "$GATES_DIR"/*.json; do [ -f "$f" ] && gates_summary "$f"; done; true ;;
     esac
     ;;
