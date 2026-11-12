@@ -4,7 +4,7 @@
     "title": "Gauss pilot API",
     "version": "0.1.0",
     "summary": "The HTTP routes a Fleet Integration pilot calls: refined space-weather data and PR-01 trust records by organisation API key, organisation key and usage self-service by signed-in session, and the public health summary.",
-    "description": "Each operation states its access in `security` and in `x-gauss-access`:\n\n- `/api/v1/*` (`api-key`): an organisation API key, `Authorization: Bearer gk_…`. Mounted before session auth (backend/commerce/routers.ts, createDataApiRouter). The organisation's plan must include API access; each key has a per-minute limit and each organisation a daily quota. Successful calls (status < 400) are metered by route template, never by query string.\n- `/api/orgs/*` (`user`): a signed-in Gauss session with at least the `user` role (backend/rbac.ts, API_POLICY). The router also requires membership of the organisation; operators and admins may read any organisation's usage. Organisations, plans and members are managed by an admin with `npm run org`.\n- `GET /health` (`public`): no credentials; `x-public-reason` says why.\n\nEvery `/api` request first passes CyberTiger, the server's intrusion guard. It answers 429 when the client IP is over its per-IP rate limit or blocked, and 400 when a request matches an attack signature, with `{ \"error\", \"requestId\" }`. Repeated 401 and 403 responses from one IP block that IP for a while, so fix credentials rather than retrying. Every `/api` response carries an `x-request-id` header; quote it when reporting a problem.\n\nUnknown values are never filled with guesses: each schema says how it shows them (null, `unknown`, or quality flags on a carried-forward point). Fields may be added within 0.x; ignore fields you don't know.\n\nErrors are JSON `{ \"error\": \"…\" }`. A request body that is not valid JSON is answered 400 `{ \"error\": \"invalid JSON\" }`, and one over 2 MB is answered 413. Both are answered before CyberTiger and before credentials are checked, so they carry no `x-request-id` and do not count toward the IP block.\n\nNot covered: sign-in (`/api/auth/*`, served by better-auth); customer-log ingest and evidence packs (PR-03a and PR-04 are command-line tools, `npm run trust:ingest` and `npm run trust:verify`, with no HTTP routes); admin tooling. backend/commerce/openapi.test.ts fails if a pilot route and this file drift apart."
+    "description": "Each operation states its access in `security` and in `x-gauss-access`:\n\n- `/api/v1/*` (`api-key`): an organisation API key, `Authorization: Bearer gk_…`. Mounted before session auth (backend/commerce/routers.ts, createDataApiRouter). The organisation's plan must include API access; each key has a per-minute limit and each organisation a daily quota. Successful calls (status < 400) are metered by route template, never by query string.\n- `/api/orgs/*` (`user`): a signed-in Gauss session with at least the `user` role (backend/rbac.ts, API_POLICY). The router also requires membership of the organisation; operators and admins may read any organisation's usage. Organisations, plans and members are managed by an admin with `npm run org`.\n- `GET /health` (`public`): no credentials; `x-public-reason` says why.\n\nEvery `/api` request first passes CyberTiger, the server's intrusion guard. It answers 429 when the client IP is over its per-IP rate limit or blocked, and 400 when a request matches an attack signature, with `{ \"error\", \"requestId\" }`. Repeated 401 and 403 responses from one IP block that IP for a while, so fix credentials rather than retrying. Every `/api` response carries an `x-request-id` header; quote it when reporting a problem.\n\nUnknown values are never filled with guesses: each schema says how it shows them (null, `unknown`, or quality flags on a carried-forward point). Fields may be added within 0.x; ignore fields you don't know.\n\nErrors are JSON `{ \"error\": \"…\" }`. A request body that is not valid JSON is answered 400 `{ \"error\": \"invalid JSON\" }`, and one over 2 MB is answered 413. Both are answered before CyberTiger and before credentials are checked, so they carry no `x-request-id` and do not count toward the IP block.\n\nNot covered: sign-in (`/api/auth/*`, served by better-auth); customer-log ingest and evidence packs (PR-03a and PR-04 are command-line tools, `npm run trust:ingest` and `npm run trust:verify`, with no HTTP routes); admin tooling. backend/commerce/openapi.test.ts fails if a pilot route and this file drift apart.\n\n`/api/v1` responses of 1 KB or more are compressed with brotli or gzip when the request's `Accept-Encoding` allows it (a 720-point history is about 67 times smaller gzipped)."
   },
   "servers": [{ "url": "/", "description": "The Gauss backend origin (default http://127.0.0.1:3001)" }],
   "security": [{ "apiKey": [] }],
@@ -18,7 +18,7 @@
         "responses": {
           "200": {
             "description": "The latest point; check `quality` before treating its values as current",
-            "headers": { "X-Quota-Limit": { "$ref": "#/components/headers/QuotaLimit" }, "X-Quota-Remaining": { "$ref": "#/components/headers/QuotaRemaining" } },
+            "headers": { "X-Quota-Limit": { "$ref": "#/components/headers/QuotaLimit" }, "X-Quota-Remaining": { "$ref": "#/components/headers/QuotaRemaining" }, "X-Points-Limit": { "$ref": "#/components/headers/PointsLimit" }, "X-Points-Remaining": { "$ref": "#/components/headers/PointsRemaining" } },
             "content": { "application/json": { "schema": { "$ref": "#/components/schemas/PointResponse" } } }
           },
           "400": { "$ref": "#/components/responses/GuardRefused" },
@@ -51,7 +51,7 @@
         "responses": {
           "200": {
             "description": "Points, oldest first as provided by the history source",
-            "headers": { "X-Quota-Limit": { "$ref": "#/components/headers/QuotaLimit" }, "X-Quota-Remaining": { "$ref": "#/components/headers/QuotaRemaining" } },
+            "headers": { "X-Quota-Limit": { "$ref": "#/components/headers/QuotaLimit" }, "X-Quota-Remaining": { "$ref": "#/components/headers/QuotaRemaining" }, "X-Points-Limit": { "$ref": "#/components/headers/PointsLimit" }, "X-Points-Remaining": { "$ref": "#/components/headers/PointsRemaining" } },
             "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HistoryResponse" } } }
           },
           "400": { "$ref": "#/components/responses/GuardRefused" },
@@ -69,7 +69,7 @@
         "responses": {
           "200": {
             "description": "Source status list",
-            "headers": { "X-Quota-Limit": { "$ref": "#/components/headers/QuotaLimit" }, "X-Quota-Remaining": { "$ref": "#/components/headers/QuotaRemaining" } },
+            "headers": { "X-Quota-Limit": { "$ref": "#/components/headers/QuotaLimit" }, "X-Quota-Remaining": { "$ref": "#/components/headers/QuotaRemaining" }, "X-Points-Limit": { "$ref": "#/components/headers/PointsLimit" }, "X-Points-Remaining": { "$ref": "#/components/headers/PointsRemaining" } },
             "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SourcesResponse" } } }
           },
           "400": { "$ref": "#/components/responses/GuardRefused" },
@@ -101,7 +101,7 @@
         "responses": {
           "200": {
             "description": "A single record (single request) or records plus rejected items (batch request)",
-            "headers": { "X-Quota-Limit": { "$ref": "#/components/headers/QuotaLimit" }, "X-Quota-Remaining": { "$ref": "#/components/headers/QuotaRemaining" } },
+            "headers": { "X-Quota-Limit": { "$ref": "#/components/headers/QuotaLimit" }, "X-Quota-Remaining": { "$ref": "#/components/headers/QuotaRemaining" }, "X-Points-Limit": { "$ref": "#/components/headers/PointsLimit" }, "X-Points-Remaining": { "$ref": "#/components/headers/PointsRemaining" } },
             "content": {
               "application/json": {
                 "schema": {
@@ -257,7 +257,9 @@
     },
     "headers": {
       "QuotaLimit": { "description": "The organisation's daily request quota", "schema": { "type": "integer" } },
-      "QuotaRemaining": { "description": "Requests left today after this one", "schema": { "type": "integer" } }
+      "QuotaRemaining": { "description": "Requests left today after this one", "schema": { "type": "integer" } },
+      "PointsLimit": { "description": "The organisation's daily data budget in points", "schema": { "type": "integer" } },
+      "PointsRemaining": { "description": "Points left today before this request; a history request returns at most this many", "schema": { "type": "integer" } }
     },
     "responses": {
       "Unauthorized": {
@@ -269,7 +271,7 @@
         "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
       },
       "RateLimited": {
-        "description": "Per-key per-minute limit (with Retry-After) or the organisation's daily quota reached; or CyberTiger's per-IP limit or an IP block (the body then carries requestId)",
+        "description": "Per-key per-minute limit (with Retry-After), the organisation's daily request quota or daily data budget reached; or CyberTiger's per-IP limit or an IP block (the body then carries requestId)",
         "headers": { "Retry-After": { "description": "Seconds until the minute window resets (minute limit only)", "schema": { "type": "integer" } } },
         "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
       },
@@ -619,7 +621,8 @@
                     "description": "Which history served the points. `memory` is the backend's in-memory feed (about 28 h at 5 s cadence, reloaded from local telemetry on restart)."
                   },
                   "lookbackMs": { "type": "integer", "description": "Lookback actually applied, after the plan cap" },
-                  "count": { "type": "integer" }
+                  "count": { "type": "integer" },
+                  "limitedBy": { "type": "string", "enum": ["daily data budget"], "description": "Present when fewer points were returned than asked for because of the daily data budget" }
                 }
               }
             ]
@@ -810,13 +813,14 @@
       "Plan": { "enum": ["free", "pilot", "enterprise"], "description": "What an organisation has bought (backend/commerce/plans.ts); set by an admin" },
       "PlanLimits": {
         "type": "object",
-        "examples": [{ "api": true, "requestsPerMinute": 60, "requestsPerDay": 50000, "maxLookbackMs": 86400000 }],
-        "required": ["api", "requestsPerMinute", "requestsPerDay", "maxLookbackMs"],
+        "examples": [{ "api": true, "requestsPerMinute": 60, "requestsPerDay": 50000, "maxLookbackMs": 86400000, "pointsPerDay": 2000000 }],
+        "required": ["api", "requestsPerMinute", "requestsPerDay", "maxLookbackMs", "pointsPerDay"],
         "properties": {
           "api": { "type": "boolean", "description": "Whether the organisation's keys may call /api/v1 at all" },
           "requestsPerMinute": { "type": "integer", "description": "Per key" },
           "requestsPerDay": { "type": "integer", "description": "Per organisation, all keys together, per UTC day" },
-          "maxLookbackMs": { "type": "integer", "description": "Longest history window and oldest trust-record inference time, ms" }
+          "maxLookbackMs": { "type": "integer", "description": "Longest history window and oldest trust-record inference time, ms" },
+          "pointsPerDay": { "type": "integer", "description": "Daily data budget per organisation, per UTC day: each history point, latest point or trust record returned counts one" }
         }
       },
       "Org": {

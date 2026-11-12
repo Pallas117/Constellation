@@ -31,8 +31,8 @@ KIT_MARKS: list[str] = []  # all marks now come from tools/symbols (the kit keep
 SYMBOLS = {
     "lightbound-symbol-colour-dark.svg": "lightbound-mark-colour-dark.svg",
     "gauss-aurora-symbol-colour-dark.svg": "gauss-aurora-mark-colour-dark.svg",
-    "turnstone-symbol-colour-dark.svg": "turnstone-mark-colour-dark-v2.svg",
-    "turnstone-badge-symbol-colour-dark.svg": "turnstone-badge-colour-dark-v2.svg",
+    "turnstone-symbol-colour-dark.svg": "turnstone-mark-colour-dark-v3.svg",
+    "turnstone-badge-symbol-colour-dark.svg": "turnstone-badge-colour-dark-v3.svg",
     "constellation-symbol-colour-dark.svg": "constellation-mark-colour-dark-v2.svg",
     "constellation-icon-symbol-colour-dark.svg": "constellation-icon-colour-dark-v2.svg",
     "argo-symbol-colour-dark.svg": "argo-mark-colour-dark.svg",

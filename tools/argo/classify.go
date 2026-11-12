@@ -88,6 +88,7 @@ type Snapshot struct {
 	WiFiDevice     string      `json:"wifi_device,omitempty"`   // e.g. en0; recorded when offline (rejoin.go)
 	WiFiPower      string      `json:"wifi_power,omitempty"`    // On/Off; recorded when offline
 	JoinCandidates []Candidate `json:"-"`                       // saved/allowlisted networks in range, best first (GAU-234); names stay in memory
+	InCall         bool        `json:"-"`                       // the owner is in a call (foreground.go); recorded when offline, never sent
 	Exposed        []string    `json:"exposed,omitempty"`       // sharing services this Mac answers on its LAN address
 	PAC            bool        `json:"pac"`
 	Proxies        []Proxy     `json:"proxies,omitempty"`

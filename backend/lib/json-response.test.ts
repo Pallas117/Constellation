@@ -4,7 +4,7 @@ import type { AddressInfo } from "node:net";
 import test from "node:test";
 import { brotliDecompressSync, gunzipSync } from "node:zlib";
 import express from "express";
-import { auroraMapReply, encodedReply, sendJsonList, STREAM_MIN_ITEMS } from "./json-response.ts";
+import { auroraMapReply, COMPRESS_MIN_BYTES, encodedReply, sendJsonCompressed, sendJsonList, STREAM_MIN_ITEMS } from "./json-response.ts";
 
 async function serve(app: express.Express, run: (base: string) => Promise<void>) {
   const server = app.listen(0, "127.0.0.1");
@@ -90,4 +90,52 @@ test("encodedReply decodes to the same body, with one strong ETag per encoding",
   assert.equal(encodedReply(reply, "br").body, br.body, "compressed once, reused");
   encodedReply(reply, "gzip");
   assert.equal(encodedReply(reply, "br").body, br.body, "a gzip client does not evict the brotli copy");
+});
+
+/** Raw GET with node:http, so the test sees the bytes on the wire (fetch would decompress them). */
+function rawGet(url: string, headers: Record<string, string> = {}) {
+  return new Promise<{ status: number; headers: http.IncomingHttpHeaders; body: Buffer }>((resolve, reject) => {
+    http
+      .get(url, { headers }, (res) => {
+        const chunks: Buffer[] = [];
+        res.on("data", (c: Buffer) => chunks.push(c));
+        res.on("end", () => resolve({ status: res.statusCode ?? 0, headers: res.headers, body: Buffer.concat(chunks) }));
+      })
+      .on("error", reject);
+  });
+}
+
+test("sendJsonCompressed: br or gzip as the client asks, identity without Accept-Encoding or under the size floor", async () => {
+  const big = { data: Array.from({ length: 720 }, (_, i) => point(i)) };
+  const circular: Record<string, unknown> = {};
+  circular.self = circular;
+  const app = express();
+  app.get("/big", (req, res) => void sendJsonCompressed(req, res, big));
+  app.get("/small", (req, res) => void sendJsonCompressed(req, res, { ok: true }));
+  app.get("/bad", (req, res) => void sendJsonCompressed(req, res, circular));
+  await serve(app, async (base) => {
+    const plain = await rawGet(`${base}/big`);
+    assert.equal(plain.headers["content-encoding"], undefined);
+    assert.equal(Number(plain.headers["content-length"]), plain.body.length);
+    assert.deepEqual(JSON.parse(plain.body.toString()), big);
+    assert.ok(plain.body.length >= COMPRESS_MIN_BYTES);
+
+    const gz = await rawGet(`${base}/big`, { "accept-encoding": "gzip" });
+    assert.equal(gz.headers["content-encoding"], "gzip");
+    assert.match(String(gz.headers.vary), /Accept-Encoding/i);
+    assert.equal(Number(gz.headers["content-length"]), gz.body.length);
+    assert.deepEqual(JSON.parse(gunzipSync(gz.body).toString()), big);
+    assert.ok(gz.body.length * 5 < plain.body.length, `gzip ${gz.body.length} B vs ${plain.body.length} B`);
+
+    const br = await rawGet(`${base}/big`, { "accept-encoding": "gzip;q=0.5, br" });
+    assert.equal(br.headers["content-encoding"], "br");
+    assert.deepEqual(JSON.parse(brotliDecompressSync(br.body).toString()), big);
+
+    const small = await rawGet(`${base}/small`, { "accept-encoding": "gzip, br" });
+    assert.equal(small.headers["content-encoding"], undefined);
+    assert.deepEqual(JSON.parse(small.body.toString()), { ok: true });
+
+    const bad = await rawGet(`${base}/bad`, { "accept-encoding": "gzip" });
+    assert.equal(bad.status, 500, "an unserialisable body is a 500, not a hung request");
+  });
 });

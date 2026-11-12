@@ -61,7 +61,7 @@ func TestEclipsePausesOnBatteryAndResumes(t *testing.T) {
 		t.Fatal("job never finished after power returned")
 	}
 	log, _ := os.ReadFile(r.store.path("guard.log"))
-	if s := string(log); !strings.Contains(s, "paused: on battery") || !strings.Contains(s, "resumed: on AC") {
+	if s := string(log); !strings.Contains(s, "paused: on battery") || !strings.Contains(s, "resumed: on battery ended") {
 		t.Errorf("guard log should record the pause and resume:\n%s", s)
 	}
 }
@@ -92,5 +92,58 @@ func TestEclipseLeavesBatteryStartsAlone(t *testing.T) {
 	code, err := r.run(0, 0, 0, []string{"sh", "-c", `i=0; while [ $i -lt 20 ]; do echo $i >> "$0"; i=$((i+1)); sleep 0.01; done`, out})
 	if err != nil || code != 0 || lines(t, out) != 20 {
 		t.Fatalf("exit %d %v, %d lines: a battery-admitted job must just run", code, err, lines(t, out))
+	}
+}
+
+// callRunner is a fake runner whose owner's call the test switches (foreground.go).
+func callRunner(t *testing.T, call *atomic.Bool) guardRunner {
+	r := fakeRunner(t, assess(nil, calm()))
+	r.maxPause = time.Minute
+	r.assess = func() (Sample, Assessment) {
+		s := calm()
+		if call.Load() {
+			s.Call = "Google Chrome"
+		}
+		return s, assess(nil, s)
+	}
+	return r
+}
+
+// TestCallPausesHeavyJobsOnly: a heavy job sleeps through the owner's call and finishes after
+// it; a light one keeps running.
+func TestCallPausesHeavyJobsOnly(t *testing.T) {
+	script := `i=0; while [ $i -lt 60 ]; do echo $i >> "$0"; i=$((i+1)); sleep 0.01; done`
+	for _, tc := range []struct {
+		name   string
+		memGB  float64
+		pauses bool
+	}{{"heavy", 1.5, true}, {"light", 0.3, false}} {
+		t.Run(tc.name, func(t *testing.T) {
+			var call atomic.Bool
+			r := callRunner(t, &call)
+			out := filepath.Join(t.TempDir(), "ticks")
+			done := make(chan int, 1)
+			go func() {
+				code, _ := r.run(tc.memGB, 0, 0, []string{"sh", "-c", script, out})
+				done <- code
+			}()
+			time.Sleep(100 * time.Millisecond)
+			call.Store(true)
+			time.Sleep(150 * time.Millisecond)
+			before := lines(t, out)
+			time.Sleep(300 * time.Millisecond)
+			if stopped := lines(t, out) == before; stopped != tc.pauses || before >= 60 {
+				t.Fatalf("paused=%v (want %v) at %d lines", stopped, tc.pauses, before)
+			}
+			call.Store(false)
+			select {
+			case code := <-done:
+				if code != 0 || lines(t, out) != 60 {
+					t.Fatalf("exit %d, %d lines, want 0 and 60", code, lines(t, out))
+				}
+			case <-time.After(5 * time.Second):
+				t.Fatal("job never finished after the call")
+			}
+		})
 	}
 }
