@@ -63,6 +63,11 @@ function resolve(ref: string): unknown {
   return ref.slice(2).split("/").reduce<unknown>((node, key) => (node as Json | undefined)?.[key], spec);
 }
 
+function resolveResponse(response: Json | undefined): Json {
+  assert.ok(response, "the response is documented");
+  return (response.$ref ? resolve(response.$ref) : response) as Json;
+}
+
 const keys = (o: object) => Object.keys(o).sort();
 
 test("openapi: every pilot route is documented, and nothing undocumented is", () => {
@@ -107,6 +112,19 @@ test("openapi: each operation states the access the code enforces, and its error
       for (const status of ["400", "401", "429"]) assert.ok(op.responses[status], `${name} documents ${status}`);
     }
   }
+});
+
+test("openapi: routes that take a body document 400 and 413, and no route blames the server for a bad body (GAU-231)", () => {
+  for (const { method, path, op } of operations()) {
+    const name = `${method} ${path}`;
+    if (op.requestBody) {
+      assert.match(String(resolveResponse(op.responses["400"]).description), /not valid JSON/, `${name}: 400 covers invalid JSON`);
+      assert.match(String(resolveResponse(op.responses["413"]).description), /over 2 MB/, `${name}: 413 covers an oversized body`);
+    }
+    const serverError = op.responses["500"] ? String(resolveResponse(op.responses["500"]).description) : "";
+    assert.doesNotMatch(serverError, /valid JSON|2 MB/, `${name}: a bad body is not a 500`);
+  }
+  assert.match(spec.info.description, /not valid JSON is answered 400/);
 });
 
 test("openapi: trust-record limits and shape match the code", () => {

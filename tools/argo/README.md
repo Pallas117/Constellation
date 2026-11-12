@@ -270,6 +270,22 @@ cores − 1. The repo's `npm test` passes it to `--test-concurrency` and Playwri
 both keep their defaults: about 7 test processes and 4 browsers on an 8-core Mac. Node refuses
 `--test-concurrency` in `NODE_OPTIONS`, so the flag lives in the script.
 
+**The owner first** (`foreground.go`). Work on this Mac (video calls, browser work) comes before Gauss's jobs:
+
+| When | Jobs | Network |
+|---|---|---|
+| A call is live (a Chromium `WebRTC has active PeerConnections` assertion, or Zoom, Teams, FaceTime, Webex holding the display awake) | New jobs over 1 GB wait; running ones that big pause (SIGSTOP) until it ends, at most 2 h, then exit 75 so the queue retries | Offline, the Wi-Fi reset waits 5 min instead of 90 s |
+| At the keyboard (input in the last 5 min) | A job must leave 0.5 GB more free | as usual |
+| Away | no extra limit | as usual |
+
+**Brownout** (`brownout.go`). On a charger too weak for the load (the Mac plugged in, the battery still
+falling), a running job is shed (paused) at 35% and restored at 50%, or as soon as a 30 W+ charger is charging
+it. While shed even an 8 W charger refills the battery, so jobs run in bursts the charger can pay for instead
+of draining it to the floor. New jobs don't start at 35% or below on a charger that is behind.
+
+Every guarded job runs at nice 10, so with nothing else running it loses nothing. The finding names the
+app locally (`argo guard`); Gauss gets only the code `owner-busy` ("its owner is using it").
+
 **Power budget (SWaP).** A spacecraft only switches loads on while its power budget has margin, and sheds them in
 eclipse. Argo keeps the same budget for the machine: **source** = the charger's rating × 0.8 (conversion losses, a
 warm charger), **load** = what the whole machine draws (the battery controller's `SystemLoad`), **margin** = source
@@ -324,8 +340,9 @@ argo inbox                           # on ground-1: 2026-10-23 09:41  judith  ~/
   check that, so anything a third party may need to check keeps the Ed25519 signature. Details:
   `docs/ARGO_DTN.md`, "Link keys".
 - **Keys.** Link keys live in `~/.config/argo/links.key` (0600) and are never logged or shown.
-  `argo enroll` creates `~/.config/argo/node.key` (0600; never leaves the device) and publishes the
-  public half to Gauss. Other devices pin a key the first time they see it; a different key later is reported and
+  An enrolled device creates `~/.config/argo/node.key` (0600; never leaves the device) on the first tick
+  its Gauss answers the bundle routes (or on the first relay command) and publishes the public half to Gauss,
+  so devices enrolled before the relay existed join by themselves. Other devices pin a key the first time they see it; a different key later is reported and
   not used until someone runs `argo keys trust DEVICE`. Compare fingerprints (`argo keys`, the Key line on
   `/mesh`) with the other person before relying on a new device.
 - **Paths.** The Gauss hub (`/api/mesh/bundles`, device token, tailnet only) holds ciphertext until the

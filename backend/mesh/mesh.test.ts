@@ -12,6 +12,7 @@ import {
   MESH_CLASSES,
   MeshStore,
   assessHosting,
+  assessMemory,
   hostingVerdict,
   parseBattery,
   parsePower,
@@ -21,6 +22,7 @@ import {
   parseReport,
   type MeshGuard,
   type MeshHost,
+  type MeshReport,
 } from "./store.js";
 
 async function withApp(fn: (base: string, store: MeshStore) => Promise<void>) {
@@ -382,4 +384,73 @@ test("onboarding points new devices at argo guard", () => {
   const steps = onboardingSteps([]);
   assert.ok(steps.find((s) => s.id === "guard")?.command === "argo guard");
   assert.match(steps.find((s) => s.id === "enroll")!.detail, /first report/);
+});
+
+// Fleet memory watch (GAU-240): the hub's view of each device's memory, from what Argo already reports.
+const MEM_NOW = new Date("2026-11-11T04:00:00Z");
+const memHost = (pressure: MeshHost["pressure"]): MeshHost => ({ ramGB: 8, pressure, swapUsedGB: 1, diskFreeGB: 20, cpus: 8, os: "macos" });
+const memReport = (over: Partial<MeshReport> = {}): MeshReport => ({ ...parseReport(okReport)!, receivedAt: MEM_NOW.toISOString(), ...over });
+const memGuard = (g: Partial<MeshGuard> = {}) => guard({ at: MEM_NOW.toISOString(), ...g });
+
+test("memory state: critical and risk come only from fresh guard codes or kernel pressure (GAU-240)", () => {
+  const state = (over: Partial<MeshReport>) => assessMemory(memReport(over), MEM_NOW);
+  assert.deepEqual(state({ host: memHost("normal"), guard: memGuard() }), { state: "ok", why: [] });
+  assert.deepEqual(state({ guard: memGuard({ level: "block", reasons: ["mem-critical", "battery-low"] }) }), { state: "critical", why: ["memory pressure critical"] });
+  assert.deepEqual(state({ guard: memGuard({ level: "risk", reasons: ["mem-paging"] }) }), { state: "critical", why: ["swapping out fast: memory short"] });
+  assert.deepEqual(state({ host: memHost("critical") }), { state: "critical", why: ["memory pressure critical"] }, "kernel pressure alone, older Argo");
+  assert.deepEqual(state({ guard: memGuard({ level: "risk", reasons: ["swap-rising", "mem-warn-sustained"] }) }), {
+    state: "risk",
+    why: ["swap climbing at warn", "memory at warn for 30+ of the last 60 min"],
+  });
+  assert.equal(state({ guard: memGuard({ level: "watch", reasons: ["no-headroom"] }) }).state, "watch", "a full machine is not a failing one");
+  assert.equal(state({ guard: memGuard({ level: "risk", reasons: ["no-headroom"] }) }).state, "risk");
+  assert.deepEqual(state({ host: memHost("warn"), guard: memGuard({ level: "watch", reasons: ["mem-warn-coping"] }) }), { state: "watch", why: ["memory at warn but coping"] });
+  assert.deepEqual(state({ host: memHost("warn") }), { state: "watch", why: ["memory pressure at warn"] });
+  assert.equal(state({ guard: memGuard({ level: "risk", reasons: ["battery-low", "disk-low"] }) }).state, "ok", "battery and disk findings are not memory");
+});
+
+test("memory state: what the hub cannot know is unknown, never ok (GAU-240)", () => {
+  assert.deepEqual(assessMemory(undefined, MEM_NOW), { state: "unknown", why: ["no report yet"] });
+  assert.deepEqual(assessMemory(memReport({ platform: "ios", guard: memGuard({ reasons: ["mem-critical"] }) }), MEM_NOW).state, "unknown");
+  assert.deepEqual(assessMemory(memReport(), MEM_NOW), { state: "unknown", why: ["no memory reading in the report"] });
+  const old = memReport({ receivedAt: "2026-11-11T03:40:00Z", guard: memGuard({ at: "2026-11-11T03:40:00Z", reasons: ["mem-critical"] }) });
+  assert.deepEqual(assessMemory(old, MEM_NOW), { state: "unknown", why: ["no report for 20 min"] }, "a stale critical says nothing about now");
+  // A guard reading much older than the report it rides on is ignored; kernel pressure still counts.
+  const lag = memReport({ host: memHost("warn"), guard: memGuard({ at: "2026-11-11T03:00:00Z", reasons: ["mem-critical"] }) });
+  assert.equal(assessMemory(lag, MEM_NOW).state, "watch");
+  assert.equal(assessMemory(memReport({ receivedAt: "not a time", host: memHost("normal") }), MEM_NOW).state, "unknown");
+});
+
+test("fleet memory: the device list, the worsening signal and the watcher's file agree (GAU-240)", async () => {
+  const fs = await import("node:fs");
+  const os = await import("node:os");
+  const path = await import("node:path");
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "mesh-mem-"));
+  const store = new MeshStore(path.join(dir, "devices.json"));
+  const mac = store.byToken((store.enroll("judith", "u") as { token: string }).token)!;
+  const box = store.byToken((store.enroll("devbox", "u") as { token: string }).token)!;
+  store.enroll("never", "u");
+
+  assert.equal(store.record(mac, memReport({ host: memHost("normal"), guard: memGuard() }), MEM_NOW), undefined, "ok is not a signal");
+  const risk = memReport({ guard: memGuard({ level: "risk", reasons: ["swap-rising"] }) });
+  assert.deepEqual(store.record(box, risk, MEM_NOW), { state: "risk", why: ["swap climbing at warn"] });
+  assert.equal(store.record(box, risk, MEM_NOW), undefined, "the same state again is not signalled twice");
+  const critical = memReport({ guard: memGuard({ level: "block", reasons: ["mem-critical"] }) });
+  assert.equal(store.record(box, critical, MEM_NOW)?.state, "critical", "worse again is signalled");
+  assert.equal(store.record(box, risk, MEM_NOW), undefined, "getting better is not signalled");
+
+  store.record(box, critical, MEM_NOW);
+  assert.deepEqual(store.fleetMemory(MEM_NOW).map((d) => `${d.name}:${d.state}`), ["devbox:critical", "judith:ok", "never:unknown"]);
+  const listed = store.list(MEM_NOW).find((d) => d.name === "devbox")!;
+  assert.equal(listed.memory, "critical");
+  assert.deepEqual(listed.memoryWhy, ["memory pressure critical"]);
+
+  const file = path.join(dir, "fleet-memory.json");
+  const written = JSON.parse(fs.readFileSync(file, "utf8")) as { at: string; staleAfterMs: number; devices: Array<Record<string, unknown>> };
+  assert.equal(written.at, MEM_NOW.toISOString());
+  assert.equal(written.staleAfterMs, 15 * 60_000);
+  assert.deepEqual(written.devices[0], { name: "devbox", state: "critical", why: ["memory pressure critical"], reportedAt: MEM_NOW.toISOString() });
+  assert.deepEqual(Object.keys(written.devices[0]).sort(), ["name", "reportedAt", "state", "why"], "states and reasons only: no token hash, no network details");
+  assert.equal(fs.statSync(file).mode & 0o777, 0o600);
+  assert.equal(fs.readFileSync(file, "utf8").includes("tokenHash"), false);
 });

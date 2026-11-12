@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { PilotRequestDialog } from "@/components/PilotRequestDialog";
 import { BACKEND_URL, commerceApi, type Org, type Usage } from "@/lib/api/commerce";
 import { useDocumentTitle } from "@/hooks/useDocumentTitle";
+import { ConfirmButton } from "@/components/ui/confirm-button";
 
 const fmt = (iso: string | null) => (iso ? new Date(iso).toLocaleString() : "—");
 
@@ -20,8 +21,10 @@ function OrgKeys({ org, onChange }: { org: Org; onChange: () => void }) {
     commerceApi.usage(org.id).then(setUsage).catch(() => setUsage(null));
   }, [org.id, org.keys.length]);
 
+  const [creating, setCreating] = useState(false);
   const create = async () => {
     setError(null);
+    setCreating(true);
     try {
       const { key } = await commerceApi.createKey(org.id, name.trim() || "API key");
       setIssued(key);
@@ -29,6 +32,8 @@ function OrgKeys({ org, onChange }: { org: Org; onChange: () => void }) {
       onChange();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not create key");
+    } finally {
+      setCreating(false);
     }
   };
 
@@ -58,7 +63,8 @@ function OrgKeys({ org, onChange }: { org: Org; onChange: () => void }) {
         {org.limits.api ? (
           <p className="text-sm text-muted-foreground">
             {org.limits.requestsPerMinute} requests/minute per key · {org.limits.requestsPerDay.toLocaleString()} requests/day for the
-            organisation · up to {Math.round(org.limits.maxLookbackMs / 3_600_000)}h of history per request
+            organisation · {org.limits.pointsPerDay.toLocaleString()} data points/day · up to{" "}
+            {Math.round(org.limits.maxLookbackMs / 3_600_000)}h of history per request
           </p>
         ) : (
           <div className="space-y-2 text-sm text-muted-foreground">
@@ -94,9 +100,7 @@ function OrgKeys({ org, onChange }: { org: Org; onChange: () => void }) {
                       {k.revokedAt ? (
                         <Badge variant="outline">Revoked</Badge>
                       ) : (
-                        <Button size="sm" variant="ghost" onClick={() => void revoke(k.id)}>
-                          Revoke
-                        </Button>
+                        <ConfirmButton size="sm" variant="ghost" label="Revoke" confirmLabel="Revoke key?" pendingLabel="Revoking…" onConfirm={() => revoke(k.id)} />
                       )}
                     </td>
                   </tr>
@@ -111,7 +115,7 @@ function OrgKeys({ org, onChange }: { org: Org; onChange: () => void }) {
             <p className="text-sm font-medium">Create a key</p>
             <div className="flex flex-col gap-2 sm:flex-row">
               <Input placeholder="what it's for, e.g. ground-station ingest" value={name} onChange={(e) => setName(e.target.value)} maxLength={80} />
-              <Button onClick={() => void create()}>Create key</Button>
+              <Button onClick={() => void create()} disabled={creating}>{creating ? "Creating…" : "Create key"}</Button>
             </div>
             {issued && (
               <div className="space-y-2 rounded-md border border-primary/40 p-3 text-sm">
@@ -188,6 +192,9 @@ const ApiKeys = () => {
 
       <section className="grid gap-6 px-4 pb-10 sm:px-8 xl:grid-cols-2">
         {error && <p className="text-sm text-destructive">{error}</p>}
+        {!orgs && !error && (
+          <p role="status" className="font-mono text-sm text-muted-foreground">Loading your organisations…</p>
+        )}
         {orgs && orgs.length === 0 && (
           <Card className="min-w-0">
             <CardHeader>

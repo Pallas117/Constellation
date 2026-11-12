@@ -139,7 +139,7 @@ function announceLinks(call, members, origin) {
 }
 
 /** The admin's view: schedule a call; list calls with bookings and announcement drafts. */
-export function renderCallsAdmin(calls, members = [], origin = "https://lightbound.uk") {
+export function renderCallsAdmin(calls, members = [], origin = "https://lightbound.space") {
   const rows = calls.map((c) => `<li class="app-card"><div class="app-head"><span class="label">${esc(formatIn(Date.parse(c.start), "UTC"))} UTC · ${c.minutes} min</span><span>${c.rsvps.length} of ${c.capacity} booked</span></div>` +
     `<h3>${esc(c.title)}</h3>${c.rsvps.length ? `<p class="m">${c.rsvps.map(esc).join(", ")}</p>` : ""}${announceLinks(c, members, origin)}` +
     postForm("/app/admin/calls", { action: "delete", id: c.id }, "Remove call", "btn ghost") + `</li>`).join("");
