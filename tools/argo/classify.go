@@ -74,26 +74,29 @@ type Snapshot struct {
 	Time   time.Time `json:"time"`
 	Online bool      `json:"online"`
 	// DNSDirectOK: the system lookup failed but 1.1.1.1 answered directly.
-	DNSDirectOK bool        `json:"dns_direct_ok,omitempty"`
-	Gateway     string      `json:"gateway,omitempty"`
-	GatewayMAC  string      `json:"gateway_mac,omitempty"`
-	PublicIP    string      `json:"public_ip,omitempty"`
-	Loc         string      `json:"loc,omitempty"`
-	DNS         Result      `json:"dns"`
-	API         Result      `json:"api"`           // api.anthropic.com, direct (no proxy)
-	Web         *Result     `json:"web,omitempty"` // legacy fixtures only; claude.ai 403s non-browsers so it is not probed (omitted, so doctor never shows a failed web check)
-	Captive     Result      `json:"captive"`
-	WPAD        bool        `json:"wpad"`
-	WiFiSec     string      `json:"wifi_security,omitempty"` // ipconfig's Security, e.g. WPA2_PSK; "" when not on Wi-Fi
-	Exposed     []string    `json:"exposed,omitempty"`       // sharing services this Mac answers on its LAN address
-	PAC         bool        `json:"pac"`
-	Proxies     []Proxy     `json:"proxies,omitempty"`
-	StaleProcs  []StaleProc `json:"stale_procs,omitempty"`
-	Tailscale   Tailscale   `json:"tailscale"`
-	Warp        Warp        `json:"warp,omitempty"`       // Cloudflare WARP, for the Wi-Fi shield (shield.go)
-	Neighbours  []Neighbour `json:"neighbours,omitempty"` // ARP table on the default interface (neighbours.go)
-	Inbound     []Inbound   `json:"inbound,omitempty"`    // LAN devices connected to this Mac's sharing services
-	Signal      *WiFiSignal `json:"signal,omitempty"`     // Wi-Fi only; read at most every signalEvery
+	DNSDirectOK    bool        `json:"dns_direct_ok,omitempty"`
+	Gateway        string      `json:"gateway,omitempty"`
+	GatewayMAC     string      `json:"gateway_mac,omitempty"`
+	PublicIP       string      `json:"public_ip,omitempty"`
+	Loc            string      `json:"loc,omitempty"`
+	DNS            Result      `json:"dns"`
+	API            Result      `json:"api"`           // api.anthropic.com, direct (no proxy)
+	Web            *Result     `json:"web,omitempty"` // legacy fixtures only; claude.ai 403s non-browsers so it is not probed (omitted, so doctor never shows a failed web check)
+	Captive        Result      `json:"captive"`
+	WPAD           bool        `json:"wpad"`
+	WiFiSec        string      `json:"wifi_security,omitempty"` // ipconfig's Security, e.g. WPA2_PSK; "" when not on Wi-Fi
+	WiFiDevice     string      `json:"wifi_device,omitempty"`   // e.g. en0; recorded when offline (rejoin.go)
+	WiFiPower      string      `json:"wifi_power,omitempty"`    // On/Off; recorded when offline
+	JoinCandidates []Candidate `json:"-"`                       // saved/allowlisted networks in range, best first (GAU-234); names stay in memory
+	Exposed        []string    `json:"exposed,omitempty"`       // sharing services this Mac answers on its LAN address
+	PAC            bool        `json:"pac"`
+	Proxies        []Proxy     `json:"proxies,omitempty"`
+	StaleProcs     []StaleProc `json:"stale_procs,omitempty"`
+	Tailscale      Tailscale   `json:"tailscale"`
+	Warp           Warp        `json:"warp,omitempty"`       // Cloudflare WARP, for the Wi-Fi shield (shield.go)
+	Neighbours     []Neighbour `json:"neighbours,omitempty"` // ARP table on the default interface (neighbours.go)
+	Inbound        []Inbound   `json:"inbound,omitempty"`    // LAN devices connected to this Mac's sharing services
+	Signal         *WiFiSignal `json:"signal,omitempty"`     // Wi-Fi only; read at most every signalEvery
 }
 
 // Classify picks the most fundamental failure first: there is no point
@@ -123,9 +126,9 @@ func Classify(s Snapshot) (Class, string) {
 	case ErrTLSUntrusted:
 		return TLSIntercept, "api.anthropic.com certificate not trusted: " + s.API.Detail
 	case ErrTimeout, ErrRefused:
-		return PortBlock, "api.anthropic.com:443 " + s.API.Err
+		return PortBlock, "api.anthropic.com:443 " + s.API.Err + uplinkNote(s)
 	case ErrOther:
-		return PortBlock, "api.anthropic.com unreachable: " + s.API.Detail
+		return PortBlock, "api.anthropic.com unreachable: " + s.API.Detail + uplinkNote(s)
 	}
 	if s.API.Status == 403 {
 		return Region, fmt.Sprintf("api.anthropic.com returned 403 (exit loc=%s)", orUnknown(s.Loc))
@@ -143,6 +146,26 @@ func Classify(s Snapshot) (Class, string) {
 		return WiFiRisk, "this " + hostNoun + " accepts connections from everyone on this network: " + strings.Join(s.Exposed, ", ")
 	}
 	return OK, fmt.Sprintf("api reachable (HTTP %d), loc=%s", s.API.Status, orUnknown(s.Loc))
+}
+
+// uplinkStalled: Apple's connectivity check failed on the network too, so a
+// PORT_BLOCK is the whole uplink stalling (a shared Wi-Fi or a phone losing
+// data), not something blocking Claude.
+func uplinkStalled(s Snapshot) bool {
+	switch s.Captive.Err {
+	case ErrTimeout, ErrRefused, ErrOther:
+		return true
+	}
+	return false
+}
+
+// uplinkNote goes into the incident detail, so the log shows which kind of
+// PORT_BLOCK it was.
+func uplinkNote(s Snapshot) string {
+	if uplinkStalled(s) {
+		return "; captive.apple.com " + s.Captive.Err + " too (uplink stalled)"
+	}
+	return ""
 }
 
 // weakWiFi: open, WEP and WPA1 networks. WPA2, WPA3 and OWE are fine; "" is not Wi-Fi.

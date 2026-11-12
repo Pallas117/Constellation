@@ -63,24 +63,26 @@ export function useOperatorNotifications() {
     let fingerprint: string;
     if (kp >= 6 || bz <= -8 || speed >= 700) {
       const description = `Severe conditions: Kp ${kp}, IMF Bz ${bz.toFixed(1)} nT, solar wind ${Math.round(speed)} km/s. Take protective actions now.`;
-      fingerprint = `critical:${description}`;
+      fingerprint = "critical";
       notify = () => toast.error("Critical geomagnetic storm alert", { id: TOAST_ID, description, duration: Infinity, action: protect });
     } else if (kp >= 4 || bz <= -4 || speed >= 600) {
       const description = `Geomagnetic stress is building (Kp ${kp}, Bz ${bz.toFixed(1)} nT). Review thermal margins and plan workload reductions.`;
-      fingerprint = `elevated:${description}`;
+      fingerprint = "elevated";
       notify = () => toast.warning("Elevated geomagnetic risk", { id: TOAST_ID, description, duration: 20000, action: protect });
     } else if (bz >= 3 && speed < 450 && kp <= 2 && radiation?.level === 0) {
       // A window needs both streams measured and quiet: a radiation storm can run under a quiet field.
       const description = "Calm solar wind, northward IMF and no radiation storm: a low-risk window for attitude manoeuvres and uplinks.";
-      fingerprint = `window:${description}`;
+      fingerprint = "window";
       notify = () => toast.success("Safe opportunity window", { id: TOAST_ID, description, duration: 12000 });
     } else {
       // This stream speaks for geomagnetic conditions only; radiation has its own toast.
       const description = "Solar wind and Kp are quiet. Radiation storms are reported separately.";
-      fingerprint = `nominal:${description}`;
+      fingerprint = "nominal";
       notify = () => toast("Geomagnetic conditions quiet", { id: TOAST_ID, description, duration: 8000 });
     }
 
+    // One toast per change of tier: the readings move every minute, and a dismissed critical toast must not come back
+    // until conditions actually change.
     if (fingerprint === lastNotificationRef.current) {
       return;
     }

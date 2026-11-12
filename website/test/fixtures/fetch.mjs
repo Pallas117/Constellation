@@ -8,7 +8,7 @@ import { SOURCES } from "../../worker/feeds.js";
 import { PROGRAMMES_URL, newsJson, programmesCsv, ukriXml, uksaAtom } from "./opportunities.mjs";
 
 const dir = dirname(fileURLToPath(import.meta.url));
-const FILES = { launches: "ll-upcoming.json", scales: "swpc-scales.json", kp: "swpc-kp.json", wind: "swpc-wind.json", mag: "swpc-mag.json", events: "luma-constellation.ics" };
+const FILES = { launches: "ll-upcoming.json", launchesFallback: "rl-next5.json", scales: "swpc-scales.json", kp: "swpc-kp.json", wind: "swpc-wind.json", mag: "swpc-mag.json", events: "luma-constellation.ics" };
 export const RECORDED_AT = Date.parse("2026-10-17T13:00:00Z");
 
 export const fixture = (name) => (name === "events" ? readFileSync(join(dir, FILES[name]), "utf8") : JSON.parse(readFileSync(join(dir, FILES[name]), "utf8")));
@@ -33,9 +33,11 @@ function shiftLaunches(json, to) {
  */
 export function makeFetch(failures = {}, { shiftTo } = {}) {
   const calls = [];
-  const f = async (url) => {
+  const requests = []; // what each upstream was sent: url, headers, redirect mode
+  const f = async (url, init = {}) => {
     const name = String(url) === PROGRAMMES_URL ? "programmes" : Object.keys(SOURCES).find((k) => SOURCES[k] === String(url));
     calls.push(name ?? String(url));
+    requests.push({ url: String(url), headers: { ...init.headers }, redirect: init.redirect ?? "follow" });
     if (!name) return new Response("unexpected URL", { status: 599 });
     if (failures[name]) return new Response("upstream error", { status: failures[name] });
     const now = shiftTo ?? RECORDED_AT;
@@ -47,6 +49,7 @@ export function makeFetch(failures = {}, { shiftTo } = {}) {
     return new Response(JSON.stringify(body), { headers: { "content-type": "application/json" } });
   };
   f.calls = calls;
+  f.requests = requests;
   return f;
 }
 

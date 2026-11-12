@@ -67,8 +67,6 @@ export const useSpaceWeather = (): UseSpaceWeatherReturn => {
 
     const fetchData = async () => {
       try {
-        console.log('[SpaceWeather] Fetching data from edge function...');
-      
         const proxyUrl = apiBase();
         const response = await fetch(`${proxyUrl}/api/feed/space-weather/latest`);
       
@@ -94,13 +92,6 @@ export const useSpaceWeather = (): UseSpaceWeatherReturn => {
         setLastUpdate(new Date());
         setError(null);
       
-        console.log('[SpaceWeather] Data updated:', {
-          source: transformed.source,
-          stale: transformed.isStale,
-          solarWind: transformed.solarWind.speed.toFixed(0) + ' km/s',
-          bz: transformed.imfBz.toFixed(1) + ' nT',
-          kp: transformed.kpIndex,
-        });
 
       } catch (err) {
         if (cancelled) return;
@@ -109,7 +100,6 @@ export const useSpaceWeather = (): UseSpaceWeatherReturn => {
         console.error('[SpaceWeather] Fetch error:', errorMsg);
       
         if (failureCountRef.current >= MARK_UNAVAILABLE_AFTER) {
-          console.log('[SpaceWeather] Live data unavailable');
           show(unavailableData());
           setError('Live data unavailable');
         } else {

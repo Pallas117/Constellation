@@ -5,6 +5,7 @@ import type {
   SourceStatus,
   SphericalHarmonicCoefficients,
 } from "./types.js";
+import { TimeIndex } from "./lib/time-index.js";
 
 const MAX_POINTS = 20000;
 const MAX_MMS_POINTS = 5000;
@@ -14,8 +15,10 @@ const MAX_MMS_POINTS = 5000;
 // duplicate objects for nothing. The fallback's `length % 10` test was also always true at the
 // cap, so it held the last 500 points rather than sparse history. Persistence is bedrock.
 const canonicalFeed: CanonicalSpaceWeatherPoint[] = [];
+const canonicalTimes = new TimeIndex();
 
 const mmsFeed: MMSReconVectorPoint[] = [];
+const mmsTimes = new TimeIndex();
 let sourceStatus: SourceStatus[] = [];
 let auroraMap:
   | {
@@ -29,8 +32,10 @@ let auroraMap:
 export function pushCanonical(point: CanonicalSpaceWeatherPoint): void {
   // Push to primary
   canonicalFeed.push(point);
+  canonicalTimes.push(point.timestamp);
   if (canonicalFeed.length > MAX_POINTS) {
     canonicalFeed.shift();
+    canonicalTimes.shift();
   }
 
 }
@@ -58,8 +63,10 @@ export function seedCanonical(points: CanonicalSpaceWeatherPoint[]): number {
 
 export function pushMms(point: MMSReconVectorPoint): void {
   mmsFeed.push(point);
+  mmsTimes.push(point.timestamp);
   if (mmsFeed.length > MAX_MMS_POINTS) {
     mmsFeed.shift();
+    mmsTimes.shift();
   }
 }
 
@@ -78,6 +85,16 @@ export function setAuroraMap(map: {
 
 export function getCanonicalFeed(): CanonicalSpaceWeatherPoint[] {
   return canonicalFeed;
+}
+
+/** The newest `limit` canonical points measured at or after `thresholdMs`, oldest first. */
+export function canonicalSince(thresholdMs: number, limit: number): CanonicalSpaceWeatherPoint[] {
+  return canonicalTimes.since(canonicalFeed, thresholdMs, limit);
+}
+
+/** The newest `limit` MMS vectors measured at or after `thresholdMs`, oldest first. */
+export function mmsSince(thresholdMs: number, limit: number): MMSReconVectorPoint[] {
+  return mmsTimes.since(mmsFeed, thresholdMs, limit);
 }
 
 export function getMmsFeed(): MMSReconVectorPoint[] {

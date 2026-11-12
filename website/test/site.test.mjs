@@ -1,4 +1,4 @@
-// Static-site checks for lightbound.uk:  npm run test:website
+// Static-site checks for lightbound.space:  npm run test:website
 // GAU-12 claim rules on /gauss/, brand and security rules everywhere, Turnstone stays secret, size budgets.
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -121,7 +121,7 @@ test("marks are served without embedded C2PA metadata", () => {
 
 // ---- Turnstone is a secret project ----
 test("Turnstone: mark and name only; nothing says what it does", () => {
-  const door = html["/"].match(/<li><a class="door" href="\/turnstone\/">[\s\S]*?<\/li>/)[0];
+  const door = html["/"].match(/<li><a href="\/turnstone\/">[\s\S]*?<\/li>/)[0];
   const tells = /consult|hardware|security|services|clients|defen[cs]e|engagement|advis/i;
   assert.doesNotMatch(text(door), tells);
   const page = html["/turnstone/"];
@@ -143,7 +143,7 @@ test("security: strict CSP, no scripts, no inline styles or handlers, nothing lo
     const code = page.replace(/<script type="application\/ld\+json">([^<]*)<\/script>/g, (m, json) => (JSON.parse(json), ""));
     assert.doesNotMatch(code, /<script|\son\w+="|\sstyle=/i, `${route}: script or inline style`);
     for (const [, url] of page.matchAll(/(?:\ssrc|srcset|<link[^>]*\shref)="(https?:[^"]+)"/g))
-      assert.match(url, /^https:\/\/lightbound\.uk\//, `${route}: third-party resource ${url}`);
+      assert.match(url, /^https:\/\/lightbound\.space\//, `${route}: third-party resource ${url}`);
   }
 });
 
@@ -167,9 +167,36 @@ test("every link and resource resolves", () => {
   for (const [, anchor] of html["/"].matchAll(/href="\/#([^"]+)"/g)) assert.match(html["/"], new RegExp(`id="${anchor}"`));
 });
 
+test("live-view gate: a labelled pre-rendered frame behind the Argo door, no script, nothing live", () => {
+  const home = html["/"];
+  const gate = home.match(/<section id="enter" class="live-gate"[\s\S]*?<\/section>/)?.[0] ?? "";
+  assert.ok(gate, "the gate follows the descent");
+  assert.ok(home.indexOf('id="enter"') > home.indexOf("<!--/descent-->") && home.indexOf('id="enter"') < home.indexOf('id="contact"'));
+  for (const f of ["gauss-live-wide.webp", "gauss-live-tall.webp"]) assert.ok(size(`/assets/media/${f}`) < 250_000, `${f} stays small`);
+  assert.match(gate, /loading="lazy"/, "never competes with the hero for first paint");
+  assert.match(gate, /a frame from the Gauss live view, not live data/, "a still is never passed off as live");
+  // One door: the Argo sail on the button. This release ships the public landing alone (ported from #231, which adds
+  // the sign-in route): the button plays the replay and the line under it says so. No <!--full--> block to strip.
+  const sail = '<img class="sail" src="/assets/marks/argo-mark-colour-dark.svg" alt="" width="24" height="24" decoding="async">';
+  assert.match(gate, new RegExp(`<a class="btn argo radiate" href="/gauss/#replay">${sail}Sign in with Argo</a>`));
+  assert.match(gate, /<p class="src">Accounts aren&rsquo;t open yet: until they are, this button plays a replay of the live view\. /);
+  assert.doesNotMatch(gate, /href="\/live"|<!--full-->|<!--public-->/, "nothing points at a sign-in route that is not deployed");
+  assert.match(html["/gauss/"], /<section id="replay"/, "the replay the door opens on");
+  assert.equal(read("assets/marks/argo-mark-colour-dark.svg").match(/<polygon/g).length, 5, "the Argo sail mark: mast, boom, three sails and the star");
+  assert.match(read("assets/site.css"), /\.btn\.argo\{/, "the door has its own style");
+  assert.match(gate, /<svg class="rad-field"[^>]*aria-hidden="true"/, "the radiation field is decoration, hidden from screen readers");
+  assert.doesNotMatch(gate, /<script|<iframe|<canvas/);
+  // Three movements (Josh, 5 Nov 2026): the landing is the slogan alone, the descent carries its own 01/05 captions,
+  // then one door. One short, true line about Argo; no encryption claims, nothing Argo's own page says differently.
+  assert.deepEqual([...home.matchAll(/class="k">(\d\d_[A-Z_]+)</g)].map((m) => m[1]), ["01_ENTER"], "one numbered kicker: the door");
+  assert.match(home, />02_CONTACT</);
+  assert.match(text(gate), /Argo is Gauss&rsquo;s network agent, and the way in\. Included for operators and staff; never sold\./);
+  assert.doesNotMatch(text(gate), /encrypt|quantum|HPKE|Ed25519|RFC ?9173|Nadia|Turnstone/i);
+});
+
 test("live sections have their markers, with a working static fallback", () => {
   const has = (route, m) => assert.match(html[route], new RegExp(`<!--live:${m}-->[\\s\\S]*?<!--/live:${m}-->`), `${route} ${m}`);
-  for (const m of ["gauss-door", "constellation-door"]) has("/", m);
+  assert.doesNotMatch(html["/"], /<!--live:/, "the landing page has no live sections: its readouts moved to the product pages");
   for (const m of ["launches", "weather", "gauss-door"]) has("/constellation/", m);
   has("/gauss/", "constellation-door");
 });
@@ -177,7 +204,10 @@ test("live sections have their markers, with a working static fallback", () => {
 // ---- Flow ----
 test("flow: no dead ends; each product page ends with the other doors, Turnstone leads home", () => {
   const doors = (p) => [...p.matchAll(/<a class="door" href="([^"]+)"/g)].map((m) => m[1]);
-  assert.deepEqual(doors(html["/"]), ["/gauss/", "/constellation/", "/turnstone/"], "three projects");
+  // The landing page's doors became one quiet row of marks (Josh, 5 Nov 2026: nothing repeating; the header carries the names).
+  assert.equal(html["/"].match(/<ul class="marks">/g).length, 1);
+  assert.deepEqual([...html["/"].match(/<ul class="marks">[\s\S]*?<\/ul>/)[0].matchAll(/<a href="([^"]+)">/g)].map((m) => m[1]), ["/gauss/", "/constellation/", "/turnstone/"], "three projects");
+  assert.doesNotMatch(html["/"], /class="door"|Enter Gauss|Visit Constellation|Restricted/, "no door cards on the landing page");
   assert.match(html["/"], /<a href="\/education\/">Gauss for Education<\/a>, part of <a href="\/constellation\/#outreach">Constellation&rsquo;s outreach<\/a>/);
   assert.match(html["/"], /Email Josh, the founder/);
   assert.deepEqual(doors(html["/argo/"]), ["/gauss/", "/constellation/"]);
@@ -252,7 +282,7 @@ test("apply pages: the static form is exactly what the Worker renders, and posts
 
 test("plans: packages and prices follow the sales plan; honest features only", () => {
   // Gauss Aurora repo, docs/SALES_FEATURE_LIST_AND_ONBOARDING.md (21 Aug 2026), "Commercial packages".
-  const expected = { pilot: "£20k–£40k per pilot", fleet_integration: "£60k–£125k a year", mission_integration: "£120k–£300k one-off", flight_candidate_adapter: "£750k–£2.5m one-off" };
+  const expected = { pilot: "$25k–$50k per pilot", fleet_integration: "$80k–$160k a year", mission_integration: "$150k–$400k one-off", flight_candidate_adapter: "$1m–$3.3m one-off" };
   assert.equal(SHOW_PRICES, true);
   assert.deepEqual(Object.fromEntries(TIERS.map((t) => [t.id, priceLabel(t)])), expected);
   assert.deepEqual(TIERS.map((t) => t.billing), ["payment", "subscription", "invoice", "invoice"]);
@@ -282,7 +312,9 @@ test("GAU-12: leads with Fleet Integration; the replay demo and evidence link ar
   assert.match(text(evidence), /Synthetic · screening evidence/);
   assert.match(text(evidence), /not a mission record/);
   for (const rx of [/\bdose\b/i, /\bdamage\b/i, /failure[- ]probabilit/i]) assert.doesNotMatch(text(evidence), rx);
-  assert.match(text(html["/"].match(/<section class="hero"[\s\S]*?<\/section>/)[0]), /Gauss tells satellite, ground-segment and onboard(?:-|&#8209;)AI teams which mission data they can trust/, "wedge and buyer on the first screen");
+  // The landing's first screen is the slogan alone (Josh, 5 Nov 2026); the wedge is the descent's last caption and the Gauss page's hero.
+  assert.equal(text(html["/"].match(/<section class="hero"[\s\S]*?<\/section>/)[0]).trim(), "Carry hope, go beyond.", "the first screen is the slogan alone");
+  assert.match(text(html["/"]), /Satellites fly through all of it\. Gauss tells their teams which data to trust\./, "the wedge, once, where the descent ends");
 });
 
 test("sales-plan entry points: /pilot and /sales redirect into the Gauss flow", () => {
@@ -326,7 +358,9 @@ test("Gauss Argo: included for operators and staff, no price, not promoted, no g
   const gaussMain = html["/gauss/"].match(/<main[\s\S]*<\/main>/)[0];
   assert.doesNotMatch(text(gaussMain), /\$\d|a month/, "no price on the Gauss page (sales plan: no low-price Gauss SaaS)");
   assert.doesNotMatch(gaussMain, /href="\/argo\//, "the Gauss page offers Argo only as a scoped Assured Connectivity pilot");
-  assert.match(read("assets/marks/argo-glyph-provisional.svg"), /provisional glyph, not yet in the Brand Book/, "until the Brand Book adds Argo");
+  assert.match(html["/argo/"], /src="\/assets\/marks\/argo-mark-colour-dark\.svg"/, "the Argo sail mark, not the provisional glyph");
+  assert.match(read("assets/marks/argo-icon-colour-dark.svg"), /<rect width="64" height="64" rx="14" fill="#050505"\/>/, "favicon: the sail on a black tile");
+  assert.match(read("assets/marks/argo-glyph-provisional.svg"), /provisional glyph, not yet in the Brand Book/, "kept while the Access login page (PR #231) still names it");
   for (const [route, page] of Object.entries(html)) if (route !== "/argo/") assert.doesNotMatch(page, /href="\/argo\//, `${route}: Argo is only linked from the workspace`);
 });
 
@@ -377,7 +411,7 @@ test("Constellation is free and invite-only: no prices, no payment, invitation w
     assert.match(text(html[route]), /invit/i);
   }
   assert.match(html["/constellation/apply/"], /<button class="btn" type="submit">Request an invitation<\/button>/);
-  assert.match(text(html["/"]), /The space community\. Free, by invitation\./);
+  assert.match(text(html["/constellation/"]), /Free, by invitation\./);
 });
 
 test("signed-in pages are private shells; the Worker fills them only after sign-in", () => {
@@ -409,7 +443,10 @@ test("public release: the config holds only what the public pages need, and keep
   assert.equal(raw.match(/REPLACE_[A-Z_]+/g), null, "no placeholders left to deploy");
   assert.match(config.kv_namespaces[0].id, /^[0-9a-f]{32}$/, "the LIVE namespace id");
   for (const route of ["/app", "/app/*", "/argo/", "/api/*"]) assert.ok(config.assets.run_worker_first.includes(route), `${route} must reach the Worker, or its static file would be served`);
-  assert.equal(config.routes, undefined, "lightbound.uk is routed only with Josh's go-ahead");
+  // Josh, 2026-11-05: the main site is lightbound.space. The route stays commented until the apex and www A records
+  // (DNS-only, tailnet address) are deleted: with them in place Cloudflare refuses the custom domain (code 100117) and
+  // a partial trigger update switches the workers.dev preview off (error 1042) until a redeploy without the route.
+  assert.deepEqual(config.routes, [{ pattern: "lightbound.space", custom_domain: true }], "lightbound.space is the main site (Josh deleted the apex record, 2026-11-05)");
 });
 
 test("public release: public pages link to sign-in only inside <!--full--> blocks, which the Worker removes", () => {
@@ -429,25 +466,25 @@ test("brand: all four marks are the refined Design System symbols, unchanged, wi
   for (const f of readdirSync(join(pub, "assets", "marks"))) assert.doesNotMatch(read(`assets/marks/${f}`), /<filter|feGaussianBlur/, `${f}: flat marks only`);
   assert.match(read("assets/marks/gauss-aurora-horizontal-colour-dark.svg"), /aria-label="Gauss Aurora"/);
   assert.match(read("assets/marks/lightbound-horizontal-colour-dark.svg"), /aria-label="Lightbound"/);
-  assert.equal(read("assets/marks/turnstone-mark-colour-dark.svg"), symbol("turnstone-symbol-colour-dark.svg"));
-  assert.equal(read("assets/marks/turnstone-badge-colour-dark.svg"), symbol("turnstone-badge-symbol-colour-dark.svg"));
-  assert.equal(read("assets/marks/constellation-mark-colour-dark.svg"), symbol("constellation-symbol-colour-dark.svg"));
-  assert.equal(read("assets/marks/constellation-icon-colour-dark.svg"), symbol("constellation-icon-symbol-colour-dark.svg"));
-  const ts = read("assets/marks/turnstone-mark-colour-dark.svg");
+  assert.equal(read("assets/marks/turnstone-mark-colour-dark-v2.svg"), symbol("turnstone-symbol-colour-dark.svg"));
+  assert.equal(read("assets/marks/turnstone-badge-colour-dark-v2.svg"), symbol("turnstone-badge-symbol-colour-dark.svg"));
+  assert.equal(read("assets/marks/constellation-mark-colour-dark-v2.svg"), symbol("constellation-symbol-colour-dark.svg"));
+  assert.equal(read("assets/marks/constellation-icon-colour-dark-v2.svg"), symbol("constellation-icon-symbol-colour-dark.svg"));
+  const ts = read("assets/marks/turnstone-mark-colour-dark-v2.svg");
   assert.ok(ts.includes("#318ada") && ts.includes("#f0782a"), "earth-blue feathers and tide, signal-orange legs");
-  const cn = read("assets/marks/constellation-mark-colour-dark.svg");
+  const cn = read("assets/marks/constellation-mark-colour-dark-v2.svg");
   assert.ok(cn.includes("#081c4d") && cn.includes("#b0906f"), "navy disc, gold ring and nodes");
   for (const f of readdirSync(join(pub, "assets", "marks")).filter((n) => /^(turnstone|constellation)-/.test(n)))
     assert.doesNotMatch(read(`assets/marks/${f}`), /<filter|<script/, f);
-  assert.match(read("assets/marks/constellation-horizontal-colour-dark.svg"), /aria-label="Constellation, space community group"/);
+  assert.match(read("assets/marks/constellation-horizontal-colour-dark-v2.svg"), /aria-label="Constellation, space community group"/);
 });
 
 test("brand: Constellation pages are navy and gold, carry the motto and values, and no Lightbound endorsement", () => {
   for (const route of ["/constellation/", "/constellation/apply/"]) {
     assert.match(html[route], /<body class="page brand-constellation">/, route);
-    assert.match(html[route], /<link rel="icon" href="\/assets\/marks\/constellation-icon-colour-dark\.svg"/, route);
+    assert.match(html[route], /<link rel="icon" href="\/assets\/marks\/constellation-icon-colour-dark-v2\.svg"/, route);
     // The legal line ("operated by Lightbound Limited") stays; no endorsement badge or "from Lightbound" framing.
-    assert.doesNotMatch(text(html[route]), /a Lightbound company|from Lightbound(?!\.uk)|by Lightbound(?! Limited)/i, `${route}: no company badge`);
+    assert.doesNotMatch(text(html[route]), /a Lightbound company|from Lightbound(?!\.(?:uk|space))|by Lightbound(?! Limited)/i, `${route}: no company badge`);
   }
   assert.match(text(html["/constellation/"]), /Per aspera ad astra: through adversity we go beyond\./);
   for (const v of ["Intentionality", "Radical integrity", "Accountability", "The Golden Rule"]) assert.ok(text(html["/constellation/"]).includes(v), v);
@@ -458,7 +495,7 @@ test("brand: Constellation pages are navy and gold, carry the motto and values, 
 test("brand: Turnstone page shows the v6 mark, wordmark and tagline, and still nothing about what it does", () => {
   const page = html["/turnstone/"];
   assert.match(page, /<body class="page brand-turnstone">/);
-  assert.match(page, /<link rel="icon" href="\/assets\/marks\/turnstone-badge-colour-dark\.svg"/);
+  assert.match(page, /<link rel="icon" href="\/assets\/marks\/turnstone-badge-colour-dark-v2\.svg"/);
   assert.match(text(page), /TURNSTONE A Lightbound company/);
   assert.match(text(page), /TURNING TIDES/);
   assert.match(read("assets/site.css"), /\.brand-turnstone\{--accent:#F0782A;--accent2:#318ADA;/);
@@ -469,7 +506,16 @@ test("brand: shared status colours and no shadows outside marks and photos", () 
   assert.match(css, /--live:#4E972F;--sim:#318ADA;--danger:#D4673B;/);
   assert.match(css, /\.chip\.live\{color:var\(--live\)\}/, "LIVE is the status green, always with its word");
   assert.match(gauss, /<span class="chip sim">Synthetic · screening evidence<\/span>/, "synthetic = SIMULATED blue");
-  assert.doesNotMatch(css, /text-shadow|drop-shadow|box-shadow:(?!inset 0 -1px)/, "no drop shadows or glows");
+  // Brand Book amendment (Josh, 4 Nov 2026): "accretion light". Glows only in the black hole's own disk colours, only on
+  // hover and focus (the live-view card is the one glow at rest); never text shadows or drop shadows.
+  assert.doesNotMatch(css, /text-shadow|drop-shadow/, "no text or drop shadows");
+  assert.match(css, /--hot:255 222 170;--ember:240 120 42;--mauve:203 182 214;--violet:142 108 196;/, "the disk tokens");
+  for (const [, selector, body] of css.matchAll(/([^{}]+)\{([^{}]*box-shadow:[^{}]*)\}/g)) {
+    const value = body.match(/box-shadow:([^;}]*)/)[1];
+    if (/^inset 0 -1px/.test(value)) continue;
+    assert.match(value, /var\(--disk-glow\)|rgb\(var\(--(hot|ember|mauve|violet)\)/, `${selector.trim()}: glows use the disk colours`);
+    assert.match(selector, /:hover|:focus|^\s*\.live-card\s*$/, `${selector.trim()}: glows on hover or focus only`);
+  }
   assert.match(css, /\.btn\{[^}]*border-radius:4px/, "4 px controls");
 });
 // ---- GAU-137 accuracy (review of addfbe1 against Constellation main and the 17 Oct radiation study) ----
@@ -483,7 +529,7 @@ test("GAU-137: bit errors follow the proton (S) level, link gaps the geomagnetic
   assert.doesNotMatch(text(evidence), /bit-error[^.]*\bG[1-5]\b/i, "bit errors never pinned on a G level");
   assert.match(text(evidence), /public NOAA space-weather data/);
   assert.doesNotMatch(text(evidence), /space-weather scales/);
-  assert.match(text(gauss), /elevated space-weather conditions \(proton, electron and geomagnetic levels\)/);
+  assert.match(text(gauss), /elevated space-weather conditions \(proton and geomagnetic levels\)/); // no electron level in the trust record on main
   assert.match(text(gauss), /Being built for the first pilots: ingest of your own logs, output flagging and the evidence export/);
   assert.match(text(gauss), /Yamcs \(pilot integration\)/);
   assert.match(text(gauss), /ONNX \(pilot integration\)/);
@@ -531,7 +577,7 @@ test("traffic: every indexable page has share cards and is in the sitemap; robot
     assert.match(page, /<meta name="twitter:card" content="summary_large_image">/, route);
   }
   assert.ok(!listed.some((u) => /\/(turnstone|argo|app)\//.test(u)), "secret, unpromoted and signed-in pages never listed");
-  assert.match(read("robots.txt"), /^Disallow: \/app\/$[\s\S]*^Sitemap: https:\/\/lightbound\.uk\/sitemap\.xml$/m);
+  assert.match(read("robots.txt"), /^Disallow: \/app\/$[\s\S]*^Sitemap: https:\/\/lightbound\.space\/sitemap\.xml$/m);
   const ld = JSON.parse(html["/"].match(/<script type="application\/ld\+json">([^<]*)<\/script>/)[1]);
   assert.equal(ld["@graph"][0].name, "Lightbound Limited");
   assert.deepEqual(ld["@graph"][0].sameAs, ["https://luma.com/constellation"]);

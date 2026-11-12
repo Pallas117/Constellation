@@ -17,9 +17,9 @@ description: Repo map, conventions, security rules and test commands for the Gau
 | Wire format | `shared/proto/telemetry.proto` | Source of truth for a future XTCE/CCSDS Space Packet export (see ADR 0001). |
 
 ## Rules
-- Node 22 (`.nvmrc`); native modules must be built with the Node that runs them.
+- Node 26 (`.nvmrc`); native modules must be built with the Node that runs them.
 - Never weaken TLS; no secrets in logs, URLs, query strings or commits; tokens go in headers.
-- Each route states its access level. Unauthenticated GETs are an explicit allowlist: `PUBLIC_READ_PATHS` in `backend/server.ts`; adding to it needs a stated reason.
+- Each route states its access level in `API_POLICY` (`backend/rbac.ts`): unlisted routes answer 404, no session 401, wrong role 403. Unauthenticated routes (`access: "public"`) are an explicit allowlist; adding to it needs a stated reason.
 - Never let the UI poll a route the current role can't use: CyberTiger counts 401/403s and auto-blocks the IP.
 - Validate request bodies and adapter payloads at the boundary; return typed errors, not stack traces.
 - Units and frames in field names or comments.

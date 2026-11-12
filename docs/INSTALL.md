@@ -37,7 +37,7 @@ Run everything as an ordinary user. No step needs root.
 git clone <repository URL from Lightbound> gauss
 cd gauss
 git checkout <release tag>     # vX.Y.Z (scripts/release/create-tag.sh); the first tag is still pending
-nvm use                        # or select Node 22 another way
+nvm use                        # or select Node 26 another way
 npm ci
 ```
 
@@ -78,7 +78,11 @@ variables below at a data directory of your choice.
 | `CYBERTIGER_MAX_EVENTS` | `5000` | no | Security events kept in memory. |
 | `DEVICE_AUTH_SECRET` | unset | **yes** | 32 or more random characters; device proofs are off while unset. `DEVICE_PROOF_TTL_MS` (default `60000`) sets their lifetime. |
 | `LOCAL_INFER_URL` | unset | no | External ML inference service; unset uses the built-in heuristic nowcast. |
-| `GAUSS_MEMORY_URL` | `http://127.0.0.1:3002` | no | Knowledge-memory sidecar for the operator console (loopback only). Set `off` if you don't run it. |
+| `GAUSS_MEMORY_URL` | `http://127.0.0.1:3002` | no | Knowledge-memory sidecar for the operator console (loopback only). Set `off` if you don't run it; the console then hides its search panel. |
+| `GAUSS_MMS` | on | no | MMS CDAWeb polling every 10 min, which feeds the reconnection vectors. `0` stops it and drops MMS from the source status. |
+| `GAUSS_LASP` | on | no | MMS LASP SDC burst-window polling every 60 s. Only its reachability is used (source status); `0` stops it and drops it from the source status. |
+| `GAUSS_SWAP_TIMER` | on | no | Device swap rebalance every `SWAP_BALANCE_INTERVAL_MS`; a tick does nothing while no device is registered. `0` stops it, and with it the automatic `needs_reauth` for devices whose health score falls below 45. |
+| `GAUSS_NATIVE_MHD` | off | no | `1` loads the optional C++ MHD kernel. Build it first with `npm run build:native` (needs a C++ toolchain); installs no longer build it. The TypeScript formulas give the same numbers. |
 | `GAUSS_BACKEND_URL` | `http://127.0.0.1:3001` | no | Backend address for `npm run tpm`. Set it in that command's environment: `npm run tpm` does not read `.env`. |
 | `GAUSS_API_TARGET` | `http://127.0.0.1:3001` | no | Where the web app forwards `/api` and `/ws`. Set it in the environment of `npm run preview`, which does not read it from `.env`. |
 
@@ -202,7 +206,7 @@ since is lost).
 - **`npm run tpm` says unreachable (exit 3):** the backend is not running or listens elsewhere.
   Check its log and `PROXY_PORT`.
 - **Error mentioning `NODE_MODULE_VERSION` or "compiled against a different Node.js version":**
-  dependencies were installed with another Node. Select Node 22 and run `npm ci` again.
+  dependencies were installed with another Node. Select Node 26 and run `npm ci` again.
 - **Sign-in fails with "Invalid origin":** the URL in the browser is not in `ALLOWED_ORIGINS`.
 - **401 from `/api/v1`:** key missing, mistyped or revoked, or the `Bearer ` prefix is missing.
   Stop retrying: by default 8 failures in 5 minutes block your IP for 15 minutes (requests made
@@ -219,8 +223,9 @@ since is lost).
   provider outage); `disk_free` = free space or move old archives elsewhere; `persist_failures` =
   disk or permissions on `GAUSS_BEDROCK_DIR`; `loop_liveness` or `tick_p95` = CPU starved;
   `memory_rss` = restart and report it.
-- **500 on a POST:** "Internal server error" means the body was not valid JSON or was over 2 MB;
-  "Could not record usage" means the commerce database is not writable (disk, permissions);
+- **400 "invalid JSON" or 413 on a POST:** the body was not valid JSON, or was over 2 MB (send
+  fewer items per request). These are answered before the key is checked.
+- **500 on a POST:** "Could not record usage" means the commerce database is not writable (disk, permissions);
   nothing was issued, so retrying is safe.
 - **`git checkout` refuses because of `data/bedrock/telemetry.jsonl`:** the backend is writing
   inside the checkout. Stop it, copy the file into your data directory, set `GAUSS_BEDROCK_DIR`,
