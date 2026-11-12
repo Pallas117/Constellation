@@ -12,6 +12,8 @@ export interface PlanLimits {
   requestsPerMinute: number;
   requestsPerDay: number;
   maxLookbackMs: number;
+  /** Data points the organisation may receive per UTC day (history points, latest points, trust records). */
+  pointsPerDay: number;
 }
 
 export interface ApiKeyInfo {
