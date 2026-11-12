@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { IngestionWorker, liveIngestSources } from "./ingest-loop.js";
+import { IngestionWorker, backoffMs, liveIngestSources } from "./ingest-loop.js";
 import type { CanonicalSpaceWeatherPoint } from "../types.js";
 
 type WorkerInternals = {
   shouldFetch: (key: string, cadenceMs: number) => boolean;
+  timedFetch: <T>(stage: string, fn: () => Promise<T>) => Promise<T | null>;
+  getFailureRuns: () => Record<string, number>;
   couplingWindow: number[];
   trimCouplingWindow: () => void;
 };
@@ -299,4 +301,41 @@ test("tick: a 7 h old completed Kp of 6 is unknown and can't make the tier sever
   const current = await run(2);
   assert.equal(current.indices.kp, 6);
   assert.equal(current.alerts.stormTier, "severe", "a current Kp 6 with Bz -12 is");
+});
+
+test("a source that keeps failing backs off (10 s doubling to 10 min) and logs once per run, then recovers", async () => {
+  let now = Date.parse("2026-01-01T00:00:00.000Z");
+  const worker = new IngestionWorker(undefined, { now: () => now }) as unknown as WorkerInternals;
+  const warnings: string[] = [];
+  const realWarn = console.warn;
+  console.warn = (...args: unknown[]) => warnings.push(args.map(String).join(" "));
+  try {
+    assert.equal(backoffMs(1), 10_000);
+    assert.equal(backoffMs(3), 40_000);
+    assert.equal(backoffMs(20), 10 * 60 * 1000);
+
+    assert.equal(worker.shouldFetch("esa", 10_000), true);
+    assert.equal(await worker.timedFetch("esa", () => Promise.reject(new Error("ENETUNREACH"))), null);
+    assert.deepEqual(worker.getFailureRuns(), { esa: 1 });
+    now += 9_999;
+    assert.equal(worker.shouldFetch("esa", 10_000), false, "backed off 10 s after the first failure");
+    now += 2;
+    assert.equal(worker.shouldFetch("esa", 10_000), true);
+    assert.equal(await worker.timedFetch("esa", () => Promise.reject(new Error("ENETUNREACH"))), null);
+    now += 10_001;
+    assert.equal(worker.shouldFetch("esa", 10_000), false, "second failure waits 20 s");
+    now += 10_000;
+    assert.equal(worker.shouldFetch("esa", 10_000), true);
+    assert.equal(warnings.filter((w) => w.includes("esa fetch failed")).length, 1, "one line per failure run, no stack");
+    assert.match(warnings[0], /esa fetch failed \(1 in a row; next try in 10 s\).*ENETUNREACH/);
+    assert.doesNotMatch(warnings[0], /\n\s+at /, "no stack trace");
+
+    assert.equal(await worker.timedFetch("esa", () => Promise.resolve("ok")), "ok");
+    assert.deepEqual(worker.getFailureRuns(), {});
+    assert.ok(warnings.some((w) => w.includes("esa fetch recovered after 2 failure(s)")));
+    now += 10_000;
+    assert.equal(worker.shouldFetch("esa", 10_000), true, "no backoff after recovery");
+  } finally {
+    console.warn = realWarn;
+  }
 });
