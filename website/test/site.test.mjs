@@ -182,7 +182,9 @@ test("live-view gate: a labelled pre-rendered frame behind the Argo door, no scr
   assert.match(gate, /<p class="src">Accounts aren&rsquo;t open yet: until they are, this button plays a replay of the live view\. /);
   assert.doesNotMatch(gate, /href="\/live"|<!--full-->|<!--public-->/, "nothing points at a sign-in route that is not deployed");
   assert.match(html["/gauss/"], /<section id="replay"/, "the replay the door opens on");
-  assert.equal(read("assets/marks/argo-mark-colour-dark.svg").match(/<polygon/g).length, 5, "the Argo sail mark: mast, boom, three sails and the star");
+  const argoMark = read("assets/marks/argo-mark-colour-dark.svg");  // one sail like a sweeping wind, a wing (Josh, 6 Nov)
+  assert.equal(argoMark.match(/<path d="M[^"]*C[^"]*Z" fill=/g).length, 1, "the Argo sail mark: one crescent sail");
+  assert.equal(argoMark.match(/<polygon/g).length, 1, "the Argo sail mark: and the star");
   assert.match(read("assets/site.css"), /\.btn\.argo\{/, "the door has its own style");
   assert.match(gate, /<svg class="rad-field"[^>]*aria-hidden="true"/, "the radiation field is decoration, hidden from screen readers");
   assert.doesNotMatch(gate, /<script|<iframe|<canvas/);
@@ -464,19 +466,19 @@ test("brand: all four marks are the refined Design System symbols, unchanged, wi
   assert.equal(read("assets/marks/lightbound-mark-colour-dark.svg"), symbol("lightbound-symbol-colour-dark.svg"));
   assert.equal(read("assets/marks/gauss-aurora-mark-colour-dark.svg"), symbol("gauss-aurora-symbol-colour-dark.svg"));
   for (const f of readdirSync(join(pub, "assets", "marks"))) assert.doesNotMatch(read(`assets/marks/${f}`), /<filter|feGaussianBlur/, `${f}: flat marks only`);
-  assert.match(read("assets/marks/gauss-aurora-horizontal-colour-dark.svg"), /aria-label="Gauss Aurora"/);
+  assert.match(read("assets/marks/gauss-aurora-horizontal-colour-dark-v2.svg"), /aria-label="Gauss Aurora"/);
   assert.match(read("assets/marks/lightbound-horizontal-colour-dark.svg"), /aria-label="Lightbound"/);
-  assert.equal(read("assets/marks/turnstone-mark-colour-dark-v2.svg"), symbol("turnstone-symbol-colour-dark.svg"));
-  assert.equal(read("assets/marks/turnstone-badge-colour-dark-v2.svg"), symbol("turnstone-badge-symbol-colour-dark.svg"));
+  assert.equal(read("assets/marks/turnstone-mark-colour-dark-v3.svg"), symbol("turnstone-symbol-colour-dark.svg"));
+  assert.equal(read("assets/marks/turnstone-badge-colour-dark-v3.svg"), symbol("turnstone-badge-symbol-colour-dark.svg"));
   assert.equal(read("assets/marks/constellation-mark-colour-dark-v2.svg"), symbol("constellation-symbol-colour-dark.svg"));
   assert.equal(read("assets/marks/constellation-icon-colour-dark-v2.svg"), symbol("constellation-icon-symbol-colour-dark.svg"));
-  const ts = read("assets/marks/turnstone-mark-colour-dark-v2.svg");
+  const ts = read("assets/marks/turnstone-mark-colour-dark-v3.svg");
   assert.ok(ts.includes("#318ada") && ts.includes("#f0782a"), "earth-blue feathers and tide, signal-orange legs");
   const cn = read("assets/marks/constellation-mark-colour-dark-v2.svg");
   assert.ok(cn.includes("#081c4d") && cn.includes("#b0906f"), "navy disc, gold ring and nodes");
   for (const f of readdirSync(join(pub, "assets", "marks")).filter((n) => /^(turnstone|constellation)-/.test(n)))
     assert.doesNotMatch(read(`assets/marks/${f}`), /<filter|<script/, f);
-  assert.match(read("assets/marks/constellation-horizontal-colour-dark-v2.svg"), /aria-label="Constellation, space community group"/);
+  assert.match(read("assets/marks/constellation-horizontal-colour-dark-v3.svg"), /aria-label="Constellation, space community group"/);
 });
 
 test("brand: Constellation pages are navy and gold, carry the motto and values, and no Lightbound endorsement", () => {
@@ -495,7 +497,7 @@ test("brand: Constellation pages are navy and gold, carry the motto and values, 
 test("brand: Turnstone page shows the v6 mark, wordmark and tagline, and still nothing about what it does", () => {
   const page = html["/turnstone/"];
   assert.match(page, /<body class="page brand-turnstone">/);
-  assert.match(page, /<link rel="icon" href="\/assets\/marks\/turnstone-badge-colour-dark-v2\.svg"/);
+  assert.match(page, /<link rel="icon" href="\/assets\/marks\/turnstone-badge-colour-dark-v3\.svg"/);
   assert.match(text(page), /TURNSTONE A Lightbound company/);
   assert.match(text(page), /TURNING TIDES/);
   assert.match(read("assets/site.css"), /\.brand-turnstone\{--accent:#F0782A;--accent2:#318ADA;/);

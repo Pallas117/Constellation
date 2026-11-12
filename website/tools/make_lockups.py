@@ -5,7 +5,7 @@ sublines JetBrains Mono 9 px. Tracking: Lightbound 24 %, Gauss 16 %, Turnstone 3
 sign-in, approved 5 Nov) takes Lightbound's 24 %, as it signs people in to the whole Lightbound workspace.
 Text is outlined, so no font is needed. Gauss keeps the kit lockup's two-tone "GAUSS AURORA" (AURORA in lime).
 
-usage: <python with fonttools> website/tools/make_lockups.py <Lightbound Brand Kit dir>
+usage: <python with fonttools (+ uharfbuzz for kerning)> website/tools/make_lockups.py <Lightbound Brand Kit dir>
 Reads website/tools/symbols/*.svg. Writes the Lightbound, Gauss, Constellation and Argo lockups to website/public/assets/marks/
 and the Turnstone lockup to website/tools/symbols/ (reference only: the site shows Turnstone as mark + text wordmark).
 """
@@ -24,7 +24,7 @@ OUT = HERE.parent / "public" / "assets" / "marks"
 WARM, MUTED, GOLD, LIME = "#f3f0e8", "#a9aba6", "#b0906f", "#ccff00"
 
 # Marks are cached for a week (public/_headers), so a changed lockup gets a new published name.
-PUBLISHED = {"constellation": "constellation-horizontal-colour-dark-v2.svg"}
+PUBLISHED = {"constellation": "constellation-horizontal-colour-dark-v3.svg", "gauss-aurora": "gauss-aurora-horizontal-colour-dark-v2.svg"}
 LOCKUPS = {
     # name: (symbol file, wordmark segments [(text, colour)], tracking, subline or None, subline colour, accessible name)
     # Turnstone is endorsed ("a Lightbound company"); Constellation carries no Lightbound badge (Brand Book, architecture).
@@ -39,16 +39,36 @@ SYMBOL, GAP, WORD_PX, SUB_PX, SUB_TRACK, LINE_GAP = 56.0, 20.0, 22.0, 9.0, 0.14,
 
 def text_path(font: TTFont, text: str, size: float, tracking: float, x0: float, baseline: float) -> tuple[str, float]:
     """Outline `text` at a font size in px with letter-spacing in em; returns (path d, width)."""
-    glyphs, cmap, upm = font.getGlyphSet(), font.getBestCmap(), font["head"].unitsPerEm
+    glyphs, upm = font.getGlyphSet(), font["head"].unitsPerEm
     scale = size / upm
     pen = SVGPathPen(glyphs)
     x = x0
-    for i, ch in enumerate(text):
-        name = cmap[ord(ch)]
+    names_advances = shaped(font, text)
+    for i, (name, advance) in enumerate(names_advances):
         glyphs[name].draw(TransformPen(pen, (scale, 0, 0, -scale, x, baseline)))
-        x += glyphs[name].width * scale + (tracking * size if i < len(text) - 1 else 0)
+        x += advance * scale + (tracking * size if i < len(names_advances) - 1 else 0)
     d = re.sub(r"-?\d+\.\d+", lambda m: f"{float(m.group()):.2f}".rstrip("0").rstrip("."), pen.getCommands())
     return d, x - x0
+
+
+def shaped(font: TTFont, text: str) -> list[tuple[str, float]]:
+    """Glyph names and advances in font units, with the font's own kerning (HarfBuzz) when uharfbuzz is installed.
+
+    Plain advances set pairs like "AV" and "TU" visibly loose; kerning first, then tracking, is how type is set.
+    Without uharfbuzz it falls back to the raw advances (the lockups before 5 Nov 2026).
+    """
+    try:
+        import uharfbuzz as hb
+    except ImportError:
+        cmap, glyphs = font.getBestCmap(), font.getGlyphSet()
+        return [(cmap[ord(ch)], glyphs[cmap[ord(ch)]].width) for ch in text]
+    hb_font = hb.Font(hb.Face(hb.Blob.from_file_path(font.reader.file.name)))
+    buf = hb.Buffer()
+    buf.add_str(text)
+    buf.guess_segment_properties()
+    hb.shape(hb_font, buf, {"kern": True, "liga": False})
+    order = font.getGlyphOrder()
+    return [(order[info.codepoint], pos.x_advance) for info, pos in zip(buf.glyph_infos, buf.glyph_positions)]
 
 
 def cap(font: TTFont, size: float) -> float:
