@@ -108,3 +108,5 @@ Before tagging, move these entries under `## [0.1.0] - <date>`.
 - The operator pattern as a snooping sensor: alarms on wrong drawings, lockouts and probed phone codes, a duress
   pattern that signs in quietly to a console in maintenance and raises the alarm, and a watch that makes unusual
   operator data access draw the pattern again (#224).
+- One operator login, checked on every request: operator sessions only from a passkey, only from the account owner's
+  own device on the tailnet, with the pattern once a day per passkey and the console certificate watched (#230).

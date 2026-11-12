@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Navigate, useLocation, useNavigate, type Location } from "react-router-dom";
 import { AnimatePresence, motion } from "framer-motion";
-import { Monitor, Smartphone } from "lucide-react";
+import { Fingerprint, Monitor, Smartphone } from "lucide-react";
 import { OperatorGeometryFigure } from "@/components/OperatorGeometryFigure";
 import { PatternPad, type PadFeedback } from "@/components/PatternPad";
 import { QrCode } from "@/components/QrCode";
@@ -11,7 +11,7 @@ import { useNow } from "@/hooks/useNow";
 import { useOperatorGeometry } from "@/hooks/useOperatorGeometry";
 import { refreshOperatorPattern, useOperatorPattern } from "@/hooks/useOperatorPattern";
 import { usePrefersReducedMotion } from "@/hooks/usePrefersReducedMotion";
-import { signOut, useSession } from "@/lib/auth-client";
+import { passkeyTouch, signOut, useSession } from "@/lib/auth-client";
 import { fetchPatternStatus, noticeText, openPadRequest, verifyPattern } from "@/lib/pattern";
 import { landingFor, roleOf } from "@/lib/roles";
 import { safeRedirectPath } from "@/lib/safe-redirect";
@@ -81,6 +81,27 @@ export default function PatternCheck() {
     }
   };
 
+  // Operator sessions must be opened with a passkey: one touch here (and, within the day on this
+  // passkey, that is all: the server starts the session already drawn).
+  const [touching, setTouching] = useState(false);
+  const [touchNote, setTouchNote] = useState<string | null>(null);
+  const touch = async () => {
+    setTouching(true);
+    setTouchNote(null);
+    const result = await passkeyTouch("sign-in");
+    setTouching(false);
+    if ("error" in result) {
+      setTouchNote(result.error);
+      return;
+    }
+    refreshOperatorPattern();
+  };
+
+  // Already through (a touch within the day on this passkey, or the phone): straight on.
+  useEffect(() => {
+    if (status?.passkeySession && status.verified && feedback.kind === "idle") navigate(target, { replace: true });
+  }, [status, feedback.kind, navigate, target]);
+
   const startPhone = async () => {
     setPhoneNote(null);
     try {
@@ -125,7 +146,7 @@ export default function PatternCheck() {
         <div className="mt-2 flex items-center gap-3">
           <OperatorGeometryFigure geometry={geometry} size={40} variant="mark" />
           <div>
-            <h1 className="text-xl font-semibold leading-tight">Draw your pattern.</h1>
+            <h1 className="text-xl font-semibold leading-tight">{status && !status.passkeySession ? "Touch, then draw." : "Draw your pattern."}</h1>
             <p className="text-xs text-muted-foreground">{geometry ? `${geometry.colourName} · ${geometry.code}` : "Your second check, after the touch."}</p>
           </div>
         </div>
@@ -147,7 +168,27 @@ export default function PatternCheck() {
 
         <div className="mt-6 min-h-[440px]">
           <AnimatePresence mode="wait" initial={false}>
-            {locked ? (
+            {status && !status.passkeySession ? (
+              <motion.section
+                key="touch"
+                initial={still ? false : { opacity: 0, y: 8 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={still ? undefined : { opacity: 0, y: -8 }}
+                className="flex flex-col items-center gap-4 pt-10 text-center"
+              >
+                <OperatorGeometryFigure geometry={geometry} size={160} />
+                <p className="max-w-xs text-sm text-muted-foreground">The operator console opens with your passkey: Touch ID here, or Face ID on your phone.</p>
+                <Button onClick={() => void touch()} disabled={touching}>
+                  <Fingerprint className="h-4 w-4" aria-hidden="true" />
+                  {touching ? "Touch the sensor…" : "Continue with your passkey"}
+                </Button>
+                {touchNote && (
+                  <p role="alert" className="max-w-xs text-sm text-caution">
+                    {touchNote}
+                  </p>
+                )}
+              </motion.section>
+            ) : locked ? (
               <motion.p key="locked" initial={{ opacity: 0 }} animate={{ opacity: 1 }} role="alert" className="rounded-md border border-caution/50 bg-caution/10 px-3 py-3 text-sm text-caution">
                 Too many misses: your pattern is locked until {new Date(locked).toLocaleTimeString()}. Wait, or ask an admin to clear it.
               </motion.p>

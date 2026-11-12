@@ -482,6 +482,13 @@ out=$(run deploy "$E" --emergency "hotfix for the outage" 2>&1); rc=$?
   && hist 'H[-1]["emergency"]=="hotfix for the outage" and H[-1]["gates"] is None and H[-1]["to"]=="'"$E"'" and H[-1]["result"]=="ok"'
 expect "--emergency deploys without the checks, texts the phone and is recorded" $?
 out=$(run check | plain); [[ "$out" == *"✗ live = ${E:0:7}, deployed "*"EMERGENCY (hotfix for the outage)"* ]]; expect "check: an emergency deploy stays ✗" $?
+# The private operator console's certificate (GAU-235): shown when there is one, failing 14 days before expiry.
+CERTS="$T/home/.local/state/gauss-ops-cert/certificates"; mkdir -p "$CERTS"
+/usr/bin/openssl req -x509 -newkey rsa:2048 -nodes -keyout "$T/console.key" -out "$CERTS/ops.example.test.crt" -days 40 -subj /CN=ops.example.test 2>/dev/null
+out=$(run check | plain); [[ "$out" == *"✓ console certificate for ops.example.test: "*" days left"* ]]; expect "check: the private console's certificate and its days left" $?
+/usr/bin/openssl req -x509 -newkey rsa:2048 -nodes -keyout "$T/console.key" -out "$CERTS/ops.example.test.crt" -days 3 -subj /CN=ops.example.test 2>/dev/null
+out=$(run check | plain); [[ "$out" == *"✗ console certificate for ops.example.test: "*" days left (renew it with ops-cert.sh)"* ]]; expect "check: a console certificate within 14 days of expiry fails the check" $?
+rm -rf "$T/home/.local/state/gauss-ops-cert" "$T/console.key"
 out=$(run deploy "$D" --emergency 2>&1); [ $? = 2 ] && [[ "$out" == *"needs a reason"* ]]; expect "--emergency needs a reason" $?
 
 # gates record: the five gates on a clean checkout (path with a space), recorded by tree

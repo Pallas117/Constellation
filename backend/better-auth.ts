@@ -14,6 +14,7 @@ import {
     passkeyConfigFrom,
     passkeyCredentialFrom,
 } from "./passkey-policy.js";
+import { createDeviceMemory } from "./pattern/device.js";
 import { isSsoCallback, ssoEmailAllowed as policyAllows, ssoPolicyFromEnv, ssoSignUpAllowed } from "./sso-policy.js";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -22,6 +23,9 @@ const __dirname = path.dirname(__filename);
 // Initialize a local SQLite db for better-auth. The admin roles route reads it too.
 const sqlite = new Database(path.join(__dirname, "../.auth.db"));
 export const authDb = sqlite;
+
+// The pattern once a day per passkey (backend/pattern/device.ts): read by the sign-in hook below.
+export const patternDeviceMemory = createDeviceMemory(sqlite);
 
 // Same origin list CORS uses; without it better-auth rejects every sign-in
 // from the frontend with "Invalid origin".
@@ -146,8 +150,15 @@ export const auth = betterAuth({
                             ...(was?.patternAt ? { patternAt: was.patternAt } : {}),
                             ...(was?.duressAt ? { duressAt: was.duressAt } : {}),
                         } as Record<string, unknown>);
+                        await ctx.context.internalAdapter.deleteSession(previous);
+                        return;
                     }
                     await ctx.context.internalAdapter.deleteSession(previous);
+                }
+                // Coming back with the same passkey within the day: the pattern was drawn on it already.
+                const credential = (fresh?.session as { passkeyCredentialId?: unknown } | undefined)?.passkeyCredentialId;
+                if (fresh && typeof credential === "string" && patternDeviceMemory.fresh(fresh.user.id, credential)) {
+                    await ctx.context.internalAdapter.updateSession(fresh.session.token, { patternAt: new Date() } as Record<string, unknown>);
                 }
             }
         }),

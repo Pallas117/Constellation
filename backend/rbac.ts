@@ -11,10 +11,12 @@ import { stepUpFresh } from "./passkey-policy.js";
  *   answer otherwise is 428 STEP_UP_REQUIRED, not 401/403, so a stale touch
  *   never counts toward CyberTiger's auth-failure block; the console asks for
  *   Touch ID or Face ID and retries.
- * - operator and admin routes also need the operator pattern drawn in this
- *   session (GAU-235, backend/pattern/): 428 PATTERN_SETUP_REQUIRED until one
- *   is set, then 428 PATTERN_REQUIRED until it is drawn. OPERATOR_PATTERN=off
- *   turns this off.
+ * - operator and admin routes also need a session opened with a passkey
+ *   (428 PASSKEY_REQUIRED; OPERATOR_PASSKEY=off turns this off) and the
+ *   operator pattern drawn in this session (GAU-235, backend/pattern/): 428
+ *   PATTERN_SETUP_REQUIRED until one is set, then 428 PATTERN_REQUIRED until
+ *   it is drawn. OPERATOR_PATTERN=off turns that off. The tailnet identity
+ *   check (backend/pattern/tailnet.ts) runs after this middleware.
  *
  * Every /api route must appear here; anything unlisted is denied
  * (backend/rbac.test.ts fails if a route is added without a policy).
@@ -36,6 +38,12 @@ export interface Policy {
 
 export const STEP_UP_REQUIRED = "STEP_UP_REQUIRED";
 export const PATTERN_SETUP_REQUIRED = "PATTERN_SETUP_REQUIRED";
+export const PASSKEY_REQUIRED = "PASSKEY_REQUIRED";
+
+/** Operator and admin sessions must be opened with a passkey unless OPERATOR_PASSKEY=off. */
+export function operatorPasskeyRequired(env: NodeJS.ProcessEnv = process.env): boolean {
+  return (env.OPERATOR_PASSKEY ?? "").trim().toLowerCase() !== "off";
+}
 export const PATTERN_REQUIRED = "PATTERN_REQUIRED";
 
 /** Operator and admin routes need the drawn pattern unless OPERATOR_PATTERN=off. */
@@ -165,6 +173,11 @@ export function enforceApiPolicy(req: AuthenticatedRequest, res: Response, next:
   if ((access === "operator" || access === "admin") && req.auth.pattern?.duress) {
     // Duress (backend/pattern/sensor.ts): the alarm has gone; the session sees a console in maintenance.
     res.status(503).json({ error: "The operator console is in maintenance. Try again later." });
+    return;
+  }
+  if ((access === "operator" || access === "admin") && operatorPasskeyRequired() && !req.auth.passkeyAt) {
+    // One login for operators: a password or Google session can't open the console.
+    res.status(428).json({ error: "Sign in with your passkey (Touch ID or Face ID).", code: PASSKEY_REQUIRED });
     return;
   }
   if ((access === "operator" || access === "admin") && operatorPatternRequired()) {

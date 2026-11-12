@@ -210,6 +210,8 @@ export interface PadRequest {
   userId: string;
   /** The session the phone's drawing will complete: the Mac's, never sent to the phone. */
   sessionToken: string;
+  /** The passkey that session was opened with, for the once-a-day memory. */
+  credentialId: string | null;
   expiresAt: number;
   tries: number;
   state: PadRequestState;
@@ -239,10 +241,10 @@ export function createPadRequests(options: { now?: () => number; ttlMs?: number;
 
   return {
     /** A new request for this session; any earlier one from the same session ends. */
-    open(userId: string, sessionToken: string): PadRequest {
+    open(userId: string, sessionToken: string, credentialId: string | null = null): PadRequest {
       sweep();
       for (const r of byId.values()) if (r.sessionToken === sessionToken && r.state === "waiting") r.state = "expired";
-      const r: PadRequest = { id: randomBytes(16).toString("base64url"), userId, sessionToken, expiresAt: now() + ttl, tries: 0, state: "waiting" };
+      const r: PadRequest = { id: randomBytes(16).toString("base64url"), userId, sessionToken, credentialId, expiresAt: now() + ttl, tries: 0, state: "waiting" };
       byId.set(r.id, r);
       return r;
     },
