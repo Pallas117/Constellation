@@ -42,6 +42,8 @@ Before tagging, move these entries under `## [0.1.0] - <date>`.
 
 ### Fixed
 
+- API: a request body that is not valid JSON answers 400, and one over 2 MB answers 413, where both were 500; a
+  rejected body is no longer written to the log (#258).
 - No fabricated output: no random values presented as model output (#45), no invented GEO objects (#46), canonical
   Dst labelled as modelled (#50).
 - Radiation: absorbed dose from stopping power in Gy(Si) with cited alert thresholds (#16); native MHD kernels in
@@ -59,3 +61,5 @@ Before tagging, move these entries under `## [0.1.0] - <date>`.
   each proof once (#41).
 - Graph client input validation, safer Neo4j defaults and inference request limits (#72).
 - Dependencies with known vulnerabilities updated; Gauss Argo built with Go 1.26.10 (#135).
+- Fonts are served by the site, not Google: no visitor's address goes to a third party and no outside request can
+  stall a page load. Their OFL-1.1 licence ships beside them and the release licence check recognises it (#142).

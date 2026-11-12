@@ -1,5 +1,4 @@
 import { buildFingerprint, type DeviceFingerprint } from "./operator-fingerprint";
-import { getAuthHeaders } from "./api/auth";
 import { apiBase } from "./api/base-url";
 import { HttpFailure } from "./api/http-error";
 
@@ -7,6 +6,7 @@ import { HttpFailure } from "./api/http-error";
  * Binds this browser's fingerprint to the signed-in user (any role may).
  * The fingerprint goes in the POST body only, never the URL. `base` is the
  * apiBase() prefix: "" when same-origin, else the API's absolute origin.
+ * The session cookie authenticates; `headers` are extra headers if any.
  */
 export async function postDeviceRegistration(
   base: string,
@@ -16,6 +16,7 @@ export async function postDeviceRegistration(
 ) {
   const res = await fetch(`${base}/api/device/register`, {
     method: "POST",
+    credentials: "include",
     headers: { "Content-Type": "application/json", ...headers },
     body: JSON.stringify({ name, fingerprintHash: fp.hash, fingerprintSignals: fp.signals }),
   });
@@ -25,6 +26,6 @@ export async function postDeviceRegistration(
 
 export async function registerDeviceWithLogin(name?: string) {
   const fp = await buildFingerprint();
-  const headers = await getAuthHeaders();
-  return postDeviceRegistration(apiBase(), headers, fp, name);
+  // apiBase(), like every other call, so it works without the dev proxy; the session cookie authenticates.
+  return postDeviceRegistration(apiBase(), {}, fp, name);
 }

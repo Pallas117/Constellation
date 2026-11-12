@@ -31,6 +31,7 @@ import type {
   IngestionTickResult,
   NowcastInferenceRequest,
 } from "./types.js";
+import { bodyErrorResponse } from "./lib/body-errors.js";
 import { withFreshness } from "./lib/freshness.js";
 import { canSend, sweepDeadSockets, trackLiveness, WS_HEARTBEAT_MS } from "./lib/socket-keepalive.js";
 import { IngestionWorker, liveIngestSources } from "./worker/ingest-loop.js";
@@ -293,7 +294,7 @@ app.post("/api/pilot-requests", createPilotRequestHandler(commerce));
 // Mesh & Network page: onboarding for everyone signed in, team status for operators.
 app.use("/api/mesh", mesh.ui);
 
-// RAG endpoints: status for any signed-in user, index/query for operators.
+// RAG endpoints: operators only (status and query; API_POLICY in rbac.ts).
 // Knowledge memory: the Cosmic Brain sidecar (backend/memory/client.ts, docs/memory-sidecar.md).
 // Nothing here is mocked: when the service is down the reply says so, never a canned count or
 // answer. Indexing is an operator task on the memory host and has no route here.
@@ -325,7 +326,7 @@ app.post("/api/rag/query", async (req: express.Request, res: express.Response) =
   res.json({ ok: true, answer: result.answer, sources: result.sources });
 });
 
-// Device lifecycle endpoints (requires operator session)
+// Device lifecycle endpoints: any signed-in user, for their own devices (API_POLICY in rbac.ts)
 app.use("/api/device", deviceRegistryRouter);
 
 app.get("/api/feed/space-weather/5s", async (req: AuthenticatedRequest, res) => {
@@ -835,7 +836,17 @@ export async function stopBackend(): Promise<void> {
   backendStarted = false;
 }
 
-app.use((error: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+app.use((error: unknown, req: express.Request, res: express.Response, _next: express.NextFunction) => {
+  // GAU-231: a bad request body is the client's mistake (400/413/415), not a server fault.
+  // express.json() runs before the security headers, so set the one a JSON answer needs here.
+  const bodyError = bodyErrorResponse(error);
+  if (bodyError) {
+    // Never log the error itself: body-parser attaches the raw body to it.
+    console.warn(`[backend] rejected request body: ${bodyError.status} ${bodyError.error} (${req.method} ${req.path})`);
+    res.setHeader("x-content-type-options", "nosniff");
+    res.status(bodyError.status).json({ error: bodyError.error });
+    return;
+  }
   console.error("[backend] unhandled error", error);
   res.status(500).json({ error: "Internal server error" });
 });

@@ -81,7 +81,7 @@ export const StateSnapshot = z.object({
   at: isoTime,
   /** Observations older than this (relative to `at`) were not used. */
   maxAgeMs: z.number().int().positive(),
-  variables: z.record(StateValue),
+  variables: z.record(z.string(), StateValue),
   /** Every observation id that contributed, for audit and replay. */
   observationIds: z.array(hexId("obs")),
 });
@@ -93,7 +93,7 @@ export const StateDelta = z.object({
   checksum: sha256,
   fromState: hexId("st"),
   toState: hexId("st"),
-  changes: z.record(z.object({ from: z.number().nullable(), to: z.number().nullable(), provenance: Provenance })),
+  changes: z.record(z.string(), z.object({ from: z.number().nullable(), to: z.number().nullable(), provenance: Provenance })),
 });
 
 export const WorldEvent = z.object({
