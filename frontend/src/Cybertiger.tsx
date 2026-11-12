@@ -18,6 +18,10 @@ const NotFound = lazy(() => import("./pages/NotFound"));
 const HeliophysicsDashboard = lazy(() => import("./pages/HeliophysicsDashboard"));
 const MeshDashboard = lazy(() => import("./pages/MeshDashboard"));
 const ApiKeys = lazy(() => import("./pages/ApiKeys"));
+const AccountSecurity = lazy(() => import("./pages/AccountSecurity"));
+const OperatorSetup = lazy(() => import("./pages/OperatorSetup"));
+const PatternCheck = lazy(() => import("./pages/PatternCheck"));
+const PhonePad = lazy(() => import("./pages/PhonePad"));
 
 const queryClient = new QueryClient();
 
@@ -74,6 +78,32 @@ const App = () => (
                       </ProtectedRoute>
                     }
                   />
+                  <Route
+                    path="/account/security"
+                    element={
+                      <ProtectedRoute minRole="user">
+                        <AccountSecurity />
+                      </ProtectedRoute>
+                    }
+                  />
+                  {/* Operator sign-in setup and the pattern check (GAU-235); /pad is the phone's, opened from a QR code */}
+                  <Route
+                    path="/setup"
+                    element={
+                      <ProtectedRoute minRole="operator" pattern={false}>
+                        <OperatorSetup />
+                      </ProtectedRoute>
+                    }
+                  />
+                  <Route
+                    path="/pattern"
+                    element={
+                      <ProtectedRoute minRole="operator" pattern={false}>
+                        <PatternCheck />
+                      </ProtectedRoute>
+                    }
+                  />
+                  <Route path="/pad" element={<PhonePad />} />
                   {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
                   <Route path="*" element={<NotFound />} />
                 </Routes>

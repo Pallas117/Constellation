@@ -47,13 +47,29 @@ import { queryLimit } from "./lib/query-limit.js";
 import { auroraMapReply, encodedReply, sendJsonList } from "./lib/json-response.js";
 import { diskFreeBytes, overall, readTpms } from "./lib/tpm.js";
 import { SPACE_OBJECT_CATALOG } from "./lib/space-object-catalog.js";
-import { auth, ssoAllowedDomain, ssoGithubEnabled, ssoGoogleEnabled } from "./better-auth.js";
+import {
+  auth,
+  authDb,
+  authSecret,
+  ensureAuthSchema,
+  markSessionPattern,
+  markUserPattern,
+  newestPasskeyKey,
+  passkeyConfig,
+  ssoAllowedDomain,
+  ssoGithubEnabled,
+  ssoGoogleEnabled,
+} from "./better-auth.js";
+import { createAdminUsersRouter } from "./admin/users.js";
+import { createPatternRouter } from "./pattern/router.js";
+import { createPadRequests, createPatternStore, patternPepper } from "./pattern/store.js";
+import { windowLimit } from "./rate-limit.js";
 import { toNodeHandler } from "better-auth/node";
 import { SelfHealerAgent } from "./cybertiger/self-healer.js";
 import { bootSwitches } from "./lib/boot-switches.js";
 import deviceRegistryRouter from "./device-registry.js";
 import { createMeshRouters } from "./mesh/router.js";
-import { enforceApiPolicy, isPublic } from "./rbac.js";
+import { enforceApiPolicy, isPublic, operatorPatternRequired } from "./rbac.js";
 import { CommerceStore } from "./commerce/store.js";
 import { createDataApiRouter, createOrgRouter, createPilotRequestHandler } from "./commerce/routers.js";
 import { EnvironmentHistory } from "./trust/environment.js";
@@ -131,6 +147,29 @@ app.use(
     credentials: true,
   }),
 );
+
+// Passkey ceremonies (GAU-235) are rate-limited per client before better-auth
+// sees them: /api/auth sits in front of CyberTiger. A sign-in or step-up is two
+// requests (options, then verify); registering is two more.
+const passkeyClientIp = (req: express.Request) => cyberTiger.extractClientIp(req);
+const PASSKEY_LIMIT_MESSAGE = "Too many passkey attempts. Wait a minute and try again.";
+app.use("/api/auth/passkey", windowLimit({ windowMs: 60_000, max: 60, keyOf: passkeyClientIp, message: PASSKEY_LIMIT_MESSAGE }));
+app.use(
+  ["/api/auth/passkey/verify-authentication", "/api/auth/passkey/verify-registration"],
+  windowLimit({ windowMs: 60_000, max: 10, keyOf: passkeyClientIp, message: PASSKEY_LIMIT_MESSAGE }),
+);
+// Pattern drawings (GAU-235): 10 a minute per address on top of the five-miss lockout.
+app.use(
+  ["/api/operator-pattern/verify", "/api/operator-pattern/pad"],
+  windowLimit({ windowMs: 60_000, max: 10, keyOf: passkeyClientIp, message: "Too many pattern attempts. Wait a minute and try again." }),
+);
+
+// Operator patterns: the drawn second check (backend/pattern/). The pepper comes from the auth secret.
+const patternPepperKey = authSecret().then(patternPepper);
+patternPepperKey.catch(() => {}); // a missing secret fails each pattern request (500), not the process
+const patternStore = createPatternStore(authDb, { pepper: patternPepperKey });
+// Where phones open the pattern pad, e.g. the tailnet share's https origin; unset: draw on the computer only.
+const patternPadOrigin = process.env.PATTERN_PAD_ORIGIN?.trim().replace(/\/+$/, "") || null;
 
 // Better-Auth handler
 app.all("/api/auth/*", toNodeHandler(auth));
@@ -247,7 +286,15 @@ app.use("/api", (req: express.Request, res: express.Response, next: express.Next
 // Tells the login page which sign-in methods to offer (public, no secrets).
 app.get("/api/sso-options", (_req, res) => {
   const any = ssoGoogleEnabled || ssoGithubEnabled;
-  res.json({ google: ssoGoogleEnabled, github: ssoGithubEnabled, domain: any ? ssoAllowedDomain : null });
+  res.json({
+    google: ssoGoogleEnabled,
+    github: ssoGithubEnabled,
+    domain: any ? ssoAllowedDomain : null,
+    // The host passkeys work at; the login page offers them only there (null: off).
+    passkey: passkeyConfig.origins.length > 0 ? { rpId: passkeyConfig.rpID } : null,
+    // Operators draw their pattern after signing in (backend/pattern/); false when OPERATOR_PATTERN=off.
+    operatorPattern: operatorPatternRequired(),
+  });
 });
 
 // Argo agents report with a device token, so this sits before session auth.
@@ -284,6 +331,32 @@ app.use(
   ),
 );
 app.use("/api", enforceApiPolicy);
+
+// Admin role management; a change needs a passkey step-up (policy: backend/rbac.ts).
+app.use(
+  "/api/admin/users",
+  createAdminUsersRouter(authDb, {
+    clearPattern: async (userId) => {
+      const cleared = patternStore.clear(userId);
+      await markUserPattern(userId, null);
+      return cleared;
+    },
+  }),
+);
+
+// Operator pattern: set, draw, and draw on a phone (policy: backend/rbac.ts).
+app.use(
+  "/api/operator-pattern",
+  createPatternRouter({
+    store: patternStore,
+    requests: createPadRequests(),
+    markSession: markSessionPattern,
+    markUser: markUserPattern,
+    geometryKeyFor: newestPasskeyKey,
+    required: () => operatorPatternRequired(),
+    padOrigin: patternPadOrigin,
+  }),
+);
 
 // Organisation self-service: keys and usage for members (policy: backend/rbac.ts).
 app.use("/api/orgs", createOrgRouter(commerce));
@@ -757,6 +830,21 @@ export async function startBackend(options?: { host?: string; port?: number }): 
     const actualPort = typeof address === "object" && address?.port ? address.port : port;
     return { app, server, host, port: actualPort };
   }
+
+  // Auth schema first: the passkey table and session fields must exist before
+  // a request can sign in. Additive; a failure stops the start (deploy rolls back).
+  const authChanges = await ensureAuthSchema();
+  if (authChanges.length > 0) console.log(`[backend] auth schema: ${authChanges.join(", ")}`);
+  console.log(
+    passkeyConfig.origins.length > 0
+      ? `[backend] passkeys: RP ID ${passkeyConfig.rpID} for ${passkeyConfig.origins.join(", ")}`
+      : `[backend] passkeys off: no secure origin matches RP ID ${passkeyConfig.rpID}`,
+  );
+  console.log(
+    operatorPatternRequired()
+      ? `[backend] operator pattern required${patternPadOrigin ? `; phones draw at ${patternPadOrigin}/pad` : "; drawing on phones is off (PATTERN_PAD_ORIGIN)"}`
+      : "[backend] operator pattern off (OPERATOR_PATTERN=off)",
+  );
 
   // Reload the last 24 h from bedrock so the feed history and the 6 h forecast window survive a
   // restart instead of starting empty. GAU-117.

@@ -1,6 +1,6 @@
 {
   "$comment": "Constellation requirements baseline (GAU-120). NASA SP-2016-6105 Rev 2 §6.2/§5.3. Methods: T test, A analysis, I inspection, D demonstration. T evidence = exact test names; A/I/D evidence = repo paths. Verified by `npm run verify`.",
-  "version": "1.14.0",
+  "version": "1.16.0",
   "requirements": [
     {
       "id": "REQ-ING-001",
@@ -374,6 +374,48 @@
       "verifiedBy": [
         "throttles NOAA fetches to once per 60s while worker ticks every 5s",
         "allows MMS survey fetch on each 5s cadence boundary"
+      ]
+    },
+    {
+      "id": "REQ-SEC-003",
+      "title": "Operator passkey sign-in, step-up and idle sign-out",
+      "statement": "Operator sign-in and admin changes shall use WebAuthn passkeys with user verification required (the device's biometric or PIN; no biometric data leaves the device), shall be refused without user verification or from an origin outside the configured relying party, shall require a passkey touch within the last 5 minutes for admin changes, shall rate-limit passkey ceremonies per client, and shall end sessions after inactivity.",
+      "rationale": "Quick, high-security operator login and logout (Josh, 2026-11-02). Passkeys bind sign-in to a device-held private key and a fresh server challenge; step-up keeps a stolen or unattended session from changing roles or security controls. Not post-quantum: passkeys use ECDSA P-256 or Ed25519. The per-operator geometry is a recognition cue derived from public data, not a control.",
+      "parent": "GAU-235",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "passkey registration asks for a discoverable, user-verifying credential and stores only public data",
+        "a passkey that did not verify the person is refused at registration",
+        "one-touch passkey sign-in opens a session stamped with the touch time and credential",
+        "passkey sign-in without user verification, from a foreign origin or with an unknown key opens no session",
+        "a passkey step-up replaces the browser's previous session and revokes it",
+        "admin changes need a passkey touch in the last 5 minutes, answered 428 (not 401/403) otherwise",
+        "every admin-only change is marked step-up",
+        "a role change needs an admin with a fresh passkey touch",
+        "passkey limiter answers 429 with Retry-After past the limit, per client, and resets each window",
+        "sessions slide: one unused for 12 hours expires",
+        "the console signs out after 15 idle minutes by default, warning a minute before"
+      ]
+    },
+    {
+      "id": "REQ-SEC-004",
+      "title": "Operator pattern after the passkey",
+      "statement": "Operator and admin routes shall require an operator pattern (8 to 24 of the tesseract's 16 vertices, at least 6 different) set with a fresh passkey touch and drawn in the same session, answered 428 rather than 401/403 until then; the server shall store only a salted scrypt hash over a pepper derived from the auth secret, lock the pattern for 15 minutes after five misses, and accept a drawing from a phone only through a one-time request that ends after one approval, five tries or two minutes.",
+      "rationale": "Josh, 2026-11-03: a pattern onboarding flow with the pattern drawn on the phone, as a second check after the biometric touch. A pattern holds at most about 31 bits, so the lockout bounds online guessing and the pepper bounds offline guessing; it adds to the passkey and never replaces it.",
+      "parent": "GAU-235",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "operator and admin routes need the operator pattern drawn in this session, answered 428 (not 401/403) otherwise",
+        "setting a pattern needs a fresh passkey touch; changing it also needs the current one drawn",
+        "operator patterns are stored only as a peppered scrypt hash, per user, under the key-lock rules",
+        "five misses lock an operator's pattern for 15 minutes; a match resets the count",
+        "phone requests are one-time: two minutes, five tries, one approval",
+        "a phone draws the pattern for the computer's session through a one-time QR code",
+        "a step-up keeps the operator pattern this browser already drew, and a fresh sign-in does not get it",
+        "admins clear another operator's forgotten pattern with a fresh touch, never their own",
+        "the frontend pad uses the same pattern rules as the server"
       ]
     },
     {

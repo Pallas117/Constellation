@@ -33,6 +33,7 @@
     "audit:adherence": "node --env-file-if-exists=.env --import tsx backend/scripts/full-adherence-audit.ts",
     "auth:migrate": "node --env-file-if-exists=.env --import tsx backend/scripts/auth-migrate.ts",
     "auth:set-role": "node --env-file-if-exists=.env --import tsx backend/scripts/set-role.ts",
+    "auth:clear-pattern": "node --env-file-if-exists=.env --import tsx backend/scripts/clear-pattern.ts",
     "mesh:enroll": "node --import tsx backend/scripts/mesh-enroll.ts",
     "org": "node --env-file-if-exists=.env --import tsx backend/scripts/org.ts",
     "test:physics": "node --import tsx --test \"frontend/src/lib/physics/**/*.test.ts\"",
@@ -80,6 +81,8 @@
     "smoke:website": "node website/tools/smoke.mjs"
   },
   "dependencies": {
+    "@better-auth/core": "1.7.12",
+    "@better-auth/passkey": "1.7.12",
     "@fontsource/ibm-plex-sans": "^5.3.0",
     "@fontsource/jetbrains-mono": "^5.3.0",
     "@radix-ui/react-dialog": "^1.1.14",
@@ -115,6 +118,7 @@
     "tailwind-merge": "^2.6.0",
     "tailwindcss-animate": "^1.0.7",
     "three": "^0.169.0",
+    "uqr": "0.1.2",
     "ws": "^8.21.0",
     "zod": "^4.6.7"
   },

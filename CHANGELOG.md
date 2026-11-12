@@ -101,3 +101,7 @@ Before tagging, move these entries under `## [0.1.0] - <date>`.
   for high-severity advisories (#226); grouped Dependabot updates with a cooldown (#176).
 - Fonts are served by the site, not Google: no visitor's address goes to a third party and no outside request can
   stall a page load. Their OFL-1.1 licence ships beside them and the release licence check recognises it (#142).
+- Operator passkeys (Touch ID, Face ID): one-touch sign-in with user verification enforced, a fresh touch before
+  admin changes such as role changes, one-click and idle sign-out, rate-limited passkey routes, and a per-operator
+  tesseract shown as a recognition cue, not a factor; then an operator pattern drawn on that tesseract, on the computer
+  or on a phone by QR code, with a guided setup, a five-miss lockout and admin recovery (#211).
