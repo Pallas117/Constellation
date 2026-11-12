@@ -840,6 +840,20 @@ gate_lock_ours() {
   return 1
 }
 
+# The detached runner is started by the awake LaunchAgent, so it inherits the services' environment:
+# live data paths (a test must never write live mesh/commerce data), the live ALLOWED_ORIGINS
+# (server.access.test.ts expects the defaults) and launchd's PATH, whose /usr/bin/python3 has no
+# numpy (5 ml tests). 2026-11-11: gates 8aa759a and 5294132 failed on exactly that, not on code.
+GATES_SCRUB_ENV=(ALLOWED_ORIGINS GAUSS_PUBLIC_URL BETTER_AUTH_URL MESH_STORE_PATH COMMERCE_DB_PATH GAUSS_BEDROCK_DIR NODE_ENV)
+gates_python_dir() { # the directory of the first python3 that can import numpy (GATES_PYTHON first), or nothing
+  local p
+  for p in "${GATES_PYTHON:-}" /Library/Frameworks/Python.framework/Versions/Current/bin/python3 \
+    /opt/homebrew/bin/python3 /usr/local/bin/python3 "$(command -v python3 2>/dev/null)"; do
+    [ -n "$p" ] && [ -x "$p" ] && "$p" -Ic 'import numpy' >/dev/null 2>&1 && { dirname "$p"; return 0; }
+  done
+  return 1
+}
+
 gates_record() { # gates_record <checkout-dir>: run the gates on a clean checkout and record the result by tree
   local dir sha tree g rc
   dir=$(cd "${1:?usage: $0 gates record <checkout-dir>}" && pwd) || return 1
@@ -850,10 +864,13 @@ gates_record() { # gates_record <checkout-dir>: run the gates on a clean checkou
   GATES_TMP=$(mktemp -d); local tmp=$GATES_TMP # global: the EXIT trap runs after this function's locals are gone
   # Release the lock on exit only while holding it: an interrupted wait must not free another agent's lock.
   trap '[ "${GATES_HOLD:-0}" = 1 ] && rmdir "$GATE_LOCK" 2>/dev/null; rm -rf "$GATES_TMP"' EXIT
+  local pydir scrub=() v
+  pydir=$(gates_python_dir) || { pydir=""; echo "warning: no python3 with numpy found; the ml tests will fail" >&2; }
+  for v in "${GATES_SCRUB_ENV[@]}"; do scrub+=(-u "$v"); done
   for g in "${GATES[@]}"; do
     gate_lock
     echo "gate $g ..."
-    rc=0; (cd "$dir" && PATH="$(dirname "$NODE"):$PATH" npm run "$g" >"$tmp/$g.log" 2>&1) || rc=$?
+    rc=0; (cd "$dir" && env "${scrub[@]}" PATH="$(dirname "$NODE")${pydir:+:$pydir}:$PATH" npm run "$g" >"$tmp/$g.log" 2>&1) || rc=$?
     if [ "$GATES_HOLD" = 1 ]; then rmdir "$GATE_LOCK" 2>/dev/null || true; fi; GATES_HOLD=0
     echo "$rc" >"$tmp/$g.rc"
   done
