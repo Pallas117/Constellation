@@ -15,6 +15,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"syscall"
@@ -123,7 +124,7 @@ func main() {
 		var skip bool
 		phase(10*time.Second, func(c context.Context) {
 			gw, mac := localGateway(c)
-			skip = skipTick(store.Load(), gw, mac, time.Now(), onBattery(store.loadGuard()))
+			skip = skipTickSaving(store.Load(), gw, mac, time.Now(), onBattery(store.loadGuard()), store.loadPowerSave().On)
 		})
 		if skip {
 			return nil
@@ -139,9 +140,15 @@ func main() {
 	var err error
 	switch cmd {
 	case "status":
-		fmt.Println(statusLine(store.Load(), time.Now()) + guardStatus(store.loadGuard(), time.Now()) + gaussStatus(store, time.Now()) + phoneStatus(store.Dir, time.Now()))
+		fmt.Println(statusLine(store.Load(), time.Now()) + guardStatus(store.loadGuard(), time.Now()) + powerSaveStatus(store.loadPowerSave()) + gaussStatus(store, time.Now()) + phoneStatus(store.Dir, time.Now()))
 	case "doctor":
 		err = doctor(ctx, loop.Prober)
+		if err == nil {
+			doctorPowerSave(ctx, store, os.Stdout)
+		}
+	case "power-save": // force or inspect power-save mode (powersave.go)
+		sample := sampleHost(ctx, false)
+		err = powerSaveCmd(ctx, os.Args[2:], store, realAppFx(), sample.Batt, runtime.GOOS, time.Now(), os.Stdout)
 	case "fix":
 		loop.Out = func(s string) { fmt.Println(s) }
 		switch {
@@ -299,15 +306,21 @@ func isIPhoneHotspot(gw string) bool { return gw == "172.20.10.1" } // Personal 
 const hotspotBatteryEvery = 150 * time.Second
 
 func skipTick(st State, gw, mac string, now time.Time, battery bool) bool {
+	return skipTickSaving(st, gw, mac, now, battery, false)
+}
+
+// skipTickSaving is skipTick with the probe intervals stretched while power-save is on
+// (powersave.go). A broken link or a new gateway still probes at once.
+func skipTickSaving(st State, gw, mac string, now time.Time, battery, saving bool) bool {
 	switch {
 	case st.CheckedAt.IsZero(), st.Class.Blocking():
 		return false
 	case gw != st.Gateway || mac != st.GatewayMAC:
 		return false
 	case isIPhoneHotspot(gw):
-		return battery && now.Sub(st.CheckedAt) < hotspotBatteryEvery
+		return (battery || saving) && now.Sub(st.CheckedAt) < stretch(hotspotBatteryEvery, saving)
 	}
-	return now.Sub(st.CheckedAt) < fullCheckEvery
+	return now.Sub(st.CheckedAt) < stretch(fullCheckEvery, saving)
 }
 
 // onBattery reads the guard's last sample (written every tick); unknown counts as AC.

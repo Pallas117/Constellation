@@ -36,6 +36,18 @@ export interface MeshReport {
   net?: MeshNet;
   link?: MeshLink;
   guard?: MeshGuard;
+  powerSave?: MeshPowerSave;
+}
+
+/**
+ * Argo's power-save mode (tools/argo/powersave.go): on while the power budget is negative (battery, a
+ * charger that can't keep up, plain 5 V USB) or when forced by hand. since and reason are only present while on.
+ */
+export const MESH_POWER_SAVE_REASONS = ["battery", "charger-short", "no-pd", "manual"] as const;
+export interface MeshPowerSave {
+  on: boolean;
+  since?: string; // ISO time it started
+  reason?: (typeof MESH_POWER_SAVE_REASONS)[number];
 }
 
 /**
@@ -167,6 +179,7 @@ export const GUARD_CODE_TEXT = {
   "on-battery": "on battery power",
   "charger-behind": "charger can't keep up",
   "charger-weak": "charger weaker than the draw",
+  "power-save": "power-save on: heavy work waits",
   "disk-critical": "disk nearly full",
   "disk-low": "disk low",
   "disk-tight": "disk under 20 GB free",
@@ -352,6 +365,19 @@ export function parsePower(value: unknown): MeshPower | undefined {
   return { mode, sourceW, loadW, marginW };
 }
 
+/** Argo's power-save block; a bad value drops it. Off carries no since or reason; on needs both. */
+export function parsePowerSave(value: unknown): MeshPowerSave | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const p = value as Record<string, unknown>;
+  if (typeof p.on !== "boolean") return undefined;
+  if (!p.on) return { on: false };
+  const reason = MESH_POWER_SAVE_REASONS.includes(p.reason as MeshPowerSave["reason"] & string) ? (p.reason as MeshPowerSave["reason"]) : null;
+  const since = text(p.since, 40);
+  const t = Date.parse(since);
+  if (!reason || Number.isNaN(t) || t > Date.now() + 5 * 60_000 || t < Date.now() - 365 * 86_400_000) return undefined;
+  return { on: true, since: new Date(t).toISOString(), reason };
+}
+
 /** Argo's charger block; a bad state or number drops it (the battery block itself stays). */
 export function parseCharger(value: unknown): MeshCharger | undefined {
   if (!value || typeof value !== "object") return undefined;
@@ -466,6 +492,7 @@ export function parseReport(body: unknown, now = new Date()): MeshReport | null 
     ...(parseNet(b.net) ? { net: parseNet(b.net) } : {}),
     ...(parseLink(b.link) ? { link: parseLink(b.link) } : {}),
     ...(parseGuard(b.guard) ? { guard: parseGuard(b.guard) } : {}),
+    ...(parsePowerSave(b.powerSave) ? { powerSave: parsePowerSave(b.powerSave) } : {}),
   };
 }
 

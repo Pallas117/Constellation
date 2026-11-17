@@ -55,6 +55,15 @@ Optional extras:
   USB-C cable with a fast charger), `pd-low` (Power Delivery, but fewer watts than a heavy job needs) or `ok`. A host that
   reports no negotiation is unknown, never guessed. The state is in `argo status` (`charger:no-pd 5V/8W`), `argo guard`
   and the Gauss report (`battery.charger`, shown on /mesh).
+- **Power-save mode** (`powersave.go`). On battery, on a charger that can't carry the load, or on plain 5 V USB, Argo
+  enters power-save at once and leaves after 10 healthy minutes. While on it holds heavy work (guard reason
+  `power-save`, with the charger advice), runs its probes, guard sampling and mesh reports 3x slower (a broken link still
+  probes and reports at once), quits an allowlisted menu-bar app only when it is idle by its own state (Cloudflare WARP's
+  app when `warp-cli status` says Disconnected; the daemon stays) and relaunches it afterwards, and texts once per 6 h.
+  Settings that need admin rights are only suggested, with the exact command, in `argo doctor` and `argo power-save status`
+  (`sudo pmset -b powernap 0`, `sudo pmset -b displaysleep 2`, `sudo pmset -a lowpowermode 1`; Linux: `powerprofilesctl`,
+  `tlp`); Argo never runs them. `argo power-save on|off|auto|status` forces, releases or shows the mode. The state is in
+  the Gauss report (`powerSave`, shown on /mesh for staff and above).
 - **Texts that fail are not silent.** If Messages stops accepting texts (for example after a rebuild, until Allow is
   clicked), `argo status` says since when and how many are waiting or lost, a desktop banner appears after 10 min,
   and the first text after recovery says how many alerts were lost.
