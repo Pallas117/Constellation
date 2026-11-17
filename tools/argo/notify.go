@@ -72,11 +72,16 @@ func notifyCmd(args []string, phone *Phone, s Store, now time.Time) error {
 	fs := flag.NewFlagSet("notify", flag.ContinueOnError)
 	key := fs.String("key", "", "rate-limit key (lowercase, e.g. battery-low)")
 	every := fs.Duration("every", 0, "send at most once per this interval for -key")
+	levelFlag := fs.String("level", "auto", "urgent texts now, also in quiet hours; warn texts unless quiet or repeated; info waits for the digest")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if fs.NArg() != 2 {
-		return errors.New("usage: argo notify [-key K -every 30m] TITLE MESSAGE")
+		return errors.New("usage: argo notify [-key K -every 30m] [-level urgent|warn|info] TITLE MESSAGE")
+	}
+	level, err := parseLevel(*levelFlag)
+	if err != nil {
+		return err
 	}
 	if *key != "" && !notifyKeyRe.MatchString(*key) {
 		return errors.New("-key must be lowercase letters, digits, '.', '_' or '-'")
@@ -91,6 +96,6 @@ func notifyCmd(args []string, phone *Phone, s Store, now time.Time) error {
 	if !shouldNotify(s, *key, *every, now) {
 		return nil
 	}
-	phone.Send(title, msg, now) // queued if offline; the next tick delivers it
+	phone.SendAlert(Alert{Level: level, Key: *key, Title: title, Msg: msg}, now) // queued if offline; the next tick delivers it
 	return nil
 }
