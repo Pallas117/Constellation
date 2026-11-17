@@ -306,7 +306,8 @@ func assess(hist []Sample, cur Sample) Assessment {
 		case !b.OnAC && atWarn(cur.Pressure) && b.Pct <= batteryPairPct:
 			a.add("battery", "battery-low-pressure", LevelRisk, "battery %d%% with memory at warn: plug in or close the browser", b.Pct)
 		case !b.OnAC:
-			a.add("battery", "on-battery", LevelWatch, "on battery power (%d%%): light work only", b.Pct)
+			// Jobs over lightJobGB start only within their eclipse budget (eclipse.go, per job).
+			a.add("battery", "on-battery", LevelWatch, "on battery power (%d%%): light work only, heavier jobs within their eclipse budget", b.Pct)
 		}
 		if b.OnAC && a.DrainPctH >= 3 && b.Pct < 100 {
 			a.ChargerBehind = true

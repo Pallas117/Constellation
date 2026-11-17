@@ -61,7 +61,7 @@ Mount order matters:
 WebSockets: `/ws/feed/space-weather`, `/ws/feed/mms-reconnection` (`backend/lib/ws-upgrade.ts`).
 
 ### 3.2 Access control
-- **`API_POLICY` allowlist** (`backend/rbac.ts`): unlisted route → 404, no session → 401, wrong
+- **`API_POLICY` allowlist** (`backend/rbac.ts`): no session → 401 for every non-public path (sign-in runs first, so anonymous callers cannot enumerate routes); signed in: unlisted route → 404, wrong
   role → 403. Roles rank user < staff < operator < admin (`backend/auth.ts`, `roleSatisfies`);
   new accounts are `user`.
 
@@ -189,6 +189,8 @@ names for T). `npm run verify` fails if a mapped test fails, is skipped or no lo
 writes the VCRM to `test-results/verification/`. New behaviour needs a requirement and a mapped
 test in the same PR. Known coverage gaps: Argo's Go tests and the website tests are not yet
 ingested into the VCRM (FMEA FM-20).
+
+From the same evidence the gate computes an implementation readiness score per requirement and per parent issue (`scripts/verify/readiness.ts`, read by `readiness-io.ts`; unit tests in `backend/lib/readiness.test.ts`), written to `test-results/verification/readiness.md` and `readiness.json`. It is report only. The parts are explained in `requirements/README.md`.
 
 ## 9. Documents that predate this layout
 These describe earlier designs and are kept for history; trust this page and the code over them:
