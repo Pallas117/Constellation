@@ -115,7 +115,20 @@ export interface MeshBattery {
   lowPower: boolean;
   external?: boolean; // on mains power (Argo sends it; phones don't)
   power?: MeshPower; // Argo's power budget (tools/argo/power.go); phones don't send it
+  charger?: MeshCharger; // what the charger negotiated (tools/argo/charger.go); phones don't send it
 }
+
+/**
+ * What the charger negotiated with the machine (tools/argo/charger.go). no-pd = 5 V USB or less and at most
+ * 15 W, no USB-C Power Delivery; pd-low = Power Delivery but too few watts for a heavy job. Argo sends nothing
+ * when the host reports no negotiation (unknown is never guessed).
+ */
+export interface MeshCharger {
+  state: "no-pd" | "pd-low" | "ok";
+  volts: number;
+  watts: number;
+}
+const CHARGER_STATES: readonly MeshCharger["state"][] = ["no-pd", "pd-low", "ok"];
 
 /**
  * Argo's SWaP power budget: the charger's derated supply, what the machine draws and the margin.
@@ -339,6 +352,17 @@ export function parsePower(value: unknown): MeshPower | undefined {
   return { mode, sourceW, loadW, marginW };
 }
 
+/** Argo's charger block; a bad state or number drops it (the battery block itself stays). */
+export function parseCharger(value: unknown): MeshCharger | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const c = value as Record<string, unknown>;
+  const state = CHARGER_STATES.includes(c.state as MeshCharger["state"]) ? (c.state as MeshCharger["state"]) : null;
+  const volts = num(c.volts, 60);
+  const watts = num(c.watts, 500);
+  if (!state || volts === null || watts === null || volts === 0 || watts === 0) return undefined;
+  return { state, volts, watts };
+}
+
 /** Battery from a phone reporter: integer percent 0-100 and two flags; anything else drops the block. */
 export function parseBattery(value: unknown): MeshBattery | undefined {
   if (!value || typeof value !== "object") return undefined;
@@ -349,12 +373,14 @@ export function parseBattery(value: unknown): MeshBattery | undefined {
   if (!(level >= 0 && level <= 100)) return undefined;
   if (typeof b.charging !== "boolean") return undefined;
   const power = parsePower(b.power);
+  const charger = parseCharger(b.charger);
   return {
     level,
     charging: b.charging,
     lowPower: b.lowPower === true,
     ...(typeof b.external === "boolean" ? { external: b.external } : {}),
     ...(power ? { power } : {}),
+    ...(charger ? { charger } : {}),
   };
 }
 

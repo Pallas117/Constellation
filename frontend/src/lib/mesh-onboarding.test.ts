@@ -42,6 +42,11 @@ test("battery and guard lines read plainly", () => {
   assert.equal(batteryLabel({ level: 72, charging: true, lowPower: false, external: true, power: power("positive", 9.5) }), "72% charging · 9.5 W spare");
   assert.equal(batteryLabel({ level: 60, charging: false, lowPower: false, external: true, power: power("negative", -2.8) }), "60% · plugged in · charger 2.8 W short");
   assert.equal(batteryLabel({ level: 48, charging: false, lowPower: true, external: false }), "48% · on battery · low power");
+  assert.equal(
+    batteryLabel({ level: 60, charging: false, lowPower: false, external: true, power: power("negative", -2.8), charger: { state: "no-pd", volts: 5, watts: 8 } }),
+    "60% · plugged in · charger 2.8 W short · 5 V USB, no fast charging (8 W)",
+  );
+  assert.equal(batteryLabel({ level: 60, charging: true, lowPower: false, external: true, charger: { state: "ok", volts: 20, watts: 30 } }), "60% charging", "a good charger adds nothing");
   assert.equal(batteryLabel({ level: 90, charging: true, lowPower: false }), "90% charging", "phones say only whether they charge");
   assert.equal(guardLine({ admission: "limited", slots: 1, headroomGB: 2.4 }), "Argo guard: light work only · 1 agent slot · 2.4 GB free");
   assert.equal(guardLine({ admission: "closed", slots: 0, headroomGB: 0 }), "Argo guard: closed to new work · 0 agent slots · 0 GB free");

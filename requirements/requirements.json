@@ -649,6 +649,24 @@
         "trust CLI: lock a key under a pattern and remove the unlocked file, sign with it from the terminal, refuse a wrong pattern, and make a key that is locked from the start (GAU-67)",
         "touch id lock: a key locked to its owner's Secure Enclave key unlocks only through that key; another person's enclave, a changed header or a damaged file fails, and the key is never stored in the clear (GAU-67)"
       ]
+    },
+    {
+      "id": "REQ-ARG-029",
+      "title": "Charger diagnosis",
+      "statement": "When a host reports what its charger negotiated, Argo shall classify the charger as no-pd (5 V or less and at most 15 W), pd-low (Power Delivery but below the measured heavy-job need) or ok, shall say why power is short and what to do in the guard's reason, shall show the state in `argo status` and send it to Gauss as an allowlisted, range-checked field, and shall report a host that gives no negotiation as unknown, never guessed.",
+      "rationale": "On 17 Nov 2026 a Mac sat on a 5 V x 1.5 A = 8 W charger and the guard said only that the charger could not keep up; the cause (no USB-C Power Delivery) and the remedy (a USB-C to USB-C cable with a fast charger) were in the controller's own readout.",
+      "parent": "GAU-195",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "TestParseAdapterDetails",
+        "TestApplyIoregAdapter",
+        "TestLinuxAdapter",
+        "TestClassifyCharger",
+        "TestChargerReasonInGuardAndAlert",
+        "TestChargerStatusAndReport",
+        "Argo's guard block is allowlisted; unknown codes drop alone, bad values drop the block"
+      ]
     }
   ]
 }

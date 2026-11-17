@@ -15,6 +15,7 @@ import {
   assessMemory,
   hostingVerdict,
   parseBattery,
+  parseCharger,
   parsePower,
   parseGuard,
   parseHost,
@@ -298,6 +299,16 @@ test("Argo's guard block is allowlisted; unknown codes drop alone, bad values dr
     assert.equal(parsePower({ ...power, ...bad }), undefined, JSON.stringify(bad));
   }
   assert.equal(parseBattery({ level: 64, charging: true, power: { mode: "bad" } })!.power, undefined, "a bad power block drops alone");
+  // The charger's negotiation (tools/argo/charger.go): allowlisted state, ranged numbers, drops alone.
+  const charger = { state: "no-pd", volts: 5, watts: 8 };
+  assert.deepEqual(parseCharger({ ...charger, extra: "x" }), charger);
+  assert.deepEqual(parseCharger({ state: "ok", volts: 20, watts: 30 }), { state: "ok", volts: 20, watts: 30 });
+  assert.deepEqual(parseBattery({ level: 64, charging: true, external: true, charger })!.charger, charger);
+  for (const bad of [{ state: "fast" }, { state: undefined }, { volts: 0 }, { volts: 61 }, { volts: "5" }, { watts: -1 }, { watts: 501 }, { watts: undefined }]) {
+    assert.equal(parseCharger({ ...charger, ...bad }), undefined, JSON.stringify(bad));
+  }
+  assert.equal(parseCharger("no-pd"), undefined);
+  assert.equal(parseBattery({ level: 64, charging: true, charger: { state: "bad" } })!.charger, undefined, "a bad charger block drops alone");
 });
 
 test("hosting verdict uses report age, battery power, swap and Argo's guard, and says why", () => {
