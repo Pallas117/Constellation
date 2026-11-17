@@ -12,4 +12,6 @@ Non-negotiables:
 - Copy is honest: no untrue claims, never "compliant", "certified" or "space-qualified". Turnstone shows its mark and "Classified." only.
 - Deploying the website is Josh's step: build, test and preview, never deploy.
 
-Report back: pages and worker files changed, tests run with counts (`npm run test:website`), audit results if run, and what Josh needs to check in a preview.
+Before handing back, run the skill's **Security self-check** (10 items) and fix what fails. The agent scorecard (`claude-agent-score`) counts every fix commit after review as rework.
+
+Report back: pages and worker files changed, tests run with counts (`npm run test:website`), the self-check results (pass / n/a / fixed for each item), audit results if run, and what Josh needs to check in a preview.
