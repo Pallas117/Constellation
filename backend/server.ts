@@ -10,7 +10,6 @@ import {
   authenticateSocket,
   roleSatisfies,
   type AuthContext,
-  type AuthRole,
   type AuthenticatedRequest,
 } from "./auth.js";
 import { CyberTigerDaemon } from "./cybertiger/daemon.js";
@@ -41,7 +40,7 @@ import { createSwapPlan, scheduledRebalance } from "./services/device-swap-manag
 import { encodeCanonicalPoint } from "./lib/proto.js";
 import { linkGuardian } from "./lib/connectivity.js";
 import { bedrock } from "./lib/local-db.js";
-import { routeUpgrades } from "./lib/ws-upgrade.js";
+import { routeUpgrades, type UpgradeDecision } from "./lib/ws-upgrade.js";
 import { retentionFromEnv, startTelemetryRetention } from "./lib/telemetry-retention.js";
 import { queryLimit } from "./lib/query-limit.js";
 import { auroraMapReply, encodedReply, sendJsonList } from "./lib/json-response.js";
@@ -125,8 +124,10 @@ app.use(
         callback(null, true);
         return;
       }
-      console.warn(`[CORS] Blocked origin: ${origin}`);
-      callback(new Error("CORS blocked"));
+      // Not an Error: that reaches the error handler (stack in the log, 500). Without CORS headers
+      // the browser blocks the response itself.
+      console.warn(`[CORS] Blocked origin: ${JSON.stringify(String(origin).slice(0, 200))}`);
+      callback(null, false);
     },
     credentials: true,
   }),
@@ -602,7 +603,9 @@ app.post("/api/ai/nowcast/infer", async (req: AuthenticatedRequest, res) => {
     });
     res.json(response);
   } catch (error) {
-    res.status(500).json({ error: error instanceof Error ? error.message : "Inference failed" });
+    // The message can carry the upstream ML URL: log the error name only, answer a fixed text.
+    console.error(`[nowcast] inference failed (${error instanceof Error ? error.name : "unknown"})`);
+    res.status(500).json({ error: "Inference failed" });
   }
 });
 
@@ -621,14 +624,40 @@ app.post("/api/ai/nowcast/train", async (_req, res) => {
 
 const server = http.createServer(app);
 
-const wsSpaceWeather = new WebSocketServer({ noServer: true });
-const wsMmsRecon = new WebSocketServer({ noServer: true });
+// Clients never send data frames that matter; ws's default maxPayload is 100 MiB.
+const WS_MAX_PAYLOAD_BYTES = 4096;
+const wsSpaceWeather = new WebSocketServer({ noServer: true, maxPayload: WS_MAX_PAYLOAD_BYTES });
+const wsMmsRecon = new WebSocketServer({ noServer: true, maxPayload: WS_MAX_PAYLOAD_BYTES });
+
+/** Origin + session + role, checked before the handshake. Failures count against the real client address. */
+async function guardUpgrade(req: http.IncomingMessage): Promise<UpgradeDecision<AuthContext>> {
+  const requestOrigin = typeof req.headers.origin === "string" ? req.headers.origin : null;
+  const ip = cyberTiger.extractClientIp(req as unknown as express.Request);
+  const record = (status: 401 | 403) =>
+    cyberTiger.recordResponse({ requestId: `ws-${Date.now()}`, ip, method: "WS", path: (req.url ?? "/ws").split("?")[0], status });
+  if (!isAllowedOrigin(requestOrigin)) {
+    record(403);
+    return { allow: false, status: 403 };
+  }
+  const auth = await authenticateSocket(req);
+  if (!auth) {
+    record(401);
+    return { allow: false, status: 401 };
+  }
+  if (!roleSatisfies(auth.role, "user")) {
+    record(403);
+    return { allow: false, status: 403 };
+  }
+  return { allow: true, context: auth };
+}
+
 routeUpgrades(
   server,
   new Map([
     ["/ws/feed/space-weather", wsSpaceWeather],
     ["/ws/feed/mms-reconnection", wsMmsRecon],
   ]),
+  guardUpgrade,
 );
 trackLiveness(wsSpaceWeather);
 trackLiveness(wsMmsRecon);
@@ -656,38 +685,8 @@ function broadcast(wss: WebSocketServer, topic: string, payload: unknown): void 
   }
 }
 
-async function guardSocketConnection(
-  socket: AuthedSocket,
-  requiredRole: AuthRole,
-  req: http.IncomingMessage,
-): Promise<boolean> {
-  const requestOrigin = typeof req.headers.origin === "string" ? req.headers.origin : null;
-  if (!isAllowedOrigin(requestOrigin)) {
-    socket.close(1008, "CORS blocked");
-    return false;
-  }
-
-  const auth = await authenticateSocket(req);
-  if (!auth || !roleSatisfies(auth.role, requiredRole)) {
-    if (req.socket.remoteAddress) {
-      cyberTiger.recordResponse({
-        requestId: `ws-${Date.now()}`,
-        ip: req.socket.remoteAddress,
-        method: "WS",
-        path: req.url ?? "/ws",
-        status: 403,
-      });
-    }
-    socket.close(1008, "Unauthorized");
-    return false;
-  }
+wsSpaceWeather.on("connection", (socket: AuthedSocket, _req: http.IncomingMessage, auth: AuthContext) => {
   socket.auth = auth;
-  return true;
-}
-
-wsSpaceWeather.on("connection", async (socket: AuthedSocket, req) => {
-  const allowed = await guardSocketConnection(socket, "user", req);
-  if (!allowed) return;
 
   socket.send(
     JSON.stringify({
@@ -702,9 +701,8 @@ wsSpaceWeather.on("connection", async (socket: AuthedSocket, req) => {
   );
 });
 
-wsMmsRecon.on("connection", async (socket: AuthedSocket, req) => {
-  const allowed = await guardSocketConnection(socket, "user", req);
-  if (!allowed) return;
+wsMmsRecon.on("connection", (socket: AuthedSocket, _req: http.IncomingMessage, auth: AuthContext) => {
+  socket.auth = auth;
 
   socket.send(
     JSON.stringify({

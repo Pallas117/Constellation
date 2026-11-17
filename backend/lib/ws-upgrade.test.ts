@@ -94,3 +94,68 @@ test("ws upgrades: an unknown path gets 400 and no socket", async (t) => {
   assert.equal(a.clients.size, 0);
   assert.equal(b.clients.size, 0);
 });
+
+test("ws upgrades: a guard refusal answers 401/403 before the handshake and no socket opens (REQ-SEC-020)", async (t) => {
+  const server = http.createServer();
+  const wss = new WebSocketServer({ noServer: true });
+  let connections = 0;
+  wss.on("connection", () => (connections += 1));
+  routeUpgrades(
+    server,
+    new Map([["/g", wss]]),
+    async (req) => {
+      const who = req.headers["x-who"];
+      if (who === "anon") return { allow: false, status: 401 };
+      if (who === "bad-origin") return { allow: false, status: 403 };
+      return { allow: true, context: "ctx" };
+    },
+  );
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  t.after(() => {
+    wss.close();
+    server.closeAllConnections();
+    server.close();
+  });
+  const { port } = server.address() as { port: number };
+  const status = (who: string) =>
+    new Promise<{ status: number | null; opened: boolean }>((resolve) => {
+      const ws = new WebSocket(`ws://127.0.0.1:${port}/g`, { headers: { "x-who": who } });
+      let opened = false;
+      ws.on("open", () => {
+        opened = true;
+        ws.terminate();
+        resolve({ status: null, opened });
+      });
+      ws.on("unexpected-response", (_r, res) => {
+        res.resume();
+        resolve({ status: res.statusCode ?? null, opened });
+      });
+      ws.on("error", () => resolve({ status: null, opened }));
+    });
+  assert.deepEqual(await status("anon"), { status: 401, opened: false });
+  assert.deepEqual(await status("bad-origin"), { status: 403, opened: false });
+  assert.equal(connections, 0, "refused upgrades never reach the connection handler");
+  assert.deepEqual(await status("ok"), { status: null, opened: true });
+  assert.equal(connections, 1);
+});
+
+test("ws upgrades: a frame over maxPayload closes the connection with 1009 (REQ-SEC-020)", async (t) => {
+  const server = http.createServer();
+  const wss = new WebSocketServer({ noServer: true, maxPayload: 4096 });
+  wss.on("connection", () => undefined);
+  routeUpgrades(server, new Map([["/m", wss]]));
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  t.after(() => {
+    wss.close();
+    server.closeAllConnections();
+    server.close();
+  });
+  const { port } = server.address() as { port: number };
+  const code = await new Promise<number>((resolve) => {
+    const ws = new WebSocket(`ws://127.0.0.1:${port}/m`);
+    ws.on("open", () => ws.send(Buffer.alloc(5000)));
+    ws.on("close", (c) => resolve(c));
+    ws.on("error", () => undefined);
+  });
+  assert.equal(code, 1009);
+});
