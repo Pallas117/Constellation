@@ -6,7 +6,7 @@
 import { accessIdentity, isAdmin, isStaff } from "./auth.js";
 import { deleteAccount, getAccount, getApplication, latestApplication, listAccounts, listApplications, putAccount, setApplicationStatus } from "./data.js";
 import { readCapped } from "./body.js";
-import { sameOrigin } from "./forms.js";
+import { clientLink, sameOrigin } from "./forms.js";
 import { feedState, readFeed } from "./feeds.js";
 import { chip, esc, renderEventIcs, renderGaussDoor, supportLink } from "./render.js";
 import { deleteCall, getCall, listCalls, renderCalls, renderCallsAdmin, rsvp, saveCall } from "./calls.js";
@@ -200,14 +200,20 @@ const inviteDraft = (email, name) => {
   return `mailto:${encodeURIComponent(email)}?subject=${encodeURIComponent("Your invitation to Constellation")}&body=${encodeURIComponent(body)}`;
 };
 
-export function renderAdmin({ applications, accounts, details, invited, error, cap = 50 }) {
+/** One ready link per plan, as plain text to copy; add &src=<campaign> (lowercase letters, digits, hyphens) to see where a lead came from. */
+export function renderClientLinks(origin) {
+  return `<h2>Links to send a client</h2><p class="muted">Copy one into your email. It opens the pilot brief with that plan chosen. Add <code>&amp;src=</code> and a short lowercase tag (for example <code>&amp;src=acme-intro</code>) and the tag shows on the application.</p>` +
+    `<ul class="links">${TIERS.map((t) => `<li><span class="label">${esc(t.short)}</span> <code>${esc(clientLink(origin, t.id))}</code></li>`).join("")}</ul>`;
+}
+
+export function renderAdmin({ applications, accounts, details, invited, error, cap = 50, origin = "https://lightbound.space" }) {
   const open = applications.filter((a) => a.status === "new");
   const done = applications.filter((a) => a.status !== "new");
   const card = (a) => {
     const d = details[a.id] ?? {};
     const planId = tierById(a.plan) ? a.plan : "pilot";
     const facts = [d.org, d.role, d.topic, d.format, d.groupSize ? `group: ${d.groupSize}` : "", d.institution, d.eduRole, d.course, d.seats ? `${d.seats} (people)` : "", d.missionType, d.stage, d.groundStack, d.dataAccess, d.timeline, d.interest, d.platform, d.devices ? `${d.devices} devices` : "",
-      d.referrer ? `referred by ${d.referrer}` : "", d.link].filter(Boolean).join(" · ");
+      d.referrer ? `referred by ${d.referrer}` : "", d.link, d.src ? `from link: ${d.src}` : ""].filter(Boolean).join(" · ");
     const decide = a.status === "new"
       ? `<form method="post" action="/app/admin/decide" class="inline"><input type="hidden" name="id" value="${esc(a.id)}">` +
         (a.kind === "gauss" ? `${tierSelect(planId)} ${quoteInput(0)} ${invoiceCheck(false, `inv-${esc(a.id)}`)}` : a.kind === "constellation" ? `<input type="hidden" name="community" value="member">` : a.kind === "edu" ? `${quoteInput(0)} ` : "") +
@@ -235,6 +241,7 @@ export function renderAdmin({ applications, accounts, details, invited, error, c
   return (
     `<p class="k">00_ADMIN</p><h1 id="hero-h">Applications and accounts.</h1>${banner}` +
     `<h2>New (${open.length})</h2>${open.length ? `<ul class="apps">${open.map(card).join("")}</ul>` : `<p class="muted">Nothing waiting.</p>`}` +
+    renderClientLinks(origin) +
     `<h2>Invite to Constellation</h2><p class="muted">Free and invite-only. This creates the membership; you send the invitation yourself.</p>` +
     `<form method="post" action="/app/admin/invite" class="inline add"><label class="sr" for="inv-email">Email</label><input id="inv-email" name="email" type="email" placeholder="email@example.com" required> ` +
     `<label class="sr" for="inv-name">Name</label><input id="inv-name" name="name" placeholder="Name" maxlength="100"> <button class="btn">Invite</button></form>` +
@@ -495,7 +502,7 @@ export async function handleApp(request, env, url, { respond, fillPage, fetchImp
     const invited = invitedEmail ? await getAccount(env, invitedEmail) : null;
     const error = ["quote", "call", "edu"].includes(url.searchParams.get("error")) ? url.searchParams.get("error") : null;
     const calls = await listCalls(env);
-    return fillPage("/app/admin/", { admin: () => renderAdmin({ applications, accounts, details, invited: invited?.community === "member" ? invited : null, error, cap: userCap(env) }) +
+    return fillPage("/app/admin/", { admin: () => renderAdmin({ applications, accounts, details, invited: invited?.community === "member" ? invited : null, error, cap: userCap(env), origin: url.origin }) +
       `<div id="calls">${error === "call" ? `<p class="banner warn" role="alert">Not scheduled: give a title, a future start time and an https link (or none).</p>` : ""}` +
       `${renderCallsAdmin(calls, accounts.filter((a) => a.community === "member").map((a) => a.email), url.origin)}</div>` }, 200, APP_HEADERS);
   }
