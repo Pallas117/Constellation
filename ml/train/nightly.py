@@ -15,19 +15,40 @@ incremental (GAU-156): only bytes appended since the last run are read, from a b
 ml/data/nightly/telemetry-count.json (counts and offsets only; the telemetry is never modified).
 Training is skipped when the same data, code and libraries were already trained (status
 "unchanged"), since the run is deterministic.
+
+Every log line ends with the run's wall time ("seconds") and peak resident memory in MB, of this
+process ("peak_rss_mb") and of the training subprocess ("child_peak_rss_mb"), so Argo/mem-guard can
+size the job from measurements (standard library getrusage; 0 for a child that never ran).
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import resource
 import subprocess
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 PAUSE_FLAG = Path.home() / "Library" / "Application Support" / "Gauss" / "learning-paused"
+
+
+# ru_maxrss is in bytes on macOS and in KiB on Linux.
+_MAXRSS_PER_MB = 1 << 20 if sys.platform == "darwin" else 1 << 10
+
+
+def run_usage(started: float) -> dict:
+  """Wall time since `started` (time.monotonic()) and peak RSS of this process and its children."""
+  def peak_mb(who: int) -> int:
+    return round(resource.getrusage(who).ru_maxrss / _MAXRSS_PER_MB)
+  return {
+    "seconds": round(time.monotonic() - started, 1),
+    "peak_rss_mb": peak_mb(resource.RUSAGE_SELF),
+    "child_peak_rss_mb": peak_mb(resource.RUSAGE_CHILDREN),
+  }
 
 
 COUNT_STATE = HERE.parent / "data" / "nightly" / "telemetry-count.json"
@@ -68,6 +89,7 @@ def count_canonical(telemetry: Path, state_path: Path = COUNT_STATE) -> int:
 
 
 def main() -> int:
+  started = time.monotonic()
   parser = argparse.ArgumentParser()
   parser.add_argument("--telemetry", default="data/bedrock/telemetry.jsonl")
   args = parser.parse_args()
@@ -75,6 +97,7 @@ def main() -> int:
   log = {"run": datetime.now(tz=timezone.utc).isoformat(), "live_points": count_canonical(Path(args.telemetry))}
   if PAUSE_FLAG.exists():
     log.update(status="paused", reason="battery saving (gauss-services.sh balance)")
+    log.update(run_usage(started))
     print(json.dumps(log))
     return 0
 
@@ -82,6 +105,7 @@ def main() -> int:
                           capture_output=True, text=True)
   if result.returncode != 0:
     log.update(status="failed", error=result.stderr.strip()[-500:])
+    log.update(run_usage(started))
     print(json.dumps(log))
     return 1
   out = json.loads(result.stdout)
@@ -93,6 +117,7 @@ def main() -> int:
     test_mae_persistence=out["test"]["mae_persistence"],
     note="candidate only; promote deliberately with train_kp.py --promote",
   )
+  log.update(run_usage(started))
   print(json.dumps(log))
   return 0
 

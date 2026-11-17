@@ -9,6 +9,7 @@ import { useDocumentTitle } from "@/hooks/useDocumentTitle";
 import { useNow } from "@/hooks/useNow";
 import { batteryLabel, copyText, deviceStage, enrollCommand, guardLine, STAGE_HELP, STALE_MS } from "@/lib/mesh-onboarding";
 import { bytesLabel, stabilityScore, stabilityTone, windowLine } from "@/lib/link-stability";
+import { ConfirmButton } from "@/components/ui/confirm-button";
 const PLATFORM_LABEL: Record<string, string> = { macos: "macOS", linux: "Linux", windows: "Windows", ios: "iPhone", android: "Android" };
 // Mirrors hostingVerdict in backend/mesh/store.ts.
 const HOSTING_LABEL: Record<string, string> = {
@@ -183,6 +184,9 @@ const MeshDashboard = () => {
                 {revokeError}
               </p>
             )}
+            {canEnroll && !devices && !error && (
+              <p role="status" className="font-mono text-sm text-muted-foreground">Loading devices…</p>
+            )}
             {canEnroll && devices && devices.length === 0 && (
               <p className="text-sm text-muted-foreground">No devices yet. Enroll this laptop below.</p>
             )}
@@ -258,9 +262,7 @@ const MeshDashboard = () => {
                           <td className="py-3 pr-4 text-muted-foreground">{ago(d.last?.receivedAt)}</td>
                           <td className="py-3 text-right">
                             {(canRevokeAny || d.owner === me) && (
-                              <Button size="sm" variant="ghost" onClick={() => void onRevoke(d.name)}>
-                                Revoke
-                              </Button>
+                              <ConfirmButton size="sm" variant="ghost" label="Revoke" confirmLabel="Revoke device?" pendingLabel="Revoking…" onConfirm={() => onRevoke(d.name)} />
                             )}
                           </td>
                         </tr>
@@ -330,9 +332,10 @@ const MeshDashboard = () => {
             <ol className="space-y-4">
               {steps.map((step, i) => (
                 <li key={step.id} className="space-y-1">
-                  <p className="text-sm font-medium">
+                  {/* A div, not a p: Badge renders a div, which can't sit inside a paragraph. */}
+                  <div className="text-sm font-medium">
                     {i + 1}. {step.title} {step.pending && <Badge variant="outline">pending</Badge>}
-                  </p>
+                  </div>
                   {step.command && <pre className="overflow-x-auto rounded bg-muted p-2 text-xs">{step.command}</pre>}
                   <p className="text-xs text-muted-foreground">{step.detail}</p>
                 </li>

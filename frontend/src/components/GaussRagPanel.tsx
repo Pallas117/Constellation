@@ -1,11 +1,12 @@
 import { useEffect, useState } from 'react';
 import { Database, Search } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { StatusBadge } from '@/components/brand/StatusBadge';
 import { apiBase } from "@/lib/api/base-url";
 
 type RagStatus = {
   ok: boolean;
+  /** false when the backend has no memory service set up (GAUSS_MEMORY_URL=off): the panel hides. */
+  configured?: boolean;
   chunkCount?: number;
   error?: string;
 };
@@ -21,22 +22,6 @@ type RagQueryResponse = {
 // memory service, which listens on loopback without auth of its own.
 const RAG_BASE = apiBase();
 
-const MOCK_AI_TEXT = `[URGENT] SYSTEM ANOMALY DETECTED
-
-Context: LSTM Time-Series forecasting on edge node has detected a massive deviation in solar wind velocity (currently exceeding 850 km/s) and a persistent southward IMF (Bz = -18nT). [Trace: DSCOVR Real-Time Solar Wind Data] 
-
-Analysis: We are entering the initial phase of a G4-class severe geomagnetic storm. 
-
-Immediate Orbital Impacts (Based on 3D Overlay Mapping):
-- LEO (400km): Proton flux has spiked to 50,000 pfu. Warning: High risk of Single Event Upsets (SEUs) for star trackers and avionics. Atmospheric drag is calculated to increase by 45% over the next 12 hours. [Trace: GraphDB Multi-Hop Path: Anomaly->Drag->LEO_Asset]
-- GEO (35,786km): Relativistic electron flux has crossed the critical threshold (>110,000 electrons/cm²/s/sr). Warning: High probability of deep dielectric charging on satellite solar panels. [Trace: "Space Weather Impacts on GEO" NotebookLM]
-
-Tactical Recommendation: 
-1. Initiate "Safe Mode" protocols for critical trailing-edge GEO assets. 
-2. Delay planned orbital raising maneuvers for LEO constellations until the Kp index drops below 5. 
-3. Monitor the magnetopause compression index; it is currently running at 0.5 (Highly Compressed).
-
-*Confidence Interval: 94.2% (Bayesian Deep Learning Engine)*`;
 
 export function GaussRagPanel() {
   const [status, setStatus] = useState<RagStatus | null>(null);
@@ -48,8 +33,6 @@ export function GaussRagPanel() {
   
   // Source chip the user expanded
   const [activeTrace, setActiveTrace] = useState<string | null>(null);
-  // True while the answer is the scripted storm narration, not a model reply
-  const [simulated, setSimulated] = useState(false);
 
   // Helper to parse text and render citation badges
   const renderTextWithTraces = (text: string) => {
@@ -76,50 +59,6 @@ export function GaussRagPanel() {
   };
 
   useEffect(() => {
-    let intervalId: number | null = null;
-    let currentIndex = 0;
-
-    const clearStormInterval = () => {
-      if (intervalId !== null) {
-        window.clearInterval(intervalId);
-        intervalId = null;
-      }
-    };
-
-    const handleStorm = (e: Event) => {
-      if ((e as CustomEvent<boolean>).detail) {
-        setSimulated(true);
-        setAnswer("");
-        setSources([]);
-        currentIndex = 0;
-        if (intervalId !== null) {
-          return;
-        }
-
-        intervalId = window.setInterval(() => {
-          if (currentIndex >= MOCK_AI_TEXT.length) {
-            clearStormInterval();
-            return;
-          }
-
-          setAnswer((prev) => (prev || "") + MOCK_AI_TEXT[currentIndex]);
-          currentIndex += 1;
-        }, 15);
-      } else {
-        setSimulated(false);
-        setAnswer(null);
-        clearStormInterval();
-      }
-    };
-
-    window.addEventListener('simulate-g4-storm', handleStorm);
-    return () => {
-      window.removeEventListener('simulate-g4-storm', handleStorm);
-      clearStormInterval();
-    };
-  }, []);
-
-  useEffect(() => {
     // Indexing is an operator task on the memory host, not something this page can trigger.
     void (async () => {
       try {
@@ -135,7 +74,6 @@ export function GaussRagPanel() {
     if (!question.trim()) return;
     setAsking(true);
     setError(null);
-    setSimulated(false);
     setAnswer(null);
     setSources([]);
     try {
@@ -167,6 +105,9 @@ export function GaussRagPanel() {
       : status.chunkCount
         ? `${status.chunkCount} knowledge chunks`
         : 'No documents indexed';
+  // No memory service set up on this backend: there is nothing to search, so show no search box.
+  // A service that is set up but down still shows, as "Knowledge base offline".
+  if (status?.configured === false) return null;
   return (
     <section aria-labelledby="rag-title" className="hud-panel w-full space-y-3 p-4">
       <div className="min-w-0">
@@ -207,7 +148,6 @@ export function GaussRagPanel() {
         <div className="space-y-2 border-t border-charcoal pt-3">
           <div className="flex items-center justify-between gap-2">
             <span className="font-mono text-[11px] uppercase tracking-[0.06em] text-muted-foreground">Answer</span>
-            {simulated && <StatusBadge tone="caution">Simulated scenario</StatusBadge>}
           </div>
           <p className="max-h-60 overflow-y-auto whitespace-pre-wrap text-left text-sm leading-relaxed text-foreground">
             {renderTextWithTraces(answer)}

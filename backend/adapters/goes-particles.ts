@@ -2,6 +2,7 @@ import { checkChannelRows, checkProtonSpectrum } from "../lib/sense-checks.js";
 import { XRAY_BAND, flareClass } from "../physics/noaa-scales.js";
 import type { DataSource, ParticleReading, SenseCheck, SourceStatus, XrayReading } from "../types.js";
 import { SWPC_ORIGIN } from "./swpc-fetch.js";
+import { freshnessMs } from "../../shared/policy/freshness.js";
 
 const SOURCE: DataSource = "goes-swpc";
 
@@ -16,11 +17,11 @@ export const PROTON_CHANNEL = ">=10 MeV";
 /** Radiation-belt "killer electron" channel used for GEO charging alerts. */
 export const ELECTRON_CHANNEL = ">=2 MeV";
 /** GOES publishes every 5 min; beyond this a reading is unknown, not current. */
-export const PARTICLE_MAX_AGE_MS = 30 * 60 * 1000;
+export const PARTICLE_MAX_AGE_MS = freshnessMs("goes_particles");
 /** Channels compared for a monotonic integral spectrum (GAU-136). */
 export const SPECTRUM_CHANNELS = [">=10 MeV", ">=50 MeV", ">=100 MeV"] as const;
 /** GOES X-rays publish every minute; a flare's rise takes minutes, so beyond this the reading is unknown. */
-export const XRAY_MAX_AGE_MS = 15 * 60 * 1000;
+export const XRAY_MAX_AGE_MS = freshnessMs("goes_xray");
 
 export interface GoesParticleReadout {
   protons: ParticleReading | null;

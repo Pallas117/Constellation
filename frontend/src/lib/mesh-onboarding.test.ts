@@ -38,6 +38,9 @@ test("a new device moves from waiting to silent; refused and stale reports say s
 
 test("battery and guard lines read plainly", () => {
   assert.equal(batteryLabel({ level: 72, charging: false, lowPower: false, external: true }), "72% · plugged in");
+  const power = (mode: "positive" | "negative", marginW: number) => ({ mode, sourceW: 16, loadW: 16 - marginW, marginW });
+  assert.equal(batteryLabel({ level: 72, charging: true, lowPower: false, external: true, power: power("positive", 9.5) }), "72% charging · 9.5 W spare");
+  assert.equal(batteryLabel({ level: 60, charging: false, lowPower: false, external: true, power: power("negative", -2.8) }), "60% · plugged in · charger 2.8 W short");
   assert.equal(batteryLabel({ level: 48, charging: false, lowPower: true, external: false }), "48% · on battery · low power");
   assert.equal(batteryLabel({ level: 90, charging: true, lowPower: false }), "90% charging", "phones say only whether they charge");
   assert.equal(guardLine({ admission: "limited", slots: 1, headroomGB: 2.4 }), "Argo guard: light work only · 1 agent slot · 2.4 GB free");

@@ -57,12 +57,18 @@ export interface BatteryReading {
   charging: boolean;
   lowPower: boolean;
   external?: boolean;
+  power?: { mode: "positive" | "negative" | "eclipse"; sourceW: number; loadW: number; marginW: number };
 }
 
-/** "72% · plugged in", "48% · on battery", "100% charging": Argo says whether it's on mains, phones only whether they charge. */
+/**
+ * "72% · plugged in · 9.5 W spare", "48% · on battery", "100% charging": Argo says whether it's on mains and its power
+ * margin (tools/argo/power.go), phones only whether they charge.
+ */
 export function batteryLabel(b: BatteryReading): string {
   const source = b.external === undefined ? (b.charging ? " charging" : "") : b.external ? (b.charging ? " charging" : " · plugged in") : " · on battery";
-  return `${b.level}%${source}${b.lowPower ? " · low power" : ""}`;
+  const p = b.power;
+  const margin = p?.mode === "positive" ? ` · ${p.marginW} W spare` : p?.mode === "negative" ? ` · charger ${-p.marginW} W short` : "";
+  return `${b.level}%${source}${margin}${b.lowPower ? " · low power" : ""}`;
 }
 
 export interface GuardReading {

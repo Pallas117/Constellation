@@ -25,8 +25,8 @@ export interface SolarWindDrivers {
   by: number;
   /** Solar wind dynamic pressure, nPa */
   pdyn: number;
-  /** Planetary Kp index, 0-9 */
-  kp: number;
+  /** Planetary Kp index, 0-9; null when no source has a Kp reading (no auroral oval is placed, GAU-230). */
+  kp: number | null;
 }
 
 export type Vec3 = [number, number, number];
@@ -252,7 +252,8 @@ export interface MagnetosphereState {
   r0: number;
   alpha: number;
   bowShock: number;
-  oval: { equatorward: number; poleward: number };
+  /** Null when Kp is unknown: the oval's latitude is not known. */
+  oval: { equatorward: number; poleward: number } | null;
   lines: FieldLine[];
   openFraction: number;
 }
@@ -301,7 +302,7 @@ export function computeMagnetosphere(
     r0: model.r0,
     alpha: model.alpha,
     bowShock: bowShockStandoff(model.r0),
-    oval: auroralOvalBounds(drivers.kp),
+    oval: drivers.kp === null ? null : auroralOvalBounds(drivers.kp),
     lines,
     openFraction: seeds ? open / seeds : 0,
   };

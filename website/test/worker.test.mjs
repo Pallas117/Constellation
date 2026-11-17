@@ -6,7 +6,7 @@ import { existsSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import worker from "../worker/index.js";
-import { FEEDS, feedState, normaliseEvents, normaliseLaunches, normaliseNews, normaliseProgrammes, normaliseUkri, normaliseUksa, normaliseWeather, parseCsv, programmesUrl, readFeed, refreshFeeds } from "../worker/feeds.js";
+import { FEEDS, feedState, launchesSource, ll2Auth, normaliseEvents, normaliseLaunches, normaliseNews, normaliseProgrammes, normaliseRocketLaunch, normaliseUkri, normaliseUksa, normaliseWeather, parseCsv, programmesUrl, readFeed, refreshFeeds } from "../worker/feeds.js";
 import { countdown, esc, renderConstellationDoor, renderEventIcs, renderEvents, renderGaussDoor, renderIcs, renderLaunches, renderWeather, whenText } from "../worker/render.js";
 import { SECURITY_HEADERS } from "../worker/headers.js";
 import { RECORDED_AT, fixture, makeFetch } from "./fixtures/fetch.mjs";
@@ -110,7 +110,7 @@ test("events: Luma's calendar becomes titles, times and public links only; cance
 test("refresh: an upstream failure keeps the last good data and records the error", async () => {
   const env = { LIVE: memoryKV() };
   await refreshFeeds(env, { fetchImpl: makeFetch(), now: RECORDED_AT });
-  const r = await refreshFeeds(env, { fetchImpl: makeFetch({ launches: 429, scales: 503 }), now: RECORDED_AT + 60 * MIN });
+  const r = await refreshFeeds(env, { fetchImpl: makeFetch({ launches: 429, launchesFallback: 503, scales: 503 }), now: RECORDED_AT + 60 * MIN });
   assert.deepEqual(core(r), { launches: "failed: ll.thespacedevs.com HTTP 429", weather: "failed: services.swpc.noaa.gov HTTP 503", events: "fresh" });
   const rec = await readFeed(env, "launches");
   assert.equal(rec.data.length, 10, "old data kept");
@@ -120,6 +120,40 @@ test("refresh: an upstream failure keeps the last good data and records the erro
   const ok = await refreshFeeds(env, { fetchImpl: makeFetch({ wind: 500, mag: 500 }), now: RECORDED_AT + 61 * MIN });
   assert.equal(ok.weather, "updated");
   assert.equal((await readFeed(env, "weather")).data.wind, null);
+});
+
+test("refresh: the optional LL2 key goes to LL2 only, in its Token header, and never follows a redirect", async () => {
+  const key = "9944b09199c62bcf9418ad846dd0e4bbdfc6ee4b"; // the example in LL2's 2.3.0 schema, not a real key
+  const isLl2 = (r) => new URL(r.url).host === "ll.thespacedevs.com";
+  const f = makeFetch();
+  assert.equal((await refreshFeeds({ LIVE: memoryKV(), LL2_API_KEY: ` ${key}\n` }, { fetchImpl: f, now: RECORDED_AT })).launches, "updated");
+  const [ll2, ...more] = f.requests.filter(isLl2);
+  assert.equal(more.length, 0);
+  assert.equal(ll2.headers.authorization, `Token ${key}`, "trimmed, with LL2's required prefix");
+  assert.equal(ll2.redirect, "manual");
+  const others = f.requests.filter((r) => !isLl2(r));
+  assert.equal(others.length, 5, "NOAA x4 and Luma");
+  assert.ok(others.every((r) => !("authorization" in r.headers) && r.redirect === "follow"), "no other upstream sees the key");
+
+  // No key, or anything that isn't a plain token: LL2 is called anonymously, as before.
+  for (const LL2_API_KEY of [undefined, "", "short", `${key}\r\nx-evil: 1`, `Token ${key}`, 42]) {
+    const g = makeFetch();
+    await refreshFeeds({ LIVE: memoryKV(), LL2_API_KEY }, { fetchImpl: g, now: RECORDED_AT });
+    const [anon] = g.requests.filter(isLl2);
+    assert.deepEqual(Object.keys(anon.headers).sort(), ["accept", "user-agent"], `ignored: ${JSON.stringify(LL2_API_KEY)}`);
+    assert.equal(anon.redirect, "follow");
+  }
+  assert.equal(ll2Auth({ LL2_API_KEY: key }, "https://evil.example/2.3.0/launches/"), null, "only ever for LL2's host");
+  assert.equal(ll2Auth({ LL2_API_KEY: key }, "https://ll.thespacedevs.com.evil.example/"), null);
+  assert.equal(ll2Auth({ LL2_API_KEY: key }, "https://lldev.thespacedevs.com/"), null);
+
+  // Failures (a 429, or a redirect it refused to follow) are recorded without the key.
+  for (const [status, why] of [[429, "rate limited"], [301, "redirect not followed"]]) {
+    const env = { LIVE: memoryKV(), LL2_API_KEY: key };
+    const r = await refreshFeeds(env, { fetchImpl: makeFetch({ launches: status, launchesFallback: 503 }), now: RECORDED_AT });
+    assert.equal(r.launches, `failed: ll.thespacedevs.com HTTP ${status}`, why);
+    assert.ok(!JSON.stringify([r, await readFeed(env, "launches")]).includes(key), `${why}: the key is never stored or logged`);
+  }
 });
 
 test("feed state: live, then stale (still shown, labelled), offline when there is nothing", () => {
@@ -189,7 +223,7 @@ after(() => {
 });
 const call = async (path, init) => {
   const { ctx, settle } = context();
-  const res = await worker.fetch(new Request(`https://lightbound.uk${path}`, init), env, ctx);
+  const res = await worker.fetch(new Request(`https://lightbound.space${path}`, init), env, ctx);
   await settle();
   return res;
 };
@@ -199,8 +233,9 @@ test("routes: live pages are filled in and carry the security headers", async ()
   assert.equal(home.status, 200);
   for (const [k, v] of Object.entries(SECURITY_HEADERS)) assert.equal(home.headers.get(k), v, k);
   const body = await home.text();
-  assert.match(body, /Space weather now/);
-  assert.match(body, /Next launch<\/span><span class="door-big">T−/);
+  // The landing page carries no readouts (Josh, 5 Nov 2026: nothing repeating); they live on the product pages below.
+  assert.doesNotMatch(body, /Space weather now|Next launch/);
+  assert.match(body, /<section id="enter" class="live-gate"/);
   const page = await (await call("/constellation/")).text();
   assert.equal((page.match(/<li class="launch">/g) || []).length, 10);
   assert.match(page, /chip live">Live/);
@@ -229,11 +264,11 @@ test("routes: API, calendar, health, errors", async () => {
 test("routes: Luma being down never fails the health check", async () => {
   const env = { ASSETS, LIVE: memoryKV() };
   await refreshFeeds(env, { fetchImpl: makeFetch({ events: 503 }, { shiftTo: Date.now() }), now: Date.now() });
-  const res = await send(env, new Request("https://lightbound.uk/api/health"));
+  const res = await send(env, new Request("https://lightbound.space/api/health"));
   const body = await res.json();
   assert.equal(res.status, 200);
   assert.equal(body.feeds.events.state, "offline");
-  const page = await (await send(env, new Request("https://lightbound.uk/constellation/"))).text();
+  const page = await (await send(env, new Request("https://lightbound.space/constellation/"))).text();
   assert.match(page, /No events are scheduled right now/, "the section still shows the Luma link");
 });
 
@@ -251,7 +286,7 @@ test("routes: a fresh deploy fetches once in the background, before the first cr
   globalThis.fetch = f;
   const fresh = { ASSETS, LIVE: memoryKV() };
   const { ctx, settle } = context();
-  const res = await worker.fetch(new Request("https://lightbound.uk/"), fresh, ctx);
+  const res = await worker.fetch(new Request("https://lightbound.space/gauss/"), fresh, ctx); // the landing page reads no feeds
   assert.equal(res.status, 200, "page still serves while data loads");
   await settle();
   assert.equal(f.calls.length, 6, "a public release: launches, events and four for space weather");
@@ -269,7 +304,7 @@ test("public release: sign-in, the workspace, Argo, form posts and the webhook a
   for (const [path, method] of [["/api/apply", "POST"], ["/api/apply", "GET"], ["/api/stripe/webhook", "POST"]]) assert.equal((await call(path, { method })).status, 404, `${method} ${path}`);
   // "full" without the DATA namespace is a half-configured deploy: it stays public.
   const half = { ...env, RELEASE: "full" };
-  assert.equal((await send(half, new Request("https://lightbound.uk/app/"))).status, 404);
+  assert.equal((await send(half, new Request("https://lightbound.space/app/"))).status, 404);
 });
 
 test("public release: each form's page asks by email instead, and carries the package but never any answers", async () => {
@@ -280,10 +315,10 @@ test("public release: each form's page asks by email instead, and carries the pa
     assert.match(page, /href="mailto:jzwnathan@lightbound\.uk\?subject=[^"]+&amp;body=/, `${path}: a mailto with the questions`);
   }
   const fleet = await (await call("/gauss/apply/?plan=fleet_integration&sent=1")).text();
-  assert.match(fleet, /<li>Package: Fleet Integration · £60k–£125k a year<\/li>/);
+  assert.match(fleet, /<li>Package: Fleet Integration · \$80k–\$160k a year<\/li>/);
   assert.match(fleet, /subject=Gauss%20brief%20%C2%B7%20Fleet%20Integration&amp;/);
   assert.doesNotMatch(fleet, /RECEIVED/, "nothing was sent, so nothing says so");
-  assert.match(await (await call("/gauss/apply/?plan=%22%3E%3Cscript%3E")).text(), /<li>Package: Pilot · £20k–£40k<\/li>/, "unknown package: the pilot");
+  assert.match(await (await call("/gauss/apply/?plan=%22%3E%3Cscript%3E")).text(), /<li>Package: Pilot · \$25k–\$50k<\/li>/, "unknown package: the pilot");
 });
 
 test("public release: pages offer pilots and an email route; later plans are in development; nothing links to sign-in", async () => {
@@ -295,26 +330,31 @@ test("public release: pages offer pilots and an email route; later plans are in 
     const page = await (await call(path)).text();
     assert.doesNotMatch(page, /href="\/app\/|>Sign in<|<!--full-->/, `${path}: sign-in links removed`);
   }
+  // The landing page's one door: "Sign in with Argo" pointing at the replay, and a line that says so.
+  const home = await (await call("/")).text();
+  assert.match(home, /<a class="btn argo radiate" href="\/gauss\/#replay"><img class="sail" src="\/assets\/marks\/argo-mark-colour-dark\.svg"[^>]*>Sign in with Argo<\/a>/);
+  assert.doesNotMatch(home, /href="\/live"/, "nothing points at a sign-in redirect this release does not carry");
+  assert.match(home, /this button plays a replay of the live view/);
   const open = { ...env, EDU_SALES: "open", SUPPORT_URL: "https://buy.stripe.com/test_00abc123" };
-  assert.doesNotMatch(await (await send(open, new Request("https://lightbound.uk/education/"))).text(), /\/app\/\?edu=start/, "education stays opening soon");
-  assert.doesNotMatch(await (await send(open, new Request("https://lightbound.uk/constellation/"))).text(), /Support Constellation/, "no payment links");
+  assert.doesNotMatch(await (await send(open, new Request("https://lightbound.space/education/"))).text(), /\/app\/\?edu=start/, "education stays opening soon");
+  assert.doesNotMatch(await (await send(open, new Request("https://lightbound.space/constellation/"))).text(), /Support Constellation/, "no payment links");
 });
 
 test("public release: health names the release and the deployed commit, and only the feeds it uses", async () => {
   const body = await (await call("/api/health")).json();
   assert.deepEqual([body.release, body.source, Object.keys(body.feeds)], ["public", null, ["launches", "weather", "events"]]);
   const sha = "6643d5f76bf98468a3c09570401077eb221d6a69";
-  assert.equal((await (await send({ ...env, SOURCE_SHA: sha }, new Request("https://lightbound.uk/api/health"))).json()).source, sha);
-  assert.equal((await (await send({ ...env, SOURCE_SHA: "<script>" }, new Request("https://lightbound.uk/api/health"))).json()).source, null);
+  assert.equal((await (await send({ ...env, SOURCE_SHA: sha }, new Request("https://lightbound.space/api/health"))).json()).source, sha);
+  assert.equal((await (await send({ ...env, SOURCE_SHA: "<script>" }, new Request("https://lightbound.space/api/health"))).json()).source, null);
 });
 
 test("full release: the same pages keep sign-in and the forms", async () => {
   const { env: full } = await appEnv();
-  const page = async (path) => (await send(full, new Request(`https://lightbound.uk${path}`))).text();
+  const page = async (path) => (await send(full, new Request(`https://lightbound.space${path}`))).text();
   assert.match(await page("/gauss/"), /<!--full--> <a class="btn ghost" href="\/app\/">Sign in<\/a><!--\/full-->/);
   assert.match(await page("/gauss/apply/"), /<form class="form" method="post" action="\/api\/apply">/);
-  assert.equal((await send(full, new Request("https://lightbound.uk/argo/"))).status, 200);
-  assert.equal((await (await send(full, new Request("https://lightbound.uk/api/health"))).json()).release, "full");
+  assert.equal((await send(full, new Request("https://lightbound.space/argo/"))).status, 200);
+  assert.equal((await (await send(full, new Request("https://lightbound.space/api/health"))).json()).release, "full");
 });
 
 // ---- Sign-in (Cloudflare Access JWT) ----
@@ -322,7 +362,7 @@ test("sign-in: only a valid Access JWT for our team and application counts", asy
   const access = await makeAccess();
   const other = await makeAccess(); // same kid, different key: a forged token
   const env = { ...access.env };
-  const req = (token) => new Request("https://lightbound.uk/app/", { headers: token ? { "cf-access-jwt-assertion": token } : {} });
+  const req = (token) => new Request("https://lightbound.space/app/", { headers: token ? { "cf-access-jwt-assertion": token } : {} });
   assert.deepEqual(await accessIdentity(req(await access.sign("Ops@Example.test")), env), { email: "ops@example.test" });
   assert.equal(await accessIdentity(req(null), env), null, "no token");
   assert.equal(await accessIdentity(req(await other.sign("ops@example.test")), env), null, "wrong key");
@@ -333,7 +373,7 @@ test("sign-in: only a valid Access JWT for our team and application counts", asy
   const [h, , sig] = (await access.sign("ops@example.test")).split(".");
   const tampered = Buffer.from(JSON.stringify({ aud: ["lightbound-dev"], email: "admin@example.test", iss: "https://dev.cloudflareaccess.local", exp: 9e9 })).toString("base64url");
   assert.equal(await accessIdentity(req(`${h}.${tampered}.${sig}`), env), null, "tampered claims");
-  const plain = new Request("https://lightbound.uk/app/", { headers: { "cf-access-authenticated-user-email": "admin@example.test" } });
+  const plain = new Request("https://lightbound.space/app/", { headers: { "cf-access-authenticated-user-email": "admin@example.test" } });
   assert.equal(await accessIdentity(plain, env), null, "a bare email header is never trusted");
   assert.equal(await accessIdentity(req(await access.sign("ops@example.test")), { ...env, ACCESS_AUD: "" }), null, "unconfigured = locked");
   assert.ok(isAdmin({ ADMIN_EMAILS: "a@x.test, Boss@X.test" }, "boss@x.test"));
@@ -345,9 +385,9 @@ async function appEnv() {
   const access = await makeAccess();
   return { access, env: { ASSETS, LIVE: memoryKV(), DATA: memoryKV(), RELEASE: "full", ADMIN_EMAILS: "boss@example.test", STRIPE_SECRET_KEY: "test-placeholder", STRIPE_WEBHOOK_SECRET: "test-webhook-placeholder", ...access.env } };
 }
-const post = (path, body, headers = {}) => new Request(`https://lightbound.uk${path}`, {
+const post = (path, body, headers = {}) => new Request(`https://lightbound.space${path}`, {
   method: "POST", body: new URLSearchParams(body).toString(),
-  headers: { origin: "https://lightbound.uk", "content-type": "application/x-www-form-urlencoded", "cf-connecting-ip": "203.0.113.9", ...headers },
+  headers: { origin: "https://lightbound.space", "content-type": "application/x-www-form-urlencoded", "cf-connecting-ip": "203.0.113.9", ...headers },
 });
 const goodGauss = { kind: "gauss", name: "Ops Example", email: "ops@example.test", org: "Example Space", role: "Mission ops",
   missionType: "Earth observation", stage: "Launched and operating", groundStack: "Yamcs / XTCE", dataAccess: "Historical packet archive",
@@ -369,8 +409,8 @@ test("apply: a good pilot brief is stored and redirected (post/redirect/get), wi
   const stored = env.DATA.map.get(`app:${app.id}`);
   assert.equal(JSON.parse(stored.v).groundStack, "Yamcs / XTCE", "readiness answers kept");
   assert.ok(stored.exp - Date.now() / 1000 > 179 * 86400 && stored.exp - Date.now() / 1000 <= 180 * 86400);
-  assert.match(await (await send(env, new Request("https://lightbound.uk/gauss/apply/?sent=1"))).text(), /we'll reply with a fixed quote/);
-  assert.match(await (await send(env, new Request("https://lightbound.uk/constellation/apply/?sent=1"))).text(), /Membership is free and by invitation/);
+  assert.match(await (await send(env, new Request("https://lightbound.space/gauss/apply/?sent=1"))).text(), /we'll reply with a fixed quote/);
+  assert.match(await (await send(env, new Request("https://lightbound.space/constellation/apply/?sent=1"))).text(), /Membership is free and by invitation/);
 });
 
 test("apply: bad input comes back with errors and the values escaped; nothing stored", async () => {
@@ -389,7 +429,7 @@ test("apply: cross-site posts, bots, odd encodings and floods are turned away", 
   assert.equal((await send(env, post("/api/apply", goodGauss, { origin: "https://evil.example" }))).status, 403);
   assert.equal((await send(env, post("/api/apply", goodGauss, { "content-type": "text/plain" }))).status, 415);
   assert.equal((await send(env, post("/api/apply", { ...goodGauss, kind: "admin" }))).status, 400);
-  assert.equal((await send(env, new Request("https://lightbound.uk/api/apply"))).status, 405);
+  assert.equal((await send(env, new Request("https://lightbound.space/api/apply"))).status, 405);
   const bot = await send(env, post("/api/apply", { ...goodGauss, website: "http://spam.example" }));
   assert.equal(bot.status, 303, "bots see success");
   assert.equal((await listApplications(env)).length, 0, "but nothing is stored");
@@ -400,14 +440,14 @@ test("apply: cross-site posts, bots, odd encodings and floods are turned away", 
 
 test("apply page: the package in the link is preselected; unknown values fall back to the pilot", async () => {
   const { env } = await appEnv();
-  assert.match(await (await send(env, new Request("https://lightbound.uk/gauss/apply/?plan=mission_integration"))).text(), /<option value="mission_integration" selected>/);
-  assert.match(await (await send(env, new Request("https://lightbound.uk/gauss/apply/?plan=%22%3E%3Cscript%3E"))).text(), /<option value="pilot" selected>/);
+  assert.match(await (await send(env, new Request("https://lightbound.space/gauss/apply/?plan=mission_integration"))).text(), /<option value="mission_integration" selected>/);
+  assert.match(await (await send(env, new Request("https://lightbound.space/gauss/apply/?plan=%22%3E%3Cscript%3E"))).text(), /<option value="pilot" selected>/);
 });
 
 // ---- Workspace, billing and admin ----
 const as = async (access, email, path, init = {}) =>
-  new Request(`https://lightbound.uk${path}`, { ...init, headers: { ...(init.headers ?? {}), "cf-access-jwt-assertion": await access.sign(email) } });
-const formPost = async (access, email, path, body = {}, origin = "https://lightbound.uk") => as(access, email, path, {
+  new Request(`https://lightbound.space${path}`, { ...init, headers: { ...(init.headers ?? {}), "cf-access-jwt-assertion": await access.sign(email) } });
+const formPost = async (access, email, path, body = {}, origin = "https://lightbound.space") => as(access, email, path, {
   method: "POST", body: new URLSearchParams(body).toString(), headers: { origin, "content-type": "application/x-www-form-urlencoded" },
 });
 function stripeMock(fail = false) {
@@ -439,7 +479,7 @@ async function withFetch(f, fn) {
 
 test("workspace: signed out gets 401; pending applicants see their status; members see Constellation", async () => {
   const { env, access } = await appEnv();
-  const out = await send(env, new Request("https://lightbound.uk/app/"));
+  const out = await send(env, new Request("https://lightbound.space/app/"));
   assert.equal(out.status, 401);
   assert.equal(out.headers.get("cache-control"), "private, no-store");
   await send(env, post("/api/apply", goodGauss));
@@ -457,7 +497,7 @@ test("workspace: an approved quote shows Pay; checkout goes to Stripe with the q
   const res = await send(env, await as(access, "ops@example.test", "/app/"));
   assert.equal(res.headers.get("content-security-policy"), APP_CSP);
   const page = await res.text();
-  assert.match(page, /<p class="big">£28,000 one-off<\/p><p class="t">Payment due<\/p>/);
+  assert.match(page, /<p class="big">\$28,000 one-off<\/p><p class="t">Payment due<\/p>/);
   assert.match(page, /<form method="post" action="\/app\/checkout" class="inline"><button class="btn">Pay now<\/button><\/form>/);
   assert.doesNotMatch(page, /Stripe|securely|card details|Request an invoice/, "no payment-method talk; invoices only where allowed");
   assert.doesNotMatch(page, /Open the Gauss console|Console link/, "locked until paid");
@@ -468,9 +508,9 @@ test("workspace: an approved quote shows Pay; checkout goes to Stripe with the q
   const { url, body, auth } = stripe.calls[0];
   assert.equal(url, "https://api.stripe.com/v1/checkout/sessions");
   assert.equal(auth, "Bearer test-placeholder");
-  assert.deepEqual([body.get("mode"), body.get("line_items[0][price_data][currency]"), body.get("line_items[0][price_data][unit_amount]")], ["payment", "gbp", "2800000"]);
+  assert.deepEqual([body.get("mode"), body.get("line_items[0][price_data][currency]"), body.get("line_items[0][price_data][unit_amount]")], ["payment", "usd", "2800000"]);
   assert.deepEqual([body.get("client_reference_id"), body.get("metadata[email]"), body.get("metadata[plan]"), body.get("customer_creation")], ["ops@example.test", "ops@example.test", "pilot", "always"]);
-  assert.equal(body.get("success_url"), "https://lightbound.uk/app/?checkout=success");
+  assert.equal(body.get("success_url"), "https://lightbound.space/app/?checkout=success");
   assert.equal((await withFetch(stripe, async () => send(env, await formPost(access, "ops@example.test", "/app/checkout", {}, "https://evil.example")))).status, 403);
   assert.equal((await getAccount(env, "ops@example.test")).billing.checkout.id, "cs_test_1", "the session is kept, so only its payment counts");
   const ops = await getAccount(env, "ops@example.test");
@@ -513,13 +553,13 @@ test("invoices: only where an admin allows them; Stripe emails one invoice; paid
   const [cust, inv, item] = stripe.calls.map((c) => c.body);
   assert.deepEqual([cust.get("email"), cust.get("name")], ["fleet@example.test", "Example Ltd"]);
   assert.deepEqual([inv.get("customer"), inv.get("collection_method"), inv.get("days_until_due"), inv.get("metadata[plan]")], ["cus_new", "send_invoice", "30", "fleet_integration"]);
-  assert.deepEqual([item.get("invoice"), item.get("amount"), item.get("currency"), item.get("description")], ["in_1", "7500000", "gbp", "Gauss: Fleet Integration, 12 months"]);
+  assert.deepEqual([item.get("invoice"), item.get("amount"), item.get("currency"), item.get("description")], ["in_1", "7500000", "usd", "Gauss: Fleet Integration, 12 months"]);
   let acct = await getAccount(env, "fleet@example.test");
   assert.deepEqual([acct.billing.status, acct.billing.customer, acct.billing.invoice], ["invoice_open", "cus_new", "in_1"]);
   const sent = await (await send(env, await as(access, "fleet@example.test", "/app/?invoice=sent"))).text();
   assert.match(sent, /Invoice sent to fleet@example\.test\./);
   assert.match(sent, /href="https:\/\/invoice\.stripe\.com\/i\/test_1"/);
-  assert.match(sent, /Console link coming by email/, "open while the invoice is within its terms");
+  assert.match(sent, /console link is coming by email/, "open while the invoice is within its terms");
   assert.equal((await withFetch(stripe, async () => send(env, await formPost(access, "fleet@example.test", "/app/invoice")))).headers.get("location"), "/app/");
   assert.equal(stripe.calls.length, 5, "one invoice at a time");
   // Overdue: locked until paid.
@@ -561,7 +601,7 @@ test("stripe webhook: verified events unlock, renew, fail and cancel plans; forg
   const t0 = Math.floor(Date.now() / 1000);
   const hook = async (type, object, created = t0, secret = env.STRIPE_WEBHOOK_SECRET) => {
     const payload = JSON.stringify({ id: `evt_${type}_${created}`, type, created, data: { object } });
-    return send(env, new Request("https://lightbound.uk/api/stripe/webhook", { method: "POST", body: payload, headers: { "stripe-signature": await signPayload(secret, payload) } }));
+    return send(env, new Request("https://lightbound.space/api/stripe/webhook", { method: "POST", body: payload, headers: { "stripe-signature": await signPayload(secret, payload) } }));
   };
   const meta = { email: "fleet@example.test", plan: "fleet_integration" };
   const status = async () => (await getAccount(env, "fleet@example.test")).billing.status;
@@ -576,7 +616,7 @@ test("stripe webhook: verified events unlock, renew, fail and cancel plans; forg
   const page = await (await send(env, await as(access, "fleet@example.test", "/app/"))).text();
   assert.match(page, /Renews yearly/);
   assert.match(page, /action="\/app\/billing"/);
-  assert.match(page, /Console link coming by email/, "unlocked once paid");
+  assert.match(page, /console link is coming by email/, "unlocked once paid");
   await hook("customer.subscription.updated", { id: "sub_1", status: "past_due", customer: "cus_1", metadata: meta }, t0 + 10);
   assert.equal(await status(), "past_due");
   await hook("customer.subscription.updated", { id: "sub_1", status: "active", customer: "cus_1", metadata: meta }, t0 + 5);
@@ -600,13 +640,13 @@ test("admin: only ADMIN_EMAILS; approval needs a quote inside the published rang
   assert.match(adminPage, /Earth observation · Launched and operating · Yamcs \/ XTCE/);
   const [app] = await listApplications(env);
   const decide = async (email, quote, origin) => send(env, await formPost(access, email, "/app/admin/decide", { id: app.id, decision: "approve", tier: "fleet_integration", quote }, origin));
-  assert.equal((await decide("ops@example.test", "75000")).status, 403, "customers cannot approve");
-  assert.equal((await decide("boss@example.test", "75000", "https://evil.example")).status, 403, "cross-site");
-  assert.equal((await decide("boss@example.test", "15000")).headers.get("location"), "/app/admin/?error=quote", "below the £60k floor");
+  assert.equal((await decide("ops@example.test", "100000")).status, 403, "customers cannot approve");
+  assert.equal((await decide("boss@example.test", "100000", "https://evil.example")).status, 403, "cross-site");
+  assert.equal((await decide("boss@example.test", "15000")).headers.get("location"), "/app/admin/?error=quote", "below the $80k floor");
   assert.equal(await getAccount(env, "ops@example.test"), null);
-  assert.equal((await decide("boss@example.test", "75000")).status, 303);
+  assert.equal((await decide("boss@example.test", "100000")).status, 303);
   const acct = await getAccount(env, "ops@example.test");
-  assert.deepEqual([acct.tier, acct.quote, acct.billing.status, acct.updatedBy], ["fleet_integration", 7_500_000, "due", "boss@example.test"]);
+  assert.deepEqual([acct.tier, acct.quote, acct.billing.status, acct.updatedBy], ["fleet_integration", 10_000_000, "due", "boss@example.test"]);
   assert.equal((await listApplications(env))[0].status, "approved");
 });
 
@@ -656,7 +696,7 @@ test("education: university emails start straight away; students free for a year
   for (const [e, ok] of [["a@ox.ac.uk", true], ["b@mit.edu", true], ["c@um.edu.my", true], ["d@student.unsw.edu.au", true], ["e@gmail.com", false], ["f@education.example.com", false], ["g@ac.evil.com", false], ["h@free.ac", false], ["i@kyoto-u.ac.jp", true], ["j@uni.edu.evil.com", false]])
     assert.equal(isAcademicEmail(e), ok, e);
   const { env, access } = await appEnv();
-  const page = async (e) => (await send(e, new Request("https://lightbound.uk/education/"))).text();
+  const page = async (e) => (await send(e, new Request("https://lightbound.space/education/"))).text();
   assert.match(await page(env), /href="\/education\/apply\/">Register interest/, "off by default");
   const stripe = stripeMock();
   assert.equal((await withFetch(stripe, async () => send(env, await formPost(access, "kim@uni.ac.uk", "/app/edu/student", { student: "yes" })))).headers.get("location"), "/app/", "off: nothing starts");
@@ -688,7 +728,7 @@ test("education: university emails start straight away; students free for a year
   const body = stripe.calls.at(-1).body;
   assert.deepEqual([body.get("mode"), body.get("line_items[0][price_data][unit_amount]"), body.get("line_items[0][price_data][currency]"), body.get("line_items[0][price_data][recurring][interval]"), body.get("metadata[product]"), body.get("metadata[offer]")],
     ["subscription", "500", "usd", "month", "edu", "staff"]);
-  assert.equal(body.get("success_url"), "https://lightbound.uk/app/?edu=started");
+  assert.equal(body.get("success_url"), "https://lightbound.space/app/?edu=started");
   const t0 = Math.floor(Date.now() / 1000);
   assert.equal(await applyEvent(priced, { type: "checkout.session.completed", created: t0, data: { object: { id: "cs_test_1", mode: "subscription", customer: "cus_pat", subscription: "sub_edu", metadata: { email: "pat@uni.ac.uk", product: "edu", offer: "staff" } } } }), "edu checkout.session.completed -> active");
   const pat = await getAccount(priced, "pat@uni.ac.uk");
@@ -700,7 +740,7 @@ test("education departments: a yearly quote from admin, an invoice with 30 days 
   const { env, access } = await appEnv();
   const res = await send(env, post("/api/apply", { kind: "edu", name: "Dr Lee", email: "lee@physics.example.org", institution: "Example University", eduRole: "Department or programme lead", course: "MSc Space Systems", seats: "21–100", note: "A module for 40 students.", consent: "yes" }));
   assert.equal(res.headers.get("location"), "/education/apply/?sent=1");
-  assert.match(await (await send(env, new Request("https://lightbound.uk/education/apply/?sent=1"))).text(), /Your request is with the Gauss for Education team/);
+  assert.match(await (await send(env, new Request("https://lightbound.space/education/apply/?sent=1"))).text(), /Your request is with the Gauss for Education team/);
   const admin = await (await send(env, await as(access, "boss@example.test", "/app/admin/"))).text();
   assert.match(admin, /EDUCATION · Department or programme lead/);
   assert.match(admin, /Example University · Department or programme lead · MSc Space Systems · 21–100 \(people\)/);
@@ -709,12 +749,12 @@ test("education departments: a yearly quote from admin, an invoice with 30 days 
   await send(env, await formPost(access, "boss@example.test", "/app/admin/decide", { id: app.id, decision: "department", quote: "3000" }));
   let lee = await getAccount(env, "lee@physics.example.org");
   assert.deepEqual([lee.edu.plan, lee.edu.quote, lee.edu.billing.status, lee.org, lee.tier ?? null], ["department", 300_000, "due", "Example University", null]);
-  assert.match(await (await send(env, await as(access, "lee@physics.example.org", "/app/"))).text(), /£3,000 a year[\s\S]*Request the invoice/);
+  assert.match(await (await send(env, await as(access, "lee@physics.example.org", "/app/"))).text(), /\$3,000 a year[\s\S]*Request the invoice/);
   const stripe = stripeMock();
   const inv = await withFetch(stripe, async () => send(env, await formPost(access, "lee@physics.example.org", "/app/edu/invoice")));
   assert.equal(inv.headers.get("location"), "/app/?invoice=sent");
   const item = stripe.calls.find((c) => c.url.endsWith("/v1/invoiceitems")).body;
-  assert.deepEqual([item.get("amount"), item.get("currency"), item.get("description"), item.get("metadata[product]"), item.get("metadata[offer]")], ["300000", "gbp", "Gauss for Education: department licence, 12 months", "edu", "department"]);
+  assert.deepEqual([item.get("amount"), item.get("currency"), item.get("description"), item.get("metadata[product]"), item.get("metadata[offer]")], ["300000", "usd", "Gauss for Education: department licence, 12 months", "edu", "department"]);
   lee = await getAccount(env, "lee@physics.example.org");
   assert.equal(lee.edu.billing.status, "invoice_open");
   assert.match(await (await send(env, await as(access, "lee@physics.example.org", "/app/edu/"))).text(), /Classroom\./, "open while the invoice is within its terms");
@@ -730,7 +770,7 @@ test("workshops: a team's request is stored and listed for admin; marking it con
   const { env, access } = await appEnv();
   const res = await send(env, post("/api/apply", { kind: "workshop", name: "Ana Example", email: "ana@example.test", org: "Example Space Ltd", topic: "A mix of the three", format: "Online", groupSize: "11–30", timeline: "Next quarter", note: "A leadership away day for our ops team.", consent: "yes" }));
   assert.equal(res.headers.get("location"), "/constellation/workshops/?sent=1");
-  assert.match(await (await send(env, new Request("https://lightbound.uk/constellation/workshops/?sent=1"))).text(), /Your workshop request is with the Constellation team/);
+  assert.match(await (await send(env, new Request("https://lightbound.space/constellation/workshops/?sent=1"))).text(), /Your workshop request is with the Constellation team/);
   const admin = await (await send(env, await as(access, "boss@example.test", "/app/admin/"))).text();
   assert.match(admin, /WORKSHOP · A mix of the three/);
   assert.match(admin, /Example Space Ltd · A mix of the three · Online · group: 11–30 · Next quarter/);
@@ -743,17 +783,17 @@ test("workshops: a team's request is stored and listed for admin; marking it con
 test("security: big bodies refused before reading; the Stripe key only ever goes to Stripe; sign-ins never create records", async () => {
   const { env, access } = await appEnv();
   const big = "x=" + "a".repeat(20 * 1024);
-  const appPost = await send(env, await as(access, "member@example.test", "/app/prefs", { method: "POST", body: big, headers: { origin: "https://lightbound.uk", "content-type": "application/x-www-form-urlencoded" } }));
+  const appPost = await send(env, await as(access, "member@example.test", "/app/prefs", { method: "POST", body: big, headers: { origin: "https://lightbound.space", "content-type": "application/x-www-form-urlencoded" } }));
   assert.equal(appPost.status, 413);
   assert.equal((await send(env, post("/api/apply", { kind: "constellation", message: "a".repeat(20 * 1024) }))).status, 413);
-  const hook = await send(env, new Request("https://lightbound.uk/api/stripe/webhook", { method: "POST", body: "{}", headers: { "content-length": String(600 * 1024) } }));
+  const hook = await send(env, new Request("https://lightbound.space/api/stripe/webhook", { method: "POST", body: "{}", headers: { "content-length": String(600 * 1024) } }));
   assert.equal(hook.status, 413);
   // STRIPE_API_BASE is only for the local stand-in: anything else is ignored.
   const calls = [];
   const f = async (url) => { calls.push(String(url)); return Response.json({ url: "https://billing.stripe.com/p/session/x" }); };
   for (const base of ["https://evil.example/v1x/", "http://127.0.0.1.evil.example/", "http://10.0.0.5:8788/__stripe"])
-    await createPortal({ ...env, STRIPE_API_BASE: base }, { email: "a@example.test", billing: { customer: "cus_1" } }, "https://lightbound.uk", f);
-  await createPortal({ ...env, STRIPE_API_BASE: "http://127.0.0.1:8788/__stripe" }, { email: "a@example.test", billing: { customer: "cus_1" } }, "https://lightbound.uk", f);
+    await createPortal({ ...env, STRIPE_API_BASE: base }, { email: "a@example.test", billing: { customer: "cus_1" } }, "https://lightbound.space", f);
+  await createPortal({ ...env, STRIPE_API_BASE: "http://127.0.0.1:8788/__stripe" }, { email: "a@example.test", billing: { customer: "cus_1" } }, "https://lightbound.space", f);
   assert.deepEqual(calls.map((u) => new URL(u).origin), ["https://api.stripe.com", "https://api.stripe.com", "https://api.stripe.com", "http://127.0.0.1:8788"]);
   // Saving a time-zone preference never creates an account for someone who only signed in.
   await send(env, await formPost(access, "stranger@example.test", "/app/prefs", { tz: "Asia/Kuala_Lumpur" }));
@@ -769,7 +809,7 @@ test("security: Access key rotation is followed (once a minute at most); calenda
   const certs = async () => { fetches++; return Response.json({ keys: served }); };
   const env = { ACCESS_TEAM_DOMAIN: oldKey.env.ACCESS_TEAM_DOMAIN, ACCESS_AUD: oldKey.env.ACCESS_AUD };
   const t = Date.now() + 10 * 3_600_000; // past any key cache left by other tests; tokens are signed for that time
-  const req = async (a) => new Request("https://lightbound.uk/app/", { headers: { "cf-access-jwt-assertion": await a.sign("a@example.test", { exp: Math.floor(t / 1000) + 7200 }) } });
+  const req = async (a) => new Request("https://lightbound.space/app/", { headers: { "cf-access-jwt-assertion": await a.sign("a@example.test", { exp: Math.floor(t / 1000) + 7200 }) } });
   assert.deepEqual(await accessIdentity(await req(oldKey), env, { fetchImpl: certs, now: t }), { email: "a@example.test" });
   served = [jwk(oldKey), jwk(newKey)]; // Access rotates
   assert.deepEqual(await accessIdentity(await req(newKey), env, { fetchImpl: certs, now: t + 120_000 }), { email: "a@example.test" }, "unknown kid: refetch once");
@@ -818,13 +858,13 @@ test("security review: checkout sessions reused, not multiplied; student year ne
   assert.equal(senderOf("203.0.113.9"), "203.0.113.9");
   // A chunked upload with no Content-Length is still capped.
   const stream = new ReadableStream({ start(c) { for (let i = 0; i < 40; i++) c.enqueue(new TextEncoder().encode("x".repeat(1024))); c.close(); } });
-  const chunked = new Request("https://lightbound.uk/app/prefs", { method: "POST", body: stream, duplex: "half",
-    headers: { origin: "https://lightbound.uk", "content-type": "application/x-www-form-urlencoded", "cf-access-jwt-assertion": await access.sign("member@example.test") } });
+  const chunked = new Request("https://lightbound.space/app/prefs", { method: "POST", body: stream, duplex: "half",
+    headers: { origin: "https://lightbound.space", "content-type": "application/x-www-form-urlencoded", "cf-access-jwt-assertion": await access.sign("member@example.test") } });
   assert.equal((await send(env, chunked)).status, 413);
   // The dev signing key is honoured only for a *.local team domain.
   const leaked = { ...env, ACCESS_TEAM_DOMAIN: "lightbound.cloudflareaccess.com" };
   const certs = async () => Response.json({ keys: [] });
-  const req = new Request("https://lightbound.uk/app/", { headers: { "cf-access-jwt-assertion": await access.sign("boss@example.test", { iss: "https://lightbound.cloudflareaccess.com" }) } });
+  const req = new Request("https://lightbound.space/app/", { headers: { "cf-access-jwt-assertion": await access.sign("boss@example.test", { iss: "https://lightbound.cloudflareaccess.com" }) } });
   assert.equal(await accessIdentity(req, leaked, { fetchImpl: certs, now: Date.now() + 20 * 3_600_000 }), null);
 });
 
@@ -843,7 +883,7 @@ test("user cap: new self-serve sign-ups wait once USER_CAP accounts exist; exist
 
 test("support: Constellation shows a Support link only once a Stripe Payment Link is set", async () => {
   const { env, access } = await appEnv();
-  const page = async (e) => (await send(e, new Request("https://lightbound.uk/constellation/"))).text();
+  const page = async (e) => (await send(e, new Request("https://lightbound.space/constellation/"))).text();
   assert.doesNotMatch(await page(env), /Support Constellation/, "hidden while unset");
   assert.doesNotMatch(await page({ ...env, SUPPORT_URL: "https://evil.example/pay" }), /Support Constellation/, "only Stripe Payment Links");
   const set = { ...env, SUPPORT_URL: "https://buy.stripe.com/test_00abc123" };
@@ -915,14 +955,14 @@ test("planner: finds the hours that suit everyone, and a picked hour shows in ev
 
 test("planner routes: the page reads its query safely; the calendar endpoint takes only a start time", async () => {
   const { env } = await appEnv();
-  const page = await (await send(env, new Request("https://lightbound.uk/constellation/time/?z=Europe/London&z=Asia/Kuala_Lumpur&z=%3Cscript%3E&date=2026-10-23&at=9"))).text();
+  const page = await (await send(env, new Request("https://lightbound.space/constellation/time/?z=Europe/London&z=Asia/Kuala_Lumpur&z=%3Cscript%3E&date=2026-10-23&at=9"))).text();
   assert.match(page, /Everyone is within/);
   assert.doesNotMatch(page, /<script>/);
-  const ics = await send(env, new Request(`https://lightbound.uk/api/call.ics?start=${new Date(Date.now() + 86_400_000).toISOString()}`));
+  const ics = await send(env, new Request(`https://lightbound.space/api/call.ics?start=${new Date(Date.now() + 86_400_000).toISOString()}`));
   assert.equal(ics.status, 200);
   assert.match(await ics.text(), /SUMMARY:Constellation group call/);
-  assert.equal((await send(env, new Request("https://lightbound.uk/api/call.ics?start=nonsense"))).status, 400);
-  assert.equal((await send(env, new Request("https://lightbound.uk/api/call.ics?start=2099-01-01T00:00:00Z"))).status, 400);
+  assert.equal((await send(env, new Request("https://lightbound.space/api/call.ics?start=nonsense"))).status, 400);
+  assert.equal((await send(env, new Request("https://lightbound.space/api/call.ics?start=2099-01-01T00:00:00Z"))).status, 400);
 });
 
 test("group calls: admins schedule; members book within capacity; the link shows only once booked", async () => {
@@ -1018,7 +1058,7 @@ test("opportunities: the programme feed waits for its setting, and health says s
   const f = makeFetch({}, { shiftTo: Date.now() });
   assert.equal((await refreshFeeds(env, { fetchImpl: f })).programmes, "not configured");
   assert.ok(!f.calls.includes("programmes"));
-  const health = await (await send(env, new Request("https://lightbound.uk/api/health"))).json();
+  const health = await (await send(env, new Request("https://lightbound.space/api/health"))).json();
   assert.equal(health.ok, true, "optional feeds never fail health");
   assert.deepEqual(health.feeds.programmes, { state: "not configured" });
   assert.equal(health.feeds.news.state, "live", "health reads the members' feeds too");
@@ -1113,4 +1153,60 @@ test("group calls: a member's page reads one cached index, not a KV list per cal
   assert.equal((await listCalls(env, t0 + 5 * 60_000)).find((c) => c.id === a.id).rsvps.length, 1);
   assert.equal((await listCalls(env, t0 + 11 * 60_000)).find((c) => c.id === a.id).rsvps.length, 2, "rebuilt from the keys after 10 minutes");
   assert.equal(await rsvp(env, a.id, "third@example.test", true, t0), "full", "capacity is checked against the keys, not the cache");
+});
+
+test("launches: when LL2 is rate-limited the free RocketLaunch.Live list keeps the page live, credited; LL2 wins when back", async () => {
+  const env = { LIVE: memoryKV() };
+  const limited = makeFetch({ launches: 429 });
+  const r = await refreshFeeds(env, { fetchImpl: limited, now: RECORDED_AT });
+  assert.equal(r.launches, "updated", "the fallback filled the feed");
+  assert.deepEqual(limited.calls.filter((c) => c.startsWith("launches")), ["launches", "launchesFallback"]);
+  const rec = await readFeed(env, "launches");
+  assert.equal(launchesSource(rec), "rocketlaunch");
+  assert.equal(rec.data.length, 2);
+  assert.deepEqual(rec.data.map((l) => [l.id, l.precision, l.location]), [
+    ["rl-9001", "MIN", "Example Spaceport, Exampleland"],
+    ["rl-9002", "MON", "Example Range, Exampleland"],
+  ]);
+  const html = renderLaunches(rec, RECORDED_AT);
+  assert.match(html, /Source: Data by RocketLaunch\.Live/, "the credit RocketLaunch.Live asks for");
+  assert.doesNotMatch(html, /Launch Library/);
+  assert.match(renderIcs(rec, RECORDED_AT).replace(/\r\n /g, ""), /Source: Data by RocketLaunch\.Live via lightbound\.space/, "unfolded calendar lines");
+
+  const both = makeFetch({ launches: 429, launchesFallback: 503 });
+  const r2 = await refreshFeeds(env, { fetchImpl: both, now: RECORDED_AT + 60 * MIN });
+  assert.match(r2.launches, /^failed: /, "both down: LL2's error is reported and the previous data kept");
+  assert.equal(launchesSource(await readFeed(env, "launches")), "rocketlaunch");
+
+  const fine = makeFetch();
+  const r3 = await refreshFeeds(env, { fetchImpl: fine, now: RECORDED_AT + 120 * MIN });
+  assert.equal(r3.launches, "updated");
+  assert.deepEqual(fine.calls.filter((c) => c.startsWith("launches")), ["launches"], "no fallback call while LL2 answers");
+  const back = await readFeed(env, "launches");
+  assert.equal(launchesSource(back), "ll2");
+  assert.match(renderLaunches(back, RECORDED_AT + 120 * MIN), /Source: The Space Devs Launch Library 2/);
+  assert.throws(() => normaliseRocketLaunch({ result: [] }), /no usable launches/);
+});
+
+test("canonical origin: plain HTTP and www on the custom domain redirect to https://lightbound.space; the preview keeps its host", async () => {
+  const { canonicalRedirect, SECURITY_TXT_EXPIRES } = await import("../worker/index.js");
+  assert.equal(canonicalRedirect(new URL("http://lightbound.space/gauss/?x=1")), "https://lightbound.space/gauss/?x=1");
+  assert.equal(canonicalRedirect(new URL("https://www.lightbound.space/constellation/")), "https://lightbound.space/constellation/");
+  assert.equal(canonicalRedirect(new URL("http://www.lightbound.space/")), "https://lightbound.space/");
+  assert.equal(canonicalRedirect(new URL("https://lightbound.space/")), null);
+  assert.equal(canonicalRedirect(new URL("http://lightbound-site.jzwnathan.workers.dev/")), null, "the preview is not redirected");
+  assert.equal(canonicalRedirect(new URL("http://127.0.0.1:8788/")), null, "local dev is not redirected");
+  const env = { LIVE: memoryKV() };
+  const ctx = { waitUntil() {} };
+  const r = await worker.fetch(new Request("http://lightbound.space/gauss/"), env, ctx);
+  assert.equal(r.status, 301);
+  assert.equal(r.headers.get("location"), "https://lightbound.space/gauss/");
+  assert.equal(r.headers.get("strict-transport-security"), "max-age=31536000; includeSubDomains", "security headers on the redirect too");
+  const s = await worker.fetch(new Request("https://lightbound.space/.well-known/security.txt"), env, ctx);
+  assert.equal(s.status, 200);
+  assert.equal(s.headers.get("content-type"), "text/plain; charset=utf-8");
+  const body = await s.text();
+  assert.match(body, /^Contact: mailto:jzwnathan@lightbound\.uk$/m);
+  assert.match(body, /^Canonical: https:\/\/lightbound\.space\/\.well-known\/security\.txt$/m);
+  assert.ok(Date.parse(SECURITY_TXT_EXPIRES) > Date.now() + 90 * 86_400_000, "security.txt expiry is at least 90 days away");
 });

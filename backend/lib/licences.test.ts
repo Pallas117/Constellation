@@ -4,7 +4,7 @@ import { classifyExpression, classifyId, detectFromText, isLicenceFile } from ".
 
 test("licence ids: permissive, weak and strong copyleft, unknown", () => {
   for (const id of ["MIT", "ISC", "Apache-2.0", "BSD-3-Clause", "0BSD", "CC0-1.0", "mit"]) assert.equal(classifyId(id), "permissive", id);
-  for (const id of ["LGPL-2.1-or-later", "MPL-2.0", "EPL-2.0", "CDDL-1.0"]) assert.equal(classifyId(id), "weak-copyleft", id);
+  for (const id of ["LGPL-2.1-or-later", "MPL-2.0", "EPL-2.0", "CDDL-1.0", "OFL-1.1"]) assert.equal(classifyId(id), "weak-copyleft", id);
   for (const id of ["GPL-3.0-only", "GPL-2.0+", "AGPL-3.0", "SSPL-1.0", "EUPL-1.2"]) assert.equal(classifyId(id), "strong-copyleft", id);
   // BUSL is not open source; "BSD" alone doesn't say which BSD; a custom text needs reading
   for (const id of ["BUSL-1.1", "BSD", "SEE LICENSE IN LICENSE", "UNLICENSED"]) assert.equal(classifyId(id), "unknown", id);

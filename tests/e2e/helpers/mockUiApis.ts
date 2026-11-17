@@ -1,31 +1,5 @@
 import type { Page } from "@playwright/test";
 
-const MOCK_SPACE_WEATHER = {
-  timestamp: new Date().toISOString(),
-  solarWind: {
-    speed: 425,
-    density: 5.5,
-    pressure: 2.4,
-  },
-  imf: {
-    bz: -6.2,
-    bt: 7.4,
-  },
-  particles: {
-    protonFlux: 1.8,
-    electronFlux: 2100,
-  },
-  indices: {
-    kp: 4,
-    dst: -40,
-  },
-  flags: {
-    stale: false,
-    source: "live",
-    lastUpdate: new Date().toISOString(),
-  },
-};
-
 // What GET /api/feed/space-weather/latest really returns: one canonical point.
 const MOCK_CANONICAL_POINT = {
   timestamp: new Date().toISOString(),
@@ -125,10 +99,6 @@ export async function mockUiApis(page: Page, options?: { auth?: boolean }): Prom
 
   await page.route("**/api/feed/space-weather/latest", async (route) => {
     await fulfillCorsJson(route, MOCK_CANONICAL_POINT);
-  });
-
-  await page.route("**/functions/v1/spaceweather**", async (route) => {
-    await fulfillCorsJson(route, MOCK_SPACE_WEATHER);
   });
 
   await page.route("**/api/system/connectivity", async (route) => {

@@ -37,7 +37,7 @@ if [[ -z "${TS_IP:-}" ]]; then
   if ! command -v tailscale >/dev/null 2>&1; then
     TS_IP="$(detect_tailscale_ip_fallback || true)"
   else
-    TS_IP="$(tailscale ip -4 2>/dev/null | awk '/^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$/{print; exit}')"
+    TS_IP="$(tailscale ip -4 2>/dev/null | awk '/^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$/ && !d {print; d=1}')"
   fi
 
   if [[ -z "${TS_IP}" ]]; then

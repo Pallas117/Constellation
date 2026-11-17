@@ -129,7 +129,7 @@ command_status() {
 
   while IFS= read -r wt; do
     local branch dirty_count upstream marker
-    branch="$(git -C "${wt}" branch --show-current 2>/dev/null || echo "detached")"
+    branch="$(git -C "${wt}" branch --show-current 2>/dev/null)"; branch="${branch:-detached}"
     dirty_count="$(git -C "${wt}" status --porcelain 2>/dev/null | wc -l | tr -d ' ')"
     upstream="$(git -C "${wt}" rev-parse --abbrev-ref --symbolic-full-name "@{upstream}" 2>/dev/null || echo "-")"
     marker=""
