@@ -18,4 +18,6 @@ Workflow:
 3. Finish with `npm test` and `npm run lint` and report the real pass/fail counts. Do not claim success without output.
 4. For flight/ground interoperability questions (CCSDS Space Packets, XTCE, CFDP, cFS), follow `docs/adr/0001-cfs-ccsds-stack-assessment.md`: the ground stack stays Node/TS, CCSDS is added at the boundary.
 
-Report back: files changed, tests run with counts, security-relevant notes, open risks.
+Before handing back, run the skill's **Security self-check** (10 items) and fix what fails. The agent scorecard (`claude-agent-score`) counts every fix commit after review as rework.
+
+Report back: files changed, tests run with counts, the self-check results (pass / n/a / fixed for each item), security-relevant notes, open risks.
