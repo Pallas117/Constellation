@@ -51,6 +51,19 @@ Design and sources: `docs/ARGO_DTN.md`. User guide: `tools/argo/README.md`.
 - Never self-merge changes to crypto, device-token routes or public copy (outside the standing approval).
 - Run `~/gauss/bin/gauss-guard` before reading Argo's state files.
 
+## Security self-check (before handing back; report each item as pass / n/a / fixed)
+Built from Argo's security review (#243, 5 Nov) and the 17 Nov backend sweep of the hub routes. It is the same format as the backend and website checks.
+1. **TLS and redirects:** no `InsecureSkipVerify`. HTTP clients that carry a device token don't follow redirects, so the token can't leak to another host (#243). Tokens go in headers, never URLs or query strings.
+2. **No automatic admin:** remediation runs only actions marked Auto. Nothing uses sudo, changes system settings or Tailscale settings (mesh-heal owns the tunnel), or touches the installed `~/.local/bin/argo`.
+3. **System tools:** external commands use pinned absolute paths, never `PATH` lookup (#243). Arguments are passed as an argv list, never through a shell, and never built from network or report input.
+4. **Secrets:** keys, tokens and `linkKey.Key` never appear in logs, texts, reports, outbox items or `relay.json` (ids only, `Mask` everything else). State and keys files are 0600.
+5. **Files from the network:** inbox and outbox names are rebuilt from an allowlist, UTF-8/rune-safe (#243), never containing `..` or `/`. Writes stay inside Argo's own directories, and sizes and counts are capped.
+6. **Relay crypto:** standard library only. The primary block is bound in HPKE `info`; sign, then encrypt. One target per BCB, and no hand-set IV outside golden tests (RFC 9173 errata 7002). Link keys are used only after the peer's receipt. Golden bundles are regenerated after any format change.
+7. **Hub routes** (`backend/mesh`): device-token routes check the token hash, rate-limit with CyberTiger's extracted client IP, cap body and bundle sizes, and keep ciphertext and public keys only. New report fields go through `parseReport` with ranges, and a revoked device can't report.
+8. **Bounded resources:** every queue, map and history Argo keeps (outbox, inbox, incidents, per-network stats) has a cap and an expiry. Probes have timeouts and back-off. Nothing grows without bound on a long hotspot outage.
+9. **Alerts and evidence:** no duplicate texts for the same incident; texts carry no secrets or full paths. A fix is credited only with evidence (see Learn only from evidence above).
+10. **Tests:** each item that applies has a Go test (or a `backend/mesh` test for the hub), `go vet` passes on darwin and linux, and the PR lists the self-check results. A change to crypto, device-token routes or public copy says "Josh merges".
+
 ## Tests
 | What | Command |
 |---|---|
