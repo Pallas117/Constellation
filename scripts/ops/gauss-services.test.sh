@@ -117,7 +117,17 @@ SRC="Battery Power" BATT="45%; discharging; 1:00 remaining present: true" run aw
 [[ " $(alerts) " == *" plug-ahead "* ]] && grep -q "plug in to keep merging" "$T/log"; expect "plug ahead: under 50% with gates queued, they wait: text" $?
 SRC="AC Power" BATT="45%; charging; present: true" run awake guard
 [ -z "$(alerts)" ]; expect "plug ahead: on AC, no text" $?
-rm -f "$PQ"/*.req
+# 17 Nov: with claude-heavy's eclipse budget (a gate runs on battery at 38%, ~8% each) the texts use its numbers.
+mkdir -p "$T/home/.local/bin"
+printf '%s\n' '#!/bin/bash' '[ "$1 $2" = "--need gates" ] && echo "38 8"' >"$T/home/.local/bin/claude-heavy"; chmod +x "$T/home/.local/bin/claude-heavy"
+SRC="Battery Power" BATT="45%; discharging; 1:00 remaining present: true" run awake guard
+[[ " $(alerts) " == *" plug-ahead "* ]] && grep -q "need about 16% of battery; at 45% the queue stops at 38%" "$T/log"; expect "plug ahead: claude-heavy's budget (38%, 8%/gate): 45% with two gates queued, text early" $?
+SRC="Battery Power" BATT="36%; discharging; 1:00 remaining present: true" run awake guard
+[[ " $(alerts) " == *" plug-ahead "* ]] && grep -q "Under 38% on battery they wait" "$T/log"; expect "plug ahead: under claude-heavy's 38% line, they wait: text" $?
+printf '%s\n' '#!/bin/bash' 'echo "not numbers"' >"$T/home/.local/bin/claude-heavy"
+SRC="Battery Power" BATT="45%; discharging; 1:00 remaining present: true" run awake guard
+grep -q "Under 50% on battery they wait" "$T/log"; expect "plug ahead: an older claude-heavy (no --need): the 50% line" $?
+rm -f "$T/home/.local/bin/claude-heavy" "$PQ"/*.req
 SRC="Battery Power" BATT="9%; discharging; 0:20 remaining present: true" run awake guard
 [ "$(alerts)" = "battery-critical" ]; expect "9% on battery: at the floor" $?
 SRC="Battery Power" BATT="55%; discharging; 4:00 remaining present: true" run awake guard

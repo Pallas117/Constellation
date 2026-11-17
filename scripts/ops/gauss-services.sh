@@ -417,18 +417,32 @@ if bad:
 # WORK_BATTERY (Argo's batteryWorkPct, claude-heavy's HEAVY_BATTERY_MIN), then waits for the charger.
 PLUG_GATE_PCT="${GAUSS_PLUG_GATE_PCT:-5}"
 WORK_BATTERY="${GAUSS_WORK_BATTERY:-50}"
+# 17 Nov (Josh: "a better system for the power use when we don't have power outlets"): claude-heavy
+# now decides when a gate runs on battery from an eclipse budget (a 30% reserve for the worn battery,
+# plus a gate's measured cost, plus `claude-heavy --unplugged <h>` x the base drain), not a flat 50%.
+# The texts take its numbers (`claude-heavy --need gates` prints "<line %> <% per gate>") so they say
+# what the queue will really do; the GAUSS_* variables above still win when set. Deploys keep
+# WORK_BATTERY: a half-finished deploy is worse than a late one.
+plug_numbers() { # prints "<battery % the queue stops at> <% per gate>"
+  local need=""
+  if [ -z "${GAUSS_WORK_BATTERY:-}${GAUSS_PLUG_GATE_PCT:-}" ] && [ -x "$HEAVY" ]; then
+    need=$(perl -e 'alarm 5; exec @ARGV' "$HEAVY" --need gates 2>/dev/null) || need=""
+  fi
+  [[ "$need" =~ ^[0-9]+\ [0-9]+$ ]] && echo "$need" || echo "$WORK_BATTERY $PLUG_GATE_PCT"
+}
 plug_ahead() { # plug_ahead <pct>: on battery with gate runs queued, say when to plug in
-  local pct=$1 n need
+  local pct=$1 n need line per
   [ -d "$GATES_QUEUE" ] || return 0 # find on a missing folder fails, and pipefail would end the caller
   n=$(find "$GATES_QUEUE" -name '*.req' | wc -l | tr -d ' ') || return 0
   [ "${n:-0}" -gt 0 ] || return 0
-  need=$(( n * PLUG_GATE_PCT ))
-  if [ "$pct" -lt "$WORK_BATTERY" ]; then
+  read -r line per <<<"$(plug_numbers)"
+  need=$(( n * per ))
+  if [ "$pct" -lt "$line" ]; then
     phone -key plug-ahead -every 1h "Gauss: plug in to keep merging" \
-      "$n PR(s) wait to be tested and merged. Under ${WORK_BATTERY}% on battery they wait for the charger (${pct}% now)."
-  elif [ $(( pct - need )) -lt "$WORK_BATTERY" ]; then
+      "$n PR(s) wait to be tested and merged. Under ${line}% on battery they wait for the charger (${pct}% now)."
+  elif [ $(( pct - need )) -lt "$line" ]; then
     phone -key plug-ahead -every 1h "Gauss: plug in soon" \
-      "$n PR(s) queued need about ${need}% of battery; at ${pct}% the queue stops at ${WORK_BATTERY}%. Plug in within the hour to keep it moving."
+      "$n PR(s) queued need about ${need}% of battery; at ${pct}% the queue stops at ${line}%. Plug in within the hour to keep it moving."
   fi
 }
 
