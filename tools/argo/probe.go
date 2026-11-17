@@ -61,11 +61,14 @@ func (p SystemProber) Probe(ctx context.Context) Snapshot {
 		return s
 	}
 
-	dctx, cancel := context.WithTimeout(ctx, 4*time.Second)
+	// 8 s, not 4: system DNS goes through Tailscale (100.100.100.100), which on a
+	// flapping hotspot can take several seconds while the link settles.
+	dctx, cancel := context.WithTimeout(ctx, dnsTimeout)
 	_, err := net.DefaultResolver.LookupHost(dctx, "api.anthropic.com")
 	cancel()
 	if err != nil {
 		s.DNS = Result{Err: ErrDNS, Detail: err.Error()}
+		s.DNSDirectOK = directLookup(ctx, "api.anthropic.com")
 	} else {
 		s.DNS = Result{OK: true}
 	}
@@ -338,6 +341,22 @@ func meshHealCircuitOpen(now time.Time) bool {
 }
 
 // ---- helpers ----
+
+const dnsTimeout = 8 * time.Second
+
+// directLookup asks 1.1.1.1 directly, bypassing the system resolver order. When it
+// answers and the system lookup did not, the network is fine and the failing layer
+// is the local resolver (usually Tailscale's MagicDNS), so flushing caches won't help.
+func directLookup(ctx context.Context, host string) bool {
+	r := &net.Resolver{PreferGo: true, Dial: func(ctx context.Context, network, _ string) (net.Conn, error) {
+		var d net.Dialer
+		return d.DialContext(ctx, network, "1.1.1.1:53")
+	}}
+	c, cancel := context.WithTimeout(ctx, 4*time.Second)
+	defer cancel()
+	addrs, err := r.LookupHost(c, host)
+	return err == nil && len(addrs) > 0
+}
 
 func run(ctx context.Context, name string, args ...string) string {
 	c, cancel := context.WithTimeout(ctx, 8*time.Second)

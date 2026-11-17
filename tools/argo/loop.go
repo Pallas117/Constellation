@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"os/exec"
 	"strings"
 	"time"
 )
@@ -16,6 +18,7 @@ type Action struct {
 	Command string `json:"command,omitempty"`
 	Auto    bool   `json:"auto,omitempty"`
 	Admin   bool   `json:"admin,omitempty"`
+	Arg     string `json:"-"` // a network name for wifi-join (GAU-234): its own argv item, never stored
 }
 
 // Plan returns the ladder for a class, least invasive first. Tailscale is
@@ -25,12 +28,15 @@ func Plan(c Class, s Snapshot, remembered string) []Action {
 	var a []Action
 	switch c {
 	case Offline:
-		a = append(a, Action{ID: "wait", Say: "No network. Join Wi-Fi or enable the hotspot; mesh-heal will reconnect Tailscale."})
+		a = append(a, offlinePlan(s)...)
 	case Captive:
 		a = append(a, Action{ID: "open-portal", Say: "Wi-Fi login page detected; opening it.", Command: "open http://captive.apple.com", Auto: true})
 	case DNS:
+		if s.DNSDirectOK && s.Tailscale.Running { // the network answers; Tailscale's resolver doesn't
+			a = append(a, Action{ID: "check-magicdns", Say: "Tailscale's DNS is stuck while the network's DNS works. Toggle Tailscale off and on, or for now:", Command: "tailscale set --accept-dns=false"})
+		}
 		a = append(a, Action{ID: "flush-dns", Say: "DNS is failing. Flush the resolver cache:", Command: "sudo dscacheutil -flushcache; sudo killall -HUP mDNSResponder", Admin: true})
-		if s.Tailscale.Running {
+		if s.Tailscale.Running && !s.DNSDirectOK {
 			a = append(a, Action{ID: "check-magicdns", Say: "If it persists, MagicDNS may be stuck:", Command: "tailscale set --accept-dns=false"})
 		}
 	case DeadProxy:
@@ -53,7 +59,7 @@ func Plan(c Class, s Snapshot, remembered string) []Action {
 			n := s.Tailscale.ExitCandidates[0]
 			a = append(a, Action{ID: "exit-node", Say: "Route via the allow-listed exit node " + n + ":", Command: "tailscale set --exit-node=" + n + " --exit-node-allow-lan-access"})
 		}
-		a = append(a, Action{ID: "switch-network", Say: "Switch to a Malaysian SIM or local Wi-Fi (Hong Kong eSIMs exit in HK, which Anthropic does not serve)."})
+		a = append(a, Action{ID: "switch-network", Say: switchAdvice(c, s)})
 	case WiFiRisk:
 		if weakWiFi(s.WiFiSec) {
 			a = append(a, Action{ID: "avoid-weak-wifi", Say: "This Wi-Fi is not properly encrypted. Use your iPhone hotspot instead, or keep Tailscale on so traffic to the team stays encrypted."})
@@ -74,12 +80,32 @@ func Plan(c Class, s Snapshot, remembered string) []Action {
 	return a
 }
 
+// switchAdvice fits the advice to what failed. A Hong Kong eSIM shows up as
+// REGION (403 or an HK exit); a PORT_BLOCK in Malaysia is the network itself.
+func switchAdvice(c Class, s Snapshot) string {
+	switch {
+	case c == Region:
+		return "Switch to a Malaysian SIM or local Wi-Fi (Hong Kong eSIMs exit in HK, which Anthropic does not serve)."
+	case isIPhoneHotspot(s.Gateway):
+		return "The iPhone's mobile data is stalling. On the phone, turn Airplane mode on for 5 seconds and off again, " +
+			"or connect it by USB cable, which holds better than the Wi-Fi hotspot."
+	case uplinkStalled(s):
+		return "This Wi-Fi is connected but nothing gets through (Apple's check fails too), so it is the network, not a block on Claude. " +
+			"Shared Wi-Fi often does this when busy: switch to the iPhone hotspot."
+	}
+	return "This network lets other sites through but drops connections to Claude. Switch to the iPhone hotspot."
+}
+
 const settleDelay = 10 * time.Second
 
 // Effects are the side effects the loop may cause; tests replace them.
 type Effects interface {
 	Notify(title, msg string)
 	Open(url string) error
+	Run(name string, args ...string) error // only the Wi-Fi shield's warp-cli connect/disconnect
+	// NotifyOffline texts while this Mac has no network, through the iPhone's SMS relay (GAU-233);
+	// true when Messages accepted it.
+	NotifyOffline(title, msg string) bool
 	Sleep(d time.Duration)
 	Now() time.Time
 }
@@ -92,7 +118,21 @@ func (f realEffects) Notify(title, msg string) {
 		f.phone.Send(title, msg, time.Now())
 	}
 }
-func (realEffects) Open(u string) error   { return openURL(u) }
+func (realEffects) Open(u string) error { return openURL(u) }
+func (realEffects) Run(name string, args ...string) error {
+	if name == "warp-cli" {
+		if name = warpCLI(); name == "" {
+			return errors.New("warp-cli not found")
+		}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	return exec.CommandContext(ctx, name, args...).Run()
+}
+func (f realEffects) NotifyOffline(title, msg string) bool {
+	desktopNotify(title, msg)
+	return f.phone != nil && f.phone.SendRelay(title, msg, time.Now())
+}
 func (realEffects) Sleep(d time.Duration) { time.Sleep(d) }
 func (realEffects) Now() time.Time        { return time.Now() }
 
@@ -103,6 +143,9 @@ type Loop struct {
 	Fx      Effects
 	Out     func(string) // foreground output; nil in the LaunchAgent
 	Pushers []func(State)
+	// AppWatch turns on the app data watch (leak.go); only the real agent sets it, so tests
+	// never run lsof or nettop.
+	AppWatch bool
 }
 
 func (l Loop) say(format string, args ...any) {
@@ -112,6 +155,9 @@ func (l Loop) say(format string, args ...any) {
 }
 
 func (l Loop) Tick(ctx context.Context) State {
+	if l.AppWatch {
+		l.leakWatch(ctx)
+	}
 	st := l.Store.Load()
 	snap := l.Prober.Probe(ctx)
 	class, reason := Classify(snap)
@@ -123,7 +169,7 @@ func (l Loop) Tick(ctx context.Context) State {
 		class, reason = Classify(snap)
 	}
 	now := l.Fx.Now()
-	fp := Fingerprint(snap.GatewayMAC, snap.PublicIP)
+	fp := netFingerprint(snap)
 	// With the link down (or the internet unreachable) there is no public IP and
 	// often no gateway: that is still the network we were on, so the incident
 	// and what Argo learns from it belong to it, not to an empty fingerprint.
@@ -135,10 +181,16 @@ func (l Loop) Tick(ctx context.Context) State {
 			st.Networks[fp] = Net{FirstSeen: now, Fixes: map[Class]string{}}
 		}
 	}
-	prev := st.Class
+	prev, prevPublicIP := st.Class, st.PublicIP
 	st.Fingerprint, st.Loc, st.CheckedAt, st.Tailscale = fp, snap.Loc, now, snap.Tailscale
-	st.Gateway, st.GatewayMAC = snap.Gateway, snap.GatewayMAC
+	if fp != "" {
+		l.watchNeighbours(&st, snap, fp, prevPublicIP) // before Gateway/GatewayMAC move on
+	}
+	st.Gateway, st.GatewayMAC, st.PublicIP = snap.Gateway, snap.GatewayMAC, snap.PublicIP
 	st.Net = ScoreNet(snap)
+	if fp != "" {
+		l.shield(ctx, &st, snap, fp)
+	}
 	l.say("%s  %s", class, reason)
 
 	if !class.Blocking() {
@@ -154,18 +206,25 @@ func (l Loop) Tick(ctx context.Context) State {
 	}
 
 	if class != prev {
-		if prev.Blocking() { // one failure turned into another: close the old incident
+		flip := prev.Blocking() // one failure turned into another: the log closes the old class
+		if flip {
 			_ = l.Store.Append(Incident{Time: now, Event: "superseded", Class: prev, Fingerprint: fp})
 		}
-		st.IncidentAt, st.Attempts, st.LastFix, st.IncidentFP = now, 0, "", fp
-		st.Notified, st.NotifyDue = false, time.Time{}
 		_ = l.Store.Append(Incident{Time: now, Event: "open", Class: class, Fingerprint: fp, Detail: reason})
+		// A slow hotspot flips between DNS and PORT_BLOCK (2026-10-27 19:53-19:59). That is
+		// one outage: keep its start, attempts and backoff, and don't text again for it.
+		if !flip {
+			st.IncidentAt, st.Attempts, st.LastFix, st.IncidentFP = now, 0, "", fp
+			st.OfflineTold, st.WiFiSteps = false, 0
+			st.Notified, st.NotifyDue = false, time.Time{}
+		}
 		switch quiet := st.Networks[fp].quietFor(class); {
+		case flip && (st.Notified || !st.NotifyDue.IsZero()): // already told, or already scheduled
 		case class == Offline: // a Mac with no network can't send it; it would arrive stale
 		case quiet > 0: // this network usually clears it by itself: say so only if it lasts longer
 			st.NotifyDue = now.Add(quiet)
-		default:
-			l.Fx.Notify("Argo: "+string(class), reason+"\n"+st.Net.Line()) // rate limit: only on class change
+		default: // rate limit: only on class change
+			l.Fx.Notify("Argo: "+string(class), reason+"\n"+st.Net.Line()+fixHint(Plan(class, snap, st.Networks[fp].Fixes[class])))
 			st.Notified = true
 		}
 	}
@@ -175,6 +234,20 @@ func (l Loop) Tick(ctx context.Context) State {
 		l.Fx.Notify("Argo: "+string(class), fmt.Sprintf("%s for %s, longer than usual on this network (it usually clears in %s).\n%s",
 			reason, now.Sub(st.IncidentAt).Round(time.Minute), p50.Round(time.Second), st.Net.Line()))
 		st.Notified = true
+	}
+
+	// GAU-233: an outage lasting offlineTellAfter is texted once through the iPhone's SMS relay
+	// (Continuity), which needs no internet on the Mac, only the phone's own cellular.
+	if class == Offline && !st.OfflineTold && now.Sub(st.IncidentAt) >= offlineTellAfter {
+		st.OfflineTold = true
+		ok := l.Fx.NotifyOffline("Argo: Mac offline", fmt.Sprintf("No network since %s (%s). Argo is retrying Wi-Fi by itself; you'll get a text when it's back. If the hotspot is off, turn it on.",
+			st.IncidentAt.Local().Format("15:04"), now.Sub(st.IncidentAt).Round(time.Minute)))
+		detail := "queued (relay not accepted)"
+		if ok {
+			detail = "sent through the iPhone relay"
+		}
+		_ = l.Store.Append(Incident{Time: now, Event: "relay", Class: class, Fingerprint: fp, Detail: detail})
+		l.say("offline alert: %s", detail)
 	}
 
 	if now.Before(st.BreakerUntil) {
@@ -195,14 +268,30 @@ func (l Loop) Tick(ctx context.Context) State {
 			class, p50.Round(time.Second), p90.Round(time.Second), k)}}, plan...)
 	}
 	var ran []string
+	wifiTurn := st.WiFiSteps // fixed for this tick: one Wi-Fi step per attempt
 	for _, a := range plan {
 		line := a.Say
 		if a.Command != "" {
 			line += "\n    " + a.Command
 		}
 		l.say("→ %s", line)
+		if a.Auto && class == Offline && now.Sub(st.IncidentAt) < offlineRejoinAfter {
+			continue // a network switch: give it time before resetting Wi-Fi
+		}
+		if a.Auto && class == Offline && snap.InCall && now.Sub(st.IncidentAt) < callRejoinAfter {
+			l.say("  (a call is live: Wi-Fi is left alone until the outage reaches %s)", callRejoinAfter)
+			continue // the call may still be riding it out; a reset would surely drop it
+		}
+		// GAU-234: with a saved network in range, attempts alternate between joining it and a Wi-Fi
+		// restart, so one step per attempt (a restart right after a join would undo it).
+		if hasAction(plan, "wifi-join") && ((a.ID == "wifi-join" && wifiTurn%2 == 1) || (a.ID == "wifi-rejoin" && wifiTurn%2 == 0)) {
+			continue
+		}
 		if a.Auto {
-			if err := l.Fx.Open(strings.TrimPrefix(a.Command, "open ")); err == nil {
+			if strings.HasPrefix(a.ID, "wifi-") {
+				st.WiFiSteps++ // counted when tried, so join and restart alternate even when one fails
+			}
+			if err := l.runAuto(a); err == nil {
 				ran = append(ran, a.ID)
 			}
 		}
@@ -218,7 +307,11 @@ func (l Loop) Tick(ctx context.Context) State {
 
 	// Verify: re-probe once after auto actions; user-run fixes are verified next tick.
 	if len(ran) > 0 {
-		l.Fx.Sleep(5 * time.Second)
+		settle := 5 * time.Second
+		if strings.HasPrefix(ran[0], "wifi-") {
+			settle = wifiRejoinSettle // joining a network and getting an address takes longer than a page opening
+		}
+		l.Fx.Sleep(settle)
 		if c2, _ := Classify(l.Prober.Probe(ctx)); !c2.Blocking() {
 			l.resolve(&st, class, l.Fx.Now(), st.LastFix, fp)
 			st.Class, st.Reason = c2, "recovered"

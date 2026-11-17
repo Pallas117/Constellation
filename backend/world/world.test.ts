@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { freshnessMin } from "../../shared/policy/freshness.js";
 import type { CanonicalSpaceWeatherPoint } from "../types.js";
 import {
   adviseOnStormOnset,
@@ -15,7 +16,7 @@ import { verifyRecord } from "./ids.js";
 const T0 = Date.parse("2026-10-16T00:00:00Z");
 const at = (min: number) => new Date(T0 + min * 60_000).toISOString();
 
-function point(min: number, over: { kp?: number; bz?: number; stale?: boolean; dstMethod?: string; goes?: boolean } = {}): CanonicalSpaceWeatherPoint {
+function point(min: number, over: { kp?: number | null; kpKind?: "estimated-1m" | "planetary-3h"; bz?: number; stale?: boolean; dstMethod?: string; goes?: boolean } = {}): CanonicalSpaceWeatherPoint {
   return {
     timestamp: at(min),
     observedAt: at(min - 1),
@@ -26,7 +27,7 @@ function point(min: number, over: { kp?: number; bz?: number; stale?: boolean; d
     magneticField: { x: 2, y: 3, z: over.bz ?? -4, bt: 5.4 },
     electricField: { x: 0, y: 1.8, z: 0, ey: 1.8 },
     solarWind: { speed: 450, density: 5, dynamicPressure: 1.7 },
-    indices: { kp: over.kp ?? 3, dst: -20, dstMethod: over.dstMethod ?? "model: O'Brien & McPherron (2000) ring-current", dstDerivedFrom: ["solarWind.speed"], kpKind: "estimated-1m", kpObservedAt: at(min - 1), dstObservedAt: over.dstMethod === "measured" ? at(min - 40) : null },
+    indices: { kp: over.kp === undefined ? 3 : over.kp, dst: -20, dstMethod: over.dstMethod ?? "model: O'Brien & McPherron (2000) ring-current", dstDerivedFrom: ["solarWind.speed"], kpKind: over.kpKind ?? "estimated-1m", kpObservedAt: at(min - 1), dstObservedAt: over.dstMethod === "measured" ? at(min - 40) : null },
     coupling: { newell: 4000, epsilon: 1e11 },
     propagation: { l1DelaySeconds: 3300, etaEarthArrival: at(min + 55) },
     alerts: { stormTier: "quiet", reason: "" },
@@ -70,6 +71,13 @@ test("GAU-63: a point with no measurement time yields no observations, never one
   assert.deepEqual(vars, ["protons_10mev"], "only the GOES reading, which carries its own time");
 });
 
+test("GAU-230: a point with no Kp (null) yields no kp observation, even with a Kp time on it", () => {
+  const vars = observationsFromCanonical(point(0, { kp: null })).map((o) => o.variable);
+  assert.ok(!vars.includes("kp"), "unknown Kp is absent, not 0 or 2");
+  assert.ok(vars.includes("imf.bz"), "the measured L1 values are still observations");
+  assert.equal(reconstructState(observationsFromCanonical(point(0, { kp: null })), at(0)).variables.kp.provenance, "unknown");
+});
+
 test("GAU-39: ids and checksums are deterministic, and tampering is detected", () => {
   const a = observationsFromCanonical(point(0));
   const b = observationsFromCanonical(point(0));
@@ -92,7 +100,7 @@ test("GAU-39: state is reconstructed from a bounded window; stale and future obs
   const late = reconstructState(obs, at(40));
   assert.equal(late.variables["imf.bz"].provenance, "unknown", "older than 15 min: unknown, not carried");
   assert.equal(late.variables["imf.bz"].value, null);
-  assert.equal(late.variables.kp.provenance, "measured", "Kp keeps its 3.5 h window");
+  assert.equal(late.variables.kp.provenance, "unknown", "a running Kp estimate expires with the L1 bound (GAU-212)");
   const stale = reconstructState(observationsFromCanonical(point(0, { stale: true })), at(1));
   assert.ok(Object.values(stale.variables).every((v) => v.provenance === "unknown"), "stale observations are not measurements");
 });
@@ -147,11 +155,26 @@ test("GAU-39: replay of a storm gives identical records, an onset event, an advi
 });
 
 test("GAU-39: a lost source becomes a source-lost event, not silently carried", () => {
-  const live = reconstructState(observationsFromCanonical(point(0, { goes: false })), at(0));
-  const later = reconstructState(observationsFromCanonical(point(0, { goes: false })), at(20));
-  const types = detectEvents(live, later).map((e) => `${e.type}:${e.rule.split(" ")[0]}`);
-  assert.ok(types.includes("source-lost:imf.bz"));
-  assert.ok(!types.some((t) => t.endsWith(":kp")), "Kp is still within its window");
+  const lost = (kpKind: "estimated-1m" | "planetary-3h") => {
+    const obs = observationsFromCanonical(point(0, { goes: false, kpKind }));
+    return detectEvents(reconstructState(obs, at(0)), reconstructState(obs, at(20))).map((e) => `${e.type}:${e.rule.split(" ")[0]}`);
+  };
+  assert.ok(lost("planetary-3h").includes("source-lost:imf.bz"));
+  assert.ok(!lost("planetary-3h").some((t) => t.endsWith(":kp")), "a completed 3-hour Kp is still within its window");
+  assert.ok(lost("estimated-1m").includes("source-lost:kp"), "a running estimate stops with the L1 feed (GAU-212)");
+});
+
+test("GAU-212: Kp keeps its product's window: the running estimate's, or the completed 3-hour Kp's", () => {
+  // point(0) measured Kp at minute -1, so at(age - 1) is `age` minutes after it.
+  const kpAfter = (kpKind: "estimated-1m" | "planetary-3h", age: number) =>
+    reconstructState(observationsFromCanonical(point(0, { kpKind })), at(age - 1)).variables.kp.provenance;
+  assert.equal(kpAfter("estimated-1m", freshnessMin("kp_estimated_1m")), "measured");
+  assert.equal(kpAfter("estimated-1m", freshnessMin("kp_estimated_1m") + 1), "unknown");
+  assert.equal(kpAfter("planetary-3h", freshnessMin("kp_planetary_3h")), "measured");
+  assert.equal(kpAfter("planetary-3h", freshnessMin("kp_planetary_3h") + 1), "unknown");
+  // The newest usable reading wins: a stalled estimate gives way to an older completed interval.
+  const obs = [...observationsFromCanonical(point(0, { kp: 3, kpKind: "planetary-3h" })), ...observationsFromCanonical(point(30, { kp: 6 }))];
+  assert.equal(reconstructState(obs, at(60)).variables.kp.value, 3);
 });
 
 test("GAU-39: a forecast is a hypothesis resolved against observed state", () => {
@@ -171,10 +194,11 @@ test("GAU-39: a forecast is a hypothesis resolved against observed state", () =>
 
 test("GAU-39: live world state uses only the needed window of the feed, newest first", async () => {
   const { worldStateFromFeed } = await import("./build.js");
-  // 6 h of 5 s points (4320); only the last 3.5 h at one per minute should be read.
-  const feed = Array.from({ length: 4320 }, (_, i) => point(-360 + i / 12, { kp: i > 4000 ? 5.3 : 3 }));
+  // 8 h of 5 s points (5760); only the longest window (the completed 3-hour Kp's, 6 h) at one per
+  // minute should be read.
+  const feed = Array.from({ length: 5760 }, (_, i) => point(-480 + i / 12, { kp: i > 5440 ? 5.3 : 3 }));
   const { state, observations } = worldStateFromFeed(feed, at(0));
   assert.equal(state.variables.kp.value, 5.3, "the newest measurement");
-  assert.ok(observations.length <= 211 * 7, `bounded: ${observations.length} observations`);
+  assert.ok(observations.length <= (freshnessMin("kp_planetary_3h") + 1) * 7, `bounded: ${observations.length} observations`);
   assert.equal(state.variables["imf.bz"].provenance, "measured");
 });

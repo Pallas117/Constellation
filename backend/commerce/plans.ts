@@ -16,14 +16,21 @@ export interface PlanLimits {
   requestsPerDay: number;
   /** Longest history window a single request may ask for. */
   maxLookbackMs: number;
+  /**
+   * Data points the organisation may receive per UTC day (a history point, a latest point or a
+   * trust record each count one). The request quota alone let one pilot key pull 50,000 full-day
+   * histories (61 MB each) a day: about 90 TB a month. 2 million points is ~9x a heavy operator
+   * (latest every 5 s plus a 720-point history every 5 min, ~225k points a day).
+   */
+  pointsPerDay: number;
 }
 
 const HOUR = 60 * 60 * 1000;
 
 export const PLANS: Readonly<Record<Plan, PlanLimits>> = {
-  free: { api: false, requestsPerMinute: 0, requestsPerDay: 0, maxLookbackMs: 0 },
-  pilot: { api: true, requestsPerMinute: 60, requestsPerDay: 50_000, maxLookbackMs: 24 * HOUR },
-  enterprise: { api: true, requestsPerMinute: 600, requestsPerDay: 500_000, maxLookbackMs: 24 * HOUR },
+  free: { api: false, requestsPerMinute: 0, requestsPerDay: 0, maxLookbackMs: 0, pointsPerDay: 0 },
+  pilot: { api: true, requestsPerMinute: 60, requestsPerDay: 50_000, maxLookbackMs: 24 * HOUR, pointsPerDay: 2_000_000 },
+  enterprise: { api: true, requestsPerMinute: 600, requestsPerDay: 500_000, maxLookbackMs: 24 * HOUR, pointsPerDay: 20_000_000 },
 };
 
 export function isPlan(value: unknown): value is Plan {

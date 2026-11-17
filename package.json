@@ -3,6 +3,7 @@
   "private": true,
   "version": "0.0.0",
   "type": "module",
+  "gypfile": false,
   "scripts": {
     "dev": "vite --config frontend/vite.config.ts",
     "dev:proxy": "node --env-file-if-exists=.env --import tsx backend/server.ts",
@@ -30,16 +31,16 @@
     "env:check": "node --import tsx backend/scripts/env-check.ts",
     "check:security-compliance": "node --env-file-if-exists=.env --import tsx backend/scripts/security-compliance-check.ts",
     "audit:adherence": "node --env-file-if-exists=.env --import tsx backend/scripts/full-adherence-audit.ts",
-    "setup:rbac": "node --env-file-if-exists=.env --import tsx backend/scripts/rbac-bootstrap.ts",
     "auth:migrate": "node --env-file-if-exists=.env --import tsx backend/scripts/auth-migrate.ts",
     "auth:set-role": "node --env-file-if-exists=.env --import tsx backend/scripts/set-role.ts",
     "mesh:enroll": "node --import tsx backend/scripts/mesh-enroll.ts",
     "org": "node --env-file-if-exists=.env --import tsx backend/scripts/org.ts",
     "test:physics": "node --import tsx --test \"frontend/src/lib/physics/**/*.test.ts\"",
-    "test:rbac": "node --env-file-if-exists=.env --import tsx backend/scripts/rbac-smoke.ts",
     "test:backend:harness": "node --import tsx --test backend/server.harness.test.ts",
     "test:argo-e2e": "tsx scripts/argo-relay-e2e.ts",
-    "test:ops": "bash scripts/ops/gauss-services.test.sh && cd tools/argo && go test ./...",
+    "test:ops": "bash scripts/ops/gauss-services.test.sh && ARGO_SHORT=1 bash tools/argo/check.sh",
+    "test:argo": "bash tools/argo/check.sh",
+    "ci:argo": "bash tools/argo/ci-local.sh",
     "test:ui": "playwright test",
     "test:ui:mobile": "playwright test tests/e2e/ui-mobile-layout.spec.ts",
     "test:ui:headed": "playwright test --headed",
@@ -47,6 +48,7 @@
     "test": "TSX_TSCONFIG_PATH=frontend/tsconfig.app.json node --import tsx --import ./backend/test-setup.ts --test ${ARGO_WORKERS:+--test-concurrency=$ARGO_WORKERS} \"backend/**/*.test.ts\" \"frontend/src/lib/**/*.test.ts\"",
     "build": "vite build --config frontend/vite.config.ts",
     "build:dev": "vite build --mode development --config frontend/vite.config.ts",
+    "build:native": "node-gyp rebuild",
     "lint": "npm run quality:types",
     "preview": "vite preview --config frontend/vite.config.ts",
     "security:audit": "npm audit --audit-level=moderate",
@@ -62,7 +64,9 @@
     "replay:fetch": "node --import tsx scripts/replay/fetch-event.ts",
     "replay:holdout": "node --import tsx scripts/replay/score-holdout.ts",
     "trust:ingest": "node --import tsx scripts/trust/ingest-log.ts",
+    "trust:keys": "node --import tsx scripts/trust/keys.ts",
     "trust:replay": "node --import tsx scripts/trust/replay-records.ts",
+    "trust:sign": "node --import tsx scripts/trust/sign.ts",
     "trust:verify": "node --import tsx scripts/trust/verify-pack.ts",
     "tpm": "node --import tsx scripts/ops/tpm-check.ts",
     "deploy": "node --import tsx scripts/release/deploy.ts",
@@ -77,6 +81,8 @@
     "smoke:website": "node website/tools/smoke.mjs"
   },
   "dependencies": {
+    "@fontsource/ibm-plex-sans": "^5.3.0",
+    "@fontsource/jetbrains-mono": "^5.3.0",
     "@radix-ui/react-dialog": "^1.1.14",
     "@radix-ui/react-label": "^2.1.7",
     "@radix-ui/react-popover": "^1.1.14",
@@ -86,7 +92,6 @@
     "@radix-ui/react-tooltip": "^1.2.7",
     "@react-three/drei": "^9.122.0",
     "@react-three/fiber": "^8.18.0",
-    "@supabase/supabase-js": "^2.86.2",
     "@tanstack/react-query": "^5.83.0",
     "@types/better-sqlite3": "^7.6.13",
     "@types/three": "^0.169.0",
@@ -99,7 +104,6 @@
     "express": "^4.21.2",
     "framer-motion": "^12.38.0",
     "lucide-react": "^0.462.0",
-    "neo4j-driver": "^6.0.1",
     "next-themes": "^0.3.0",
     "node-addon-api": "^8.6.0",
     "protobufjs": "^8.0.0",
@@ -113,7 +117,7 @@
     "tailwindcss-animate": "^1.0.7",
     "three": "^0.169.0",
     "ws": "^8.21.0",
-    "zod": "^3.25.76"
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
@@ -126,7 +130,7 @@
     "@types/ws": "^8.18.1",
     "@vitejs/plugin-react-swc": "latest",
     "autoprefixer": "^10.4.21",
-    "concurrently": "^9.2.1",
+    "concurrently": "^10.0.6",
     "eslint": "^10.12.0",
     "eslint-plugin-react-hooks": "^7.1.1",
     "eslint-plugin-react-refresh": "^0.5.7",
@@ -134,7 +138,7 @@
     "lovable-tagger": "^1.1.11",
     "postcss": "^8.5.6",
     "tailwindcss": "^3.4.17",
-    "tsx": "^4.20.3",
+    "tsx": "^4.23.15",
     "typescript": "^5.8.3",
     "typescript-eslint": "^8.71.1",
     "vite": "^7.3.1"
@@ -145,9 +149,13 @@
     "ml"
   ],
   "overrides": {
+    "minimatch": "^11.0.7",
     "three-mesh-bvh": "^0.8.0",
     "express": {
       "qs": "^6.16.1"
+    },
+    "lovable-tagger": {
+      "esbuild": "^0.28.2"
     }
   }
 }

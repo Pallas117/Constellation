@@ -43,7 +43,8 @@ export interface MagnetosphereModelInfo {
   r0: number;
   bowShock: number;
   tilt: number;
-  oval: { equatorward: number; poleward: number };
+  /** Null when the drivers have no Kp reading: the oval's latitude is unknown (GAU-230). */
+  oval: { equatorward: number; poleward: number } | null;
   /** Null until the first field-line trace arrives. */
   openFraction: number | null;
 }
@@ -635,7 +636,7 @@ function fillOvals(g: THREE.BufferGeometry, tilt: number, equatorward: number, p
   g.computeBoundingSphere();
 }
 
-const AuroralOvals = ({ tilt, oval, kp }: { tilt: number; oval: TracedModel['oval']; kp: number }) => {
+const AuroralOvals = ({ tilt, oval, kp }: { tilt: number; oval: NonNullable<TracedModel['oval']>; kp: number }) => {
   const animTime = useAnimTime();
   const tau = useTau(MORPH_TAU);
   const meshRef = useRef<THREE.Mesh<THREE.BufferGeometry, THREE.ShaderMaterial>>(null);
@@ -734,7 +735,8 @@ export const Magnetosphere = ({
       bz: pick(drivers?.bz, legacy.bz),
       by: pick(drivers?.by, legacy.by),
       pdyn: pick(drivers?.pdyn, legacy.pdyn),
-      kp: pick(drivers?.kp, legacy.kp),
+      // Live drivers without a Kp reading keep it unknown (no oval); only the reference geometry uses its Kp (GAU-230).
+      kp: drivers?.kp === null ? null : pick(drivers?.kp, legacy.kp ?? 2),
     };
   }, [compression, reconnectionStrength, drivers?.bz, drivers?.by, drivers?.pdyn, drivers?.kp]);
 
@@ -787,7 +789,7 @@ export const Magnetosphere = ({
             {state.render && <FieldLineTracers data={state.render} />}
           </>
         )}
-        <AuroralOvals tilt={state.tilt} oval={state.oval} kp={model.drivers.kp} />
+        {state.oval && model.drivers.kp !== null && <AuroralOvals tilt={state.tilt} oval={state.oval} kp={model.drivers.kp} />}
       </group>
     </MotionScale.Provider>
   );

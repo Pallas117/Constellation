@@ -1,12 +1,13 @@
 import { buildFingerprint } from "./operator-fingerprint";
-import { getAuthHeaders } from "./api/auth";
+import { apiBase } from "./api/base-url";
 
 export async function registerDeviceWithLogin(name?: string) {
   const fp = await buildFingerprint();
-  const headers = await getAuthHeaders();
-  const res = await fetch("/api/device/register", {
+  // apiBase(), like every other call, so it works without the dev proxy; the session cookie authenticates.
+  const res = await fetch(`${apiBase()}/api/device/register`, {
     method: "POST",
-    headers: { "Content-Type": "application/json", ...headers },
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ name, fingerprintHash: fp.hash, fingerprintSignals: fp.signals }),
   });
   return res.json();

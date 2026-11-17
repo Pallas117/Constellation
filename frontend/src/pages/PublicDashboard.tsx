@@ -1,6 +1,7 @@
 import { useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Globe, KeyRound, Lock, Orbit } from 'lucide-react';
+import { hasRole, roleOf } from '@/lib/roles';
+import { Globe, KeyRound, Lock, LogIn, Orbit } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { GaussGlobe } from '@/components/GaussGlobe';
 import { SceneBoundary } from '@/components/ErrorBoundary';
@@ -40,6 +41,8 @@ export default function PublicDashboard() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const { data: session } = useSession();
   const signedIn = Boolean(session?.user?.id);
+  // Only offer the console to roles that can open it; anyone else would be bounced straight back here.
+  const operator = signedIn && hasRole(roleOf(session?.user), 'operator');
   const [modelInfo, setModelInfo] = useState<MagnetosphereModelInfo | null>(null);
 
   // The public latest L1 point, once a minute, drives the traced field lines.
@@ -103,10 +106,18 @@ export default function PublicDashboard() {
               Field model
             </Link>
           )}
-          <Link to="/operator" className={NAV_LINK}>
-            <Lock className="h-3.5 w-3.5" aria-hidden="true" />
-            Operator Portal
-          </Link>
+          {operator && (
+            <Link to="/operator" className={NAV_LINK}>
+              <Lock className="h-3.5 w-3.5" aria-hidden="true" />
+              Operator console
+            </Link>
+          )}
+          {!signedIn && (
+            <Link to="/login" className={NAV_LINK}>
+              <LogIn className="h-3.5 w-3.5" aria-hidden="true" />
+              Sign in
+            </Link>
+          )}
           <Link to="/member" className={NAV_LINK}>
             <Globe className="h-3.5 w-3.5" aria-hidden="true" />
             Member Hub
@@ -167,8 +178,12 @@ export default function PublicDashboard() {
             <HudStat
               label="Kp"
               value={fmt(drivers?.kp)}
-              tone={drivers ? (drivers.kp >= 7 ? 'risk' : drivers.kp >= 5 ? 'caution' : 'default') : 'default'}
-              detail="Planetary geomagnetic activity, 0–9. 5 and above is a storm (G1+)."
+              tone={drivers && drivers.kp !== null ? (drivers.kp >= 7 ? 'risk' : drivers.kp >= 5 ? 'caution' : 'default') : 'default'}
+              detail={
+                drivers && drivers.kp === null
+                  ? 'Planetary geomagnetic activity, 0–9. No Kp reading from any source: unknown.'
+                  : 'Planetary geomagnetic activity, 0–9. 5 and above is a storm (G1+).'
+              }
             />
             <HudStat
               label="Radiation"
