@@ -1210,3 +1210,53 @@ test("canonical origin: plain HTTP and www on the custom domain redirect to http
   assert.match(body, /^Canonical: https:\/\/lightbound\.space\/\.well-known\/security\.txt$/m);
   assert.ok(Date.parse(SECURITY_TXT_EXPIRES) > Date.now() + 90 * 86_400_000, "security.txt expiry is at least 90 days away");
 });
+
+// ---- Offline pilot steps in the workspace ----
+test("workspace: the pilot's steps show the current step with dates, and how to send logs", async () => {
+  const { env, access } = await appEnv();
+  await putAccount(env, { email: "ops@example.test", tier: "pilot", billing: { status: "due" } }, "test");
+  let page = await (await send(env, await as(access, "ops@example.test", "/app/"))).text();
+  assert.match(page, /Now: Approved \(quote\)/, "no quote yet");
+  await putAccount(env, { email: "ops@example.test", tier: "pilot", quote: 2_800_000, approvedAt: "2026-11-03T00:00:00.000Z", billing: { status: "due" } }, "test");
+  page = await (await send(env, await as(access, "ops@example.test", "/app/"))).text();
+  assert.match(page, /<li class="done">Brief received<\/li><li class="done">Approved \(quote\) <span class="muted">· 3 Nov 2026<\/span><\/li><li class="here" aria-current="step">Paid<\/li><li class="">Logs received<\/li>/);
+  assert.doesNotMatch(page, /Stripe|securely|card details/, "no payment-method talk");
+  await putAccount(env, { email: "ops@example.test", tier: "pilot", quote: 2_800_000, approvedAt: "2026-11-03T00:00:00.000Z", billing: { status: "paid", updatedAt: "2026-11-05T00:00:00.000Z" } }, "test");
+  page = await (await send(env, await as(access, "ops@example.test", "/app/"))).text();
+  assert.match(page, /Now: Logs received/);
+  assert.match(page, /Paid <span class="muted">· 5 Nov 2026<\/span>/);
+  assert.match(page, /href="mailto:jzwnathan@lightbound\.uk\?subject=Gauss%20pilot%3A%20inference%20logs"/);
+  assert.match(page, /CSV, JSON or JSONL/);
+  assert.match(page, /href="\/gauss\/evidence\/"/);
+  assert.match(page, /There is no upload form yet/);
+  await putAccount(env, { email: "ops@example.test", tier: "pilot", quote: 2_800_000, billing: { status: "paid" }, logsAt: "2026-11-10T00:00:00.000Z", evidenceAt: "2026-11-16T00:00:00.000Z" }, "test");
+  page = await (await send(env, await as(access, "ops@example.test", "/app/"))).text();
+  assert.match(page, /Now: Evidence ready/);
+  assert.match(page, /Logs received <span class="muted">· 10 Nov 2026<\/span>/);
+  assert.match(page, /Evidence ready <span class="muted">· 16 Nov 2026<\/span>/);
+  assert.doesNotMatch(page, /Send your logs by email/, "instructions go once logs are in");
+});
+
+test("admin: sets logs received and evidence ready for an account, keeps the dates, and clears them when unticked", async () => {
+  const { env, access } = await appEnv();
+  const form = async (body) => send(env, await formPost(access, "boss@example.test", "/app/admin/account", body));
+  await form({ email: "lead@example.test", tier: "pilot", quote: "30000", action: "save" });
+  let a = await getAccount(env, "lead@example.test");
+  assert.deepEqual([typeof a.approvedAt, a.logsAt, a.evidenceAt], ["string", null, null]);
+  await form({ email: "lead@example.test", tier: "pilot", quote: "30000", logs: "yes", action: "save" });
+  a = await getAccount(env, "lead@example.test");
+  assert.equal(typeof a.logsAt, "string");
+  const first = [a.approvedAt, a.logsAt];
+  await form({ email: "lead@example.test", tier: "pilot", quote: "30000", logs: "yes", evidence: "yes", action: "save" });
+  a = await getAccount(env, "lead@example.test");
+  assert.deepEqual([a.approvedAt, a.logsAt], first, "dates stay once set");
+  assert.equal(typeof a.evidenceAt, "string");
+  const admin = await (await send(env, await as(access, "boss@example.test", "/app/admin/"))).text();
+  assert.match(admin, /name="logs" value="yes" checked> Logs received/);
+  assert.match(admin, /name="evidence" value="yes" checked> Evidence ready/);
+  await form({ email: "lead@example.test", tier: "pilot", quote: "30000", action: "save" });
+  a = await getAccount(env, "lead@example.test");
+  assert.deepEqual([a.logsAt, a.evidenceAt], [null, null]);
+  const other = await send(env, await formPost(access, "ops@example.test", "/app/admin/account", { email: "lead@example.test", logs: "yes", action: "save" }));
+  assert.equal(other.status, 403, "only admin");
+});
