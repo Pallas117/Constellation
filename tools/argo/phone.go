@@ -34,6 +34,14 @@ type Phone struct {
 	// sendRelay is for alerts sent while this Mac has no network (GAU-233): SMS first, so Messages
 	// hands it to the iPhone over Continuity instead of holding an iMessage it can't deliver.
 	sendRelay func(to, text string) error
+	// Policy decides which alerts text now and which wait for the digest (attention.go).
+	// Nil sends everything, as before.
+	Policy *Attention
+	// Fallback gets an alert by iMessage when sending to To fails (an expired SIM, a number
+	// iMessage no longer knows). It catches failures Messages reports; a text Messages accepts
+	// and the iPhone later fails needs the delivery check (Full Disk Access) to be caught.
+	Fallback     string
+	sendFallback func(to, text string) error // replaced in tests
 }
 
 func newPhone(to, device string) *Phone {
@@ -55,6 +63,10 @@ func newPhoneFor(cfg Config) *Phone {
 	p := newPhone(cfg.PhoneTo, cfg.Device)
 	if p != nil {
 		p.sendRelay = smsFirst
+		p.Policy = newAttention(filepath.Dir(p.Queue), cfg.QuietHours)
+		if cfg.PhoneFallback != "" && handleRe.MatchString(cfg.PhoneFallback) && cfg.PhoneFallback != p.To {
+			p.Fallback, p.sendFallback = cfg.PhoneFallback, iMessage
+		}
 	}
 	if p != nil && strings.EqualFold(cfg.PhoneService, "sms") && strings.HasPrefix(p.To, "+") {
 		p.send, p.Route = smsFirst, "sms-first"
@@ -155,12 +167,21 @@ func iMessage(to, text string) error {
 // instead of holding the tick for the ~2 min AppleEvent default.
 const sendTimeout = 30 * time.Second
 
-// Send delivers any queued alerts first, then this one; failures are queued.
+// Send is SendAlert with the level worked out from the title.
 func (p *Phone) Send(title, msg string, at time.Time) {
-	text := fmt.Sprintf("%s on %s (%s)\n%s", Mask(title), p.Device, at.Local().Format("15:04"), Mask(msg))
+	p.SendAlert(Alert{Title: title, Msg: msg}, at)
+}
+
+// SendAlert delivers any queued alerts first, then this one; failures are queued.
+// The attention policy may hold it for the digest instead.
+func (p *Phone) SendAlert(a Alert, at time.Time) {
+	text := fmt.Sprintf("%s on %s (%s)\n%s", Mask(a.Title), p.Device, at.Local().Format("15:04"), Mask(a.Msg))
 	if unlock, err := p.queueLock(); err == nil {
 		defer unlock()
 	} // still best-effort deliver if the lock is stuck
+	if p.Policy != nil && !p.Policy.admit(a, at.Local()) {
+		return // held: goes out with the next digest
+	}
 	if egressHeld(filepath.Dir(p.Queue)) {
 		p.writeQueue(append(p.readQueue(), text)) // held on this Mac until `argo egress on`
 		return
@@ -187,14 +208,22 @@ func (p *Phone) SendRelay(title, msg string, at time.Time) bool {
 }
 
 // Flush retries queued alerts; called every tick so offline alerts arrive once back online.
-func (p *Phone) Flush() {
+func (p *Phone) Flush() { p.flushAt(time.Now()) }
+
+func (p *Phone) flushAt(now time.Time) {
 	if egressHeld(filepath.Dir(p.Queue)) {
 		return
 	}
 	if unlock, err := p.queueLock(); err == nil {
 		defer unlock()
 	}
-	if q := p.readQueue(); len(q) > 0 {
+	q := p.readQueue()
+	if p.Policy != nil {
+		if d := p.Policy.digest(now.Local()); d != "" {
+			q = append(q, fmt.Sprintf("Argo digest on %s (%s)\n%s", p.Device, now.Local().Format("15:04"), d))
+		}
+	}
+	if len(q) > 0 {
 		p.deliver(q)
 	}
 }
@@ -207,14 +236,24 @@ func (p *Phone) deliver(pending []string) {
 		}
 	}
 	p.writeQueue(failed)
+	if note := p.noteDelivery(len(failed), max(0, len(failed)-maxQueued), time.Now()); note != "" && p.sendLogged(note) != nil {
+		p.writeQueue([]string{note})
+	}
 }
 
 // sendLogged sends one text and records it in the egress log once it has left.
 func (p *Phone) sendLogged(text string) error {
-	if err := p.send(p.To, text); err != nil {
+	to, route := p.To, p.Route
+	err := p.send(to, text)
+	if err != nil && p.Fallback != "" && p.sendFallback != nil {
+		if p.sendFallback(p.Fallback, text) == nil {
+			to, route, err = p.Fallback, "fallback", nil
+		}
+	}
+	if err != nil {
 		return err
 	}
-	logEgress(filepath.Dir(p.Queue), EgressEntry{At: time.Now(), Via: "messages", Route: p.Route, To: maskHandle(p.To), Bytes: len(text), Text: text})
+	logEgress(filepath.Dir(p.Queue), EgressEntry{At: time.Now(), Via: "messages", Route: route, To: maskHandle(to), Bytes: len(text), Text: text})
 	return nil
 }
 
@@ -254,8 +293,11 @@ func (p *Phone) writeQueue(q []string) {
 
 // phoneSetup: `argo phone <+60123456789|you@icloud.com>`, `argo phone test|off`, `argo phone imessage|sms`.
 func phoneSetup(args []string, cfg Config) error {
+	if len(args) == 2 && args[0] == "fallback" {
+		return phoneFallbackSetup(args[1], cfg)
+	}
 	if len(args) != 1 {
-		return errors.New("usage: argo phone <your iMessage phone (+60...) or email> | test | off | imessage | sms")
+		return errors.New("usage: argo phone <your iMessage phone (+60...) or email> | test | off | imessage | sms | fallback <email>|off")
 	}
 	switch args[0] {
 	case "test":
@@ -267,6 +309,9 @@ func phoneSetup(args []string, cfg Config) error {
 			return err
 		}
 		fmt.Println("sent a test alert to", p.To)
+		if p.Fallback != "" {
+			fmt.Println("fallback:", maskHandle(p.Fallback), "(gets an alert by iMessage when sending to the main handle fails)")
+		}
 		if strings.EqualFold(cfg.PhoneService, "sms") {
 			if chatDBReadable() {
 				fmt.Println("delivery check: on (an SMS the iPhone fails is resent over iMessage)")
@@ -280,6 +325,8 @@ func phoneSetup(args []string, cfg Config) error {
 		cfg.PhoneTo = ""
 		fmt.Println("phone alerts off.")
 		return saveConfig(cfg)
+	case "fallback": // `argo phone fallback <Apple ID email>` | `argo phone fallback off`
+		return errors.New("usage: argo phone fallback <your Apple ID email>|off")
 	case "imessage", "sms": // who carries the text: Apple end to end, or the mobile carrier
 		cfg.PhoneService = ""
 		if args[0] == "sms" {
@@ -299,5 +346,26 @@ func phoneSetup(args []string, cfg Config) error {
 		return err
 	}
 	fmt.Println("saved. Run `argo phone test` (macOS will ask once to let it control Messages).")
+	return nil
+}
+
+// phoneFallbackSetup: `argo phone fallback <handle>` sets the second handle, `off` removes it.
+func phoneFallbackSetup(h string, cfg Config) error {
+	if h == "off" {
+		cfg.PhoneFallback = ""
+		fmt.Println("fallback off: alerts go only to", maskHandle(cfg.PhoneTo))
+		return saveConfig(cfg)
+	}
+	if !handleRe.MatchString(h) {
+		return errors.New("the fallback must be an Apple ID email (best) or a phone number in international form (+60...)")
+	}
+	if h == cfg.PhoneTo {
+		return errors.New("the fallback must differ from the main handle")
+	}
+	cfg.PhoneFallback = h
+	if err := saveConfig(cfg); err != nil {
+		return err
+	}
+	fmt.Println("saved: when an alert to", maskHandle(cfg.PhoneTo), "fails, it goes to", maskHandle(h), "by iMessage.")
 	return nil
 }
