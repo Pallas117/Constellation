@@ -54,7 +54,8 @@ export interface DeviceRecord {
   fingerprintSignals?: Record<string, string | number>;
   registeredAt: string;
   lastSeen: string;
-  status: "trusted" | "untrusted" | "needs_reauth";
+  /** "trusted" is set only by a verified /proof; new devices are "unverified". */
+  status: "unverified" | "trusted" | "untrusted" | "needs_reauth" | "revoked";
   telemetry?: DeviceTelemetry;
   swap?: {
     tier: "L1" | "L2" | "L3";

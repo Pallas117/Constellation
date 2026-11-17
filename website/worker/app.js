@@ -5,7 +5,8 @@
 // Staff (STAFF_EMAILS) also get a link to the staff operations and training site (OPS_URL), which has its own Access application.
 import { accessIdentity, isAdmin, isStaff } from "./auth.js";
 import { deleteAccount, getAccount, getApplication, latestApplication, listAccounts, listApplications, putAccount, setApplicationStatus } from "./data.js";
-import { readCapped } from "./body.js";
+import { readCapped, readCappedBytes } from "./body.js";
+import { EVIDENCE_ERRORS, EVIDENCE_MAX_BYTES, addEvidence, deleteAllEvidence, deleteEvidence, downloadResponse, evidenceAdmin, evidenceCard, getEvidence, listEvidence } from "./evidence.js";
 import { sameOrigin } from "./forms.js";
 import { feedState, readFeed } from "./feeds.js";
 import { chip, esc, renderEventIcs, renderGaussDoor, supportLink } from "./render.js";
@@ -38,7 +39,7 @@ function pilotTrack(step) {
 
 const postButton = (action, label, cls = "btn") => `<form method="post" action="${action}" class="inline"><button class="${cls}">${esc(label)}</button></form>`;
 // Stripe's hosted invoice page (https), or a same-origin path (the local stand-in); anything else is not shown.
-const linkable = (u) => /^(https:\/\/|\/(?!\/))[^\s"<>]*$/.test(u ?? "");
+const linkable = (u) => /^(https:\/\/[^\s"<>]*|\/(?![\/\\])[^\s"<>]*)$/.test(u ?? "");
 
 function billingCard(account, tier) {
   const status = billingStatus(account);
@@ -139,7 +140,7 @@ export function staffCard(opsUrl) {
     `<p class="m">For the Lightbound team. It signs you in with the same email.</p><p class="m"><a href="${esc(opsUrl)}" rel="noopener">Open operations and training</a></p></article>`;
 }
 
-export function renderWorkspace({ email, account, admin, weather, consoleUrl, supportUrl = "", argo = "", edu = "", staff = "", applications = [], notice = "" }) {
+export function renderWorkspace({ email, account, admin, weather, consoleUrl, supportUrl = "", argo = "", edu = "", staff = "", evidence = "", applications = [], notice = "" }) {
   const tier = tierById(account?.tier);
   const who = esc(account?.name || email);
   const adminLink = admin ? `<p class="actions"><a class="btn ghost" href="/app/admin/">Applications and accounts</a></p>` : "";
@@ -159,10 +160,10 @@ export function renderWorkspace({ email, account, admin, weather, consoleUrl, su
     const pending = applications.filter((a) => a.status === "new");
     const status = pending.length
       ? `<p class="lead">Your application from ${esc(day(pending[0].at))} is with the Lightbound team. You'll hear from us by email.</p>`
-      : `<p class="lead">You're signed in as ${esc(email)}.${member || argo || edu || staff ? "" : " This account has no Gauss plan yet."}</p>`;
+      : `<p class="lead">You're signed in as ${esc(email)}.${member || argo || edu || staff || evidence ? "" : " This account has no Gauss plan yet."}</p>`;
     return `<p class="k">00_WORKSPACE</p><h1 id="hero-h">Welcome, ${who}.</h1>${bannerHtml}${status}` +
-      (member || argo || edu || staff ? `<div class="tiles">${staff}${member ? memberCard(supportUrl) : ""}${argo}${edu}</div>` : "") +
-      (member || argo || edu || staff ? "" : `<p class="actions"><a class="btn" href="/gauss/#plans">See the Gauss plans</a>${pending.length ? "" : ` <a class="btn ghost" href="/gauss/apply/">Apply</a>`}</p>`) + adminLink;
+      (member || argo || edu || staff || evidence ? `<div class="tiles">${staff}${member ? memberCard(supportUrl) : ""}${evidence}${argo}${edu}</div>` : "") +
+      (member || argo || edu || staff || evidence ? "" : `<p class="actions"><a class="btn" href="/gauss/#plans">See the Gauss plans</a>${pending.length ? "" : ` <a class="btn ghost" href="/gauss/apply/">Apply</a>`}</p>`) + adminLink;
   }
   const open = unlocked(billingStatus(account));
   const next = TIERS[TIERS.indexOf(tier) + 1];
@@ -177,7 +178,7 @@ export function renderWorkspace({ email, account, admin, weather, consoleUrl, su
     `<div class="tiles">${billingCard(account, tier)}` +
     (open ? `<article class="tile"><h2 class="label">Pilot</h2>${account.pilot ? pilotTrack(account.pilot) : `<p class="m">Not started. We'll set this up with you.</p>`}</article>` : "") +
     spaceTile(weather) +
-    (member ? memberCard(supportUrl) : "") + argo + edu + staff + `</div>` +
+    (member ? memberCard(supportUrl) : "") + evidence + argo + edu + staff + `</div>` +
     `<div class="two plan-lists"><div><h2 class="label">${open ? "Included" : "What you get"}: ${esc(tier.name)}</h2><ul class="ticks">${list(tier.features)}</ul></div>` +
     (next ? `<div><h2 class="label">Next: ${esc(next.name)}</h2><ul class="locked">${list(next.features.filter((f) => !tier.features.includes(f)))}</ul><p class="m">${esc(next.entry)} Planning range: ${esc(priceLabel(next))}.</p></div>` : "") +
     `</div><p class="actions"><a class="btn ghost" href="mailto:jzwnathan@lightbound.uk?subject=${encodeURIComponent(`Gauss ${tier.name}`)}">Email Josh, the founder</a></p>` +
@@ -200,7 +201,7 @@ const inviteDraft = (email, name) => {
   return `mailto:${encodeURIComponent(email)}?subject=${encodeURIComponent("Your invitation to Constellation")}&body=${encodeURIComponent(body)}`;
 };
 
-export function renderAdmin({ applications, accounts, details, invited, error, cap = 50 }) {
+export function renderAdmin({ applications, accounts, details, invited, error, cap = 50, evidence = {} }) {
   const open = applications.filter((a) => a.status === "new");
   const done = applications.filter((a) => a.status !== "new");
   const card = (a) => {
@@ -227,9 +228,10 @@ export function renderAdmin({ applications, accounts, details, invited, error, c
       `<button class="btn ghost" name="action" value="save">Save</button> <button class="btn ghost" name="action" value="delete">Remove</button></form>` +
       `${status ? `<span class="tag${status === "overdue" || status === "past_due" ? " warn" : ""}">${esc(BILLING[status] ?? status)}</span>` : ""}` +
       `${u.argo === "requested" ? `<form method="post" action="/app/admin/argo" class="inline"><input type="hidden" name="email" value="${esc(u.email)}"> <span class="tag warn">Argo: setup requested</span> <button class="btn ghost">Mark Argo setup sent</button></form>` : u.argo === "sent" ? ` <span class="tag">Argo: setup sent</span>` : ""}` +
-      `${u.edu ? ` <span class="tag">Education: ${esc(u.edu)}</span>` : ""}</td></tr>`;
+      `${u.edu ? ` <span class="tag">Education: ${esc(u.edu)}</span>` : ""}${evidenceAdmin(u.email, evidence[u.email] ?? [], i)}</td></tr>`;
   }).join("");
-  const banner = error === "quote" || error === "edu"
+  const banner = EVIDENCE_ERRORS[error] ? `<p class="banner warn" role="alert">${esc(EVIDENCE_ERRORS[error])}</p>`
+    : error === "quote" || error === "edu"
     ? `<p class="banner warn" role="alert">${error === "edu" ? "Not approved: enter the department licence's yearly quote in dollars." : "Not approved: enter a quote inside the plan's range."}</p>`
     : invited ? `<p class="banner" role="status">${esc(invited.email)} is now a Constellation member. <a href="${esc(inviteDraft(invited.email, invited.name))}">Draft the invitation email</a> (opens your mail app; nothing is sent automatically).</p>` : "";
   return (
@@ -296,6 +298,20 @@ export async function handleApp(request, env, url, { respond, fillPage, fetchImp
 
   if (request.method === "POST") {
     if (!sameOrigin(request)) return fail(403, "Forbidden");
+    // Evidence upload (admin only): the one multipart form, read through its own byte cap, one file at a time.
+    if (url.pathname === "/app/admin/evidence") {
+      if (!admin) return fail(403, "Forbidden");
+      const type = request.headers.get("content-type") ?? "";
+      if (!/^multipart\/form-data;/i.test(type)) return back("/app/admin/?error=evidence-type");
+      const bytes = await readCappedBytes(request, EVIDENCE_MAX_BYTES + 64 * 1024);
+      if (bytes === null) return back("/app/admin/?error=evidence-size");
+      let form;
+      try { form = await new Request(request.url, { method: "POST", headers: { "content-type": type }, body: bytes }).formData(); } catch { return back("/app/admin/?error=evidence-type"); }
+      const email = String(form.get("email") ?? "").trim().toLowerCase();
+      if (!EMAIL.test(email) || !(await getAccount(env, email))) return back("/app/admin/?error=evidence-none");
+      const error = await addEvidence(env, email, form.get("file"), id.email);
+      return back(error ? `/app/admin/?error=${error}` : "/app/admin/");
+    }
     // Every form here is small: the body is read once, through a byte cap.
     const raw = await readCapped(request, MAX_FORM);
     if (raw === null) return fail(413, "Too large");
@@ -444,6 +460,11 @@ export async function handleApp(request, env, url, { respond, fillPage, fetchImp
       await putAccount(env, { ...prev, name, community: "member", invitedAt: new Date().toISOString() }, id.email);
       return back(`/app/admin/?invited=${await flash(env, email)}`);
     }
+    if (url.pathname === "/app/admin/evidence/delete") {
+      const email = String(form.get("email") ?? "").trim().toLowerCase();
+      if (EMAIL.test(email)) await deleteEvidence(env, email, form.get("id") ?? "", id.email);
+      return back("/app/admin/");
+    }
     if (url.pathname === "/app/admin/argo") {
       const account = await getAccount(env, String(form.get("email") ?? ""));
       if (account?.argo?.requestedAt && !account.argo.sentAt) await putAccount(env, { ...account, argo: { ...account.argo, sentAt: new Date().toISOString() } }, id.email);
@@ -454,6 +475,7 @@ export async function handleApp(request, env, url, { respond, fillPage, fetchImp
       if (!EMAIL.test(email)) return back("/app/admin/");
       if (form.get("action") === "delete") {
         await deleteAccount(env, email);
+        await deleteAllEvidence(env, email);
         return back("/app/admin/");
       }
       const prev = (await getAccount(env, email)) ?? { email };
@@ -480,6 +502,12 @@ export async function handleApp(request, env, url, { respond, fillPage, fetchImp
       url: booked && call.link ? call.link : "" });
     return respond(body, 200, "text/calendar; charset=utf-8", { ...APP_HEADERS, "content-disposition": 'attachment; filename="constellation-call.ics"' });
   }
+  const evidenceFile = /^\/app\/evidence\/([a-z0-9]{6,30})$/.exec(url.pathname);
+  if (evidenceFile) {
+    // Only the signed-in account's own files: the key is built from who they are, so another account's id is simply not found.
+    const file = await getEvidence(env, id.email, evidenceFile[1]);
+    return file ? downloadResponse(file, APP_HEADERS) : fail(404, "Not found");
+  }
   if (url.pathname === "/app/edu/") {
     const account = await getAccount(env, id.email);
     if (!admin && !eduOpen(account)) return back("/app/");
@@ -493,14 +521,16 @@ export async function handleApp(request, env, url, { respond, fillPage, fetchImp
     const token = url.searchParams.get("invited");
     const invitedEmail = /^[0-9a-f-]{36}$/.test(token ?? "") ? await env.DATA.get(`flash:${token}`) : null;
     const invited = invitedEmail ? await getAccount(env, invitedEmail) : null;
-    const error = ["quote", "call", "edu"].includes(url.searchParams.get("error")) ? url.searchParams.get("error") : null;
+    const error = ["quote", "call", "edu", ...Object.keys(EVIDENCE_ERRORS)].includes(url.searchParams.get("error")) ? url.searchParams.get("error") : null;
+    const evidence = Object.fromEntries(await Promise.all(accounts.map(async (a) => [a.email, await listEvidence(env, a.email, a.evidenceCount)])));
     const calls = await listCalls(env);
-    return fillPage("/app/admin/", { admin: () => renderAdmin({ applications, accounts, details, invited: invited?.community === "member" ? invited : null, error, cap: userCap(env) }) +
+    return fillPage("/app/admin/", { admin: () => renderAdmin({ applications, accounts, details, invited: invited?.community === "member" ? invited : null, error, cap: userCap(env), evidence }) +
       `<div id="calls">${error === "call" ? `<p class="banner warn" role="alert">Not scheduled: give a title, a future start time and an https link (or none).</p>` : ""}` +
       `${renderCallsAdmin(calls, accounts.filter((a) => a.community === "member").map((a) => a.email), url.origin)}</div>` }, 200, APP_HEADERS);
   }
   if (url.pathname === "/app/") {
-    const [account, weather, latest] = await Promise.all([getAccount(env, id.email), readFeed(env, "weather"), latestApplication(env, id.email)]);
+    const accountP = getAccount(env, id.email);
+    const [account, weather, latest, files] = await Promise.all([accountP, readFeed(env, "weather"), latestApplication(env, id.email), accountP.then((a) => listEvidence(env, id.email, a?.evidenceCount))]);
     const mine = latest ? [latest] : [];
     const eduNotice = { started: "edu-started", student: "edu-student" }[url.searchParams.get("edu")];
     const full = { edu: "full-edu" }[url.searchParams.get("full")];
@@ -510,7 +540,7 @@ export async function handleApp(request, env, url, { respond, fillPage, fetchImp
     const callNotice = url.searchParams.get("call") ?? "";
     // Members' opportunities: four cached feeds, plus their own application only while no interests are saved.
     const opps = member ? await memberOpportunities(env, account, latest) : "";
-    return fillPage("/app/", { workspace: () => renderWorkspace({ email: id.email, account, admin, weather, consoleUrl: env.GAUSS_APP_URL || "", supportUrl: env.SUPPORT_URL || "", argo: argoCard(account, { staff: isStaff(env, id.email) }), edu: eduCard(env, account ?? { email: id.email }, id.email, url.searchParams.get("edu") === "start"), staff: isStaff(env, id.email) ? staffCard(env.OPS_URL) : "", applications: mine, notice }) +
+    return fillPage("/app/", { workspace: () => renderWorkspace({ email: id.email, account, admin, weather, consoleUrl: env.GAUSS_APP_URL || "", supportUrl: env.SUPPORT_URL || "", argo: argoCard(account, { staff: isStaff(env, id.email) }), edu: eduCard(env, account ?? { email: id.email }, id.email, url.searchParams.get("edu") === "start"), staff: isStaff(env, id.email) ? staffCard(env.OPS_URL) : "", evidence: evidenceCard(files), applications: mine, notice }) +
       (member ? renderCalls({ calls, email: id.email, tz: isZone(account?.tz) ? account.tz : "UTC", notice: callNotice }) : "") + opps }, 200, APP_HEADERS);
   }
   return fail(404, "Not found");

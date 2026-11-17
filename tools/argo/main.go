@@ -34,12 +34,16 @@ type Config struct {
 	ExitNodes map[string]string `json:"exit_nodes,omitempty"` // tailscale hostname → country (MY/SG only)
 	PhoneTo   string            `json:"phone_to,omitempty"`   // your own iMessage handle for phone alerts
 	// "sms" sends SMS first: iMessages to your own number arrive silently, with no banner.
-	PhoneService  string   `json:"phone_service,omitempty"`
+	PhoneService string `json:"phone_service,omitempty"`
+	// A second handle (best an Apple ID email) that gets an alert by iMessage when the first
+	// one fails, e.g. while the SIM is expired. Set with `argo phone fallback <email>`.
+	PhoneFallback string   `json:"phone_fallback,omitempty"`
 	Watch         []Peer   `json:"watch,omitempty"`           // LaunchAgents Argo keeps alive; default: awake guard + mesh-heal
 	Devices       []string `json:"devices,omitempty"`         // tailnet hostnames to watch; default: this user's phones
 	GuardSlotGB   float64  `json:"guard_slot_gb,omitempty"`   // RAM one mesh agent slot reserves (default 2)
 	GuardWorkerGB float64  `json:"guard_worker_gb,omitempty"` // RAM one job worker (test file, browser) holds (default 0.5)
 	InboxDir      string   `json:"inbox_dir,omitempty"`       // where received files land; default ~/Downloads/Argo
+	QuietHours    string   `json:"quiet_hours,omitempty"`     // no non-urgent texts in these hours; default 23:00-07:00, "off" for none
 }
 
 func (c Config) peers() []Peer {
@@ -135,7 +139,7 @@ func main() {
 	var err error
 	switch cmd {
 	case "status":
-		fmt.Println(statusLine(store.Load(), time.Now()) + guardStatus(store.loadGuard(), time.Now()) + gaussStatus(store, time.Now()))
+		fmt.Println(statusLine(store.Load(), time.Now()) + guardStatus(store.loadGuard(), time.Now()) + gaussStatus(store, time.Now()) + phoneStatus(store.Dir, time.Now()))
 	case "doctor":
 		err = doctor(ctx, loop.Prober)
 	case "fix":
@@ -250,6 +254,8 @@ func main() {
 		} else {
 			fmt.Print(scaleText(p))
 		}
+	case "attention": // what texts now, what waits for the digest
+		err = attentionCmd(os.Args[2:], cfg, store)
 	case "notify": // for mesh-heal, the awake guard and Claude Code hooks
 		err = notifyCmd(os.Args[2:], phone, store, time.Now())
 	case "phone":
@@ -269,7 +275,7 @@ func main() {
 	case "version":
 		fmt.Println("argo", version)
 	default:
-		fmt.Fprintln(os.Stderr, "usage: argo [status|doctor|fix|report|on|off|preflight|run -- cmd|phone <handle>|test|off|imessage|sms|notify TITLE MSG|egress [off|on]|thirdparty [list|check|accept|seen]|guard [admit|run]|heal [--json]|scale [--json]|watch|summary [--send]|enroll URL DEVICE|install|uninstall|version]\n       argo [send [-ttl D] DEVICE FILE|outbox|inbox|sync|keys [list|publish|trust DEVICE]|mule export|import DIR|link]")
+		fmt.Fprintln(os.Stderr, "usage: argo [status|doctor|fix|report|on|off|preflight|run -- cmd|phone <handle>|test|off|imessage|sms|notify TITLE MSG|attention [replay]|egress [off|on]|thirdparty [list|check|accept|seen]|guard [admit|run]|heal [--json]|scale [--json]|watch|summary [--send]|enroll URL DEVICE|install|uninstall|version]\n       argo [send [-ttl D] DEVICE FILE|outbox|inbox|sync|keys [list|publish|trust DEVICE]|mule export|import DIR|link]")
 		os.Exit(2)
 	}
 	if err != nil {
