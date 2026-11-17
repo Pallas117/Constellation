@@ -30,7 +30,7 @@
  */
 import type { Field } from "./record.js";
 import type { SaaTier } from "./saa.js";
-import { citedProtonCampaigns, findProfile, PROFILE_LIBRARY_VERSION, PROFILES, profileProblem, type EffectClass, type ProcessorProfile } from "./profiles.js";
+import { citedProtonCampaigns, findMissingProfile, findProfile, PROFILE_LIBRARY_VERSION, PROFILES, profileProblem, type EffectClass, type ProcessorProfile } from "./profiles.js";
 
 /*
  * Solar-proton access thresholds, on the record's centred-dipole L. Observed cutoffs for ~16 MeV
@@ -152,6 +152,10 @@ export function upsetRiskField(
   const generic = "Processor radiation profile";
   if (!profileId) return unknown(generic, "No processor profile given; an upset-rate band needs a cited profile (PR-02, GAU-58).");
   const profile = findProfile(profileId, library);
+  const missing = profile ? null : findMissingProfile(profileId);
+  if (missing) {
+    return unknown(`${generic} ${missing.id} (${PROFILE_LIBRARY_VERSION})`, `${missing.name}: ${missing.missing} No upset-rate band is given; none is estimated from other devices.`);
+  }
   if (!profile) {
     return unknown(generic, `No cited radiation profile for processor "${profileId}" in ${PROFILE_LIBRARY_VERSION}; known profiles: ${library.map((p) => p.id).join(", ")}.`);
   }

@@ -77,8 +77,50 @@ export interface TrustRecordRequest {
   ephemeris?: Ephemeris | null;
   /** Two-line element set, propagated with SGP4 when no ephemeris is given (and cross-checked when both are). */
   tle?: [string, string] | null;
+  /** The exact model file that ran (GAU-245); echoed and hashed, never interpreted. */
+  modelArtifact?: ModelArtifact | null;
   /** Set by the log ingest adapter (GAU-66), never taken from an API body. */
   ingest?: IngestProvenance | null;
+}
+
+export const MODEL_FORMATS = ["onnx", "tensorrt", "other"] as const;
+
+/**
+ * Model identity beyond the free-text `modelId` (GAU-245): the SHA-256 of the exact file that ran
+ * (the ONNX file, or the serialised TensorRT engine/plan) and the runtime that ran it, as the
+ * customer reports them. Gauss echoes these into the record (so they are covered by its hash) and
+ * never checks or interprets them: it cannot see the file.
+ */
+export interface ModelArtifact {
+  format: (typeof MODEL_FORMATS)[number];
+  /** Lowercase hex SHA-256 of the model file or engine. */
+  sha256: string;
+  /** e.g. "TensorRT", "onnxruntime-gpu"; null when not given. */
+  runtime: string | null;
+  /** e.g. "10.3.0" or "JetPack 6.2.1"; null when not given. */
+  runtimeVersion: string | null;
+}
+
+/** Why a model artefact isn't valid, or null. */
+export function modelArtifactProblem(v: unknown): string | null {
+  if (!v || typeof v !== "object" || Array.isArray(v)) return "must be an object with format and sha256";
+  const a = v as Record<string, unknown>;
+  if (!MODEL_FORMATS.includes(a.format as ModelArtifact["format"])) return `format must be one of ${MODEL_FORMATS.join(", ")}`;
+  if (typeof a.sha256 !== "string" || !/^[0-9a-fA-F]{64}$/.test(a.sha256)) return "sha256 must be 64 hex characters";
+  for (const k of ["runtime", "runtimeVersion"] as const) {
+    if (a[k] != null && !id(a[k])) return `${k} must be 1–128 characters`;
+  }
+  const extra = Object.keys(a).filter((k) => !["format", "sha256", "runtime", "runtimeVersion"].includes(k));
+  return extra.length ? `unknown field ${extra.map((k) => `"${k}"`).join(", ")}` : null;
+}
+
+function modelArtifactFrom(v: Record<string, unknown>): ModelArtifact {
+  return {
+    format: v.format as ModelArtifact["format"],
+    sha256: (v.sha256 as string).toLowerCase(),
+    runtime: (v.runtime as string | null | undefined)?.trim() ?? null,
+    runtimeVersion: (v.runtimeVersion as string | null | undefined)?.trim() ?? null,
+  };
 }
 
 /** Where an ingested inference came from: the exact file, row and mapping (GAU-66). */
@@ -117,6 +159,11 @@ export interface TrustRecord {
     spacecraftId: string;
     modelId: string;
     processorProfileId: string | null;
+    /**
+     * Only present when the request gave one, so a record without it hashes exactly as before
+     * the field existed (GAU-245).
+     */
+    modelArtifact?: ModelArtifact;
     output: unknown;
     confidence: number | null;
     /** Present when the inference came from an ingested customer log. */
@@ -179,6 +226,10 @@ export function parseTrustRequest(body: unknown): { request: TrustRecordRequest 
     }
     if (size > MAX_OUTPUT_BYTES) errors.push(`output must be JSON of at most ${MAX_OUTPUT_BYTES} bytes`);
   }
+  if (b.modelArtifact != null) {
+    const problem = modelArtifactProblem(b.modelArtifact);
+    if (problem) errors.push(`modelArtifact: ${problem}`);
+  }
   if (b.ephemeris != null) {
     const problem = ephemerisProblem(b.ephemeris);
     if (problem) errors.push(`ephemeris: ${problem}`);
@@ -194,6 +245,7 @@ export function parseTrustRequest(body: unknown): { request: TrustRecordRequest 
       spacecraftId: (b.spacecraftId as string).trim(),
       modelId: (b.modelId as string).trim(),
       processorProfileId: (b.processorProfileId as string | undefined)?.trim() ?? null,
+      modelArtifact: b.modelArtifact != null ? modelArtifactFrom(b.modelArtifact as Record<string, unknown>) : null,
       output: b.output ?? null,
       confidence: (b.confidence as number | undefined) ?? null,
       ephemeris: (b.ephemeris as Ephemeris | undefined) ?? null,
@@ -609,6 +661,7 @@ export function buildTrustRecord(
       spacecraftId: req.spacecraftId,
       modelId: req.modelId,
       processorProfileId: req.processorProfileId ?? null,
+      ...(req.modelArtifact ? { modelArtifact: req.modelArtifact } : {}),
       output: req.output ?? null,
       confidence: req.confidence ?? null,
       ingest: req.ingest ?? null,
