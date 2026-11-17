@@ -1590,6 +1590,19 @@ deploy() { # deploy <commit> [fallback-dir]
   fi
   # Live's data files (telemetry, models) change in place and carry over; code must not.
   local dirty; dirty=$(git -C "$live" status --porcelain --untracked-files=no | cut -c4- | grep -Ev '^(data|ml/models)/' || true)
+  # Edits under .claude/ or docs/ (agent notes, docs) are saved as patches and restored, not a reason to stop.
+  # Anything else, or a rename or delete, still refuses.
+  if [ -n "$dirty" ] && ! printf '%s\n' "$dirty" | grep -Evq '^(\.claude|docs)/'; then
+    local saved="$LOGS/live-local-changes/$(date +%Y%m%d-%H%M%S)" f n=0
+    mkdir -p "$saved" && while IFS= read -r f; do
+      git -C "$live" diff HEAD -- "$f" >"$saved/$(printf '%s' "$f" | tr '/' '_').patch" \
+        && git -C "$live" checkout -q HEAD -- "$f" || { echo "Couldn't save and restore $f; not deploying." >&2; return 1; }
+      n=$((n + 1))
+    done <<<"$dirty"
+    echo "Live had $n local doc/agent-note change(s); saved as patches in $saved and restored."
+    event deploy-local-doc-changes live "saved and restored $n file(s) under .claude/ or docs/ before deploying" "saved_to=$saved"
+    dirty=""
+  fi
   [ -z "$dirty" ] || { printf 'Live has local code changes; not deploying over them:\n%s\n' "$dirty" >&2; return 1; }
   mkdir -p "$WATCH_DIR" "$LOGS"
   if ! mkdir "$DEPLOY_LOCK" 2>/dev/null; then
@@ -1876,6 +1889,55 @@ resilience() { # can background work survive the lid closed, the battery, memory
   return $fail
 }
 
+# space-weather data: our latest point's quality tier. When it is ageing/stale, say whether the cause is
+# upstream (NOAA's ACTIVE RTSW spacecraft has no plasma while a standby one is current: 17 Nov 2026,
+# SOLAR1 null from 10:07Z) or our own ingest (NOAA has newer active-spacecraft plasma than our point).
+# Read-only: the backend's own response plus NOAA's public file; never changes what the backend serves.
+RTSW_URL="${GAUSS_RTSW_URL:-https://services.swpc.noaa.gov/json/rtsw/rtsw_wind_1m.json}"
+space_weather_item() {
+  local latest fresh upstream=""
+  latest=$(curl -s -m 5 http://127.0.0.1:3001/api/feed/space-weather/latest || true)
+  if [ "$(printf '%s' "$latest" | python3 -Ic 'import json,sys; print((json.load(sys.stdin).get("quality") or {}).get("tier", 3))' 2>/dev/null || echo 3)" != 0 ]; then
+    upstream=$(curl -s -m 10 --compressed "$RTSW_URL" 2>/dev/null || true)
+  fi
+  fresh=$(printf '%s\n%s' "$latest" "$upstream" | python3 -Ic '
+import json, sys
+from datetime import datetime, timezone
+def ts(t):
+    d = datetime.fromisoformat(str(t).replace("Z", "+00:00"))
+    return d if d.tzinfo else d.replace(tzinfo=timezone.utc)
+try:
+    first, _, rest = sys.stdin.read().partition("\n")
+    point = json.loads(first)
+    q = point.get("quality") or {}
+    tier = q.get("tier", 3)
+    label = {0: "live", 1: "ageing (last measurement 10-15 min old)"}.get(tier, "stale (no measurement in 15 min; just restarted?)")
+    if tier == 0:
+        print("ok space-weather data: " + label); sys.exit()
+    try:
+        rows = json.loads(rest)
+        active = sorted((r for r in rows if r.get("active") and r.get("time_tag")), key=lambda r: ts(r["time_tag"]))
+        plasma = [r for r in active if r.get("proton_speed") is not None]
+        std = [r for r in rows if not r.get("active") and r.get("proton_speed") is not None and r.get("time_tag")]
+        newest = max(ts(r["time_tag"]) for r in rows)
+        ours = ts(point["observedAt"])
+        behind = bool(plasma) and (ts(plasma[-1]["time_tag"]) - ours).total_seconds() > 600
+        gap = active and active[-1].get("proton_speed") is None and std and (datetime.now(timezone.utc) - max(ts(r["time_tag"]) for r in std)).total_seconds() <= 900
+        if gap and not behind:
+            name = active[-1].get("source", "?")
+            since = ts(plasma[-1]["time_tag"]).strftime("%H:%MZ") if plasma else "the start of the file"
+            print("ok space-weather data: upstream gap (NOAA active spacecraft %s has no plasma since %s; standby current)" % (name, since)); sys.exit()
+        if behind:
+            label += "; our ingest is behind NOAA (active data newer than ours)"
+    except Exception:
+        pass
+    print("no space-weather data: " + label)
+except Exception:
+    print("no space-weather data unavailable")
+' 2>/dev/null || echo "no space-weather data unavailable")
+  item "${fresh%% *}" "${fresh#* }"
+}
+
 check() { # pre-demo checklist
   local fail=0 ok
   network_item
@@ -1904,18 +1966,7 @@ check() { # pre-demo checklist
     fi
     item $ok "shared on your tailnet: $PUBLIC_URL (open it on your phone to confirm)"
   fi
-  local fresh
-  fresh=$(curl -s -m 5 http://127.0.0.1:3001/api/feed/space-weather/latest | python3 -Ic '
-import json, sys
-try:
-    q = json.load(sys.stdin).get("quality") or {}
-    tier = q.get("tier", 3)
-    label = {0: "live", 1: "ageing (last measurement 10-15 min old)"}.get(tier, "stale (no measurement in 15 min; just restarted?)")
-    print(("ok" if tier == 0 else "no") + " space-weather data: " + label)
-except Exception:
-    print("no space-weather data unavailable")
-' 2>/dev/null || echo "no space-weather data unavailable")
-  item "${fresh%% *}" "${fresh#* }"
+  space_weather_item
   # || true: with the backend not loaded, launchctl fails and pipefail + set -e would end the checklist here.
   local dir; dir=$(launchctl print "$UID_DOMAIN/uk.lightbound.gauss-backend" 2>/dev/null | awk -F'= ' '/working directory =/ && !d {print $2; d=1}' || true)
   local report; report=$(python3 -Ic '
