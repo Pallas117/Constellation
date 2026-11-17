@@ -1257,6 +1257,15 @@ test("admin: sets logs received and evidence ready for an account, keeps the dat
   await form({ email: "lead@example.test", tier: "pilot", quote: "30000", action: "save" });
   a = await getAccount(env, "lead@example.test");
   assert.deepEqual([a.logsAt, a.evidenceAt], [null, null]);
+  await form({ email: "lead@example.test", tier: "pilot", quote: "30000", logs: "yes", evidence: "yes", pilot: "", action: "save" });
+  const before = await getAccount(env, "lead@example.test");
+  const again = await form({ email: "lead@example.test", action: "add" });
+  assert.equal(again.status, 409, "the add form refuses an address that already has an account");
+  assert.match(await again.text(), /already has an account/);
+  assert.deepEqual(await getAccount(env, "lead@example.test"), before, "nothing is overwritten");
+  assert.match(await (await send(env, await as(access, "boss@example.test", "/app/admin/"))).text(), /name="action" value="add">Add account/);
+  assert.equal((await form({ email: "fresh@example.test", tier: "pilot", quote: "30000", action: "add" })).status, 303, "a new address is added");
+  assert.equal((await getAccount(env, "fresh@example.test")).tier, "pilot");
   const other = await send(env, await formPost(access, "ops@example.test", "/app/admin/account", { email: "lead@example.test", logs: "yes", action: "save" }));
   assert.equal(other.status, 403, "only admin");
 });

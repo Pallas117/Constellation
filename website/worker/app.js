@@ -264,7 +264,7 @@ export function renderAdmin({ applications, accounts, details, invited, error, c
     (accounts.some((u) => u.argo === "requested") ? `<p class="banner" role="status">Gauss Argo setup requested by ${accounts.filter((u) => u.argo === "requested").length}: email each their install link, then press "Mark Argo setup sent" below.</p>` : "") +
     `<h2>Accounts (${accounts.length} of ${cap})</h2><div class="tw"><table class="table"><thead><tr><th>Email</th><th>Plan, quote ($), billing, invoice, pilot, logs and evidence, membership</th></tr></thead><tbody>${rows}</tbody></table></div>` +
     `<form method="post" action="/app/admin/account" class="inline add"><label class="sr" for="new-email">Email</label><input id="new-email" name="email" type="email" placeholder="email@company.com" required> ` +
-    `${tierSelect("")} ${quoteInput(0)} ${billingSelect()} ${invoiceCheck(false, "new-inv")} ${pilotSelect("")} ${stepCheck(false, "logs", "Logs received", "new-logs")} ${stepCheck(false, "evidence", "Evidence ready", "new-ev")} ${communitySelect("")} <button class="btn" name="action" value="save">Add account</button></form>` +
+    `${tierSelect("")} ${quoteInput(0)} ${billingSelect()} ${invoiceCheck(false, "new-inv")} ${pilotSelect("")} ${stepCheck(false, "logs", "Logs received", "new-logs")} ${stepCheck(false, "evidence", "Evidence ready", "new-ev")} ${communitySelect("")} <button class="btn" name="action" value="add">Add account</button></form>` +
     `<h2>Decided (${done.length})</h2>${done.length ? `<ul class="apps">${done.map(card).join("")}</ul>` : `<p class="muted">None yet.</p>`}` +
     `<p class="note">Quotes must sit inside the plan's published range. Paid plans move to Active or Paid when Stripe confirms; "Billing" overrides that by hand. ` +
     `"Allow invoice" lets that customer ask for a Stripe invoice (${INVOICE_DAYS} days to pay) instead of paying by card: their workspace opens at once and locks if the invoice goes overdue. ` +
@@ -479,7 +479,10 @@ export async function handleApp(request, env, url, { respond, fillPage, fetchImp
         await deleteAccount(env, email);
         return back("/app/admin/");
       }
-      const prev = (await getAccount(env, email)) ?? { email };
+      const existing = await getAccount(env, email);
+      // The add form is a full overwrite, so for an address that already has an account it refuses; the account's own row edits it.
+      if (form.get("action") === "add" && existing) return fail(409, "That address already has an account. Change it from its row in the account list (Save there); nothing was changed.");
+      const prev = existing ?? { email };
       const quote = quoteFrom(form, tier);
       const changed = (tier?.id ?? null) !== (prev.tier ?? null) || (quote ?? null) !== (prev.quote ?? null);
       const override = Object.hasOwn(BILLING, form.get("billing") ?? "") ? form.get("billing") : null;
