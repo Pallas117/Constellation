@@ -448,28 +448,41 @@ out=$(run deploy "$Bc" --no-fallback 2>&1); rc=$?
 expect "deploy --no-fallback: warns, deploys, leaves none" $?
 main_at "$D"; run deploy "$D" --no-fallback >/dev/null 2>&1; head_is "$D"; expect "deploy back to D, the gated tree the GAU-162 checks below start from" $?
 # GAU-211: a commit that stops tracking live's telemetry file (now in .gitignore). Live appends to it in
-# place, so a plain checkout refuses (modified) or deletes it; going back refuses (untracked in the way).
-tel="$LIVE/data/bedrock/telemetry.jsonl"; carry="$(g rev-parse --absolute-git-dir)/gauss-carry"
+# place by path while the deploy runs, so the file itself must stay where it is (same inode, never moved):
+# a plain checkout refuses going forward (changed file) and going back silently writes the committed copy
+# over live's (git overwrites ignored files).
+tel="$LIVE/data/bedrock/telemetry.jsonl"; ino() { stat -f %i "$1"; }
+kept() { [ "$(cat "$tel")" = "$before" ] && [ "$(ino "$tel")" = "$inode" ] && [ ! -e "$tel.gauss-keep" ]; } # same data, same file, no link left
 saved=$(cat "$tel"); g checkout -q --detach "$D"; g rm -q --cached data/bedrock/telemetry.jsonl; echo data/bedrock/telemetry.jsonl >>"$LIVE/.gitignore"
 g add .gitignore; g commit -qm untrack; U=$(g rev-parse HEAD)
 echo 500 >"$LIVE/health"; g commit -qam bad-untrack; Ubad=$(g rev-parse HEAD)
 rm "$tel"; g checkout -q --detach "$D"; echo "$saved" >"$tel"; gated "$U"; gated "$Ubad"; main_at "$Ubad"
-echo t2 >>"$tel"; before=$(cat "$tel")
+echo t2 >>"$tel"; before=$(cat "$tel"); inode=$(ino "$tel")
 out=$(HEALTH_FILE="$LIVE/health" run deploy "$Ubad" --no-fallback 2>&1); rc=$?
-[ $rc = 1 ] && head_is "$D" && [ "$(cat "$tel")" = "$before" ] && [[ "$out" == *"Rolled back"* ]] && [ ! -e "$carry" ]
+[ $rc = 1 ] && head_is "$D" && kept && [[ "$out" == *"Rolled back"* ]] && [ "$(g status --porcelain data)" = " M data/bedrock/telemetry.jsonl" ]
 expect "GAU-211: a failed deploy across the untracking commit rolls back with live telemetry intact" $?
 out=$(HEALTH_FILE="$LIVE/health" run deploy "$U" --no-fallback 2>&1); rc=$?
-[ $rc = 0 ] && head_is "$U" && [ "$(cat "$tel")" = "$before" ] && [ -z "$(g ls-files data/bedrock)" ] \
-  && [ -z "$(g status --porcelain data)" ] && [ ! -e "$carry" ]
-expect "GAU-211: deploy across the untracking commit keeps live telemetry (untracked, ignored, unchanged)" $?
+[ $rc = 0 ] && head_is "$U" && kept && [ -z "$(g ls-files data/bedrock)" ] && [ -z "$(g status --porcelain data)" ]
+expect "GAU-211: deploy across the untracking commit keeps live telemetry (untracked, ignored, the same file)" $?
 echo t3 >>"$tel"; before=$(cat "$tel")
-mkdir -p "$carry"; out=$(HEALTH_FILE="$LIVE/health" run deploy "$D" --no-fallback 2>&1); rc=$?
-[ $rc = 1 ] && head_is "$U" && [[ "$out" == *"gauss-carry exists"* ]] && [ "$(cat "$tel")" = "$before" ]
-expect "GAU-211: a hold left by an interrupted checkout stops the next one (no data overwritten)" $?
-rmdir "$carry"
+echo older >"$tel.gauss-keep"; out=$(HEALTH_FILE="$LIVE/health" run deploy "$D" --no-fallback 2>&1); rc=$?
+[ $rc = 1 ] && head_is "$U" && [[ "$out" == *"gauss-keep is live data left by an earlier checkout"* ]] && [ "$(cat "$tel")" = "$before" ] \
+  && [ "$(cat "$tel.gauss-keep")" = older ] && [ -z "$(g status --porcelain --untracked-files=no data)" ]
+expect "GAU-211: a differing copy left by an interrupted checkout stops the next one (neither file touched)" $?
+rm "$tel.gauss-keep"
 out=$(HEALTH_FILE="$LIVE/health" run deploy "$D" --no-fallback 2>&1); rc=$?
-[ $rc = 0 ] && head_is "$D" && [ "$(cat "$tel")" = "$before" ] && [ ! -e "$carry" ]
+[ $rc = 0 ] && head_is "$D" && kept
 expect "GAU-211: deploying back to a commit that still tracks the file keeps live's copy" $?
+# Safety net: a git that removes the file all the same (once, in the checkout) still leaves live's data in place.
+stub git '/usr/bin/git "$@"; rc=$?
+if [ -e "'"$T"'/git-eats" ] && [[ " $* " == *" checkout -q --detach "* ]]; then rm -f "'"$T"'/git-eats" "'"$tel"'"; fi; exit $rc'
+touch "$T/git-eats"; out=$(HEALTH_FILE="$LIVE/health" run deploy "$U" --no-fallback 2>&1); rc=$?; rm "$T/bin/git"
+[ $rc = 0 ] && head_is "$U" && kept && [ ! -e "$T/git-eats" ] && [[ "$out" == *"git touched data/bedrock/telemetry.jsonl"*"live's copy is back in place"* ]]
+expect "GAU-211: if git removes the file during the checkout, live's copy is put back from the hard link" $?
+mv "$tel" "$tel.gauss-keep" # as left by a run that stopped between git removing the file and the restore
+out=$(HEALTH_FILE="$LIVE/health" run deploy "$D" --no-fallback 2>&1); rc=$?
+[ $rc = 0 ] && head_is "$D" && kept
+expect "GAU-211: an interrupted restore is finished by the next checkout before anything else" $?
 main_at "$D"
 # A deploy's install and build can run a low battery flat mid-switch (4 Nov 2026: one ran at 13% on 8 W).
 main_at "$Bc"

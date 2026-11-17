@@ -52,6 +52,8 @@ data/mesh/
 data/commerce/
 # Telemetry archives written by the retention job (gzip + manifest; GAU-157). Never commit them.
 data/bedrock/archive/
+# Second name for a live data file while a deploy checks out (gauss-services.sh carry_checkout): live data, never commit or clean it.
+*.gauss-keep
 # Live telemetry (GAU-211): appended in place by the backend, never versioned. The 6,068 legacy rows
 # (Mar-Jul 2026, 90% with impossible solar-wind speeds) stay in git history and on existing disks.
 data/bedrock/telemetry.jsonl
