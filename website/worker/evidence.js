@@ -4,6 +4,7 @@
 // The key is built from the signed-in address, never from the request, so one account can't name another's file.
 // The command to check a pack is the one documented in docs/EVIDENCE_SIGNING.md ("Verify a pack").
 import { esc } from "./render.js";
+import { getAccount, putAccount } from "./data.js";
 
 export const EVIDENCE_MAX_BYTES = 8 * 1024 * 1024; // per file (KV allows 25 MiB; the Worker holds the body in memory)
 export const EVIDENCE_MAX_FILES = 10; // per account
@@ -38,27 +39,46 @@ export async function checkUpload(file) {
   return { ok: true, name: safeName(file.name, ext), type: EVIDENCE_TYPES[ext], bytes };
 }
 
-export async function listEvidence(env, email) {
+async function listKeys(env, email) {
   const page = await env.DATA.list({ prefix: prefixOf(email) });
   return page.keys.map((k) => ({ id: k.name.slice(prefixOf(email).length), ...k.metadata })).filter((f) => f.name).sort((a, b) => (a.at < b.at ? 1 : -1));
+}
+
+/** The account's files. KV list() has a small daily budget, so it runs only when the account's evidenceCount is above 0,
+ *  and a failed list renders the page without the files instead of failing it. */
+export async function listEvidence(env, email, count) {
+  if (!(count > 0)) return [];
+  return listKeys(env, email).catch(() => []);
+}
+
+/** Keep the account's evidenceCount (and its list metadata) equal to what is stored. */
+async function syncCount(env, email, by) {
+  const account = await getAccount(env, email);
+  if (!account) return;
+  const n = (await listKeys(env, email)).length;
+  if (account.evidenceCount !== n) await putAccount(env, { ...account, evidenceCount: n }, by);
 }
 
 /** Attach one uploaded file to an account. Returns an error code or null. */
 export async function addEvidence(env, email, file, by, now = Date.now()) {
   const checked = await checkUpload(file);
   if (!checked.ok) return checked.error;
-  if ((await listEvidence(env, email)).length >= EVIDENCE_MAX_FILES) return "evidence-full";
+  if ((await listKeys(env, email)).length >= EVIDENCE_MAX_FILES) return "evidence-full";
   const id = `${now.toString(36)}${crypto.getRandomValues(new Uint32Array(1))[0].toString(36)}`.slice(0, 30);
   await env.DATA.put(`${prefixOf(email)}${id}`, checked.bytes, { metadata: { name: checked.name, type: checked.type, size: checked.bytes.length, at: new Date(now).toISOString(), by } });
+  await syncCount(env, email, by);
   return null;
 }
 
-export async function deleteEvidence(env, email, id) {
-  if (ID.test(id ?? "")) await env.DATA.delete(`${prefixOf(email)}${id}`);
+export async function deleteEvidence(env, email, id, by) {
+  if (!ID.test(id ?? "")) return;
+  await env.DATA.delete(`${prefixOf(email)}${id}`);
+  await syncCount(env, email, by);
 }
 
+/** Used when the account itself is being deleted, so the count is not kept. */
 export async function deleteAllEvidence(env, email) {
-  for (const f of await listEvidence(env, email)) await env.DATA.delete(`${prefixOf(email)}${f.id}`);
+  for (const f of await listKeys(env, email)) await env.DATA.delete(`${prefixOf(email)}${f.id}`);
 }
 
 /** The file, only from the signed-in account's own prefix; anything else is null (the caller answers 404). */

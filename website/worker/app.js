@@ -39,7 +39,7 @@ function pilotTrack(step) {
 
 const postButton = (action, label, cls = "btn") => `<form method="post" action="${action}" class="inline"><button class="${cls}">${esc(label)}</button></form>`;
 // Stripe's hosted invoice page (https), or a same-origin path (the local stand-in); anything else is not shown.
-const linkable = (u) => /^(https:\/\/|\/(?!\/))[^\s"<>]*$/.test(u ?? "");
+const linkable = (u) => /^(https:\/\/[^\s"<>]*|\/(?![\/\\])[^\s"<>]*)$/.test(u ?? "");
 
 function billingCard(account, tier) {
   const status = billingStatus(account);
@@ -462,7 +462,7 @@ export async function handleApp(request, env, url, { respond, fillPage, fetchImp
     }
     if (url.pathname === "/app/admin/evidence/delete") {
       const email = String(form.get("email") ?? "").trim().toLowerCase();
-      if (EMAIL.test(email)) await deleteEvidence(env, email, form.get("id") ?? "");
+      if (EMAIL.test(email)) await deleteEvidence(env, email, form.get("id") ?? "", id.email);
       return back("/app/admin/");
     }
     if (url.pathname === "/app/admin/argo") {
@@ -522,14 +522,15 @@ export async function handleApp(request, env, url, { respond, fillPage, fetchImp
     const invitedEmail = /^[0-9a-f-]{36}$/.test(token ?? "") ? await env.DATA.get(`flash:${token}`) : null;
     const invited = invitedEmail ? await getAccount(env, invitedEmail) : null;
     const error = ["quote", "call", "edu", ...Object.keys(EVIDENCE_ERRORS)].includes(url.searchParams.get("error")) ? url.searchParams.get("error") : null;
-    const evidence = Object.fromEntries(await Promise.all(accounts.map(async (a) => [a.email, await listEvidence(env, a.email)])));
+    const evidence = Object.fromEntries(await Promise.all(accounts.map(async (a) => [a.email, await listEvidence(env, a.email, a.evidenceCount)])));
     const calls = await listCalls(env);
     return fillPage("/app/admin/", { admin: () => renderAdmin({ applications, accounts, details, invited: invited?.community === "member" ? invited : null, error, cap: userCap(env), evidence }) +
       `<div id="calls">${error === "call" ? `<p class="banner warn" role="alert">Not scheduled: give a title, a future start time and an https link (or none).</p>` : ""}` +
       `${renderCallsAdmin(calls, accounts.filter((a) => a.community === "member").map((a) => a.email), url.origin)}</div>` }, 200, APP_HEADERS);
   }
   if (url.pathname === "/app/") {
-    const [account, weather, latest, files] = await Promise.all([getAccount(env, id.email), readFeed(env, "weather"), latestApplication(env, id.email), listEvidence(env, id.email)]);
+    const accountP = getAccount(env, id.email);
+    const [account, weather, latest, files] = await Promise.all([accountP, readFeed(env, "weather"), latestApplication(env, id.email), accountP.then((a) => listEvidence(env, id.email, a?.evidenceCount))]);
     const mine = latest ? [latest] : [];
     const eduNotice = { started: "edu-started", student: "edu-student" }[url.searchParams.get("edu")];
     const full = { edu: "full-edu" }[url.searchParams.get("full")];

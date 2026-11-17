@@ -17,6 +17,7 @@ import { getAccount, listApplications, putAccount, saveApplication, senderOf } f
 import { applyEvent, createPortal, formEncode, signPayload, verifySignature } from "../worker/stripe.js";
 import { billingStatus, isAcademicEmail } from "../worker/tiers.js";
 import { APP_CSP } from "../worker/headers.js";
+import { eduCard } from "../worker/app.js";
 import { formatIn, renderPlanner, tzOffset, zonedToUtc } from "../worker/timezones.js";
 import { listCalls, rsvp, saveCall } from "../worker/calls.js";
 import { PROGRAMMES_URL, newsJson, programmesCsv, ukriXml, uksaAtom } from "./fixtures/opportunities.mjs";
@@ -1290,6 +1291,45 @@ test("evidence: admin can remove a file, and removing the account removes its fi
   assert.equal((await listEvidenceKeys(env)).length, 1);
   await send(env, await formPost(access, "boss@example.test", "/app/admin/account", { email: "ops@example.test", action: "delete" }));
   assert.equal((await listEvidenceKeys(env)).length, 0);
+});
+
+const countLists = (env) => { const real = env.DATA.list.bind(env.DATA); const calls = []; env.DATA.list = async (o) => { calls.push(o?.prefix); return real(o); }; return calls; };
+
+test("evidence: an account with no files costs no list() call on /app/ or /app/admin/, and the count follows add and remove", async () => {
+  const { env, access } = await evidenceEnv();
+  const calls = countLists(env);
+  assert.equal((await send(env, await as(access, "ops@example.test", "/app/"))).status, 200);
+  assert.equal((await send(env, await as(access, "boss@example.test", "/app/admin/"))).status, 200);
+  assert.equal(calls.filter((p) => p?.startsWith("evid:")).length, 0, "evidenceCount 0: the evidence prefix is never listed");
+  await upload(access, "boss@example.test", "ops@example.test", "a.json", PACK);
+  assert.equal((await getAccount(env, "ops@example.test")).evidenceCount, 1);
+  assert.equal((await listAccountsMeta(env)).find((a) => a.email === "ops@example.test").evidenceCount, 1, "the count is in the list metadata");
+  calls.length = 0;
+  assert.match(await (await send(env, await as(access, "ops@example.test", "/app/"))).text(), /Evidence pack/);
+  assert.equal(calls.filter((p) => p?.startsWith("evid:")).length, 1, "listed once, only for the account that has files");
+  const [first] = await listEvidenceKeys(env);
+  await send(env, await formPost(access, "boss@example.test", "/app/admin/evidence/delete", { email: "ops@example.test", id: first.name.split(":").pop() }));
+  assert.equal((await getAccount(env, "ops@example.test")).evidenceCount, 0);
+});
+const listAccountsMeta = async (env) => (await env.DATA.list({ prefix: "acct:" })).keys.map((k) => ({ email: k.name.slice(5), ...k.metadata }));
+
+test("evidence: a failing list() still renders /app/ and /app/admin/ without the evidence list", async () => {
+  const { env, access } = await evidenceEnv();
+  await upload(access, "boss@example.test", "ops@example.test", "a.json", PACK);
+  const real = env.DATA.list.bind(env.DATA);
+  env.DATA.list = async (o) => { if (o?.prefix?.startsWith("evid:")) throw new Error("KV list limit exceeded"); return real(o); };
+  const app = await send(env, await as(access, "ops@example.test", "/app/"));
+  assert.equal(app.status, 200);
+  assert.doesNotMatch(await app.text(), /Evidence pack/);
+  const admin = await send(env, await as(access, "boss@example.test", "/app/admin/"));
+  assert.equal(admin.status, 200);
+  assert.match(await admin.text(), /Evidence \(0\)/);
+});
+
+test("app: a backslash after the first slash is not a linkable invoice address", () => {
+  const card = (invoiceUrl) => eduCard({}, { email: "s@example.test", edu: { plan: "department", billing: { status: "invoice_open", invoiceUrl } } }, "s@example.test");
+  for (const bad of ["/\\evil.example", "//evil.example", "javascript:alert(1)", "http://x.test/"]) assert.doesNotMatch(card(bad), /View invoice/, bad);
+  for (const good of ["https://invoice.stripe.com/i/x", "/app/"]) assert.match(card(good), /View invoice/, good);
 });
 
 test("evidence: a public release keeps every evidence route closed", async () => {
