@@ -61,7 +61,7 @@ Mount order matters:
 WebSockets: `/ws/feed/space-weather`, `/ws/feed/mms-reconnection` (`backend/lib/ws-upgrade.ts`).
 
 ### 3.2 Access control
-- **`API_POLICY` allowlist** (`backend/rbac.ts`): unlisted route → 404, no session → 401, wrong
+- **`API_POLICY` allowlist** (`backend/rbac.ts`): no session → 401 for every non-public path (sign-in runs first, so anonymous callers cannot enumerate routes); signed in: unlisted route → 404, wrong
   role → 403. Roles rank user < staff < operator < admin (`backend/auth.ts`, `roleSatisfies`);
   new accounts are `user`.
 

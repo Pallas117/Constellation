@@ -1,6 +1,6 @@
 {
   "$comment": "Constellation requirements baseline (GAU-120). NASA SP-2016-6105 Rev 2 §6.2/§5.3. Methods: T test, A analysis, I inspection, D demonstration. T evidence = exact test names; A/I/D evidence = repo paths. Verified by `npm run verify`.",
-  "version": "1.15.0",
+  "version": "1.15.1",
   "requirements": [
     {
       "id": "REQ-ING-001",
@@ -653,8 +653,8 @@
     {
       "id": "REQ-SEC-010",
       "title": "Deny-by-default API policy",
-      "statement": "The API shall answer 404 for any route not listed in its access policy, 401 for a listed route without a session, and 403 for a session whose role is below the route's role.",
-      "rationale": "Only routes that were deliberately exposed are reachable, and the three answers keep probing, missing login and missing privilege apart (audit 2026-11-17: shipped without a requirement).",
+      "statement": "The API shall answer 401 to any request without a session for a path that is not public, whether or not the path is listed, and, for a signed-in session, 404 for a route not listed in its access policy and 403 for a role below the route's role.",
+      "rationale": "Only deliberately exposed routes are reachable; anonymous callers cannot tell listed from unlisted paths (sign-in runs before the policy, backend/server.ts authenticateRequest then enforceApiPolicy), and signed-in callers get distinct missing-route and missing-privilege answers. Corrected 2026-11-17 after a live probe answered 401 to an unlisted path.",
       "parent": "GAU-185",
       "method": "T",
       "owner": "Josh",
