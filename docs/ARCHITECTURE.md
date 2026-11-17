@@ -213,6 +213,10 @@ const decayedValue = baseline + (lastValue - baseline) * decayFactor;
 
 ---
 
+## Verification and readiness
+
+`npm run verify` (scripts/verify/verify.ts) runs the local gate and writes the VCRM and FMEA reports (scripts/verify/vcrm.ts). From the same evidence it computes an implementation readiness score per requirement and per parent issue (scripts/verify/readiness.ts, read by readiness-io.ts; unit tests in backend/lib/readiness.test.ts), written to `test-results/verification/readiness.md` and `readiness.json`. It is report only. The parts are explained in requirements/README.md.
+
 ## File Structure
 
 ```
