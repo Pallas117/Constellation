@@ -39,6 +39,20 @@ Optional extras:
   ad-hoc-signed binary, macOS asks again on the first background send, and sends time out after 30 s until
   someone clicks Allow.
 - **Alerts from other tools.** `argo notify [-key K -every 30m] TITLE MESSAGE` sends through the same
+- **Attention policy.** Every text passes one gate, whichever watcher raised it. Urgent alerts (`-level urgent`, or
+  "critical" in the title or key) text at once. Warnings text unless it is quiet hours (default 23:00-07:00; set
+  `"quiet_hours": "23:00-07:00,09:00-12:30"` or `"off"` in config.json), the same topic texted in the last 30 min
+  (2 h for power, memory and disk, which several watchers report), or 4 texts already went out this hour. Recoveries
+  never text by themselves. Whatever is held is never dropped: it arrives as one "Argo digest" when quiet hours end,
+  or 3 h after the first held alert. `argo attention replay` shows what the policy would have done with the texts
+  already sent.
+- **Fallback handle.** `argo phone fallback you@icloud.com` (best an Apple ID email) gets an alert by iMessage
+  whenever sending to the main handle fails, for example while the SIM is expired; `argo phone fallback off`
+  removes it. It catches failures Messages reports at once. An SMS that Messages accepts and the iPhone fails
+  later is only caught by the delivery check (Full Disk Access for `~/.local/bin/argo`).
+- **Texts that fail are not silent.** If Messages stops accepting texts (for example after a rebuild, until Allow is
+  clicked), `argo status` says since when and how many are waiting or lost, a desktop banner appears after 10 min,
+  and the first text after recovery says how many alerts were lost.
   channel, mask and offline queue, at most once per interval per key. The gauss-awake battery guard
   uses it (battery low, at the sleep floor, charger can't keep up, no cutoff configured), as do
   mesh-heal and Claude Code `Notification` hooks.
@@ -77,7 +91,8 @@ Then remove the `statusLine` and `claude()` lines above if you added them, and r
 | `argo report` | Incident counts by class, how many needed a fix and were fixed, how many resolved on their own, last 10 events |
 | `argo phone <handle>\|test\|off\|imessage\|sms` | Set up, test or turn off alerts to your iPhone; choose iMessage first (end-to-end encrypted) or SMS first (banner on your own number, carried by your carrier) |
 | `argo egress [off\|on]` | What Argo sent off this Mac and where (log kept on this Mac); `off` holds third-party sends locally until `on` |
-| `argo notify [-key K -every D] TITLE MSG` | Send an alert to your iPhone (masked, queued offline, rate-limited per key) |
+| `argo notify [-key K -every D] [-level urgent\|warn\|info] TITLE MSG` | Send an alert to your iPhone (masked, queued offline, rate-limited per key, then the attention policy) |
+| `argo attention [replay]` | Show the attention policy and what is held for the digest; `replay` runs the sent-texts log through it |
 | `argo watch` | Run the peer watchdog once (also every tick): restarts the gauss-awake guard or mesh-heal when their heartbeat is stale, max 3 restarts/hour each, then alerts. Override the list with `"watch"` in config.json |
 | `argo devices` | Which watched tailnet devices are offline. Every tick, a phone of yours that has been off the tailnet for 30 min or more gets a text (SMS over its own cellular link) with the fix: open Tailscale, turn on Connect On Demand. At most every 6 h per device. Override the list with `"devices": ["hostname", ...]` in config.json |
 | `argo guard` | Resource guard (below): memory, battery, disk and CPU now and over the last 24 h, who uses memory, what to do. `--json` for scripts |

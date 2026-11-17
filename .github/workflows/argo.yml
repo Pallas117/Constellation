@@ -1,0 +1,46 @@
+name: Argo (Go)
+
+# Optional second runner for tools/argo. The check itself is tools/argo/check.sh,
+# which the local gate (npm run test:ops) and tools/argo/ci-local.sh also run, so
+# Argo's CI does not depend on GitHub Actions being available.
+
+on:
+  pull_request:
+    paths:
+      - "tools/argo/**"
+      - ".github/workflows/argo.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "tools/argo/**"
+      - ".github/workflows/argo.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: argo-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: Format, vet, build, test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: tools/argo/go.mod
+          cache: false # standard library only: nothing to cache
+
+      - name: Check (same script as the local gate)
+        env:
+          ARGO_NO_DESKTOP: "1"
+        run: bash tools/argo/check.sh

@@ -184,6 +184,7 @@ async function currentTpms() {
   return readTpms({
     pipeline: worker.getPipelineLatency(),
     failedWrites: bedrock.failedWrites,
+    rejectedPoints: bedrock.rejectedPoints,
     diskFreeBytes: await diskFreeBytes(bedrock.dataDir),
     rssBytes: process.memoryUsage().rss,
     sources: getSourceStatus(),
