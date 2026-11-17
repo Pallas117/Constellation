@@ -1210,3 +1210,89 @@ test("canonical origin: plain HTTP and www on the custom domain redirect to http
   assert.match(body, /^Canonical: https:\/\/lightbound\.space\/\.well-known\/security\.txt$/m);
   assert.ok(Date.parse(SECURITY_TXT_EXPIRES) > Date.now() + 90 * 86_400_000, "security.txt expiry is at least 90 days away");
 });
+
+// ---- Evidence delivery: signed packs attached by admin, downloaded only by their own account ----
+const upload = async (access, email, to, name, bytes, type = "application/octet-stream") => {
+  const fd = new FormData();
+  fd.set("email", to);
+  fd.set("file", new File([bytes], name, { type }));
+  return send(access.env.__env, await as(access, email, "/app/admin/evidence", { method: "POST", body: fd, headers: { origin: "https://lightbound.space" } }));
+};
+
+async function evidenceEnv() {
+  const { env, access } = await appEnv();
+  access.env.__env = env;
+  await putAccount(env, { email: "ops@example.test", tier: "pilot", billing: { status: "paid", paidUntil: "2099-01-01T00:00:00.000Z" } }, "test");
+  await putAccount(env, { email: "other@example.test", tier: "pilot", billing: { status: "paid", paidUntil: "2099-01-01T00:00:00.000Z" } }, "test");
+  return { env, access };
+}
+const PDF = new TextEncoder().encode("%PDF-1.7\n%test pack\n");
+const PACK = new TextEncoder().encode(JSON.stringify({ pack: "x", signature: "y" }));
+
+test("evidence: admin attaches a PDF and pack JSON; the owner lists and downloads them as attachments, nosniff", async () => {
+  const { env, access } = await evidenceEnv();
+  assert.equal((await upload(access, "boss@example.test", "ops@example.test", "../../Pack Report (v1).PDF", PDF)).headers.get("location"), "/app/admin/");
+  assert.equal((await upload(access, "boss@example.test", "ops@example.test", "pack.json", PACK)).headers.get("location"), "/app/admin/");
+  const page = await (await send(env, await as(access, "ops@example.test", "/app/"))).text();
+  assert.match(page, /Evidence pack/);
+  assert.match(page, /Pack-Report-v1\.pdf/, "the name is sanitised: no path, no spaces or brackets");
+  assert.match(page, /npm run trust:verify -- pack\.json --pdf pack\.pdf --keyring signing-keys\.json/);
+  const links = [...page.matchAll(/href="\/app\/evidence\/([a-z0-9]+)"/g)].map((m) => m[1]);
+  assert.equal(links.length, 2);
+  for (const id of links) {
+    const res = await send(env, await as(access, "ops@example.test", `/app/evidence/${id}`));
+    assert.equal(res.status, 200);
+    assert.match(res.headers.get("content-disposition"), /^attachment; filename="[A-Za-z0-9._-]+\.(pdf|json)"$/);
+    assert.equal(res.headers.get("x-content-type-options"), "nosniff");
+    assert.match(res.headers.get("content-type"), /^application\/(pdf|json)$/);
+    assert.equal(res.headers.get("cache-control"), "private, no-store");
+  }
+  const body = await (await send(env, await as(access, "ops@example.test", `/app/evidence/${links[0]}`))).arrayBuffer();
+  assert.ok(body.byteLength === PDF.length || body.byteLength === PACK.length, "the stored bytes come back whole");
+  assert.match(await (await send(env, await as(access, "boss@example.test", "/app/admin/"))).text(), /Evidence \(2\)/);
+});
+
+test("evidence: another account gets 404, signed-out gets 401, and a non-admin cannot attach", async () => {
+  const { env, access } = await evidenceEnv();
+  await upload(access, "boss@example.test", "ops@example.test", "pack.json", PACK);
+  const id = /href="\/app\/evidence\/([a-z0-9]+)"/.exec(await (await send(env, await as(access, "ops@example.test", "/app/"))).text())[1];
+  assert.equal((await send(env, await as(access, "other@example.test", `/app/evidence/${id}`))).status, 404);
+  assert.equal((await send(env, await as(access, "boss@example.test", `/app/evidence/${id}`))).status, 404, "even an admin only sees their own account's files here");
+  assert.doesNotMatch(await (await send(env, await as(access, "other@example.test", "/app/"))).text(), /Evidence pack/);
+  assert.equal((await send(env, new Request(`https://lightbound.space/app/evidence/${id}`))).status, 401);
+  assert.equal((await send(env, await as(access, "ops@example.test", "/app/evidence/..%2F..%2Facct"))).status, 404);
+  assert.equal((await upload(access, "other@example.test", "other@example.test", "pack.json", PACK)).status, 403);
+  assert.equal((await listEvidenceKeys(env)).length, 1);
+});
+const listEvidenceKeys = async (env) => (await env.DATA.list({ prefix: "evid:" })).keys;
+
+test("evidence: anything that isn't a real PDF or JSON, or is too big, is refused; the account must exist", async () => {
+  const { env, access } = await evidenceEnv();
+  const code = async (to, name, bytes) => new URL((await upload(access, "boss@example.test", to, name, bytes)).headers.get("location"), "https://x.test").searchParams.get("error");
+  assert.equal(await code("ops@example.test", "run.exe", new TextEncoder().encode("MZ")), "evidence-type");
+  assert.equal(await code("ops@example.test", "fake.pdf", new TextEncoder().encode("<html>")), "evidence-type", "name says PDF, content is not");
+  assert.equal(await code("ops@example.test", "bad.json", new TextEncoder().encode("{nope")), "evidence-type");
+  assert.equal(await code("ops@example.test", "page.html", new TextEncoder().encode("<b>x</b>")), "evidence-type");
+  assert.equal(await code("ops@example.test", "big.pdf", new Uint8Array(8 * 1024 * 1024 + 100_000).fill(1)), "evidence-size");
+  assert.equal(await code("nobody@example.test", "pack.json", PACK), "evidence-none");
+  assert.equal((await listEvidenceKeys(env)).length, 0);
+  for (let i = 0; i < 10; i++) assert.equal(await code("ops@example.test", `p${i}.json`, PACK), null);
+  assert.equal(await code("ops@example.test", "p11.json", PACK), "evidence-full");
+  assert.match(await (await send(env, await as(access, "boss@example.test", "/app/admin/?error=evidence-type"))).text(), /only a PDF or a JSON file is accepted/);
+});
+
+test("evidence: admin can remove a file, and removing the account removes its files", async () => {
+  const { env, access } = await evidenceEnv();
+  await upload(access, "boss@example.test", "ops@example.test", "a.json", PACK);
+  await upload(access, "boss@example.test", "ops@example.test", "b.json", PACK);
+  const [first] = await listEvidenceKeys(env);
+  await send(env, await formPost(access, "boss@example.test", "/app/admin/evidence/delete", { email: "ops@example.test", id: first.name.split(":").pop() }));
+  assert.equal((await listEvidenceKeys(env)).length, 1);
+  await send(env, await formPost(access, "boss@example.test", "/app/admin/account", { email: "ops@example.test", action: "delete" }));
+  assert.equal((await listEvidenceKeys(env)).length, 0);
+});
+
+test("evidence: a public release keeps every evidence route closed", async () => {
+  const closed = { ...env, RELEASE: "public" };
+  for (const [path, method] of [["/app/evidence/abcdef12", "GET"], ["/app/admin/evidence", "POST"], ["/app/admin/evidence/delete", "POST"]]) assert.equal((await send(closed, new Request(`https://lightbound.space${path}`, { method }))).status, 404, `${method} ${path}`);
+});
