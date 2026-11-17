@@ -16,6 +16,9 @@ Before tagging, move these entries under `## [0.1.0] - <date>`.
   lives and where to revoke it; `argo thirdparty check` flags new, changed and unregistered services (#219).
 - Inference trust records: the record engine (#115), `POST /api/v1/data/trust/records` on the metered data API (#116),
   SGP4 orbit context from TLEs (#122), and a South Atlantic Anomaly flag from IGRF-14 |B| (#128).
+- Jetson/GPU inference-log pack: an optional `modelArtifact` (ONNX/TensorRT file SHA-256 and runtime) echoed and
+  hashed in trust records, Jetson Orin and H100 JSONL log mappings on synthetic fixtures, and Jetson AGX Orin and H100
+  listed as MISSING processor profiles until published test data can be read (#281).
 - Ed25519 signing of evidence packs and release files, with one offline verify command for customers (#161), and the
   first published evidence-pack and release keys (#197), which can be locked under a pattern drawn on a rotating
   tesseract (#200).
