@@ -7,6 +7,7 @@ import { once } from "node:events";
 import { fileURLToPath } from "node:url";
 import { createGunzip, createGzip } from "node:zlib";
 import type { CanonicalSpaceWeatherPoint } from "../types.js";
+import { canonicalPointProblems } from "./canonical-check.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -74,6 +75,38 @@ export class BedrockDB {
       console.error("[Bedrock] Append failed", err);
       throw err;
     }
+  }
+
+  /** Canonical points refused as observations since start (impossible values, fills, no observedAt). GAU-244. */
+  public rejectedPoints = 0;
+  private lastRejectLog = 0;
+
+  /**
+   * Persist a nowcast point under the type that says what it is (GAU-244), so the canonical history
+   * (reload, learning) holds only usable observations, and nothing is silently dropped:
+   * - "canonical-stale": no measurement behind it (quality.stale); kept as a record, not as history.
+   * - "canonical-rejected": fails canonicalPointProblems; kept with its reasons and counted.
+   * - "canonical": everything else.
+   * Rejects (like appendTelemetryStrict) when the write itself fails.
+   */
+  public async appendCanonicalStrict(point: CanonicalSpaceWeatherPoint): Promise<"canonical" | "canonical-stale" | "canonical-rejected"> {
+    if (point?.quality?.stale) {
+      await this.appendTelemetryStrict({ type: "canonical-stale", data: point, timestamp: point.timestamp });
+      return "canonical-stale";
+    }
+    const problems = canonicalPointProblems(point);
+    if (problems.length === 0) {
+      await this.appendTelemetryStrict({ type: "canonical", data: point, timestamp: point.timestamp });
+      return "canonical";
+    }
+    this.rejectedPoints += 1;
+    const now = Date.now();
+    if (now - this.lastRejectLog > 60_000) {
+      this.lastRejectLog = now; // a broken feed would otherwise log every 5 s tick
+      console.warn(`[Bedrock] Canonical point refused as an observation (${this.rejectedPoints} since start): ${problems.join("; ")}`);
+    }
+    await this.appendTelemetryStrict({ type: "canonical-rejected", data: point, timestamp: point.timestamp, problems });
+    return "canonical-rejected";
   }
 
   /** Serialises appends and archiving (every writer to telemetry.jsonl is in this process). */
