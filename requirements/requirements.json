@@ -377,6 +377,22 @@
       ]
     },
     {
+      "id": "REQ-SEC-017",
+      "title": "Device trust only by proof",
+      "statement": "The API shall mark a device trusted only after a verified proof, register new devices as unverified, accept only downgrade statuses from a device owner, and reject fingerprint signals beyond 32 flat entries.",
+      "rationale": "Device trust was self-attested (17 Nov security sweep).",
+      "parent": "GAU-25",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "REQ-SEC-017: a newly registered device is unverified, not trusted",
+        "REQ-SEC-017: the owner cannot set a device to trusted through /status",
+        "REQ-SEC-017: /status rejects a status outside the allowed set with 400",
+        "REQ-SEC-017: only a verified proof marks a device trusted",
+        "REQ-SEC-017: oversized or non-flat fingerprintSignals are rejected with 400"
+      ]
+    },
+    {
       "id": "REQ-OPS-001",
       "title": "Backend starts and reports health",
       "statement": "The backend shall start on an ephemeral port and answer /health.",
