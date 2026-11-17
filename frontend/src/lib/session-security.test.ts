@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { DEFAULT_IDLE_MINUTES, IDLE_WARNING_MS, idleLimitMs, idlePhase, latestActivity } from "./idle";
+import { DEFAULT_IDLE_MINUTES, IDLE_WARNING_MS, idleLimitMs, idlePhase, idleStayHint, latestActivity } from "./idle";
 import { passkeyErrorMessage, passkeySupport, type PasskeyEnvironment } from "./passkey-support";
 import { fetchWithStepUp, StepUpCancelled } from "./step-up";
 
@@ -97,4 +97,10 @@ test("a passkey prompt that ends without a passkey says what to do next, not 'Au
   // Server refusals keep the server's words; nothing at all falls back per action.
   assert.equal(passkeyErrorMessage({ code: "UNAUTHORIZED", message: "Passkey not found" }, "sign-in"), "Passkey not found");
   assert.equal(passkeyErrorMessage(null, "confirm"), "The passkey check failed.");
+});
+
+test("the idle warning says tap on touch screens and mouse or key elsewhere", () => {
+  assert.match(idleStayHint(true), /Tap anywhere/);
+  assert.doesNotMatch(idleStayHint(true), /mouse/);
+  assert.match(idleStayHint(false), /Move the mouse or press a key/);
 });

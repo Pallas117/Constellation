@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { extendPattern, patternProblem, PATTERN_RULES, samePattern, vertexAt } from "./pattern";
+import { extendPattern, patternProblem, PATTERN_RULES, samePattern, shortPatternNotice, vertexAt } from "./pattern";
 import { project, randomRotation, VERTICES } from "./tesseract";
 
 test("the pattern pad takes 8 to 24 vertices, 6 or more different, no vertex twice in a row", () => {
@@ -25,4 +25,13 @@ test("a touch picks the nearest vertex within reach, whatever the figure's orien
   }
   const points = [{ x: 0, y: 0 }, { x: 10, y: 0 }];
   assert.equal(vertexAt(points, 7, 0, 24), 1, "nearest wins");
+});
+
+test("submitting a short or repetitive pattern is answered with the rule, never the letters", () => {
+  const msg = "Draw at least 8 vertices, 6 different";
+  assert.equal(shortPatternNotice([]), msg);
+  assert.equal(shortPatternNotice([0, 1, 2, 3, 4, 5, 6]), msg);
+  assert.equal(shortPatternNotice([0, 1, 0, 1, 0, 1, 0, 1]), msg);
+  assert.equal(shortPatternNotice([0, 5, 10, 15, 3, 6, 9, 12]), null);
+  assert.equal(/[A-P]{3}/.test(msg.replace(/[a-z ,0-9]/g, "")), false);
 });

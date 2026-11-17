@@ -37,3 +37,8 @@ export function latestActivity(local: number, shared: string | null, now: number
   const other = Number(shared);
   return Number.isFinite(other) && other <= now + 5_000 ? Math.max(local, other) : local;
 }
+
+/** What the pre-sign-out warning asks for: a tap on a touch screen, input on a desktop. */
+export function idleStayHint(coarsePointer: boolean): string {
+  return `No activity for a while. ${coarsePointer ? "Tap anywhere" : "Move the mouse or press a key"} to stay signed in.`;
+}

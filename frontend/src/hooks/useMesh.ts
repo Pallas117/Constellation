@@ -106,13 +106,16 @@ const MESH_SIGN_IN_MESSAGE = "Couldn't load the mesh: sign in with a staff accou
  * that feed (`stopped`) until the page is reloaded or the session changes.
  */
 export function useMesh() {
-  const { userKey } = useFeedSession();
+  const { userKey, resolved, signedIn } = useFeedSession();
+  // Staff routes: nothing is requested without a session (CyberTiger counts the 401s).
+  const polling = resolved && signedIn;
   // Bumped after enrol/revoke: restarting the feeds fetches straight away.
   const [refreshKey, setRefreshKey] = useState(0);
   const restartKey = `${userKey}:${refreshKey}`;
 
   const onboardingFeed = usePolledFeed<MeshOnboarding>({
-    path: MESH_ONBOARDING_PATH,
+    path: polling ? MESH_ONBOARDING_PATH : null,
+    disabledStatus: resolved ? "sign-in-required" : "waiting",
     intervalMs: MESH_POLL_INTERVAL_MS,
     parse: parseMeshOnboarding,
     signInMessage: MESH_SIGN_IN_MESSAGE,
@@ -120,7 +123,8 @@ export function useMesh() {
   });
   const onboarding = onboardingFeed.data;
   const devicesFeed = usePolledFeed<MeshDevice[]>({
-    path: meshDevicesPath(onboardingFeed.status === "live", onboarding),
+    path: polling ? meshDevicesPath(onboardingFeed.status === "live", onboarding) : null,
+    disabledStatus: resolved ? "sign-in-required" : "waiting",
     intervalMs: MESH_POLL_INTERVAL_MS,
     parse: parseMeshDevices,
     signInMessage: MESH_SIGN_IN_MESSAGE,
