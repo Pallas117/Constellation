@@ -311,6 +311,9 @@ alert_event() { # alert_event <key> <every: 30m|1h> <title> <message>
 }
 
 boot_epoch() { sysctl -n kern.boottime 2>/dev/null | sed -nE 's/^[{] sec = ([0-9]+),.*/\1/p'; }
+# Minutes since the Mac last woke (kern.waketime); a huge number when unknown. Peers can't have
+# checked in while the Mac slept, so the watchdog gives them that long again before restarting.
+awake_min() { local w; w=$(sysctl -n kern.waketime 2>/dev/null | sed -nE 's/^[{] sec = ([0-9]+),.*/\1/p'); [ -n "$w" ] || { echo 99999; return; }; echo $(( ($(date +%s) - w) / 60 )); }
 iso_utc() { date -u -r "$1" +%Y-%m-%dT%H:%M:%SZ; }
 
 # Boot breadcrumb. The 2026-10-21 reset left no panic report, an empty unified log and nothing
@@ -623,15 +626,22 @@ kick() { # kick <label> <reason>: rate-limited launchctl kickstart, logged and a
 
 watch_peers() {
   mkdir -p "$(dirname "$GUARD_HEARTBEAT")"; touch "$GUARD_HEARTBEAT"
-  local age
-  # Argo only rewrites state.json on a full probe (~5 min), so allow 15.
+  local age awake; awake=$(awake_min)
+  # Argo only rewrites state.json on a full probe (~5 min), so allow 15. A stale file right after
+  # the Mac wakes is sleep, not a stall (5 Nov 2026: 4 needless restarts after a 3 h lid-closed sleep).
   if loaded uk.lightbound.argo && [ ! -e "$HOME/.local/state/argo/disabled" ]; then
     age=$(mtime_age_min "$HOME/.local/state/argo/state.json")
-    [ "$age" -gt 15 ] && kick uk.lightbound.argo "no Argo check for ${age} min"
+    if [ "$age" -gt 15 ]; then
+      if [ "$awake" -gt 15 ]; then kick uk.lightbound.argo "no Argo check for ${age} min"
+      else echo "$(date '+%F %T') watchdog: Argo stale ${age} min but the Mac woke ${awake} min ago; waiting"; fi
+    fi
   fi
   if loaded uk.lightbound.mesh-heal; then
     age=$(mtime_age_min "$HOME/.local/share/mesh-heal/state")
-    [ "$age" -gt 10 ] && kick uk.lightbound.mesh-heal "no mesh-heal check for ${age} min"
+    if [ "$age" -gt 10 ]; then
+      if [ "$awake" -gt 10 ]; then kick uk.lightbound.mesh-heal "no mesh-heal check for ${age} min"
+      else echo "$(date '+%F %T') watchdog: mesh-heal stale ${age} min but the Mac woke ${awake} min ago; waiting"; fi
+    fi
   fi
   # A deploy restarts them on purpose and rolls back by itself. A lock left by a
   # deploy that died stops counting after 30 min.
