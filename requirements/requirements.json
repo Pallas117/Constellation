@@ -1,6 +1,6 @@
 {
   "$comment": "Constellation requirements baseline (GAU-120). NASA SP-2016-6105 Rev 2 §6.2/§5.3. Methods: T test, A analysis, I inspection, D demonstration. T evidence = exact test names; A/I/D evidence = repo paths. Verified by `npm run verify`.",
-  "version": "1.14.0",
+  "version": "1.15.0",
   "requirements": [
     {
       "id": "REQ-ING-001",
@@ -648,6 +648,172 @@
         "key lock page: the one-time pattern page answers only its own address and origin, needs the nonce it served, unlocks once and closes after five misses (GAU-67)",
         "trust CLI: lock a key under a pattern and remove the unlocked file, sign with it from the terminal, refuse a wrong pattern, and make a key that is locked from the start (GAU-67)",
         "touch id lock: a key locked to its owner's Secure Enclave key unlocks only through that key; another person's enclave, a changed header or a damaged file fails, and the key is never stored in the clear (GAU-67)"
+      ]
+    },
+    {
+      "id": "REQ-SEC-010",
+      "title": "Deny-by-default API policy",
+      "statement": "The API shall answer 404 for any route not listed in its access policy, 401 for a listed route without a session, and 403 for a session whose role is below the route's role.",
+      "rationale": "Only routes that were deliberately exposed are reachable, and the three answers keep probing, missing login and missing privilege apart (audit 2026-11-17: shipped without a requirement).",
+      "parent": "GAU-185",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "enforcement: unlisted 404, anonymous 401, under-privileged 403, allowed passes",
+        "every declared API route has an access policy (deny by default otherwise)"
+      ]
+    },
+    {
+      "id": "REQ-SEC-011",
+      "title": "New accounts start as user",
+      "statement": "A new account shall get the role user, and the person signing up shall not be able to choose a higher role.",
+      "rationale": "Privilege is granted by an admin, never self-assigned at sign-up.",
+      "parent": "GAU-120",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "users without a stored role are viewers, not admins",
+        "a user cannot satisfy an operator gate",
+        "roles rank user < staff < operator < admin, and legacy 'viewer' means user",
+        "email sign-up cannot choose its own role: a new account is a plain user"
+      ]
+    },
+    {
+      "id": "REQ-SEC-012",
+      "title": "SSO limited to the Workspace domain",
+      "statement": "Single sign-on shall create accounts only for addresses on the configured Workspace domain.",
+      "rationale": "An outside Google account must not be able to create a Gauss account.",
+      "parent": "GAU-120",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "Google SSO only creates accounts on the Workspace domain"
+      ]
+    },
+    {
+      "id": "REQ-SEC-013",
+      "title": "Trusted client address",
+      "statement": "The intrusion daemon shall take a client address from X-Forwarded-For only when the request comes from the local proxy, using only the last hop, and shall never auto-block a direct local request.",
+      "rationale": "A forged header must not let a client pick its own address, nor let an attacker block the operator's own machine.",
+      "parent": "GAU-120",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "X-Forwarded-For is trusted only from the local proxy, and only its last hop",
+        "direct local requests are never auto-blocked; proxied tailnet clients still are"
+      ]
+    },
+    {
+      "id": "REQ-SEC-014",
+      "title": "Device proofs",
+      "statement": "A device proof shall verify only with the configured key, only within its time-to-live, and only once; without a usable key every proof shall fail.",
+      "rationale": "Device identity fails closed and a captured proof cannot be replayed.",
+      "parent": "GAU-97",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "without a usable key, device proofs are disabled and a forged proof never verifies (GAU-97)",
+        "timestamps: only computeProof's epoch-ms format, within the TTL; a bad TTL setting can't disable the check (GAU-98)",
+        "each proof is accepted once, uppercase copies included; a new nonce makes a new proof (GAU-99)",
+        "without DEVICE_AUTH_SECRET, /proof answers 503 and leaves the device's status alone (GAU-97)"
+      ]
+    },
+    {
+      "id": "REQ-SEC-015",
+      "title": "Device ownership and revocation",
+      "statement": "A device shall be listed and changed only by its owner or an admin, and a revoked device shall not be able to report.",
+      "rationale": "One staff member cannot see or alter another's devices, and revocation takes effect at once.",
+      "parent": "GAU-120",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "devices can only be modified and listed by their owner or an admin",
+        "staff see and revoke only their own devices; operators see all; admins revoke any",
+        "revoked devices can no longer report",
+        "team device status is operator-only and never exposes token hashes"
+      ]
+    },
+    {
+      "id": "REQ-SEC-016",
+      "title": "Evidence memory access",
+      "statement": "The evidence-memory (RAG) routes shall require a session and shall not log query text.",
+      "rationale": "Questions operators ask can reveal customer or mission detail.",
+      "parent": "GAU-120",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "RAG endpoints require a session and never log query text"
+      ]
+    },
+    {
+      "id": "REQ-MSH-001",
+      "title": "Mesh report ingress",
+      "statement": "The hub shall refuse a device report with a bad token, a malformed payload or a rate above its limit, and shall keep only known fields from an accepted report.",
+      "rationale": "The hub faces every enrolled device; it must not store attacker-chosen data or be flooded.",
+      "parent": "GAU-240",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "agents report with their device token; bad tokens, bad payloads and floods are refused",
+        "parseReport sanitises fields",
+        "network scores are allowlisted; nothing unmeasured is invented"
+      ]
+    },
+    {
+      "id": "REQ-MSH-002",
+      "title": "Store-and-forward mailbox",
+      "statement": "The hub mailbox shall accept a bundle only from its enrolled source to an enrolled destination within its lifetime, shall drop duplicates, and shall deliver it with a receipt.",
+      "rationale": "Store-and-forward must not become an open relay or replay channel.",
+      "parent": "GAU-120",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "the mailbox enforces source, destination, lifetime and dedup, and keeps tombstones",
+        "two devices exchange a sealed bundle and a receipt through the hub routes"
+      ]
+    },
+    {
+      "id": "REQ-COM-001",
+      "title": "Data API limits",
+      "statement": "Organisation API keys shall be limited per minute per key, per day per organisation and in history depth by plan, and the public pilot form shall accept at most 3 requests per address per hour.",
+      "rationale": "Paid access is metered and the only public write route cannot be flooded.",
+      "parent": "GAU-120",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "data API: per-key minute limit, per-org daily quota, history capped by plan",
+        "data API: the daily data budget caps history, then refuses until the next UTC day",
+        "pilot requests: valid leads stored, bad input rejected, honeypot dropped, 3 per IP per hour"
+      ]
+    },
+    {
+      "id": "REQ-PER-004",
+      "title": "Telemetry retention",
+      "statement": "The live telemetry store shall keep 3 days or 40,000 lines by default, and shall never keep less than the restart reload needs.",
+      "rationale": "Bounded disk and memory on an 8 GB host without losing the history a restart reloads.",
+      "parent": "GAU-157",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "retention defaults: 3 days live (40,000 lines), daily, first run 10 min after start",
+        "retention env: a keep below the reload floor is raised; 0 hours turns it off; junk falls back"
+      ]
+    },
+    {
+      "id": "REQ-OPS-008",
+      "title": "Deploy only gated main",
+      "statement": "The deploy command shall refuse a commit that is not on origin/main or has no passing gate record for its tree, unless an emergency reason is given, and an emergency deploy shall text the phone, be recorded and stay flagged in the health check.",
+      "rationale": "What runs live is exactly what passed the local gate; the only bypass is loud and visible.",
+      "parent": "GAU-206",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "deploy refuses a commit not on origin/main",
+        "deploy refuses a tree with no passing gate record",
+        "--emergency deploys without the checks, texts the phone and is recorded",
+        "--emergency needs a reason",
+        "check: an emergency deploy stays ✗",
+        "gates record: runs the gates (test and build inside verify) and records the counts by tree"
       ]
     }
   ]
