@@ -27,10 +27,14 @@ export function ConsoleHeader({
 }) {
     return (
         <header className="pointer-events-auto flex flex-wrap items-center justify-between gap-x-4 gap-y-2 rounded-lg border border-charcoal bg-panel/95 px-4 py-3 animate-fade-in-up">
-            <div className="min-w-0">
-                <p className="brand-label">01_OPERATOR_CONSOLE</p>
-                <h1 className="text-xl font-semibold leading-tight">Gauss Aurora</h1>
-                {summary && <p className="mt-0.5 text-xs text-muted-foreground">{summary}</p>}
+            <div className="flex min-w-0 items-center gap-4">
+                {/* Brand Book: clear space is half the symbol height, so 32 px tall with a 16 px gap. The title names it. */}
+                <img src="/gauss-aurora-mark.svg" alt="" width={78} height={32} className="hidden h-8 w-auto shrink-0 sm:block" />
+                <div className="min-w-0">
+                    <p className="brand-label">01_OPERATOR_CONSOLE</p>
+                    <h1 className="text-xl font-semibold leading-tight">Gauss Aurora</h1>
+                    {summary && <p className="mt-0.5 text-xs text-muted-foreground">{summary}</p>}
+                </div>
             </div>
             <div className="flex flex-wrap items-center gap-2">
                 {actions}

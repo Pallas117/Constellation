@@ -1,8 +1,12 @@
-# lightbound.uk
+# lightbound.space
 
 The Lightbound site: a black-hole landing ("Carry hope, go beyond.") with three doors, Gauss,
 Constellation and Turnstone. It is one Cloudflare Worker with static assets. There is no client-side
 JavaScript, no third-party requests, and no secrets.
+
+**It launches as the public release** (GAU-178, `RELEASE: "public"`): the pages and live feeds, with an email
+route instead of forms. Sign-in, payments and the members' and operators' pages below are built and tested, but
+closed until `RELEASE: "full"`. See "Launch" and "Opening accounts later".
 
 | Page | What it is |
 |---|---|
@@ -13,7 +17,7 @@ JavaScript, no third-party requests, and no secrets.
 | `/turnstone/` | Mark, "Classified." and a "Request a briefing" link to Josh's 30-minute Cal.com call; nothing about what it does (secret project; `noindex`). |
 | `/gauss/apply/` | Pilot brief in the sales plan's three steps (fit, readiness, pilot brief). Plan links preselect the package. |
 | `/constellation/apply/` | Request an invitation. Constellation is free and invite-only; there is no payment anywhere on its side. |
-| `/argo/` | Gauss Argo, the self-healing connectivity agent, "built like a spacecraft": what it catches, how it works, its security rules, where it runs, the private relay (in development, not available). Included for operators and staff, no price, `noindex`, linked only from the workspace. |
+| `/argo/` | Gauss Argo, the self-healing connectivity agent, "built like a spacecraft": what it catches, how it works, its security rules, where it runs, store and forward (files between your devices through drop-outs: Bundle Protocol, signed, end-to-end encrypted, receipts; the claim is a simulation), the private relay (in development, not available). Included for operators and staff, no price, `noindex`, linked only from the workspace. |
 | `/education/` | Gauss for Education (prototype), part of Constellation's outreach (nav shows Constellation): what a class gets (four labs), the three plans (student free, staff and research monthly, department yearly), and who can join. Buttons follow `EDU_SALES`; the staff price is "Price TBC" until `EDU_STAFF_PRICE` is set. |
 | `/education/apply/` | A department licence request, or a review for people without a university email. |
 | `/app/` | Signed-in workspace: quote and payment (card, or an invoice where you allow it), billing state, pilot progress, space weather, Constellation membership, members' opportunities, and the staff link for the team. |
@@ -45,7 +49,7 @@ visitor ──► Cloudflare ─┬─ static file (free, no Worker run) ──�
 - **Failures are safe.** If a feed fails, the last good data stays up. After 45 minutes (weather) or
   2 hours (launches), the page labels it "Stale · as of …". With no data at all, the section says
   so plainly. Nothing is ever invented.
-- **One URL to watch:** `https://lightbound.uk/api/health` returns 200 when both feeds are fresh and
+- **One URL to watch:** `https://lightbound.space/api/health` returns 200 when both feeds are fresh and
   503 otherwise, with each feed's age and last error. Point any uptime monitor at it. Worker logs are
   in the Cloudflare dashboard (observability is on).
 - **Day to day there is nothing to do.** No servers, no database, no keys to rotate.
@@ -75,15 +79,17 @@ customer ── Manage billing ──► Stripe billing portal (cards, invoices,
 ```
 
 **Packages and prices** come from the sales plan ("Gauss Aurora sales feature list and onboarding
-flow", Gauss Aurora repo `docs/SALES_FEATURE_LIST_AND_ONBOARDING.md`, 21 Aug 2026). They live in
-`worker/tiers.js`:
+flow", Gauss Aurora repo `docs/SALES_FEATURE_LIST_AND_ONBOARDING.md`, 21 Aug 2026), converted from pounds to US dollars
+(Josh, 3 Nov 2026: one currency everywhere) at $1.34 to the pound (ECB reference rate, 2 Nov 2026) and rounded. Charges and
+invoices are in USD; a UK Stripe account paying out in pounds adds a currency-conversion fee (check Stripe's UK pricing
+before the first charge). They live in `worker/tiers.js`:
 
 | Package | Range | Paid how |
 |---|---|---|
-| Design-partner pilot | £20k–£40k per pilot | One Stripe payment, or one invoice if allowed |
-| Fleet Integration | £60k–£125k a year | Yearly Stripe subscription, or a yearly invoice if allowed |
-| Mission integration | £120k–£300k one-off | Invoiced by milestone |
-| Flight Candidate Adapter (gated) | £750k–£2.5m one-off | Invoiced by milestone |
+| Design-partner pilot | $25k–$50k per pilot | One Stripe payment, or one invoice if allowed |
+| Fleet Integration | $80k–$160k a year | Yearly Stripe subscription, or a yearly invoice if allowed |
+| Mission integration | $150k–$400k one-off | Invoiced by milestone |
+| Flight Candidate Adapter (gated) | $1m–$3.3m one-off | Invoiced by milestone |
 
 Each customer pays a fixed quote that you set inside the range when you approve them. The public
 pages and the workspace don't say how payment is taken (a test checks); the privacy notice still
@@ -118,8 +124,10 @@ invoice for the quote (Fleet Integration: 12 months) and Stripe emails it, with 
 README and code on main (`tools/argo`): the fault classes, the security rules, the Mac agent and the Linux container.
 The private relay is the two-hop design from the "Lightbound Private Connectivity" brief, described as in development
 and not available until an outside security review and legal checks. A test keeps out grade or anonymity claims
-("space grade", "mission-grade", "untraceable", "certified", "VPN"), prices and list wording. The Argo glyph in
-`assets/marks/argo-glyph-provisional.svg` is provisional until the Brand Book adds Argo.
+("space grade", "mission-grade", "untraceable", "certified", "VPN"), prices and list wording. The Argo mark is a square
+sail full of wind set by Canopus (`assets/marks/argo-mark-colour-dark.svg`, favicon `argo-icon-colour-dark.svg`, lockup
+`argo-horizontal-colour-dark.svg`; generated by `tools/make_marks.py`; approved by Josh 5 Nov). The
+old `argo-glyph-provisional.svg` stays only while the Access login page set-up (PR #231) still names it.
 
 - **Who gets it:** operators (an account with a Gauss plan whose billing is unlocked: `isOperator` in
   `worker/tiers.js`) and staff (`STAFF_EMAILS`, plus admins). Nothing extra to pay; there is no Argo price, checkout,
@@ -192,10 +200,10 @@ and not available until an outside security review and legal checks. A test keep
   - This is more generous than the 14-day cancellation right for digital services, so no waiver wording is needed at
     Checkout (check with counsel).
 - **Stripe settings:** Checkout asks every education subscriber to accept the terms, so put
-  `https://lightbound.uk/terms/` in Stripe's public business details. Checkout fails until that's set.
+  `https://lightbound.space/terms/` in Stripe's public business details. Checkout fails until that's set.
 - **UK VAT:**
   - Lightbound must register once UK taxable turnover passes £90,000 in 12 months (gov.uk, VAT Notice 700/1). Three
-    Gauss pilots at £20k–£40k would do it.
+    Gauss pilots near the top of $25k–$50k (about £19k–£37k each at $1.34 to the pound) would do it.
   - The standard rate is 20% (gov.uk/vat-rates).
   - Prices shown to UK consumers should include VAT once registered (UNVERIFIED: check with the accountant).
   - Self-serve plans are UK-only for now: a UK seller owes EU VAT from the first sale to an EU consumer (see Gauss
@@ -293,7 +301,9 @@ renewal and cancellation. No real keys are used.
 
 The Lightbound Brand Book (15 Oct 2026, with 16 and 18 Oct updates) and the Design System tokens (v3) are the rules:
 
-- **Shared:** black ground, warm white, IBM Plex Sans and JetBrains Mono. Status colours always come with their
+- **Shared:** black ground, warm white, IBM Plex Sans and JetBrains Mono. The site serves Plex as "Lightbound Sans":
+  our subset is a modified copy, and the OFL reserves the name "Plex" (`tools/build_assets.py`; the licences sit
+  beside the fonts in `public/assets/fonts/OFL-*.txt`). Status colours always come with their
   word: LIVE green #4E972F, STALE amber, SIMULATED blue #318ADA (the replay's "synthetic" chips), danger #D4673B.
   Controls have 4 px corners, cards 10 px. There are no shadows or glows outside the marks and photos.
 - **Lightbound and Gauss:** lime is the accent. Both use the refined flat symbols (no blur), and Gauss keeps the two-tone "GAUSS AURORA" lockup.
@@ -341,6 +351,9 @@ Around Earth", image 78985).
 npm run site:dev            # http://127.0.0.1:8788, live feeds, the real Worker code
 npm run site:dev:offline    # same, with recorded feed data (no network)
 npm run test:website        # pages, claims, Turnstone secrecy, headers, budgets, feeds, routes
+RELEASE=public npm run site:dev:offline      # the launch: no sign-in, email routes, closed pages answer 404
+RELEASE=public npm run audit:website         # contrast, tap targets, overflow, headings on the launch pages
+npm run smoke:website -- http://127.0.0.1:8788   # the deployed-site smoke check, against a public preview
 ```
 
 `dev.mjs` emulates Cloudflare: assets with `_headers`, trailing slashes, the 404 page and byte
@@ -383,24 +396,95 @@ Cloudflare Access application (a staff-only email policy). Set `STAFF_EMAILS` as
 `OPS_URL` in `wrangler.jsonc` once the staff site is live (https only; the card stays hidden while it's empty).
 Keep the same addresses in the staff site's Access policy and its own `STAFF_EMAILS`.
 
-## Deploy (Pallas runs these; they need your Cloudflare login)
+## Launch: the public release (GAU-178; Pallas runs these, they need your Cloudflare login)
+
+lightbound.space launches as the reduced public release Josh approved on 21 Oct 2026 (`RELEASE: "public"` in
+`wrangler.jsonc`, see `worker/release.js`):
+
+- **Open:** every public page, the live feeds, the time planner, the launch calendar and `/api/health`.
+- **Email instead of forms:** the four apply pages list their questions and open a pre-filled email to
+  jzwnathan@lightbound.uk. Nothing is stored. The header's pill is **Contact**.
+- **Closed by the Worker (404):** `/app/*`, `/argo/`, `POST /api/apply` and `/api/stripe/webhook`. The Gauss page
+  offers pilots, and shows the later plans, with their prices, as in development. Gauss for Education stays
+  "opening soon", and there's no Support link. The members-only feeds aren't fetched.
+- **Config:** only the LIVE namespace, plus one optional secret, `LL2_API_KEY` (below). No DATA, Access settings,
+  Stripe keys or other secrets. `"full"` without a DATA binding stays public.
 
 One time:
 
 ```bash
 cd website
-npx wrangler@4 login
-npx wrangler@4 kv namespace create LIVE    # feed cache: paste the id into wrangler.jsonc
-npx wrangler@4 kv namespace create DATA    # applications and accounts: paste the id too
-npx wrangler@4 deploy                      # live at https://lightbound-site.<account>.workers.dev
+npx wrangler@4 login                       # opens Cloudflare in your browser
+npx wrangler@4 kv namespace create LIVE    # done 23 Oct 2026: its id is in wrangler.jsonc (not a secret)
+npx wrangler@4 secret put LL2_API_KEY      # optional: paste the Launch Library 2 key when asked
 ```
+
+**Without an LL2 key the launch feed falls back to RocketLaunch.Live.** When LL2 fails (429 or down) the cron fetches RocketLaunch.Live's free "next five" list (no key; credited on the page and in the calendar as "Data by RocketLaunch.Live", which is its one condition) and the feed stays live with fewer launches. A key is still better: twelve launches with status and orbit.
+
+**The launch feed needs an LL2 key for the full list.** Launch Library 2 allows 15 anonymous calls an hour, and the
+Worker shares Cloudflare's outbound IPs with other users who use them up: the first preview (24 Oct 2026) got
+HTTP 429 on every refresh, while the same URL answered from a home connection. With `LL2_API_KEY` set (a key from
+The Space Devs' Patreon), the Worker sends `Authorization: Token <key>` to `ll.thespacedevs.com` and to no other
+host, never follows a redirect with it, and ignores a value that isn't a plain token. The key is never stored or
+logged. Setting the secret takes effect at once; the next cron run (within 15 minutes) retries the feed, and
+`/api/launches` turns `live`. Without the key, the page says the launch data is offline.
+
+Each deploy, from a clean checkout of the exact commit whose gates passed (`npm run test:website`, and
+`RELEASE=public npm run audit:website`):
+
+```bash
+cd website
+npx wrangler@4 deploy --var SOURCE_SHA:$(git rev-parse HEAD)
+npm run smoke:website -- https://lightbound-site.<account>.workers.dev $(git rev-parse HEAD)
+```
+
+`smoke:website` checks every public page and its security headers, the 404s, the email routes, the feeds,
+and that `/api/health` names the commit you meant to deploy. The first visit after a deploy fetches the feeds
+once; after that the cron runs every 15 minutes.
+
+**Then lightbound.space** (the DNS change, so only with Josh's go-ahead):
+1. Uncomment `routes` in `wrangler.jsonc`, deploy again, and run the smoke check against `https://lightbound.space`.
+   This adds proxied A/AAAA records only; the Google Workspace MX records stay as they are.
+2. In the dashboard:
+   - SSL/TLS > Edge Certificates: **Always Use HTTPS** on. The smoke check tests the redirect.
+   - Add no Zero Trust Access application for `/app` yet. With one, visitors would get a sign-in page
+     instead of the Worker's 404.
+   - Security > WAF: one rate-limiting rule on `/api/*` (the free plan's allowance is UNVERIFIED).
+   - `www.lightbound.uk` has no DNS record today. Add a proxied one (DNS > Add record: AAAA `www` `100::`), then
+     Rules > Redirect Rules > the "Redirect from WWW to root" template (301 to `https://lightbound.space`, keep the
+     path and query). The smoke check doesn't cover www, so try `curl -sI https://www.lightbound.uk/gauss/`.
+3. `BASE=https://lightbound.space RELEASE=public npm run audit:website` for a last look at the real pages.
+
+**Rollback:** `npx wrangler@4 deployments list`, then `npx wrangler@4 rollback <version-id>`. To take the
+site off lightbound.space entirely, remove the custom domain under Workers & Pages > lightbound-site >
+Settings > Domains & Routes.
+
+**Still open before go-live (GAU-178):**
+- Privacy and terms are drafts written for the full site. In the public release the site itself collects
+  nothing (email goes straight to Google Workspace), but they still need a lawyer's read.
+- lightbound.space has no SPF and no DKIM (GAU-177), so replies from jzwnathan@lightbound.uk may land in spam. Add
+  them before sharing the link widely.
+
+After launch, every change is `npm run test:website`, then the deploy and smoke check above.
+
+## Opening accounts later (`RELEASE: "full"`)
+
+All of it is still in the code, and the tests run it with `RELEASE: "full"`. To open it:
+1. In `wrangler.jsonc`, set `RELEASE` to `"full"`.
+   - Add the DATA namespace: `npx wrangler@4 kv namespace create DATA`, then a `{ "binding": "DATA", "id": … }` entry.
+   - Add these vars: `ACCESS_TEAM_DOMAIN`, `ACCESS_AUD`, `ADMIN_EMAILS` (`jzwnathan@lightbound.uk`),
+     `GAUSS_APP_URL`, `OPS_URL`, `SUPPORT_URL`, `USER_CAP` (`"50"`).
+2. Set up Stripe and sign-in as below, plus the secrets in "Members' opportunities and the staff link".
+3. Put **Sign in** back in the page headers. The public release shows Contact there; Worker-run pages bring
+   back their own `<!--full-->` parts by themselves.
+4. Work through "Before going live, in dashboards" under "Plans, payment and sign-in".
 
 Stripe, once (do it in test mode first, then repeat with live keys):
 1. In the Dashboard, under Settings > Payment methods, enable the methods you accept. For amounts
    this size: card, Bacs Direct Debit and bank transfer.
 2. Under Settings > Billing > Customer portal, allow invoices, payment-method updates and
    cancellation.
-3. Under Developers > Webhooks, add `https://lightbound.uk/api/stripe/webhook` with these events:
+3. Under Developers > Webhooks, add `https://lightbound.space/api/stripe/webhook` with these events:
    - `checkout.session.completed`, `checkout.session.async_payment_succeeded` and
      `checkout.session.async_payment_failed`
    - `customer.subscription.created`, `.updated` and `.deleted`
@@ -414,17 +498,13 @@ Stripe, once (do it in test mode first, then repeat with live keys):
 
 Sign-in, once (Cloudflare dashboard > Zero Trust):
 1. Settings > Authentication: turn on **One-time PIN**.
-2. Access > Applications > Add > Self-hosted: domain `lightbound.uk`, path `app`. Policy: Allow,
+2. Access > Applications > Add > Self-hosted: domain `lightbound.space`, path `app`. Policy: Allow,
    Include **Everyone**. The Worker then decides who sees what from the account records.
 3. Copy the team domain (`<team>.cloudflareaccess.com`) and the application's **AUD tag** into
    `vars` in `wrangler.jsonc`. Neither is a secret.
 
-When the workers.dev preview looks right, uncomment `routes` in `wrangler.jsonc` and deploy again
-to serve `lightbound.uk`. This adds proxied A/AAAA records only; the Google Workspace MX records
-stay as they are. The first visit after a deploy fetches the feeds once; after that the cron runs
-every 15 minutes.
-
-After that, every change is `npm run test:website`, then `npx wrangler@4 deploy` from `website/`.
+Preview the full site locally with `npm run site:dev` (the preview defaults to `"full"`); `RELEASE=public npm run
+site:dev` previews the launch.
 
 ## Not yet verified
 
@@ -447,7 +527,8 @@ After that, every change is `npm run test:website`, then `npx wrangler@4 deploy`
 
 - The Space Devs' page lists no terms for caching or redistribution. The site attributes them on
   every view; ask them before any commercial reuse.
-- Launch Library 2 rate-limits by IP, and Cloudflare Workers share outbound IPs. If refreshes fail
-  with HTTP 429, `/api/health` will show it. The fix is an LL2 API key (Patreon tier, costs money).
+- That an LL2 key lifts the 429s. Observed 24 Oct 2026: anonymous refreshes from the Worker got HTTP 429
+  (02:00, 02:15 and 02:30 UTC) while the same URL answered 200 from a home connection. The Worker sends the key
+  when `LL2_API_KEY` is set (Launch, above); check `/api/launches` turns `live` after setting it.
 - Cloudflare's default `Cache-Control` for `site.css` and the pages (expected: revalidate every
   time). Check with `curl -I` after the first deploy.

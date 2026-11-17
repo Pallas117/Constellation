@@ -1,17 +1,18 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useDeviceSwapPlan } from "@/hooks/useDeviceSwapPlan";
 import { useSolarWind5s } from "@/hooks/useSolarWind5s";
 import { driverReadings, weatherRisk } from "@/lib/measured";
 import { useDocumentTitle } from "@/hooks/useDocumentTitle";
+import { ConfirmButton } from "@/components/ui/confirm-button";
 
 const ProtectionDashboard = () => {
   useDocumentTitle("Protection");
 
-  const { plan, loading, error, lastUpdated, rebalanceMessage, rebalance } = useDeviceSwapPlan();
-  const solarWind = useSolarWind5s();
+  const { plan, loading, error, rebalanceMessage, rebalanceFailed, rebalance } = useDeviceSwapPlan();
+  // Only the newest point is read here, so no 24 h backfill (the server sends about 56 MB for one).
+  const solarWind = useSolarWind5s({ history: false });
   const latest = solarWind.latest;
 
   const assignmentSummary = useMemo(() => {
@@ -72,14 +73,12 @@ const ProtectionDashboard = () => {
             <p className="brand-label">00_PROTECTION</p>
             <h1 className="mt-2 text-3xl font-semibold tracking-tight">Device SWAP Resilience & Heliophysics Research</h1>
             <p className="mt-3 max-w-2xl text-sm text-muted-foreground">
-              Correlate current magnetospheric stress with operational device health. Use adaptive SWAP load management to protect critical infrastructure and capture impact signals for civilization-scale resilience research.
+              Current magnetospheric stress beside the health of each device, with SWAP load management to shed work from the devices most at risk.
             </p>
           </div>
 
           <div className="flex flex-wrap gap-3">
-            <Button variant="secondary" onClick={rebalance} disabled={loading}>
-              Trigger SWAP Rebalance
-            </Button>
+            <ConfirmButton variant="secondary" label="Rebalance SWAP load" confirmLabel="Rebalance now?" pendingLabel="Rebalancing…" onConfirm={rebalance} disabled={loading} />
             <Link to="/operator" className="inline-flex items-center justify-center rounded-md border border-primary px-4 py-2 text-sm font-medium text-primary transition hover:bg-primary/10">
               Back to Operator
             </Link>
@@ -122,7 +121,8 @@ const ProtectionDashboard = () => {
             </div>
 
             <p className="text-sm leading-6 text-muted-foreground">{risk.description}</p>
-            <p className="text-xs text-muted-foreground">Feed source: {solarWind.source} · Updated {lastUpdated ? lastUpdated.toLocaleTimeString() : "soon"}</p>
+            {/* The reading's own measurement time, not when the SWAP plan was last fetched. */}
+            <p className="text-xs text-muted-foreground">Feed source: {solarWind.source} · Measured {latest ? `${new Date(latest.observedAt ?? latest.timestamp).toISOString().slice(11, 19)} UTC` : "—"}</p>
           </CardContent>
         </Card>
 
@@ -193,7 +193,7 @@ const ProtectionDashboard = () => {
               </div>
               <div className="rounded-xl border border-border bg-muted p-4">
                 <div className="stat-label mb-2">Rebalance status</div>
-                <div className="text-xl font-semibold">{rebalanceMessage ? "Updated" : "Idle"}</div>
+                <div className={`text-xl font-semibold${rebalanceFailed ? " text-destructive" : ""}`}>{rebalanceFailed ? "Failed" : rebalanceMessage ? "Updated" : "Idle"}</div>
                 <div className="text-xs text-muted-foreground">{rebalanceMessage ?? "No recent rebalance"}</div>
               </div>
             </div>

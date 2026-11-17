@@ -1,6 +1,7 @@
 import { vec } from "../physics/coordinates.js";
 import type { DataSource, SourceStatus } from "../types.js";
 import type { MMSSpacecraftSample } from "../physics/reconnection.js";
+import { freshnessMs } from "../../shared/policy/freshness.js";
 
 const SOURCE: DataSource = "mms-cdaweb";
 const HAPI_BASE = "https://cdaweb.gsfc.nasa.gov/hapi";
@@ -15,7 +16,7 @@ const WINDOW_MS = 60 * 1000;
  * L2 survey data is archival, published well behind real time. Older than this, the source is
  * not reported healthy: the reconnection vector would describe a different season (GAU-63).
  */
-export const MMS_MAX_AGE_MS = 90 * 86_400_000;
+export const MMS_MAX_AGE_MS = freshnessMs("mms_fgm_l2");
 const STOP_DATE_TTL_MS = 60 * 60 * 1000;
 
 let latestStatus: SourceStatus = {

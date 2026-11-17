@@ -73,6 +73,11 @@ test("Kp and Bz cards: current values, missing field and no feed (GAU-81)", () =
   const noKp = driverReadings({ ...live!, indices: { ...live!.indices, kp: undefined as unknown as number } }, NOW);
   assert.equal(noKp.kp.text, "Unknown", "a missing Kp is not n/a or 0");
   assert.equal(noKp.bz.text, "-4.0 nT");
+  // The backend's no-reading value (GAU-230): null reads Unknown, and the risk is unknown, not scored from 0 or 2.
+  const nullKp = { ...live!, indices: { ...live!.indices, kp: null } };
+  assert.equal(driverReadings(nullKp, NOW).kp.text, "Unknown");
+  assert.equal(measuredDrivers(nullKp, NOW), null);
+  assert.equal(weatherRisk(nullKp, NOW).score, null);
   assert.deepEqual(driverReadings(null, NOW).kp, { text: "Unknown", current: false, note: "No reading yet" });
 });
 

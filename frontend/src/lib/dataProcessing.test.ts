@@ -40,6 +40,26 @@ test("carries backend staleness through, and rejects malformed points", () => {
   assert.equal(canonicalToInterpolated(null), null);
 });
 
+test("a point with no Kp reading (null) is still a point, with Kp unknown, never 0 or 2 (GAU-230)", () => {
+  const noKp = { ...canonical, indices: { kp: null, dst: -30 } };
+  assert.equal(isCanonicalPoint(noKp), true, "the measured L1 values are not thrown away");
+  const d = canonicalToInterpolated(noKp);
+  assert.ok(d);
+  assert.equal(d.kpIndex, null);
+  assert.equal(d.imfBz, -6.5);
+  // A missing or non-numeric Kp is a malformed point, not an unknown one.
+  assert.equal(isCanonicalPoint({ ...canonical, indices: { dst: -30 } }), false);
+  assert.equal(isCanonicalPoint({ ...canonical, indices: { kp: "2", dst: -30 } }), false);
+
+  // Interpolation never invents a Kp between unknown and known, in either direction.
+  const interp = new EMAInterpolator(canonicalToInterpolated(canonical)!, 60_000);
+  interp.setTarget(d);
+  assert.equal(interp.getInterpolated().kpIndex, null);
+  interp.setTarget(canonicalToInterpolated(canonical)!);
+  assert.equal(interp.getInterpolated().kpIndex, 4);
+  for (const v of Object.values(calculateVisualizationParams(d))) assert.ok(Number.isFinite(v));
+});
+
 test("unavailable placeholder is deterministic and never claims to be live", () => {
   const a = unavailableData();
   const b = unavailableData();
@@ -47,6 +67,7 @@ test("unavailable placeholder is deterministic and never claims to be live", () 
   assert.equal(a.tier, 3);
   assert.equal(a.isStale, true);
   assert.equal(a.protonFlux, null);
+  assert.equal(a.kpIndex, null, "no Kp is unknown, not 0");
   assert.deepEqual(a.solarWind, b.solarWind);
   assert.equal(a.imfBz, b.imfBz);
 });

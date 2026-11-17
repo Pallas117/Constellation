@@ -90,12 +90,15 @@ export function renderPlanner({ zones, date, at }) {
     return `/constellation/time/?${esc(u.toString())}`;
   };
   const checkboxes = ZONES.map(([z, l]) => `<label class="zone"><input type="checkbox" name="z" value="${esc(z)}"${zones.includes(z) ? " checked" : ""}> ${esc(l)}</label>`).join("");
-  const head = hours.map((t, h) => `<th scope="col" class="${bestHours.includes(h) ? "best" : ""}${at === h ? " picked" : ""}"><a href="${qs({ at: h })}#slot">${String(h).padStart(2, "0")}</a></th>`).join("");
+  const head = hours.map((t, h) => `<th scope="col" class="${bestHours.includes(h) ? "best" : ""}${at === h ? " picked" : ""}"><a href="${qs({ at: h })}#slot">${String(h).padStart(2, "0")}${bestHours.includes(h) ? '<span class="sr"> best</span>' : ""}${at === h ? '<span class="sr"> picked</span>' : ""}</a></th>`).join("");
   const rows = zones.map((z) =>
     `<tr><th scope="row">${esc(zoneLabel(z))}</th>${hours.map((t, h) => {
       const lh = localHour(t, z);
-      const cls = [WORK(lh) ? "work" : QUIET(lh) ? "quiet" : "edge", bestHours.includes(h) ? "best" : "", at === h ? "picked" : ""].filter(Boolean).join(" ");
-      return `<td class="${cls}">${String(lh).padStart(2, "0")}</td>`;
+      const kind = WORK(lh) ? "work" : QUIET(lh) ? "quiet" : "edge";
+      const cls = [kind, bestHours.includes(h) ? "best" : "", at === h ? "picked" : ""].filter(Boolean).join(" ");
+      // Colour is not the only cue (WCAG 1.4.1): each cell carries its status as hidden text for screen readers.
+      const word = { work: "working hours", quiet: "quiet hours", edge: "edge of the day" }[kind];
+      return `<td class="${cls}">${String(lh).padStart(2, "0")}<span class="sr"> ${word}${at === h ? ", picked" : ""}</span></td>`;
     }).join("")}</tr>`).join("");
   const summary = best === zones.length
     ? `Everyone is within 08:00–20:00 local time at ${bestHours.map((h) => `${String(h).padStart(2, "0")}:00`).join(", ")} UTC.`

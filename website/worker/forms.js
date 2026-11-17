@@ -8,6 +8,7 @@ import { esc } from "./render.js";
 import { TIERS, optionLabel } from "./tiers.js";
 import { rateLimited, saveApplication, APPLICATION_DAYS } from "./data.js";
 import { readCapped } from "./body.js";
+import { CONTACT } from "./release.js";
 
 const PLANS = TIERS.map((t) => [t.id, optionLabel(t)]);
 const opts = (...xs) => xs.map((x) => [x, x]);
@@ -126,6 +127,27 @@ export function renderSent(kind) {
   const [nextHref, nextLabel] = NEXT[kind];
   const next = `<a class="btn" href="${nextHref}"${nextHref.startsWith("https://") ? ' rel="noopener"' : ""}>${nextLabel}</a> <a class="btn ghost" href="${href}">${back}</a>`;
   return `<div class="sent" role="status"><p class="k">RECEIVED</p><h2>${title}</h2><p class="lead">${lead}</p><p class="actions">${next}</p></div>`;
+}
+
+// The public release (release.js) collects nothing: each form's page asks for the same answers by email instead.
+const BY_EMAIL = {
+  gauss: ["Send your pilot brief by email.", "Answer these in an email. A person reads every brief and replies with whether a replay pilot fits, and a fixed quote if it does.", "Email your pilot brief", "Gauss brief"],
+  constellation: ["Ask for an invitation by email.", "Membership is free and by invitation. Answer these in an email; a person reads every request.", "Email your request", "Constellation invitation"],
+  workshop: ["Ask about a workshop by email.", "Answer these in an email and a person replies with a proposal for your team.", "Email your request", "Constellation workshop"],
+  edu: ["Tell us about your course by email.", "Gauss for Education is opening soon. Answer these in an email and we'll be in touch.", "Email us", "Gauss for Education"],
+};
+
+/** The email route: the form's questions, and a mailto link that carries them (and the chosen package), never any answers. */
+export function renderContact(kind, { plan = "" } = {}) {
+  const [title, lead, button, subject] = BY_EMAIL[kind];
+  const tier = kind === "gauss" ? (TIERS.find((t) => t.id === plan) ?? TIERS[0]) : null;
+  const asks = fieldsOf(kind).filter((f) => f !== "email").map((f) => [label(kind, f), f === "plan" && tier ? optionLabel(tier) : ""]);
+  const body = `${asks.map(([q, a]) => `${q}: ${a}`).join("\n\n")}\n`;
+  const mailto = `mailto:${CONTACT}?subject=${encodeURIComponent(tier ? `${subject} · ${tier.short}` : subject)}&body=${encodeURIComponent(body)}`;
+  return `<div class="sent"><p class="k">BY_EMAIL</p><h2>${esc(title)}</h2><p class="lead">${esc(lead)}</p>` +
+    `<ul class="ticks">${asks.map(([q, a]) => `<li>${esc(q)}${a ? `: ${esc(a)}` : ""}</li>`).join("")}</ul>` +
+    `<p class="actions"><a class="btn" href="${esc(mailto)}">${esc(button)}</a></p>` +
+    `<p class="muted">Or write to <a href="mailto:${CONTACT}">${CONTACT}</a>. <a href="/privacy/">Privacy</a></p></div>`;
 }
 
 const clean = (v, max) => String(v ?? "").replace(/\s+/g, " ").trim().slice(0, max);

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildAuroraGrid, latLonGridHarmonics, sphericalHarmonics } from "./healpix.js";
+import { auroraGridKey, buildAuroraGrid, latLonGridHarmonics, sphericalHarmonics } from "./healpix.js";
 import type { CanonicalSpaceWeatherPoint } from "../types.js";
 
 const point = {
@@ -10,11 +10,23 @@ const point = {
   electricField: { ey: 2.5 },
 } as unknown as CanonicalSpaceWeatherPoint;
 
+/** The grid for a point with a Kp reading; failing loudly if none was built. */
+function grid(p: CanonicalSpaceWeatherPoint, nside: number) {
+  const built = buildAuroraGrid(p, nside);
+  assert.ok(built, "a point with Kp builds a grid");
+  return built;
+}
+
+test("GAU-230: without a Kp reading there is no aurora grid, not a quiet-time one", () => {
+  const noKp = { ...point, indices: { kp: null } } as unknown as CanonicalSpaceWeatherPoint;
+  assert.equal(buildAuroraGrid(noKp, 8), null);
+});
+
 test("separable harmonics match the generic per-pixel sum", () => {
   // nside 8 keeps the generic reference fast enough for a unit test.
-  const { grid } = buildAuroraGrid(point, 8);
-  const fast = latLonGridHarmonics(grid, 24, 32, 8);
-  const reference = sphericalHarmonics(grid, 8);
+  const { grid: pixels } = grid(point, 8);
+  const fast = latLonGridHarmonics(pixels, 24, 32, 8);
+  const reference = sphericalHarmonics(pixels, 8);
   assert.equal(fast.coefficients.length, reference.coefficients.length);
   const scale = Math.max(...reference.coefficients.map((c) => Math.abs(c.re)));
   fast.coefficients.forEach((c, i) => {
@@ -31,8 +43,8 @@ test("separable harmonics match the generic per-pixel sum", () => {
 test("aurora grid at nside 64 builds within its 1 s pipeline budget", () => {
   const budgetMs = 1000;
   // The warm-up run doubles as the shape check.
-  const { grid, harmonics } = buildAuroraGrid(point, 64);
-  assert.equal(grid.length, 12 * 64 * 64);
+  const { grid: pixels, harmonics } = grid(point, 64);
+  assert.equal(pixels.length, 12 * 64 * 64);
   assert.equal(harmonics.coefficients.length, 81);
 
   // Wall clock alone measures the machine: a ~25 ms build took 1.5 s during a
@@ -52,4 +64,27 @@ test("aurora grid at nside 64 builds within its 1 s pipeline budget", () => {
     runs.push(`wall ${wallMs.toFixed(0)}ms / cpu ${cpuMs.toFixed(0)}ms`);
   }
   assert.fail(`every run exceeded ${budgetMs}ms: ${runs.join(", ")}`);
+});
+
+test("auroraGridKey covers every input of buildAuroraGrid: a reused grid is the grid a rebuild would give", () => {
+  // `point` above has only these four fields, so buildAuroraGrid reads nothing else.
+  const extra = { ...point, density: 9, speed: 700, timestamp: "2026-11-01T00:00:00Z" } as unknown as CanonicalSpaceWeatherPoint;
+  // Every point here has a Kp, so each has a grid (no Kp gives null: GAU-230).
+  const gridOf = (p: CanonicalSpaceWeatherPoint) => {
+    const built = buildAuroraGrid(p, 8);
+    assert.ok(built, "a point with a Kp has a grid");
+    return built.grid;
+  };
+  assert.equal(auroraGridKey(extra), auroraGridKey(point));
+  assert.deepEqual(gridOf(extra), gridOf(point));
+  const changed: Array<[string, CanonicalSpaceWeatherPoint]> = [
+    ["kp", { ...point, indices: { kp: 6 } } as unknown as CanonicalSpaceWeatherPoint],
+    ["bz", { ...point, magneticField: { z: -9 } } as unknown as CanonicalSpaceWeatherPoint],
+    ["newell", { ...point, coupling: { newell: 9000 } } as unknown as CanonicalSpaceWeatherPoint],
+    ["ey", { ...point, electricField: { ey: 3 } } as unknown as CanonicalSpaceWeatherPoint],
+  ];
+  for (const [name, p] of changed) {
+    assert.notEqual(auroraGridKey(p), auroraGridKey(point), `${name} must change the key`);
+    assert.notDeepEqual(gridOf(p), gridOf(point), `${name} changes the grid`);
+  }
 });
