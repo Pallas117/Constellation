@@ -311,6 +311,9 @@ alert_event() { # alert_event <key> <every: 30m|1h> <title> <message>
 }
 
 boot_epoch() { sysctl -n kern.boottime 2>/dev/null | sed -nE 's/^[{] sec = ([0-9]+),.*/\1/p'; }
+# Minutes since the Mac last woke (kern.waketime); a huge number when unknown. Peers can't have
+# checked in while the Mac slept, so the watchdog gives them that long again before restarting.
+awake_min() { local w; w=$(sysctl -n kern.waketime 2>/dev/null | sed -nE 's/^[{] sec = ([0-9]+),.*/\1/p'); [ -n "$w" ] || { echo 99999; return; }; echo $(( ($(date +%s) - w) / 60 )); }
 iso_utc() { date -u -r "$1" +%Y-%m-%dT%H:%M:%SZ; }
 
 # Boot breadcrumb. The 2026-10-21 reset left no panic report, an empty unified log and nothing
@@ -414,18 +417,32 @@ if bad:
 # WORK_BATTERY (Argo's batteryWorkPct, claude-heavy's HEAVY_BATTERY_MIN), then waits for the charger.
 PLUG_GATE_PCT="${GAUSS_PLUG_GATE_PCT:-5}"
 WORK_BATTERY="${GAUSS_WORK_BATTERY:-50}"
+# 17 Nov (Josh: "a better system for the power use when we don't have power outlets"): claude-heavy
+# now decides when a gate runs on battery from an eclipse budget (a 30% reserve for the worn battery,
+# plus a gate's measured cost, plus `claude-heavy --unplugged <h>` x the base drain), not a flat 50%.
+# The texts take its numbers (`claude-heavy --need gates` prints "<line %> <% per gate>") so they say
+# what the queue will really do; the GAUSS_* variables above still win when set. Deploys keep
+# WORK_BATTERY: a half-finished deploy is worse than a late one.
+plug_numbers() { # prints "<battery % the queue stops at> <% per gate>"
+  local need=""
+  if [ -z "${GAUSS_WORK_BATTERY:-}${GAUSS_PLUG_GATE_PCT:-}" ] && [ -x "$HEAVY" ]; then
+    need=$(perl -e 'alarm 5; exec @ARGV' "$HEAVY" --need gates 2>/dev/null) || need=""
+  fi
+  [[ "$need" =~ ^[0-9]+\ [0-9]+$ ]] && echo "$need" || echo "$WORK_BATTERY $PLUG_GATE_PCT"
+}
 plug_ahead() { # plug_ahead <pct>: on battery with gate runs queued, say when to plug in
-  local pct=$1 n need
+  local pct=$1 n need line per
   [ -d "$GATES_QUEUE" ] || return 0 # find on a missing folder fails, and pipefail would end the caller
   n=$(find "$GATES_QUEUE" -name '*.req' | wc -l | tr -d ' ') || return 0
   [ "${n:-0}" -gt 0 ] || return 0
-  need=$(( n * PLUG_GATE_PCT ))
-  if [ "$pct" -lt "$WORK_BATTERY" ]; then
+  read -r line per <<<"$(plug_numbers)"
+  need=$(( n * per ))
+  if [ "$pct" -lt "$line" ]; then
     phone -key plug-ahead -every 1h "Gauss: plug in to keep merging" \
-      "$n PR(s) wait to be tested and merged. Under ${WORK_BATTERY}% on battery they wait for the charger (${pct}% now)."
-  elif [ $(( pct - need )) -lt "$WORK_BATTERY" ]; then
+      "$n PR(s) wait to be tested and merged. Under ${line}% on battery they wait for the charger (${pct}% now)."
+  elif [ $(( pct - need )) -lt "$line" ]; then
     phone -key plug-ahead -every 1h "Gauss: plug in soon" \
-      "$n PR(s) queued need about ${need}% of battery; at ${pct}% the queue stops at ${WORK_BATTERY}%. Plug in within the hour to keep it moving."
+      "$n PR(s) queued need about ${need}% of battery; at ${pct}% the queue stops at ${line}%. Plug in within the hour to keep it moving."
   fi
 }
 
@@ -623,15 +640,22 @@ kick() { # kick <label> <reason>: rate-limited launchctl kickstart, logged and a
 
 watch_peers() {
   mkdir -p "$(dirname "$GUARD_HEARTBEAT")"; touch "$GUARD_HEARTBEAT"
-  local age
-  # Argo only rewrites state.json on a full probe (~5 min), so allow 15.
+  local age awake; awake=$(awake_min)
+  # Argo only rewrites state.json on a full probe (~5 min), so allow 15. A stale file right after
+  # the Mac wakes is sleep, not a stall (5 Nov 2026: 4 needless restarts after a 3 h lid-closed sleep).
   if loaded uk.lightbound.argo && [ ! -e "$HOME/.local/state/argo/disabled" ]; then
     age=$(mtime_age_min "$HOME/.local/state/argo/state.json")
-    [ "$age" -gt 15 ] && kick uk.lightbound.argo "no Argo check for ${age} min"
+    if [ "$age" -gt 15 ]; then
+      if [ "$awake" -gt 15 ]; then kick uk.lightbound.argo "no Argo check for ${age} min"
+      else echo "$(date '+%F %T') watchdog: Argo stale ${age} min but the Mac woke ${awake} min ago; waiting"; fi
+    fi
   fi
   if loaded uk.lightbound.mesh-heal; then
     age=$(mtime_age_min "$HOME/.local/share/mesh-heal/state")
-    [ "$age" -gt 10 ] && kick uk.lightbound.mesh-heal "no mesh-heal check for ${age} min"
+    if [ "$age" -gt 10 ]; then
+      if [ "$awake" -gt 10 ]; then kick uk.lightbound.mesh-heal "no mesh-heal check for ${age} min"
+      else echo "$(date '+%F %T') watchdog: mesh-heal stale ${age} min but the Mac woke ${awake} min ago; waiting"; fi
+    fi
   fi
   # A deploy restarts them on purpose and rolls back by itself. A lock left by a
   # deploy that died stops counting after 30 min.

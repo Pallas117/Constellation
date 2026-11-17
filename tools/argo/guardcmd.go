@@ -174,7 +174,10 @@ const guardUsage = `usage:
   uses what it really needed instead of -mem. The job gets ARGO_WORKERS (parallel workers this host
   can afford now) and ARGO_HEADROOM_GB.
   At memory warn a job still starts while the host is coping (swapping out under 64 MB/min, with
-  available memory after the reserve covering the job; 1.5x for a job that usually runs 15 min+).`
+  available memory after the reserve covering the job; 1.5x for a job that usually runs 15 min+).
+  On battery a job over 1 GB starts only within its eclipse budget: battery % >= 30% reserve + the
+  job's median battery cost over its last 5 runs on battery (8% until 3) + 6% per hour left on the
+  unplugged plan (~/.local/state/gauss-unplugged, set by claude-heavy --unplugged).`
 
 // guardCmd returns the process exit code.
 func guardCmd(args []string, s Store, cfg Config, out io.Writer) (int, error) {
@@ -199,6 +202,7 @@ func guardCmd(args []string, s Store, cfg Config, out io.Writer) (int, error) {
 		}
 		fmt.Fprint(out, guardText(cur, a, g.Scale, hist, memoryUsers(ctx)))
 		fmt.Fprint(out, jobsText(s.jobRuns()))
+		fmt.Fprint(out, eclipseText(cur, s.jobRuns(), readPlan(unpluggedPath())))
 		return 0, nil
 	case "admit":
 		fs := flag.NewFlagSet("guard admit", flag.ContinueOnError)
@@ -258,12 +262,13 @@ type guardRunner struct {
 
 	name     string  // -name: what the job learns under (default: the command's name)
 	workerGB float64 // RAM one worker holds, for ARGO_WORKERS
+	planFile string  // claude-heavy's unplugged plan (eclipse.go); "" = none
 }
 
 func newGuardRunner(s Store, out io.Writer) guardRunner {
 	return guardRunner{
 		store: s, out: out, every: 5 * time.Second, retry: 15 * time.Second, grace: 15 * time.Second, strikes: 2,
-		first: time.Second, maxPause: 2 * time.Hour,
+		first: time.Second, maxPause: 2 * time.Hour, planFile: unpluggedPath(),
 		assess: func() (Sample, Assessment) {
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
@@ -305,7 +310,8 @@ func (r guardRunner) waitAdmit(name string, memGB float64, wait time.Duration) (
 		}
 		memGB = need
 	}
-	long := name != "" && longJob(r.store.jobRuns(), name)
+	runs := r.store.jobRuns()
+	long := name != "" && longJob(runs, name)
 	deadline := time.Now().Add(wait)
 	for {
 		cur, a = r.assess()
@@ -313,7 +319,8 @@ func (r guardRunner) waitAdmit(name string, memGB float64, wait time.Duration) (
 		if long && a.Coping {
 			ask = ceil1(memGB * longJobExtra) // a long job at warn outlasts the reading it started on
 		}
-		ok, why = admit(a, ask)
+		// On battery, a job over the light-work cap starts within its eclipse budget (eclipse.go).
+		ok, why = admitIn(a, ask, eclipseFor(cur, runs, name, readPlan(r.planFile)))
 		if ok || !time.Now().Add(r.retry).Before(deadline.Add(time.Millisecond)) {
 			return ok, why, cur, a
 		}
@@ -361,6 +368,8 @@ func (r guardRunner) run(memGB, maxGB float64, wait time.Duration, argv []string
 		return 127, err
 	}
 	pgid := cmd.Process.Pid
+	// Below the owner's apps (foreground.go); children started from here on inherit it.
+	_ = syscall.Setpriority(syscall.PRIO_PGRP, pgid, jobNice)
 	done := make(chan error, 1)
 	go func() { done <- cmd.Wait() }()
 	sigs := make(chan os.Signal, 1)
@@ -371,6 +380,7 @@ func (r guardRunner) run(memGB, maxGB float64, wait time.Duration, argv []string
 	// ended before the first reading would teach "needs nothing".
 	started, peak := time.Now(), 0.0
 	var pausedAt time.Time
+	pausedWhy := ""
 	var pausedFor time.Duration // eclipse pauses, left out of the learned run time
 	measure := func() float64 {
 		used := r.jobGB(pgid)
@@ -387,6 +397,15 @@ func (r guardRunner) run(memGB, maxGB float64, wait time.Duration, argv []string
 				WaitSecs: waited, PauseSecs: int(pausedFor.Seconds())}
 			if nW > 0 && pw.LoadW > 0 && onAC(cur) {
 				j.BaseW, j.AvgW = pw.LoadW, round1(sumW/float64(nW))
+			}
+			// Battery at both ends, from the admission reading and a fresh one now: the job's
+			// battery cost for the eclipse budget.
+			if b0 := cur.Batt; b0 != nil && b0.Present {
+				end, _ := r.assess()
+				if b1 := end.Batt; b1 != nil && b1.Present {
+					j.BattStart, j.BattEnd = b0.Pct, b1.Pct
+					j.OnBatt = !b0.OnAC && !b1.OnAC
+				}
 			}
 			_ = r.store.appendJob(j)
 		}
@@ -419,22 +438,32 @@ func (r guardRunner) run(memGB, maxGB float64, wait time.Duration, argv []string
 			measure()
 		case <-tick.C:
 			now, a := r.assess()
-			if eclipse {
-				switch {
-				case pausedAt.IsZero() && !onAC(now) && a.Level < LevelBlock:
-					_ = syscall.Kill(-pgid, syscall.SIGSTOP)
-					pausedAt = time.Now()
-					fmt.Fprintln(r.out, "argo guard: on battery: pausing", filepath.Base(argv[0]), "until power returns")
-					r.log(argv[0], "paused: on battery")
-					continue
-				case !pausedAt.IsZero() && onAC(now):
-					resume()
-					fmt.Fprintln(r.out, "argo guard: power is back: resuming", filepath.Base(argv[0]))
-					r.log(argv[0], "resumed: on AC")
-					continue
-				case !pausedAt.IsZero() && time.Since(pausedAt) < r.maxPause:
-					continue // asleep: nothing to measure or police
-				}
+			// Pause for eclipse (on battery) or for the owner's call (foreground.go); resume when
+			// neither holds any more.
+			hold := ""
+			switch {
+			case a.Level >= LevelBlock:
+			case eclipse && !onAC(now):
+				hold = "on battery"
+			case eclipse && brownout(now, a, pausedWhy == "charger can't keep up" && !pausedAt.IsZero()):
+				hold = "charger can't keep up"
+			case r.maxPause > 0 && now.Call != "" && heavyForCall(memGB, peak):
+				hold = "a call is live"
+			}
+			switch {
+			case pausedAt.IsZero() && hold != "":
+				_ = syscall.Kill(-pgid, syscall.SIGSTOP)
+				pausedAt, pausedWhy = time.Now(), hold
+				fmt.Fprintf(r.out, "argo guard: %s: pausing %s until it ends\n", hold, filepath.Base(argv[0]))
+				r.log(argv[0], "paused: "+hold)
+				continue
+			case !pausedAt.IsZero() && hold == "": // at block too: awake, so the strikes below can stop it
+				resume()
+				fmt.Fprintln(r.out, "argo guard: resuming", filepath.Base(argv[0]), "("+pausedWhy+" no more)")
+				r.log(argv[0], "resumed: "+pausedWhy+" ended")
+				continue
+			case !pausedAt.IsZero() && time.Since(pausedAt) < r.maxPause:
+				continue // asleep: nothing to measure or police
 			}
 			used := measure()
 			if b := now.Batt; b != nil && b.OnAC && b.SystemW > 0 {
@@ -442,7 +471,7 @@ func (r guardRunner) run(memGB, maxGB float64, wait time.Duration, argv []string
 			}
 			bad := ""
 			if !pausedAt.IsZero() {
-				bad = fmt.Sprintf("paused on battery for %s", r.maxPause)
+				bad = fmt.Sprintf("paused (%s) for %s", pausedWhy, r.maxPause)
 				strikes = r.strikes
 			} else if a.Level >= LevelBlock {
 				bad = "host at block: " + worst(a)
@@ -516,7 +545,7 @@ var guardAdvice = map[string]string{
 	"battery-low":          "Plug in.",
 	"battery-draining":     "Plug in: the battery reaches the floor within the hour.",
 	"battery-low-pressure": "Plug in or close the browser.",
-	"on-battery":           "Plug in to take more than light work.",
+	"on-battery":           "Jobs over 1 GB start only within their eclipse budget (below). Plug in to lift it.",
 	"charger-behind":       "Use a stronger charger: this one can't keep up with the machine's draw.",
 	"charger-weak":         "Use a stronger charger: the machine draws more than this one supplies.",
 	"disk-critical":        "Free disk space now: swap needs room on the boot volume.",

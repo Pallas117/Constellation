@@ -21,6 +21,7 @@ stub sysctl 'case "$*" in
   *pressure_level*) echo "${LEVEL:-1}" ;;
   *memorystatus_level*) echo "${AVAIL:-50}" ;;
   *boottime*) echo "{ sec = ${BOOT:-1000}, usec = 5 } Thu Oct 22 01:01:27 2026" ;;
+  *waketime*) echo "{ sec = ${WAKE:-1000}, usec = 5 } Thu Oct 22 01:01:27 2026" ;;
   *) echo "total = 6144.00M  used = ${SWAPUSED:-1000}.00M  free = 0.00M  (encrypted)" ;;
 esac'
 stub ps 'case "$*" in *comm=*) echo "/opt/homebrew/bin/node" ;; *) echo "2097152 node" ;; esac'
@@ -62,7 +63,7 @@ run() { # run <args...>: gauss-services.sh with the stubs; alerts land in $LOG
     GAUSS_SUDOERS="$T/sudoers" MLX="${MLX:-0}" MLXPORT="${MLXPORT:-8089}" ACTIONS="$T/actions" GAUSS_BALANCE="${GAUSS_BALANCE:-1}" \
     LOADED="${LOADED:-}" HEALTH="${HEALTH:-200}" HEALTH_FILE="${HEALTH_FILE:-}" GAUSS_DEPLOY_WAIT=0 DISKGB="${DISKGB:-50}" \
     GATEFAIL="${GATEFAIL:-}" MOVEMAIN="${MOVEMAIN:-}" GAUSS_BY=test-user BOOT="${BOOT:-1000}" GAUSS_DIAG_DIRS="$T/diag" GAUSS_EVENTS_MAX_KB="${GAUSS_EVENTS_MAX_KB:-5120}" \
-    GAUSS_DEV_DRY="${GAUSS_DEV_DRY:-0}" GAUSS_GATES_START=0 HEAVYGIVEUP="${HEAVYGIVEUP:-}" NPMNET="${NPMNET:-}" GAUSS_GATEBOX="${GAUSS_GATEBOX:-}" GAUSS_FLEET_MEMORY="${GAUSS_FLEET_MEMORY:-}" GAUSS_GATEBOX_KEY="$T/gatebox-key" GBRC="${GBRC:-}" GAUSS_GATES_EXPIRE_H="${GAUSS_GATES_EXPIRE_H:-72}" GAUSS_DEV_API_PORT="${GAUSS_DEV_API_PORT:-3101}" \
+    WAKE="${WAKE:-1000}" GAUSS_DEV_DRY="${GAUSS_DEV_DRY:-0}" GAUSS_GATES_START=0 HEAVYGIVEUP="${HEAVYGIVEUP:-}" NPMNET="${NPMNET:-}" GAUSS_GATEBOX="${GAUSS_GATEBOX:-}" GAUSS_FLEET_MEMORY="${GAUSS_FLEET_MEMORY:-}" GAUSS_GATEBOX_KEY="$T/gatebox-key" GBRC="${GBRC:-}" GAUSS_GATES_EXPIRE_H="${GAUSS_GATES_EXPIRE_H:-72}" GAUSS_DEV_API_PORT="${GAUSS_DEV_API_PORT:-3101}" \
     SRC="${SRC:-AC Power}" BATT="${BATT:-80%; charging; present: true}" SD="${SD:-0}" FCC="${FCC:-}" ACW="${ACW:-}" \
     LEAKY="${LEAKY:-}" LEAKFP="${LEAKFP:-12 MB}" AVAIL="${AVAIL:-50}" GAUSS_SWAP_LAST="${SWAPLAST:-/dev/null}" \
     GATEENV="${GATEENV:-}" GATES_PYTHON="${GATES_PYTHON:-}" ${GATELEAK:+ALLOWED_ORIGINS=https://live.example MESH_STORE_PATH=/live/data/mesh/devices.json COMMERCE_DB_PATH=/live/data/commerce/commerce.db GAUSS_BEDROCK_DIR=/live/data/bedrock NODE_ENV=production} \
@@ -116,7 +117,17 @@ SRC="Battery Power" BATT="45%; discharging; 1:00 remaining present: true" run aw
 [[ " $(alerts) " == *" plug-ahead "* ]] && grep -q "plug in to keep merging" "$T/log"; expect "plug ahead: under 50% with gates queued, they wait: text" $?
 SRC="AC Power" BATT="45%; charging; present: true" run awake guard
 [ -z "$(alerts)" ]; expect "plug ahead: on AC, no text" $?
-rm -f "$PQ"/*.req
+# 17 Nov: with claude-heavy's eclipse budget (a gate runs on battery at 38%, ~8% each) the texts use its numbers.
+mkdir -p "$T/home/.local/bin"
+printf '%s\n' '#!/bin/bash' '[ "$1 $2" = "--need gates" ] && echo "38 8"' >"$T/home/.local/bin/claude-heavy"; chmod +x "$T/home/.local/bin/claude-heavy"
+SRC="Battery Power" BATT="45%; discharging; 1:00 remaining present: true" run awake guard
+[[ " $(alerts) " == *" plug-ahead "* ]] && grep -q "need about 16% of battery; at 45% the queue stops at 38%" "$T/log"; expect "plug ahead: claude-heavy's budget (38%, 8%/gate): 45% with two gates queued, text early" $?
+SRC="Battery Power" BATT="36%; discharging; 1:00 remaining present: true" run awake guard
+[[ " $(alerts) " == *" plug-ahead "* ]] && grep -q "Under 38% on battery they wait" "$T/log"; expect "plug ahead: under claude-heavy's 38% line, they wait: text" $?
+printf '%s\n' '#!/bin/bash' 'echo "not numbers"' >"$T/home/.local/bin/claude-heavy"
+SRC="Battery Power" BATT="45%; discharging; 1:00 remaining present: true" run awake guard
+grep -q "Under 50% on battery they wait" "$T/log"; expect "plug ahead: an older claude-heavy (no --need): the 50% line" $?
+rm -f "$T/home/.local/bin/claude-heavy" "$PQ"/*.req
 SRC="Battery Power" BATT="9%; discharging; 0:20 remaining present: true" run awake guard
 [ "$(alerts)" = "battery-critical" ]; expect "9% on battery: at the floor" $?
 SRC="Battery Power" BATT="55%; discharging; 4:00 remaining present: true" run awake guard
@@ -139,6 +150,7 @@ stub sysctl 'case "$*" in
   *pressure_level*) echo "${LEVEL:-1}" ;;
   *memorystatus_level*) echo "${AVAIL:-50}" ;;
   *boottime*) echo "{ sec = ${BOOT:-1000}, usec = 5 } Thu Oct 22 01:01:27 2026" ;;
+  *waketime*) echo "{ sec = ${WAKE:-1000}, usec = 5 } Thu Oct 22 01:01:27 2026" ;;
   *) echo "total = 6144.00M  used = ${SWAPUSED:-1000}.00M  free = 0.00M  (encrypted)" ;;
 esac'
 LEVEL=1 SWAPUSED=3000 run awake guard
@@ -215,6 +227,11 @@ LOADED="uk.lightbound.argo uk.lightbound.mesh-heal" run awake guard
 touch -t 202601010000 "$T/home/.local/state/argo/state.json" "$T/home/.local/share/mesh-heal/state"
 LOADED="uk.lightbound.argo uk.lightbound.mesh-heal" run awake guard
 [ "$(kicked)" = "uk.lightbound.argo uk.lightbound.mesh-heal" ]; expect "stale Argo and mesh-heal: both restarted" $?
+touch -t 202601010000 "$T/home/.local/state/argo/state.json" "$T/home/.local/share/mesh-heal/state"
+WAKE=$(( $(date +%s) - 120 )) LOADED="uk.lightbound.argo uk.lightbound.mesh-heal" run awake guard
+[ -z "$(kicked)" ]; expect "stale peers 2 min after the Mac woke: sleep, not a stall; no restarts" $?
+WAKE=$(( $(date +%s) - 20 * 60 )) LOADED="uk.lightbound.argo uk.lightbound.mesh-heal" run awake guard
+[ "$(kicked)" = "uk.lightbound.argo uk.lightbound.mesh-heal" ]; expect "still stale 20 min after waking: restarted" $?
 ev '[e["label"] for e in E if e["event"]=="watchdog_kick"][-2:]==["uk.lightbound.argo","uk.lightbound.mesh-heal"] and "no Argo check for" in E[-2]["reason"] and E[-1]["pressure"]==1 and E[-1]["swap_mb"]==1000 and E[-1]["battery"]==80 and E[-1]["on_ac"] is True'
 expect "events: each watchdog restart is a JSON line with the memory and power state" $?
 touch "$T/home/.local/state/argo/disabled"

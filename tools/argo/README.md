@@ -39,6 +39,20 @@ Optional extras:
   ad-hoc-signed binary, macOS asks again on the first background send, and sends time out after 30 s until
   someone clicks Allow.
 - **Alerts from other tools.** `argo notify [-key K -every 30m] TITLE MESSAGE` sends through the same
+- **Attention policy.** Every text passes one gate, whichever watcher raised it. Urgent alerts (`-level urgent`, or
+  "critical" in the title or key) text at once. Warnings text unless it is quiet hours (default 23:00-07:00; set
+  `"quiet_hours": "23:00-07:00,09:00-12:30"` or `"off"` in config.json), the same topic texted in the last 30 min
+  (2 h for power, memory and disk, which several watchers report), or 4 texts already went out this hour. Recoveries
+  never text by themselves. Whatever is held is never dropped: it arrives as one "Argo digest" when quiet hours end,
+  or 3 h after the first held alert. `argo attention replay` shows what the policy would have done with the texts
+  already sent.
+- **Fallback handle.** `argo phone fallback you@icloud.com` (best an Apple ID email) gets an alert by iMessage
+  whenever sending to the main handle fails, for example while the SIM is expired; `argo phone fallback off`
+  removes it. It catches failures Messages reports at once. An SMS that Messages accepts and the iPhone fails
+  later is only caught by the delivery check (Full Disk Access for `~/.local/bin/argo`).
+- **Texts that fail are not silent.** If Messages stops accepting texts (for example after a rebuild, until Allow is
+  clicked), `argo status` says since when and how many are waiting or lost, a desktop banner appears after 10 min,
+  and the first text after recovery says how many alerts were lost.
   channel, mask and offline queue, at most once per interval per key. The gauss-awake battery guard
   uses it (battery low, at the sleep floor, charger can't keep up, no cutoff configured), as do
   mesh-heal and Claude Code `Notification` hooks.
@@ -77,7 +91,8 @@ Then remove the `statusLine` and `claude()` lines above if you added them, and r
 | `argo report` | Incident counts by class, how many needed a fix and were fixed, how many resolved on their own, last 10 events |
 | `argo phone <handle>\|test\|off\|imessage\|sms` | Set up, test or turn off alerts to your iPhone; choose iMessage first (end-to-end encrypted) or SMS first (banner on your own number, carried by your carrier) |
 | `argo egress [off\|on]` | What Argo sent off this Mac and where (log kept on this Mac); `off` holds third-party sends locally until `on` |
-| `argo notify [-key K -every D] TITLE MSG` | Send an alert to your iPhone (masked, queued offline, rate-limited per key) |
+| `argo notify [-key K -every D] [-level urgent\|warn\|info] TITLE MSG` | Send an alert to your iPhone (masked, queued offline, rate-limited per key, then the attention policy) |
+| `argo attention [replay]` | Show the attention policy and what is held for the digest; `replay` runs the sent-texts log through it |
 | `argo watch` | Run the peer watchdog once (also every tick): restarts the gauss-awake guard or mesh-heal when their heartbeat is stale, max 3 restarts/hour each, then alerts. Override the list with `"watch"` in config.json |
 | `argo devices` | Which watched tailnet devices are offline. Every tick, a phone of yours that has been off the tailnet for 30 min or more gets a text (SMS over its own cellular link) with the fix: open Tailscale, turn on Connect On Demand. At most every 6 h per device. Override the list with `"devices": ["hostname", ...]` in config.json |
 | `argo guard` | Resource guard (below): memory, battery, disk and CPU now and over the last 24 h, who uses memory, what to do. `--json` for scripts |
@@ -216,6 +231,14 @@ rating is the host's level:
 |---|---|---|
 | ok | takes work | |
 | watch | light work only (jobs up to 1 GB, one mesh slot) | memory at warn, on battery, disk under 20 GB, load ≥ 1 per core, charger rated below the machine's draw |
+
+On battery, a job over 1 GB is not held to light work if it fits its **eclipse budget** (`eclipse.go`, the same numbers
+as `claude-heavy`): battery % ≥ 30% reserve + the job's median battery-% drop over its last 5 runs on battery (8% until
+3 runs) + 6% for each hour left on the unplugged plan (`claude-heavy --unplugged 4h` writes the deadline to
+`~/.local/state/gauss-unplugged`). Each guarded run records battery % at its start and end in `jobs.jsonl`
+(`batt0`, `batt1`, `on_batt`); the cost is learned from those, not from `avg_w`/`base_w`, which the battery
+controller smooths over minutes. The 10% floor, low battery, battery-draining and brownout rules still act first.
+`argo guard` on battery lists what each measured job needs.
 | risk | no new work; running work continues | memory at warn for 30 of the last 60 min, swap +1 GB in an hour at warn, swap ≥ 4 GB, battery ≤ 20% (or ≤ 25% with memory at warn, or under an hour to the floor), plugged in but still losing charge, disk under 8 GB, CPU throttled by the OS |
 | block | no work; guarded jobs are stopped | memory pressure critical, battery at the 10% floor on battery power, disk under 3 GB (swap lives on the boot volume) |
 
@@ -269,6 +292,22 @@ wins). `ARGO_WORKERS` is 1 at watch, otherwise headroom ÷ `guard_worker_gb` (co
 cores − 1. The repo's `npm test` passes it to `--test-concurrency` and Playwright uses it for `workers`. Without it
 both keep their defaults: about 7 test processes and 4 browsers on an 8-core Mac. Node refuses
 `--test-concurrency` in `NODE_OPTIONS`, so the flag lives in the script.
+
+**The owner first** (`foreground.go`). Work on this Mac (video calls, browser work) comes before Gauss's jobs:
+
+| When | Jobs | Network |
+|---|---|---|
+| A call is live (a Chromium `WebRTC has active PeerConnections` assertion, or Zoom, Teams, FaceTime, Webex holding the display awake) | New jobs over 1 GB wait; running ones that big pause (SIGSTOP) until it ends, at most 2 h, then exit 75 so the queue retries | Offline, the Wi-Fi reset waits 5 min instead of 90 s |
+| At the keyboard (input in the last 5 min) | A job must leave 0.5 GB more free | as usual |
+| Away | no extra limit | as usual |
+
+**Brownout** (`brownout.go`). On a charger too weak for the load (the Mac plugged in, the battery still
+falling), a running job is shed (paused) at 35% and restored at 50%, or as soon as a 30 W+ charger is charging
+it. While shed even an 8 W charger refills the battery, so jobs run in bursts the charger can pay for instead
+of draining it to the floor. New jobs don't start at 35% or below on a charger that is behind.
+
+Every guarded job runs at nice 10, so with nothing else running it loses nothing. The finding names the
+app locally (`argo guard`); Gauss gets only the code `owner-busy` ("its owner is using it").
 
 **Power budget (SWaP).** A spacecraft only switches loads on while its power budget has margin, and sheds them in
 eclipse. Argo keeps the same budget for the machine: **source** = the charger's rating × 0.8 (conversion losses, a
