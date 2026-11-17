@@ -1,6 +1,6 @@
 {
   "$comment": "Constellation requirements baseline (GAU-120). NASA SP-2016-6105 Rev 2 §6.2/§5.3. Methods: T test, A analysis, I inspection, D demonstration. T evidence = exact test names; A/I/D evidence = repo paths. Verified by `npm run verify`.",
-  "version": "1.14.0",
+  "version": "1.15.0",
   "requirements": [
     {
       "id": "REQ-ING-001",
@@ -693,6 +693,19 @@
         "key lock page: the one-time pattern page answers only its own address and origin, needs the nonce it served, unlocks once and closes after five misses (GAU-67)",
         "trust CLI: lock a key under a pattern and remove the unlocked file, sign with it from the terminal, refuse a wrong pattern, and make a key that is locked from the start (GAU-67)",
         "touch id lock: a key locked to its owner's Secure Enclave key unlocks only through that key; another person's enclave, a changed header or a damaged file fails, and the key is never stored in the clear (GAU-67)"
+      ]
+    },
+    {
+      "id": "REQ-VER-001",
+      "title": "Computed readiness score",
+      "statement": "The verification gate shall compute a readiness score from 0 to 100 for each requirement as the sum of six evidence-based parts weighted 15, 30, 20, 15, 10 and 10.",
+      "rationale": "A score computed from test, FMEA and documentation evidence replaces a self-graded one (GAU-120).",
+      "parent": "GAU-120",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "readiness: a fully evidenced internal requirement scores 100 and shows its reasons",
+        "readiness: verification is 0 when a mapped test is skipped or missing, lower for a single test"
       ]
     }
   ]
