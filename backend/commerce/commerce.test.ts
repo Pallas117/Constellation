@@ -4,6 +4,7 @@ import test from "node:test";
 import express from "express";
 import type { AuthenticatedRequest, AuthRole } from "../auth.js";
 import { PLANS, type Plan, type PlanLimits } from "./plans.js";
+import { CyberTigerDaemon } from "../cybertiger/daemon.js";
 import { createDataApiRouter, createOrgRouter, createPilotRequestHandler, type DataProvider } from "./routers.js";
 import { CommerceStore, type ApiKeyInfo, type Org } from "./store.js";
 
@@ -197,4 +198,26 @@ test("pilot requests: addresses with nothing in the last hour are forgotten (GAU
   assert.equal(send("203.0.113.2", lead), 201);
   assert.equal(send("203.0.113.2", lead), 201);
   assert.equal(send("203.0.113.2", lead), 429);
+});
+
+test("pilot requests: limit keys on the forwarded client behind the local proxy, not on the proxy (sec-pilot-ip)", () => {
+  const store = new CommerceStore(":memory:");
+  const t = Date.parse("2026-10-10T08:00:00Z");
+  const daemon = new CyberTigerDaemon();
+  const handler = createPilotRequestHandler(store, () => t, (req) => daemon.extractClientIp(req));
+  const send = (peer: string, forwarded: string | undefined) => {
+    let status = 0;
+    const res = { status: (code: number) => ((status = code), res), json: () => res } as unknown as express.Response;
+    const headers: Record<string, string> = forwarded ? { "x-forwarded-for": forwarded } : {};
+    handler({ socket: { remoteAddress: peer }, headers, body: { name: "Ada", email: "ada@xorbita.space", company: "xOrbita" } } as unknown as express.Request, res);
+    return status;
+  };
+  // Two clients behind the loopback proxy each get their own 3-per-hour budget.
+  for (let i = 0; i < 3; i += 1) assert.equal(send("127.0.0.1", "100.64.1.5"), 201);
+  assert.equal(send("127.0.0.1", "100.64.1.5"), 429);
+  for (let i = 0; i < 3; i += 1) assert.equal(send("::ffff:127.0.0.1", "100.64.1.6"), 201);
+  assert.equal(send("::ffff:127.0.0.1", "100.64.1.6"), 429);
+  // A forwarded header from a non-local peer is ignored: spoofing cannot mint fresh budgets.
+  for (let i = 0; i < 3; i += 1) assert.equal(send("203.0.113.9", `10.0.0.${i}`), 201);
+  assert.equal(send("203.0.113.9", "10.0.0.99"), 429);
 });

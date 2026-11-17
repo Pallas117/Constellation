@@ -286,7 +286,7 @@ app.use("/api", enforceApiPolicy);
 app.use("/api/orgs", createOrgRouter(commerce));
 
 // Public "Request a pilot" form on the landing page.
-app.post("/api/pilot-requests", createPilotRequestHandler(commerce));
+app.post("/api/pilot-requests", createPilotRequestHandler(commerce, Date.now, (req) => cyberTiger.extractClientIp(req)));
 
 // Mesh & Network page: onboarding for everyone signed in, team status for operators.
 app.use("/api/mesh", mesh.ui);
