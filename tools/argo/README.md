@@ -231,6 +231,14 @@ rating is the host's level:
 |---|---|---|
 | ok | takes work | |
 | watch | light work only (jobs up to 1 GB, one mesh slot) | memory at warn, on battery, disk under 20 GB, load ≥ 1 per core, charger rated below the machine's draw |
+
+On battery, a job over 1 GB is not held to light work if it fits its **eclipse budget** (`eclipse.go`, the same numbers
+as `claude-heavy`): battery % ≥ 30% reserve + the job's median battery-% drop over its last 5 runs on battery (8% until
+3 runs) + 6% for each hour left on the unplugged plan (`claude-heavy --unplugged 4h` writes the deadline to
+`~/.local/state/gauss-unplugged`). Each guarded run records battery % at its start and end in `jobs.jsonl`
+(`batt0`, `batt1`, `on_batt`); the cost is learned from those, not from `avg_w`/`base_w`, which the battery
+controller smooths over minutes. The 10% floor, low battery, battery-draining and brownout rules still act first.
+`argo guard` on battery lists what each measured job needs.
 | risk | no new work; running work continues | memory at warn for 30 of the last 60 min, swap +1 GB in an hour at warn, swap ≥ 4 GB, battery ≤ 20% (or ≤ 25% with memory at warn, or under an hour to the floor), plugged in but still losing charge, disk under 8 GB, CPU throttled by the OS |
 | block | no work; guarded jobs are stopped | memory pressure critical, battery at the 10% floor on battery power, disk under 3 GB (swap lives on the boot volume) |
 
