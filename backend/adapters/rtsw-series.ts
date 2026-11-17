@@ -11,6 +11,7 @@
 import { vec, type Vector3 } from "../physics/coordinates.js";
 import type { ArrivingSolarWind, DensityDisagreement } from "../types.js";
 import { freshnessMs } from "../../shared/policy/freshness.js";
+import { PLAUSIBLE } from "../../shared/policy/limits.js";
 
 type Rec = Record<string, unknown>;
 
@@ -36,17 +37,8 @@ export interface L1Sample {
   temperature?: number | null;
 }
 
-/**
- * Plausibility bounds. ACE's degraded SWEPAM reports densities of 0.0-0.1 cm^-3;
- * the quietest solar wind on record is ~0.1-0.2 cm^-3, so anything below is a fill.
- */
-export const PLAUSIBLE = {
-  densityMin: 0.1,
-  densityMax: 150,
-  speedMin: 200,
-  speedMax: 3000,
-  fieldMaxNt: 300,
-} as const;
+/** Plausibility bounds: the shared table (GAU-244), re-exported for this module's callers. */
+export { PLAUSIBLE };
 
 /** Mag and wind records further apart than this are not paired. */
 const PAIR_TOLERANCE_MS = 90_000;
