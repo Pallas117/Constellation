@@ -10,7 +10,8 @@
  *   6. Argo Go tests (tools/argo, short mode, JSON) feed the VCRM too (FMEA FM-20)
  *   7. VCRM: every requirement verified (no failing, skipped or missing evidence), by exact test
  *      name across all reports
- * Writes test-results/verification/{junit.xml,ops-junit.xml,argo-go-test.json,vcrm.json,vcrm.md}. Exits non-zero on any failure.
+ * Writes test-results/verification/{junit.xml,ops-junit.xml,argo-go-test.json,vcrm.json,vcrm.md} and the
+ * computed readiness score (readiness.json, readiness.md; report only). Exits non-zero on any failure.
  *
  *   npm run verify               full gate
  *   npm run verify -- --no-build skip the build (faster while iterating)
@@ -32,6 +33,7 @@ import {
   type FmeaRow,
   type TestOutcome,
 } from "./vcrm.ts";
+import { writeReadiness } from "./readiness-io.ts";
 
 const root = path.resolve(import.meta.dirname, "../..");
 const outDir = path.join(root, "test-results", "verification");
@@ -110,9 +112,8 @@ const outcomes = mergeOutcomes(
 const rows = buildMatrix(baseline, outcomes, (p) => existsSync(path.join(root, p)));
 const meta = { version: baseline.version, commit, generatedAt: new Date().toISOString() };
 const fmeaPath = path.join(root, "requirements/fmea.json");
-const fmea = existsSync(fmeaPath)
-  ? buildFmea((JSON.parse(readFileSync(fmeaPath, "utf8")) as { rows: FmeaRow[] }).rows, outcomes)
-  : [];
+const fmeaRows = existsSync(fmeaPath) ? (JSON.parse(readFileSync(fmeaPath, "utf8")) as { rows: FmeaRow[] }).rows : [];
+const fmea = buildFmea(fmeaRows, outcomes);
 writeFileSync(path.join(outDir, "vcrm.json"), JSON.stringify({ ...meta, rows, fmea }, null, 2) + "\n");
 writeFileSync(path.join(outDir, "vcrm.md"), renderMarkdown(rows, meta) + (fmea.length ? renderFmeaMarkdown(fmea) : ""));
 const verified = rows.filter((r) => r.status === "verified").length;
@@ -130,6 +131,10 @@ if (fmea.length) {
   // Broken evidence fails the gate; open gaps and high residual risk are reported, not blocking.
   results.fmea = fmea.every((r) => r.status !== "broken");
 }
+
+// Implementation readiness (computed from the evidence above; report only, never fails the gate).
+const readinessLine = writeReadiness({ root, outDir, baseline, outcomes, fmea: fmeaRows, meta });
+if (readinessLine) console.log(`\n▶ ${readinessLine} (test-results/verification/readiness.md)`);
 
 const failed = Object.entries(results).filter(([, ok]) => !ok).map(([k]) => k);
 console.log(failed.length === 0

@@ -424,7 +424,8 @@ export class IngestionWorker {
     try {
       // Local Buffer is always the priority (Air-Gap ready)
       await this.timing.time("persist", async () => {
-        await bedrock.appendTelemetryStrict({ type: "canonical", data: point, timestamp: point.timestamp });
+        // Typed by what it is: canonical, canonical-stale (no measurement) or canonical-rejected. GAU-244.
+        await bedrock.appendCanonicalStrict(point);
         if (mmsVector) {
           await bedrock.appendTelemetryStrict({ type: "mms", data: mmsVector, timestamp: mmsVector.timestamp });
         }

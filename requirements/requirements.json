@@ -1,6 +1,6 @@
 {
   "$comment": "Constellation requirements baseline (GAU-120). NASA SP-2016-6105 Rev 2 §6.2/§5.3. Methods: T test, A analysis, I inspection, D demonstration. T evidence = exact test names; A/I/D evidence = repo paths. Verified by `npm run verify`.",
-  "version": "1.16.0",
+  "version": "1.16.4",
   "requirements": [
     {
       "id": "REQ-ING-001",
@@ -653,8 +653,8 @@
     {
       "id": "REQ-SEC-010",
       "title": "Deny-by-default API policy",
-      "statement": "The API shall answer 404 for any route not listed in its access policy, 401 for a listed route without a session, and 403 for a session whose role is below the route's role.",
-      "rationale": "Only routes that were deliberately exposed are reachable, and the three answers keep probing, missing login and missing privilege apart (audit 2026-11-17: shipped without a requirement).",
+      "statement": "The API shall answer 401 to any request without a session for a path that is not public, whether or not the path is listed, and, for a signed-in session, 404 for a route not listed in its access policy and 403 for a role below the route's role.",
+      "rationale": "Only deliberately exposed routes are reachable; anonymous callers cannot tell listed from unlisted paths (sign-in runs before the policy, backend/server.ts authenticateRequest then enforceApiPolicy), and signed-in callers get distinct missing-route and missing-privilege answers. Corrected 2026-11-17 after a live probe answered 401 to an unlisted path.",
       "parent": "GAU-185",
       "method": "T",
       "owner": "Josh",
@@ -727,7 +727,10 @@
       "method": "T",
       "owner": "Josh",
       "verifiedBy": [
-        "devices can only be modified and listed by their owner or an admin",
+        "another user cannot heartbeat, set status or push telemetry",
+        "unauthenticated requests are rejected",
+        "an admin can modify any device",
+        "listing returns only the caller's devices unless admin",
         "staff see and revoke only their own devices; operators see all; admins revoke any",
         "revoked devices can no longer report",
         "team device status is operator-only and never exposes token hashes"
@@ -814,6 +817,64 @@
         "--emergency needs a reason",
         "check: an emergency deploy stays ✗",
         "gates record: runs the gates (test and build inside verify) and records the counts by tree"
+      ]
+    },
+    {
+      "id": "REQ-SEC-017",
+      "title": "Device trust only by proof",
+      "statement": "The API shall mark a device trusted only after a verified proof, register new devices as unverified, accept only downgrade statuses from a device owner, and reject fingerprint signals beyond 32 flat entries.",
+      "rationale": "Device trust was self-attested (17 Nov security sweep).",
+      "parent": "GAU-25",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "REQ-SEC-017: a newly registered device is unverified, not trusted",
+        "REQ-SEC-017: the owner cannot set a device to trusted through /status",
+        "REQ-SEC-017: /status rejects a status outside the allowed set with 400",
+        "REQ-SEC-017: only a verified proof marks a device trusted",
+        "REQ-SEC-017: oversized or non-flat fingerprintSignals are rejected with 400"
+      ]
+    },
+    {
+      "id": "REQ-OPS-009",
+      "title": "Check names an upstream data gap",
+      "statement": "When the served space-weather point is ageing or stale, `check` shall report an upstream gap as a warning (not a failure) only when NOAA's public RTSW file shows the active spacecraft without plasma while a standby spacecraft is current, and shall keep the failure when NOAA has newer active-spacecraft plasma than the point or cannot be reached; it shall not change what the backend serves.",
+      "rationale": "On 2026-11-17 NOAA's active spacecraft (SOLAR1) reported null plasma while standby spacecraft were current; `check` showed a failure that nothing on this host could fix (scripts/ops/gauss-services.sh).",
+      "parent": "GAU-15",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "check: a stale point with NOAA's active spacecraft out of plasma is an upstream-gap warning, not ✗",
+        "check: a stale point while NOAA has newer active plasma stays ✗ (our ingest is behind)",
+        "check: a live point does not ask NOAA anything",
+        "check: a stale point with NOAA unreachable stays ✗"
+      ]
+    },
+    {
+      "id": "REQ-OPS-010",
+      "title": "Deploy tolerates doc-only live edits",
+      "statement": "`deploy` shall save as patches, restore and log local edits in the live checkout that are all under .claude/ or docs/, then proceed, and shall still refuse when any other tracked path is changed.",
+      "rationale": "On 2026-11-17 an edit to a skill file in the live checkout blocked a deploy whose target commit already contained the text (scripts/ops/gauss-services.sh).",
+      "parent": "GAU-158",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "deploy: local edits under .claude/ and docs/ are saved as patches, restored, and the deploy proceeds",
+        "events: the saved doc-only live changes are logged",
+        "deploy: a code change next to a doc change still refuses, and the doc change is not touched"
+      ]
+    },
+    {
+      "id": "REQ-VER-001",
+      "title": "Computed readiness score",
+      "statement": "The verification gate shall compute a readiness score from 0 to 100 for each requirement as the sum of six evidence-based parts weighted 15, 30, 20, 15, 10 and 10.",
+      "rationale": "A score computed from test, FMEA and documentation evidence replaces a self-graded one (GAU-120).",
+      "parent": "GAU-120",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "readiness: a fully evidenced internal requirement scores 100 and shows its reasons",
+        "readiness: verification is 0 when a mapped test is skipped or missing, lower for a single test"
       ]
     },
     {
