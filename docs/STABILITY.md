@@ -23,7 +23,11 @@ This is how Constellation stays stable. It follows the NASA Systems Engineering 
 
 ## Open risks (from the FMEA)
 
-- **FM-13, single host (residual risk 20/25):** everything runs on one laptop. Planned fix: a warm standby on the Talos host, with data replication and Tailscale failover. That needs SSH access and approval.
+- **FM-13, single host (residual risk 15/25, was 20):** everything runs on one laptop. A process or release failure now fails over to a cold-standby fallback on the same host (GAU-158), and the awake guard keeps the host running with the lid closed, but host loss (power, hardware, OS) still takes everything down. Planned fix: a warm standby on a second node with at least 16 GB RAM (this note earlier named the Talos host), with data replication and Tailscale failover. That needs SSH access and approval.
+- **FM-20, the watchers share the host:** the awake guard and Argo restart each other. Argo's side is tested only in Go (`tools/argo/watch_test.go`), which `npm run verify` doesn't ingest yet; if both stop, nothing watches.
+- **FM-21, the standby going bad (narrowed 3 Nov 2026):** the awake guard now texts when a prepared fallback's record is corrupt, its checkout or build is gone, or its checkout moved after it was prepared (at most every 6 h). A moved checkout is still used if a failover comes first.
+- **FM-22, the fallback reads newer data:** it shares live's `data/`, `.env` and accounts; nothing checks that the previous release reads what the current one wrote.
+- **FM-24, a deploy leaving no fallback (narrowed 3 Nov 2026):** with none prepared and no path given, a deploy now refuses; a person can still go ahead with `--no-fallback` (or `--emergency`).
 - **FM-14, disk filling:** the measure exists, but `npm run tpm` isn't yet scheduled with an alert. Planned fix: a launchd job every 10 min that sends a phone alert on red. That needs approval for a launchctl change.
 
 Review this table whenever an FMEA row or residual risk changes.

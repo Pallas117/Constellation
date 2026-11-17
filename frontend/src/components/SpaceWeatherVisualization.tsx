@@ -73,7 +73,7 @@ export const SpaceWeatherVisualization = ({ headerActions }: { headerActions?: R
 
   const summary = spaceObjectAlert
     ? `${spaceObjectAlert.candidateCount} untracked object${spaceObjectAlert.candidateCount === 1 ? '' : 's'} detected`
-    : `${spaceObjects?.length ?? 0} known orbital assets tracked`;
+    : `${spaceObjects?.length ?? 0} objects in the reference catalogue`; // a fixed list, not live tracking
 
   // ---- Render --------------------------------------------------------------
   return (

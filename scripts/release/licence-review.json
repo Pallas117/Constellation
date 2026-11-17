@@ -1,0 +1,4 @@
+{
+  "_about": "Licence decisions for runtime packages that declare no recognised licence (GAU-69). Key: name@version. Add an entry only after a person has read the licence; 'source' says where (URL or file), so the next reviewer can check it. npm run release:sbom uses these and lists them as reviewed.",
+  "packages": {}
+}

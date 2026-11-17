@@ -5,7 +5,25 @@ import { readFileSync } from "node:fs";
 import express from "express";
 import type { AuthenticatedRequest, AuthRole } from "../auth.js";
 import { createMeshRouters, exitNodesFromEnv, onboardingSteps } from "./router.js";
-import { MESH_CLASSES, MeshStore, hostingVerdict, parseBattery, parseHost, parseReport, type MeshHost } from "./store.js";
+import {
+  GUARD_ADMISSIONS,
+  GUARD_CODE_TEXT,
+  GUARD_LEVELS,
+  MESH_CLASSES,
+  MeshStore,
+  assessHosting,
+  assessMemory,
+  hostingVerdict,
+  parseBattery,
+  parsePower,
+  parseGuard,
+  parseHost,
+  parseNet,
+  parseReport,
+  type MeshGuard,
+  type MeshHost,
+  type MeshReport,
+} from "./store.js";
 
 async function withApp(fn: (base: string, store: MeshStore) => Promise<void>) {
   const store = new MeshStore(null);
@@ -138,6 +156,34 @@ test("battery is range-checked; Shortcuts fractions become percent", () => {
   }
 });
 
+test("network scores are allowlisted; nothing unmeasured is invented", () => {
+  const net = {
+    privacy: 70,
+    privacyWhy: ["Remote Login (SSH) reachable on this network -10", "<script>alert(1)</script>"],
+    rttMs: 29,
+    speed: "excellent",
+    signal: "fair",
+    rssi: -70,
+    noise: -92,
+    ssid: "HomeNet",
+  };
+  assert.deepEqual(parseReport({ ...okReport, net })!.net, {
+    privacy: 70,
+    privacyWhy: ["Remote Login (SSH) reachable on this network -10"],
+    rttMs: 29,
+    speed: "excellent",
+    signal: "fair",
+    rssi: -70,
+    noise: -92,
+  });
+  const wired = parseNet({ privacy: 100, privacyWhy: [], rttMs: -1, speed: "not measured", signal: "n/a", rssi: -50, noise: -90 });
+  assert.equal(wired!.rssi, undefined, "no signal numbers for a link Argo didn't grade");
+  for (const bad of [{ ...net, privacy: 101 }, { ...net, privacy: 50.5 }, { ...net, speed: "blazing" }, { ...net, signal: undefined }, { ...net, rttMs: "29" }, null]) {
+    assert.equal(parseNet(bad), undefined, JSON.stringify(bad));
+  }
+  assert.equal(parseReport(okReport)!.net, undefined, "older Argo: no block");
+});
+
 test("platform is allowlisted and phones never host", () => {
   assert.equal(parseReport({ ...okReport, platform: "ios" })!.platform, "ios");
   assert.equal(parseReport({ ...okReport, platform: "playstation" })!.platform, undefined);
@@ -221,4 +267,190 @@ test("Gauss accepts every class Argo can report", () => {
   const argoClasses = [...go.matchAll(/^\s*\w+\s+Class\s*=\s*"([A-Z_]+)"/gm)].map((m) => m[1]);
   assert.ok(argoClasses.includes("OK") && argoClasses.includes("WIFI_RISK"), `parsed ${argoClasses.join(",")}`);
   for (const c of argoClasses) assert.ok((MESH_CLASSES as readonly string[]).includes(c), `Gauss rejects Argo class ${c}`);
+});
+
+const goodHost: MeshHost = { ramGB: 32, pressure: "normal", swapUsedGB: 0, diskFreeGB: 400, cpus: 12, os: "darwin" };
+const guard = (g: Partial<MeshGuard> = {}): MeshGuard => ({
+  at: "2026-10-23T12:00:00Z",
+  level: "ok",
+  admission: "open",
+  slots: 4,
+  headroomGB: 9.5,
+  reasons: [],
+  warnMin: 0,
+  swapRiseGB: 0,
+  minToFloor: -1,
+  ...g,
+});
+
+test("Argo's guard block is allowlisted; unknown codes drop alone, bad values drop the block", () => {
+  const g = guard({ level: "risk", admission: "closed", slots: 0, reasons: ["swap-rising", "mem-warn-sustained"] });
+  assert.deepEqual(parseGuard({ ...g, procs: ["chrome"] }), g);
+  assert.deepEqual(parseGuard({ ...g, reasons: ["swap-rising", "<script>", 7, "rm -rf"] })!.reasons, ["swap-rising"]);
+  for (const bad of [{ level: "fine" }, { admission: "yes" }, { slots: -1 }, { slots: 1.5 }, { headroomGB: "9" }, { warnMin: 61 }, { minToFloor: -2 }, { at: "soon" }]) {
+    assert.equal(parseGuard({ ...g, ...bad }), undefined, JSON.stringify(bad));
+  }
+  assert.deepEqual(parseBattery({ level: 64, charging: false, external: true }), { level: 64, charging: false, lowPower: false, external: true });
+  const power = { mode: "negative", sourceW: 6.4, loadW: 9.2, marginW: -2.8 };
+  assert.deepEqual(parseBattery({ level: 64, charging: true, external: true, power }), { level: 64, charging: true, lowPower: false, external: true, power });
+  assert.deepEqual(parsePower({ mode: "eclipse", loadW: 7, marginW: -7 }), { mode: "eclipse", sourceW: 0, loadW: 7, marginW: -7 }, "Go omits a zero source");
+  for (const bad of [{ mode: "sunny" }, { sourceW: -1 }, { loadW: "9" }, { marginW: 1e6 }, { marginW: undefined }]) {
+    assert.equal(parsePower({ ...power, ...bad }), undefined, JSON.stringify(bad));
+  }
+  assert.equal(parseBattery({ level: 64, charging: true, power: { mode: "bad" } })!.power, undefined, "a bad power block drops alone");
+});
+
+test("hosting verdict uses report age, battery power, swap and Argo's guard, and says why", () => {
+  const now = new Date("2026-10-23T12:05:00Z");
+  const fresh = { receivedAt: "2026-10-23T12:00:00Z", now };
+  assert.equal(hostingVerdict(goodHost, "macos", fresh), "agents");
+  assert.deepEqual(assessHosting(goodHost, "macos", { ...fresh, now: new Date("2026-10-23T12:20:00Z") }), { verdict: "unknown", why: ["no report for 20 min"] });
+  assert.equal(hostingVerdict({ ...goodHost, swapUsedGB: 4.5 }, "macos", fresh), "no");
+
+  const battery = (level: number, external?: boolean) => ({ level, charging: false, lowPower: false, ...(external === undefined ? {} : { external }) });
+  assert.deepEqual(assessHosting(goodHost, "macos", { ...fresh, battery: battery(60, false) }), { verdict: "light", why: ["on battery power: light work only"] });
+  assert.equal(hostingVerdict(goodHost, "macos", { ...fresh, battery: battery(18, false) }), "no");
+  assert.equal(hostingVerdict(goodHost, "macos", { ...fresh, battery: battery(80, true) }), "agents", "plugged in, held at 80%, is not on battery");
+  assert.equal(hostingVerdict(goodHost, "macos", { ...fresh, battery: battery(18) }), "no", "phones' charging=false means on battery");
+
+  // SWaP power budget from Argo (tools/argo/power.go): a deficit or a thin margin means light work only.
+  const powered = (power: Record<string, unknown>) => parseBattery({ level: 90, charging: true, external: true, power })!;
+  assert.equal(hostingVerdict(goodHost, "macos", { ...fresh, battery: powered({ mode: "positive", sourceW: 76.8, loadW: 12, marginW: 64.8 }) }), "agents");
+  assert.deepEqual(assessHosting(goodHost, "macos", { ...fresh, battery: powered({ mode: "negative", sourceW: 6.4, loadW: 9.2, marginW: -2.8 }) }), {
+    verdict: "light",
+    why: ["the charger can't carry the load: drawing 9.2 W from 6.4 W"],
+  });
+  assert.deepEqual(assessHosting(goodHost, "macos", { ...fresh, battery: powered({ mode: "positive", sourceW: 16, loadW: 12.5, marginW: 3.5 }) }).why, ["only 3.5 W of power margin"]);
+
+  const closed = assessHosting(goodHost, "macos", { ...fresh, guard: guard({ level: "risk", admission: "closed", slots: 0, reasons: ["mem-warn-sustained", "swap-rising"] }) });
+  assert.equal(closed.verdict, "no");
+  assert.deepEqual(closed.why, ["Argo guard closed to new work: memory at warn for 30+ of the last 60 min, swap climbing at warn"]);
+  assert.equal(hostingVerdict(goodHost, "macos", { ...fresh, guard: guard({ level: "watch", admission: "limited", slots: 1, reasons: ["on-battery"] }) }), "light");
+  assert.equal(hostingVerdict(goodHost, "macos", { ...fresh, guard: guard({ slots: 0 }) }), "light", "a new host cools down first");
+  assert.equal(hostingVerdict(goodHost, "macos", { ...fresh, guard: guard({ admission: "full", slots: 0, headroomGB: 0, reasons: ["no-headroom"] }) }), "no");
+  assert.equal(hostingVerdict(goodHost, "macos", { ...fresh, guard: guard() }), "agents");
+  assert.equal(hostingVerdict(goodHost, "macos", { ...fresh, guard: guard({ admission: "closed", at: "2026-10-22T12:00:00Z" }) }), "agents", "a day-old guard is ignored");
+
+  const small = assessHosting({ ...goodHost, ramGB: 4 }, "linux", fresh);
+  assert.deepEqual(small, { verdict: "no", why: ["needs 8 GB RAM and 10 GB free disk (has 4 GB, 400 GB free)"] });
+});
+
+test("an Argo report with guard and battery reaches the device list with its reasons", async () => {
+  await withApp(async (base, store) => {
+    const { token } = (await (await fetch(`${base}/devices`, json({ name: "judith" }, { "x-test-role": "staff" }))).json()) as { token: string };
+    const report = {
+      ...okReport,
+      checkedAt: new Date().toISOString(),
+      host: goodHost,
+      platform: "macos",
+      battery: { level: 72, charging: true, external: true, lowPower: false },
+      guard: guard({ at: new Date().toISOString(), level: "watch", admission: "limited", slots: 1, reasons: ["charger-weak"] }),
+    };
+    assert.equal((await fetch(`${base}/report`, json(report, { authorization: `Bearer ${token}` }))).status, 200);
+    const d = store.list()[0];
+    assert.equal(d.last!.guard!.admission, "limited");
+    assert.equal(d.last!.battery!.external, true);
+    assert.equal(d.hosting, "light");
+    assert.deepEqual(d.hostingWhy, ["Argo guard: light work only: charger weaker than the draw"]);
+  });
+});
+
+test("Gauss knows every guard code, level and admission Argo can send", () => {
+  const go = readFileSync(new URL("../../tools/argo/guard.go", import.meta.url), "utf8");
+  const codes = [...go.matchAll(/a\.add\("\w+", "([a-z-]+)"/g)].map((m) => m[1]);
+  assert.ok(codes.length >= 18 && codes.includes("swap-rising"), `parsed ${codes.join(",")}`);
+  for (const c of codes) assert.ok(Object.hasOwn(GUARD_CODE_TEXT, c), `Gauss drops Argo guard code ${c}`);
+  const levels = go.match(/\[\.\.\.\]string\{"ok", "watch", "risk", "block"\}/);
+  assert.ok(levels, "guard.go level names changed");
+  assert.deepEqual([...GUARD_LEVELS], ["ok", "watch", "risk", "block"]);
+  for (const a of GUARD_ADMISSIONS) assert.ok(go.includes(`next.Admission = "${a}"`), `Argo never sends admission ${a}`);
+});
+
+test("a refused report is remembered (at most once a minute) so the page can say why a device looks silent", async () => {
+  await withApp(async (base, store) => {
+    const { token } = (await (await fetch(`${base}/devices`, json({ name: "talos" }, { "x-test-role": "staff" }))).json()) as { token: string };
+    const auth = { authorization: `Bearer ${token}` };
+    assert.equal((await fetch(`${base}/report`, json({ ...okReport, class: "NEW_CLASS" }, auth))).status, 400);
+    const first = store.list()[0].rejectedAt;
+    assert.ok(first && !store.list()[0].last, "rejection recorded, nothing else stored");
+    assert.equal((await fetch(`${base}/report`, json({ ...okReport, class: "NEW_CLASS" }, auth))).status, 400);
+    assert.equal(store.list()[0].rejectedAt, first, "no second write within the minute");
+    assert.equal((await fetch(`${base}/report`, json(okReport, auth))).status, 200);
+    assert.equal(store.list()[0].rejectedAt, undefined, "an accepted report clears it");
+  });
+});
+
+test("onboarding points new devices at argo guard", () => {
+  const steps = onboardingSteps([]);
+  assert.ok(steps.find((s) => s.id === "guard")?.command === "argo guard");
+  assert.match(steps.find((s) => s.id === "enroll")!.detail, /first report/);
+});
+
+// Fleet memory watch (GAU-240): the hub's view of each device's memory, from what Argo already reports.
+const MEM_NOW = new Date("2026-11-11T04:00:00Z");
+const memHost = (pressure: MeshHost["pressure"]): MeshHost => ({ ramGB: 8, pressure, swapUsedGB: 1, diskFreeGB: 20, cpus: 8, os: "macos" });
+const memReport = (over: Partial<MeshReport> = {}): MeshReport => ({ ...parseReport(okReport)!, receivedAt: MEM_NOW.toISOString(), ...over });
+const memGuard = (g: Partial<MeshGuard> = {}) => guard({ at: MEM_NOW.toISOString(), ...g });
+
+test("memory state: critical and risk come only from fresh guard codes or kernel pressure (GAU-240)", () => {
+  const state = (over: Partial<MeshReport>) => assessMemory(memReport(over), MEM_NOW);
+  assert.deepEqual(state({ host: memHost("normal"), guard: memGuard() }), { state: "ok", why: [] });
+  assert.deepEqual(state({ guard: memGuard({ level: "block", reasons: ["mem-critical", "battery-low"] }) }), { state: "critical", why: ["memory pressure critical"] });
+  assert.deepEqual(state({ guard: memGuard({ level: "risk", reasons: ["mem-paging"] }) }), { state: "critical", why: ["swapping out fast: memory short"] });
+  assert.deepEqual(state({ host: memHost("critical") }), { state: "critical", why: ["memory pressure critical"] }, "kernel pressure alone, older Argo");
+  assert.deepEqual(state({ guard: memGuard({ level: "risk", reasons: ["swap-rising", "mem-warn-sustained"] }) }), {
+    state: "risk",
+    why: ["swap climbing at warn", "memory at warn for 30+ of the last 60 min"],
+  });
+  assert.equal(state({ guard: memGuard({ level: "watch", reasons: ["no-headroom"] }) }).state, "watch", "a full machine is not a failing one");
+  assert.equal(state({ guard: memGuard({ level: "risk", reasons: ["no-headroom"] }) }).state, "risk");
+  assert.deepEqual(state({ host: memHost("warn"), guard: memGuard({ level: "watch", reasons: ["mem-warn-coping"] }) }), { state: "watch", why: ["memory at warn but coping"] });
+  assert.deepEqual(state({ host: memHost("warn") }), { state: "watch", why: ["memory pressure at warn"] });
+  assert.equal(state({ guard: memGuard({ level: "risk", reasons: ["battery-low", "disk-low"] }) }).state, "ok", "battery and disk findings are not memory");
+});
+
+test("memory state: what the hub cannot know is unknown, never ok (GAU-240)", () => {
+  assert.deepEqual(assessMemory(undefined, MEM_NOW), { state: "unknown", why: ["no report yet"] });
+  assert.deepEqual(assessMemory(memReport({ platform: "ios", guard: memGuard({ reasons: ["mem-critical"] }) }), MEM_NOW).state, "unknown");
+  assert.deepEqual(assessMemory(memReport(), MEM_NOW), { state: "unknown", why: ["no memory reading in the report"] });
+  const old = memReport({ receivedAt: "2026-11-11T03:40:00Z", guard: memGuard({ at: "2026-11-11T03:40:00Z", reasons: ["mem-critical"] }) });
+  assert.deepEqual(assessMemory(old, MEM_NOW), { state: "unknown", why: ["no report for 20 min"] }, "a stale critical says nothing about now");
+  // A guard reading much older than the report it rides on is ignored; kernel pressure still counts.
+  const lag = memReport({ host: memHost("warn"), guard: memGuard({ at: "2026-11-11T03:00:00Z", reasons: ["mem-critical"] }) });
+  assert.equal(assessMemory(lag, MEM_NOW).state, "watch");
+  assert.equal(assessMemory(memReport({ receivedAt: "not a time", host: memHost("normal") }), MEM_NOW).state, "unknown");
+});
+
+test("fleet memory: the device list, the worsening signal and the watcher's file agree (GAU-240)", async () => {
+  const fs = await import("node:fs");
+  const os = await import("node:os");
+  const path = await import("node:path");
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "mesh-mem-"));
+  const store = new MeshStore(path.join(dir, "devices.json"));
+  const mac = store.byToken((store.enroll("judith", "u") as { token: string }).token)!;
+  const box = store.byToken((store.enroll("devbox", "u") as { token: string }).token)!;
+  store.enroll("never", "u");
+
+  assert.equal(store.record(mac, memReport({ host: memHost("normal"), guard: memGuard() }), MEM_NOW), undefined, "ok is not a signal");
+  const risk = memReport({ guard: memGuard({ level: "risk", reasons: ["swap-rising"] }) });
+  assert.deepEqual(store.record(box, risk, MEM_NOW), { state: "risk", why: ["swap climbing at warn"] });
+  assert.equal(store.record(box, risk, MEM_NOW), undefined, "the same state again is not signalled twice");
+  const critical = memReport({ guard: memGuard({ level: "block", reasons: ["mem-critical"] }) });
+  assert.equal(store.record(box, critical, MEM_NOW)?.state, "critical", "worse again is signalled");
+  assert.equal(store.record(box, risk, MEM_NOW), undefined, "getting better is not signalled");
+
+  store.record(box, critical, MEM_NOW);
+  assert.deepEqual(store.fleetMemory(MEM_NOW).map((d) => `${d.name}:${d.state}`), ["devbox:critical", "judith:ok", "never:unknown"]);
+  const listed = store.list(MEM_NOW).find((d) => d.name === "devbox")!;
+  assert.equal(listed.memory, "critical");
+  assert.deepEqual(listed.memoryWhy, ["memory pressure critical"]);
+
+  const file = path.join(dir, "fleet-memory.json");
+  const written = JSON.parse(fs.readFileSync(file, "utf8")) as { at: string; staleAfterMs: number; devices: Array<Record<string, unknown>> };
+  assert.equal(written.at, MEM_NOW.toISOString());
+  assert.equal(written.staleAfterMs, 15 * 60_000);
+  assert.deepEqual(written.devices[0], { name: "devbox", state: "critical", why: ["memory pressure critical"], reportedAt: MEM_NOW.toISOString() });
+  assert.deepEqual(Object.keys(written.devices[0]).sort(), ["name", "reportedAt", "state", "why"], "states and reasons only: no token hash, no network details");
+  assert.equal(fs.statSync(file).mode & 0o777, 0o600);
+  assert.equal(fs.readFileSync(file, "utf8").includes("tokenHash"), false);
 });

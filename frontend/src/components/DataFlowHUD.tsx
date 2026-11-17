@@ -34,7 +34,7 @@ const Row = ({ label, children }: { label: string; children: ReactNode }) => (
 
 /** Where the console's numbers come from right now. Only measured values; nothing decorative. */
 export const DataFlowHUD: FC<DataFlowHUDProps> = ({ tier = 0 }) => {
-  const { mode, latencyMs } = useConnectivity();
+  const { mode, latencyMs, lastChecked } = useConnectivity();
   const pipeline = usePipelineLatency();
   const tierLabel = TIER_LABEL[tier] ?? 'Unknown';
   const pipelineBadge = PIPELINE_BADGE[pipeline.tone];
@@ -53,7 +53,7 @@ export const DataFlowHUD: FC<DataFlowHUDProps> = ({ tier = 0 }) => {
           {pipelineBadge ? <StatusBadge tone={pipelineBadge}>{pipeline.label}</StatusBadge> : pipeline.label}
         </Row>
         <Row label="Link">
-          {mode === 'AIRGAP' ? <StatusBadge tone="caution">{LINK_LABEL[mode]}</StatusBadge> : LINK_LABEL[mode]}
+          {!lastChecked ? 'Checking…' : mode === 'AIRGAP' ? <StatusBadge tone="caution">{LINK_LABEL[mode]}</StatusBadge> : LINK_LABEL[mode]}
         </Row>
         <Row label="Latency">{latencyMs >= 0 ? `${latencyMs} ms` : '—'}</Row>
       </dl>

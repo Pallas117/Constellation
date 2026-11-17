@@ -36,6 +36,8 @@ func hostProbe(_ context.Context, s *Snapshot) {
 	s.Exposed = exposedServices(ifaceIPv4(iface), dialQuick)
 }
 
+func wifiSignalInfo(context.Context) string { return "" } // Linux never sets WiFiSec, so this is not called
+
 func staleProcs(context.Context) []StaleProc { return nil } // Claude Code daemons are a desktop concern
 
 func localGateway(context.Context) (string, string) {
@@ -55,6 +57,10 @@ func openURL(string) error { return errors.New("opening URLs is not supported on
 func messagesSend(string, string, string) error {
 	return errors.New("phone alerts need macOS Messages")
 }
+
+func chatDBStatus(string, time.Time) smsState { return smsUnreadable }
+
+func chatDBReadable() bool { return false }
 
 func readFile(p string) string {
 	b, _ := os.ReadFile(p)

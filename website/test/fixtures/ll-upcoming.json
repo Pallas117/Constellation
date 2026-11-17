@@ -1,0 +1,376 @@
+{
+ "//": "Trimmed from GET ll.thespacedevs.com/2.3.0/launches/upcoming/?mode=normal on 2026-10-17 (The Space Devs Launch Library 2).",
+ "count": 475,
+ "results": [
+  {
+   "id": "3b430f81-0ff1-4d85-8a1a-cef0de326198",
+   "name": "Falcon 9 Block 5 | Bandwagon 5 (Dedicated Mid-Inclination Rideshare)",
+   "status": {
+    "abbrev": "Go",
+    "name": "Go for Launch"
+   },
+   "net": "2026-10-19T10:30:00Z",
+   "net_precision": {
+    "abbrev": "MIN"
+   },
+   "window_start": "2026-10-19T10:30:00Z",
+   "window_end": "2026-10-19T11:30:00Z",
+   "launch_service_provider": {
+    "name": "SpaceX"
+   },
+   "rocket": {
+    "configuration": {
+     "name": "Falcon 9",
+     "full_name": "Falcon 9 Block 5"
+    }
+   },
+   "mission": {
+    "name": "Bandwagon 5 (Dedicated Mid-Inclination Rideshare)",
+    "type": "Dedicated Rideshare",
+    "orbit": {
+     "abbrev": "LEO",
+     "name": "Low Earth Orbit"
+    }
+   },
+   "pad": {
+    "name": "Space Launch Complex 40",
+    "location": {
+     "name": "Cape Canaveral SFS, FL, USA"
+    }
+   }
+  },
+  {
+   "id": "69ebbcd2-b257-4070-9ef9-21e7d1f8a883",
+   "name": "H3-24 | Martian Moons eXploration (MMX)",
+   "status": {
+    "abbrev": "Go",
+    "name": "Go for Launch"
+   },
+   "net": "2026-10-19T19:41:03Z",
+   "net_precision": {
+    "abbrev": "SEC"
+   },
+   "window_start": "2026-10-19T19:41:03Z",
+   "window_end": "2026-10-19T19:41:03Z",
+   "launch_service_provider": {
+    "name": "Mitsubishi Heavy Industries"
+   },
+   "rocket": {
+    "configuration": {
+     "name": "H3-24",
+     "full_name": "H3-24"
+    }
+   },
+   "mission": {
+    "name": "Martian Moons eXploration (MMX)",
+    "type": "Planetary Science",
+    "orbit": {
+     "abbrev": "Mars",
+     "name": "Mars Orbit"
+    }
+   },
+   "pad": {
+    "name": "Yoshinobu Launch Complex LP-2",
+    "location": {
+     "name": "Tanegashima Space Center, Japan"
+    }
+   }
+  },
+  {
+   "id": "f6af629d-39b5-4f86-bc0c-f8776444a858",
+   "name": "Falcon 9 Block 5 | Starlink Group 15-15",
+   "status": {
+    "abbrev": "Go",
+    "name": "Go for Launch"
+   },
+   "net": "2026-10-20T22:14:00Z",
+   "net_precision": {
+    "abbrev": "MIN"
+   },
+   "window_start": "2026-10-20T22:14:00Z",
+   "window_end": "2026-10-21T02:14:00Z",
+   "launch_service_provider": {
+    "name": "SpaceX"
+   },
+   "rocket": {
+    "configuration": {
+     "name": "Falcon 9",
+     "full_name": "Falcon 9 Block 5"
+    }
+   },
+   "mission": {
+    "name": "Starlink Group 15-15",
+    "type": "Communications",
+    "orbit": {
+     "abbrev": "LEO",
+     "name": "Low Earth Orbit"
+    }
+   },
+   "pad": {
+    "name": "Space Launch Complex 4E",
+    "location": {
+     "name": "Vandenberg SFB, CA, USA"
+    }
+   }
+  },
+  {
+   "id": "c6f8b6b0-6bae-460a-99bb-c12a3d29effd",
+   "name": "Ceres-1S | Unknown Payload",
+   "status": {
+    "abbrev": "Go",
+    "name": "Go for Launch"
+   },
+   "net": "2026-10-21T03:35:00Z",
+   "net_precision": {
+    "abbrev": "HR"
+   },
+   "window_start": "2026-10-21T03:29:00Z",
+   "window_end": "2026-10-21T03:50:00Z",
+   "launch_service_provider": {
+    "name": "Galactic Energy"
+   },
+   "rocket": {
+    "configuration": {
+     "name": "Ceres-1S",
+     "full_name": "Ceres-1S"
+    }
+   },
+   "mission": {
+    "name": "Unknown Payload",
+    "type": "Unknown",
+    "orbit": {
+     "abbrev": "N/A",
+     "name": "Unknown"
+    }
+   },
+   "pad": {
+    "name": "Rizhao offshore launch location",
+    "location": {
+     "name": "Haiyang Oriental Spaceport"
+    }
+   }
+  },
+  {
+   "id": "7766f3bb-674c-4c71-b986-963bd633fcfe",
+   "name": "Electron | We're Not Hawking Around (3x HawkEye 360)",
+   "status": {
+    "abbrev": "TBC",
+    "name": "To Be Confirmed"
+   },
+   "net": "2026-10-21T05:00:00Z",
+   "net_precision": {
+    "abbrev": "HR"
+   },
+   "window_start": "2026-10-21T05:00:00Z",
+   "window_end": "2026-10-21T08:45:00Z",
+   "launch_service_provider": {
+    "name": "Rocket Lab"
+   },
+   "rocket": {
+    "configuration": {
+     "name": "Electron",
+     "full_name": "Electron"
+    }
+   },
+   "mission": {
+    "name": "We're Not Hawking Around (3x HawkEye 360)",
+    "type": "Earth Science",
+    "orbit": {
+     "abbrev": "SSO",
+     "name": "Sun-Synchronous Orbit"
+    }
+   },
+   "pad": {
+    "name": "Unknown Pad",
+    "location": {
+     "name": "Rocket Lab Launch Complex 1, Mahia Peninsula, New Zealand"
+    }
+   }
+  },
+  {
+   "id": "6b95bcc8-1f88-4539-84fe-f63630138766",
+   "name": "Long March 8A | Unknown Payload",
+   "status": {
+    "abbrev": "Go",
+    "name": "Go for Launch"
+   },
+   "net": "2026-10-22T02:57:00Z",
+   "net_precision": {
+    "abbrev": "HR"
+   },
+   "window_start": "2026-10-22T02:50:00Z",
+   "window_end": "2026-10-22T03:15:00Z",
+   "launch_service_provider": {
+    "name": "China Aerospace Science and Technology Corporation"
+   },
+   "rocket": {
+    "configuration": {
+     "name": "Long March 8A",
+     "full_name": "Long March 8A"
+    }
+   },
+   "mission": {
+    "name": "Unknown Payload",
+    "type": "Unknown",
+    "orbit": {
+     "abbrev": "N/A",
+     "name": "Unknown"
+    }
+   },
+   "pad": {
+    "name": "Commercial LC-1",
+    "location": {
+     "name": "Wenchang Space Launch Site, People's Republic of China"
+    }
+   }
+  },
+  {
+   "id": "3621085f-deae-4f89-bd54-c0f96ee44421",
+   "name": "Long March 4B | Unknown Payload",
+   "status": {
+    "abbrev": "TBC",
+    "name": "To Be Confirmed"
+   },
+   "net": "2026-10-23T18:00:00Z",
+   "net_precision": {
+    "abbrev": "HR"
+   },
+   "window_start": "2026-10-23T18:00:00Z",
+   "window_end": "2026-10-23T21:00:00Z",
+   "launch_service_provider": {
+    "name": "China Aerospace Science and Technology Corporation"
+   },
+   "rocket": {
+    "configuration": {
+     "name": "Long March 4B",
+     "full_name": "Long March 4B"
+    }
+   },
+   "mission": {
+    "name": "Unknown Payload",
+    "type": "Unknown",
+    "orbit": {
+     "abbrev": "N/A",
+     "name": "Unknown"
+    }
+   },
+   "pad": {
+    "name": "Launch Area 94 (SLS-2 / 603)",
+    "location": {
+     "name": "Jiuquan Satellite Launch Center, People's Republic of China"
+    }
+   }
+  },
+  {
+   "id": "e2886a96-5ce9-4f45-872f-4e25a00be837",
+   "name": "Falcon 9 Block 5 | Starlink Group 15-16",
+   "status": {
+    "abbrev": "Go",
+    "name": "Go for Launch"
+   },
+   "net": "2026-10-24T05:29:00Z",
+   "net_precision": {
+    "abbrev": "MIN"
+   },
+   "window_start": "2026-10-24T05:29:00Z",
+   "window_end": "2026-10-24T09:29:00Z",
+   "launch_service_provider": {
+    "name": "SpaceX"
+   },
+   "rocket": {
+    "configuration": {
+     "name": "Falcon 9",
+     "full_name": "Falcon 9 Block 5"
+    }
+   },
+   "mission": {
+    "name": "Starlink Group 15-16",
+    "type": "Communications",
+    "orbit": {
+     "abbrev": "LEO",
+     "name": "Low Earth Orbit"
+    }
+   },
+   "pad": {
+    "name": "Space Launch Complex 4E",
+    "location": {
+     "name": "Vandenberg SFB, CA, USA"
+    }
+   }
+  },
+  {
+   "id": "ef9850ad-1096-425b-9d27-f7bbd186e61a",
+   "name": "Vulcan VC6L | Amazon Leo (LV-01)",
+   "status": {
+    "abbrev": "TBD",
+    "name": "To Be Determined"
+   },
+   "net": "2026-10-29T00:00:00Z",
+   "net_precision": {
+    "abbrev": "DAY"
+   },
+   "window_start": "2026-10-29T00:00:00Z",
+   "window_end": "2026-10-29T00:00:00Z",
+   "launch_service_provider": {
+    "name": "United Launch Alliance"
+   },
+   "rocket": {
+    "configuration": {
+     "name": "Vulcan VC6L",
+     "full_name": "Vulcan VC6L"
+    }
+   },
+   "mission": {
+    "name": "Amazon Leo (LV-01)",
+    "type": "Communications",
+    "orbit": {
+     "abbrev": "LEO",
+     "name": "Low Earth Orbit"
+    }
+   },
+   "pad": {
+    "name": "Space Launch Complex 41",
+    "location": {
+     "name": "Cape Canaveral SFS, FL, USA"
+    }
+   }
+  },
+  {
+   "id": "20d5676e-111b-40e3-8923-b218c3665ca2",
+   "name": "GSLV Mk II | IRNSS-1L (NVS-03)",
+   "status": {
+    "abbrev": "TBD",
+    "name": "To Be Determined"
+   },
+   "net": "2026-10-31T00:00:00Z",
+   "net_precision": {
+    "abbrev": "M"
+   },
+   "window_start": "2026-10-31T00:00:00Z",
+   "window_end": "2026-10-31T00:00:00Z",
+   "launch_service_provider": {
+    "name": "Indian Space Research Organization"
+   },
+   "rocket": {
+    "configuration": {
+     "name": "GSLV Mk II",
+     "full_name": "GSLV Mk. II"
+    }
+   },
+   "mission": {
+    "name": "IRNSS-1L (NVS-03)",
+    "type": "Navigation",
+    "orbit": {
+     "abbrev": "GTO",
+     "name": "Geostationary Transfer Orbit"
+    }
+   },
+   "pad": {
+    "name": "Satish Dhawan Space Centre Second Launch Pad",
+    "location": {
+     "name": "Satish Dhawan Space Centre, India"
+    }
+   }
+  }
+ ]
+}

@@ -1,0 +1,6 @@
+# Entry points from the Gauss sales plan (docs/SALES_FEATURE_LIST_AND_ONBOARDING.md: "/pilot and /sales").
+/pilot  /gauss/apply/?plan=pilot  301
+/sales  /gauss/#plans  301
+# Gauss Argo has no list any more: it's included for operators and staff (2026-10-22).
+/argo/apply/  /argo/  301
+/argo/apply  /argo/  301

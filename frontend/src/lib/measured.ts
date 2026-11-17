@@ -1,8 +1,9 @@
+import { freshnessMs } from "../../../shared/policy/freshness";
 import { formatDuration } from "./pipelineLatency";
 import type { CanonicalSpaceWeatherPoint } from "./types/space-weather";
 
-/** The backend's cap for serving a point as current (LATEST_MAX_AGE_MS in backend/lib/freshness.ts, GAU-15). */
-export const MEASUREMENT_MAX_AGE_MS = 15 * 60 * 1000;
+/** The backend's cap for serving a point as current (the L1 bound in shared/policy/freshness.json, GAU-15). */
+export const MEASUREMENT_MAX_AGE_MS = freshnessMs("l1_solar_wind");
 
 type FeedPoint = Pick<CanonicalSpaceWeatherPoint, "timestamp" | "indices" | "magneticField" | "solarWind" | "quality">;
 

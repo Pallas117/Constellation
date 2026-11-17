@@ -1,7 +1,8 @@
+import { freshnessMs } from "../../shared/policy/freshness.js";
 import type { CanonicalSpaceWeatherPoint } from "../types.js";
 
-/** Carried values expire after 15 minutes (GAU-15). */
-export const LATEST_MAX_AGE_MS = 15 * 60 * 1000;
+/** Carried values expire with the L1 bound (GAU-15; shared/policy/freshness.json). */
+export const LATEST_MAX_AGE_MS = freshnessMs("l1_solar_wind");
 
 /**
  * An older point (e.g. from the bedrock buffer) may still be served, but flagged stale

@@ -1,9 +1,17 @@
-import { useCallback, useEffect, useState } from "react";
-import { getAuthHeaders } from "@/lib/api/auth";
+import { useCallback, useState } from "react";
 import { apiBase } from "@/lib/api/base-url";
 import { describeHttpFailure, HttpFailure } from "@/lib/api/http-error";
-
-const POLL_INTERVAL_MS = 30_000;
+import {
+  MESH_ONBOARDING_PATH,
+  MESH_POLL_INTERVAL_MS,
+  meshDevicesPath,
+  parseMeshDevices,
+  parseMeshOnboarding,
+  type MeshOnboarding,
+} from "@/lib/api/mesh";
+import type { BatteryReading, GuardReading } from "@/lib/mesh-onboarding";
+import type { LinkReport } from "@/lib/link-stability";
+import { usePolledFeed, useFeedSession } from "./usePolledFeed";
 
 function getBaseUrl(): string {
   return apiBase();
@@ -21,7 +29,31 @@ export interface MeshReport {
   receivedAt: string;
   host?: MeshHost;
   platform?: "macos" | "linux" | "windows" | "ios" | "android";
-  battery?: { level: number; charging: boolean; lowPower: boolean };
+  battery?: BatteryReading;
+  net?: MeshNet;
+  link?: LinkReport;
+  guard?: MeshGuard;
+}
+
+/** Argo's resource guard decision (backend/mesh/store.ts MeshGuard, GAU-195). */
+export interface MeshGuard extends GuardReading {
+  at: string;
+  level: "ok" | "watch" | "risk" | "block";
+  reasons: string[];
+  warnMin: number;
+  swapRiseGB: number;
+  minToFloor: number;
+}
+
+/** Argo's measured network scores (backend/mesh/store.ts MeshNet); -1 / "not measured" is never a guess. */
+export interface MeshNet {
+  privacy: number;
+  privacyWhy: string[];
+  rttMs: number;
+  speed: string;
+  signal: string;
+  rssi?: number;
+  noise?: number;
 }
 
 export interface MeshHost {
@@ -40,7 +72,13 @@ export interface MeshDevice {
   enrolledAt: string;
   owner?: string;
   last?: MeshReport;
+  rejectedAt?: string;
   hosting?: HostingVerdict;
+  hostingWhy?: string[];
+  /** Bundles waiting at the Gauss hub for this device: counts and sizes only. */
+  relay?: { queued: number; bytes: number };
+  /** Fingerprint of the device's published keys, to compare with `argo keys` on the device. */
+  keyFingerprint?: string;
 }
 
 export interface OnboardingStep {
@@ -51,95 +89,52 @@ export interface OnboardingStep {
   pending?: boolean;
 }
 
-async function api(path: string, init: RequestInit = {}) {
+function api(path: string, init: RequestInit = {}) {
   return fetch(`${getBaseUrl()}/api/mesh${path}`, {
     ...init,
     credentials: "include",
-    headers: { "content-type": "application/json", ...(await getAuthHeaders()), ...(init.headers ?? {}) },
+    // The session cookie authenticates; no /get-session round trip per call for a bearer token it never has.
+    headers: { "content-type": "application/json", ...(init.headers ?? {}) },
   });
 }
 
-interface MeshState {
-  steps: OnboardingStep[];
-  devices: MeshDevice[] | null;
-  canEnroll: boolean;
-  canSeeTeam: boolean;
-  canRevokeAny: boolean;
-  me: string | null;
-  error: string | null;
-}
+const MESH_SIGN_IN_MESSAGE = "Couldn't load the mesh: sign in with a staff account.";
 
-const INITIAL_MESH_STATE: MeshState = {
-  steps: [],
-  devices: null,
-  canEnroll: false,
-  canSeeTeam: false,
-  canRevokeAny: false,
-  me: null,
-  error: null,
-};
-
-const errorMessage = (err: unknown) => (err instanceof Error ? err.message : "Mesh request failed");
-
-/** One poll of the onboarding info (and the device list when allowed), as an update to the held state. */
-async function loadMesh(): Promise<(prev: MeshState) => MeshState> {
-  let info;
-  try {
-    const onboarding = await api("/onboarding");
-    if (!onboarding.ok) throw new HttpFailure("Couldn't load the mesh", onboarding.status);
-    info = await onboarding.json();
-  } catch (err) {
-    const error = errorMessage(err);
-    return (prev) => ({ ...prev, error });
-  }
-  const next = {
-    steps: info.steps,
-    canEnroll: info.canEnroll === true,
-    canSeeTeam: info.canSeeTeam === true,
-    canRevokeAny: info.canRevokeAny === true,
-    me: typeof info.me === "string" ? info.me : null,
-    error: null,
-  };
-  // Only call /devices when allowed: 403s count as auth failures in CyberTiger.
-  // Staff get their own devices back; operators get the whole team.
-  if (info.canEnroll !== true) return (prev) => ({ ...prev, ...next });
-  try {
-    const res = await api("/devices");
-    if (!res.ok) throw new HttpFailure("Couldn't load your devices", res.status);
-    const devices: MeshDevice[] = (await res.json()).devices;
-    return (prev) => ({ ...prev, ...next, devices });
-  } catch (err) {
-    const error = errorMessage(err);
-    return (prev) => ({ ...prev, ...next, error });
-  }
-}
-
+/**
+ * Two feeds on the shared poller: onboarding always, the device list only when onboarding
+ * says the caller may enrol (403s count as auth failures in CyberTiger). A 401/403 stops
+ * that feed (`stopped`) until the page is reloaded or the session changes.
+ */
 export function useMesh() {
-  const [state, setState] = useState<MeshState>(INITIAL_MESH_STATE);
+  const { userKey } = useFeedSession();
+  // Bumped after enrol/revoke: restarting the feeds fetches straight away.
+  const [refreshKey, setRefreshKey] = useState(0);
+  const restartKey = `${userKey}:${refreshKey}`;
 
-  const refresh = useCallback(async () => {
-    setState(await loadMesh());
-  }, []);
+  const onboardingFeed = usePolledFeed<MeshOnboarding>({
+    path: MESH_ONBOARDING_PATH,
+    intervalMs: MESH_POLL_INTERVAL_MS,
+    parse: parseMeshOnboarding,
+    signInMessage: MESH_SIGN_IN_MESSAGE,
+    restartKey,
+  });
+  const onboarding = onboardingFeed.data;
+  const devicesFeed = usePolledFeed<MeshDevice[]>({
+    path: meshDevicesPath(onboardingFeed.status === "live", onboarding),
+    intervalMs: MESH_POLL_INTERVAL_MS,
+    parse: parseMeshDevices,
+    signInMessage: MESH_SIGN_IN_MESSAGE,
+    restartKey,
+  });
 
-  useEffect(() => {
-    let cancelled = false;
-    const poll = async () => {
-      const update = await loadMesh();
-      if (!cancelled) setState(update);
-    };
-    void poll();
-    const timer = setInterval(() => void poll(), POLL_INTERVAL_MS);
-    return () => {
-      cancelled = true;
-      clearInterval(timer);
-    };
-  }, []);
+  const refresh = useCallback(() => setRefreshKey((n) => n + 1), []);
 
   /** Returns the one-time device token, or throws. */
   const enroll = useCallback(
     async (name: string): Promise<string> => {
       const res = await api("/devices", { method: "POST", body: JSON.stringify({ name }) });
-      const body = await res.json();
+      // An error page or empty body must still read as a message, not a JSON parse error.
+      const body = (await res.json().catch(() => ({}))) as { error?: string; token?: string };
       if (!res.ok) throw new Error(body.error ?? describeHttpFailure("Couldn't enrol the device", res.status));
       void refresh();
       return body.token as string;
@@ -157,8 +152,15 @@ export function useMesh() {
     [refresh],
   );
 
-  const { steps, devices, me, canEnroll, canSeeTeam, canRevokeAny, error } = state;
-  return { steps, devices, me, canEnroll, canSeeTeam, canRevokeAny, error, enroll, revoke };
+  const steps = onboarding?.steps ?? [];
+  const canEnroll = onboarding?.canEnroll ?? false;
+  const canSeeTeam = onboarding?.canSeeTeam ?? false;
+  const canRevokeAny = onboarding?.canRevokeAny ?? false;
+  const me = onboarding?.me ?? null;
+  const devices = devicesFeed.data;
+  const error = onboardingFeed.error ?? devicesFeed.error;
+  const stopped = onboardingFeed.status === "sign-in-required" || devicesFeed.status === "sign-in-required";
+  return { steps, devices, me, canEnroll, canSeeTeam, canRevokeAny, error, stopped, enroll, revoke };
 }
 
 /** Argo's non-blocking warnings: the device works, but someone should look. */

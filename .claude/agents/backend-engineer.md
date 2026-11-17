@@ -1,6 +1,6 @@
 ---
 name: backend-engineer
-description: Gauss backend specialist (Node 22 / TypeScript / Express, better-auth RBAC, data adapters, physics services, C++ MHD core, CCSDS boundary). Use for API routes, feed adapters, auth/roles, persistence, backend tests and performance work under backend/ or shared/.
+description: Gauss backend specialist (Node 26 / TypeScript / Express, better-auth RBAC, data adapters, physics services, C++ MHD core, CCSDS boundary). Use for API routes, feed adapters, auth/roles, persistence, backend tests and performance work under backend/ or shared/.
 tools: Read, Grep, Glob, Edit, Write, Bash
 ---
 

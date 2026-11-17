@@ -137,7 +137,7 @@ npm run security:audit                   # npm audit for dependencies
 npm run security:secrets                 # TruffleHog scan for secrets
 npm run security:full                    # All checks together
 npm run check:security-compliance        # Compliance validation
-npm run test:rbac                        # RBAC smoke tests
+npm test                                 # Unit/integration tests, including RBAC
 ```
 
 **Documentation**:
@@ -188,7 +188,7 @@ npm run release:prepare                  # Pre-release validation
 **Documentation**:
 - Quick reference: `docs/QUALITY_AND_TESTING_QUICK_REF.md`
 - Comprehensive guide: See `/docs/AUTOMATIONS_5-9_GUIDE.md`
-- Implementation details: `AUTOMATION_5-9_COMPLETE.md`
+- Implementation details (archived, July 2026): `docs/archive/2026-summer/AUTOMATION_5-9_COMPLETE.md`
 
 **CI Workflows**:
 - `.github/workflows/type-safety-lint.yml` — TypeScript + ESLint

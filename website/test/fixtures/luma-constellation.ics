@@ -1,0 +1,53 @@
+BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//Luma//Constellation//EN
+X-WR-CALNAME:Constellation
+REFRESH-INTERVAL;VALUE=DURATION:PT12H
+CALSCALE:GREGORIAN
+METHOD:PUBLISH
+BEGIN:VEVENT
+DTSTART:20261003T190000Z
+DTEND:20261003T220000Z
+DTSTAMP:20261017T130000Z
+ORGANIZER;CN="Example Host":MAILTO:calendar-invite@example.test
+UID:evt-PastExample01@events.lu.ma
+SUMMARY:Example Night
+DESCRIPTION:Get up-to-date information at: https://luma.com/pastex01\n\nAddress:\n1 Example Street\, Exampletown
+LOCATION:1 Example Street, Exampletown EX1 1EX, UK
+GEO:51.5;-0.1
+SEQUENCE:0
+STATUS:CONFIRMED
+END:VEVENT
+BEGIN:VEVENT
+DTSTART:20261024T090000Z
+DTEND:20261024T120000Z
+DTSTAMP:20261017T130000Z
+ORGANIZER;CN="Example Host":MAILTO:calendar-invite@example.test
+UID:evt-NextExample02@events.lu.ma
+SUMMARY:Workshop: Ethics\, data and dual use
+DESCRIPTION:Get up-to-date information at: https://luma.com/ethics26\n\nHosted by Example Host
+LOCATION:https://luma.com/event/evt-NextExample02
+GEO:3.1;101.6
+SEQUENCE:0
+STATUS:CONFIRMED
+END:VEVENT
+BEGIN:VEVENT
+DTSTART:20261107T100000Z
+DTEND:20261107T110000Z
+DTSTAMP:20261017T130000Z
+UID:evt-NoPageExample03@events.lu.ma
+SUMMARY:Resilience for teams on a
+  very long folded line
+DESCRIPTION:Hosted by Example Host
+LOCATION:Online
+STATUS:CONFIRMED
+END:VEVENT
+BEGIN:VEVENT
+DTSTART:20261108T100000Z
+DTEND:20261108T110000Z
+UID:evt-Cancelled04@events.lu.ma
+SUMMARY:Cancelled example
+DESCRIPTION:Get up-to-date information at: https://luma.com/cancel04
+STATUS:CANCELLED
+END:VEVENT
+END:VCALENDAR
