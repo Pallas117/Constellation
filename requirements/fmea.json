@@ -219,11 +219,12 @@
       "mitigation": "Ring buffers and capped windows",
       "severity": 4,
       "likelihood": 2,
-      "residualLikelihood": 1,
+      "residualLikelihood": 2,
       "verifiedBy": [
         "caps coupling window length to prevent unbounded memory growth",
         "canonical feed keeps a fixed-size ring buffer"
-      ]
+      ],
+      "gap": "CyberTiger's per-address rate and auth-failure maps (backend/cybertiger/daemon.ts) are added to but never swept, so they grow with every distinct client address; only expired blocks are removed. Fix: PR #172 (GAU-209: expired-window sweep and a 50k cap). Found by the requirements audit 2026-11-17."
     },
     {
       "id": "FM-16",
