@@ -65,7 +65,7 @@ test("devices can only be modified and listed by their owner or an admin", async
 
   await t.test("the owner can heartbeat, set status and push telemetry", async () => {
     assert.equal((await call(`/${aliceDevice.id}/heartbeat`, "alice", { body: {} })).status, 200);
-    assert.equal((await call(`/${aliceDevice.id}/status`, "alice", { body: { status: "trusted" } })).status, 200);
+    assert.equal((await call(`/${aliceDevice.id}/status`, "alice", { body: { status: "unverified" } })).status, 200);
     const res = await call(`/${aliceDevice.id}/telemetry`, "alice", { body: telemetry });
     assert.equal(res.status, 200);
     assert.equal(((await res.json()) as DeviceBody).device.telemetry?.temperatureC, 40);
