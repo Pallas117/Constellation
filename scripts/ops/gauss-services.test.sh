@@ -62,7 +62,7 @@ run() { # run <args...>: gauss-services.sh with the stubs; alerts land in $LOG
   env -i PATH="$T/bin:/usr/bin:/bin" HOME="$T/home" ARGO="$T/bin/argo" LOG="$T/log" KICKS="$T/kicks" GAUSS_PUBLIC_URL=http://127.0.0.1:8080 \
     GAUSS_SUDOERS="$T/sudoers" MLX="${MLX:-0}" MLXPORT="${MLXPORT:-8089}" ACTIONS="$T/actions" GAUSS_BALANCE="${GAUSS_BALANCE:-1}" \
     LOADED="${LOADED:-}" HEALTH="${HEALTH:-200}" HEALTH_FILE="${HEALTH_FILE:-}" GAUSS_DEPLOY_WAIT=0 DISKGB="${DISKGB:-50}" \
-    GATEFAIL="${GATEFAIL:-}" MOVEMAIN="${MOVEMAIN:-}" GAUSS_BY=test-user BOOT="${BOOT:-1000}" GAUSS_DIAG_DIRS="$T/diag" GAUSS_EVENTS_MAX_KB="${GAUSS_EVENTS_MAX_KB:-5120}" \
+    GATEORDER="${GATEORDER:-}" GAUSS_PW_CHROMIUM="${GAUSS_PW_CHROMIUM:-}" GATEORDER="${GATEORDER:-}" GAUSS_PW_CHROMIUM="${GAUSS_PW_CHROMIUM:-}" GATEFAIL="${GATEFAIL:-}" MOVEMAIN="${MOVEMAIN:-}" GAUSS_BY=test-user BOOT="${BOOT:-1000}" GAUSS_DIAG_DIRS="$T/diag" GAUSS_EVENTS_MAX_KB="${GAUSS_EVENTS_MAX_KB:-5120}" \
     WAKE="${WAKE:-1000}" GAUSS_DEV_DRY="${GAUSS_DEV_DRY:-0}" GAUSS_GATES_START=0 HEAVYGIVEUP="${HEAVYGIVEUP:-}" NPMNET="${NPMNET:-}" GAUSS_GATEBOX="${GAUSS_GATEBOX:-}" GAUSS_FLEET_MEMORY="${GAUSS_FLEET_MEMORY:-}" GAUSS_GATEBOX_KEY="$T/gatebox-key" GBRC="${GBRC:-}" GAUSS_GATES_EXPIRE_H="${GAUSS_GATES_EXPIRE_H:-72}" GAUSS_DEV_API_PORT="${GAUSS_DEV_API_PORT:-3101}" \
     SRC="${SRC:-AC Power}" BATT="${BATT:-80%; charging; present: true}" SD="${SD:-0}" FCC="${FCC:-}" ACW="${ACW:-}" \
     LEAKY="${LEAKY:-}" LEAKFP="${LEAKFP:-12 MB}" AVAIL="${AVAIL:-50}" GAUSS_SWAP_LAST="${SWAPLAST:-/dev/null}" \
@@ -350,7 +350,9 @@ stub node 'if [[ " $* " == *" build "* ]]; then mkdir -p frontend/dist && touch 
 stub npm 'if [ "$1" = run ]; then
   [ "$2" = verify ] && [ -n "$MOVEMAIN" ] && [ -f "$MOVEMAIN" ] && { sh "$MOVEMAIN"; rm -f "$MOVEMAIN"; } # main moves mid-run
   [ -n "$GATEENV" ] && { env | grep -E "^(ALLOWED_ORIGINS|MESH_STORE_PATH|COMMERCE_DB_PATH|GAUSS_BEDROCK_DIR|NODE_ENV)=" ; echo "PATH=$PATH"; } >>"$GATEENV"
+  [ -n "$GATEORDER" ] && echo "$2" >>"$GATEORDER" # the order the gates ran in
   case "$2" in
+    test:ui:gate) echo "  4 passed" ;;
     test:ops) echo "gauss-services: 99 passed, 0 failed"; echo "ok  	argo	1.0s" ;;
     test|build) echo "$2 is not a gate: verify runs it" >&2; exit 9 ;;
     verify) echo "▶ Test suite"
@@ -502,6 +504,20 @@ out=$(run gates record "$GW" 2>&1); rc=$?
   && python3 -Ic 'import json,sys; r=json.load(open(sys.argv[1])); sys.exit(0 if r["passed"] and r["sha"]==sys.argv[2] and r["by"]=="test-user" and r["test_ops"]["go_ok"]==1 else 1)' "$rec" "$D"
 expect "gates record: runs the gates (test and build inside verify) and records the counts by tree" $?
 [ ! -d "$T/home/.local/state/gauss-gate.lock" ]; expect "gates record releases the shared gate lock" $?
+# UI gate (hermetic Playwright subset): runs after quality:full and before verify (verify merges its JUnit
+# report), installs Chromium once when the pinned build is missing, and a UI failure fails the record.
+GATEORDER="$T/gate-order"; rm -f "$GATEORDER"; export GATEORDER
+mkdir -p "$T/pw"; printf '#!/bin/sh\n' >"$T/pw/chromium"; chmod +x "$T/pw/chromium"
+out=$(GAUSS_PW_CHROMIUM="$T/pw/chromium" run gates record "$GW" 2>&1)
+[ "$(tr '\n' ' ' <"$GATEORDER")" = "test:ops quality:full test:ui:gate verify " ] && ! grep -q '^npm exec' "$T/actions" && python3 -Ic 'import json,sys; r=json.load(open(sys.argv[1])); sys.exit(0 if r["passed"] and r["ui"]["exit"]==0 else 1)' "$rec"
+expect "gates record: the UI gate runs after quality:full and before verify, and is in the record; an installed Chromium is not reinstalled" $?
+out=$(GAUSS_PW_CHROMIUM="$T/pw/missing" run gates record "$GW" 2>&1)
+grep -qx "npm exec -- playwright install chromium" "$T/actions" && [ "$(grep -c '^npm exec' "$T/actions")" = 1 ]
+expect "gates record: a missing Chromium is installed once, in the checkout, before the UI gate" $?
+out=$(GAUSS_PW_CHROMIUM="$T/pw/chromium" GATEFAIL=test:ui:gate run gates record "$GW" 2>&1); rc=$?
+[ $rc != 0 ] && [[ "$out" == *"FAILED (ui) ${D:0:7}"* ]]
+expect "gates record: a failing UI gate is recorded as FAILED (ui)" $?
+unset GATEORDER; GAUSS_PW_CHROMIUM="$T/pw/chromium" run gates record "$GW" >/dev/null 2>&1 # back to a passing record
 out=$(run gates); [[ "$out" == *"PASSED ${D:0:7}"* ]]; expect "gates lists the records" $?
 out=$(GATEFAIL=test run gates record "$GW" 2>&1); rc=$?
 [ $rc != 0 ] && [[ "$out" == *"FAILED (test, verify) ${D:0:7}"* ]] && ! python3 -Ic 'import json,sys; sys.exit(0 if json.load(open(sys.argv[1]))["passed"] else 1)' "$rec"

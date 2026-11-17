@@ -9,13 +9,13 @@
  *   5. production build
  *   6. VCRM: every requirement verified (no failing, skipped or missing evidence), by exact test
  *      name across both reports
- * Writes test-results/verification/{junit.xml,ops-junit.xml,vcrm.json,vcrm.md}. Exits non-zero on any failure.
+ * Writes test-results/verification/{junit.xml,ops-junit.xml,ui-junit.xml,vcrm.json,vcrm.md}. Exits non-zero on any failure.
  *
  *   npm run verify               full gate
  *   npm run verify -- --no-build skip the build (faster while iterating)
  */
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import {
   buildFmea,
@@ -35,6 +35,10 @@ const root = path.resolve(import.meta.dirname, "../..");
 const outDir = path.join(root, "test-results", "verification");
 const junitPath = path.join(outDir, "junit.xml");
 const opsJunitPath = path.join(outDir, "ops-junit.xml");
+// Written by `npm run test:ui:gate` (a gate of its own, run before verify). Not removed here: a report
+// younger than UI_REPORT_MAX_MS stands in for the run; an older one (a stale local file) is rerun below.
+const uiJunitPath = path.join(outDir, "ui-junit.xml");
+const UI_REPORT_MAX_MS = 2 * 60 * 60 * 1000;
 const skipBuild = process.argv.includes("--no-build");
 
 function step(name: string, cmd: string, args: string[], extraEnv: Record<string, string> = {}): boolean {
@@ -84,9 +88,13 @@ results.opsTests = step("Ops tests (bash)", "bash", ["scripts/ops/gauss-services
 
 results.build = skipBuild ? true : step("Production build", "npm", ["run", "build", "--silent"]);
 
+// UI tests (hermetic Playwright subset; REQ-UI-*): run now only if the gate did not just do it.
+const uiFresh = existsSync(uiJunitPath) && Date.now() - statSync(uiJunitPath).mtimeMs < UI_REPORT_MAX_MS;
+results.uiTests = uiFresh || step("UI tests (Playwright)", "npm", ["run", "test:ui:gate", "--silent"]);
+
 const commit = spawnSync("git", ["rev-parse", "--short", "HEAD"], { cwd: root, encoding: "utf8" }).stdout.trim() || "unknown";
 const readJunit = (p: string): Map<string, TestOutcome> => (existsSync(p) ? parseJunit(readFileSync(p, "utf8")) : new Map());
-const outcomes = mergeOutcomes(readJunit(junitPath), readJunit(opsJunitPath));
+const outcomes = mergeOutcomes(readJunit(junitPath), readJunit(opsJunitPath), readJunit(uiJunitPath));
 const rows = buildMatrix(baseline, outcomes, (p) => existsSync(path.join(root, p)));
 const meta = { version: baseline.version, commit, generatedAt: new Date().toISOString() };
 const fmeaPath = path.join(root, "requirements/fmea.json");

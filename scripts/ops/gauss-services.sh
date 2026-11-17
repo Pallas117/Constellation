@@ -126,7 +126,9 @@ GATE_LOCK="${GAUSS_GATE_LOCK:-$HOME/.local/state/gauss-gate.lock}" # shared with
 # `verify` already runs the full test suite, the ops tests and the production build
 # (scripts/verify/verify.ts), so `test` and `build` are not run again as gates of
 # their own; their record fields come from verify's log. Halves a gate run.
-GATES=(test:ops quality:full verify)
+# test:ui:gate (hermetic Playwright subset, own port 8094, never :8080) runs before verify so verify
+# merges its JUnit report (test-results/verification/ui-junit.xml) into the VCRM; ~2-4 min extra.
+GATES=(test:ops quality:full test:ui:gate verify)
 # Gate queue (2026-10-29): sessions held a `claude-heavy --wait 720 ... gates record` each for hours
 # (~1 GB of idle sessions on an 8 GB Mac), each with its own npm ci. Now a session enqueues and
 # can be archived; one detached runner works through the requests one at a time under claude-heavy
@@ -879,6 +881,16 @@ gates_python_dir() { # the directory of the first python3 that can import numpy 
   return 1
 }
 
+# Chromium for the UI gate lives in Playwright's shared cache, so installing it once serves every
+# checkout and touches none of them. GAUSS_PW_CHROMIUM overrides the executable path (tests).
+gates_browser() { # gates_browser <checkout-dir>: install Chromium once if the pinned build is missing
+  local exe
+  exe=${GAUSS_PW_CHROMIUM:-$(cd "$1" && "$NODE" -e 'console.log(require("@playwright/test").chromium.executablePath())' 2>/dev/null || true)}
+  [ -n "$exe" ] && [ -x "$exe" ] && return 0
+  echo "Chromium for the UI gate is missing: installing it once (playwright install chromium)"
+  (cd "$1" && npm exec -- playwright install chromium)
+}
+
 gates_record() { # gates_record <checkout-dir>: run the gates on a clean checkout and record the result by tree
   local dir sha tree g rc
   dir=$(cd "${1:?usage: $0 gates record <checkout-dir>}" && pwd) || return 1
@@ -895,7 +907,8 @@ gates_record() { # gates_record <checkout-dir>: run the gates on a clean checkou
   for g in "${GATES[@]}"; do
     gate_lock
     echo "gate $g ..."
-    rc=0; (cd "$dir" && env "${scrub[@]}" PATH="$(dirname "$NODE")${pydir:+:$pydir}:$PATH" npm run "$g" >"$tmp/$g.log" 2>&1) || rc=$?
+    rc=0; [ "$g" = test:ui:gate ] && { (PATH="$(dirname "$NODE"):$PATH"; gates_browser "$dir") >"$tmp/$g.log" 2>&1 || rc=$?; }
+    [ $rc = 0 ] && { (cd "$dir" && env "${scrub[@]}" PATH="$(dirname "$NODE")${pydir:+:$pydir}:$PATH" npm run "$g" >>"$tmp/$g.log" 2>&1) || rc=$?; }
     if [ "$GATES_HOLD" = 1 ]; then rmdir "$GATE_LOCK" 2>/dev/null || true; fi; GATES_HOLD=0
     echo "$rc" >"$tmp/$g.rc"
   done
@@ -919,8 +932,9 @@ r = {"sha": sha, "tree": tree, "by": by, "at": at,
      "test": {"exit": step("Test suite"), "tests": last(r"^\S* ?tests (\d+)$", v), "pass": last(r"^\S* ?pass (\d+)$", v), "fail": last(r"^\S* ?fail (\d+)$", v), "via": "verify"},
      "build": {"exit": step("Production build"), "via": "verify"},
      "quality": {"exit": rc("quality:full")},
+     "ui": {"exit": rc("test:ui:gate")},
      "verify": {"exit": rc("verify"), "vcrm": last(r"VCRM: (\d+/\d+)", v, str), "fmea": last(r"FMEA: (\d+/\d+)", v, str), "passed_at": last(r"VERIFY PASSED at (\w+)", v, str)}}
-r["passed"] = all(r[k]["exit"] == 0 for k in ("test_ops", "test", "build", "quality", "verify")) \
+r["passed"] = all(r[k]["exit"] == 0 for k in ("test_ops", "test", "build", "quality", "ui", "verify")) \
     and r["test"]["fail"] == 0 and r["test_ops"]["fail"] == 0 and sha.startswith(r["verify"]["passed_at"] or "-")
 print(json.dumps(r, ensure_ascii=False))
 ' "$tmp" "$sha" "$tree" "$(deployer)" "$(date -u +%Y-%m-%dT%H:%M:%SZ)") || return 1
@@ -945,7 +959,7 @@ gates_summary() { # gates_summary <record file>: one line
 import json, sys
 r = json.load(open(sys.argv[1]))
 t, o, v = r.get("test") or {}, r.get("test_ops") or {}, r.get("verify") or {}
-fails = [k for k in ("test_ops", "test", "build", "quality", "verify") if (r.get(k) or {}).get("exit") not in (0, None)]
+fails = [k for k in ("test_ops", "test", "build", "quality", "ui", "verify") if (r.get(k) or {}).get("exit") not in (0, None)]
 print("%s %s (tree %s) by %s at %s: npm test %s/%s, test:ops %s passed, build %s, quality %s, VCRM %s, FMEA %s" % (
     "PASSED" if r.get("passed") else "FAILED (" + ", ".join(fails or ["counts"]) + ")", r["sha"][:7], r["tree"][:7], r.get("by"), r.get("at"),
     t.get("pass"), t.get("tests"), o.get("pass"), "ok" if (r.get("build") or {}).get("exit") == 0 else "failed",
