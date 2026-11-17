@@ -89,8 +89,7 @@ variables below at a data directory of your choice.
 Leave these unset for a data-API pilot: `OFFICIAL_SOURCES_ONLY` (`false`), `MESH_EXIT_NODES`,
 `TRAINING_SCRIPT_PATH` (`ml/train/train_kp.py`), `CLOSED_LOOP_SCRIPT` (`scripts/closed-loop.sh`),
 `SWAP_BALANCE_INTERVAL_MS` (`45000`), `DEVICE_SWAP_THERMAL_THRESHOLD_C` (`70`),
-`DEVICE_SWAP_DEFAULT_COMPUTE_PERCENT` (`70`), `DEVICE_SWAP_DEFAULT_POWER_W` (`120`). The
-`SUPABASE_*` and `VITE_SUPABASE_*` names are legacy and unused by the pilot stack.
+`DEVICE_SWAP_DEFAULT_COMPUTE_PERCENT` (`70`), `DEVICE_SWAP_DEFAULT_POWER_W` (`120`).
 
 ## 5. First start
 

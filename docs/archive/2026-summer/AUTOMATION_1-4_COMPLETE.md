@@ -53,7 +53,7 @@
 ```
 ✅ compliance-gate.yml             — PR/main gating workflow
 ✅ Security compliance checks      — CORS, auth, headers validation
-✅ RBAC smoke tests                — viewer/operator/admin flows
+✅ RBAC tests                      — in process in `npm test` (smoke script removed, GAU-181)
 ✅ Headers validation              — X-Frame-Options, X-Content-Type, etc.
 ✅ Rate limiting validation        — Config verification
 ✅ PR auto-comments                — Compliance status on every PR
@@ -132,7 +132,7 @@ npm run security:audit            # Check dependencies
 npm run security:secrets          # Scan for secrets
 npm run security:full             # All checks together
 npm run check:security-compliance # Compliance validation
-npm run test:rbac                 # RBAC tests
+npm test                          # Unit/integration tests, including RBAC
 ```
 
 ---

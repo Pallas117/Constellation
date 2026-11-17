@@ -26,6 +26,7 @@ Design and sources: `docs/ARGO_DTN.md`. User guide: `tools/argo/README.md`.
 | UI | `frontend/src/pages/MeshDashboard.tsx`, `frontend/src/lib/link-stability.ts`, `website/public/argo/` | `/mesh` columns; `/argo/` is noindex, "Included", no price |
 
 ## Rules
+- **Never rebuild or install `~/.local/bin/argo` from an agent or an unattended session.** macOS keys the Automation → Messages grant and Full Disk Access to the ad-hoc signature, so a rebuild silences texts until Josh clicks Allow at the Mac (5 Nov 2026). Build to /tmp for tests; Josh installs. After any rebuild: `argo phone test`.
 - Go standard library only, no runtime downloads. One binary for macOS and Linux (`host_darwin.go` / `host_linux.go`).
 - Never disable TLS verification, never run an admin action automatically, never run a Tailscale command that changes
   settings (mesh-heal owns the tunnel). Mask secrets (`Mask`). State and keys are 0600 under `~/.local/state/argo` and

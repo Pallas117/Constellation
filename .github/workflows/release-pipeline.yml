@@ -43,31 +43,26 @@ jobs:
         run: |
           echo "🔐 Running pre-release security gates..."
           
-          # 1. Full adherence audit
+          # 1. Full adherence audit (its npm test step includes the in-process RBAC tests)
           echo "1️⃣  Running full adherence audit..."
           npm run audit:adherence || exit 1
-          
+
           # 2. Security compliance
           echo "2️⃣  Running security compliance check..."
           npm run check:security-compliance || exit 1
-          
-          # 3. RBAC tests
-          echo "3️⃣  Running RBAC smoke tests..."
-          npm run test:rbac || echo "⚠️  RBAC tests require Supabase (optional for CI)"
-          
-          # 4. Type checking
-          echo "4️⃣  Running TypeScript check..."
+
+          # 3. Type checking
+          echo "3️⃣  Running TypeScript check..."
           npm run lint || exit 1
-          
-          # 5. Build verification
-          echo "5️⃣  Building project..."
+
+          # 4. Build verification
+          echo "4️⃣  Building project..."
           npm run build || exit 1
           
           echo "✅ All pre-release gates passed!"
         env:
           AUTH_REQUIRED: "true"
           CYBERTIGER_ENABLED: "true"
-          RBAC_SKIP_HEALTH_CHECK: "true"
 
   build:
     name: Build Project

@@ -361,6 +361,8 @@ func (r guardRunner) run(memGB, maxGB float64, wait time.Duration, argv []string
 		return 127, err
 	}
 	pgid := cmd.Process.Pid
+	// Below the owner's apps (foreground.go); children started from here on inherit it.
+	_ = syscall.Setpriority(syscall.PRIO_PGRP, pgid, jobNice)
 	done := make(chan error, 1)
 	go func() { done <- cmd.Wait() }()
 	sigs := make(chan os.Signal, 1)
@@ -371,6 +373,7 @@ func (r guardRunner) run(memGB, maxGB float64, wait time.Duration, argv []string
 	// ended before the first reading would teach "needs nothing".
 	started, peak := time.Now(), 0.0
 	var pausedAt time.Time
+	pausedWhy := ""
 	var pausedFor time.Duration // eclipse pauses, left out of the learned run time
 	measure := func() float64 {
 		used := r.jobGB(pgid)
@@ -419,22 +422,32 @@ func (r guardRunner) run(memGB, maxGB float64, wait time.Duration, argv []string
 			measure()
 		case <-tick.C:
 			now, a := r.assess()
-			if eclipse {
-				switch {
-				case pausedAt.IsZero() && !onAC(now) && a.Level < LevelBlock:
-					_ = syscall.Kill(-pgid, syscall.SIGSTOP)
-					pausedAt = time.Now()
-					fmt.Fprintln(r.out, "argo guard: on battery: pausing", filepath.Base(argv[0]), "until power returns")
-					r.log(argv[0], "paused: on battery")
-					continue
-				case !pausedAt.IsZero() && onAC(now):
-					resume()
-					fmt.Fprintln(r.out, "argo guard: power is back: resuming", filepath.Base(argv[0]))
-					r.log(argv[0], "resumed: on AC")
-					continue
-				case !pausedAt.IsZero() && time.Since(pausedAt) < r.maxPause:
-					continue // asleep: nothing to measure or police
-				}
+			// Pause for eclipse (on battery) or for the owner's call (foreground.go); resume when
+			// neither holds any more.
+			hold := ""
+			switch {
+			case a.Level >= LevelBlock:
+			case eclipse && !onAC(now):
+				hold = "on battery"
+			case eclipse && brownout(now, a, pausedWhy == "charger can't keep up" && !pausedAt.IsZero()):
+				hold = "charger can't keep up"
+			case r.maxPause > 0 && now.Call != "" && heavyForCall(memGB, peak):
+				hold = "a call is live"
+			}
+			switch {
+			case pausedAt.IsZero() && hold != "":
+				_ = syscall.Kill(-pgid, syscall.SIGSTOP)
+				pausedAt, pausedWhy = time.Now(), hold
+				fmt.Fprintf(r.out, "argo guard: %s: pausing %s until it ends\n", hold, filepath.Base(argv[0]))
+				r.log(argv[0], "paused: "+hold)
+				continue
+			case !pausedAt.IsZero() && hold == "": // at block too: awake, so the strikes below can stop it
+				resume()
+				fmt.Fprintln(r.out, "argo guard: resuming", filepath.Base(argv[0]), "("+pausedWhy+" no more)")
+				r.log(argv[0], "resumed: "+pausedWhy+" ended")
+				continue
+			case !pausedAt.IsZero() && time.Since(pausedAt) < r.maxPause:
+				continue // asleep: nothing to measure or police
 			}
 			used := measure()
 			if b := now.Batt; b != nil && b.OnAC && b.SystemW > 0 {
@@ -442,7 +455,7 @@ func (r guardRunner) run(memGB, maxGB float64, wait time.Duration, argv []string
 			}
 			bad := ""
 			if !pausedAt.IsZero() {
-				bad = fmt.Sprintf("paused on battery for %s", r.maxPause)
+				bad = fmt.Sprintf("paused (%s) for %s", pausedWhy, r.maxPause)
 				strikes = r.strikes
 			} else if a.Level >= LevelBlock {
 				bad = "host at block: " + worst(a)

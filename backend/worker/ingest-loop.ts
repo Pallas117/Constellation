@@ -50,6 +50,12 @@ import type {
 } from "../types.js";
 
 export const TICK_MS = 5000;
+export const BACKOFF_BASE_MS = 10_000;
+export const BACKOFF_MAX_MS = 10 * 60 * 1000;
+/** Wait before the next attempt after `runs` consecutive failures: 10 s, 20 s, 40 s ... capped at 10 min. */
+export function backoffMs(runs: number): number {
+  return Math.min(BACKOFF_MAX_MS, BACKOFF_BASE_MS * 2 ** Math.max(0, runs - 1));
+}
 const NOAA_MS = 60000;
 const ESA_MS = 10000;
 const JAXA_MS = 60000;
@@ -141,6 +147,9 @@ export class IngestionWorker {
   private couplingWindow: number[] = [];
   private auroraGridCache: { key: string; result: ReturnType<typeof buildAuroraGrid> } | null = null;
   private lastFetch = new Map<string, number>();
+  /** Consecutive failures per source, and when its next attempt is allowed (GAU-232 follow-up). */
+  private failures = new Map<string, number>();
+  private backoffUntil = new Map<string, number>();
 
   private noaa: NOAAReadout | null = null;
   /**
@@ -257,18 +266,45 @@ export class IngestionWorker {
     return this.timing.snapshot(TICK_MS, this.lastMeasurementAt, NOAA_FRESH_MS, NOAA_MAX_AGE_MS);
   }
 
-  /** Fetch one source within its latency budget; a failure or timeout keeps the previous value. */
+  /**
+   * Fetch one source within its latency budget; a failure or timeout keeps the previous value.
+   * A source that keeps failing (a hotspot with no route, an upstream outage) backs off: the
+   * wait doubles from 10 s to 10 min, and the log gets one line per failure run, not a stack
+   * trace every cadence (the live backend wrote ~2k ESA timeouts with traces in a few hours).
+   */
   private async timedFetch<T>(stage: string, fn: () => Promise<T>): Promise<T | null> {
     try {
-      return await this.timing.time(stage, fn, STAGE_BUDGET_MS[stage]);
+      const value = await this.timing.time(stage, fn, STAGE_BUDGET_MS[stage]);
+      const runs = this.failures.get(stage) ?? 0;
+      if (runs > 0) {
+        this.failures.delete(stage);
+        this.backoffUntil.delete(stage);
+        console.warn(`[IngestionWorker] ${stage} fetch recovered after ${runs} failure(s).`);
+      }
+      return value;
     } catch (error) {
-      console.warn(`[IngestionWorker] ${stage} fetch failed; keeping previous value.`, error);
+      const runs = (this.failures.get(stage) ?? 0) + 1;
+      this.failures.set(stage, runs);
+      const waitMs = backoffMs(runs);
+      this.backoffUntil.set(stage, this.now() + waitMs);
+      if (runs === 1 || runs % 10 === 0) {
+        const reason = error instanceof Error ? error.message : String(error);
+        console.warn(
+          `[IngestionWorker] ${stage} fetch failed (${runs} in a row; next try in ${Math.round(waitMs / 1000)} s); keeping previous value: ${reason}`,
+        );
+      }
       return null;
     }
   }
 
+  /** Consecutive failures per source (tests and /health). */
+  getFailureRuns(): Record<string, number> {
+    return Object.fromEntries(this.failures);
+  }
+
   private shouldFetch(key: string, cadenceMs: number): boolean {
     const now = this.now();
+    if (now < (this.backoffUntil.get(key) ?? 0)) return false;
     const last = this.lastFetch.get(key) ?? 0;
     if (now - last >= cadenceMs) {
       this.lastFetch.set(key, now);

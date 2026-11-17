@@ -278,6 +278,10 @@ func (l Loop) Tick(ctx context.Context) State {
 		if a.Auto && class == Offline && now.Sub(st.IncidentAt) < offlineRejoinAfter {
 			continue // a network switch: give it time before resetting Wi-Fi
 		}
+		if a.Auto && class == Offline && snap.InCall && now.Sub(st.IncidentAt) < callRejoinAfter {
+			l.say("  (a call is live: Wi-Fi is left alone until the outage reaches %s)", callRejoinAfter)
+			continue // the call may still be riding it out; a reset would surely drop it
+		}
 		// GAU-234: with a saved network in range, attempts alternate between joining it and a Wi-Fi
 		// restart, so one step per attempt (a restart right after a join would undo it).
 		if hasAction(plan, "wifi-join") && ((a.ID == "wifi-join" && wifiTurn%2 == 1) || (a.ID == "wifi-rejoin" && wifiTurn%2 == 0)) {
