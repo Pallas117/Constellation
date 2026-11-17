@@ -1426,12 +1426,14 @@ gates_queue() { # gates queue: the queue in run order, with each request's PR
 
 gates_priority() { # gates priority <pr number|sha> front|back: move that request in the queue
   local key=${1:?usage: $0 gates priority <pr|sha> front|back} where=${2:-front} f b n=0 head
+  # A PR number matches exactly; a sha matches by prefix only from 7 characters (99 must not match a sha starting 99).
+  local pat="^pr=$key$"; [ ${#key} -ge 7 ] && pat="^(pr=$key$|sha=$key)"
   case "$where" in front) head=1$(date +%s) ;; back) head=9$(date +%s) ;; *) echo "usage: $0 gates priority <pr|sha> front|back" >&2; return 2 ;; esac
   while IFS= read -r f; do
     [ -n "$f" ] || continue
     b=$(basename "$f")
     mv "$f" "$GATES_QUEUE/$head.$(printf '%06d' "$n")-${b#*-}"; n=$((n + 1))
-  done < <(grep -l -E "^(pr=$key|sha=$key)" "$GATES_QUEUE"/*.req 2>/dev/null)
+  done < <(grep -l -E "$pat" "$GATES_QUEUE"/*.req 2>/dev/null)
   [ $n -gt 0 ] || { echo "Nothing queued for $key." >&2; return 1; }
   echo "Moved $n request(s) for $key to the $where."
   gates_queue

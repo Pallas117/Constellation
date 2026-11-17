@@ -807,6 +807,10 @@ expect "gates priority: a PR moves to the front, and gates queue lists requests 
 out=$(run gates priority 31 back 2>&1); last=$(ls "$GQ" | sort | tail -1); grep -qx "pr=31" "$GQ/$last"
 expect "gates priority: a PR moves to the back" $?
 out=$(run gates priority 99 front 2>&1); [ $? = 1 ] && [[ "$out" == *"Nothing queued for 99"* ]]; expect "gates priority: an unknown PR is refused" $?
+# 17 Nov: a queued sha that merely starts with the digits of an unknown PR number (99) was taken for that PR (a flaky gate).
+printf 'sha=99aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\npr=77\n' >"$GQ/5.000000-zz99.req"
+out=$(run gates priority 99 front 2>&1); rc=$?; rm -f "$GQ/5.000000-zz99.req"
+[ $rc = 1 ] && [[ "$out" == *"Nothing queued for 99"* ]]; expect "gates priority: a PR number never matches a sha that starts with the same digits" $?
 rm -f "$GQ"/*.req
 printf '%s 13 true CLEAN Brand refresh\n%s 21 false CLEAN Already merged head\n' "$N5" "$P8" >"$GHD/open"
 out=$(cd "$LIVE" && run gates waiting 2>&1)
