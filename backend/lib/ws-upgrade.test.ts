@@ -142,7 +142,7 @@ test("ws upgrades: a guard refusal answers 401/403 before the handshake and no s
 test("ws upgrades: a frame over maxPayload closes the connection with 1009 (REQ-SEC-020)", async (t) => {
   const server = http.createServer();
   const wss = new WebSocketServer({ noServer: true, maxPayload: 4096 });
-  wss.on("connection", () => undefined);
+  wss.on("connection", (socket) => socket.on("error", () => undefined)); // as server.ts does: ws emits "error" on oversize
   routeUpgrades(server, new Map([["/m", wss]]));
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   t.after(() => {

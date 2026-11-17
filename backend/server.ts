@@ -687,6 +687,9 @@ function broadcast(wss: WebSocketServer, topic: string, payload: unknown): void 
 
 wsSpaceWeather.on("connection", (socket: AuthedSocket, _req: http.IncomingMessage, auth: AuthContext) => {
   socket.auth = auth;
+  // An oversize frame (maxPayload) or a protocol error emits "error" here; with no listener Node
+  // throws and the whole backend dies. ws closes the socket itself (1009 etc.); log nothing from the peer.
+  socket.on("error", () => undefined);
 
   socket.send(
     JSON.stringify({
@@ -703,6 +706,9 @@ wsSpaceWeather.on("connection", (socket: AuthedSocket, _req: http.IncomingMessag
 
 wsMmsRecon.on("connection", (socket: AuthedSocket, _req: http.IncomingMessage, auth: AuthContext) => {
   socket.auth = auth;
+  // An oversize frame (maxPayload) or a protocol error emits "error" here; with no listener Node
+  // throws and the whole backend dies. ws closes the socket itself (1009 etc.); log nothing from the peer.
+  socket.on("error", () => undefined);
 
   socket.send(
     JSON.stringify({

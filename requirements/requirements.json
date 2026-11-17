@@ -374,6 +374,7 @@
       "verifiedBy": [
         "ws upgrades: a guard refusal answers 401/403 before the handshake and no socket opens (REQ-SEC-020)",
         "ws upgrades: a frame over maxPayload closes the connection with 1009 (REQ-SEC-020)",
+        "feed WebSockets: an oversize frame closes that socket with 1009 and the backend keeps serving (REQ-SEC-020)",
         "an unauthenticated WebSocket upgrade is refused with 401 before it opens (REQ-SEC-020)"
       ]
     },
