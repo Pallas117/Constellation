@@ -1,4 +1,4 @@
-import { getAuthHeaders } from "./auth";
+import { apiBase } from "./base-url";
 import { HttpFailure } from "./http-error";
 
 export interface DeviceSwapAssignment {
@@ -19,12 +19,12 @@ export interface DeviceSwapPlan {
   summary: Record<string, number>;
 }
 
-const DEVICE_SWAP_PLAN_URL = "/api/device/swap/plan";
-const DEVICE_SWAP_REBALANCE_URL = "/api/device/swap/rebalance";
+// apiBase(), like every other call, so these work without the dev proxy; the session cookie authenticates.
+const DEVICE_SWAP_PLAN_URL = `${apiBase()}/api/device/swap/plan`;
+const DEVICE_SWAP_REBALANCE_URL = `${apiBase()}/api/device/swap/rebalance`;
 
 export async function getDeviceSwapPlan(): Promise<DeviceSwapPlan> {
-  const headers = await getAuthHeaders();
-  const response = await fetch(DEVICE_SWAP_PLAN_URL, { headers });
+  const response = await fetch(DEVICE_SWAP_PLAN_URL, { credentials: "include" });
   if (!response.ok) {
     throw new HttpFailure("Couldn't load the SWAP plan", response.status);
   }
@@ -39,11 +39,11 @@ export async function requestDeviceSwapRebalance(payload: {
   requiredComputePercent?: number;
   requiredPowerWatts?: number;
   thermalThresholdC?: number;
-} = {}): Promise<DeviceSwapPlan> {
-  const headers = await getAuthHeaders();
+} = {}): Promise<DeviceSwapPlan & { message?: string }> {
   const response = await fetch(DEVICE_SWAP_REBALANCE_URL, {
     method: "POST",
-    headers: { "Content-Type": "application/json", ...headers },
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
   });
 
@@ -52,12 +52,16 @@ export async function requestDeviceSwapRebalance(payload: {
   }
 
   const json = await response.json();
-  if (!json?.ok || !json?.assignments) {
+  // The route answers { ok, plan: { timestamp, assignments, summary }, message } (device-registry.ts); reading
+  // `assignments` at the top level failed every rebalance with "Invalid SWAP rebalance response".
+  const plan = json?.plan;
+  if (!json?.ok || !Array.isArray(plan?.assignments)) {
     throw new Error(json?.error || "Invalid SWAP rebalance response");
   }
   return {
-    timestamp: json.timestamp ?? new Date().toISOString(),
-    assignments: json.assignments,
-    summary: json.summary ?? {},
+    timestamp: plan.timestamp ?? new Date().toISOString(),
+    assignments: plan.assignments,
+    summary: plan.summary ?? {},
+    message: typeof json.message === "string" ? json.message : undefined,
   };
 }

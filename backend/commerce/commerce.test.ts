@@ -20,7 +20,7 @@ const data: DataProvider = {
 
 const tinyPlans: Record<Plan, PlanLimits> = {
   ...PLANS,
-  pilot: { api: true, requestsPerMinute: 3, requestsPerDay: 5, maxLookbackMs: 60 * 60 * 1000 },
+  pilot: { api: true, requestsPerMinute: 3, requestsPerDay: 5, maxLookbackMs: 60 * 60 * 1000, pointsPerDay: 1_000 },
 };
 
 async function withApp(

@@ -197,7 +197,7 @@ func TestAssessLevels(t *testing.T) {
 		{"pressure critical", func(s *Sample) { s.Pressure = "critical" }, LevelBlock, "mem-critical"},
 		{"pressure warn, just started", func(s *Sample) { s.Pressure = "warn" }, LevelWatch, "mem-warn"},
 		{"pressure unknown", func(s *Sample) { s.Pressure = "" }, LevelWatch, "pressure-unknown"},
-		{"swap at the balance limit", func(s *Sample) { s.SwapGB = 4.2 }, LevelRisk, "swap-high"},
+		{"swap at the balance limit, no calm hour on record", func(s *Sample) { s.SwapGB = 4.2 }, LevelRisk, "swap-high"},
 		{"no headroom is information, not risk", func(s *Sample) { s.RAMGB, s.InRAMGB = 8, 7.5 }, LevelOK, "no-headroom"},
 		{"battery at the floor", func(s *Sample) { s.Batt = battery(9, false) }, LevelBlock, "battery-floor"},
 		{"battery low", func(s *Sample) { s.Batt = battery(18, false) }, LevelRisk, "battery-low"},
@@ -241,6 +241,43 @@ func TestAssessTrends(t *testing.T) {
 		t.Errorf("warn %d min, swap +%v GB; want 40, 1.2", a.WarnMin, a.SwapRiseGB)
 	}
 
+	// High swap after a calm hour is stale (macOS keeps it allocated): watch, not risk.
+	// A warn reading, a gap or growth within the hour keeps it a risk.
+	hour := func(edit func(i int, s *Sample)) []Sample {
+		var h []Sample
+		for i := 60; i > 0; i -= 5 {
+			s := calm()
+			s.At, s.SwapGB = t0.Add(-time.Duration(i)*time.Minute), 4.6
+			edit(i, &s)
+			h = append(h, s)
+		}
+		return h
+	}
+	stale := calm()
+	stale.SwapGB = 4.6
+	for _, c := range []struct {
+		name  string
+		edit  func(i int, s *Sample)
+		level Level
+	}{
+		{"calm hour, swap flat", func(int, *Sample) {}, LevelWatch},
+		{"warn 30 min ago", func(i int, s *Sample) {
+			if i == 30 {
+				s.Pressure = "warn"
+			}
+		}, LevelRisk},
+		{"swap still climbing", func(i int, s *Sample) { s.SwapGB = 4.6 - float64(i)*0.01 }, LevelRisk},
+		{"readings only for the last 30 min", func(i int, s *Sample) {
+			if i > 30 {
+				s.At = s.At.Add(-2 * time.Hour)
+			}
+		}, LevelRisk},
+	} {
+		if as := assess(hour(c.edit), stale); as.Level != c.level || !strings.Contains(codes(as), "swap-high") {
+			t.Errorf("%s: %s [%s], want %s", c.name, as.Level, codes(as), c.level)
+		}
+	}
+
 	// A 20 min gap (lid shut, Argo off) is not time at warn.
 	gap := []Sample{hist[0]}
 	gap[0].At = t0.Add(-20 * time.Minute)
@@ -268,7 +305,7 @@ func TestAssessTrends(t *testing.T) {
 	}
 	cur.Batt = &Battery{Present: true, Pct: 50, OnAC: true}
 	if a := assess(drainHist[:len(drainHist)-1], cur); !a.ChargerBehind || a.Level != LevelRisk {
-		t.Errorf("charger behind: %+v", a)
+		t.Errorf("charger behind, floor 1.3 h away (30 %%/h from 50 %%): want risk: %+v", a)
 	}
 }
 
@@ -358,6 +395,15 @@ func TestAdmit(t *testing.T) {
 	}
 	if yes, why := admit(watch, 2); yes || !strings.Contains(why, "light work only") {
 		t.Errorf("watch admitted 2 GB: %s", why)
+	}
+	d := calm()
+	d.DiskGB = 16
+	if yes, why := admit(assess(nil, d), 1.4); !yes {
+		t.Errorf("a tight disk alone capped a 1.4 GB job: %s", why)
+	}
+	d.Batt = &Battery{Present: true, Pct: 80}
+	if yes, _ := admit(assess(nil, d), 1.4); yes {
+		t.Error("tight disk plus another watch finding should keep the light-job cap")
 	}
 	r := calm()
 	r.Pressure = "critical"
@@ -513,7 +559,7 @@ func fakeRunner(t *testing.T, levels ...Assessment) guardRunner {
 	i := 0
 	return guardRunner{
 		store: Store{Dir: filepath.Join(t.TempDir(), "not-yet-created")}, out: io.Discard, every: 20 * time.Millisecond, retry: 10 * time.Millisecond,
-		grace: 2 * time.Second, strikes: 2,
+		grace: 2 * time.Second, strikes: 2, first: 10 * time.Millisecond,
 		assess: func() (Sample, Assessment) {
 			a := levels[min(i, len(levels)-1)]
 			i++
@@ -570,7 +616,334 @@ func TestGuardRun(t *testing.T) {
 	}
 
 	// Waiting: refused at first, admitted once the host recovers.
-	if yes, why := fakeRunner(t, block, block, ok).waitAdmit(0, time.Second); !yes {
+	if yes, why, _, _ := fakeRunner(t, block, block, ok).waitAdmit("", 0, time.Second); !yes {
 		t.Errorf("waitAdmit gave up: %s", why)
+	}
+}
+
+// ---- coping at warn (2026-10-31) ----
+
+func TestAvailAndSwapOut(t *testing.T) {
+	if got := availGB("43\n", 8); got != 3.4 {
+		t.Errorf("availGB(43%%, 8 GB) = %v, want 3.4", got)
+	}
+	for _, bad := range []string{"", "x", "0", "101"} {
+		if got := availGB(bad, 8); got != 0 {
+			t.Errorf("availGB(%q) = %v, want 0 (unknown)", bad, got)
+		}
+	}
+	vm := "Mach Virtual Memory Statistics: (page size of 16384 bytes)\nSwapouts:                                      65536.\n"
+	if got := swapOutGB(vm); got != 1 {
+		t.Errorf("swapOutGB = %v, want 1 (65536 pages of 16 KB)", got)
+	}
+}
+
+// warnHost is this 8 GB Mac on a typical afternoon: warn for the whole hour,
+// swap flat, the kernel counting avail GB as available, swapping out mbMin MB a
+// minute between one-minute readings.
+func warnHost(avail, mbMin float64) ([]Sample, Sample) {
+	var hist []Sample
+	for i := 40; i >= 0; i-- {
+		s := Sample{At: t0.Add(-time.Duration(i) * time.Minute), Pressure: "warn", RAMGB: 8, InRAMGB: 7.5,
+			SwapGB: 2, DiskGB: 200, CPUs: 8, Load1: 2, SpeedPct: 100, AvailGB: avail,
+			SwapOutGB: 10 + float64(40-i)*mbMin/1024}
+		hist = append(hist, s)
+	}
+	return hist[:len(hist)-1], hist[len(hist)-1]
+}
+
+func TestCopingAtWarn(t *testing.T) {
+	hist, cur := warnHost(3.4, 1)
+	a := assess(hist, cur)
+	if !a.Coping || a.Level != LevelWatch || !strings.Contains(codes(a), "mem-warn-coping") || strings.Contains(codes(a), "mem-warn-sustained") {
+		t.Fatalf("40 min of warn, 1 MB/min paging, 3.4 GB available: %s [%s] coping=%v paging=%v", a.Level, codes(a), a.Coping, a.PagingMBMin)
+	}
+	if a.PagingMBMin != 1 || a.AvailRoomGB != 1.9 {
+		t.Errorf("paging %v MB/min, room %v GB; want 1, 1.9", a.PagingMBMin, a.AvailRoomGB)
+	}
+	if yes, why := admit(a, 1.5); !yes || !strings.Contains(why, "coping") {
+		t.Errorf("coping host refused a 1.5 GB job (the old light-job cap is 1 GB): %s", why)
+	}
+	if yes, why := admit(a, 2.5); yes || !strings.Contains(why, "available") {
+		t.Errorf("coping host admitted 2.5 GB with 1.9 GB of room: %s", why)
+	}
+
+	// Paging fast: short, whatever the flag says, and nothing starts.
+	hist, cur = warnHost(3.4, 200)
+	if a := assess(hist, cur); a.Coping || a.Level != LevelRisk || !strings.Contains(codes(a), "mem-paging") {
+		t.Errorf("200 MB/min swap-out: %s [%s] coping=%v", a.Level, codes(a), a.Coping)
+	} else if yes, _ := admit(a, 0.3); yes {
+		t.Error("admitted a job while the host swaps out 200 MB/min")
+	}
+
+	// No earlier reading (or an old Argo's history without counters): unknown
+	// paging is not coping, so the old sustained-warn rule still applies.
+	hist, cur = warnHost(3.4, 1)
+	for i := range hist {
+		hist[i].SwapOutGB = 0
+	}
+	if a := assess(hist, cur); a.Coping || a.PagingMBMin != -1 || !strings.Contains(codes(a), "mem-warn-sustained") {
+		t.Errorf("unknown paging: coping=%v paging=%v [%s]", a.Coping, a.PagingMBMin, codes(a))
+	}
+
+	// Nothing available after the reserve: not coping.
+	hist, cur = warnHost(1.2, 1)
+	if a := assess(hist, cur); a.Coping {
+		t.Errorf("1.2 GB available (under the 1.5 GB reserve) counted as coping")
+	}
+
+	// A reboot resets the counter: unknown, not negative.
+	hist, cur = warnHost(3.4, 1)
+	cur.SwapOutGB = 0.01
+	if p := paging(hist, cur); p != -1 {
+		t.Errorf("counter went back: paging %v, want -1", p)
+	}
+}
+
+func TestAdmitUsesAvailableAtNormal(t *testing.T) {
+	// 31 Oct 12:41: pressure normal, 6.0 of 8 GB held by work (0.5 GB after the reserve), but the
+	// kernel counted ~3.4 GB available and nothing was paging. A 1 GB job was refused at normal
+	// that would have started at warn.
+	hist, cur := warnHost(3.4, 1)
+	for i := range hist {
+		hist[i].Pressure = "normal"
+	}
+	cur.Pressure, cur.InRAMGB = "normal", 6.0
+	a := assess(hist, cur)
+	if a.HeadroomGB != 0.5 || a.AvailRoomGB != 1.9 {
+		t.Fatalf("headroom %v, room %v; want 0.5, 1.9", a.HeadroomGB, a.AvailRoomGB)
+	}
+	if yes, why := admit(a, 1); !yes {
+		t.Errorf("normal pressure, 1.9 GB available after the reserve, refused 1 GB: %s", why)
+	}
+	if yes, _ := admit(a, 2.5); yes {
+		t.Error("admitted 2.5 GB with 1.9 GB available")
+	}
+	// Paging unknown: only RAM not held by work counts, as before.
+	for i := range hist {
+		hist[i].SwapOutGB = 0
+	}
+	if yes, _ := admit(assess(hist, cur), 1); yes {
+		t.Error("admitted 1 GB on 0.5 GB headroom with paging unknown")
+	}
+}
+
+// TestSlowChargerIsAWatchAndDoesNotCapRAM (2 Nov, Josh: "the 8W should be fine"): an 8 W
+// charger losing 4 %/h at 40 % is ~7.5 h from the floor, so a 1.8 GB gate may start.
+func TestSlowChargerIsAWatchAndDoesNotCapRAM(t *testing.T) {
+	if h := float64(40-batteryFloorPct) / 4; h < chargerBehindRiskH {
+		t.Fatalf("test premise: %.1f h to the floor", h)
+	}
+	slow := Assessment{Level: LevelWatch, HeadroomGB: 3, Findings: []Finding{{Resource: "battery", Code: "charger-behind", Level: LevelWatch}}}
+	if ok, why := admit(slow, 1.8); !ok {
+		t.Fatalf("a slow charger capped a 1.8 GB gate: %s", why)
+	}
+	onBatt := Assessment{Level: LevelWatch, HeadroomGB: 3, Findings: []Finding{{Resource: "battery", Code: "on-battery", Level: LevelWatch}}}
+	if ok, _ := admit(onBatt, 1.8); ok {
+		t.Fatal("running on battery must keep the light-work cap")
+	}
+}
+
+// ---- eclipse energy budget (eclipse.go) ----
+
+func battRun(name string, start, end int) JobRun {
+	return JobRun{At: t0, Name: name, PeakGB: 1, Outcome: "exit 0", BattStart: start, BattEnd: end, OnBatt: true}
+}
+
+func eclipseSample(pct int) Sample {
+	s := calm()
+	s.Batt = &Battery{Present: true, Pct: pct}
+	return s
+}
+
+func TestBatteryCost(t *testing.T) {
+	if c, n := batteryCost(nil, "gates"); c != eclipseDefaultCost || n != 0 {
+		t.Errorf("no runs: %d%% from %d, want the %d%% default", c, n, eclipseDefaultCost)
+	}
+	two := []JobRun{battRun("gates", 60, 54), battRun("gates", 54, 48)}
+	if c, n := batteryCost(two, "gates"); c != eclipseDefaultCost || n != 0 {
+		t.Errorf("two runs: %d%% from %d, want the default until 3", c, n)
+	}
+	ac := battRun("gates", 60, 50)
+	ac.OnBatt = false // plugged in at one end: not a battery cost
+	paused := battRun("gates", 70, 50)
+	paused.PauseSecs = 600 // a paused job's drop is the rest of the Mac's
+	charged := battRun("gates", 40, 45)
+	runs := []JobRun{
+		battRun("gates", 90, 70), // oldest: falls out of the newest five
+		battRun("gates", 80, 73), battRun("gates", 73, 68), ac, paused, charged,
+		battRun("gates-on-battery-4242", 68, 62), // claude-heavy's override name teaches the job's own cost
+		battRun("e2e", 60, 30),                   // another job
+		battRun("gates", 62, 58), battRun("gates", 58, 49),
+	}
+	// Newest five gates runs on battery: 9, 4, 6, 5, 7 -> sorted 4 5 6 7 9 -> median 6.
+	if c, n := batteryCost(runs, "gates"); c != 6 || n != 5 {
+		t.Errorf("gates cost %d%% from %d runs, want 6%% from 5", c, n)
+	}
+	// claude-heavy's median of an even count is the upper one: 2, 3, 5, 6 -> 5.
+	even := []JobRun{battRun("go", 50, 48), battRun("go", 48, 45), battRun("go", 45, 40), battRun("go", 40, 34)}
+	if c, _ := batteryCost(even, "go"); c != 5 {
+		t.Errorf("even count: %d%%, want the upper median 5%%", c)
+	}
+	// Runs too short to move the battery still cost at least 1%.
+	flat := []JobRun{battRun("lint", 50, 50), battRun("lint", 50, 50), battRun("lint", 50, 50)}
+	if c, n := batteryCost(flat, "lint"); c != 1 || n != 3 {
+		t.Errorf("flat runs: %d%% from %d, want 1%% from 3", c, n)
+	}
+}
+
+func TestUnpluggedPlan(t *testing.T) {
+	if h := planHours(time.Time{}, t0); h != 0 {
+		t.Errorf("no plan: %d h", h)
+	}
+	if h := planHours(t0.Add(-time.Minute), t0); h != 0 {
+		t.Errorf("a passed plan: %d h", h)
+	}
+	if h := planHours(t0.Add(3*time.Hour+time.Minute), t0); h != 4 {
+		t.Errorf("3 h 1 min left: %d h, want 4 (rounded up, as claude-heavy)", h)
+	}
+	if h := planHours(t0.Add(2*time.Hour), t0); h != 2 {
+		t.Errorf("exactly 2 h left: %d h", h)
+	}
+	dir := t.TempDir()
+	plan := filepath.Join(dir, "gauss-unplugged")
+	if !readPlan(plan).IsZero() || !readPlan("").IsZero() {
+		t.Error("a missing plan file should read as no plan")
+	}
+	_ = os.WriteFile(plan, []byte(strconv.FormatInt(t0.Add(4*time.Hour).Unix(), 10)+"\n"), 0o600)
+	if got := readPlan(plan); !got.Equal(t0.Add(4 * time.Hour)) {
+		t.Errorf("plan read as %v", got)
+	}
+	_ = os.WriteFile(plan, []byte("soon"), 0o600)
+	if !readPlan(plan).IsZero() {
+		t.Error("garbage in the plan file should read as no plan")
+	}
+}
+
+func TestEclipseBudgetAdmission(t *testing.T) {
+	gates := []JobRun{battRun("gates", 80, 74), battRun("gates", 74, 68), battRun("gates", 68, 62)} // 6%/run
+	if e := eclipseFor(calm(), gates, "gates", time.Time{}); e != nil {
+		t.Fatalf("no battery: budget %+v", e)
+	}
+	plugged := eclipseSample(40)
+	plugged.Batt.OnAC = true
+	if e := eclipseFor(plugged, gates, "gates", time.Time{}); e != nil {
+		t.Fatalf("on AC: budget %+v", e)
+	}
+
+	cases := []struct {
+		name  string
+		pct   int
+		runs  []JobRun
+		plan  time.Duration // 0 = no unplugged plan
+		mem   float64
+		admit bool
+		want  string
+	}{
+		{"measured cost fits: 30 + 6 = 36", 36, gates, 0, 1.8, true, "within the eclipse budget of 36%"},
+		{"one short of the measured budget", 35, gates, 0, 1.8, false, "needs 36% (30% reserve + gates ~6%/run (median of 3 measured))"},
+		{"unknown job: 30 + 8 default = 38", 37, nil, 0, 1.8, false, "needs 38%"},
+		{"unknown job at the default budget", 38, nil, 0, 1.8, true, "default until 3 runs"},
+		{"4 h unplugged: 30 + 6 + 24 = 60", 59, gates, 3*time.Hour + 30*time.Minute, 1.8, false, "+ 4 h unplugged x 6%/h"},
+		{"4 h unplugged, enough battery", 60, gates, 3*time.Hour + 30*time.Minute, 1.8, true, "eclipse budget of 60%"},
+		{"a light job ignores the budget", 32, nil, 0, 0.5, true, "ok"},
+		{"battery-low stays a risk", 18, gates, 0, 1.8, false, "host at risk"},
+		{"the 10% floor still blocks", 9, gates, 0, 0.3, false, "host at block"},
+		{"well over budget, RAM still checked", 90, gates, 0, 25, false, "GB free after keeping"},
+	}
+	for _, c := range cases {
+		cur := eclipseSample(c.pct)
+		plan := time.Time{}
+		if c.plan > 0 {
+			plan = cur.At.Add(c.plan)
+		}
+		ok, why := admitIn(assess(nil, cur), c.mem, eclipseFor(cur, c.runs, "gates", plan))
+		if ok != c.admit || !strings.Contains(why, c.want) {
+			t.Errorf("%s: admitted %v (%s), want %v with %q", c.name, ok, why, c.admit, c.want)
+		}
+	}
+
+	// Battery-draining (under an hour to the floor) is still a risk, budget or not.
+	d := eclipseSample(70)
+	d.Batt.RemainMin = 60
+	if ok, why := admitIn(assess(nil, d), 1.8, eclipseFor(d, gates, "gates", time.Time{})); ok || !strings.Contains(why, "min to the 10% floor") {
+		t.Errorf("draining battery admitted a gate: %s", why)
+	}
+	// Another watch finding (memory at warn, not coping) keeps the light-work cap within budget.
+	w := eclipseSample(90)
+	w.Pressure = "warn"
+	if ok, why := admitIn(assess(nil, w), 1.8, eclipseFor(w, gates, "gates", time.Time{})); ok || !strings.Contains(why, "light work only") {
+		t.Errorf("memory warn on battery admitted a 1.8 GB job: %s", why)
+	}
+	// Without a budget (mesh callers), on battery keeps the cap as before.
+	if ok, _ := admitIn(assess(nil, eclipseSample(90)), 1.8, nil); ok {
+		t.Error("no budget: on battery admitted a 1.8 GB job")
+	}
+}
+
+// TestGuardRunEclipseBudget: a guarded run on battery is admitted within its budget, refused outside it
+// (the unplugged plan raising the need), and records battery % at both ends for the next budget.
+func TestGuardRunEclipseBudget(t *testing.T) {
+	pcts := []int{50, 47} // admission, then the reading when the job ends
+	r := fakeRunner(t)
+	r.name = "gates"
+	i := 0
+	r.assess = func() (Sample, Assessment) {
+		s := eclipseSample(pcts[min(i, len(pcts)-1)])
+		s.At = time.Now()
+		i++
+		return s, assess(nil, s)
+	}
+	if code, err := r.run(1.8, 0, 0, []string{"sleep", "0.1"}); err != nil || code != 0 {
+		t.Fatalf("a 1.8 GB job at 50%% on battery (needs 38%%): exit %d %v", code, err)
+	}
+	runs := r.store.jobRuns()
+	if len(runs) != 1 || runs[0].BattStart != 50 || runs[0].BattEnd != 47 || !runs[0].OnBatt {
+		t.Fatalf("battery not recorded: %+v", runs)
+	}
+
+	// Two hours unplugged: 30 + 8 + 12 = 50%, so the next run at 47% waits, and never starts.
+	plan := filepath.Join(t.TempDir(), "gauss-unplugged")
+	_ = os.WriteFile(plan, []byte(strconv.FormatInt(time.Now().Add(2*time.Hour-time.Minute).Unix(), 10)), 0o600)
+	r.planFile, pcts, i = plan, []int{47}, 0
+	marker := filepath.Join(t.TempDir(), "ran")
+	if code, _ := r.run(1.8, 0, 0, []string{"touch", marker}); code != exitTempFail {
+		t.Errorf("over-budget job exit %d, want 75", code)
+	}
+	if _, err := os.Stat(marker); err == nil {
+		t.Error("an over-budget job ran")
+	}
+	if b, _ := os.ReadFile(r.store.path("guard.log")); !strings.Contains(string(b), "needs 50%") {
+		t.Errorf("refusal doesn't give the budget: %s", b)
+	}
+
+	// On AC the battery is still recorded, but not as a battery cost.
+	r.planFile = ""
+	r.assess = func() (Sample, Assessment) {
+		s := eclipseSample(60)
+		s.Batt.OnAC = true
+		return s, assess(nil, s)
+	}
+	if code, _ := r.run(1.8, 0, 0, []string{"sleep", "0.1"}); code != 0 {
+		t.Fatalf("on AC: exit %d", code)
+	}
+	if runs = r.store.jobRuns(); len(runs) != 2 || runs[1].OnBatt || runs[1].BattStart != 60 {
+		t.Errorf("AC run recorded as %+v", runs[len(runs)-1])
+	}
+}
+
+func TestEclipseText(t *testing.T) {
+	runs := []JobRun{battRun("gates", 80, 74), battRun("gates", 74, 68), battRun("gates", 68, 62), battRun("e2e", 60, 50)}
+	out := eclipseText(eclipseSample(37), runs, time.Time{})
+	for _, want := range []string{"on battery at 37%", "gates", "36%  starts", "e2e", "38%  waits"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("eclipse text lacks %q:\n%s", want, out)
+		}
+	}
+	if out := eclipseText(calm(), runs, time.Time{}); out != "" {
+		t.Errorf("no battery, no plan: %q", out)
+	}
+	if out := eclipseText(calm(), runs, t0.Add(90*time.Minute)); !strings.Contains(out, "2 h left") || !strings.Contains(out, "= 42%") {
+		t.Errorf("plan line: %q", out)
 	}
 }

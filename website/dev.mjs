@@ -1,4 +1,4 @@
-// Local preview of lightbound.uk with the real Worker code: node website/dev.mjs [--port 8788] [--offline]
+// Local preview of lightbound.space with the real Worker code: node website/dev.mjs [--port 8788] [--offline]
 // Emulates what Cloudflare provides: static assets from public/ (with _headers, trailing-slash
 // handling, 404 page and byte ranges for the film), run_worker_first routing from wrangler.jsonc,
 // in-memory KV (LIVE and DATA), the 15-minute cron, Cloudflare Access for /app/* (a local key pair
@@ -17,7 +17,7 @@ import { putAccount, saveApplication } from "./worker/data.js";
 import { saveCall } from "./worker/calls.js";
 import { signPayload } from "./worker/stripe.js";
 import { esc } from "./worker/render.js";
-import { gbp } from "./worker/tiers.js";
+import { usd } from "./worker/tiers.js";
 import { fixtureFetch } from "./test/fixtures/fetch.mjs";
 import { PROGRAMMES_URL } from "./test/fixtures/opportunities.mjs";
 import { memoryKV } from "./test/fixtures/kv.mjs";
@@ -123,6 +123,9 @@ const env = {
   // Staff and the members' programme list (both secrets in production). Offline, the programmes come from a synthetic tab.
   STAFF_EMAILS: process.env.STAFF_EMAILS ?? "staff@example.test",
   OPS_URL: process.env.OPS_URL ?? "https://ops.example.test/",
+  // The workspace's "Open the Gauss console" button; empty = "link is coming by email". To walk site -> console locally:
+  // GAUSS_APP_URL=http://127.0.0.1:5174/ npm run site:dev, beside scripts/ops/gauss-services.sh dev <checkout>.
+  GAUSS_APP_URL: process.env.GAUSS_APP_URL ?? "",
   PROGRAMMES_CSV_URL: process.env.PROGRAMMES_CSV_URL ?? (offline ? PROGRAMMES_URL : ""),
 };
 const admin = String(env.ADMIN_EMAILS).split(",")[0].trim();
@@ -148,7 +151,7 @@ setInterval(refresh, 15 * 60_000).unref();
 const cookie = (req, name) => (req.headers.cookie ?? "").split(";").map((c) => c.trim().split("=")).find(([k]) => k === name)?.[1];
 const devLogin = (redirect) => `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Sign in (local) · Lightbound</title><link rel="stylesheet" href="/assets/site.css">
 <main class="vault wrap"><div class="narrow"><p class="k">LOCAL_PREVIEW · CLOUDFLARE_ACCESS</p><h1>Sign in</h1>
-<p class="muted">On lightbound.uk, Cloudflare Access shows its own sign-in page and emails a one-time code. Locally, pick who to be:</p>
+<p class="muted">On lightbound.space, Cloudflare Access shows its own sign-in page and emails a one-time code. Locally, pick who to be:</p>
 <p class="actions"><a class="btn" href="/__dev/login?as=${encodeURIComponent(admin)}&amp;redirect=${encodeURIComponent(redirect)}">Admin (${admin})</a>
 <a class="btn ghost" href="/__dev/login?as=pilot%40example.test&amp;redirect=${encodeURIComponent(redirect)}">Approved, payment due (invoice allowed)</a>
 <a class="btn ghost" href="/__dev/login?as=fleet%40example.test&amp;redirect=${encodeURIComponent(redirect)}">Fleet Integration, active</a>
@@ -174,7 +177,7 @@ async function deliver(type, object) {
   console.log("stripe stand-in ->", type, res.status);
 }
 const standInPage = (title, body) => `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${title} (local Stripe stand-in)</title><link rel="stylesheet" href="/assets/site.css">
-<main class="vault wrap"><div class="narrow"><p class="k">LOCAL_PREVIEW · STRIPE_STAND_IN</p>${body}<p class="muted">On lightbound.uk this is Stripe's own page. Nothing here is charged.</p></div></main>`;
+<main class="vault wrap"><div class="narrow"><p class="k">LOCAL_PREVIEW · STRIPE_STAND_IN</p>${body}<p class="muted">On lightbound.space this is Stripe's own page. Nothing here is charged.</p></div></main>`;
 
 async function stripeStandIn(req, url, send) {
   const html = (body) => send(200, { "content-type": "text/html; charset=utf-8" }, body);
@@ -231,7 +234,7 @@ async function stripeStandIn(req, url, send) {
       if (subscription) await deliver("customer.subscription.created", { id: subscription, status: "active", customer: cs.customer, metadata: meta });
       return send(303, { location: cs.success });
     }
-    const price = cs.product ? `$${cs.amount / 100} a month` : `${gbp(cs.amount)}${cs.yearly ? " a year" : ""}`;
+    const price = cs.product ? `$${cs.amount / 100} a month` : `${usd(cs.amount)}${cs.yearly ? " a year" : ""}`;
     return html(standInPage("Checkout", `<h1>${esc(cs.name)}</h1><p class="lead">${esc(price)} · ${esc(cs.email)}</p>
 <form method="post" action="/__stripe/checkout/${cs.id}/pay"><p class="actions"><button class="btn">Pay (test)</button> <a class="btn ghost" href="${esc(cs.cancel)}">Cancel</a></p></form>`));
   }
@@ -243,7 +246,7 @@ async function stripeStandIn(req, url, send) {
       return send(303, { location: "/app/" });
     }
     const due = inv.due_date ? new Date(inv.due_date * 1000).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }) : "";
-    return html(standInPage("Invoice", `<h1>${esc(inv.description)}</h1><p class="lead">${esc(gbp(inv.amount))} · ${esc(inv.metadata.email)}${due ? ` · due ${esc(due)}` : ""} · ${esc(inv.status)}</p>` +
+    return html(standInPage("Invoice", `<h1>${esc(inv.description)}</h1><p class="lead">${esc(usd(inv.amount))} · ${esc(inv.metadata.email)}${due ? ` · due ${esc(due)}` : ""} · ${esc(inv.status)}</p>` +
       (inv.status === "open" ? `<div class="actions"><form method="post" action="/__stripe/invoice/${inv.id}/pay" class="inline"><button class="btn">Pay invoice (test)</button></form>` +
         `<form method="post" action="/__stripe/invoice/${inv.id}/void" class="inline"><button class="btn ghost">Void (test)</button></form></div>` : "") +
       `<p class="actions"><a class="btn ghost" href="/app/">Back to Lightbound</a></p>`));
@@ -305,4 +308,4 @@ createServer(async (req, res) => {
     console.error(err);
     res.writeHead(500).end("dev server error\n");
   }
-}).listen(port, "127.0.0.1", () => console.log(`lightbound.uk preview on http://127.0.0.1:${port}/${offline ? " (offline fixtures)" : ""}  ·  sign in: /app/`));
+}).listen(port, "127.0.0.1", () => console.log(`lightbound.space preview on http://127.0.0.1:${port}/${offline ? " (offline fixtures)" : ""}  ·  sign in: /app/`));

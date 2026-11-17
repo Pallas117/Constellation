@@ -114,7 +114,22 @@ export interface MeshBattery {
   charging: boolean;
   lowPower: boolean;
   external?: boolean; // on mains power (Argo sends it; phones don't)
+  power?: MeshPower; // Argo's power budget (tools/argo/power.go); phones don't send it
 }
+
+/**
+ * Argo's SWaP power budget: the charger's derated supply, what the machine draws and the margin.
+ * negative = plugged in but the battery still covers part of the load; eclipse = on battery.
+ */
+export interface MeshPower {
+  mode: "positive" | "negative" | "eclipse";
+  sourceW: number;
+  loadW: number;
+  marginW: number;
+}
+const POWER_MODES: readonly MeshPower["mode"][] = ["positive", "negative", "eclipse"];
+/** Below this margin a device takes light work only: one more worker would put it in deficit. */
+export const MIN_POWER_MARGIN_W = 5;
 
 /**
  * Argo's resource guard (tools/argo/guard.go, GAU-195): the host's own risk
@@ -125,6 +140,8 @@ export interface MeshBattery {
 export const GUARD_CODE_TEXT = {
   "mem-critical": "memory pressure critical",
   "mem-warn-sustained": "memory at warn for 30+ of the last 60 min",
+  "mem-paging": "swapping out fast: memory short",
+  "mem-warn-coping": "memory at warn but coping",
   "mem-warn": "memory pressure at warn",
   "pressure-unknown": "memory pressure unknown",
   "swap-rising": "swap climbing at warn",
@@ -143,6 +160,7 @@ export const GUARD_CODE_TEXT = {
   "cpu-throttled": "CPU throttled",
   "cpu-saturated": "CPU saturated",
   "cpu-busy": "CPU busy",
+  "owner-busy": "its owner is using it",
 } as const;
 export type GuardCode = keyof typeof GUARD_CODE_TEXT;
 export const GUARD_LEVELS = ["ok", "watch", "risk", "block"] as const;
@@ -215,6 +233,8 @@ export function assessHosting(host?: MeshHost, platform?: MeshPlatform, ctx: Hos
   const onBattery = b ? (b.external ?? b.charging) === false : false;
   if (b && onBattery && b.level <= 20) cap("no", `battery ${b.level}% on battery power`);
   else if (b && onBattery) cap("light", "on battery power: light work only");
+  else if (b?.power?.mode === "negative") cap("light", `the charger can't carry the load: drawing ${b.power.loadW} W from ${b.power.sourceW} W`);
+  else if (b?.power?.mode === "positive" && b.power.marginW < MIN_POWER_MARGIN_W) cap("light", `only ${b.power.marginW} W of power margin`);
   const g = ctx.guard;
   const guardFresh = g && ctx.receivedAt && Math.abs(Date.parse(ctx.receivedAt) - Date.parse(g.at)) <= MESH_STALE_MS;
   if (g && guardFresh) {
@@ -244,7 +264,57 @@ export interface MeshDevice {
   rejectedAt?: string;
 }
 
-export type MeshDeviceView = Omit<MeshDevice, "tokenHash" | "keys"> & { hosting: HostingVerdict; hostingWhy: string[]; keyFingerprint?: string };
+export type MeshDeviceView = Omit<MeshDevice, "tokenHash" | "keys"> & {
+  hosting: HostingVerdict;
+  hostingWhy: string[];
+  memory: MemoryState;
+  memoryWhy: string[];
+  keyFingerprint?: string;
+};
+
+/**
+ * Fleet memory watch (GAU-240): where each device's memory stands, from what its Argo already
+ * reports (guard finding codes, kernel pressure). Nothing is inferred: a stale report, a phone or
+ * an Argo without a memory reading is "unknown", never "ok".
+ * critical = the device may freeze or kill processes soon; risk = it is heading there.
+ */
+export const MEMORY_STATES = ["ok", "watch", "risk", "critical", "unknown"] as const;
+export type MemoryState = (typeof MEMORY_STATES)[number];
+const MEMORY_RANK: Record<MemoryState, number> = { unknown: -1, ok: 0, watch: 1, risk: 2, critical: 3 };
+const MEM_CRITICAL: readonly GuardCode[] = ["mem-critical", "mem-paging"];
+const MEM_RISK: readonly GuardCode[] = ["mem-warn-sustained", "swap-rising", "swap-high"];
+const MEM_WATCH: readonly GuardCode[] = ["mem-warn", "mem-warn-coping", "no-headroom"];
+
+export function assessMemory(last: MeshReport | undefined, now = new Date()): { state: MemoryState; why: string[] } {
+  if (!last) return { state: "unknown", why: ["no report yet"] };
+  if (last.platform && PHONES.has(last.platform)) return { state: "unknown", why: ["phones don't report memory"] };
+  const age = now.getTime() - Date.parse(last.receivedAt);
+  if (!(age <= MESH_STALE_MS)) return { state: "unknown", why: [`no report for ${Math.round(age / 60_000)} min`] };
+  const g = last.guard && Math.abs(Date.parse(last.receivedAt) - Date.parse(last.guard.at)) <= MESH_STALE_MS ? last.guard : undefined;
+  const pressure = last.host?.pressure ?? "";
+  if (!g && !pressure) return { state: "unknown", why: ["no memory reading in the report"] };
+  const codes = g?.reasons ?? [];
+  const texts = (set: readonly GuardCode[]) => codes.filter((c) => set.includes(c)).map((c) => GUARD_CODE_TEXT[c]);
+  const critical = texts(MEM_CRITICAL);
+  if (pressure === "critical" && critical.length === 0) critical.push("memory pressure critical");
+  if (critical.length > 0) return { state: "critical", why: critical };
+  const risk = texts(MEM_RISK);
+  // "No spare RAM" alone is a full machine, not a failing one, unless Argo itself rates the host at risk.
+  if (codes.includes("no-headroom") && (g?.level === "risk" || g?.level === "block")) risk.push(GUARD_CODE_TEXT["no-headroom"]);
+  if (risk.length > 0) return { state: "risk", why: risk };
+  const watch = texts(MEM_WATCH);
+  if (pressure === "warn" && watch.length === 0) watch.push("memory pressure at warn");
+  if (watch.length > 0) return { state: "watch", why: watch };
+  return { state: "ok", why: [] };
+}
+
+/** One line per device in the derived file a local watcher reads (scripts/ops/gauss-services.sh, awake guard). */
+export interface FleetMemoryEntry {
+  name: string;
+  state: MemoryState;
+  why: string[];
+  reportedAt: string | null;
+}
 
 const NAME_RE = /^[a-z0-9][a-z0-9-]{0,62}$/;
 const MAX_TEXT = 200;
@@ -256,6 +326,19 @@ const text = (value: unknown, max = MAX_TEXT) => (typeof value === "string" ? va
 const num = (value: unknown, max: number) =>
   typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= max ? Math.round(value * 10) / 10 : null;
 
+/** Argo's power block; a bad mode or number drops it (the battery block itself stays). */
+export function parsePower(value: unknown): MeshPower | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const p = value as Record<string, unknown>;
+  const mode = POWER_MODES.includes(p.mode as MeshPower["mode"]) ? (p.mode as MeshPower["mode"]) : null;
+  const watts = (v: unknown) => (v === undefined ? 0 : num(v, 1000)); // omitted means 0 (Go's omitempty)
+  const sourceW = watts(p.sourceW);
+  const loadW = watts(p.loadW);
+  const marginW = typeof p.marginW === "number" && Number.isFinite(p.marginW) && Math.abs(p.marginW) <= 1000 ? Math.round(p.marginW * 10) / 10 : null;
+  if (!mode || sourceW === null || loadW === null || marginW === null) return undefined;
+  return { mode, sourceW, loadW, marginW };
+}
+
 /** Battery from a phone reporter: integer percent 0-100 and two flags; anything else drops the block. */
 export function parseBattery(value: unknown): MeshBattery | undefined {
   if (!value || typeof value !== "object") return undefined;
@@ -265,7 +348,14 @@ export function parseBattery(value: unknown): MeshBattery | undefined {
   const level = raw > 0 && raw <= 1 && !Number.isInteger(raw) ? Math.round(raw * 100) : Math.round(raw);
   if (!(level >= 0 && level <= 100)) return undefined;
   if (typeof b.charging !== "boolean") return undefined;
-  return { level, charging: b.charging, lowPower: b.lowPower === true, ...(typeof b.external === "boolean" ? { external: b.external } : {}) };
+  const power = parsePower(b.power);
+  return {
+    level,
+    charging: b.charging,
+    lowPower: b.lowPower === true,
+    ...(typeof b.external === "boolean" ? { external: b.external } : {}),
+    ...(power ? { power } : {}),
+  };
 }
 
 const isGuardCode = (c: unknown): c is GuardCode => typeof c === "string" && Object.hasOwn(GUARD_CODE_TEXT, c);
@@ -405,10 +495,39 @@ export class MeshStore {
     return undefined;
   }
 
-  record(device: MeshDevice, report: MeshReport): void {
+  /**
+   * Stores the report. Returns the device's memory state when this report made it worse and it is
+   * now at risk or critical, so the caller can log it once per change, not once per report.
+   */
+  record(device: MeshDevice, report: MeshReport, now = new Date()): { state: MemoryState; why: string[] } | undefined {
+    const before = assessMemory(device.last, now).state;
     device.last = report;
     delete device.rejectedAt;
     this.persist();
+    this.writeFleetMemory(now);
+    const after = assessMemory(report, now);
+    return MEMORY_RANK[after.state] >= MEMORY_RANK.risk && MEMORY_RANK[after.state] > MEMORY_RANK[before] ? after : undefined;
+  }
+
+  /** Every device's memory state now, worst first. */
+  fleetMemory(now = new Date()): FleetMemoryEntry[] {
+    this.reloadIfChanged();
+    return [...this.devices.values()]
+      .map((d) => ({ name: d.name, ...assessMemory(d.last, now), reportedAt: d.last?.receivedAt ?? null }))
+      .sort((a, b) => MEMORY_RANK[b.state] - MEMORY_RANK[a.state] || a.name.localeCompare(b.name));
+  }
+
+  /**
+   * fleet-memory.json beside the device store: states and reasons only (no tokens, no network
+   * details), so the Mac's watchdog can text about a device at risk without an API session. The
+   * reader must check reportedAt itself: a file nobody rewrites says nothing about now.
+   */
+  private writeFleetMemory(now: Date): void {
+    if (!this.file) return;
+    const out = path.join(path.dirname(this.file), "fleet-memory.json");
+    const tmp = `${out}.tmp`;
+    fs.writeFileSync(tmp, JSON.stringify({ at: now.toISOString(), staleAfterMs: MESH_STALE_MS, devices: this.fleetMemory(now) }, null, 2), { mode: 0o600 });
+    fs.renameSync(tmp, out);
   }
 
   /**
@@ -428,7 +547,8 @@ export class MeshStore {
       .map(({ tokenHash: _hidden, keys, ...rest }) => {
         const l = rest.last;
         const { verdict, why } = assessHosting(l?.host, l?.platform, { battery: l?.battery, guard: l?.guard, receivedAt: l?.receivedAt, now });
-        return { ...rest, hosting: verdict, hostingWhy: why, ...(keys ? { keyFingerprint: keyFingerprint(keys) } : {}) };
+        const memory = assessMemory(l, now);
+        return { ...rest, hosting: verdict, hostingWhy: why, memory: memory.state, memoryWhy: memory.why, ...(keys ? { keyFingerprint: keyFingerprint(keys) } : {}) };
       })
       .sort((a, b) => a.name.localeCompare(b.name));
   }

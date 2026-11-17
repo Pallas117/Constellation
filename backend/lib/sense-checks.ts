@@ -6,6 +6,7 @@
  */
 import { magnitude, type Vector3 } from "../physics/coordinates.js";
 import type { ParticleReading, ScaleReading, SenseCheck } from "../types.js";
+import { freshnessLabel, freshnessMs } from "../../shared/policy/freshness.js";
 
 const utc = (ms: number) => new Date(ms).toISOString().slice(11, 16);
 
@@ -280,7 +281,7 @@ export interface NoaaScales {
 }
 
 /** NOAA scales older than this aren't compared; the product normally updates every few minutes. */
-export const NOAA_SCALES_MAX_AGE_MS = 60 * 60_000;
+export const NOAA_SCALES_MAX_AGE_MS = freshnessMs("noaa_scales");
 
 /**
  * Gauss's own R, S and G levels against NOAA's latest observed scales. NOAA is the
@@ -296,7 +297,7 @@ export function compareScales(
   if (!noaa || !noaa.observedAt) return { id, status: "unknown", reason: "NOAA scales not available", observedAt: null };
   const age = nowMs - Date.parse(noaa.observedAt);
   if (!Number.isFinite(age) || age > NOAA_SCALES_MAX_AGE_MS) {
-    return { id, status: "unknown", reason: "NOAA scales are older than 1 h", observedAt: noaa.observedAt };
+    return { id, status: "unknown", reason: `NOAA scales are older than ${freshnessLabel("noaa_scales")}`, observedAt: noaa.observedAt };
   }
   const agree: string[] = [];
   const differ: string[] = [];

@@ -28,3 +28,6 @@ func sampleHost(ctx context.Context, _ bool) Sample {
 func memoryUsers(ctx context.Context) []Group {
 	return parsePSGroups(run(ctx, "ps", "-eo", "rss=,comm="))
 }
+
+// liveCall: no call detection on Linux hosts (headless mesh nodes).
+func liveCall(context.Context) string { return "" }

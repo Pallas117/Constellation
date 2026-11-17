@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -223,16 +224,27 @@ func (p *seqProber) Probe(context.Context) Snapshot {
 }
 
 type fakeFx struct {
-	now     time.Time
-	notes   []string
-	opened  []string
-	openErr error
+	now       time.Time
+	notes     []string
+	opened    []string
+	openErr   error
+	ran       []string
+	relayed   []string
+	relayFail bool
 }
 
 func (f *fakeFx) Notify(title, msg string) { f.notes = append(f.notes, title) }
 func (f *fakeFx) Open(u string) error      { f.opened = append(f.opened, u); return f.openErr }
-func (f *fakeFx) Sleep(time.Duration)      {}
-func (f *fakeFx) Now() time.Time           { return f.now }
+func (f *fakeFx) Run(name string, args ...string) error {
+	f.ran = append(f.ran, name+" "+strings.Join(args, " "))
+	return nil
+}
+func (f *fakeFx) Sleep(time.Duration) {}
+func (f *fakeFx) NotifyOffline(title, msg string) bool {
+	f.relayed = append(f.relayed, title)
+	return !f.relayFail
+}
+func (f *fakeFx) Now() time.Time { return f.now }
 
 func newLoop(t *testing.T, snaps ...Snapshot) (Loop, *fakeFx) {
 	fx := &fakeFx{now: time.Date(2026, 10, 9, 8, 0, 0, 0, time.UTC)}
@@ -351,7 +363,7 @@ func TestHotspotOnWrongSIMAlertsOnce(t *testing.T) {
 func TestSkipTickOnlyWhenNothingCanHaveChanged(t *testing.T) {
 	now := time.Now()
 	home := State{Class: OK, CheckedAt: now.Add(-time.Minute), Gateway: "192.168.1.254", GatewayMAC: "24:2f:d0:c5:e6:9e"}
-	if !skipTick(home, "192.168.1.254", "24:2f:d0:c5:e6:9e", now) {
+	if !skipTick(home, "192.168.1.254", "24:2f:d0:c5:e6:9e", now, false) {
 		t.Error("same home network, checked 1 min ago: should skip")
 	}
 	cases := map[string]struct {
@@ -365,9 +377,42 @@ func TestSkipTickOnlyWhenNothingCanHaveChanged(t *testing.T) {
 		"5 minutes old":       {State{Class: OK, CheckedAt: now.Add(-5 * time.Minute), Gateway: "192.168.1.254", GatewayMAC: "24:2f:d0:c5:e6:9e"}, "192.168.1.254", "24:2f:d0:c5:e6:9e"},
 	}
 	for name, c := range cases {
-		if skipTick(c.st, c.gw, c.mac, now) {
+		if skipTick(c.st, c.gw, c.mac, now, false) {
 			t.Errorf("%s: must run a full check", name)
 		}
+	}
+	// On the hotspot and on battery, a healthy link is probed every 2.5 min, not every minute.
+	hs := State{Class: OK, CheckedAt: now.Add(-time.Minute), Gateway: "172.20.10.1"}
+	if !skipTick(hs, "172.20.10.1", "", now, true) {
+		t.Error("hotspot on battery, healthy, checked 1 min ago: should skip")
+	}
+	hs.CheckedAt = now.Add(-3 * time.Minute)
+	if skipTick(hs, "172.20.10.1", "", now, true) {
+		t.Error("hotspot on battery, checked 3 min ago: must run")
+	}
+	hs.CheckedAt, hs.Class = now.Add(-time.Minute), Offline
+	if skipTick(hs, "172.20.10.1", "", now, true) {
+		t.Error("hotspot on battery while broken: must run")
+	}
+}
+
+func TestLockFromDeadProcessIsTaken(t *testing.T) {
+	s := Store{Dir: t.TempDir()}
+	// A killed run: fresh lock file naming a PID that doesn't exist.
+	if err := os.WriteFile(s.path("lock"), []byte("999999\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	unlock, err := s.Lock()
+	if err != nil {
+		t.Fatalf("lock from a dead process: %v", err)
+	}
+	unlock()
+	// A live holder (this test process) still excludes.
+	if err := os.WriteFile(s.path("lock"), []byte(fmt.Sprintf("%d\n", os.Getpid())), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Lock(); err == nil {
+		t.Fatal("lock held by a live process was taken")
 	}
 }
 

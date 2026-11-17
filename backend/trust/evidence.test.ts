@@ -1,68 +1,12 @@
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import test from "node:test";
-import { fileURLToPath } from "node:url";
-import { loadArchive, replayArchive } from "../replay/replay.js";
-import type { CanonicalSpaceWeatherPoint } from "../types.js";
-import { EnvironmentHistory } from "./environment.js";
-import { buildEvidencePack, ENVIRONMENT_NOT_SPACECRAFT, GENESIS, verifyEvidencePack, type EvidenceInputs, type EvidencePack } from "./evidence.js";
+import { buildEvidencePack, ENVIRONMENT_NOT_SPACECRAFT, GENESIS, verifyEvidencePack, type EvidenceInputs } from "./evidence.js";
 import { renderEvidencePdf } from "./evidence-pdf.js";
-import { ingestLog, type LogMapping } from "./ingest.js";
+import { archivePath, clone, csv, mapping, NOW, packFromStoredInputs, rehashPack, rehashRecord, relink, replayed, sha, WINDOW } from "./fixtures/evidence-pack.js";
+import { ingestLog } from "./ingest.js";
 import { HELVETICA_BOLD_WIDTHS, HELVETICA_WIDTHS, textWidth, winAnsi, wrap } from "./pdf.js";
-import { buildTrustRecord, canonicalJson, DEFAULT_POLICY, TRUST_RECORD_SCHEMA, type TrustRecord } from "./record.js";
-
-const here = (p: string) => fileURLToPath(new URL(p, import.meta.url));
-const sha = (b: Buffer | string) => createHash("sha256").update(b).digest("hex");
-// A synthetic log (not customer data): rows 1, 2 and 6 accepted, the other six rejected with reasons.
-const csv = readFileSync(here("fixtures/generic-inferences.csv"));
-const mapping = JSON.parse(readFileSync(here("mappings/generic-csv.json"), "utf8")) as LogMapping;
-const archivePath = here("../replay/events/jan-2026.json.gz");
-const WINDOW = { from: "2026-01-19T00:00:00Z", to: "2026-01-19T06:00:00Z" };
-const NOW = Date.parse("2026-01-20T02:00:00Z");
-
-let history: EnvironmentHistory | null = null;
-async function replayed(): Promise<EnvironmentHistory> {
-  if (!history) {
-    const points: CanonicalSpaceWeatherPoint[] = [];
-    await replayArchive(loadArchive(archivePath), { end: "2026-01-19T05:30:00Z", points });
-    history = new EnvironmentHistory(points, "replay jan-2026");
-  }
-  return history;
-}
-
-/** The pack trust:ingest --pack would write for the fixture log, built from the stored inputs. */
-async function packFromStoredInputs(previousPackHash: string | null = null): Promise<{ pack: EvidencePack; records: TrustRecord[]; inputs: EvidenceInputs }> {
-  const report = ingestLog(readFileSync(here("fixtures/generic-inferences.csv")), mapping);
-  const h = await replayed();
-  const records = report.accepted.map((a) => buildTrustRecord(a.request, h, { nowMs: NOW, policy: DEFAULT_POLICY }));
-  const inputs: EvidenceInputs = {
-    log: { fileSha256: report.file.sha256, bytes: report.file.bytes, rows: report.file.rows, mappingId: report.mapping.id, mappingVersion: report.mapping.version, rejected: report.rejected },
-    environment: { source: h.label, archiveSha256: sha(readFileSync(archivePath)) },
-    policy: DEFAULT_POLICY,
-    software: { name: "Gauss", commit: "test", requirementsVersion: "test", trustRecordSchema: TRUST_RECORD_SCHEMA },
-    previousPackHash,
-  };
-  return { pack: buildEvidencePack([...records].reverse(), { window: WINDOW, generatedAtMs: NOW, inputs }), records, inputs };
-}
-
-const clone = (p: EvidencePack): EvidencePack => JSON.parse(JSON.stringify(p)) as EvidencePack;
-const rehashRecord = (r: TrustRecord) => {
-  const { hash: _h, ...rest } = r;
-  r.hash = sha(canonicalJson(rest));
-};
-const relink = (p: EvidencePack) => {
-  let prev = p.inputs.previousPackHash ?? GENESIS;
-  p.chain.links = p.records.map((r) => {
-    prev = sha(prev + r.hash);
-    return { recordId: r.recordId, recordHash: r.hash, link: prev };
-  });
-  p.chain.head = prev;
-};
-const rehashPack = (p: EvidencePack) => {
-  const { packHash: _h, ...rest } = p;
-  p.packHash = sha(canonicalJson(rest));
-};
+import { buildTrustRecord, DEFAULT_POLICY, type TrustRecord } from "./record.js";
 
 test("evidence pack: from a log and a replayed storm, every row accounted for, and the same stored inputs give the same pack and PDF (GAU-60)", async () => {
   const a = await packFromStoredInputs();
@@ -89,7 +33,7 @@ test("evidence pack: any change is detected: a record, its hash, the chain, the 
   assert.match(verifyEvidencePack(edited).join("\n"), /the chain breaks at record 1/);
 
   relink(edited);
-  assert.deepEqual(verifyEvidencePack(edited), ["the pack hash does not match the pack"], "only a trusted pack hash catches a full rewrite");
+  assert.deepEqual(verifyEvidencePack(edited), ["the pack hash does not match the pack"], "without a signature, only a trusted pack hash catches a full rewrite");
 
   const verdictChanged = clone(pack);
   verdictChanged.records[0].verdict.value = "degraded-context";

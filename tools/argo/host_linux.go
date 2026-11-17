@@ -58,6 +58,10 @@ func messagesSend(string, string, string) error {
 	return errors.New("phone alerts need macOS Messages")
 }
 
+func chatDBStatus(string, time.Time) smsState { return smsUnreadable }
+
+func chatDBReadable() bool { return false }
+
 func readFile(p string) string {
 	b, _ := os.ReadFile(p)
 	return string(b)

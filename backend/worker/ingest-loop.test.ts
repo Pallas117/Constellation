@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { IngestionWorker } from "./ingest-loop.js";
+import { IngestionWorker, backoffMs, liveIngestSources } from "./ingest-loop.js";
 import type { CanonicalSpaceWeatherPoint } from "../types.js";
 
 type WorkerInternals = {
   shouldFetch: (key: string, cadenceMs: number) => boolean;
+  timedFetch: <T>(stage: string, fn: () => Promise<T>) => Promise<T | null>;
+  getFailureRuns: () => Record<string, number>;
   couplingWindow: number[];
   trimCouplingWindow: () => void;
 };
@@ -135,6 +137,40 @@ test("interval never stacks a tick on one still running", async () => {
   }
 });
 
+test("stop() cancels a pending start-up retry, so it never ticks after a restart (GAU-208)", async () => {
+  const worker = new IngestionWorker() as unknown as TimedWorker;
+  const realSetTimeout = globalThis.setTimeout;
+  const realSetInterval = globalThis.setInterval;
+  const retries: Array<() => void> = [];
+  globalThis.setTimeout = ((fn: () => void) => {
+    retries.push(fn);
+    return realSetTimeout(() => undefined, 1_000_000);
+  }) as typeof setTimeout;
+  globalThis.setInterval = (() => realSetInterval(() => undefined, 1_000_000)) as typeof setInterval;
+  let ticks = 0;
+  worker.tick = async () => {
+    ticks++;
+    throw new Error("upstream down");
+  };
+  const realError = console.error;
+  console.error = () => undefined;
+  try {
+    worker.start();
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(ticks, 1);
+    assert.equal(retries.length, 1, "a retry was scheduled");
+    worker.stop();
+    retries[0]!(); // even if the timer still fired, a stopped worker must not tick
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(ticks, 1);
+  } finally {
+    worker.stop();
+    globalThis.setTimeout = realSetTimeout;
+    globalThis.setInterval = realSetInterval;
+    console.error = realError;
+  }
+});
+
 test("tick attaches only current GOES particle readings to the canonical point (GAU-112)", async () => {
   const worker = new IngestionWorker() as unknown as TimedWorker & { goes: unknown };
   const now = Date.now();
@@ -208,4 +244,113 @@ test("FMEA: a failed telemetry write is counted and reported, and the tick still
   } finally {
     await fs.rm(file, { recursive: true, force: true });
   }
+});
+
+test("GAU-228: GAUSS_LASP=0 / GAUSS_MMS=0 leave those sources out of the live worker: not fetched, not reported", async () => {
+  assert.equal(liveIngestSources({ mms: true, lasp: true }), undefined, "default: every source, as before");
+  assert.deepEqual(liveIngestSources({ mms: false, lasp: false }), ["noaa", "kyoto-dst", "goes", "swpc-products", "esa", "jaxa"]);
+  const sources = liveIngestSources({ mms: true, lasp: false });
+  assert.ok(sources?.includes("mms") && !sources.includes("lasp"));
+
+  const worker = new IngestionWorker(undefined, { sources, publish: false, respectLink: false }) as unknown as TimedWorker;
+  const now = Date.now();
+  // Everything else was fetched just now, so LASP is the only source due this tick.
+  for (const key of ["noaa", "esa", "jaxa", "mms", "goes", "kyoto-dst", "swpc-products", "ml-forecast"]) worker.lastFetch.set(key, now);
+  const urls: string[] = [];
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = (async (input: string | URL | Request) => {
+    urls.push(input instanceof Request ? input.url : String(input));
+    return new Response("unavailable", { status: 503 });
+  }) as typeof fetch;
+  try {
+    const result = await worker.tick();
+    assert.deepEqual(urls.filter((u) => u.includes("lasp.colorado.edu")), [], "LASP was not polled");
+    const reported = result.sourceStatus.map((s) => s.source);
+    assert.ok(!reported.includes("mms-lasp"), "a source switched off is not reported as failing");
+    assert.ok(reported.includes("mms-cdaweb") && reported.includes("noaa-swpc"), reported.join(", "));
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
+
+test("tick: a 7 h old completed Kp of 6 is unknown and can't make the tier severe (GAU-232)", async () => {
+  const now = Date.now();
+  const run = async (kpHoursAgo: number) => {
+    const worker = new IngestionWorker() as unknown as TimedWorker & { noaa: unknown; kpReading: unknown };
+    for (const key of ["noaa", "esa", "jaxa", "mms", "lasp", "goes", "kyoto-dst", "swpc-products", "ml-forecast"]) worker.lastFetch.set(key, now);
+    const kpReading = { value: 6, kind: "planetary-3h", observedAt: new Date(now - kpHoursAgo * 3_600_000).toISOString() };
+    const field = { x: 2, y: 1, z: -12 };
+    worker.noaa = {
+      timestamp: new Date(now - 60_000).toISOString(),
+      spacecraft: "ACE",
+      density: 8,
+      velocityGse: { x: -600, y: 0, z: 0 },
+      velocityGsm: { x: -600, y: 0, z: 0 },
+      magneticFieldGse: field,
+      magneticFieldGsm: field,
+      kp: 6,
+      kpReading,
+      densityCheck: null,
+    };
+    worker.kpReading = kpReading;
+    return tickPoint(worker);
+  };
+  const stale = await run(7);
+  assert.equal(stale.indices.kp, null, "past the 6 h bound Kp is unknown");
+  assert.notEqual(stale.alerts.stormTier, "severe", "Bz -12 alone, with no Dst fall, is not severe");
+  const current = await run(2);
+  assert.equal(current.indices.kp, 6);
+  assert.equal(current.alerts.stormTier, "severe", "a current Kp 6 with Bz -12 is");
+});
+
+test("a source that keeps failing backs off (10 s doubling to 10 min) and logs once per run, then recovers", async () => {
+  let now = Date.parse("2026-01-01T00:00:00.000Z");
+  const worker = new IngestionWorker(undefined, { now: () => now }) as unknown as WorkerInternals;
+  const warnings: string[] = [];
+  const realWarn = console.warn;
+  console.warn = (...args: unknown[]) => warnings.push(args.map(String).join(" "));
+  try {
+    assert.equal(backoffMs(1), 10_000);
+    assert.equal(backoffMs(3), 40_000);
+    assert.equal(backoffMs(20), 10 * 60 * 1000);
+
+    assert.equal(worker.shouldFetch("esa", 10_000), true);
+    assert.equal(await worker.timedFetch("esa", () => Promise.reject(new Error("ENETUNREACH"))), null);
+    assert.deepEqual(worker.getFailureRuns(), { esa: 1 });
+    now += 9_999;
+    assert.equal(worker.shouldFetch("esa", 10_000), false, "backed off 10 s after the first failure");
+    now += 2;
+    assert.equal(worker.shouldFetch("esa", 10_000), true);
+    assert.equal(await worker.timedFetch("esa", () => Promise.reject(new Error("ENETUNREACH"))), null);
+    now += 10_001;
+    assert.equal(worker.shouldFetch("esa", 10_000), false, "second failure waits 20 s");
+    now += 10_000;
+    assert.equal(worker.shouldFetch("esa", 10_000), true);
+    assert.equal(warnings.filter((w) => w.includes("esa fetch failed")).length, 1, "one line per failure run, no stack");
+    assert.match(warnings[0], /esa fetch failed \(1 in a row; next try in 10 s\).*ENETUNREACH/);
+    assert.doesNotMatch(warnings[0], /\n\s+at /, "no stack trace");
+
+    assert.equal(await worker.timedFetch("esa", () => Promise.resolve("ok")), "ok");
+    assert.deepEqual(worker.getFailureRuns(), {});
+    assert.ok(warnings.some((w) => w.includes("esa fetch recovered after 2 failure(s)")));
+    now += 10_000;
+    assert.equal(worker.shouldFetch("esa", 10_000), true, "no backoff after recovery");
+  } finally {
+    console.warn = realWarn;
+  }
+});
+
+test("GAU-244: a tick with no measurement behind it is saved as canonical-stale, not as canonical history", async () => {
+  const { bedrock } = await import("../lib/local-db.js");
+  const worker = new IngestionWorker() as unknown as TimedWorker;
+  const now = Date.now();
+  for (const key of ["noaa", "esa", "jaxa", "mms", "lasp", "goes", "kyoto-dst", "swpc-products", "ml-forecast"]) worker.lastFetch.set(key, now);
+  const point = await tickPoint(worker);
+  assert.equal(point.quality.stale, true, "no readout: the served point is flagged stale");
+  const [last] = await bedrock.getRecent(1);
+  assert.equal(last?.type, "canonical-stale");
+  assert.equal((last?.data as CanonicalSpaceWeatherPoint).timestamp, point.timestamp);
+  const history = await bedrock.getCanonicalSince(Date.parse(point.timestamp) - 1, 50);
+  assert.ok(!history.some((p) => p.timestamp === point.timestamp), "a restart does not reload it as an observation");
+  assert.equal(bedrock.rejectedPoints, 0, "stale is not an error");
 });

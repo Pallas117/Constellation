@@ -89,7 +89,7 @@ else
     fi
   else
     TS_RAW="$(tailscale ip -4 2>&1 || true)"
-    RESOLVED_TS_IP="$(printf '%s\n' "${TS_RAW}" | awk '/^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$/{print; exit}')"
+    RESOLVED_TS_IP="$(printf '%s\n' "${TS_RAW}" | awk '/^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$/ && !d {print; d=1}')"
     if [[ -z "${RESOLVED_TS_IP}" ]]; then
       RESOLVED_TS_IP="$(detect_tailscale_ip_fallback || true)"
       if [[ -n "${RESOLVED_TS_IP}" ]]; then
