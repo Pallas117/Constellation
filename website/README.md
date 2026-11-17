@@ -532,3 +532,6 @@ site:dev` previews the launch.
   when `LL2_API_KEY` is set (Launch, above); check `/api/launches` turns `live` after setting it.
 - Cloudflare's default `Cache-Control` for `site.css` and the pages (expected: revalidate every
   time). Check with `curl -I` after the first deploy.
+
+## Evidence delivery (full release only)
+After an offline pilot, an admin attaches the signed evidence pack to an account in `/app/admin/` (Evidence, per account): the PDF, the pack JSON and the public keyring. Only `.pdf` that starts `%PDF-` and `.json` that parses are accepted, at most 8 MB each and 10 files per account, stored in the DATA namespace (`evid:<email>:<id>`). The account owner sees them in `/app/` and downloads them from `/app/evidence/<id>` (attachment, nosniff, private, no-store); the key is built from the signed-in address, so another account's id answers 404. The card shows the offline check from `docs/EVIDENCE_SIGNING.md`. Removing an account removes its files. A public release answers 404 for all of it.
