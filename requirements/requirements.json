@@ -517,6 +517,35 @@
       ]
     },
     {
+      "id": "REQ-OPS-009",
+      "title": "Check names an upstream data gap",
+      "statement": "When the served space-weather point is ageing or stale, `check` shall report an upstream gap as a warning (not a failure) only when NOAA's public RTSW file shows the active spacecraft without plasma while a standby spacecraft is current, and shall keep the failure when NOAA has newer active-spacecraft plasma than the point or cannot be reached; it shall not change what the backend serves.",
+      "rationale": "On 2026-11-17 NOAA's active spacecraft (SOLAR1) reported null plasma while standby spacecraft were current; `check` showed a failure that nothing on this host could fix (scripts/ops/gauss-services.sh).",
+      "parent": "GAU-15",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "check: a stale point with NOAA's active spacecraft out of plasma is an upstream-gap warning, not ✗",
+        "check: a stale point while NOAA has newer active plasma stays ✗ (our ingest is behind)",
+        "check: a live point does not ask NOAA anything",
+        "check: a stale point with NOAA unreachable stays ✗"
+      ]
+    },
+    {
+      "id": "REQ-OPS-010",
+      "title": "Deploy tolerates doc-only live edits",
+      "statement": "`deploy` shall save as patches, restore and log local edits in the live checkout that are all under .claude/ or docs/, then proceed, and shall still refuse when any other tracked path is changed.",
+      "rationale": "On 2026-11-17 an edit to a skill file in the live checkout blocked a deploy whose target commit already contained the text (scripts/ops/gauss-services.sh).",
+      "parent": "GAU-158",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "deploy: local edits under .claude/ and docs/ are saved as patches, restored, and the deploy proceeds",
+        "events: the saved doc-only live changes are logged",
+        "deploy: a code change next to a doc change still refuses, and the doc change is not touched"
+      ]
+    },
+    {
       "id": "REQ-WM-001",
       "title": "Deterministic, tamper-evident world records",
       "statement": "Every world-state record shall have a deterministic id and a SHA-256 checksum over its canonical content, and validation shall reject records whose content, id or schema do not match.",
