@@ -755,7 +755,7 @@ fallback_prepare() { # fallback_prepare <dir> [sha]: check out, install, build, 
     # The checkout changes under the old record from here: drop it, so a failed install or
     # build leaves "none prepared", never a ready record describing a different checkout.
     rm -f "$FALLBACK_STATE/ready"
-    git -C "$dir" checkout -q --detach "$sha" || return 1
+    carry_checkout "$dir" "$(git -C "$dir" rev-parse HEAD)" "$sha" || return 1
   else
     git -C "$live" worktree add -q --detach "$dir" "$sha" || return 1; dir=$(cd "$dir" && pwd)
   fi
@@ -1535,8 +1535,36 @@ deploy_power_short() { # prints why the power can't carry a deploy, or nothing
   watts=$(pmset -g ac 2>/dev/null | sed -n 's/^ *Wattage = \([0-9]*\)W.*/\1/p')
   [ -z "$watts" ] || [ "$watts" -ge 20 ] || echo "battery ${pct}% on a ${watts} W charger"
 }
+carry_checkout() { # carry_checkout <dir> <from sha> <to sha>: check out <to>, keeping runtime data whose tracking changes
+  # GAU-211: data/bedrock/telemetry.jsonl was tracked and is now ignored. Live appends to it in place,
+  # so a plain checkout across that commit refuses (modified file) or deletes it (unmodified), and
+  # going back refuses (untracked file in the way). Each data/ or ml/models/ path that one side
+  # tracks and the other doesn't is held aside, the checkout runs on a clean path, and live's copy
+  # goes back. The hold sits in the checkout's git dir (same disk, survives a reboot), never /tmp.
+  local dir=$1 from=$2 to=$3 hold p
+  hold="$(git -C "$dir" rev-parse --absolute-git-dir)/gauss-carry" || return 1
+  if [ -e "$hold" ]; then
+    echo "$hold exists: an earlier checkout stopped while holding live data files. Put them back into $dir by hand, then remove it." >&2
+    return 1
+  fi
+  local -a held=()
+  while IFS= read -r p; do
+    [ -n "$p" ] && [ -e "$dir/$p" ] || continue
+    mkdir -p "$hold/$(dirname "$p")" && mv "$dir/$p" "$hold/$p" || return 1
+    held+=("$p")
+    # Tracked at HEAD: put the committed copy back so the checkout sees a clean path.
+    if git -C "$dir" cat-file -e "HEAD:$p" 2>/dev/null; then git -C "$dir" checkout -q HEAD -- "$p" || return 1; fi
+  done < <(git -C "$dir" diff --name-only --no-renames --diff-filter=AD "$from" "$to" -- data ml/models)
+  local rc=0
+  git -C "$dir" checkout -q --detach "$to" || rc=1
+  for p in ${held[@]+"${held[@]}"}; do
+    mkdir -p "$dir/$(dirname "$p")" && mv -f "$hold/$p" "$dir/$p" || return 1 # hold kept: the message above names it
+  done
+  rm -rf "$hold"
+  return $rc
+}
 switch_live() { # switch_live <dir> <from sha> <to sha>: check out, npm ci if the lockfile or Node changed, reinstall
-  git -C "$1" checkout -q --detach "$3" || return 1
+  carry_checkout "$1" "$2" "$3" || return 1
   if [ ! -d "$1/node_modules" ] || ! git -C "$1" diff --quiet "$2" "$3" -- package-lock.json || node_changed "$1"; then
     echo "package-lock.json or Node changed: installing dependencies in $1 ..."
     (cd "$1" && PATH="$(dirname "$NODE"):$PATH" npm ci --no-audit --no-fund >/dev/null) || return 1
@@ -1606,7 +1634,7 @@ deploy() { # deploy <commit> [fallback-dir]
   fi
 
   echo "Deploying ${prev:0:7} -> ${sha:0:7} in $live ..."
-  git -C "$live" checkout -q --detach "$sha" \
+  carry_checkout "$live" "$prev" "$sha" \
     || { echo "Checkout refused (a local data file conflicts with ${sha:0:7}?): nothing changed." >&2; return 1; }
   if switch_live "$live" "$prev" "$sha" && deploy_ready "$live" "$DEPLOY_WAIT"; then
     echo "$(date '+%F %T') deployed ${sha:0:7} (was ${prev:0:7})" >>"$LOGS/deploy.log"

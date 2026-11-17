@@ -447,6 +447,30 @@ out=$(run deploy "$Bc" --no-fallback 2>&1); rc=$?
 [ $rc = 0 ] && head_is "$Bc" && [[ "$out" == *"warning: no fallback to refresh"* ]] && [ ! -e "$FB/ready" ]
 expect "deploy --no-fallback: warns, deploys, leaves none" $?
 main_at "$D"; run deploy "$D" --no-fallback >/dev/null 2>&1; head_is "$D"; expect "deploy back to D, the gated tree the GAU-162 checks below start from" $?
+# GAU-211: a commit that stops tracking live's telemetry file (now in .gitignore). Live appends to it in
+# place, so a plain checkout refuses (modified) or deletes it; going back refuses (untracked in the way).
+tel="$LIVE/data/bedrock/telemetry.jsonl"; carry="$(g rev-parse --absolute-git-dir)/gauss-carry"
+saved=$(cat "$tel"); g checkout -q --detach "$D"; g rm -q --cached data/bedrock/telemetry.jsonl; echo data/bedrock/telemetry.jsonl >>"$LIVE/.gitignore"
+g add .gitignore; g commit -qm untrack; U=$(g rev-parse HEAD)
+echo 500 >"$LIVE/health"; g commit -qam bad-untrack; Ubad=$(g rev-parse HEAD)
+rm "$tel"; g checkout -q --detach "$D"; echo "$saved" >"$tel"; gated "$U"; gated "$Ubad"; main_at "$Ubad"
+echo t2 >>"$tel"; before=$(cat "$tel")
+out=$(HEALTH_FILE="$LIVE/health" run deploy "$Ubad" --no-fallback 2>&1); rc=$?
+[ $rc = 1 ] && head_is "$D" && [ "$(cat "$tel")" = "$before" ] && [[ "$out" == *"Rolled back"* ]] && [ ! -e "$carry" ]
+expect "GAU-211: a failed deploy across the untracking commit rolls back with live telemetry intact" $?
+out=$(HEALTH_FILE="$LIVE/health" run deploy "$U" --no-fallback 2>&1); rc=$?
+[ $rc = 0 ] && head_is "$U" && [ "$(cat "$tel")" = "$before" ] && [ -z "$(g ls-files data/bedrock)" ] \
+  && [ -z "$(g status --porcelain data)" ] && [ ! -e "$carry" ]
+expect "GAU-211: deploy across the untracking commit keeps live telemetry (untracked, ignored, unchanged)" $?
+echo t3 >>"$tel"; before=$(cat "$tel")
+mkdir -p "$carry"; out=$(HEALTH_FILE="$LIVE/health" run deploy "$D" --no-fallback 2>&1); rc=$?
+[ $rc = 1 ] && head_is "$U" && [[ "$out" == *"gauss-carry exists"* ]] && [ "$(cat "$tel")" = "$before" ]
+expect "GAU-211: a hold left by an interrupted checkout stops the next one (no data overwritten)" $?
+rmdir "$carry"
+out=$(HEALTH_FILE="$LIVE/health" run deploy "$D" --no-fallback 2>&1); rc=$?
+[ $rc = 0 ] && head_is "$D" && [ "$(cat "$tel")" = "$before" ] && [ ! -e "$carry" ]
+expect "GAU-211: deploying back to a commit that still tracks the file keeps live's copy" $?
+main_at "$D"
 # A deploy's install and build can run a low battery flat mid-switch (4 Nov 2026: one ran at 13% on 8 W).
 main_at "$Bc"
 out=$(SRC="Battery Power" BATT="13%; discharging; present: true" run deploy "$Bc" 2>&1); rc=$?
