@@ -34,12 +34,16 @@ type Config struct {
 	ExitNodes map[string]string `json:"exit_nodes,omitempty"` // tailscale hostname → country (MY/SG only)
 	PhoneTo   string            `json:"phone_to,omitempty"`   // your own iMessage handle for phone alerts
 	// "sms" sends SMS first: iMessages to your own number arrive silently, with no banner.
-	PhoneService  string   `json:"phone_service,omitempty"`
+	PhoneService string `json:"phone_service,omitempty"`
+	// A second handle (best an Apple ID email) that gets an alert by iMessage when the first
+	// one fails, e.g. while the SIM is expired. Set with `argo phone fallback <email>`.
+	PhoneFallback string   `json:"phone_fallback,omitempty"`
 	Watch         []Peer   `json:"watch,omitempty"`           // LaunchAgents Argo keeps alive; default: awake guard + mesh-heal
 	Devices       []string `json:"devices,omitempty"`         // tailnet hostnames to watch; default: this user's phones
 	GuardSlotGB   float64  `json:"guard_slot_gb,omitempty"`   // RAM one mesh agent slot reserves (default 2)
 	GuardWorkerGB float64  `json:"guard_worker_gb,omitempty"` // RAM one job worker (test file, browser) holds (default 0.5)
 	InboxDir      string   `json:"inbox_dir,omitempty"`       // where received files land; default ~/Downloads/Argo
+	QuietHours    string   `json:"quiet_hours,omitempty"`     // no non-urgent texts in these hours; default 23:00-07:00, "off" for none
 }
 
 func (c Config) peers() []Peer {
@@ -86,7 +90,7 @@ func main() {
 	}
 	cfg, store := loadConfig(), DefaultStore()
 	phone := newPhoneFor(cfg)
-	loop := Loop{Prober: SystemProber{ExitNodes: cfg.ExitNodes, SignalCache: store.path("signal.json")}, Store: store, Fx: realEffects{phone: phone}}
+	loop := Loop{Prober: SystemProber{ExitNodes: cfg.ExitNodes, SignalCache: store.path("signal.json")}, Store: store, Fx: realEffects{phone: phone}, AppWatch: true}
 	flush := func() {
 		if phone != nil {
 			phone.Flush() // deliver alerts queued while offline
@@ -95,7 +99,7 @@ func main() {
 	if cfg.GaussURL != "" {
 		loop.Pushers = append(loop.Pushers, func(st State) { pushToGauss(cfg, st) })
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 
 	// One scheduled check: the peer watchdog every time (cheap file stats), the
@@ -104,15 +108,31 @@ func main() {
 		if store.Disabled() {
 			return nil
 		}
+		// Each phase has its own deadline. With one shared 90 s budget, slow texts
+		// (up to 2x30 s), the guard and the relay used it up, `route` then returned
+		// nothing and a working link was logged as OFFLINE "no default route".
+		phase := func(d time.Duration, f func(context.Context)) {
+			c, cancel := context.WithTimeout(ctx, d)
+			defer cancel()
+			f(c)
+		}
 		_ = withLock(store, func() { watchPeers(cfg.peers(), store, realWatchFx(phone, store), time.Now()) })
-		_ = withLock(store, func() { guardTick(ctx, store, cfg, phone, time.Now()) })
-		relayTick(ctx, cfg, store, phone) // store-and-forward (relay.go); takes its own lock
-		if gw, mac := localGateway(ctx); skipTick(store.Load(), gw, mac, time.Now()) {
+		thirdpartyTick(tpFilesIn(configDir()), phone, time.Now()) // texts once per new third-party change; two small file reads
+		_ = withLock(store, func() { phase(20*time.Second, func(c context.Context) { guardTick(c, store, cfg, phone, time.Now()) }) })
+		phase(30*time.Second, func(c context.Context) { relayTick(c, cfg, store, phone) }) // store-and-forward (relay.go); takes its own lock
+		// Read-only posture checks hourly and the update check daily (posture.go, update.go).
+		phase(25*time.Second, func(c context.Context) { securityTick(c, cfg, store, time.Now()) })
+		var skip bool
+		phase(10*time.Second, func(c context.Context) {
+			gw, mac := localGateway(c)
+			skip = skipTick(store.Load(), gw, mac, time.Now(), onBattery(store.loadGuard()))
+		})
+		if skip {
 			return nil
 		}
 		return withLock(store, func() {
 			flush()
-			loop.Tick(ctx)
+			phase(60*time.Second, func(c context.Context) { loop.Tick(c) })
 			watchDevices(ctx, cfg.Devices, store, phone, time.Now())
 			maybeSendWeekly(store, phone, time.Now())
 		})
@@ -121,12 +141,29 @@ func main() {
 	var err error
 	switch cmd {
 	case "status":
-		fmt.Println(statusLine(store.Load(), time.Now()) + guardStatus(store.loadGuard(), time.Now()) + gaussStatus(store, time.Now()))
+		fmt.Println(statusLine(store.Load(), time.Now()) + guardStatus(store.loadGuard(), time.Now()) + gaussStatus(store, time.Now()) + phoneStatus(store.Dir, time.Now()))
 	case "doctor":
 		err = doctor(ctx, loop.Prober)
 	case "fix":
 		loop.Out = func(s string) { fmt.Println(s) }
-		err = withLock(store, func() { flush(); loop.Tick(ctx) })
+		switch {
+		case len(os.Args) > 2 && os.Args[2] == "--list": // what gauss-phone fix shows
+			class, reason, plan := planNow(ctx, loop)
+			fixList(os.Stdout, class, reason, plan)
+		case len(os.Args) > 2: // argo fix <step>: one phone-runnable step, then a tick to verify it
+			var stepErr error
+			err = withLock(store, func() {
+				_, _, plan := planNow(ctx, loop)
+				if stepErr = fixStep(ctx, os.Stdout, plan, os.Args[2], realEffects{}.Run); stepErr == nil {
+					loop.Tick(ctx)
+				}
+			})
+			if err == nil {
+				err = stepErr
+			}
+		default:
+			err = withLock(store, func() { flush(); loop.Tick(ctx) })
+		}
 	case "tick": // LaunchAgent entry point
 		err = tick(ctx)
 	case "loop": // container entry point: a tick every ARGO_INTERVAL (default 60s) until stopped
@@ -147,6 +184,14 @@ func main() {
 			case <-time.After(every):
 			}
 		}
+	case "reach": // GAU-247: is this one host reachable from this network, and what helps if not
+		code, rerr := reachCmd(ctx, store, os.Args[2:])
+		if rerr != nil {
+			fmt.Fprintln(os.Stderr, "argo:", rerr)
+		}
+		os.Exit(code)
+	case "networks": // GAU-234: Wi-Fi networks in range and what Argo would join (names stay on this Mac)
+		err = printNetworks(ctx, os.Stdout)
 	case "summary": // what Argo caught, fixed and learned in the last 7 days
 		now := time.Now()
 		st := store.Load()
@@ -189,15 +234,42 @@ func main() {
 		if len(lines) == 0 {
 			fmt.Println("devices: all watched devices are on the tailnet (or this Mac is off it)")
 		}
+	case "thirdparty": // outside services as nodes: what each sees, scopes, credential place, revoke place
+		var code int
+		if code, err = thirdpartyCmd(os.Args[2:], configDir(), os.Stdin, os.Stdout, time.Now()); err == nil && code != 0 {
+			os.Exit(code)
+		}
 	case "guard": // resource guard: deep analysis, admission, guarded runs (GAU-195)
 		var code int
 		if code, err = guardCmd(os.Args[2:], store, cfg, os.Stdout); err == nil && code != 0 {
 			os.Exit(code)
 		}
+	case "heal": // self-healing: open blockers, the remedy chosen for each, how long each kind lasted (heal.go)
+		days := 7
+		g := store.loadGuard()
+		stats := healStats(store.healEpisodes(), time.Now().Add(-time.Duration(days)*24*time.Hour))
+		if len(os.Args) > 2 && os.Args[2] == "--json" {
+			b, _ := json.MarshalIndent(map[string]any{"open": g.Open, "stats": stats}, "", "  ")
+			fmt.Println(string(b))
+		} else {
+			fmt.Print(healText(g.Open, stats, days, time.Now()))
+		}
+	case "scale": // measured demand this host could not serve, to size outside compute (scale.go)
+		p := scalePlan(store.jobRuns(), store.guardHistory(), 7, time.Now())
+		if len(os.Args) > 2 && os.Args[2] == "--json" {
+			b, _ := json.MarshalIndent(p, "", "  ")
+			fmt.Println(string(b))
+		} else {
+			fmt.Print(scaleText(p))
+		}
+	case "attention": // what texts now, what waits for the digest
+		err = attentionCmd(os.Args[2:], cfg, store)
 	case "notify": // for mesh-heal, the awake guard and Claude Code hooks
 		err = notifyCmd(os.Args[2:], phone, store, time.Now())
 	case "phone":
 		err = phoneSetup(os.Args[2:], cfg)
+	case "egress": // what Argo sent off this Mac and where; `off|on` holds or releases third-party sends
+		err = egressCmd(os.Args[2:], store, phone, os.Stdout, time.Now())
 	case "enroll":
 		if err = enroll(os.Args[2:]); err == nil {
 			err = verifyEnroll(ctx, loadConfig(), store, loop.Prober)
@@ -208,10 +280,14 @@ func main() {
 		err = uninstall(store)
 	case "send", "outbox", "inbox", "sync", "keys", "mule", "link":
 		err = relayMain(cmd, os.Args[2:], cfg, store, phone, os.Stdout)
+	case "posture": // read-only device security checks against docs/DEVICE_SECURITY_BASELINE.md
+		err = postureCmd(ctx, os.Args[2:], store, os.Stdout)
+	case "update": // signed releases: check (default) or apply; never automatic (update.go)
+		err = updateCmd(ctx, os.Args[2:], cfg, newUpdater(store), os.Stdout)
 	case "version":
 		fmt.Println("argo", version)
 	default:
-		fmt.Fprintln(os.Stderr, "usage: argo [status|doctor|fix|report|on|off|preflight|run -- cmd|phone <handle>|test|off|notify TITLE MSG|guard [admit|run]|watch|summary [--send]|enroll URL DEVICE|install|uninstall|version]\n       argo [send [-ttl D] DEVICE FILE|outbox|inbox|sync|keys [list|publish|trust DEVICE]|mule export|import DIR|link]")
+		fmt.Fprintln(os.Stderr, "usage: argo [status|doctor|fix|report|on|off|preflight|run -- cmd|phone <handle>|test|off|imessage|sms|notify TITLE MSG|attention [replay]|egress [off|on]|thirdparty [list|check|accept|seen]|guard [admit|run]|heal [--json]|scale [--json]|watch|summary [--send]|enroll URL DEVICE|install|uninstall|version]\n       argo [send [-ttl D] DEVICE FILE|outbox|inbox|sync|keys [list|publish|trust DEVICE]|mule export|import DIR|link]")
 		os.Exit(2)
 	}
 	if err != nil {
@@ -228,14 +304,28 @@ const fullCheckEvery = 290 * time.Second
 
 func isIPhoneHotspot(gw string) bool { return gw == "172.20.10.1" } // Personal Hotspot always uses 172.20.10.0/28
 
-func skipTick(st State, gw, mac string, now time.Time) bool {
+// hotspotBatteryEvery: on the hotspot a full probe (about 30 processes and 4
+// requests) ran every minute even on battery. While the link is healthy and
+// the Mac is on battery, every 2.5 minutes is enough; a network change still
+// triggers a run through the LaunchAgent's WatchPaths.
+const hotspotBatteryEvery = 150 * time.Second
+
+func skipTick(st State, gw, mac string, now time.Time, battery bool) bool {
 	switch {
-	case st.CheckedAt.IsZero(), st.Class.Blocking(), isIPhoneHotspot(gw):
+	case st.CheckedAt.IsZero(), st.Class.Blocking():
 		return false
 	case gw != st.Gateway || mac != st.GatewayMAC:
 		return false
+	case isIPhoneHotspot(gw):
+		return battery && now.Sub(st.CheckedAt) < hotspotBatteryEvery
 	}
 	return now.Sub(st.CheckedAt) < fullCheckEvery
+}
+
+// onBattery reads the guard's last sample (written every tick); unknown counts as AC.
+func onBattery(g GuardState) bool {
+	b := g.Batt
+	return b != nil && b.Present && !b.OnAC
 }
 
 // localGateway is the cheap, local-only part of a probe (no network traffic).

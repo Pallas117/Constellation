@@ -1,9 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { CanonicalSpaceWeatherPoint } from "@/lib/types/space-weather";
-import { getAccessToken } from "@/lib/api/auth";
 import { useFeedSession, usePolledFeed, type FeedStatus } from "@/hooks/usePolledFeed";
 import { wsOrigin } from "@/lib/api/base-url";
-import { lookbackSince, mergeSeries, SERIES_MAX_POINTS, SERIES_WINDOW_MS } from "@/lib/api/feed-series";
+import { lookbackSince, mergeSeries, pendingAfter, SERIES_MAX_POINTS, SERIES_WINDOW_MS } from "@/lib/api/feed-series";
 import { isCanonicalPoint } from "@/lib/dataProcessing";
 
 // Signed in: the 24 h, 5 s feed (`user` role). Signed out: only the public
@@ -70,23 +69,30 @@ export function useSolarWind5s({ history = true, backfillMs = SERIES_WINDOW_MS }
     () => (pushed.length > 0 ? mergeSeries(feed.data, pushed) : feed.data ?? NO_POINTS),
     [feed.data, pushed],
   );
+  // Each poll catches up with what was pushed: keep only the points it doesn't hold yet. Done
+  // while rendering when the polled series changes (React's "adjust state when an input
+  // changes"), not in an effect, so it costs no extra render pass.
+  const [polled, setPolled] = useState(feed.data);
+  if (polled !== feed.data) {
+    setPolled(feed.data);
+    setPushed((prev) => pendingAfter(prev, feed.data));
+  }
 
   useEffect(() => {
     const wsEnabled = String(import.meta.env.VITE_HELIO_WS_ENABLED ?? "false") === "true";
-    if (!wsEnabled) {
+    // The socket is authenticated by the session cookie. It used to wait for a bearer token that better-auth
+    // sessions never carry, so it never opened. Only a signed-in page connects: CyberTiger counts a refused socket
+    // as a 403, and nothing here reconnects after a close.
+    if (!wsEnabled || !session.signedIn) {
       return;
     }
 
     let ws: WebSocket | null = null;
     let cancelled = false;
 
-    const connect = async () => {
+    const connect = () => {
       const base = wsOrigin();
-      const token = await getAccessToken();
-      if (!token || cancelled) {
-        setSource("polling");
-        return;
-      }
+      if (cancelled) return;
       const wsUrl = `${base}/ws/feed/space-weather`; // session cookie authenticates; never put tokens in URLs
       ws = new WebSocket(wsUrl);
       wsRef.current = ws;
@@ -129,7 +135,7 @@ export function useSolarWind5s({ history = true, backfillMs = SERIES_WINDOW_MS }
       }
       wsRef.current = null;
     };
-  }, []);
+  }, [session.signedIn, session.userKey]);
 
   const latest = useMemo(
     () => (points.length > 0 ? points[points.length - 1] : null),

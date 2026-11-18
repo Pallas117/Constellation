@@ -5,19 +5,30 @@
 // Staff (STAFF_EMAILS) also get a link to the staff operations and training site (OPS_URL), which has its own Access application.
 import { accessIdentity, isAdmin, isStaff } from "./auth.js";
 import { deleteAccount, getAccount, getApplication, latestApplication, listAccounts, listApplications, putAccount, setApplicationStatus } from "./data.js";
-import { readCapped } from "./body.js";
+import { readCapped, readCappedBytes } from "./body.js";
+import { EVIDENCE_ERRORS, EVIDENCE_MAX_BYTES, addEvidence, deleteAllEvidence, deleteEvidence, downloadResponse, evidenceAdmin, evidenceCard, getEvidence, listEvidence } from "./evidence.js";
 import { sameOrigin } from "./forms.js";
-import { readFeed } from "./feeds.js";
-import { esc, renderEventIcs, renderGaussDoor, supportLink } from "./render.js";
+import { feedState, readFeed } from "./feeds.js";
+import { chip, esc, renderEventIcs, renderGaussDoor, supportLink } from "./render.js";
 import { deleteCall, getCall, listCalls, renderCalls, renderCallsAdmin, rsvp, saveCall } from "./calls.js";
 import { isZone, zonedToUtc } from "./timezones.js";
 import { APP_CSP } from "./headers.js";
 import { createCheckout, createEduCheckout, createEduInvoice, createInvoice, createPortal, customerOf, eduInvoiceable, invoiceable, payable } from "./stripe.js";
 import { renderClassroom } from "./classroom.js";
 import { cleanTags, renderOpportunities } from "./opportunities.js";
-import { ARGO, BILLING, EDU, FEATURES, INVOICE_DAYS, PILOT_STEPS, TIERS, billingStatus, isOperator, eduEligible, eduMode, eduStaffLabel, eduStaffPrice, gbp, isAcademicEmail, priceLabel, quoteInRange, tierById, unlocked } from "./tiers.js";
+import { ARGO, BILLING, EDU, FEATURES, INVOICE_DAYS, PILOT_STEPS, TIERS, billingStatus, isOperator, eduEligible, eduMode, eduStaffLabel, eduStaffPrice, usd, isAcademicEmail, priceLabel, quoteInRange, tierById, unlocked } from "./tiers.js";
 
 export const APP_HEADERS = { "cache-control": "private, no-store", "x-robots-tag": "noindex", "Content-Security-Policy": APP_CSP };
+
+// The customer's workspace says where the reading came from and how fresh it is (the Gauss page promises "every value
+// carries its source and age"); the landing-page door stays a bare readout.
+function spaceTile(weather) {
+  const door = renderGaussDoor(weather);
+  if (!door) return `<article class="tile"><h2 class="label">Space environment</h2><p class="m">Space-weather data is unavailable right now.</p></article>`;
+  return `<article class="tile"><div class="tile-head"><h2 class="label">Space environment</h2>${chip(feedState("weather", weather))}</div>${door}` +
+    `<p class="m src">NOAA Space Weather Prediction Center</p></article>`;
+}
+
 const day = (iso) => (iso ? new Date(iso).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" }) : "");
 const EMAIL = /^[^@\s<>]+@[^@\s<>]+\.[^@\s<>]{2,}$/;
 
@@ -28,12 +39,12 @@ function pilotTrack(step) {
 
 const postButton = (action, label, cls = "btn") => `<form method="post" action="${action}" class="inline"><button class="${cls}">${esc(label)}</button></form>`;
 // Stripe's hosted invoice page (https), or a same-origin path (the local stand-in); anything else is not shown.
-const linkable = (u) => /^(https:\/\/|\/(?!\/))[^\s"<>]*$/.test(u ?? "");
+const linkable = (u) => /^(https:\/\/[^\s"<>]*|\/(?![\/\\])[^\s"<>]*)$/.test(u ?? "");
 
 function billingCard(account, tier) {
   const status = billingStatus(account);
   const b = account.billing ?? {};
-  const quote = account.quote ? `${gbp(account.quote)} ${tier.billing === "subscription" ? "a year" : "one-off"}` : priceLabel(tier);
+  const quote = account.quote ? `${usd(account.quote)} ${tier.billing === "subscription" ? "a year" : "one-off"}` : priceLabel(tier);
   const portal = customerOf(account) ? postButton("/app/billing", "Manage billing", "btn ghost") : "";
   const invoice = linkable(b.invoiceUrl) ? `<p class="actions"><a class="btn" href="${esc(b.invoiceUrl)}" rel="noopener noreferrer">View invoice</a></p>` : "";
   let body;
@@ -85,7 +96,7 @@ export function eduCard(env, account, email, start = false) {
   const invoiceLink = linkable(b?.invoiceUrl) ? `<p class="actions"><a class="btn ghost" href="${esc(b.invoiceUrl)}" rel="noopener noreferrer">View invoice</a></p>` : "";
   let price = "", state, body;
   if (e?.plan === "department") {
-    price = e.quote ? `${gbp(e.quote)} a year` : "Quoted per year";
+    price = e.quote ? `${usd(e.quote)} a year` : "Quoted per year";
     state = status === "paid" ? "Licence active" : BILLING[status] ?? "Payment due";
     if (status === "paid") body = `<p class="m">Department licence until ${esc(day(b.paidUntil))}.</p>${classroom}`;
     else if (status === "invoice_open") body = `<p class="m">Invoice sent to ${esc(account.email)}${b.dueAt ? `; due ${esc(day(b.dueAt))}` : ""}. The classroom is open meanwhile.</p>${classroom}${invoiceLink}`;
@@ -115,7 +126,8 @@ export function eduCard(env, account, email, start = false) {
 }
 
 function memberCard(supportUrl = "") {
-  return `<article class="tile"><h2 class="label">Constellation</h2><p class="big">Member</p><p class="t">Free, by invitation.</p>` +
+  // Wears Constellation's own navy and gold (Brand Book), so membership never reads as part of Gauss.
+  return `<article class="tile brand-constellation"><div class="tile-head"><h2 class="label">Constellation</h2><img src="/assets/marks/constellation-icon-colour-dark-v2.svg" alt="" width="32" height="32"></div><p class="big">Member</p><p class="t">Free, by invitation.</p>` +
     `<p class="m">Community channels are shared with members directly. Launch calendar: <a href="/api/launches.ics">subscribe</a>.</p>` +
     (supportLink(supportUrl) ? `<p class="m"><a href="${esc(supportUrl)}" rel="noopener">Support Constellation</a> (optional)</p>` : "") +
     `<p class="m"><a href="/constellation/">Constellation</a></p></article>`;
@@ -128,7 +140,7 @@ export function staffCard(opsUrl) {
     `<p class="m">For the Lightbound team. It signs you in with the same email.</p><p class="m"><a href="${esc(opsUrl)}" rel="noopener">Open operations and training</a></p></article>`;
 }
 
-export function renderWorkspace({ email, account, admin, weather, consoleUrl, supportUrl = "", argo = "", edu = "", staff = "", applications = [], notice = "" }) {
+export function renderWorkspace({ email, account, admin, weather, consoleUrl, supportUrl = "", argo = "", edu = "", staff = "", evidence = "", applications = [], notice = "" }) {
   const tier = tierById(account?.tier);
   const who = esc(account?.name || email);
   const adminLink = admin ? `<p class="actions"><a class="btn ghost" href="/app/admin/">Applications and accounts</a></p>` : "";
@@ -148,25 +160,25 @@ export function renderWorkspace({ email, account, admin, weather, consoleUrl, su
     const pending = applications.filter((a) => a.status === "new");
     const status = pending.length
       ? `<p class="lead">Your application from ${esc(day(pending[0].at))} is with the Lightbound team. You'll hear from us by email.</p>`
-      : `<p class="lead">You're signed in as ${esc(email)}.${member || argo || edu || staff ? "" : " This account has no Gauss plan yet."}</p>`;
+      : `<p class="lead">You're signed in as ${esc(email)}.${member || argo || edu || staff || evidence ? "" : " This account has no Gauss plan yet."}</p>`;
     return `<p class="k">00_WORKSPACE</p><h1 id="hero-h">Welcome, ${who}.</h1>${bannerHtml}${status}` +
-      (member || argo || edu || staff ? `<div class="tiles">${staff}${member ? memberCard(supportUrl) : ""}${argo}${edu}</div>` : "") +
-      (member || argo || edu || staff ? "" : `<p class="actions"><a class="btn" href="/gauss/#plans">See the Gauss plans</a>${pending.length ? "" : ` <a class="btn ghost" href="/gauss/apply/">Apply</a>`}</p>`) + adminLink;
+      (member || argo || edu || staff || evidence ? `<div class="tiles">${staff}${member ? memberCard(supportUrl) : ""}${evidence}${argo}${edu}</div>` : "") +
+      (member || argo || edu || staff || evidence ? "" : `<p class="actions"><a class="btn" href="/gauss/#plans">See the Gauss plans</a>${pending.length ? "" : ` <a class="btn ghost" href="/gauss/apply/">Apply</a>`}</p>`) + adminLink;
   }
   const open = unlocked(billingStatus(account));
   const next = TIERS[TIERS.indexOf(tier) + 1];
   const list = (ids) => ids.map((f) => `<li>${esc(FEATURES[f])}</li>`).join("");
   const consoleBtn = !open ? "" : consoleUrl
     ? `<a class="btn" href="${esc(consoleUrl)}">Open the Gauss console</a>`
-    : `<span class="btn ghost" aria-disabled="true">Console link coming by email</span>`;
+    : `<span class="m">Your Gauss console link is coming by email.</span>`; // a line, not a dead button
   return (
     `<div class="section-head"><div><p class="k">00_WORKSPACE</p><h1 id="hero-h">Welcome, ${who}.</h1></div><span class="chip tier">${esc(tier.name)}</span></div>${bannerHtml}` +
     `<p class="lead">${esc(account.org ? `${account.org} · ` : "")}${esc(tier.outcome)}</p>` +
     (consoleBtn ? `<p class="actions">${consoleBtn}</p>` : "") +
     `<div class="tiles">${billingCard(account, tier)}` +
     (open ? `<article class="tile"><h2 class="label">Pilot</h2>${account.pilot ? pilotTrack(account.pilot) : `<p class="m">Not started. We'll set this up with you.</p>`}</article>` : "") +
-    `<article class="tile"><h2 class="label">Space environment</h2>${renderGaussDoor(weather) || `<p class="m">Space-weather data is unavailable right now.</p>`}</article>` +
-    (member ? memberCard(supportUrl) : "") + argo + edu + staff + `</div>` +
+    spaceTile(weather) +
+    (member ? memberCard(supportUrl) : "") + evidence + argo + edu + staff + `</div>` +
     `<div class="two plan-lists"><div><h2 class="label">${open ? "Included" : "What you get"}: ${esc(tier.name)}</h2><ul class="ticks">${list(tier.features)}</ul></div>` +
     (next ? `<div><h2 class="label">Next: ${esc(next.name)}</h2><ul class="locked">${list(next.features.filter((f) => !tier.features.includes(f)))}</ul><p class="m">${esc(next.entry)} Planning range: ${esc(priceLabel(next))}.</p></div>` : "") +
     `</div><p class="actions"><a class="btn ghost" href="mailto:jzwnathan@lightbound.uk?subject=${encodeURIComponent(`Gauss ${tier.name}`)}">Email Josh, the founder</a></p>` +
@@ -177,7 +189,7 @@ export function renderWorkspace({ email, account, admin, weather, consoleUrl, su
 // ---- Admin ----
 const opt = (v, label, cur) => `<option value="${esc(v)}"${v === (cur ?? "") ? " selected" : ""}>${esc(label)}</option>`;
 const tierSelect = (cur) => `<select name="tier" aria-label="Gauss plan">${opt("", "No Gauss plan", cur)}${TIERS.map((t) => opt(t.id, `${t.name} (${priceLabel(t)})`, cur)).join("")}</select>`;
-const quoteInput = (pence) => `<label class="money"><span>£</span><input name="quote" type="number" inputmode="numeric" min="0" step="500" aria-label="Quote in pounds" placeholder="Quote" value="${pence ? pence / 100 : ""}"></label>`;
+const quoteInput = (cents) => `<label class="money"><span>$</span><input name="quote" type="number" inputmode="numeric" min="0" step="500" aria-label="Quote in dollars" placeholder="Quote" value="${cents ? cents / 100 : ""}"></label>`;
 // Defaults to "automatic" (keep, or reset to due when the plan or quote changes); the current state shows as a tag.
 const billingSelect = () => `<select name="billing" aria-label="Billing override">${opt("", "Billing: automatic", "")}${Object.entries(BILLING).map(([k, l]) => opt(k, `Set: ${l}`, null)).join("")}</select>`;
 const pilotSelect = (cur) => `<select name="pilot" aria-label="Pilot step">${opt("", "No pilot", cur)}${PILOT_STEPS.map((s) => opt(s, s, cur)).join("")}</select>`;
@@ -185,11 +197,11 @@ const invoiceCheck = (on, id) => `<label class="check" for="${id}"><input id="${
 const communitySelect = (cur) => `<select name="community" aria-label="Constellation">${opt("", "Not a member", cur)}${opt("member", "Constellation member", cur)}</select>`;
 
 const inviteDraft = (email, name) => {
-  const body = `Hello${name ? ` ${name}` : ""},\n\nYou're invited to Constellation, Lightbound's space community group. Membership is free.\n\nSign in with this email address at https://lightbound.uk/app/ (we'll email you a one-time code; there's no password).\n\nJoshua`;
+  const body = `Hello${name ? ` ${name}` : ""},\n\nYou're invited to Constellation, Lightbound's space community group. Membership is free.\n\nSign in with this email address at https://lightbound.space/app/ (we'll email you a one-time code; there's no password).\n\nJoshua`;
   return `mailto:${encodeURIComponent(email)}?subject=${encodeURIComponent("Your invitation to Constellation")}&body=${encodeURIComponent(body)}`;
 };
 
-export function renderAdmin({ applications, accounts, details, invited, error, cap = 50 }) {
+export function renderAdmin({ applications, accounts, details, invited, error, cap = 50, evidence = {} }) {
   const open = applications.filter((a) => a.status === "new");
   const done = applications.filter((a) => a.status !== "new");
   const card = (a) => {
@@ -216,10 +228,11 @@ export function renderAdmin({ applications, accounts, details, invited, error, c
       `<button class="btn ghost" name="action" value="save">Save</button> <button class="btn ghost" name="action" value="delete">Remove</button></form>` +
       `${status ? `<span class="tag${status === "overdue" || status === "past_due" ? " warn" : ""}">${esc(BILLING[status] ?? status)}</span>` : ""}` +
       `${u.argo === "requested" ? `<form method="post" action="/app/admin/argo" class="inline"><input type="hidden" name="email" value="${esc(u.email)}"> <span class="tag warn">Argo: setup requested</span> <button class="btn ghost">Mark Argo setup sent</button></form>` : u.argo === "sent" ? ` <span class="tag">Argo: setup sent</span>` : ""}` +
-      `${u.edu ? ` <span class="tag">Education: ${esc(u.edu)}</span>` : ""}</td></tr>`;
+      `${u.edu ? ` <span class="tag">Education: ${esc(u.edu)}</span>` : ""}${evidenceAdmin(u.email, evidence[u.email] ?? [], i)}</td></tr>`;
   }).join("");
-  const banner = error === "quote" || error === "edu"
-    ? `<p class="banner warn" role="alert">${error === "edu" ? "Not approved: enter the department licence's yearly quote in pounds." : "Not approved: enter a quote inside the plan's range."}</p>`
+  const banner = EVIDENCE_ERRORS[error] ? `<p class="banner warn" role="alert">${esc(EVIDENCE_ERRORS[error])}</p>`
+    : error === "quote" || error === "edu"
+    ? `<p class="banner warn" role="alert">${error === "edu" ? "Not approved: enter the department licence's yearly quote in dollars." : "Not approved: enter a quote inside the plan's range."}</p>`
     : invited ? `<p class="banner" role="status">${esc(invited.email)} is now a Constellation member. <a href="${esc(inviteDraft(invited.email, invited.name))}">Draft the invitation email</a> (opens your mail app; nothing is sent automatically).</p>` : "";
   return (
     `<p class="k">00_ADMIN</p><h1 id="hero-h">Applications and accounts.</h1>${banner}` +
@@ -228,7 +241,7 @@ export function renderAdmin({ applications, accounts, details, invited, error, c
     `<form method="post" action="/app/admin/invite" class="inline add"><label class="sr" for="inv-email">Email</label><input id="inv-email" name="email" type="email" placeholder="email@example.com" required> ` +
     `<label class="sr" for="inv-name">Name</label><input id="inv-name" name="name" placeholder="Name" maxlength="100"> <button class="btn">Invite</button></form>` +
     (accounts.some((u) => u.argo === "requested") ? `<p class="banner" role="status">Gauss Argo setup requested by ${accounts.filter((u) => u.argo === "requested").length}: email each their install link, then press "Mark Argo setup sent" below.</p>` : "") +
-    `<h2>Accounts (${accounts.length} of ${cap})</h2><div class="tw"><table class="table"><thead><tr><th>Email</th><th>Plan, quote (£), billing, invoice, pilot, membership</th></tr></thead><tbody>${rows}</tbody></table></div>` +
+    `<h2>Accounts (${accounts.length} of ${cap})</h2><div class="tw"><table class="table"><thead><tr><th>Email</th><th>Plan, quote ($), billing, invoice, pilot, membership</th></tr></thead><tbody>${rows}</tbody></table></div>` +
     `<form method="post" action="/app/admin/account" class="inline add"><label class="sr" for="new-email">Email</label><input id="new-email" name="email" type="email" placeholder="email@company.com" required> ` +
     `${tierSelect("")} ${quoteInput(0)} ${billingSelect()} ${invoiceCheck(false, "new-inv")} ${pilotSelect("")} ${communitySelect("")} <button class="btn" name="action" value="save">Add account</button></form>` +
     `<h2>Decided (${done.length})</h2>${done.length ? `<ul class="apps">${done.map(card).join("")}</ul>` : `<p class="muted">None yet.</p>`}` +
@@ -261,10 +274,10 @@ const signedOut = (respond) =>
 // A new plan or quote starts billing afresh: no earlier invoice, paid year or event can count towards it.
 const FRESH = { eventAt: null, invoice: null, invoiceUrl: null, dueAt: null, paidUntil: null, checkout: null };
 
-/** Quote from the form, in pence, only if it sits inside the plan's range. */
+/** Quote from the form, in cents, only if it sits inside the plan's range. */
 function quoteFrom(form, tier) {
-  const pounds = Number(form.get("quote"));
-  return tier && quoteInRange(tier, pounds) ? Math.round(pounds * 100) : null;
+  const dollars = Number(form.get("quote"));
+  return tier && quoteInRange(tier, dollars) ? Math.round(dollars * 100) : null;
 }
 
 async function memberOpportunities(env, account, latest) {
@@ -285,6 +298,20 @@ export async function handleApp(request, env, url, { respond, fillPage, fetchImp
 
   if (request.method === "POST") {
     if (!sameOrigin(request)) return fail(403, "Forbidden");
+    // Evidence upload (admin only): the one multipart form, read through its own byte cap, one file at a time.
+    if (url.pathname === "/app/admin/evidence") {
+      if (!admin) return fail(403, "Forbidden");
+      const type = request.headers.get("content-type") ?? "";
+      if (!/^multipart\/form-data;/i.test(type)) return back("/app/admin/?error=evidence-type");
+      const bytes = await readCappedBytes(request, EVIDENCE_MAX_BYTES + 64 * 1024);
+      if (bytes === null) return back("/app/admin/?error=evidence-size");
+      let form;
+      try { form = await new Request(request.url, { method: "POST", headers: { "content-type": type }, body: bytes }).formData(); } catch { return back("/app/admin/?error=evidence-type"); }
+      const email = String(form.get("email") ?? "").trim().toLowerCase();
+      if (!EMAIL.test(email) || !(await getAccount(env, email))) return back("/app/admin/?error=evidence-none");
+      const error = await addEvidence(env, email, form.get("file"), id.email);
+      return back(error ? `/app/admin/?error=${error}` : "/app/admin/");
+    }
     // Every form here is small: the body is read once, through a byte cap.
     const raw = await readCapped(request, MAX_FORM);
     if (raw === null) return fail(413, "Too large");
@@ -406,14 +433,14 @@ export async function handleApp(request, env, url, { respond, fillPage, fetchImp
       if (!app || app.status !== "new") return back("/app/admin/");
       const department = app.kind === "edu" && form.get("decision") === "department";
       const approve = form.get("decision") === "approve" || department;
-      const pounds = Number(form.get("quote"));
-      if (department && !(Number.isFinite(pounds) && pounds > 0 && pounds <= 1_000_000)) return back("/app/admin/?error=edu");
+      const dollars = Number(form.get("quote"));
+      if (department && !(Number.isFinite(dollars) && dollars > 0 && dollars <= 1_000_000)) return back("/app/admin/?error=edu");
       if (approve && app.kind === "gauss" && (!tier || (tier.billing !== "invoice" && quoteFrom(form, tier) === null))) return back("/app/admin/?error=quote");
       await setApplicationStatus(env, app, approve ? "approved" : "declined", id.email);
-      if (approve && app.kind === "edu") { // self-serve eligibility, or a department licence at a yearly quote (pence)
+      if (approve && app.kind === "edu") { // self-serve eligibility, or a department licence at a yearly quote (cents)
         const prev = (await getAccount(env, app.email)) ?? { email: app.email };
         const edu = { ...(prev.edu ?? {}), approvedAt: new Date().toISOString(),
-          ...(department ? { plan: "department", quote: Math.round(pounds * 100), institution: app.institution ?? null, seats: app.seats ?? null, billing: { status: "due" } } : {}) };
+          ...(department ? { plan: "department", quote: Math.round(dollars * 100), institution: app.institution ?? null, seats: app.seats ?? null, billing: { status: "due" } } : {}) };
         await putAccount(env, { ...prev, name: prev.name ?? app.name, org: prev.org ?? app.institution ?? null, edu }, id.email);
       } else if (approve && !["workshop", "argo"].includes(app.kind)) { // workshop requests and old Argo list entries are leads: no account change
         const prev = (await getAccount(env, app.email)) ?? { email: app.email };
@@ -433,6 +460,11 @@ export async function handleApp(request, env, url, { respond, fillPage, fetchImp
       await putAccount(env, { ...prev, name, community: "member", invitedAt: new Date().toISOString() }, id.email);
       return back(`/app/admin/?invited=${await flash(env, email)}`);
     }
+    if (url.pathname === "/app/admin/evidence/delete") {
+      const email = String(form.get("email") ?? "").trim().toLowerCase();
+      if (EMAIL.test(email)) await deleteEvidence(env, email, form.get("id") ?? "", id.email);
+      return back("/app/admin/");
+    }
     if (url.pathname === "/app/admin/argo") {
       const account = await getAccount(env, String(form.get("email") ?? ""));
       if (account?.argo?.requestedAt && !account.argo.sentAt) await putAccount(env, { ...account, argo: { ...account.argo, sentAt: new Date().toISOString() } }, id.email);
@@ -443,6 +475,7 @@ export async function handleApp(request, env, url, { respond, fillPage, fetchImp
       if (!EMAIL.test(email)) return back("/app/admin/");
       if (form.get("action") === "delete") {
         await deleteAccount(env, email);
+        await deleteAllEvidence(env, email);
         return back("/app/admin/");
       }
       const prev = (await getAccount(env, email)) ?? { email };
@@ -465,9 +498,15 @@ export async function handleApp(request, env, url, { respond, fillPage, fetchImp
     if (!call) return fail(404, "Not found");
     const booked = admin || !!(await env.DATA.get(`rsvp:${call.id}:${id.email}`));
     const body = renderEventIcs({ uid: `call-${call.id}`, start: call.start, minutes: call.minutes, summary: `Constellation: ${call.title}`,
-      description: [call.notes, booked && call.link ? `Join: ${call.link}` : "Book a seat at https://lightbound.uk/app/ to get the link."].filter(Boolean).join("\n"),
+      description: [call.notes, booked && call.link ? `Join: ${call.link}` : "Book a seat at https://lightbound.space/app/ to get the link."].filter(Boolean).join("\n"),
       url: booked && call.link ? call.link : "" });
     return respond(body, 200, "text/calendar; charset=utf-8", { ...APP_HEADERS, "content-disposition": 'attachment; filename="constellation-call.ics"' });
+  }
+  const evidenceFile = /^\/app\/evidence\/([a-z0-9]{6,30})$/.exec(url.pathname);
+  if (evidenceFile) {
+    // Only the signed-in account's own files: the key is built from who they are, so another account's id is simply not found.
+    const file = await getEvidence(env, id.email, evidenceFile[1]);
+    return file ? downloadResponse(file, APP_HEADERS) : fail(404, "Not found");
   }
   if (url.pathname === "/app/edu/") {
     const account = await getAccount(env, id.email);
@@ -482,14 +521,16 @@ export async function handleApp(request, env, url, { respond, fillPage, fetchImp
     const token = url.searchParams.get("invited");
     const invitedEmail = /^[0-9a-f-]{36}$/.test(token ?? "") ? await env.DATA.get(`flash:${token}`) : null;
     const invited = invitedEmail ? await getAccount(env, invitedEmail) : null;
-    const error = ["quote", "call", "edu"].includes(url.searchParams.get("error")) ? url.searchParams.get("error") : null;
+    const error = ["quote", "call", "edu", ...Object.keys(EVIDENCE_ERRORS)].includes(url.searchParams.get("error")) ? url.searchParams.get("error") : null;
+    const evidence = Object.fromEntries(await Promise.all(accounts.map(async (a) => [a.email, await listEvidence(env, a.email, a.evidenceCount)])));
     const calls = await listCalls(env);
-    return fillPage("/app/admin/", { admin: () => renderAdmin({ applications, accounts, details, invited: invited?.community === "member" ? invited : null, error, cap: userCap(env) }) +
+    return fillPage("/app/admin/", { admin: () => renderAdmin({ applications, accounts, details, invited: invited?.community === "member" ? invited : null, error, cap: userCap(env), evidence }) +
       `<div id="calls">${error === "call" ? `<p class="banner warn" role="alert">Not scheduled: give a title, a future start time and an https link (or none).</p>` : ""}` +
       `${renderCallsAdmin(calls, accounts.filter((a) => a.community === "member").map((a) => a.email), url.origin)}</div>` }, 200, APP_HEADERS);
   }
   if (url.pathname === "/app/") {
-    const [account, weather, latest] = await Promise.all([getAccount(env, id.email), readFeed(env, "weather"), latestApplication(env, id.email)]);
+    const accountP = getAccount(env, id.email);
+    const [account, weather, latest, files] = await Promise.all([accountP, readFeed(env, "weather"), latestApplication(env, id.email), accountP.then((a) => listEvidence(env, id.email, a?.evidenceCount))]);
     const mine = latest ? [latest] : [];
     const eduNotice = { started: "edu-started", student: "edu-student" }[url.searchParams.get("edu")];
     const full = { edu: "full-edu" }[url.searchParams.get("full")];
@@ -499,7 +540,7 @@ export async function handleApp(request, env, url, { respond, fillPage, fetchImp
     const callNotice = url.searchParams.get("call") ?? "";
     // Members' opportunities: four cached feeds, plus their own application only while no interests are saved.
     const opps = member ? await memberOpportunities(env, account, latest) : "";
-    return fillPage("/app/", { workspace: () => renderWorkspace({ email: id.email, account, admin, weather, consoleUrl: env.GAUSS_APP_URL || "", supportUrl: env.SUPPORT_URL || "", argo: argoCard(account, { staff: isStaff(env, id.email) }), edu: eduCard(env, account ?? { email: id.email }, id.email, url.searchParams.get("edu") === "start"), staff: isStaff(env, id.email) ? staffCard(env.OPS_URL) : "", applications: mine, notice }) +
+    return fillPage("/app/", { workspace: () => renderWorkspace({ email: id.email, account, admin, weather, consoleUrl: env.GAUSS_APP_URL || "", supportUrl: env.SUPPORT_URL || "", argo: argoCard(account, { staff: isStaff(env, id.email) }), edu: eduCard(env, account ?? { email: id.email }, id.email, url.searchParams.get("edu") === "start"), staff: isStaff(env, id.email) ? staffCard(env.OPS_URL) : "", evidence: evidenceCard(files), applications: mine, notice }) +
       (member ? renderCalls({ calls, email: id.email, tz: isZone(account?.tz) ? account.tz : "UTC", notice: callNotice }) : "") + opps }, 200, APP_HEADERS);
   }
   return fail(404, "Not found");

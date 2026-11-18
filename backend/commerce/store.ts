@@ -84,6 +84,10 @@ export class CommerceStore {
       CREATE TABLE IF NOT EXISTS usage (
         day TEXT NOT NULL, key_id TEXT NOT NULL REFERENCES api_keys(id), endpoint TEXT NOT NULL,
         count INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (day, key_id, endpoint));
+      -- Data points returned per key per UTC day: the daily data budget (plans.ts pointsPerDay).
+      CREATE TABLE IF NOT EXISTS usage_points (
+        day TEXT NOT NULL, key_id TEXT NOT NULL REFERENCES api_keys(id),
+        points INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (day, key_id));
       -- One row per trust record returned to a customer (GAU-70): what pilots are invoiced on
       -- (per 1,000 records, per spacecraft-month). Append-only: the database refuses changes.
       CREATE TABLE IF NOT EXISTS trust_issued (
@@ -240,6 +244,24 @@ export class CommerceStore {
   orgUsageOn(orgId: string, day: string): number {
     const row = this.db
       .prepare("SELECT COALESCE(SUM(u.count), 0) AS n FROM usage u JOIN api_keys k ON k.id = u.key_id WHERE k.org_id = ? AND u.day = ?")
+      .get(orgId, day) as { n: number };
+    return row.n;
+  }
+
+  /** Adds data points returned to a key today (UTC): the daily data budget counter. */
+  recordPoints(keyId: string, points: number, at = new Date()): void {
+    if (!Number.isFinite(points) || points <= 0) return;
+    this.db
+      .prepare(
+        "INSERT INTO usage_points (day, key_id, points) VALUES (?, ?, ?) ON CONFLICT(day, key_id) DO UPDATE SET points = points + excluded.points",
+      )
+      .run(at.toISOString().slice(0, 10), keyId, Math.floor(points));
+  }
+
+  /** Data points returned today (UTC) to all of an organisation's keys. */
+  orgPointsOn(orgId: string, day: string): number {
+    const row = this.db
+      .prepare("SELECT COALESCE(SUM(p.points), 0) AS n FROM usage_points p JOIN api_keys k ON k.id = p.key_id WHERE k.org_id = ? AND p.day = ?")
       .get(orgId, day) as { n: number };
     return row.n;
   }

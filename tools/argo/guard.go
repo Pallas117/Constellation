@@ -34,14 +34,15 @@ func (l Level) String() string {
 	return [...]string{"ok", "watch", "risk", "block"}[l]
 }
 
-// Thresholds. Shared with scripts/ops/gauss-services.sh so the guard, balance
+// Thresholds. Shared with scripts/ops/gauss-services.sh (except its awake floor) so the guard, balance
 // and the awake guard agree, and with GAU-165 for the trend alerts.
 const (
-	batteryFloorPct = 10  // GAUSS_AWAKE_MIN_BATTERY: the mesh's critical-battery level
-	batteryWarnPct  = 20  // GAUSS_AWAKE_WARN_BATTERY
-	batteryPairPct  = 25  // GAU-165: low battery plus memory warn was the crash combination
-	swapMaxGB       = 4.0 // GAUSS_SWAP_MAX_GB: balance sheds load from here
-	diskMinGB       = 8.0 // GAUSS_DISK_MIN_GB
+	batteryFloorPct    = 10  // the mesh's critical-battery level (the awake guard sleeps earlier, at 40%)
+	chargerBehindRiskH = 2.0 // a charger losing ground is a risk only when the floor is under this many hours away
+	batteryWarnPct     = 20  // job admission only; the awake guard warns at 50%
+	batteryPairPct     = 25  // GAU-165: low battery plus memory warn was the crash combination
+	swapMaxGB          = 4.0 // GAUSS_SWAP_MAX_GB: balance sheds load from here
+	diskMinGB          = 8.0 // GAUSS_DISK_MIN_GB
 	// macOS keeps swap files on the boot volume; running it out of space ends
 	// in a kernel panic ("low swap space"), so below this nothing may run.
 	diskBlockGB   = 3.0
@@ -50,7 +51,8 @@ const (
 	sustainedWarn = 30 * time.Minute
 	swapRiseGB    = 1.0 // GAU-165: +1 GB of swap within 60 min while at warn
 	swapRiseOver  = 60 * time.Minute
-	minToFloor    = 60 // minutes of battery left before the floor that still count as safe
+	swapGrowingGB = 0.3 // over swapRiseOver: high swap that is still climbing stays a risk
+	minToFloor    = 60  // minutes of battery left before the floor that still count as safe
 	historyGap    = 15 * time.Minute
 	// Coping at warn (2026-10-31, Josh "a better way to sense development demand vs mac
 	// resources"): on this 8 GB Mac the kernel says warn ~half the time while barely paging
@@ -64,17 +66,18 @@ const (
 
 // Battery is one battery reading. Watts are positive into the battery.
 type Battery struct {
-	Present   bool    `json:"present"`
-	Pct       int     `json:"pct"`
-	OnAC      bool    `json:"ac"`
-	Charging  bool    `json:"charging"`
-	RemainMin int     `json:"remain,omitempty"`   // the OS estimate to empty (on battery) or full; 0 unknown
-	AdapterW  float64 `json:"adapterW,omitempty"` // the charger's rating
-	SystemW   float64 `json:"systemW,omitempty"`  // what the whole machine draws, when the controller reports it
-	Cycles    int     `json:"cycles,omitempty"`
-	HealthPct int     `json:"health,omitempty"`    // the OS's "maximum capacity" vs design
-	Condition string  `json:"condition,omitempty"` // the OS's own words, e.g. "Normal", "Service Recommended"
-	LowPower  bool    `json:"lowPower,omitempty"`
+	Present   bool     `json:"present"`
+	Pct       int      `json:"pct"`
+	OnAC      bool     `json:"ac"`
+	Charging  bool     `json:"charging"`
+	RemainMin int      `json:"remain,omitempty"`   // the OS estimate to empty (on battery) or full; 0 unknown
+	AdapterW  float64  `json:"adapterW,omitempty"` // the charger's rating
+	Adapter   *Adapter `json:"adapter,omitempty"`  // what the charger negotiated (charger.go); nil = unknown
+	SystemW   float64  `json:"systemW,omitempty"`  // what the whole machine draws, when the controller reports it
+	Cycles    int      `json:"cycles,omitempty"`
+	HealthPct int      `json:"health,omitempty"`    // the OS's "maximum capacity" vs design
+	Condition string   `json:"condition,omitempty"` // the OS's own words, e.g. "Normal", "Service Recommended"
+	LowPower  bool     `json:"lowPower,omitempty"`
 }
 
 // Sample is one reading of the host. It is what the history keeps.
@@ -93,6 +96,8 @@ type Sample struct {
 	SwappedPc int       `json:"swapped,omitempty"` // share of compressed memory already pushed to disk (macOS)
 	AvailGB   float64   `json:"avail,omitempty"`   // what the kernel counts as available (macOS kern.memorystatus_level × RAM)
 	SwapOutGB float64   `json:"swo,omitempty"`     // swap-outs since boot (macOS vm_stat), for the paging rate
+	Call      string    `json:"call,omitempty"`    // the app holding a call open (foreground.go); local only
+	Active    bool      `json:"active,omitempty"`  // the owner touched the keyboard or trackpad in the last activeIdle
 }
 
 // Finding is one reason behind a level.
@@ -113,9 +118,10 @@ type Assessment struct {
 	DrainPctH     float64   `json:"drainPctH"`  // battery points lost per hour on battery (or on a charger that can't keep up)
 	MinToFloor    int       `json:"minToFloor"` // minutes until the battery floor at the current drain; -1 unknown
 	ChargerBehind bool      `json:"chargerBehind"`
-	PagingMBMin   float64   `json:"pagingMBMin"` // swap-outs per minute since an earlier reading; -1 unknown
-	AvailRoomGB   float64   `json:"availRoomGB"` // available memory after the reserve: what a job may take at warn
-	Coping        bool      `json:"coping"`      // at warn, but not paging and with available memory
+	PagingMBMin   float64   `json:"pagingMBMin"`           // swap-outs per minute since an earlier reading; -1 unknown
+	AvailRoomGB   float64   `json:"availRoomGB"`           // available memory after the reserve: what a job may take at warn
+	Coping        bool      `json:"coping"`                // at warn, but not paging and with available memory
+	Interactive   bool      `json:"interactive,omitempty"` // the owner is at the keyboard: jobs leave interactiveGB more free
 }
 
 func (a *Assessment) add(res, code string, l Level, format string, args ...any) {
@@ -153,6 +159,21 @@ func warnWithin(hist []Sample, cur Sample, window time.Duration) time.Duration {
 		}
 	}
 	return d
+}
+
+// calmHour is true when unbroken readings cover the last hour (to within one
+// history gap) and none of them, nor now, was at warn or worse.
+func calmHour(hist []Sample, cur Sample) bool {
+	pts := append(recent(hist, cur.At, time.Hour), cur)
+	if atWarn(cur.Pressure) || cur.Pressure == "" || cur.At.Sub(pts[0].At) < time.Hour-historyGap {
+		return false
+	}
+	for i := 0; i+1 < len(pts); i++ {
+		if atWarn(pts[i].Pressure) || pts[i].Pressure == "" || pts[i+1].At.Sub(pts[i].At) > historyGap {
+			return false
+		}
+	}
+	return true
 }
 
 // paging is swap-out MB per minute from the newest earlier reading at least
@@ -221,6 +242,12 @@ func assess(hist []Sample, cur Sample) Assessment {
 	a.Coping = cur.Pressure == "warn" && a.PagingMBMin >= 0 && a.PagingMBMin < thrashMBMin &&
 		a.AvailRoomGB > 0 && a.SwapRiseGB < swapRiseGB
 
+	// The owner first (foreground.go). The finding's text names the app; Gauss only gets the code.
+	a.Interactive = cur.Active
+	if cur.Call != "" {
+		a.add("user", "owner-busy", LevelWatch, "a call is live in %s: heavy jobs wait, and pause until it ends", cur.Call)
+	}
+
 	// Memory: the kernel's own level first, then how long and how fast.
 	switch {
 	case cur.Pressure == "critical":
@@ -240,8 +267,18 @@ func assess(hist []Sample, cur Sample) Assessment {
 	if atWarn(cur.Pressure) && a.SwapRiseGB >= swapRiseGB {
 		a.add("memory", "swap-rising", LevelRisk, "swap grew %.1f GB in the last hour while at warn", a.SwapRiseGB)
 	}
+	// macOS only frees swap when the swapped pages are touched or their process
+	// exits, so "used" stays high long after pressure is back to normal. High
+	// swap is a watch only after a calm hour on record (normal throughout, swap
+	// not growing); otherwise a risk. The GAU-165 crash began at normal with
+	// 4.2 GB and no history, so "normal right now" is not enough. (2026-10-28: a
+	// stale 4.6 GB held five gate runs at normal on AC for 12 h until they gave up.)
 	if cur.SwapGB >= swapMaxGB {
-		a.add("memory", "swap-high", LevelRisk, "%.1f GB of swap in use (limit %.0f GB)", cur.SwapGB, swapMaxGB)
+		if !calmHour(hist, cur) || a.SwapRiseGB >= swapGrowingGB {
+			a.add("memory", "swap-high", LevelRisk, "%.1f GB of swap in use (limit %.0f GB)", cur.SwapGB, swapMaxGB)
+		} else {
+			a.add("memory", "swap-high", LevelWatch, "%.1f GB of swap in use (limit %.0f GB) but not growing and pressure is normal", cur.SwapGB, swapMaxGB)
+		}
 	}
 	if cur.RAMGB > 0 && a.HeadroomGB == 0 && cur.Pressure == "normal" {
 		a.add("memory", "no-headroom", LevelOK, "no spare RAM after the %.1f GB reserve (%.1f of %.0f GB held by work)", reserveGB, cur.InRAMGB, cur.RAMGB)
@@ -270,17 +307,24 @@ func assess(hist []Sample, cur Sample) Assessment {
 		case !b.OnAC && atWarn(cur.Pressure) && b.Pct <= batteryPairPct:
 			a.add("battery", "battery-low-pressure", LevelRisk, "battery %d%% with memory at warn: plug in or close the browser", b.Pct)
 		case !b.OnAC:
-			a.add("battery", "on-battery", LevelWatch, "on battery power (%d%%): light work only", b.Pct)
+			// Jobs over lightJobGB start only within their eclipse budget (eclipse.go, per job).
+			a.add("battery", "on-battery", LevelWatch, "on battery power (%d%%): light work only, heavier jobs within their eclipse budget", b.Pct)
 		}
 		if b.OnAC && a.DrainPctH >= 3 && b.Pct < 100 {
 			a.ChargerBehind = true
-			lvl := LevelRisk
+			// Judge by time to the floor, not the drain alone (2 Nov, Josh: "the 8W should be fine"):
+			// 4 %/h from 40 % is ~7 h to the floor while a gate takes ~45 min. Risk only when the floor is
+			// near; a slow drain is a watch that doesn't cap RAM (watchLimitsRAM).
+			lvl := LevelWatch
+			if hours := float64(b.Pct-batteryFloorPct) / a.DrainPctH; hours < chargerBehindRiskH || b.Pct <= shedPct {
+				lvl = LevelRisk // at shedPct running jobs are shed (brownout.go), so new ones don't start either
+			}
 			if b.Pct <= batteryFloorPct {
 				lvl = LevelBlock
 			}
-			a.add("battery", "charger-behind", lvl, "plugged in but losing %.0f%%/h: the charger can't keep up%s", a.DrainPctH, adapterNote(b))
+			a.add("battery", "charger-behind", lvl, "plugged in but losing %.0f%%/h: the charger can't keep up%s", a.DrainPctH, chargerNote(b))
 		} else if b.OnAC && b.AdapterW > 0 && b.SystemW > b.AdapterW {
-			a.add("battery", "charger-weak", LevelWatch, "the machine draws %.1f W from a %.0f W charger", b.SystemW, b.AdapterW)
+			a.add("battery", "charger-weak", LevelWatch, "the machine draws %.1f W from a %.0f W charger%s", b.SystemW, b.AdapterW, chargerNote(b))
 		}
 	}
 
@@ -308,6 +352,15 @@ func assess(hist []Sample, cur Sample) Assessment {
 		}
 	}
 	return a
+}
+
+// chargerNote is the reason and remedy when the negotiation explains the shortfall: the adapter's
+// rating (as before) plus why, from the charger diagnosis. Empty when the host reports none.
+func chargerNote(b *Battery) string {
+	if why := chargerWhy(chargerOf(b, defaultWorkerW)); why != "" {
+		return ": " + why
+	}
+	return adapterNote(b)
 }
 
 func adapterNote(b *Battery) string {
@@ -397,18 +450,25 @@ const lightJobGB = 1.0
 // coping, what the kernel counts as available decides, not the light-job cap:
 // the job still runs under the guard, which stops it at block.
 func admit(a Assessment, memGB float64) (bool, string) {
+	// At the keyboard, the owner's apps keep interactiveGB on top of the OS reserve (foreground.go).
+	keep, avail, room := reserveGB, a.AvailRoomGB, roomFor(a)
+	if a.Interactive {
+		keep, avail, room = reserveGB+interactiveGB, math.Max(0, avail-interactiveGB), math.Max(0, room-interactiveGB)
+	}
 	switch {
 	case a.Level >= LevelRisk:
 		return false, "host at " + a.Level.String() + ": " + worst(a)
+	case a.Level == LevelWatch && memGB > lightJobGB && hasCode(a, "owner-busy"):
+		return false, fmt.Sprintf("light work only (%s); this job asks for %.1f GB, the limit is %.1f GB", findingText(a, "owner-busy"), memGB, lightJobGB)
 	case a.Coping && a.Level == LevelWatch:
-		if memGB > a.AvailRoomGB {
-			return false, fmt.Sprintf("needs %.1f GB, %.1f GB available after the %.1f GB reserve (memory at warn)", memGB, a.AvailRoomGB, reserveGB)
+		if memGB > avail {
+			return false, fmt.Sprintf("needs %.1f GB, %.1f GB available after keeping %.1f GB (memory at warn)", memGB, avail, keep)
 		}
-		return true, fmt.Sprintf("ok at warn: coping, %.1f GB available after the reserve", a.AvailRoomGB)
-	case a.Level == LevelWatch && memGB > lightJobGB:
+		return true, fmt.Sprintf("ok at warn: coping, %.1f GB available after keeping %.1f GB", avail, keep)
+	case a.Level == LevelWatch && memGB > lightJobGB && watchLimitsRAM(a):
 		return false, fmt.Sprintf("light work only (%s); this job asks for %.1f GB, the limit is %.1f GB", worst(a), memGB, lightJobGB)
-	case memGB > roomFor(a) && memGB > 0:
-		return false, fmt.Sprintf("needs %.1f GB, %.1f GB free after the %.1f GB reserve", memGB, roomFor(a), reserveGB)
+	case memGB > room && memGB > 0:
+		return false, fmt.Sprintf("needs %.1f GB, %.1f GB free after keeping %.1f GB", memGB, room, keep)
 	}
 	return true, "ok"
 }
@@ -422,6 +482,29 @@ func roomFor(a Assessment) float64 {
 		return a.AvailRoomGB
 	}
 	return a.HeadroomGB
+}
+
+// watchLimitsRAM is false when every watch finding is about disk or a slow charger: 8-20 GB free on disk
+// says nothing about RAM (2026-10-31: a 16 GB-free disk held a 1.4 GB gate to the 1 GB
+// light-job cap for hours), and RAM is still checked against the headroom below.
+func watchLimitsRAM(a Assessment) bool {
+	for _, f := range a.Findings {
+		if f.Level >= LevelWatch && f.Resource != "disk" && f.Code != "charger-behind" && f.Code != "charger-weak" {
+			return true
+		}
+	}
+	return false
+}
+
+func hasCode(a Assessment, code string) bool { return findingText(a, code) != "" }
+
+func findingText(a Assessment, code string) string {
+	for _, f := range a.Findings {
+		if f.Code == code {
+			return f.Text
+		}
+	}
+	return ""
 }
 
 // worst is the text of the most severe finding.
@@ -594,6 +677,11 @@ func ioregInt(out, key string) (int64, bool) {
 // SystemLoad (mW) is not documented by Apple; it is shown, not decided on,
 // except against the charger's own rating.
 func applyIoreg(b *Battery, out string) {
+	if b.OnAC {
+		if a, ok := parseAdapterDetails(out); ok {
+			b.Adapter = &a
+		}
+	}
 	if v, ok := ioregInt(out, "CycleCount"); ok {
 		b.Cycles = int(v)
 	}
@@ -741,7 +829,8 @@ func readSupplies(root string) map[string]map[string]string {
 	for _, e := range ents {
 		f := map[string]string{}
 		for _, k := range []string{"type", "online", "present", "scope", "capacity", "status", "cycle_count",
-			"energy_full", "energy_full_design", "charge_full", "charge_full_design"} {
+			"energy_full", "energy_full_design", "charge_full", "charge_full_design",
+			"voltage_now", "voltage_max", "current_max"} {
 			if b, err := os.ReadFile(filepath.Join(root, e.Name(), k)); err == nil {
 				f[k] = string(b)
 			}

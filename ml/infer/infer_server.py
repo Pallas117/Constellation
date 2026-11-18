@@ -43,7 +43,9 @@ def infer(payload: Dict[str, Any]) -> Dict[str, Any]:
   speed = float(sw.get("speed", 400.0))
   density = float(sw.get("density", 5.0))
   bz = float(b.get("z", 0.0))
-  kp = float(idx.get("kp", 2.0))
+  # No Kp reading (null or absent) is unknown: both outputs start from Kp, so they are None, not
+  # computed from an assumed Kp 2 (GAU-230).
+  kp = _num(idx.get("kp"))
   newell = float(coupling.get("newell", 0.0))
 
   steps = max(1, min(24, horizon // 5))
@@ -53,8 +55,8 @@ def infer(payload: Dict[str, Any]) -> Dict[str, Any]:
   for i in range(steps):
     minutes = (i + 1) * 5
     driver = max(0.0, -bz) * 0.45 + (speed - 350.0) * 0.004 + density * 0.05 + newell / 8000.0
-    perturb = kp * 8.0 + driver * 12.0
-    aurora = max(0.0, min(1.0, (kp / 9.0) * 0.7 + driver * 0.03))
+    perturb = None if kp is None else kp * 8.0 + driver * 12.0
+    aurora = None if kp is None else max(0.0, min(1.0, (kp / 9.0) * 0.7 + driver * 0.03))
 
     predictions.append(
       {

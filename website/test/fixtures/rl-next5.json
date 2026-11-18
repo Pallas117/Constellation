@@ -1,0 +1,97 @@
+{
+ "valid_auth": false,
+ "count": 2,
+ "limit": 5,
+ "total": 2,
+ "last_page": 1,
+ "result": [
+  {
+   "id": 9001,
+   "name": "Example Sat 1",
+   "provider": {
+    "id": 1,
+    "name": "Example Launch Co",
+    "slug": "example"
+   },
+   "vehicle": {
+    "id": 2,
+    "name": "Example Rocket",
+    "slug": "example-rocket"
+   },
+   "pad": {
+    "id": 3,
+    "name": "LC-1",
+    "location": {
+     "id": 4,
+     "name": "Example Spaceport",
+     "state": null,
+     "country": "Exampleland",
+     "slug": "example"
+    }
+   },
+   "missions": [
+    {
+     "id": 5,
+     "name": "Example Sat 1",
+     "description": null
+    }
+   ],
+   "win_open": "2026-10-18T10:00Z",
+   "t0": "2026-10-18T10:30Z",
+   "win_close": "2026-10-18T12:00Z",
+   "est_date": {
+    "month": null,
+    "day": null,
+    "year": null,
+    "quarter": null
+   },
+   "date_str": "Oct 18",
+   "slug": "example-sat-1",
+   "quicktext": "Example Rocket - Example Sat 1",
+   "suborbital": false,
+   "tags": [],
+   "result": -1
+  },
+  {
+   "id": 9002,
+   "name": "TBD",
+   "provider": {
+    "id": 6,
+    "name": "Example Agency",
+    "slug": "agency"
+   },
+   "vehicle": {
+    "id": 7,
+    "name": "Unconfirmed Vehicle",
+    "slug": "unconfirmed"
+   },
+   "pad": {
+    "id": 8,
+    "name": "TBD",
+    "location": {
+     "id": 9,
+     "name": "Example Range, Exampleland",
+     "state": null,
+     "country": "Exampleland",
+     "slug": "range"
+    }
+   },
+   "missions": [],
+   "win_open": null,
+   "t0": null,
+   "win_close": null,
+   "est_date": {
+    "month": 10,
+    "day": null,
+    "year": 2026,
+    "quarter": null
+   },
+   "date_str": "Oct",
+   "slug": "tbd",
+   "quicktext": "",
+   "suborbital": false,
+   "tags": [],
+   "result": -1
+  }
+ ]
+}

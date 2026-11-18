@@ -74,7 +74,8 @@ export function registerDevice(
     fingerprintSignals: signals,
     registeredAt: now,
     lastSeen: now,
-    status: "trusted",
+    // Trust is earned by a verified proof (POST /:id/proof), never by registering.
+    status: "unverified",
     telemetry: undefined,
     swap: {
       tier: "L3",

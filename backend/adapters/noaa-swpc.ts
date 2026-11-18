@@ -1,6 +1,7 @@
 import { gseToGsm, magnitude, type Vector3 } from "../physics/coordinates.js";
 import { detectL1Structures, type L1Sample as StructureSample, type L1Structures } from "../physics/l1-structures.js";
 import type { DataSource, SourceStatus } from "../types.js";
+import { freshnessMs } from "../../shared/policy/freshness.js";
 import { buildL1Series, checkDensity, type DensityCheck, type L1Sample } from "./rtsw-series.js";
 
 const SOURCE: DataSource = "noaa-swpc";
@@ -15,7 +16,7 @@ const KP_URL = "https://services.swpc.noaa.gov/products/noaa-planetary-k-index.j
 const OVATION_URL = "https://services.swpc.noaa.gov/json/ovation_aurora_latest.json";
 
 /** A newest L1 sample older than this is not current: the source is unhealthy (same bound as the ingest tick). */
-export const RTSW_MAX_AGE_MS = 15 * 60_000;
+export const RTSW_MAX_AGE_MS = freshnessMs("l1_solar_wind");
 
 /** The L1 history kept for propagation: the slowest plausible wind (200 km/s) takes 2.1 h. */
 const SERIES_KEEP_MS = 3 * 3_600_000;
@@ -38,7 +39,8 @@ export interface NOAAReadout {
   velocityGsm?: Vector3 | null;
   magneticFieldGse: Vector3;
   magneticFieldGsm?: Vector3 | null;
-  kp: number;
+  /** Null when neither Kp product had a valid value: the L1 values still stand (GAU-232). */
+  kp: number | null;
   kpReading?: KpReading;
   /** The last 3 h of validated 1-minute L1 samples, oldest first. */
   series?: L1Sample[];
@@ -148,7 +150,9 @@ export function latestKp1m(data: unknown): KpReading | null {
 }
 
 /** A completed 3-hour Kp older than this (interval start) no longer describes now. */
-const KP_3H_MAX_AGE_MS = 6 * 3_600_000;
+const KP_3H_MAX_AGE_MS = freshnessMs("kp_planetary_3h");
+/** A running estimate older than this has stopped updating (it is published every minute). */
+const KP_1M_MAX_AGE_MS = freshnessMs("kp_estimated_1m");
 
 /**
  * Kp for now: the higher of the running estimate for the current 3-hour interval and
@@ -156,12 +160,17 @@ const KP_3H_MAX_AGE_MS = 6 * 3_600_000;
  * it restarts near 0 each interval (0.33 at 09:39 UT on 2026-10-12, after a 06-09 UT
  * interval of 3.33): alone it under-reads for much of every interval. The completed value
  * alone lags a rise by up to 3 h. Taking the higher never under-reports activity.
+ * An estimate that has stopped updating gives way to a recent completed value, which
+ * stays current for longer (GAU-212).
  */
 export function currentKp(estimate: KpReading | null, completed: KpReading | null, nowMs: number): KpReading | null {
   const start = completed?.observedAt ? Date.parse(completed.observedAt) : NaN;
   const recent = completed && Number.isFinite(start) && nowMs - start <= KP_3H_MAX_AGE_MS ? completed : null;
   if (!estimate) return recent ?? completed;
   if (!recent) return estimate;
+  const estimatedAt = estimate.observedAt ? Date.parse(estimate.observedAt) : NaN;
+  const updating = Number.isFinite(estimatedAt) && nowMs - estimatedAt <= KP_1M_MAX_AGE_MS;
+  if (!updating) return recent;
   return estimate.value > recent.value ? estimate : recent;
 }
 
@@ -180,7 +189,6 @@ export async function fetchNoaaReadout(nowMs = Date.now()): Promise<NOAAReadout 
     // Judge how recent the completed Kp is against now, not against the newest L1 sample.
     const kp = currentKp(latestKp1m(kp1mData), latestKp(kpData), nowMs);
     if (!latest) throw new Error("NOAA RTSW: no complete, plausible wind+mag record");
-    if (!kp) throw new Error("NOAA Kp: no valid value");
 
     const timestamp = new Date(latest.t).toISOString();
     const series = all.filter((x) => x.t > latest.t - SERIES_KEEP_MS);
@@ -206,7 +214,7 @@ export async function fetchNoaaReadout(nowMs = Date.now()): Promise<NOAAReadout 
       latencySeconds: Math.max(0, ageMs / 1000),
       healthy: current,
       message: current
-        ? `NOAA SWPC RTSW OK (${latest.spacecraft})${disagreement}`
+        ? `NOAA SWPC RTSW OK (${latest.spacecraft})${disagreement}${kp ? "" : "; no valid Kp (unknown)"}`
         : `NOAA SWPC RTSW: newest complete L1 sample (${latest.spacecraft}) is ${Math.round(ageMs / 60_000)} min old${disagreement}`,
     };
 
@@ -219,8 +227,8 @@ export async function fetchNoaaReadout(nowMs = Date.now()): Promise<NOAAReadout 
       // RTSW publishes native GSE and GSM components; no local conversion is needed.
       magneticFieldGse: latest.magneticFieldGse,
       magneticFieldGsm: latest.magneticFieldGsm,
-      kp: kp.value,
-      kpReading: kp,
+      kp: kp?.value ?? null,
+      kpReading: kp ?? undefined,
       series,
       densityCheck,
       velocityAssumed: latest.velocityAssumed === true,

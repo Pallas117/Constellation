@@ -1,0 +1,56 @@
+{
+  "l1_solar_wind": {
+    "maxAgeMin": 15,
+    "cadence": "1 min",
+    "source": "NOAA SWPC RTSW 1-minute solar wind and IMF (json/rtsw/rtsw_wind_1m.json, rtsw_mag_1m.json)",
+    "why": "GAU-15: an L1 sample (or its propagated arrival at Earth) older than this is not current; ingest stops carrying it and every surface shows it stale."
+  },
+  "kp_estimated_1m": {
+    "maxAgeMin": 15,
+    "cadence": "1 min",
+    "source": "NOAA SWPC running planetary Kp estimate (json/planetary_k_index_1m.json)",
+    "why": "The estimate updates every minute, so one older than the L1 bound has stopped updating; the last completed 3-hour Kp is used instead."
+  },
+  "kp_planetary_3h": {
+    "maxAgeMin": 360,
+    "cadence": "3 h, stamped with the interval start",
+    "source": "NOAA SWPC planetary Kp (products/noaa-planetary-k-index.json)",
+    "why": "A completed interval is published after it ends and lags a rising storm by up to 3 h; 6 h after its start it no longer describes now."
+  },
+  "dst_kyoto": {
+    "maxAgeMin": 120,
+    "cadence": "1 h",
+    "source": "Kyoto WDC quicklook Dst via NOAA SWPC (products/kyoto-dst.json)",
+    "why": "GAU-116: hourly values, so past one missed hour the reading is unknown and the modelled Dst is used."
+  },
+  "goes_particles": {
+    "maxAgeMin": 30,
+    "cadence": "5 min",
+    "source": "NOAA SWPC GOES primary integral protons and electrons (json/goes/primary/integral-{protons,electrons}-6-hour.json)",
+    "why": "GAU-112: GOES publishes every 5 min; after several missed files the flux is unknown, not current."
+  },
+  "goes_xray": {
+    "maxAgeMin": 15,
+    "cadence": "1 min",
+    "source": "NOAA SWPC GOES primary X-ray irradiance, 0.1-0.8 nm band (json/goes/primary/xrays-6-hour.json)",
+    "why": "A flare rises in minutes, so an older X-ray reading cannot set the R-scale."
+  },
+  "noaa_scales": {
+    "maxAgeMin": 60,
+    "cadence": "a few minutes",
+    "source": "NOAA SWPC latest observed R/S/G scales (products/noaa-scales.json)",
+    "why": "GAU-136: a cross-check only; older NOAA scales are not compared with Gauss's own levels."
+  },
+  "esa_swarm_hapi": {
+    "maxAgeMin": 1440,
+    "cadence": "1 Hz samples, published hours behind real time",
+    "source": "ESA VirES HAPI, Swarm A FAST magnetic field (SW_FAST_MAGA_LR_1B)",
+    "why": "GAU-63: Swarm FAST runs hours behind; a newest sample older than a day is not current."
+  },
+  "mms_fgm_l2": {
+    "maxAgeMin": 129600,
+    "cadence": "archival survey L2, published weeks behind real time",
+    "source": "NASA CDAWeb HAPI, MMS FGM survey L2 field in GSM (mms[1-4]_fgm_b_gsm_srvy_l2_clean)",
+    "why": "GAU-63: older than 90 d the reconnection vector would describe a different season, so the source is not reported healthy."
+  }
+}
