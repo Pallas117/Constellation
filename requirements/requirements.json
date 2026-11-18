@@ -1207,6 +1207,128 @@
       ]
     },
     {
+      "id": "REQ-DEV-001",
+      "title": "Swap timer idle with no devices",
+      "statement": "The swap timer's tick shall append no telemetry line and change no device when no device is registered.",
+      "rationale": "An idle tick otherwise appends about 3,840 telemetry lines a day to the line-capped live file (backend/services/device-swap-manager.ts scheduledRebalance, GAU-228).",
+      "parent": "GAU-228",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "GAU-228: the swap timer's tick does nothing until a device is registered, then rebalances it"
+      ]
+    },
+    {
+      "id": "REQ-DEV-002",
+      "title": "Swap plan and quality are operator-only",
+      "statement": "The API policy shall require the operator role for GET /api/device/swap/plan and for POST /api/device/:id/quality.",
+      "rationale": "Both change or reveal how work is spread across devices (backend/rbac.ts:68,70); the exact path /device/swap/plan must beat /device/:id.",
+      "parent": "GAU-120",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "role matrix"
+      ]
+    },
+    {
+      "id": "REQ-FEED-001",
+      "title": "Space-object catalogue needs a session",
+      "statement": "The system shall answer GET /api/feed/space-objects with HTTP 401 when the request has no session.",
+      "rationale": "The route is in the user tier of the API policy (backend/server.ts:373, backend/rbac.ts); only the landing feeds are public.",
+      "parent": "GAU-120",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "landing feeds are public; other API routes still require a session"
+      ]
+    },
+    {
+      "id": "REQ-LNK-001",
+      "title": "Link mode drops to AIRGAP after two failed checks",
+      "statement": "The link guardian shall switch to AIRGAP only after 2 consecutive failed link checks, and shall keep the previous mode after a single failed check.",
+      "rationale": "One lost ping used to stop every external fetch for 30 s; the 17% AIRGAP readings on the hotspot were mostly single lost pings (backend/lib/link-mode.ts, AIRGAP_AFTER = 2).",
+      "parent": "GAU-120",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "one lost ping keeps the last mode: fetches don't stop for a blip",
+        "2 lost pings in a row switch to AIRGAP"
+      ]
+    },
+    {
+      "id": "REQ-LNK-002",
+      "title": "Link mode by latency",
+      "statement": "The link guardian shall report SAT when an answered link check takes 150 ms or more and CLOUD when it takes less than 150 ms.",
+      "rationale": "SAT mode throttles the live feeds to save bandwidth (backend/lib/link-mode.ts SAT_LATENCY_MS = 150; backend/server.ts broadcast).",
+      "parent": "GAU-120",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "a ping that answers resets the count and picks CLOUD or SAT by latency"
+      ]
+    },
+    {
+      "id": "REQ-AUTH-001",
+      "title": "Sign-in options carry no secret",
+      "statement": "GET /api/sso-options shall answer a caller with no session with HTTP 200 and a body of the Google and GitHub enabled flags and the allowed domain only, containing no credential.",
+      "rationale": "The login page needs to know which methods to offer before sign-in (backend/server.ts:249).",
+      "parent": "GAU-120",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "sso-options is public and reports Google SSO off without credentials"
+      ]
+    },
+    {
+      "id": "REQ-ADP-001",
+      "title": "JAXA ERG probe is never a healthy feed",
+      "statement": "The JAXA ERG adapter shall report healthy false and no last-seen time for every probe outcome, including a reachable catalogue.",
+      "rationale": "The probe ingests no particle data, so it must not make a source look live (backend/adapters/jaxa-erg.ts, GAU-55, GAU-63).",
+      "parent": "GAU-55",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "JAXA: catalog reachability is not reported as a healthy data feed (GAU-55)",
+        "JAXA: a failure or an unexpected page is never a healthy feed (GAU-63)"
+      ]
+    },
+    {
+      "id": "REQ-GATE-001",
+      "title": "Gate reports missing or skipped tests",
+      "statement": "The verification gate shall mark a requirement unverified when any mapped test is missing or skipped, and failed when any mapped test fails.",
+      "rationale": "Evidence is by exact test name, so a renamed test must not pass silently (scripts/verify/vcrm.ts buildMatrix).",
+      "parent": "GAU-120",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "VCRM: verified only with all evidence passing; missing, failing or skipped tests are reported (GAU-120)"
+      ]
+    },
+    {
+      "id": "REQ-GATE-002",
+      "title": "Baseline validator requires a shall",
+      "statement": "The baseline validator shall report a problem for any requirement whose statement does not contain \"shall\".",
+      "rationale": "A statement without a shall is not a requirement (scripts/verify/vcrm.ts validateBaseline).",
+      "parent": "GAU-120",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "VCRM: baseline rules enforce id, 'shall', method and evidence (GAU-120)"
+      ]
+    },
+    {
+      "id": "REQ-WS-001",
+      "title": "Feed sockets refuse a foreign origin",
+      "statement": "The feed WebSocket servers shall close with code 1008 any connection whose Origin header is not an allowed origin.",
+      "rationale": "A page on another site must not read the live feeds with a visitor's session (backend/server.ts guardSocketConnection, GAU-201).",
+      "parent": "GAU-201",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "feed WebSockets: both paths connect at once and stay open; bad origin and unknown path refused (GAU-201)"
+      ]
+    },
+    {
       "id": "REQ-ARG-001",
       "title": "Argo never automates admin actions",
       "statement": "Argo shall never run an administrator, sudo or Tailscale-changing step on its own: its remediation plan shall hold only allowlisted, non-sudo steps, and exit-node candidates shall come from an allowlist.",
