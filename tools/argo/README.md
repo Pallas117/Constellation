@@ -52,6 +52,11 @@ Optional extras:
   whenever sending to the main handle fails, for example while the SIM is expired; `argo phone fallback off`
   removes it. It catches failures Messages reports at once. An SMS that Messages accepts and the iPhone fails
   later is only caught by the delivery check (Full Disk Access for `~/.local/bin/argo`).
+- **Charger diagnosis.** Argo reads what the charger negotiated (macOS: `ioreg` AdapterDetails; Linux: `/sys/class/power_supply`)
+  and says why power is short: `no-pd` (5 V or less and at most 15 W: plain USB, no USB-C Power Delivery; use a USB-C to
+  USB-C cable with a fast charger), `pd-low` (Power Delivery, but fewer watts than a heavy job needs) or `ok`. A host that
+  reports no negotiation is unknown, never guessed. The state is in `argo status` (`charger:no-pd 5V/8W`), `argo guard`
+  and the Gauss report (`battery.charger`, shown on /mesh).
 - **Texts that fail are not silent.** If Messages stops accepting texts (for example after a rebuild, until Allow is
   clicked), `argo status` says since when and how many are waiting or lost, a desktop banner appears after 10 min,
   and the first text after recovery says how many alerts were lost.
@@ -89,6 +94,7 @@ Then remove the `statusLine` and `claude()` lines above if you added them, and r
 |---|---|
 | `argo status` | One line, e.g. `● OK MY ts:on` or `▲ REGION HK ts:on` |
 | `argo doctor` | Full probe snapshot (secrets masked), the class, and what to do. Changes nothing. |
+| `argo reach [--json] [host[:port] ...]` | Can this network reach these hosts? Per host: `ok`, `dns`, `blocked` (resolves, no TCP answer), `tls_failed`, `tls_untrusted` or `uplink_down`, with what helps. Defaults: Claude's API, SWPC, NASA GSFC iSWA and CDAWeb (`ARGO_REACH_HOSTS` replaces them). Remembers blocked hosts per network; exit 2 when any host is unreachable. |
 | `argo fix` | Runs the loop once in the foreground |
 | `argo report` | Incident counts by class, how many needed a fix and were fixed, how many resolved on their own, last 10 events |
 | `argo phone <handle>\|test\|off\|imessage\|sms` | Set up, test or turn off alerts to your iPhone; choose iMessage first (end-to-end encrypted) or SMS first (banner on your own number, carried by your carrier) |
@@ -110,6 +116,8 @@ Then remove the `statusLine` and `claude()` lines above if you added them, and r
 | `argo link` | Link stability: availability, drops and recovery times over 24 h and 7 days |
 | `argo thirdparty [list\|check\|accept] [-json]` | Third parties (below): every outside service as a node with what it can see, its scopes, where its credential lives and where to revoke it. `check` exits 3 when a node is new, changed, removed, unregistered or can see local-class data |
 | `argo thirdparty seen [TOOL]` | Credits one use of a tool (or a Claude Code hook's JSON on stdin) to its node, or records the service as unregistered. Always exits 0 |
+| `argo posture [--json]` | Read-only device security checks against the draft baseline (below): disk encryption, firewall, automatic updates, system integrity, tailnet key expiry, Argo version, sharing services. Each is `ok`, `warn`, `fail` or `unknown`, with a one-line fix. Changes nothing |
+| `argo update [check\|apply]` | Signed Argo releases (below). `check` (default) says whether a newer signed release exists; `apply` installs it. Nothing updates by itself, and nothing works until a release key is pinned |
 | `argo off` / `argo on` | Pauses or resumes the LaunchAgent ticks |
 | `argo preflight` | Fast local check for dead proxies and stuck Claude daemons (exit 1 if found) |
 | `argo run -- cmd` | Runs `cmd` with dead proxy variables removed |
@@ -127,6 +135,10 @@ Wi-Fi security is checked on every probe: WIFI_RISK (a warning, like WPAD_RISK) 
 **Networks in range (GAU-234).** `ArgoWiFi.app` (`tools/argo/wifihelper`, build with `bash tools/argo/wifihelper/build.sh`) scans with CoreWLAN; it is an app bundle so macOS asks once for Location Services, which un-redacts network names. It never joins and never reads passwords. `argo networks` lists what is in range and which networks Argo would join: saved ones, plus open ones only if named in `~/.config/argo/public-wifi.txt` (the Wi-Fi shield then turns WARP on), with a signal of at least -80 dBm, best first. When offline, Argo alternates joining the best one (`networksetup -setairportnetwork <dev> <name>`, the name as its own argument) with a Wi-Fi restart. Names stay in memory: never in state, reports or texts.
 
 **Offline alert through the iPhone (GAU-233).** After 5 minutes with no network, Argo texts once per outage: "Mac offline since HH:MM". It sends the SMS first, so Messages hands it to the iPhone over Continuity (Text Message Forwarding) and needs no internet on the Mac, only the phone's cellular. A send Messages refuses is queued as usual; the incident log records `relay` with whether it was accepted. Needs iPhone Settings > Messages > Text Message Forwarding on for this Mac.
+
+**Dead uplink is not DNS (GAU-247).** When the system lookup and the direct 1.1.1.1 lookup both fail, Argo dials 1.1.1.1, 9.9.9.9 and 8.8.8.8 on port 443 by address (2 s, at once). If none answers, nothing gets out at all: the class is PORT_BLOCK "uplink stalled" and the advice is to switch to the iPhone hotspot, not to flush DNS or try an exit node (which rides the same uplink). On 2026-11-18 the dorm Wi-Fi was dead for 9.6 h and the old build called it DNS 22 times; mesh-heal's IP check failed 306 of 307 times over the same hours. "Usual blip, nothing to do yet" is capped at 30 minutes like the quiet window, so one long outage in a network's history can't silence advice for hours.
+
+**One host unreachable (GAU-247).** Some networks reach the internet but not one host: on 2026-11-18 the dorm network resolved `iswa.gsfc.nasa.gov` and `cdaweb.gsfc.nasa.gov` but TCP 443 and 80 timed out (traceroute died at the exchange), while nasa.gov and SWPC worked. That is not a link class (Claude works), so `argo reach` checks named hosts: DNS, TCP to up to 4 addresses at once, and a TLS handshake with certificates verified. If anything fails it dials the IP anchors once, so a dead uplink is reported as `uplink_down` rather than as per-host blocks. Blocked hosts are kept per network in state (`blocked_hosts`, cleared when the host answers, 32 at most, 30 days). Nothing is changed and nothing is sent to the hub.
 
 **Rejoin when offline.** With no route for 90 s, Argo turns Wi-Fi on if it is off, otherwise power-cycles it (`networksetup -setairportpower <dev> off`, then `on`) so macOS auto-join picks a known network or the hotspot. It follows the loop's backoff and breaker (4 tries, then every 30 minutes), waits 20 s and re-probes, and remembers per network what worked. While offline it records the radio's state (`wifi_device`, `wifi_power`) so an outage leaves evidence. No other command runs by itself.
 
@@ -405,6 +417,33 @@ log: A = MTBF / (MTBF + MTTR), computed as 1 − down/observed. They also carry 
 95th-percentile outage, and the time between drops. Time asleep counts as observed and up unless an incident was
 open. The 7-day figure is the stability score on `/mesh`. Example from this Mac on 2026-10-23:
 `Link stability 83/100 · 24 h: 84.3% up over 24.0 h, 24 drops, typical outage 3 min (p95 63 min)`.
+
+## Device security posture and updates
+
+**`argo posture`** checks this device against `docs/DEVICE_SECURITY_BASELINE.md` (a DRAFT until Josh approves it).
+It only reads settings: no admin rights, no changes, no Tailscale command that changes anything. A check that cannot
+be read is `unknown`, never `ok`. The output has no serial numbers, addresses, host or user names. The tick re-runs
+it about hourly and the mesh report carries one status per item (nothing else), which `/mesh` shows as a
+"Security:" line under the device name. Linux checks are untested on a real Linux host so far.
+
+```
+$ argo posture
+ok       Disk encryption             FileVault is on
+fail     Firewall                    The macOS firewall is off
+         fix: Turn it on in System Settings > Network > Firewall
+```
+
+**`argo update`** is described in `docs/ARGO_UPDATE.md` (design and threat model). In short: a release manifest
+(JSON) with a detached Ed25519 signature is verified against the release public key compiled into Argo before
+anything in it is trusted; expired manifests, versions that are not newer, other platforms, and downloads whose size
+or SHA-256 differ are refused; fetching is https (or plain http on this machine or the tailnet only), with no
+redirects and no proxies. `apply` downloads next to the binary, runs the new build once, keeps the old one as
+`argo.prev`, replaces the binary with one rename and puts the old one back if the new one fails.
+
+- **No release key is pinned yet**, so today `argo update` prints that and fetches nothing, and `apply` refuses.
+- **Nothing applies by itself.** The tick only checks, at most daily, once a key is pinned.
+- **macOS:** `apply` also needs `--reset-mac-permissions`, because replacing the binary resets Argo's Messages and
+  Full Disk Access grants until Argo has a stable signing identity. Run `argo phone test` afterwards.
 
 ## Third parties
 
