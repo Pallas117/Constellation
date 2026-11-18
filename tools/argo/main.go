@@ -182,6 +182,12 @@ func main() {
 			case <-time.After(every):
 			}
 		}
+	case "reach": // GAU-247: is this one host reachable from this network, and what helps if not
+		code, rerr := reachCmd(ctx, store, os.Args[2:])
+		if rerr != nil {
+			fmt.Fprintln(os.Stderr, "argo:", rerr)
+		}
+		os.Exit(code)
 	case "networks": // GAU-234: Wi-Fi networks in range and what Argo would join (names stay on this Mac)
 		err = printNetworks(ctx, os.Stdout)
 	case "summary": // what Argo caught, fixed and learned in the last 7 days
