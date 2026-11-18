@@ -42,7 +42,7 @@ type radioDisk struct {
 }
 
 // Load reads state saved by Save; a missing or damaged file starts empty.
-func (r *Radio) Load(path string) {
+func (r *BearerRadio) Load(path string) {
 	r.init()
 	b, err := os.ReadFile(path)
 	if err != nil || len(b) > 4<<20 {
@@ -103,7 +103,7 @@ func (r *Radio) Load(path string) {
 }
 
 // Save writes the state atomically with mode 0600.
-func (r *Radio) Save(path string) error {
+func (r *BearerRadio) Save(path string) error {
 	d := radioDisk{Spend: map[string][]spend{}, Holds: r.holds, Fails: r.fails, Done: map[string]time.Time{}}
 	now := r.now()
 	for name, b := range r.budgets {

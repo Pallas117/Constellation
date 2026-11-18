@@ -2,7 +2,7 @@ package main
 
 // Bearers: ways a bundle can leave this device other than HTTPS to the hub
 // (REQ-ARG-042..045). A bearer has an MTU, a legal duty cycle and a cost, so
-// the scheduler (Radio) fragments each bundle to the MTU and sends only what
+// the scheduler (BearerRadio) fragments each bundle to the MTU and sends only what
 // fits the budget: alerts, receipts and small status, never bulk files. Store
 // and forward already gives custody and receipts, so a bearer only has to move
 // bytes. Everything that leaves on a bearer is a BPSec-protected bundle
@@ -369,9 +369,9 @@ type radioItem struct {
 	targets []string
 }
 
-// Radio is the bearer scheduler: a bounded queue, per-bearer duty budgets and
+// BearerRadio is the bearer scheduler (named apart from Radio, the Wi-Fi profile in radio.go): a bounded queue, per-bearer duty budgets and
 // the receive side. Not safe for concurrent use; callers hold the relay lock.
-type Radio struct {
+type BearerRadio struct {
 	Bearers []Bearer
 	Now     func() time.Time
 	Loss    func() float64 // measured link loss, for the parity ratio; nil = 0
@@ -383,20 +383,20 @@ type Radio struct {
 	queue   []*radioItem
 }
 
-func (r *Radio) now() time.Time {
+func (r *BearerRadio) now() time.Time {
 	if r.Now != nil {
 		return r.Now()
 	}
 	return time.Now()
 }
 
-func (r *Radio) init() {
+func (r *BearerRadio) init() {
 	if r.budgets == nil {
 		r.budgets, r.holds, r.fails = map[string]*DutyBudget{}, map[string]time.Time{}, map[string]int{}
 	}
 }
 
-func (r *Radio) budget(b Bearer) *DutyBudget {
+func (r *BearerRadio) budget(b Bearer) *DutyBudget {
 	r.init()
 	if d, ok := r.budgets[b.Name()]; ok {
 		return d
@@ -407,7 +407,7 @@ func (r *Radio) budget(b Bearer) *DutyBudget {
 }
 
 // maxRadioBundle is the largest bundle any bearer could carry.
-func (r *Radio) maxBundle(b Bearer) int { return maxFragments * (b.MTU() - hdrLen) }
+func (r *BearerRadio) maxBundle(b Bearer) int { return maxFragments * (b.MTU() - hdrLen) }
 
 // radioOK says a bundle may leave on a radio: it must carry BPSec protection.
 // Bundles with a payload to keep private need a confidentiality block; admin
@@ -440,7 +440,7 @@ func radioOK(raw []byte) error {
 
 // Submit queues a bundle. Bulk (any other priority), unprotected or oversize
 // bundles are refused. Resubmitting an id already queued is a no-op.
-func (r *Radio) Submit(id string, prio int, raw []byte, expires time.Time) error {
+func (r *BearerRadio) Submit(id string, prio int, raw []byte, expires time.Time) error {
 	if prio != RadioAlert && prio != RadioStatus {
 		return errNotForRadio
 	}
@@ -467,9 +467,9 @@ func (r *Radio) Submit(id string, prio int, raw []byte, expires time.Time) error
 }
 
 // Pending is how many bundles are waiting for budget or a bearer.
-func (r *Radio) Pending() int { return len(r.queue) }
+func (r *BearerRadio) Pending() int { return len(r.queue) }
 
-func (r *Radio) targetsFor(it *radioItem) []Bearer {
+func (r *BearerRadio) targetsFor(it *radioItem) []Bearer {
 	var ok []Bearer
 	for _, b := range r.Bearers {
 		if len(it.raw) <= r.maxBundle(b) {
@@ -488,7 +488,7 @@ func (r *Radio) targetsFor(it *radioItem) []Bearer {
 
 // Pump sends what fits the budgets, alerts first, and returns frames sent.
 // A failing bearer is held with jittered exponential back-off, never hammered.
-func (r *Radio) Pump(ctx context.Context) int {
+func (r *BearerRadio) Pump(ctx context.Context) int {
 	now := r.now()
 	r.init()
 	sort.SliceStable(r.queue, func(i, j int) bool { return r.queue[i].prio < r.queue[j].prio })
@@ -556,7 +556,7 @@ func (r *Radio) Pump(ctx context.Context) int {
 }
 
 // Poll reads every bearer and returns the bundles completed this time.
-func (r *Radio) Poll(ctx context.Context) [][]byte {
+func (r *BearerRadio) Poll(ctx context.Context) [][]byte {
 	var out [][]byte
 	for _, b := range r.Bearers {
 		frames, err := b.Recv(ctx)

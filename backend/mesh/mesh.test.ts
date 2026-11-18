@@ -21,6 +21,7 @@ import {
   parseCharger,
   parsePower,
   parseClock,
+  parsePowerSave,
   parseGuard,
   parsePosture,
   parseHost,
@@ -192,6 +193,26 @@ test("network scores are allowlisted; nothing unmeasured is invented", () => {
   assert.equal(parseReport(okReport)!.net, undefined, "older Argo: no block");
 });
 
+test("net.radio: Argo's radio profile is allowlisted field by field (GAU-188)", () => {
+  const net = { privacy: 70, privacyWhy: [], rttMs: 29, speed: "excellent", signal: "excellent", rssi: -35, noise: -98 };
+  // The 2026-10-23 hotspot: crowded 2.4 GHz ch10, Wi-Fi hop clean, loss upstream.
+  const radio = {
+    band: "2.4", channel: 10, widthMHz: 20, phy: "ax", mcs: 9, txMbps: 114, coChannel: 1, overlapping: 3,
+    gwLossPct: 0, gwJitterMs: 1, netLossPct: 40, netJitterMs: 400, netRttMs: 967, path: "upstream",
+  };
+  assert.deepEqual(parseNet({ ...net, radio })!.radio, radio);
+  assert.deepEqual(parseNet({ ...net, radio: { netLossPct: 0, path: "ok" } })!.radio, { netLossPct: 0, path: "ok" }, "wired: link quality only");
+  assert.equal(parseNet({ ...net, radio: { ssid: "HomeNet", bssid: "aa:bb" } })!.radio, undefined, "names are never kept");
+  for (const bad of [
+    { band: "3.6" }, { channel: 0 }, { widthMHz: 30 }, { phy: "802.11ax" }, { mcs: 16 }, { netLossPct: 101 },
+    { path: "somewhere" }, { overlapping: -1 }, { channel: 10.5 },
+  ]) {
+    const parsed = parseNet({ ...net, radio: { ...radio, ...bad } });
+    assert.ok(parsed, `a bad radio field must not drop the report: ${JSON.stringify(bad)}`);
+    assert.equal(parsed.radio, undefined, JSON.stringify(bad));
+  }
+});
+
 test("platform is allowlisted and phones never host", () => {
   assert.equal(parseReport({ ...okReport, platform: "ios" })!.platform, "ios");
   assert.equal(parseReport({ ...okReport, platform: "playstation" })!.platform, undefined);
@@ -318,6 +339,26 @@ test("Argo's guard block is allowlisted; unknown codes drop alone, bad values dr
   assert.equal(parseBattery({ level: 64, charging: true, charger: { state: "bad" } })!.charger, undefined, "a bad charger block drops alone");
 });
 
+test("power-save: allowlisted reason, ranged time, off carries nothing, bad drops alone", () => {
+  const since = new Date(Date.now() - 60_000).toISOString();
+  assert.deepEqual(parsePowerSave({ on: true, since, reason: "no-pd", extra: "x" }), { on: true, since, reason: "no-pd" });
+  for (const reason of ["battery", "charger-short", "manual"]) assert.equal(parsePowerSave({ on: true, since, reason })!.reason, reason);
+  assert.deepEqual(parsePowerSave({ on: false, since, reason: "battery" }), { on: false }, "off keeps no reason");
+  const bad = [
+    { on: "yes" }, { on: true }, { on: true, since }, { on: true, reason: "battery" },
+    { on: true, since, reason: "rm -rf" }, { on: true, since: "not a time", reason: "battery" },
+    { on: true, since: new Date(Date.now() + 3_600_000).toISOString(), reason: "battery" },
+    { on: true, since: "2001-01-01T00:00:00Z", reason: "battery" },
+  ];
+  for (const b of bad) assert.equal(parsePowerSave(b), undefined, JSON.stringify(b));
+  assert.equal(parsePowerSave("on"), undefined);
+  assert.equal(parsePowerSave(null), undefined);
+  assert.deepEqual(parseReport({ ...okReport, powerSave: { on: true, since, reason: "battery" } })!.powerSave, { on: true, since, reason: "battery" });
+  assert.equal(parseReport({ ...okReport, powerSave: { on: true, reason: "x" } })!.powerSave, undefined, "a bad block drops alone");
+  assert.equal(parseReport(okReport)!.powerSave, undefined, "old Argo without the field still parses");
+  assert.equal(GUARD_CODE_TEXT["power-save"].length > 0, true);
+});
+
 test("hosting verdict uses report age, battery power, swap and Argo's guard, and says why", () => {
   const now = new Date("2026-10-23T12:05:00Z");
   const fresh = { receivedAt: "2026-10-23T12:00:00Z", now };
@@ -375,7 +416,8 @@ test("an Argo report with guard and battery reaches the device list with its rea
 
 test("Gauss knows every guard code, level and admission Argo can send", () => {
   const go = readFileSync(new URL("../../tools/argo/guard.go", import.meta.url), "utf8");
-  const codes = [...go.matchAll(/a\.add\("\w+", "([a-z-]+)"/g)].map((m) => m[1]);
+  const goCmd = readFileSync(new URL("../../tools/argo/guardcmd.go", import.meta.url), "utf8"); // power-save is added in guardStep
+  const codes = [...(go + goCmd).matchAll(/a\.add\("\w+", "([a-z-]+)"/g)].map((m) => m[1]);
   assert.ok(codes.length >= 18 && codes.includes("swap-rising"), `parsed ${codes.join(",")}`);
   for (const c of codes) assert.ok(Object.hasOwn(GUARD_CODE_TEXT, c), `Gauss drops Argo guard code ${c}`);
   const levels = go.match(/\[\.\.\.\]string\{"ok", "watch", "risk", "block"\}/);
