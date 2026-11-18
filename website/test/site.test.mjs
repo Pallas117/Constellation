@@ -334,6 +334,29 @@ test("flow: the header sticks on every page; anchors land below it", () => {
   assert.match(css, /scroll-padding-top:76px/);
 });
 
+test("tap targets: every <details> summary, in pages or Worker markup, is at least 24 px high (WCAG 2.5.8)", () => {
+  const worker = join(pub, "..", "worker");
+  const sources = [...walk(pub).filter((f) => f.endsWith(".html")), ...readdirSync(worker).filter((f) => f.endsWith(".js")).map((f) => join(worker, f))]
+    .map((f) => readFileSync(f, "utf8")).join("\n");
+  assert.doesNotMatch(sources, /<details(?![^>]*\bclass=")/, "every <details> has a class its summary rule can target");
+  const classes = new Set([...sources.matchAll(/<details class="([a-z-]+)"/g)].map((m) => m[1]));
+  assert.ok(classes.has("evid") && classes.has("interests"), `found ${[...classes]}`);
+  const css = read("assets/site.css");
+  for (const c of classes) {
+    const rule = css.match(new RegExp(`\\.${c} summary\\{([^}]*)\\}`));
+    assert.ok(rule, `.${c} summary has a rule`);
+    const h = rule[1].match(/min-height:(\d+)px/);
+    assert.ok(h && Number(h[1]) >= 24, `.${c} summary min-height ≥ 24px`);
+  }
+});
+
+test("phones: wide tables scroll inside their box; hidden labels can't widen the page", () => {
+  // .sr is position:absolute; unless the scroll box is its containing block it escapes the clip (planner was 874 px at 375).
+  const css = read("assets/site.css");
+  assert.match(css, /\.sr\{position:absolute/);
+  assert.match(css, /\.tw\{overflow-x:auto;position:relative\}/);
+});
+
 // ---- Budgets: beat a heavy reference site on weight, on an 8 GB laptop or a phone on a hotspot ----
 test("budgets: first view under 200 KB before the film; film under 300 KB; whole site under 1 MB", () => {
   const firstView = ["index.html", "assets/site.css", "assets/fonts/plex-sans-400.woff2", "assets/fonts/plex-sans-600.woff2",
@@ -662,4 +685,8 @@ test("traffic: every indexable page has share cards and is in the sitemap; robot
   assert.equal(ld["@graph"][0].name, "Lightbound Limited");
   assert.deepEqual(ld["@graph"][0].sameAs, ["https://luma.com/constellation"]);
   for (const [route, page] of Object.entries(html)) if (route !== "/") assert.doesNotMatch(page, /<script/, `${route}: no data blocks elsewhere`);
+});
+
+test("client links: /gauss/, /gauss/evidence/ and /argo/ each link to the pilot brief with a plan", () => {
+  for (const path of ["/gauss/", "/gauss/evidence/", "/argo/"]) assert.match(html[path], /href="\/gauss\/apply\/\?plan=pilot"/, path);
 });

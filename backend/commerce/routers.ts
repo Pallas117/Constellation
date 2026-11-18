@@ -195,11 +195,20 @@ const INTERESTS = new Set(["data-api", "connectivity", "both"]);
  * caps. Leads are stored for admins (`npm run org -- leads`); nothing is sent
  * anywhere automatically.
  */
-export function createPilotRequestHandler(store: CommerceStore, now: () => number = Date.now) {
+export function createPilotRequestHandler(
+  store: CommerceStore,
+  now: () => number = Date.now,
+  /**
+   * Resolves the real client address. Behind the loopback proxy `req.ip` is
+   * always 127.0.0.1, so production passes CyberTiger's extractor (X-Forwarded-For
+   * trusted only from a loopback peer, last hop). Express "trust proxy" stays off.
+   */
+  clientIp: (req: express.Request) => string = (req) => req.ip ?? "unknown",
+) {
   const recent = new Map<string, number[]>();
   let lastSweep = 0;
   const handler = (req: express.Request, res: express.Response) => {
-    const ip = req.ip ?? "unknown";
+    const ip = clientIp(req);
     const hourAgo = now() - 60 * 60 * 1000;
     // Forget addresses with nothing in the last hour (at most once a minute).
     if (now() - lastSweep >= 60 * 1000) {
