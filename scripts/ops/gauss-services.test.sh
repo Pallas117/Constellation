@@ -838,6 +838,10 @@ M2=$(tc "$M1" main.txt main-2); g push -q origin "$M2:refs/heads/main" && g fetc
 out=$(cd "$LIVE" && run gates enqueue "$P5" --pr 13 2>&1)
 [[ "$out" == *"main has moved past it: queueing"* ]] && [ "$(ls "$GQ" | grep -c '\.req$')" = 1 ] && ! grep -q "gh merge" "$T/actions"
 expect "train: an already-passed head that main moved past is queued to sync, not merged" $?
+# 18 Nov: gates result showed only QUEUED for a re-queued commit, hiding the verdict it already had.
+out=$(cd "$LIVE" && run gates result "$P5" 2>&1); rc=$?
+[ $rc = 3 ] && [[ "$(sed -n 1p <<<"$out")" =~ ^earlier:\ [^\ ]+\ $P5\ [^\ ]+\ (PASSED|HELD|MERGED|SKIPPED) ]] && [[ "$(tail -1 <<<"$out")" == QUEUED* ]]
+expect "gates result: a re-queued commit shows its earlier verdict first, QUEUED last" $?
 # 12 Nov: the runner dropped such a request as SKIPPED (its tree had passed) before the train step,
 # so the PR never landed. It must merge main in, gate the new head and merge it.
 : >"$T/actions"; run gates run >/dev/null 2>&1; N5=$(git --git-dir="$ORIGIN" rev-parse refs/heads/train)
@@ -866,6 +870,34 @@ expect "gates priority: a PR moves to the front, and gates queue lists requests 
 out=$(run gates priority 31 back 2>&1); last=$(ls "$GQ" | sort | tail -1); grep -qx "pr=31" "$GQ/$last"
 expect "gates priority: a PR moves to the back" $?
 out=$(run gates priority 99 front 2>&1); [ $? = 1 ] && [[ "$out" == *"Nothing queued for 99"* ]]; expect "gates priority: an unknown PR is refused" $?
+# 17 Nov: keys matched as prefixes, so "99" hit any sha starting 99 (the test above failed ~1 run in
+# 128, failing PR #259's gates) and PR 3 would have moved PR 31.
+out=$(run gates priority 3 front 2>&1); [ $? = 1 ] && [[ "$out" == *"Nothing queued for 3"* ]]
+expect "gates priority: a PR number never matches a longer PR number" $?
+before=$(ls "$GQ" | sort); out=$(run gates priority "${P8:0:5}" front 2>&1); rc=$?
+[ "$rc" != 0 ] && [ "$(ls "$GQ" | sort)" = "$before" ]
+expect "gates priority: a short sha prefix moves nothing" $?
+out=$(run gates priority "${P8:0:7}" front 2>&1); first=$(ls "$GQ" | sort | sed -n 1p); grep -qx "pr=31" "$GQ/$first"
+expect "gates priority: a 7-character sha moves its request" $?
+out=$(run gates priority 'pr=.*' front 2>&1); [ $? = 2 ]; expect "gates priority: a key that is not a PR or sha is a usage error" $?
+rm -f "$GQ"/*.req
+# 18 Nov: requirements PRs each bump the baseline "version" and conflicted with each other (#284, #286).
+# A conflict on that line alone is settled as main's version plus one patch step and gated; any other
+# conflict, even in the same file, still waits for a person.
+RJ() { printf '{\n  "version": "%s",\n  "requirements": [\n    {"id": "%s"},\n    {"id": "M"},\n    {"id": "%s"}\n  ]\n}' "$@"; }
+R0=$(tc "$M3" requirements/requirements.json "$(RJ 1.0.0 A Z)")
+RM=$(tc "$R0" requirements/requirements.json "$(RJ 1.1.0 A Y)")   # main: 1.1.0, Z -> Y
+RP=$(tc "$R0" requirements/requirements.json "$(RJ 1.0.1 B Z)")   # PR: 1.0.1, A -> B (version line only clashes)
+RX=$(tc "$R0" requirements/requirements.json "$(RJ 1.0.1 A X)")   # PR: 1.0.1, Z -> X (clashes with main's Y too)
+g push -q origin "$RM:refs/heads/main" "$RP:refs/heads/reqs" "$RX:refs/heads/reqclash" && g fetch -q origin
+echo "OPEN reqs main false CLEAN" >"$GHD/pr41"; echo "OPEN reqclash main false CLEAN" >"$GHD/pr42"; : >"$T/actions"
+(cd "$LIVE" && run gates enqueue "$RP" --pr 41 >/dev/null 2>&1; run gates enqueue "$RX" --pr 42 >/dev/null 2>&1); run gates run >/dev/null 2>&1
+NR=$(git --git-dir="$ORIGIN" rev-parse refs/heads/reqs); rj=$(git --git-dir="$ORIGIN" show "$NR:requirements/requirements.json")
+[ "$NR" != "$RP" ] && git --git-dir="$ORIGIN" merge-base --is-ancestor "$RM" "$NR" && [ "$(git --git-dir="$ORIGIN" rev-parse "$NR^1")" = "$RP" ] \
+  && [ "$rj" = "$(RJ 1.1.1 B Y)" ] && grep -q "^[^ ]* $RP [^ ]* MOVED merged main into PR #41" "$GR" && grep -qx "gh merge 41 $NR" "$T/actions"
+expect "train: a conflict on the requirements baseline version alone is settled (main's version + 1 patch), gated and merged" $?
+grep -q "^[^ ]* $RX [^ ]* CONFLICT PR #42" "$GR" && [ "$(git --git-dir="$ORIGIN" rev-parse refs/heads/reqclash)" = "$RX" ] && ! grep -q "gh merge 42" "$T/actions"
+expect "train: a requirements conflict beyond the version line still waits for a person" $?
 rm -f "$GQ"/*.req
 printf '%s 13 true CLEAN Brand refresh\n%s 21 false CLEAN Already merged head\n' "$N5" "$P8" >"$GHD/open"
 out=$(cd "$LIVE" && run gates waiting 2>&1)

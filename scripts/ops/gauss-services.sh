@@ -1304,6 +1304,28 @@ train_pr() { # train_pr <pr>: "state head branch base draft merge-state" on one 
     -q '[.state, .headRefOid, .headRefName, .baseRefName, (.isDraft|tostring), .mergeStateStatus] | join(" ")' 2>/dev/null
 }
 
+train_versions() { # train_versions <worktree>: settle a merge whose only conflicts are baseline "version" lines
+  # 18 Nov (Josh: "yes, add it"): every requirements PR bumps requirements.json/fmea.json "version", so
+  # each one conflicted with the next on the train (#284, #286) and needed a person. Take main's version
+  # plus one patch step; anything else in conflict (another line, another file, invalid JSON) still fails.
+  local w=$1 files f
+  files=$(git -C "$w" diff --name-only --diff-filter=U) || return 1
+  [ -n "$files" ] || return 1
+  while IFS= read -r f; do
+    case "$f" in requirements/requirements.json|requirements/fmea.json) ;; *) return 1 ;; esac
+    python3 -I - "$w/$f" <<'PY' || return 1
+import json, re, sys
+p = sys.argv[1]; s = open(p).read()
+hunk = re.compile(r'<<<<<<< [^\n]*\n(  "version": "[^"\n]*",\n)=======\n  "version": "(\d+)\.(\d+)\.(\d+)",\n>>>>>>> [^\n]*\n')
+out = hunk.sub(lambda m: '  "version": "%s.%s.%d",\n' % (m.group(2), m.group(3), int(m.group(4)) + 1), s)
+if out == s or re.search(r'^(<<<<<<<|=======|>>>>>>>)', out, re.M): sys.exit(1)
+json.loads(out); open(p, "w").write(out)
+PY
+    git -C "$w" add -- "$f" || return 1
+  done <<<"$files"
+  git -C "$w" commit -q --no-edit >/dev/null
+}
+
 train_sync() { # train_sync <request>: merge origin/main into a train PR's head before its run; 1 = withdrawn
   local req=$1 pr sha tree repo info state head branch base _ w new
   pr=$(req_get "$req" pr); sha=$(req_get "$req" sha); tree=$(req_get "$req" tree); repo=$(req_get "$req" repo)
@@ -1318,7 +1340,8 @@ train_sync() { # train_sync <request>: merge origin/main into a train PR's head 
   git --git-dir="$repo" merge-base --is-ancestor refs/remotes/origin/main "$sha" && return 0
   w=$(mktemp -d -t gauss-train)/w
   git --git-dir="$repo" worktree add -q --detach "$w" "$sha" 2>/dev/null || { echo "could not prepare a merge of main; gating as queued"; return 0; }
-  if git -C "$w" merge -q --no-edit -m "Merge origin/main into $branch (merge train)" refs/remotes/origin/main >/dev/null 2>&1 \
+  if { git -C "$w" merge -q --no-edit -m "Merge origin/main into $branch (merge train)" refs/remotes/origin/main >/dev/null 2>&1 \
+       || train_versions "$w"; } \
      && new=$(git -C "$w" rev-parse HEAD) && git -C "$w" push -q origin "$new:refs/heads/$branch" 2>/dev/null; then
     sed -i '' -e "s/^sha=.*/sha=$new/" -e "s/^tree=.*/tree=$(git -C "$w" rev-parse "$new^{tree}")/" "$req"
     gates_result "$sha" "$tree" MOVED "merged main into PR #$pr: gating ${new:0:7} instead"
@@ -1378,6 +1401,10 @@ gates_show_result() { # gates_show_result <checkout-dir>|<commit>: the latest li
   local arg=${1:?usage: $0 gates result <checkout-dir>|<commit>|status} tree="" line f
   if gates_resolve "$arg" 2>/dev/null; then tree=$G_TREE; else tree=$arg; fi # a session's worktree may be gone: match a prefix
   if [ ${#tree} = 40 ] && f=$(gates_queued "$tree"); then
+    # 18 Nov: a re-queued commit showed only this line, hiding the verdict it already had (17 Nov lesson).
+    # The earlier verdict goes first; the QUEUED line stays last, where scripts read it.
+    line=$(awk -v t="$tree" '(index($2, t) == 1 || index($3, t) == 1) && $4 != "REQUEUED"' "$GATES_RESULTS" 2>/dev/null | tail -1)
+    [ -n "$line" ] && echo "earlier: $line"
     echo "QUEUED ${tree:0:7} since $(date -r "$(req_get "$f" queued)" '+%F %H:%M') by $(req_get "$f" by); runner: $(gates_runner_pid >/dev/null && echo working || echo 'not running (the awake guard restarts it within a minute)')"
     return 3
   fi
@@ -1426,12 +1453,23 @@ gates_queue() { # gates queue: the queue in run order, with each request's PR
 
 gates_priority() { # gates priority <pr number|sha> front|back: move that request in the queue
   local key=${1:?usage: $0 gates priority <pr|sha> front|back} where=${2:-front} f b n=0 head
-  case "$where" in front) head=1$(date +%s) ;; back) head=9$(date +%s) ;; *) echo "usage: $0 gates priority <pr|sha> front|back" >&2; return 2 ;; esac
+  # front: "0" + a countdown, so the newest front move sorts first (before re-queues at "1<time>" and
+  # plain requests at "<time>"); "1<time>" put a later front move behind an earlier one (17 Nov).
+  case "$where" in front) head=0$(python3 -Ic 'import time; print("%016d" % (10**16 - int(time.time() * 1e6)))') ;; back) head=9$(date +%s) ;; *) echo "usage: $0 gates priority <pr|sha> front|back" >&2; return 2 ;; esac
+  # A PR number matches exactly; a sha matches by prefix only from 7 hex characters. (17 Nov: "99"
+  # matched any sha starting 99, so the unknown-PR test failed about 1 run in 128 and PR #259's
+  # gates with it; "27" would also have moved PR #278.)
+  local pat
+  case "$key" in
+    *[!0-9a-f]*|"") echo "usage: $0 gates priority <pr|sha> front|back" >&2; return 2 ;;
+    *[!0-9]*) [ ${#key} -ge 7 ] || { echo "A sha needs at least 7 characters: $key" >&2; return 2; }; pat="^sha=$key" ;;
+    *) pat="^pr=$key\$"; [ ${#key} -ge 7 ] && pat="$pat|^sha=$key" ;;
+  esac
   while IFS= read -r f; do
     [ -n "$f" ] || continue
     b=$(basename "$f")
     mv "$f" "$GATES_QUEUE/$head.$(printf '%06d' "$n")-${b#*-}"; n=$((n + 1))
-  done < <(grep -l -E "^(pr=$key|sha=$key)" "$GATES_QUEUE"/*.req 2>/dev/null)
+  done < <(grep -l -E "$pat" "$GATES_QUEUE"/*.req 2>/dev/null)
   [ $n -gt 0 ] || { echo "Nothing queued for $key." >&2; return 1; }
   echo "Moved $n request(s) for $key to the $where."
   gates_queue
