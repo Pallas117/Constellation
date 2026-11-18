@@ -93,7 +93,7 @@ export interface PostureReading {
   items: Partial<Record<"disk" | "firewall" | "updates" | "integrity" | "tailkey" | "argo" | "sharing", PostureStatus>>;
 }
 
-const POSTURE_LABEL: Record<keyof PostureReading["items"], string> = {
+export const POSTURE_LABEL: Record<keyof PostureReading["items"], string> = {
   disk: "disk encryption",
   firewall: "firewall",
   updates: "automatic updates",
