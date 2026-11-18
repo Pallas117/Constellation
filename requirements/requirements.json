@@ -1370,6 +1370,320 @@
       ]
     },
     {
+      "id": "REQ-ARG-004",
+      "title": "Argo names the link problem",
+      "statement": "Argo shall classify each network probe into one of eleven classes (OK, OFFLINE, CAPTIVE, DNS, DEAD_PROXY, STALE_DAEMON, TLS_INTERCEPT, PORT_BLOCK, REGION, WPAD_RISK, WIFI_RISK), choosing the most fundamental failure first.",
+      "rationale": "Remote work from anywhere starts with knowing which of the common failures on an unknown network is the cause (tools/argo/classify.go).",
+      "parent": "GAU-187",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "TestClassifyEveryFailureClass",
+        "TestWiFiRiskIsAWarningWithAdviceOnly"
+      ]
+    },
+    {
+      "id": "REQ-ARG-005",
+      "title": "Argo credits a fix only after recovery",
+      "statement": "Argo shall record a remediation step as the fix for a network only after a later probe shows the link recovered.",
+      "rationale": "A fix that is not credited on evidence is repeated on every network it did not help (docs/ARGO_DTN.md, Honest learning per network).",
+      "parent": "GAU-187",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "TestLoopCaptiveAutoOpensVerifiesAndRemembers",
+        "TestLoopUserFixCreditedOnRecovery"
+      ]
+    },
+    {
+      "id": "REQ-ARG-006",
+      "title": "Argo credits switch-network only on a changed network",
+      "statement": "Argo shall credit the switch-network fix to a network only when the network fingerprint changed before the link recovered.",
+      "rationale": "A blip that cleared by itself must not be remembered as a fix (tools/argo/adaptive_test.go).",
+      "parent": "GAU-187",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "TestSwitchNetworkCreditedOnlyWhenTheNetworkChanged"
+      ]
+    },
+    {
+      "id": "REQ-ARG-007",
+      "title": "Argo tries the remembered fix first",
+      "statement": "Argo shall place the fix remembered for the current network first in its remediation plan.",
+      "rationale": "The step that worked on this network is the cheapest next attempt.",
+      "parent": "GAU-187",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "TestPlanPutsRememberedFixFirst"
+      ]
+    },
+    {
+      "id": "REQ-ARG-008",
+      "title": "Argo remediation attempts back off",
+      "statement": "Argo shall wait between remediation attempts for one incident, starting at 60 s and doubling up to a maximum of 15 min.",
+      "rationale": "Repeated attempts on a failing uplink must not add load or battery drain (tools/argo/store.go backoffBase, backoffMax).",
+      "parent": "GAU-187",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "TestLoopBackoffAndCircuitBreaker"
+      ]
+    },
+    {
+      "id": "REQ-ARG-009",
+      "title": "Argo stops after four failed attempts",
+      "statement": "Argo shall stop automatic remediation of an incident after 4 attempts, open its circuit breaker and alert the owner.",
+      "rationale": "A bounded number of attempts prevents a loop and hands a persistent fault to a person (tools/argo/store.go maxAttempts).",
+      "parent": "GAU-187",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "TestLoopBackoffAndCircuitBreaker",
+        "TestEscalationTextsOnceThenEveryTwoHours"
+      ]
+    },
+    {
+      "id": "REQ-ARG-010",
+      "title": "Argo never weakens TLS",
+      "statement": "Argo shall not include in any remediation plan a step that disables TLS certificate verification.",
+      "rationale": "A hostile network that breaks TLS must be reported (TLS_INTERCEPT), never worked around.",
+      "parent": "GAU-187",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "TestPlanNeverAutomatesAdminOrTailscale"
+      ]
+    },
+    {
+      "id": "REQ-ARG-011",
+      "title": "Argo masks secrets in what it logs and sends",
+      "statement": "Argo shall mask API keys, tokens, passwords and proxy credentials in the text it writes to its incident log and sends in alerts.",
+      "rationale": "Logs and alerts leave the process; a credential in them is a leak (tools/argo/store.go, notify.go).",
+      "parent": "GAU-187",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "TestMaskHidesSecrets",
+        "TestStaleProcCommandNeverIncludesEnv",
+        "TestNotifyMasksTruncatesAndQueuesOffline"
+      ]
+    },
+    {
+      "id": "REQ-ARG-012",
+      "title": "Argo announces a link class once",
+      "statement": "Argo shall send one alert for a link class until the class changes.",
+      "rationale": "Repeated alerts for one fault train people to ignore them.",
+      "parent": "GAU-187",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "TestLoopNotifiesOnlyOnClassChange"
+      ]
+    },
+    {
+      "id": "REQ-ARG-013",
+      "title": "Argo rate-limits alerts per key",
+      "statement": "Argo shall send at most one alert per key within that key's interval.",
+      "rationale": "Alert floods hide the one that matters (tools/argo/notify.go).",
+      "parent": "GAU-187",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "TestNotifyRateLimitsPerKey"
+      ]
+    },
+    {
+      "id": "REQ-ARG-014",
+      "title": "Argo queues a bundle while the hub is unreachable",
+      "statement": "Argo shall write each bundle to disk before send returns and shall upload it when the hub next answers, including after a restart.",
+      "rationale": "Work must not be lost when the link is down; it is delivered later (docs/ARGO_DTN.md, Reliability). Designed for delay- and disruption-tolerant operation (RFC 9171).",
+      "parent": "GAU-193",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "TestRelayWorksOfflineAndExpires",
+        "TestRelayRestartKeepsQueue"
+      ]
+    },
+    {
+      "id": "REQ-ARG-015",
+      "title": "Argo confirms delivery with a signed receipt",
+      "statement": "Argo shall give the sender a signed delivered receipt for each bundle the destination accepted.",
+      "rationale": "With no custody transfer in BPv7 (RFC 9171), delivery is confirmed end to end by the receiver.",
+      "parent": "GAU-193",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "TestRelayDeliversWithSignedReceipt",
+        "TestRelayResendsReceiptForDuplicates"
+      ]
+    },
+    {
+      "id": "REQ-ARG-016",
+      "title": "Argo re-sends bundles the hub lost",
+      "statement": "Argo shall queue a bundle again when the hub reports it unknown and the destination has not confirmed it.",
+      "rationale": "A hub restored from an old backup must not turn a send into silent loss.",
+      "parent": "GAU-193",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "TestRelayReuploadsWhenHubLosesBundles"
+      ]
+    },
+    {
+      "id": "REQ-ARG-017",
+      "title": "Argo gives up only at end of lifetime",
+      "statement": "Argo shall keep a bundle queued until its lifetime ends and shall then alert the owner with the file name.",
+      "rationale": "The sender is told which file failed, not just that something did (docs/ARGO_DTN.md, Reliability point 5).",
+      "parent": "GAU-193",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "TestRelayWorksOfflineAndExpires"
+      ]
+    },
+    {
+      "id": "REQ-ARG-018",
+      "title": "Argo carries bundles with no network",
+      "statement": "Argo shall move a bundle between two devices with no network path between them by exporting it to a removable drive and importing it on the other device.",
+      "rationale": "No dependence on continuous connectivity (docs/ARGO_DTN.md, data mule).",
+      "parent": "GAU-193",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "TestRelayDataMule"
+      ]
+    },
+    {
+      "id": "REQ-ARG-019",
+      "title": "Argo seals bundle payloads",
+      "statement": "Argo shall seal each bundle payload so that its plaintext is absent from the bundle bytes and the payload opens only with the destination's private key.",
+      "rationale": "The hub and the path see ciphertext only (HPKE, RFC 9180).",
+      "parent": "GAU-193",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "TestSealOpenVerify"
+      ]
+    },
+    {
+      "id": "REQ-ARG-020",
+      "title": "Hub returns bundles unchanged to the destination only",
+      "statement": "The hub shall return a stored bundle byte for byte unchanged and only to its destination device.",
+      "rationale": "The hub moves ciphertext and must neither alter it nor show it to a third device.",
+      "parent": "GAU-193",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "the mailbox enforces source, destination, lifetime and dedup, and keeps tombstones",
+        "two devices exchange a sealed bundle and a receipt through the hub routes"
+      ]
+    },
+    {
+      "id": "REQ-ARG-021",
+      "title": "Hub rate-limits device reports",
+      "statement": "The hub shall answer HTTP 429 to a device report that arrives less than 10 s after that device's previous report.",
+      "rationale": "A stolen or faulty device token must not flood the hub (backend/mesh/router.ts MIN_REPORT_INTERVAL_MS).",
+      "parent": "GAU-187",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "agents report with their device token; bad tokens, bad payloads and floods are refused"
+      ]
+    },
+    {
+      "id": "REQ-ARG-022",
+      "title": "Argo guard refuses jobs the memory cannot hold",
+      "statement": "argo guard shall refuse to admit a job whose memory need exceeds the memory free after keeping the operating-system reserve of 1.5 GB.",
+      "rationale": "The 8 GB host runs one heavy job at a time; admission within a memory budget keeps it up (tools/argo/guard.go reserveGB).",
+      "parent": "GAU-187",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "TestAdmit",
+        "TestAdmitUsesAvailableAtNormal"
+      ]
+    },
+    {
+      "id": "REQ-ARG-023",
+      "title": "Argo guard admits no job at risk level",
+      "statement": "argo guard shall refuse every job that needs memory while the host is at risk or critical level.",
+      "rationale": "Pressure already at risk must not be added to.",
+      "parent": "GAU-187",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "TestAdmit"
+      ]
+    },
+    {
+      "id": "REQ-ARG-024",
+      "title": "Argo guard pauses heavy jobs on battery",
+      "statement": "argo guard shall pause a heavy job that started on mains power while the host runs on battery and resume it when mains power returns.",
+      "rationale": "Eclipse budget: on a limited power source, heavy work yields (tools/argo/guard.go maxPause).",
+      "parent": "GAU-187",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "TestEclipsePausesOnBatteryAndResumes"
+      ]
+    },
+    {
+      "id": "REQ-ARG-025",
+      "title": "Argo guard bounds an eclipse pause",
+      "statement": "argo guard shall stop a job paused on battery for longer than the maximum pause (2 h by default) and exit with code 75 so that a queue retries it.",
+      "rationale": "A pause must not hold a job indefinitely.",
+      "parent": "GAU-187",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "TestEclipseStopsAfterMaxPause"
+      ]
+    },
+    {
+      "id": "REQ-ARG-026",
+      "title": "Argo reproduces the BPSec standard test vectors",
+      "statement": "Argo shall reproduce the RFC 9173 Appendix A example vectors A.1 to A.4 for BPSec integrity and confidentiality blocks.",
+      "rationale": "Designed for delay- and disruption-tolerant operation with the BPSec layout (RFC 9172, RFC 9173); the vectors check interoperability at the block level only.",
+      "parent": "GAU-193",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "TestRFC9173A1Integrity",
+        "TestRFC9173A2ConfidentialityKeyWrap",
+        "TestRFC9173A3MultipleSources",
+        "TestRFC9173A4FullScope"
+      ]
+    },
+    {
+      "id": "REQ-ARG-027",
+      "title": "Argo bundles match the hub's reading",
+      "statement": "Argo shall encode bundles as BPv7 primary and canonical blocks with CRCs (RFC 9171) that round-trip and that the hub parses to the same ids, endpoints and times.",
+      "rationale": "Both ends must read one bundle the same way (golden fixtures).",
+      "parent": "GAU-193",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "TestBundleFixtures",
+        "TestBundleRoundTripAndCRC",
+        "the hub parses Argo's bundles to the same ids, endpoints and times as Argo"
+      ]
+    },
+    {
+      "id": "REQ-ARG-028",
+      "title": "Argo uses only the Go standard library",
+      "statement": "The Argo module shall have no third-party dependency: tools/argo/go.mod shall hold no require line.",
+      "rationale": "Small and auditable: nothing outside the Go toolchain to track or trust.",
+      "parent": "GAU-187",
+      "method": "I",
+      "owner": "Josh",
+      "evidence": [
+        "tools/argo/go.mod"
+      ]
+    },
+    {
       "id": "REQ-ARG-029",
       "title": "Charger diagnosis",
       "statement": "When a host reports what its charger negotiated, Argo shall classify the charger as no-pd (5 V or less and at most 15 W), pd-low (Power Delivery but below the measured heavy-job need) or ok, shall say why power is short and what to do in the guard's reason, shall show the state in `argo status` and send it to Gauss as an allowlisted, range-checked field, and shall report a host that gives no negotiation as unknown, never guessed.",
