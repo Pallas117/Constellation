@@ -1,5 +1,5 @@
 import { useMemo, useRef, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useLocation } from 'react-router-dom';
 import { hasRole, roleOf } from '@/lib/roles';
 import { Globe, KeyRound, Lock, LogIn, Orbit } from 'lucide-react';
 import { motion } from 'framer-motion';
@@ -16,6 +16,8 @@ import { useNow } from '@/hooks/useNow';
 import { useSession } from '@/lib/auth-client';
 import { beltVisuals, liveDrivers, standoffIfReference } from '@/lib/physics/live-drivers';
 import { useDocumentTitle } from '@/hooks/useDocumentTitle';
+import { overlayState } from '@/lib/auth-stage';
+import { loadLogin } from '@/pages/load-login';
 
 const LAYERS = {
   earth: true,
@@ -29,6 +31,9 @@ const LAYERS = {
 const NAV_LINK =
   'inline-flex h-8 items-center gap-1.5 rounded-md border border-charcoal/70 bg-black/55 px-2.5 text-xs font-medium text-foreground/90 backdrop-blur-md transition-colors hover:bg-white/10 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring';
 
+// The one way in for a visitor: same smoked glass, a warm-white edge instead of charcoal.
+const SIGN_IN_LINK = NAV_LINK.replace('border-charcoal/70', 'border-foreground/45').replace('text-foreground/90', 'text-foreground');
+
 const fadeIn = (delay: number) => ({
   initial: { opacity: 0 },
   animate: { opacity: 1 },
@@ -39,6 +44,7 @@ export default function PublicDashboard() {
   useDocumentTitle();
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const location = useLocation();
   const { data: session } = useSession();
   const signedIn = Boolean(session?.user?.id);
   // Only offer the console to roles that can open it; anyone else would be bounced straight back here.
@@ -113,7 +119,14 @@ export default function PublicDashboard() {
             </Link>
           )}
           {!signedIn && (
-            <Link to="/login" className={NAV_LINK}>
+            // Opens over this scene (it keeps running); the chunk is warmed on intent.
+            <Link
+              to="/login"
+              state={overlayState(location)}
+              onPointerEnter={() => void loadLogin()}
+              onFocus={() => void loadLogin()}
+              className={SIGN_IN_LINK}
+            >
               <LogIn className="h-3.5 w-3.5" aria-hidden="true" />
               Sign in
             </Link>
