@@ -461,6 +461,65 @@ out=$(run deploy "$Bc" --no-fallback 2>&1); rc=$?
 [ $rc = 0 ] && head_is "$Bc" && [[ "$out" == *"warning: no fallback to refresh"* ]] && [ ! -e "$FB/ready" ]
 expect "deploy --no-fallback: warns, deploys, leaves none" $?
 main_at "$D"; run deploy "$D" --no-fallback >/dev/null 2>&1; head_is "$D"; expect "deploy back to D, the gated tree the GAU-162 checks below start from" $?
+# GAU-211: a commit that stops tracking live's telemetry file (now in .gitignore). Live appends to it in
+# place by path while the deploy runs, so the file itself must stay where it is (same inode, never moved):
+# a plain checkout refuses going forward (changed file) and going back silently writes the committed copy
+# over live's (git overwrites ignored files).
+tel="$LIVE/data/bedrock/telemetry.jsonl"; ino() { stat -f %i "$1"; }
+kept() { [ "$(cat "$tel")" = "$before" ] && [ "$(ino "$tel")" = "$inode" ] && [ ! -e "$tel.gauss-keep" ]; } # same data, same file, no link left
+saved=$(cat "$tel"); g checkout -q --detach "$D"; g rm -q --cached data/bedrock/telemetry.jsonl; echo data/bedrock/telemetry.jsonl >>"$LIVE/.gitignore"
+g add .gitignore; g commit -qm untrack; U=$(g rev-parse HEAD)
+echo 500 >"$LIVE/health"; g commit -qam bad-untrack; Ubad=$(g rev-parse HEAD)
+rm "$tel"; g checkout -q --detach "$D"; echo "$saved" >"$tel"; gated "$U"; gated "$Ubad"; main_at "$Ubad"
+echo t2 >>"$tel"; before=$(cat "$tel"); inode=$(ino "$tel")
+out=$(HEALTH_FILE="$LIVE/health" run deploy "$Ubad" --no-fallback 2>&1); rc=$?
+[ $rc = 1 ] && head_is "$D" && kept && [[ "$out" == *"Rolled back"* ]] && [ "$(g status --porcelain data)" = " M data/bedrock/telemetry.jsonl" ]
+expect "GAU-211: a failed deploy across the untracking commit rolls back with live telemetry intact" $?
+# The backend keeps appending while git checks out: this git appends the line in $T/mark by path just
+# before and just after every checkout (and, once, removes the file if $T/git-eats exists; used below).
+stub git 'if [[ " $* " != *" checkout -q --detach "* ]]; then exec /usr/bin/git "$@"; fi
+[ ! -s "'"$T"'/mark" ] || cat "'"$T"'/mark" >>"'"$tel"'"
+/usr/bin/git "$@"; rc=$?
+if [ -e "'"$T"'/git-eats" ]; then rm -f "'"$T"'/git-eats" "'"$tel"'"; fi
+[ ! -s "'"$T"'/mark" ] || cat "'"$T"'/mark" >>"'"$tel"'"
+exit $rc'
+appended() { [ "$(grep -c "^$1\$" "$tel")" = 4 ] && [ "$(grep -v "^$1\$" "$tel")" = "$before" ] && [ "$(ino "$tel")" = "$inode" ] && [ ! -e "$tel.gauss-keep" ]; }
+echo during-forward >"$T/mark"; out=$(HEALTH_FILE="$LIVE/health" run deploy "$U" --no-fallback 2>&1); rc=$?
+[ $rc = 0 ] && head_is "$U" && appended during-forward && [ -z "$(g ls-files data/bedrock)" ] && [ -z "$(g status --porcelain data)" ]
+expect "GAU-211: deploy across the untracking commit keeps live telemetry (untracked, ignored, the same file) and every line appended meanwhile" $?
+echo t3 >>"$tel"; before=$(cat "$tel")
+echo older >"$tel.gauss-keep"; out=$(HEALTH_FILE="$LIVE/health" run deploy "$D" --no-fallback 2>&1); rc=$?
+[ $rc = 1 ] && head_is "$U" && [[ "$out" == *"gauss-keep is live data left by an earlier checkout"* ]] && [ "$(cat "$tel")" = "$before" ] \
+  && [ "$(cat "$tel.gauss-keep")" = older ] && [ -z "$(g status --porcelain --untracked-files=no data)" ]
+expect "GAU-211: a differing copy left by an interrupted checkout stops the next one (neither file touched)" $?
+rm "$tel.gauss-keep"
+echo during-back >"$T/mark"; out=$(HEALTH_FILE="$LIVE/health" run deploy "$D" --no-fallback 2>&1); rc=$?
+[ $rc = 0 ] && head_is "$D" && appended during-back && [ "$(g status --porcelain data)" = " M data/bedrock/telemetry.jsonl" ]
+expect "GAU-211: deploying back to a commit that still tracks the file keeps live's copy and every line appended meanwhile" $?
+# Safety net: a git that removes the file all the same (once, in the checkout) still leaves live's data in place.
+: >"$T/mark"; before=$(cat "$tel")
+touch "$T/git-eats"; out=$(HEALTH_FILE="$LIVE/health" run deploy "$U" --no-fallback 2>&1); rc=$?
+[ $rc = 0 ] && head_is "$U" && kept && [ ! -e "$T/git-eats" ] && [[ "$out" == *"git touched data/bedrock/telemetry.jsonl"*"live's copy is back in place"* ]]
+expect "GAU-211: if git removes the file during the checkout, live's copy is put back from the hard link" $?
+mv "$tel" "$tel.gauss-keep" # as left by a run that stopped between git removing the file and the restore
+out=$(HEALTH_FILE="$LIVE/health" run deploy "$D" --no-fallback 2>&1); rc=$?
+[ $rc = 0 ] && head_is "$D" && kept
+expect "GAU-211: an interrupted restore is finished by the next checkout before anything else" $?
+rm "$T/bin/git" "$T/mark"
+# A checkout git refuses for another reason (here a local change to a file the target also changes) leaves
+# the data file, and what the index says about it, exactly as they were.
+eval "$(sed -n '/^carry_checkout()/,/^}/p' "$SCRIPT")"
+CR="$T/carry-repo"; c() { git -C "$CR" -c user.email=t@t -c user.name=t "$@"; }
+git init -q "$CR"; mkdir -p "$CR/data/bedrock"; echo r0 >"$CR/data/bedrock/telemetry.jsonl"; echo v1 >"$CR/code"
+c add -A; c commit -qm tracked; c rm -q --cached data/bedrock/telemetry.jsonl; echo data/bedrock/telemetry.jsonl >"$CR/.gitignore"; echo v2 >"$CR/code"
+c add -A; c commit -qm untracked; CU=$(c rev-parse HEAD); c checkout -q --detach HEAD~1; echo r0 >"$CR/data/bedrock/telemetry.jsonl"
+echo r1 >>"$CR/data/bedrock/telemetry.jsonl"; echo local >"$CR/code"; was=$(c status --porcelain); cino=$(ino "$CR/data/bedrock/telemetry.jsonl")
+out=$(carry_checkout "$CR" "$CU" 2>&1); rc=$?
+[ $rc = 1 ] && [ "$(c rev-parse HEAD)" != "$CU" ] && [ "$(c status --porcelain)" = "$was" ] && [ "$(ino "$CR/data/bedrock/telemetry.jsonl")" = "$cino" ] \
+  && [ "$(cat "$CR/data/bedrock/telemetry.jsonl")" = "r0
+r1" ] && [ ! -e "$CR/data/bedrock/telemetry.jsonl.gauss-keep" ]
+expect "GAU-211: a checkout git refuses for another reason leaves the data file and its index entry as they were" $?
+main_at "$D"
 # 17 Nov 2026: a live checkout whose only edit was a skill file blocked a deploy. Edits under .claude/ or docs/
 # are saved as patches and restored; any other changed path still refuses.
 main_at "$Bc"; echo "local skill text" >>"$LIVE/.claude/NOTE.md"; echo "local doc" >>"$LIVE/docs/NOTE.md"
