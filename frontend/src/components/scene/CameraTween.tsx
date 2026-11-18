@@ -18,8 +18,12 @@ export function CameraTween({ goal, controlsRef }: { goal?: CameraGoalRequest; c
   const { camera } = useThree();
   const run = useRef<{ t: number; fromPos: THREE.Vector3; fromTarget: THREE.Vector3; toPos: THREE.Vector3; toTarget: THREE.Vector3 } | null>(null);
 
+  // The newest goal, kept in an effect (refs are not written during render). It is declared before the
+  // effect below, so on a new request that effect already reads the new goal.
   const latest = useRef(goal);
-  latest.current = goal;
+  useEffect(() => {
+    latest.current = goal;
+  });
   const request = goal?.request;
 
   useEffect(() => {

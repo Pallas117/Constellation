@@ -40,14 +40,19 @@ export function useStormWalkthrough(data: WalkthroughData | null): StormWalkthro
   const [cameraRequest, setCameraRequest] = useState(0);
   const msRef = useRef(0);
 
-  // Start at the first stop whenever a new storm loads.
-  useEffect(() => {
-    if (!data || !stops) return;
-    msRef.current = stops[0].atMs;
+  // Start at the first stop whenever a new storm loads. The state is reset while rendering (React's
+  // pattern for "reset when an input changes"), so there is no extra render from an effect; the ref
+  // the clock reads is set in an effect, because refs are not written during render.
+  const [loaded, setLoaded] = useState<WalkthroughStop[] | null>(null);
+  if (stops && stops !== loaded) {
+    setLoaded(stops);
     setMs(stops[0].atMs);
     setPlaying(false);
     setCameraRequest((n) => n + 1);
-  }, [data, stops]);
+  }
+  useEffect(() => {
+    if (stops) msRef.current = stops[0].atMs;
+  }, [stops]);
 
   useEffect(() => {
     if (!playing || !data || !stops) return;
