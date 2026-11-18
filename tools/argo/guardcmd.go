@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -607,6 +608,12 @@ func guardText(cur Sample, a Assessment, sc Scale, hist []Sample, users []Group)
 		if bt.OnAC {
 			w("charger  %s\n", chargerText(chargerOf(bt, defaultWorkerW)))
 		}
+		if note := batteryNote(bt); note != "" {
+			w("         %s\n", note)
+		}
+		if lim := chargeLimitText(bt, runtime.GOOS); lim != "" {
+			w("         %s\n", lim)
+		}
 		if bt.Cycles > 0 || bt.HealthPct > 0 {
 			w("         %d cycles", bt.Cycles)
 			if bt.HealthPct > 0 {
@@ -723,6 +730,9 @@ func guardStatus(g GuardState, now time.Time) string {
 	}
 	if c := chargerOf(g.Batt, defaultWorkerW); c.State != ChargerUnknown { // unknown shows nothing, never a guess
 		out += fmt.Sprintf(" charger:%s %sV/%sW", c.State, trimNum(c.Volts), trimNum(c.Watts))
+	}
+	if note := batteryNote(g.Batt); note != "" { // Linux: plugged in but draining, or held at a charge limit
+		out += " (" + note + ")"
 	}
 	return out
 }
