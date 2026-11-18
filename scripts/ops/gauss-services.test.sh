@@ -461,6 +461,65 @@ out=$(run deploy "$Bc" --no-fallback 2>&1); rc=$?
 [ $rc = 0 ] && head_is "$Bc" && [[ "$out" == *"warning: no fallback to refresh"* ]] && [ ! -e "$FB/ready" ]
 expect "deploy --no-fallback: warns, deploys, leaves none" $?
 main_at "$D"; run deploy "$D" --no-fallback >/dev/null 2>&1; head_is "$D"; expect "deploy back to D, the gated tree the GAU-162 checks below start from" $?
+# GAU-211: a commit that stops tracking live's telemetry file (now in .gitignore). Live appends to it in
+# place by path while the deploy runs, so the file itself must stay where it is (same inode, never moved):
+# a plain checkout refuses going forward (changed file) and going back silently writes the committed copy
+# over live's (git overwrites ignored files).
+tel="$LIVE/data/bedrock/telemetry.jsonl"; ino() { stat -f %i "$1"; }
+kept() { [ "$(cat "$tel")" = "$before" ] && [ "$(ino "$tel")" = "$inode" ] && [ ! -e "$tel.gauss-keep" ]; } # same data, same file, no link left
+saved=$(cat "$tel"); g checkout -q --detach "$D"; g rm -q --cached data/bedrock/telemetry.jsonl; echo data/bedrock/telemetry.jsonl >>"$LIVE/.gitignore"
+g add .gitignore; g commit -qm untrack; U=$(g rev-parse HEAD)
+echo 500 >"$LIVE/health"; g commit -qam bad-untrack; Ubad=$(g rev-parse HEAD)
+rm "$tel"; g checkout -q --detach "$D"; echo "$saved" >"$tel"; gated "$U"; gated "$Ubad"; main_at "$Ubad"
+echo t2 >>"$tel"; before=$(cat "$tel"); inode=$(ino "$tel")
+out=$(HEALTH_FILE="$LIVE/health" run deploy "$Ubad" --no-fallback 2>&1); rc=$?
+[ $rc = 1 ] && head_is "$D" && kept && [[ "$out" == *"Rolled back"* ]] && [ "$(g status --porcelain data)" = " M data/bedrock/telemetry.jsonl" ]
+expect "GAU-211: a failed deploy across the untracking commit rolls back with live telemetry intact" $?
+# The backend keeps appending while git checks out: this git appends the line in $T/mark by path just
+# before and just after every checkout (and, once, removes the file if $T/git-eats exists; used below).
+stub git 'if [[ " $* " != *" checkout -q --detach "* ]]; then exec /usr/bin/git "$@"; fi
+[ ! -s "'"$T"'/mark" ] || cat "'"$T"'/mark" >>"'"$tel"'"
+/usr/bin/git "$@"; rc=$?
+if [ -e "'"$T"'/git-eats" ]; then rm -f "'"$T"'/git-eats" "'"$tel"'"; fi
+[ ! -s "'"$T"'/mark" ] || cat "'"$T"'/mark" >>"'"$tel"'"
+exit $rc'
+appended() { [ "$(grep -c "^$1\$" "$tel")" = 4 ] && [ "$(grep -v "^$1\$" "$tel")" = "$before" ] && [ "$(ino "$tel")" = "$inode" ] && [ ! -e "$tel.gauss-keep" ]; }
+echo during-forward >"$T/mark"; out=$(HEALTH_FILE="$LIVE/health" run deploy "$U" --no-fallback 2>&1); rc=$?
+[ $rc = 0 ] && head_is "$U" && appended during-forward && [ -z "$(g ls-files data/bedrock)" ] && [ -z "$(g status --porcelain data)" ]
+expect "GAU-211: deploy across the untracking commit keeps live telemetry (untracked, ignored, the same file) and every line appended meanwhile" $?
+echo t3 >>"$tel"; before=$(cat "$tel")
+echo older >"$tel.gauss-keep"; out=$(HEALTH_FILE="$LIVE/health" run deploy "$D" --no-fallback 2>&1); rc=$?
+[ $rc = 1 ] && head_is "$U" && [[ "$out" == *"gauss-keep is live data left by an earlier checkout"* ]] && [ "$(cat "$tel")" = "$before" ] \
+  && [ "$(cat "$tel.gauss-keep")" = older ] && [ -z "$(g status --porcelain --untracked-files=no data)" ]
+expect "GAU-211: a differing copy left by an interrupted checkout stops the next one (neither file touched)" $?
+rm "$tel.gauss-keep"
+echo during-back >"$T/mark"; out=$(HEALTH_FILE="$LIVE/health" run deploy "$D" --no-fallback 2>&1); rc=$?
+[ $rc = 0 ] && head_is "$D" && appended during-back && [ "$(g status --porcelain data)" = " M data/bedrock/telemetry.jsonl" ]
+expect "GAU-211: deploying back to a commit that still tracks the file keeps live's copy and every line appended meanwhile" $?
+# Safety net: a git that removes the file all the same (once, in the checkout) still leaves live's data in place.
+: >"$T/mark"; before=$(cat "$tel")
+touch "$T/git-eats"; out=$(HEALTH_FILE="$LIVE/health" run deploy "$U" --no-fallback 2>&1); rc=$?
+[ $rc = 0 ] && head_is "$U" && kept && [ ! -e "$T/git-eats" ] && [[ "$out" == *"git touched data/bedrock/telemetry.jsonl"*"live's copy is back in place"* ]]
+expect "GAU-211: if git removes the file during the checkout, live's copy is put back from the hard link" $?
+mv "$tel" "$tel.gauss-keep" # as left by a run that stopped between git removing the file and the restore
+out=$(HEALTH_FILE="$LIVE/health" run deploy "$D" --no-fallback 2>&1); rc=$?
+[ $rc = 0 ] && head_is "$D" && kept
+expect "GAU-211: an interrupted restore is finished by the next checkout before anything else" $?
+rm "$T/bin/git" "$T/mark"
+# A checkout git refuses for another reason (here a local change to a file the target also changes) leaves
+# the data file, and what the index says about it, exactly as they were.
+eval "$(sed -n '/^carry_checkout()/,/^}/p' "$SCRIPT")"
+CR="$T/carry-repo"; c() { git -C "$CR" -c user.email=t@t -c user.name=t "$@"; }
+git init -q "$CR"; mkdir -p "$CR/data/bedrock"; echo r0 >"$CR/data/bedrock/telemetry.jsonl"; echo v1 >"$CR/code"
+c add -A; c commit -qm tracked; c rm -q --cached data/bedrock/telemetry.jsonl; echo data/bedrock/telemetry.jsonl >"$CR/.gitignore"; echo v2 >"$CR/code"
+c add -A; c commit -qm untracked; CU=$(c rev-parse HEAD); c checkout -q --detach HEAD~1; echo r0 >"$CR/data/bedrock/telemetry.jsonl"
+echo r1 >>"$CR/data/bedrock/telemetry.jsonl"; echo local >"$CR/code"; was=$(c status --porcelain); cino=$(ino "$CR/data/bedrock/telemetry.jsonl")
+out=$(carry_checkout "$CR" "$CU" 2>&1); rc=$?
+[ $rc = 1 ] && [ "$(c rev-parse HEAD)" != "$CU" ] && [ "$(c status --porcelain)" = "$was" ] && [ "$(ino "$CR/data/bedrock/telemetry.jsonl")" = "$cino" ] \
+  && [ "$(cat "$CR/data/bedrock/telemetry.jsonl")" = "r0
+r1" ] && [ ! -e "$CR/data/bedrock/telemetry.jsonl.gauss-keep" ]
+expect "GAU-211: a checkout git refuses for another reason leaves the data file and its index entry as they were" $?
+main_at "$D"
 # 17 Nov 2026: a live checkout whose only edit was a skill file blocked a deploy. Edits under .claude/ or docs/
 # are saved as patches and restored; any other changed path still refuses.
 main_at "$Bc"; echo "local skill text" >>"$LIVE/.claude/NOTE.md"; echo "local doc" >>"$LIVE/docs/NOTE.md"
@@ -807,6 +866,24 @@ expect "gates priority: a PR moves to the front, and gates queue lists requests 
 out=$(run gates priority 31 back 2>&1); last=$(ls "$GQ" | sort | tail -1); grep -qx "pr=31" "$GQ/$last"
 expect "gates priority: a PR moves to the back" $?
 out=$(run gates priority 99 front 2>&1); [ $? = 1 ] && [[ "$out" == *"Nothing queued for 99"* ]]; expect "gates priority: an unknown PR is refused" $?
+rm -f "$GQ"/*.req
+# 18 Nov: requirements PRs each bump the baseline "version" and conflicted with each other (#284, #286).
+# A conflict on that line alone is settled as main's version plus one patch step and gated; any other
+# conflict, even in the same file, still waits for a person.
+RJ() { printf '{\n  "version": "%s",\n  "requirements": [\n    {"id": "%s"},\n    {"id": "M"},\n    {"id": "%s"}\n  ]\n}' "$@"; }
+R0=$(tc "$M3" requirements/requirements.json "$(RJ 1.0.0 A Z)")
+RM=$(tc "$R0" requirements/requirements.json "$(RJ 1.1.0 A Y)")   # main: 1.1.0, Z -> Y
+RP=$(tc "$R0" requirements/requirements.json "$(RJ 1.0.1 B Z)")   # PR: 1.0.1, A -> B (version line only clashes)
+RX=$(tc "$R0" requirements/requirements.json "$(RJ 1.0.1 A X)")   # PR: 1.0.1, Z -> X (clashes with main's Y too)
+g push -q origin "$RM:refs/heads/main" "$RP:refs/heads/reqs" "$RX:refs/heads/reqclash" && g fetch -q origin
+echo "OPEN reqs main false CLEAN" >"$GHD/pr41"; echo "OPEN reqclash main false CLEAN" >"$GHD/pr42"; : >"$T/actions"
+(cd "$LIVE" && run gates enqueue "$RP" --pr 41 >/dev/null 2>&1; run gates enqueue "$RX" --pr 42 >/dev/null 2>&1); run gates run >/dev/null 2>&1
+NR=$(git --git-dir="$ORIGIN" rev-parse refs/heads/reqs); rj=$(git --git-dir="$ORIGIN" show "$NR:requirements/requirements.json")
+[ "$NR" != "$RP" ] && git --git-dir="$ORIGIN" merge-base --is-ancestor "$RM" "$NR" && [ "$(git --git-dir="$ORIGIN" rev-parse "$NR^1")" = "$RP" ] \
+  && [ "$rj" = "$(RJ 1.1.1 B Y)" ] && grep -q "^[^ ]* $RP [^ ]* MOVED merged main into PR #41" "$GR" && grep -qx "gh merge 41 $NR" "$T/actions"
+expect "train: a conflict on the requirements baseline version alone is settled (main's version + 1 patch), gated and merged" $?
+grep -q "^[^ ]* $RX [^ ]* CONFLICT PR #42" "$GR" && [ "$(git --git-dir="$ORIGIN" rev-parse refs/heads/reqclash)" = "$RX" ] && ! grep -q "gh merge 42" "$T/actions"
+expect "train: a requirements conflict beyond the version line still waits for a person" $?
 rm -f "$GQ"/*.req
 printf '%s 13 true CLEAN Brand refresh\n%s 21 false CLEAN Already merged head\n' "$N5" "$P8" >"$GHD/open"
 out=$(cd "$LIVE" && run gates waiting 2>&1)
