@@ -18,6 +18,7 @@ const NotFound = lazy(() => import("./pages/NotFound"));
 const HeliophysicsDashboard = lazy(() => import("./pages/HeliophysicsDashboard"));
 const MeshDashboard = lazy(() => import("./pages/MeshDashboard"));
 const ApiKeys = lazy(() => import("./pages/ApiKeys"));
+const Evidence = lazy(() => import("./pages/Evidence"));
 
 const queryClient = new QueryClient();
 
@@ -71,6 +72,14 @@ const App = () => (
                     element={
                       <ProtectedRoute minRole="user">
                         <ApiKeys />
+                      </ProtectedRoute>
+                    }
+                  />
+                  <Route
+                    path="/operator/evidence"
+                    element={
+                      <ProtectedRoute minRole="operator">
+                        <Evidence />
                       </ProtectedRoute>
                     }
                   />
