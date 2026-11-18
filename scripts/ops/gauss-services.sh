@@ -19,6 +19,10 @@
 #   scripts/ops/gauss-services.sh gates enqueue <checkout-dir>|<commit>   hand a gate run to the queue; the session can then be archived
 #   scripts/ops/gauss-services.sh gates queue | priority <pr|sha> front|back | waiting   see/reorder the train, list passes waiting for a person
 #   scripts/ops/gauss-services.sh gates result <checkout-dir>|<commit>|status   the queue's one-line result (exit 0 passed, 1 failed, 3 queued)
+#   scripts/ops/gauss-services.sh gates why <commit>       why that commit's gate failed: what failed by name, the known cause and its fix
+#     When a gate fails: 1. `gates why <commit>` (never start in the raw log). 2. Apply the fix it names, or find
+#     the cause. 3. `npm run -s check:changed` before re-queueing with --pr. 4. If the cause was new, add a row to
+#     GATES_CAUSES with its date, so the same failure is named next time. That list is how failures go down.
 #   scripts/ops/gauss-services.sh gates passed <commit>    exit 0 only if that commit's exact tree has a passing record (for scripts)
 #   scripts/ops/gauss-services.sh events [--since 2h] [--json]     timeline: watchdog, failover, deploys, alerts, boots (events.jsonl)
 #
@@ -1206,7 +1210,8 @@ gates_prescreen() { # gates_prescreen <sha> <tree>: 0 the gatebox failed the com
   fi
   if [ "$rc" -ge 1 ] && [ "$rc" -le 63 ] && [[ "$last" == "gates rc=$rc "* ]]; then
     event gates-gatebox gates "failed on the gatebox" sha="$sha" rc:="$rc" host="$GATEBOX"
-    gates_result "$sha" "$tree" FAILED "on gatebox $GATEBOX (npm ci, test, quality:full, build): $last; log $log"
+    local what; what=$(gates_log_findings brief "$log") # by name, so the result line says which test (see gates why)
+    gates_result "$sha" "$tree" FAILED "on gatebox $GATEBOX (npm ci, test, quality:full, build): $last${what:+; $what}; log $log"
     return 0
   fi
   if [ "$rc" = 142 ]; then
@@ -1216,6 +1221,81 @@ gates_prescreen() { # gates_prescreen <sha> <tree>: 0 the gatebox failed the com
   fi
   echo "$(date '+%F %T') gatebox could not screen ${sha:0:7} (exit $rc: $(tail -1 "$log" 2>/dev/null)); gating here"
   return 1
+}
+
+# Diagnosing a failed gate (`gates why <commit>`), 18 Nov: a gatebox failure said only "gates rc=1 ... log <path>",
+# and a session had to grep 1,391 lines to learn that one test failed for a known reason.
+# GATES_CAUSES is the list of causes we have actually met: <pattern (Python regex)> TAB <cause> TAB <fix>.
+# Add a row only after a real failure was fixed, with its date; the first rows that match are shown.
+IFS= read -r -d '' GATES_CAUSES <<'CAUSES' || true # read ends at EOF with status 1: expected
+^✖ telemetry_descriptor\.json is the current \.proto	telemetry.proto changed without its descriptor (18 Nov, PR #309)	regenerate it with the one-liner at the top of shared/proto/telemetry.proto, commit, re-queue
+ETIMEDOUT|ECONNRESET|ECONNREFUSED|ENOTFOUND|EAI_AGAIN|ENETUNREACH|network request to	the install could not reach the package registry	nothing is wrong with the commit: re-queue it when the link is up (argo doctor)
+error TS2307: Cannot find module	a package is missing where the check ran (18 Nov: a worktree using an older checkout's modules)	if main's package.json has it, the modules there are stale (reinstall in that checkout); otherwise add the dependency
+^✖ Argo Go tests \(exit	an Argo Go test failed inside verify, which does not name it (19 Nov, PR #331: a timing test on a throttled battery run)	the test name is in test-results/verification/argo-go-test.json of the gates checkout (Action "fail"); run the Argo short suite in tools/argo to see if it is the commit or the machine
+^\s*✗ (REQ-[A-Z]+-\d+)	a requirement has no passing test (VCRM)	npm run verify names it: fix the failing test, or map a passing test to the requirement in requirements/requirements.json
+error TS\d+	a type error	npm run -s check:changed reproduces it in seconds; fix the type (never silence the rule)
+^\s+\d+:\d+\s+error\s	a lint error	fix the code the linter names (never disable or downgrade the rule)
+^✖ .+ \(\d[\d.]*ms\)$	a failing test	run its file alone: node --import tsx --test <file>; fix the cause, not the assertion
+CAUSES
+gates_log_findings() { # gates_log_findings <mode: brief|full> <log>...: what failed, by name, and the known causes that match
+  python3 -Ic '
+import re, sys
+mode, causes, files = sys.argv[1], sys.argv[2], sys.argv[3:]
+text = ""
+for f in files:
+    try: text += open(f, encoding="utf-8", errors="replace").read() + "\n"
+    except OSError: pass
+def names(pat, t, n=3):
+    seen = []
+    for m in re.findall(pat, t, re.M):
+        m = m.strip()
+        if m and m not in seen: seen.append(m)
+    return seen[:n] + (["+%d more" % (len(seen) - n)] if len(seen) > n else [])
+tail = text.split("failing tests:", 1)[1] if "failing tests:" in text else text
+def lint(t, n=3): # the linter prints a file path, then "  line:col  error  message"; the rule ends the block
+    seen, cur = [], ""
+    for line in t.splitlines():
+        if line.startswith("/") and ":" not in line: cur = "/".join(line.strip().split("/")[-2:])
+        m = re.match(r"^\s+(\d+):\d+\s+error\s", line)
+        if m and cur and "%s:%s" % (cur, m.group(1)) not in seen: seen.append("%s:%s" % (cur, m.group(1)))
+    return seen[:n] + (["+%d more" % (len(seen) - n)] if len(seen) > n else [])
+found = [("failing tests", names(r"^✖ (.+?) \(\d[\d.]*ms\)$", tail)),
+         ("requirements", names(r"^\s*✗ (REQ-[A-Z]+-\d+)", text)),
+         ("type errors", names(r"^(\S+\(\d+,\d+\): error TS\d+)", text)),
+         ("lint errors", lint(text))]
+found = [(k, v) for k, v in found if v]
+if mode == "brief":
+    print("; ".join("%s: %s" % (k, ", ".join(v)) for k, v in found))
+    sys.exit(0)
+for k, v in found: print("  %s: %s" % (k, "; ".join(v)))
+hits = 0
+for row in causes.splitlines():
+    parts = row.split("\t")
+    if len(parts) != 3: continue
+    try: ok = re.search(parts[0], text, re.M)
+    except re.error: ok = None
+    if ok and hits and parts[1] == "a failing test": continue # the general advice, only when nothing specific matched
+    if ok and hits < 3:
+        hits += 1
+        print("  cause: %s\n  fix:   %s" % (parts[1], parts[2]))
+if not hits:
+    print("  cause: none of the known causes match" + ("" if text else " (no log to read)"))
+    print("  after the fix, add a row to GATES_CAUSES in scripts/ops/gauss-services.sh so the next one is named")
+' "$1" "$GATES_CAUSES" "${@:2}" 2>/dev/null || true
+}
+gates_why() { # gates_why <commit>: the last failure of that commit, what failed by name, the known cause and its fix
+  local want=${1:?usage: gates why <commit>} line sha tree detail logs=() f pr
+  line=$(awk -v s="$want" '$4 == "FAILED" && index($2, s) == 1' "$GATES_RESULTS" 2>/dev/null | tail -1)
+  if [ -z "$line" ]; then echo "No failed gate on record for $want (see: gates result $want)."; return 3; fi
+  read -r _ sha tree _ detail <<<"$line"
+  f=$(grep -o "log $GATES_DIR/logs/[^ ;)]*" <<<"$detail" | cut -d' ' -f2- || true); [ -n "$f" ] && [ -f "$f" ] && logs+=("$f")
+  for f in "$GATES_DIR/logs/$tree"/*.log "$GATES_DIR/runs/$sha.install.log"; do [ -f "$f" ] && logs+=("$f"); done
+  pr=$(awk -v s="$sha" '$4 == "MOVED" && index($0, "gating " substr(s, 1, 7)) { for (i = 5; i <= NF; i++) if ($i ~ /^#[0-9]+:?$/) p = $i } END { gsub(/[#:]/, "", p); print p }' "$GATES_RESULTS" 2>/dev/null || true)
+  echo "Why ${sha:0:7} failed${pr:+ (PR #$pr)}:"
+  echo "  result: ${detail%%; log *}"
+  gates_log_findings full ${logs[@]+"${logs[@]}"}
+  for f in ${logs[@]+"${logs[@]}"}; do echo "  log: $f"; done
+  echo "Before re-queueing: npm run -s check:changed (the changed projects and their tests), then gates enqueue <new commit> --pr ${pr:-N}."
 }
 
 gates_after_pass() { # gates_after_pass <sha> [<pr>]: run the after-pass hook (GATES_HOOK) if there is one; never fails the runner
@@ -2374,6 +2454,7 @@ case "${1:-}" in
       run-one) gates_run_one "${3:?}" "${4:-}" "${5:-}" ;;
       result) if [ "${3:-}" = status ]; then gates_status; else gates_show_result "${3:-}"; fi ;;
       passed) gates_passed "${3:-}" ;;
+      why) gates_why "${3:-}" ;;
       queue) gates_queue ;;
       priority) gates_priority "${3:-}" "${4:-front}" ;;
       waiting) gates_waiting ;;
