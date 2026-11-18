@@ -69,6 +69,9 @@ func (p SystemProber) Probe(ctx context.Context) Snapshot {
 	if err != nil {
 		s.DNS = Result{Err: ErrDNS, Detail: err.Error()}
 		s.DNSDirectOK = directLookup(ctx, "api.anthropic.com")
+		if !s.DNSDirectOK { // DNS or the whole uplink? Only an IP dial can tell (uplink.go)
+			s.IPUp = boolPtr(ipReachable(ctx, tcpDial))
+		}
 	} else {
 		s.DNS = Result{OK: true}
 	}
