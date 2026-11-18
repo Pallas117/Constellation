@@ -121,6 +121,8 @@ func main() {
 		thirdpartyTick(tpFilesIn(configDir()), phone, time.Now()) // texts once per new third-party change; two small file reads
 		_ = withLock(store, func() { phase(20*time.Second, func(c context.Context) { guardTick(c, store, cfg, phone, time.Now()) }) })
 		phase(30*time.Second, func(c context.Context) { relayTick(c, cfg, store, phone) }) // store-and-forward (relay.go); takes its own lock
+		// Read-only posture checks hourly and the update check daily (posture.go, update.go).
+		phase(25*time.Second, func(c context.Context) { securityTick(c, cfg, store, time.Now()) })
 		var skip bool
 		phase(10*time.Second, func(c context.Context) {
 			gw, mac := localGateway(c)
@@ -189,6 +191,12 @@ func main() {
 			case <-time.After(every):
 			}
 		}
+	case "reach": // GAU-247: is this one host reachable from this network, and what helps if not
+		code, rerr := reachCmd(ctx, store, os.Args[2:])
+		if rerr != nil {
+			fmt.Fprintln(os.Stderr, "argo:", rerr)
+		}
+		os.Exit(code)
 	case "networks": // GAU-234: Wi-Fi networks in range and what Argo would join (names stay on this Mac)
 		err = printNetworks(ctx, os.Stdout)
 	case "summary": // what Argo caught, fixed and learned in the last 7 days
@@ -279,6 +287,10 @@ func main() {
 		err = uninstall(store)
 	case "send", "outbox", "inbox", "sync", "keys", "mule", "link":
 		err = relayMain(cmd, os.Args[2:], cfg, store, phone, os.Stdout)
+	case "posture": // read-only device security checks against docs/DEVICE_SECURITY_BASELINE.md
+		err = postureCmd(ctx, os.Args[2:], store, os.Stdout)
+	case "update": // signed releases: check (default) or apply; never automatic (update.go)
+		err = updateCmd(ctx, os.Args[2:], cfg, newUpdater(store), os.Stdout)
 	case "version":
 		fmt.Println("argo", version)
 	default:

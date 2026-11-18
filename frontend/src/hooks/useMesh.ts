@@ -9,7 +9,7 @@ import {
   parseMeshOnboarding,
   type MeshOnboarding,
 } from "@/lib/api/mesh";
-import type { BatteryReading, GuardReading, PowerSaveReading } from "@/lib/mesh-onboarding";
+import type { BatteryReading, GuardReading, PostureReading, PowerSaveReading } from "@/lib/mesh-onboarding";
 import type { LinkReport } from "@/lib/link-stability";
 import { usePolledFeed, useFeedSession } from "./usePolledFeed";
 
@@ -34,6 +34,7 @@ export interface MeshReport {
   link?: LinkReport;
   guard?: MeshGuard;
   powerSave?: PowerSaveReading;
+  posture?: PostureReading; // `argo posture` statuses (backend/mesh/store.ts MeshPosture, GAU-238)
 }
 
 /** Argo's resource guard decision (backend/mesh/store.ts MeshGuard, GAU-195). */

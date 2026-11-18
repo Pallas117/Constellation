@@ -1,6 +1,6 @@
 {
   "$comment": "Constellation requirements baseline (GAU-120). NASA SP-2016-6105 Rev 2 §6.2/§5.3. Methods: T test, A analysis, I inspection, D demonstration. T evidence = exact test names; A/I/D evidence = repo paths. Verified by `npm run verify`.",
-  "version": "1.17.1",
+  "version": "1.17.2",
   "requirements": [
     {
       "id": "REQ-ING-001",
@@ -397,6 +397,7 @@
       "owner": "Josh",
       "verifiedBy": [
         "tail read returns the last lines in order without reading the whole file (GAU-117)",
+        "tail read touches only a bounded chunk of a file far larger than the tail (REQ-PER-001)",
         "tail read keeps multi-byte UTF-8 intact across chunk boundaries (GAU-117)",
         "bedrock skips corrupt and torn lines instead of returning nothing (GAU-117)",
         "restart reload fills an empty buffer once, in order, and never duplicates (GAU-117)"
@@ -992,7 +993,8 @@
       "method": "T",
       "owner": "Josh",
       "verifiedBy": [
-        "RAG endpoints require a session and never log query text"
+        "RAG endpoints require a session and never log query text",
+        "RAG endpoints are operator-only: a signed-in user gets 403, an operator does not (REQ-SEC-016)"
       ]
     },
     {
