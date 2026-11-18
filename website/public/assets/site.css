@@ -356,7 +356,7 @@ footer p{margin:0 0 8px;max-width:72ch}
 .table td{overflow-wrap:anywhere}
 .table th,.table td{text-align:left;padding:12px 8px;border-bottom:1px solid var(--char);vertical-align:top}
 .table th{font:700 11px var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
-.tw{overflow-x:auto}
+.tw{overflow-x:auto;position:relative} /* contains the .sr labels (position:absolute) so they scroll with the table instead of widening the page */
 .add{margin:16px 0 32px}
 
 /* Brand themes (Brand Book): Constellation is navy and gold, with no Lightbound badge; Turnstone is
