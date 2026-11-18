@@ -26,7 +26,7 @@ const PIPELINE_BADGE: Record<PipelineTone, BadgeTone | null> = {
 };
 
 const Row = ({ label, children }: { label: string; children: ReactNode }) => (
-  <div className="flex min-h-[2.125rem] items-center justify-between gap-3 border-b border-charcoal py-1.5 last:border-b-0">
+  <div className="flex min-h-[2.1875rem] items-center justify-between gap-3 border-b border-charcoal py-1.5 last:border-b-0">
     <dt className="font-mono text-xs uppercase tracking-[0.06em] text-muted-foreground">{label}</dt>
     <dd className="font-mono text-sm tabular-nums text-foreground">{children}</dd>
   </div>

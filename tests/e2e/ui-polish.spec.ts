@@ -68,7 +68,7 @@ for (const viewport of [
     const after = await header.boundingBox();
 
     expect(before && after).toBeTruthy();
-    expect(after!.height).toBe(before!.height);
+    expect(after!.height).toBeCloseTo(before!.height, 0); // same height, to sub-pixel rounding
   });
 }
 
@@ -78,9 +78,32 @@ test("telemetry rows are one height with or without a status word", async ({ pag
   const panel = page.getByRole("region", { name: "03_SOLAR_WIND" });
   // The mock's Bz (-6.2 nT) and Kp (4) carry status words; speed and density don't.
   await expect(panel.getByText("Southward", { exact: false })).toBeVisible();
+  // A badge row is 22 px of pill + 12 px padding + the 1 px rule; plain rows reserve the same.
   const heights = await panel.locator("dl > div").evaluateAll((rows) => rows.map((r) => Math.round(r.getBoundingClientRect().height)));
   expect(heights.length).toBeGreaterThan(3);
   expect(new Set(heights).size).toBe(1);
+});
+
+test("the storm forecast banner is one height while computing and when it lands", async ({ page }) => {
+  await mockUiApis(page);
+  const release = await holdRoute(page, "**/api/forecast/anomaly", {
+    modelVersion: "anomaly-v1",
+    generatedAt: new Date().toISOString(),
+    horizonHours: 72,
+    anomalyProbability: 0.08,
+    predictedKpMax: 4,
+    warningMessage: "Nominal magnetospheric conditions detected.",
+    confidenceInterval: [0.02, 0.15],
+  });
+  await page.goto("/operator?e2e=1");
+  const banner = page.getByTestId("forecast-banner");
+  await expect(banner).toContainText("computing");
+  const before = await banner.boundingBox();
+  release();
+  await expect(banner).toContainText("72 h forecast");
+  const after = await banner.boundingBox();
+  // The column is anchored at the bottom: a taller banner pushed the assistant up.
+  expect(after!.height).toBeCloseTo(before!.height, 0);
 });
 
 test("the first Tab on the console reaches the page, not a toast", async ({ page }) => {
