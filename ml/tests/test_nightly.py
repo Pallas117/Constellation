@@ -24,6 +24,18 @@ CANON = '{"type":"canonical","speed":400}\n'
 MMS = '{"type":"mms","x":1}\n'
 
 
+class DefaultTelemetryTest(unittest.TestCase):
+  """GAU-211: without --telemetry the job counts the file the backend writes, wherever it runs from."""
+
+  def test_follows_the_backend_data_dir(self):
+    with mock.patch.dict("os.environ", {"GAUSS_BEDROCK_DIR": "/srv/gauss/bedrock"}):
+      self.assertEqual(nightly.default_telemetry(), Path("/srv/gauss/bedrock/telemetry.jsonl"))
+
+  def test_defaults_to_this_checkout_not_the_working_directory(self):
+    with mock.patch.dict("os.environ", clear=True):
+      self.assertEqual(nightly.default_telemetry(), ML_DIR.parent / "data" / "bedrock" / "telemetry.jsonl")
+
+
 class CountCanonicalTest(unittest.TestCase):
   def setUp(self):
     self.dir = Path(tempfile.mkdtemp())
