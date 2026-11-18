@@ -76,7 +76,9 @@ test("evidence routes: there is no signing route, and nothing private in the opt
     assert.doesNotMatch(text, /PRIVATE KEY|sign-key":|\/Users\/|\/home\//);
     const options = JSON.parse(text) as { events: Array<{ id: string; title: string | null }>; mappings: Array<{ id: string }>; sample: { name: string; text: string }; keys: Array<Record<string, unknown>>; signOnHost: string; keyring: string };
     assert.ok(options.events.some((e) => e.id === "jan-2026" && e.title));
-    assert.deepEqual(options.mappings.map((m) => m.id), ["generic-csv"]);
+    // Every mapping shipped in backend/trust/mappings (more arrive with new log formats), the sample's among them.
+    assert.ok(options.mappings.some((m) => m.id === "generic-csv"), options.mappings.map((m) => m.id).join(", "));
+    assert.equal(new Set(options.mappings.map((m) => m.id)).size, options.mappings.length);
     assert.equal(options.sample.text, csv.toString("utf8"));
     assert.equal(options.signOnHost, SIGN_ON_HOST);
     assert.equal(options.keyring, KEYRING_LABEL);
