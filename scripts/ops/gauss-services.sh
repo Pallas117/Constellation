@@ -1348,6 +1348,28 @@ train_pr() { # train_pr <pr>: "state head branch base draft merge-state" on one 
     -q '[.state, .headRefOid, .headRefName, .baseRefName, (.isDraft|tostring), .mergeStateStatus] | join(" ")' 2>/dev/null
 }
 
+train_versions() { # train_versions <worktree>: settle a merge whose only conflicts are baseline "version" lines
+  # 18 Nov (Josh: "yes, add it"): every requirements PR bumps requirements.json/fmea.json "version", so
+  # each one conflicted with the next on the train (#284, #286) and needed a person. Take main's version
+  # plus one patch step; anything else in conflict (another line, another file, invalid JSON) still fails.
+  local w=$1 files f
+  files=$(git -C "$w" diff --name-only --diff-filter=U) || return 1
+  [ -n "$files" ] || return 1
+  while IFS= read -r f; do
+    case "$f" in requirements/requirements.json|requirements/fmea.json) ;; *) return 1 ;; esac
+    python3 -I - "$w/$f" <<'PY' || return 1
+import json, re, sys
+p = sys.argv[1]; s = open(p).read()
+hunk = re.compile(r'<<<<<<< [^\n]*\n(  "version": "[^"\n]*",\n)=======\n  "version": "(\d+)\.(\d+)\.(\d+)",\n>>>>>>> [^\n]*\n')
+out = hunk.sub(lambda m: '  "version": "%s.%s.%d",\n' % (m.group(2), m.group(3), int(m.group(4)) + 1), s)
+if out == s or re.search(r'^(<<<<<<<|=======|>>>>>>>)', out, re.M): sys.exit(1)
+json.loads(out); open(p, "w").write(out)
+PY
+    git -C "$w" add -- "$f" || return 1
+  done <<<"$files"
+  git -C "$w" commit -q --no-edit >/dev/null
+}
+
 train_sync() { # train_sync <request>: merge origin/main into a train PR's head before its run; 1 = withdrawn
   local req=$1 pr sha tree repo info state head branch base _ w new
   pr=$(req_get "$req" pr); sha=$(req_get "$req" sha); tree=$(req_get "$req" tree); repo=$(req_get "$req" repo)
@@ -1362,7 +1384,8 @@ train_sync() { # train_sync <request>: merge origin/main into a train PR's head 
   git --git-dir="$repo" merge-base --is-ancestor refs/remotes/origin/main "$sha" && return 0
   w=$(mktemp -d -t gauss-train)/w
   git --git-dir="$repo" worktree add -q --detach "$w" "$sha" 2>/dev/null || { echo "could not prepare a merge of main; gating as queued"; return 0; }
-  if git -C "$w" merge -q --no-edit -m "Merge origin/main into $branch (merge train)" refs/remotes/origin/main >/dev/null 2>&1 \
+  if { git -C "$w" merge -q --no-edit -m "Merge origin/main into $branch (merge train)" refs/remotes/origin/main >/dev/null 2>&1 \
+       || train_versions "$w"; } \
      && new=$(git -C "$w" rev-parse HEAD) && git -C "$w" push -q origin "$new:refs/heads/$branch" 2>/dev/null; then
     sed -i '' -e "s/^sha=.*/sha=$new/" -e "s/^tree=.*/tree=$(git -C "$w" rev-parse "$new^{tree}")/" "$req"
     gates_result "$sha" "$tree" MOVED "merged main into PR #$pr: gating ${new:0:7} instead"
