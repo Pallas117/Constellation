@@ -111,7 +111,11 @@ if (packPath) {
   const git = (...a: string[]) => execFileSync("git", ["-C", root, ...a], { encoding: "utf8" }).trim();
   let commit = "unknown";
   try {
-    commit = git("rev-parse", "HEAD") + (git("status", "--porcelain", "--untracked-files=no") ? "+modified" : "");
+    // "+modified" means the CODE differs from the commit. The live checkout rewrites tracked runtime
+    // data in place (the bedrock telemetry log, the ML model registry and promoted model files), so
+    // those paths are excluded: they are data, not software, and would otherwise mark every pack.
+    const codeChanges = git("status", "--porcelain", "--untracked-files=no", "--", ".", ":(exclude)data/", ":(exclude)ml/models/");
+    commit = git("rev-parse", "HEAD") + (codeChanges ? "+modified" : "");
   } catch {
     // not a git checkout: the pack says so
   }
