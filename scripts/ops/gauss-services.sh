@@ -769,7 +769,7 @@ fallback_prepare() { # fallback_prepare <dir> [sha]: check out, install, build, 
     # The checkout changes under the old record from here: drop it, so a failed install or
     # build leaves "none prepared", never a ready record describing a different checkout.
     rm -f "$FALLBACK_STATE/ready"
-    git -C "$dir" checkout -q --detach "$sha" || return 1
+    carry_checkout "$dir" "$sha" || return 1
   else
     git -C "$live" worktree add -q --detach "$dir" "$sha" || return 1; dir=$(cd "$dir" && pwd)
   fi
@@ -1304,6 +1304,28 @@ train_pr() { # train_pr <pr>: "state head branch base draft merge-state" on one 
     -q '[.state, .headRefOid, .headRefName, .baseRefName, (.isDraft|tostring), .mergeStateStatus] | join(" ")' 2>/dev/null
 }
 
+train_versions() { # train_versions <worktree>: settle a merge whose only conflicts are baseline "version" lines
+  # 18 Nov (Josh: "yes, add it"): every requirements PR bumps requirements.json/fmea.json "version", so
+  # each one conflicted with the next on the train (#284, #286) and needed a person. Take main's version
+  # plus one patch step; anything else in conflict (another line, another file, invalid JSON) still fails.
+  local w=$1 files f
+  files=$(git -C "$w" diff --name-only --diff-filter=U) || return 1
+  [ -n "$files" ] || return 1
+  while IFS= read -r f; do
+    case "$f" in requirements/requirements.json|requirements/fmea.json) ;; *) return 1 ;; esac
+    python3 -I - "$w/$f" <<'PY' || return 1
+import json, re, sys
+p = sys.argv[1]; s = open(p).read()
+hunk = re.compile(r'<<<<<<< [^\n]*\n(  "version": "[^"\n]*",\n)=======\n  "version": "(\d+)\.(\d+)\.(\d+)",\n>>>>>>> [^\n]*\n')
+out = hunk.sub(lambda m: '  "version": "%s.%s.%d",\n' % (m.group(2), m.group(3), int(m.group(4)) + 1), s)
+if out == s or re.search(r'^(<<<<<<<|=======|>>>>>>>)', out, re.M): sys.exit(1)
+json.loads(out); open(p, "w").write(out)
+PY
+    git -C "$w" add -- "$f" || return 1
+  done <<<"$files"
+  git -C "$w" commit -q --no-edit >/dev/null
+}
+
 train_sync() { # train_sync <request>: merge origin/main into a train PR's head before its run; 1 = withdrawn
   local req=$1 pr sha tree repo info state head branch base _ w new
   pr=$(req_get "$req" pr); sha=$(req_get "$req" sha); tree=$(req_get "$req" tree); repo=$(req_get "$req" repo)
@@ -1318,7 +1340,8 @@ train_sync() { # train_sync <request>: merge origin/main into a train PR's head 
   git --git-dir="$repo" merge-base --is-ancestor refs/remotes/origin/main "$sha" && return 0
   w=$(mktemp -d -t gauss-train)/w
   git --git-dir="$repo" worktree add -q --detach "$w" "$sha" 2>/dev/null || { echo "could not prepare a merge of main; gating as queued"; return 0; }
-  if git -C "$w" merge -q --no-edit -m "Merge origin/main into $branch (merge train)" refs/remotes/origin/main >/dev/null 2>&1 \
+  if { git -C "$w" merge -q --no-edit -m "Merge origin/main into $branch (merge train)" refs/remotes/origin/main >/dev/null 2>&1 \
+       || train_versions "$w"; } \
      && new=$(git -C "$w" rev-parse HEAD) && git -C "$w" push -q origin "$new:refs/heads/$branch" 2>/dev/null; then
     sed -i '' -e "s/^sha=.*/sha=$new/" -e "s/^tree=.*/tree=$(git -C "$w" rev-parse "$new^{tree}")/" "$req"
     gates_result "$sha" "$tree" MOVED "merged main into PR #$pr: gating ${new:0:7} instead"
@@ -1549,8 +1572,53 @@ deploy_power_short() { # prints why the power can't carry a deploy, or nothing
   watts=$(pmset -g ac 2>/dev/null | sed -n 's/^ *Wattage = \([0-9]*\)W.*/\1/p')
   [ -z "$watts" ] || [ "$watts" -ge 20 ] || echo "battery ${pct}% on a ${watts} W charger"
 }
+carry_checkout() { # carry_checkout <dir> <to sha>: check out <to>; git never touches runtime data whose tracking changes
+  # GAU-211: data/bedrock/telemetry.jsonl was tracked and is now ignored, and the running backend
+  # appends to it by path (fs.appendFile). Across that commit a plain checkout refuses (changed
+  # file) or deletes it (unchanged), and going back silently replaces live's copy with the committed
+  # one (git overwrites ignored files). Moving it aside loses what is appended meanwhile, so the
+  # file never moves: for each data/ or ml/models/ path that only one side tracks, the index is set
+  # to what <to> has (git then keeps the working file as it is, same inode), and a path leaving the
+  # tree is excluded for this one command (else git refuses over an "untracked" file).
+  # Safety net: a hard link beside the file. If git removes the file all the same, the link goes
+  # back in its place. Nothing here deletes data: in doubt both copies stay and a person decides.
+  local dir=$1 to=$2 p f mode blob excl rc=0 _
+  local -a paths=()
+  while IFS= read -r p; do
+    f="$dir/$p"
+    if [ -e "$f.gauss-keep" ] && [ ! -e "$f" ]; then mv "$f.gauss-keep" "$f" || return 1; fi # an earlier run stopped before putting it back
+    [ -f "$f" ] || continue
+    if [ ! -e "$f.gauss-keep" ]; then ln "$f" "$f.gauss-keep" || return 1
+    elif ! [ "$f" -ef "$f.gauss-keep" ]; then
+      echo "$f.gauss-keep is live data left by an earlier checkout and differs from $p: keep the right one by hand (move it to $p), then retry." >&2; return 1
+    fi
+    paths+=("$p")
+  done < <(git -C "$dir" diff --name-only --no-renames --diff-filter=AD HEAD "$to" -- data ml/models)
+  excl=$(mktemp "${TMPDIR:-/tmp}/gauss-carry.XXXXXX") || return 1
+  for p in ${paths[@]+"${paths[@]}"}; do
+    if read -r mode _ blob _ < <(git -C "$dir" ls-tree "$to" -- "$p") && [ -n "$blob" ]; then
+      git -C "$dir" update-index --add --cacheinfo "$mode,$blob,$p" || rc=1
+    else
+      git -C "$dir" update-index --force-remove -- "$p" || rc=1; printf '/%s\n' "$p" >>"$excl"
+    fi
+  done
+  [ $rc != 0 ] || git -C "$dir" -c core.excludesFile="$excl" checkout -q --detach "$to" || rc=1
+  rm -f "$excl"
+  for p in ${paths[@]+"${paths[@]}"}; do
+    f="$dir/$p"
+    [ $rc = 0 ] || git -C "$dir" reset -q -- "$p" >/dev/null 2>&1 || true # refused: the index describes HEAD again
+    if [ "$f" -ef "$f.gauss-keep" ]; then rm -f "$f.gauss-keep" # untouched: drop the second name, the data stays
+    elif [ ! -e "$f" ] || [ "$(git -C "$dir" hash-object -- "$f")" = "$(git -C "$dir" rev-parse -q --verify "$to:$p")" ]; then
+      mv -f "$f.gauss-keep" "$f" || return 1 # git removed it, or wrote the committed copy (still in git) over it
+      echo "git touched $p during the checkout: live's copy is back in place." >&2
+    else
+      echo "warning: $p was replaced during the checkout (not by git); the earlier data is kept as $f.gauss-keep. Compare the two before the next deploy." >&2
+    fi
+  done
+  return $rc
+}
 switch_live() { # switch_live <dir> <from sha> <to sha>: check out, npm ci if the lockfile or Node changed, reinstall
-  git -C "$1" checkout -q --detach "$3" || return 1
+  carry_checkout "$1" "$3" || return 1
   if [ ! -d "$1/node_modules" ] || ! git -C "$1" diff --quiet "$2" "$3" -- package-lock.json || node_changed "$1"; then
     echo "package-lock.json or Node changed: installing dependencies in $1 ..."
     (cd "$1" && PATH="$(dirname "$NODE"):$PATH" npm ci --no-audit --no-fund >/dev/null) || return 1
@@ -1633,7 +1701,7 @@ deploy() { # deploy <commit> [fallback-dir]
   fi
 
   echo "Deploying ${prev:0:7} -> ${sha:0:7} in $live ..."
-  git -C "$live" checkout -q --detach "$sha" \
+  carry_checkout "$live" "$sha" \
     || { echo "Checkout refused (a local data file conflicts with ${sha:0:7}?): nothing changed." >&2; return 1; }
   if switch_live "$live" "$prev" "$sha" && deploy_ready "$live" "$DEPLOY_WAIT"; then
     echo "$(date '+%F %T') deployed ${sha:0:7} (was ${prev:0:7})" >>"$LOGS/deploy.log"
