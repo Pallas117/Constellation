@@ -57,6 +57,7 @@ import { CommerceStore } from "./commerce/store.js";
 import { createDataApiRouter, createOrgRouter, createPilotRequestHandler } from "./commerce/routers.js";
 import { EnvironmentHistory } from "./trust/environment.js";
 import { createEvidenceRouter } from "./trust/evidence-router.js";
+import { createFundingRouter } from "./funding/router.js";
 import { getL1Structures } from "./adapters/noaa-swpc.js";
 
 const app = express();
@@ -305,6 +306,10 @@ app.use("/api/mesh", mesh.ui);
 // Evidence view of the operator console: the pilot flow (log -> trust records -> evidence pack ->
 // PDF -> check). Operators only (API_POLICY); nothing is stored and nothing is signed here.
 app.use("/api/trust/evidence", createEvidenceRouter());
+
+// Funding tracker view: admins only (API_POLICY), read-only, from a CSV export on this machine
+// (FUNDING_TRACKER_CSV, outside the repository). Off unless that is set; nothing is stored or logged.
+app.use("/api/admin/funding", createFundingRouter());
 
 // RAG endpoints: operators only (status and query; API_POLICY in rbac.ts).
 // Knowledge memory: the Cosmic Brain sidecar (backend/memory/client.ts, docs/memory-sidecar.md).

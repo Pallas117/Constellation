@@ -27,6 +27,9 @@ function declaredRoutes(): string[] {
   for (const m of read("trust/evidence-router.ts").matchAll(/router\.(get|post|put|patch|delete)\("([^"]+)"/g)) {
     out.push(`${m[1].toUpperCase()} /trust/evidence${m[2]}`);
   }
+  for (const m of read("funding/router.ts").matchAll(/router\.(get|post|put|patch|delete)\("([^"]+)"/g)) {
+    out.push(`${m[1].toUpperCase()} ${("/admin/funding" + m[2]).replace(/\/$/, "")}`);
+  }
   // Handled before the policy middleware by design (see rbac.ts header).
   return out.filter((r) => r !== "GET /sso-options");
 }
@@ -58,10 +61,12 @@ test("role matrix", () => {
     ["POST", "/trust/evidence/verify", "operator"],
     ["GET", "/security/cybertiger/events", "admin"],
     ["POST", "/ai/nowcast/train", "admin"],
+    ["GET", "/admin/funding", "admin"], // funding tracker view: read-only
   ];
   for (const [m, p, want] of cases) assert.equal(accessFor(m, p), want, `${m} ${p}`);
   assert.equal(accessFor("POST", "/feed/space-weather/latest"), undefined, "public is GET-only");
   assert.equal(accessFor("GET", "/admin/secrets"), undefined);
+  for (const verb of ["POST", "PUT", "PATCH", "DELETE"]) assert.equal(accessFor(verb, "/admin/funding"), undefined, `the funding view has no ${verb}`);
 });
 
 function run(method: string, p: string, role?: AuthRole) {
@@ -86,5 +91,9 @@ test("enforcement: unlisted 404, anonymous 401, under-privileged 403, allowed pa
   assert.equal(run("POST", "/rag/query", "operator"), 200);
   assert.equal(run("POST", "/security/cybertiger/block", "operator"), 403);
   assert.equal(run("POST", "/security/cybertiger/block", "admin"), 200);
+  assert.equal(run("GET", "/admin/funding"), 401);
+  assert.equal(run("GET", "/admin/funding", "operator"), 403);
+  assert.equal(run("GET", "/admin/funding", "admin"), 200);
+  assert.equal(run("POST", "/admin/funding", "admin"), 404, "read-only: no write route");
   assert.equal(run("OPTIONS", "/rag/query"), 200, "CORS preflight is never blocked");
 });
