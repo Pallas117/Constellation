@@ -766,10 +766,18 @@ a,button{-webkit-tap-highlight-color:transparent}
    a faint nebula, still; no fields. No lime here: the page's one lime signal stays in the descent and the door. */
 .cosmos{position:fixed;inset:0;z-index:-1;pointer-events:none;overflow:hidden;contain:strict}
 .cosmos i{position:absolute;inset:-12%;display:block}
-.c-far{opacity:.5;background-size:233px 233px;background-image:radial-gradient(.8px .8px at 14% 22%,rgb(243 240 232 / .8),transparent 70%),
-  radial-gradient(.8px .8px at 61% 9%,rgb(243 240 232 / .6),transparent 70%),radial-gradient(1px 1px at 83% 47%,rgb(243 240 232 / .7),transparent 70%),
-  radial-gradient(.7px .7px at 37% 63%,rgb(203 182 214 / .7),transparent 70%),radial-gradient(.8px .8px at 72% 88%,rgb(243 240 232 / .5),transparent 70%),
-  radial-gradient(.7px .7px at 6% 79%,rgb(243 240 232 / .45),transparent 70%)}
+/* The far stars are shared: the landing's backdrop and every other page (below) draw the same plane, so moving
+   between pages stays in one sky. */
+:root{--far-stars:radial-gradient(1.2px 1.2px at 14% 22%,rgb(243 240 232 / .8),transparent 70%),
+  radial-gradient(1.2px 1.2px at 61% 9%,rgb(243 240 232 / .6),transparent 70%),radial-gradient(1.4px 1.4px at 83% 47%,rgb(243 240 232 / .7),transparent 70%),
+  radial-gradient(1.1px 1.1px at 37% 63%,rgb(203 182 214 / .7),transparent 70%),radial-gradient(1.2px 1.2px at 72% 88%,rgb(243 240 232 / .5),transparent 70%),
+  radial-gradient(1.1px 1.1px at 6% 79%,rgb(243 240 232 / .45),transparent 70%)}
+/* Two tile sizes (233 and 377 px: their pattern repeats only every ~88,000 px), so no lattice shows. */
+.c-far,body.page::before{background-size:233px 233px,233px 233px,233px 233px,377px 377px,377px 377px,377px 377px;background-image:var(--far-stars)}
+.c-far{opacity:.5}
+/* Every other page: the same far stars, fixed behind the content (quieter than on the landing, which has the whole
+   scene), drifting slowly as you scroll; still with reduced motion. Panels and cards keep their own grounds on top. */
+body.page::before{content:"";position:fixed;inset:-12%;z-index:-1;pointer-events:none;opacity:.45}
 .c-nebula{opacity:.45;background:radial-gradient(ellipse 46% 30% at 24% 36%,rgb(142 108 196 / .17),transparent 70%),
   radial-gradient(ellipse 34% 24% at 72% 60%,rgb(240 120 42 / .075),transparent 70%),
   radial-gradient(ellipse 58% 38% at 58% 28%,rgb(203 182 214 / .06),transparent 72%),
@@ -779,7 +787,7 @@ a,button{-webkit-tap-highlight-color:transparent}
 @supports (animation-timeline:scroll()){
   @media (prefers-reduced-motion:no-preference){
     .cosmos i{will-change:transform,opacity}
-    .c-far{animation:c-far linear both;animation-timeline:scroll(root)}
+    .c-far,body.page::before{animation:c-far linear both;animation-timeline:scroll(root)}
     .c-nebula{animation:c-nebula linear both;animation-timeline:scroll(root);animation-range:4% 36%}
     .c-fields{animation:c-fields linear both;animation-timeline:scroll(root);animation-range:62% 92%}
   }

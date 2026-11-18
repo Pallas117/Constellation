@@ -251,6 +251,10 @@ test("landing backdrop: stars, then nebula, then fields, one fixed sky; decorati
     const kf = css.match(new RegExp(`@keyframes ${k}\\{[^\\n]*\\}`))[0];
     assert.doesNotMatch(kf.replace(/transform|opacity/g, ""), /[a-z-]+:/, `${k} animates transform and opacity only`);
   }
+  // One sky across the site: every other page draws the same far stars, fixed and decorative.
+  assert.match(css, /\.c-far,body\.page::before\{background-size:233px 233px,233px 233px,233px 233px,377px 377px,377px 377px,377px 377px;background-image:var\(--far-stars\)\}/);
+  assert.match(css, /body\.page::before\{content:"";position:fixed;inset:-12%;z-index:-1;pointer-events:none;opacity:\.45\}/);
+  for (const route of ["/gauss/", "/constellation/", "/turnstone/", "/education/", "/privacy/"]) assert.match(html[route], /<body class="page[ "]/, `${route} gets the sky`);
   const fields = read("assets/media/fields.svg");
   assert.ok(fields.length < 4096, "fields art stays tiny");
   assert.match(fields, /^<svg xmlns="http:\/\/www\.w3\.org\/2000\/svg" viewBox="0 0 1000 1000"/);
