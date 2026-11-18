@@ -30,9 +30,9 @@ test.describe('Authentication Flow & Route Splitting', () => {
     await mockUiApis(page, { auth: false });
     await page.goto('/?e2e=true');
     
-    // Public landing: brand header, operator entry point, fail-closed feed state
+    // Public landing: brand header, the way in (signed out: "Sign in"), fail-closed feed state
     await expect(page.locator('h1')).toHaveText(/Gauss Aurora/);
-    await expect(page.getByRole('link', { name: /operator portal/i })).toBeVisible();
+    await expect(page.getByRole('link', { name: /^sign in$/i })).toBeVisible();
 
     // Operator console panels are explicitly NOT on the public page
     await expect(page.getByText('Feed source')).not.toBeVisible();
