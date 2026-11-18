@@ -77,7 +77,12 @@ type Snapshot struct {
 	DNSDirectOK bool `json:"dns_direct_ok,omitempty"`
 	// IPUp: both lookups failed, so the IP anchors were dialled (uplink.go); false means nothing
 	// gets out at all. nil when not measured.
-	IPUp           *bool       `json:"ip_up,omitempty"`
+	IPUp *bool `json:"ip_up,omitempty"`
+	// DoHOK: DNS failed but IP works, so encrypted DNS over 443 was tried (privdns.go). true means the
+	// network's resolver (or its port-53 filter) is the fault and encrypted DNS gets around it.
+	DoHOK *bool `json:"doh_ok,omitempty"`
+	// DNSProfile: Argo's encrypted DNS profile is installed; read only when a login page shows.
+	DNSProfile     bool        `json:"dns_profile,omitempty"`
 	Gateway        string      `json:"gateway,omitempty"`
 	GatewayMAC     string      `json:"gateway_mac,omitempty"`
 	PublicIP       string      `json:"public_ip,omitempty"`
@@ -117,6 +122,9 @@ func Classify(s Snapshot) (Class, string) {
 	case s.DNS.Err != "" || s.API.Err == ErrDNS:
 		if s.DNSDirectOK {
 			return DNS, "the local resolver (Tailscale MagicDNS) is not answering; 1.1.1.1 resolves api.anthropic.com, so the network itself is fine"
+		}
+		if s.DoHOK != nil && *s.DoHOK {
+			return DNS, "this network's DNS is not answering (1.1.1.1 on port 53 neither), but encrypted DNS over port 443 works: the network's resolver is the fault"
 		}
 		return DNS, "cannot resolve api.anthropic.com: " + firstNonEmpty(s.DNS.Detail, s.API.Detail)
 	}
