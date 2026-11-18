@@ -956,11 +956,18 @@ def names(pat, text, n=3):
         m = m.strip()
         if m and m not in seen: seen.append(m)
     return seen[:n] + (["+%d more" % (len(seen) - n)] if len(seen) > n else [])
+def lint_errors(text, n=3): # the linter prints a file path, then "  line:col  error  message  rule"
+    seen, cur = [], ""
+    for line in text.splitlines():
+        if line.startswith("/") and " " not in line.strip()[:1]: cur = "/".join(line.strip().split("/")[-2:])
+        m = re.match(r"^\s+(\d+):\d+\s+error\s+.*?\s{2,}(\S+)\s*$", line)
+        if m and cur and "%s:%s %s" % (cur, m.group(1), m.group(2)) not in seen: seen.append("%s:%s %s" % (cur, m.group(1), m.group(2)))
+    return seen[:n] + (["+%d more" % (len(seen) - n)] if len(seen) > n else [])
 tail = v.split("failing tests:", 1)[1] if "failing tests:" in v else ""
 q = log("quality:full") if rc("quality:full") != 0 else ""
 r["failing"] = {"tests": names(r"^✖ (.+?) \(\d[\d.]*ms\)$", tail),
                 "requirements": names(r"^\s*✗ (REQ-[A-Z]+-\d+)", v),
-                "quality": names(r"^(\S+\(\d+,\d+\): error TS\d+)", q)}
+                "quality": names(r"^(\S+\(\d+,\d+\): error TS\d+)", q) or lint_errors(q)}
 r["passed"] = all(r[k]["exit"] == 0 for k in ("test_ops", "test", "build", "quality", "verify")) \
     and r["test"]["fail"] == 0 and r["test_ops"]["fail"] == 0 and sha.startswith(r["verify"]["passed_at"] or "-")
 print(json.dumps(r, ensure_ascii=False))

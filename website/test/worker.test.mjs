@@ -13,9 +13,9 @@ import { RECORDED_AT, fixture, makeFetch } from "./fixtures/fetch.mjs";
 import { memoryKV } from "./fixtures/kv.mjs";
 import { makeAccess } from "./fixtures/access.mjs";
 import { accessIdentity, isAdmin, isStaff } from "../worker/auth.js";
-import { getAccount, listApplications, putAccount, saveApplication, senderOf } from "../worker/data.js";
+import { getAccount, getApplication, listApplications, putAccount, saveApplication, senderOf } from "../worker/data.js";
 import { applyEvent, createPortal, formEncode, signPayload, verifySignature } from "../worker/stripe.js";
-import { billingStatus, isAcademicEmail } from "../worker/tiers.js";
+import { TIERS, billingStatus, isAcademicEmail } from "../worker/tiers.js";
 import { APP_CSP } from "../worker/headers.js";
 import { eduCard } from "../worker/app.js";
 import { formatIn, renderPlanner, tzOffset, zonedToUtc } from "../worker/timezones.js";
@@ -80,8 +80,9 @@ test("refresh: fills KV, then leaves fresh feeds alone (LL2 allows 15 calls an h
   assert.deepEqual([first.news, first.ukri, first.uksa, first.programmes], ["updated", "updated", "updated", "not configured"]);
   assert.equal(f.calls.length, 9, "six for the public pages, three for members (news, UKRI, UKSA)");
   assert.equal((await readFeed(env, "launches")).data.length, 10);
-  assert.deepEqual(core(await refreshFeeds(env, { fetchImpl: f, now: RECORDED_AT + 10 * MIN })), { launches: "fresh", weather: "fresh", events: "fresh" });
+  assert.deepEqual(core(await refreshFeeds(env, { fetchImpl: f, now: RECORDED_AT + 2 * MIN })), { launches: "fresh", weather: "fresh", events: "fresh" });
   assert.equal(f.calls.length, 9, "no upstream calls while fresh");
+  assert.deepEqual(core(await refreshFeeds(env, { fetchImpl: f, now: RECORDED_AT + 5 * MIN })), { launches: "fresh", weather: "updated", events: "fresh" }, "space weather every 5 minutes");
   assert.deepEqual(core(await refreshFeeds(env, { fetchImpl: f, now: RECORDED_AT + 15 * MIN })), { launches: "fresh", weather: "updated", events: "fresh" });
   assert.deepEqual(core(await refreshFeeds(env, { fetchImpl: f, now: RECORDED_AT + 30 * MIN })), { launches: "updated", weather: "updated", events: "fresh" });
   const later = await refreshFeeds(env, { fetchImpl: f, now: RECORDED_AT + 180 * MIN });
@@ -159,7 +160,7 @@ test("refresh: the optional LL2 key goes to LL2 only, in its Token header, and n
 
 test("feed state: live, then stale (still shown, labelled), offline when there is nothing", () => {
   const rec = { data: [1], fetchedAt: new Date(RECORDED_AT).toISOString() };
-  assert.equal(feedState("weather", rec, RECORDED_AT + 30 * MIN).state, "live");
+  assert.equal(feedState("weather", rec, RECORDED_AT + 10 * MIN).state, "live");
   assert.equal(feedState("weather", rec, RECORDED_AT + (FEEDS.weather.staleMin + 1) * MIN).state, "stale");
   assert.equal(feedState("launches", rec, RECORDED_AT + 100 * MIN).state, "live");
   assert.equal(feedState("launches", null).state, "offline");
@@ -322,6 +323,16 @@ test("public release: each form's page asks by email instead, and carries the pa
   assert.match(await (await call("/gauss/apply/?plan=%22%3E%3Cscript%3E")).text(), /<li>Package: Pilot · \$25k–\$50k<\/li>/, "unknown package: the pilot");
 });
 
+test("client links, public release: plan and src show in the mailto subject; bad values are ignored, never echoed", async () => {
+  const page = await (await call("/gauss/apply/?plan=fleet_integration&src=acme-intro")).text();
+  assert.match(page, /subject=Gauss%20brief%20%C2%B7%20Fleet%20Integration%20%C2%B7%20src%20acme-intro&amp;/);
+  for (const bad of ["%22%3E%3Cscript%3Ex", "UPPER", "-x", "a".repeat(25), "a%20b"]) {
+    const res = await (await call(`/gauss/apply/?plan=pilot&src=${bad}`)).text();
+    assert.doesNotMatch(res, /<script|UPPER|aaaaaaaa|src%20/, `src ${bad} ignored`);
+    assert.match(res, /subject=Gauss%20brief%20%C2%B7%20Pilot&amp;/);
+  }
+});
+
 test("public release: pages offer pilots and an email route; later plans are in development; nothing links to sign-in", async () => {
   const gauss = await (await call("/gauss/")).text();
   assert.equal((gauss.match(/<span class="label">In development<\/span>/g) || []).length, 3);
@@ -443,6 +454,23 @@ test("apply page: the package in the link is preselected; unknown values fall ba
   const { env } = await appEnv();
   assert.match(await (await send(env, new Request("https://lightbound.space/gauss/apply/?plan=mission_integration"))).text(), /<option value="mission_integration" selected>/);
   assert.match(await (await send(env, new Request("https://lightbound.space/gauss/apply/?plan=%22%3E%3Cscript%3E"))).text(), /<option value="pilot" selected>/);
+});
+
+test("client links: src is kept as a hidden field, stored with the application, shown to admin; bad src is dropped", async () => {
+  const { env, access } = await appEnv();
+  const page = await (await send(env, new Request("https://lightbound.space/gauss/apply/?plan=pilot&src=acme-intro"))).text();
+  assert.match(page, /<input type="hidden" name="src" value="acme-intro">/);
+  assert.doesNotMatch(await (await send(env, new Request("https://lightbound.space/gauss/apply/?src=%22%3E%3Cb%3E"))).text(), /name="src"/);
+  assert.equal((await send(env, post("/api/apply", { ...goodGauss, src: "acme-intro" }))).status, 303);
+  assert.equal((await send(env, post("/api/apply", { ...goodGauss, email: "b@example.test", src: "<b>x</b>" }))).status, 303);
+  const apps = await listApplications(env);
+  const stored = await Promise.all(apps.map((a) => getApplication(env, a.id)));
+  assert.deepEqual(stored.map((a) => a.src).sort(), ["acme-intro", undefined]);
+  const admin = await (await send(env, await as(access, "boss@example.test", "/app/admin/"))).text();
+  assert.match(admin, /from link: acme-intro/);
+  assert.match(admin, /Links to send a client/);
+  for (const t of TIERS) assert.ok(admin.includes(`<code>https://lightbound.space/gauss/apply/?plan=${t.id}</code>`), `link for ${t.id}`);
+  assert.doesNotMatch(admin, /<script/);
 });
 
 // ---- Workspace, billing and admin ----
