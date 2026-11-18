@@ -116,6 +116,7 @@ func sendReport(cfg Config, st State) (int, error) {
 	}
 	addGuard(report, DefaultStore().loadGuard(), time.Now())
 	addLowAndLink(report, cfg, st)
+	postureSent := addPosture(report, DefaultStore(), time.Now()) // item → status only, about hourly (posture.go)
 	body, _ := json.Marshal(report)
 	u.Path = "/api/mesh/report"
 	req, _ := http.NewRequest(http.MethodPost, u.String(), bytes.NewReader(body))
@@ -127,6 +128,9 @@ func sendReport(cfg Config, st State) (int, error) {
 		return 0, err
 	}
 	resp.Body.Close()
+	if resp.StatusCode < 300 {
+		postureSent()
+	}
 	countOwnEgress(DefaultStore().Dir, "gauss report", u.Host, len(body), time.Now())
 	return resp.StatusCode, nil
 }

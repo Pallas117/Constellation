@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { useMesh, type MeshDevice, type MeshNet, WARNING_CLASSES } from "@/hooks/useMesh";
 import { useDocumentTitle } from "@/hooks/useDocumentTitle";
 import { useNow } from "@/hooks/useNow";
-import { batteryLabel, copyText, deviceStage, enrollCommand, guardLine, STAGE_HELP, STALE_MS } from "@/lib/mesh-onboarding";
+import { batteryLabel, copyText, deviceStage, enrollCommand, guardLine, postureLine, STAGE_HELP, STALE_MS } from "@/lib/mesh-onboarding";
 import { bytesLabel, stabilityScore, stabilityTone, windowLine } from "@/lib/link-stability";
 import { summariseLinks, type LinkQuality } from "@/lib/link-map";
 import { ConfirmButton } from "@/components/ui/confirm-button";
@@ -275,6 +275,7 @@ const MeshDashboard = () => {
                                 {d.last.battery ? `${d.last.platform ? " · " : ""}${batteryLabel(d.last.battery)}` : ""}
                               </p>
                             )}
+                            {d.last?.posture && <p className="mt-1 max-w-xs text-xs text-muted-foreground">{postureLine(d.last.posture)}</p>}
                           </td>
                           <td className="py-3 pr-4">
                             <Badge variant={s.variant}>{s.label}</Badge>
