@@ -691,6 +691,12 @@ printf '%s\n' '✖ failing tests:' '' '✖ something nobody has met (3ms)' >"$T/
 (cd "$LIVE" && run gates enqueue "$GB1" >/dev/null 2>&1); GAUSS_GATEBOX=gatebox GBRC=say1 run gates run >/dev/null 2>&1
 out=$(run gates why "$GB1")
 [[ "$out" == *"failing tests: something nobody has met"* && "$out" == *"cause: a failing test"* ]]; expect "gates why: an unknown failing test is named, with the general advice" $?
+# 18 Nov, PR #321: a PASSING descriptor test in the log was blamed; and the lint errors were not named
+printf '%s\n' '✔ telemetry_descriptor.json is the current .proto (9.1ms)' '' '/home/gate/work.x/frontend/src/components/scene/CameraTween.tsx' '  22:3  error  Error: Cannot access refs during render' '' '✖ 1 problem (1 error, 0 warnings)' >"$T/home/gatebox-out"
+(cd "$LIVE" && run gates enqueue "$GB1" >/dev/null 2>&1); GAUSS_GATEBOX=gatebox GBRC=say1 run gates run >/dev/null 2>&1
+out=$(run gates why "$GB1")
+[[ "$out" == *"lint errors: scene/CameraTween.tsx:22"* && "$out" == *"cause: a lint error"* && "$out" != *"telemetry.proto changed"* ]]
+expect "gates why: lint errors are named by file and line, and a passing test is not blamed" $?
 rm -f "$T/home/gatebox-out"
 (cd "$LIVE" && run gates enqueue "$GB1" >/dev/null 2>&1); GAUSS_GATEBOX=gatebox GBRC=say1 run gates run >/dev/null 2>&1
 out=$(run gates why "$GB1")

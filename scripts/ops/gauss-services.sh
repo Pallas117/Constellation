@@ -1221,7 +1221,7 @@ gates_prescreen() { # gates_prescreen <sha> <tree>: 0 the gatebox failed the com
 # GATES_CAUSES is the list of causes we have actually met: <pattern (Python regex)> TAB <cause> TAB <fix>.
 # Add a row only after a real failure was fixed, with its date; the first rows that match are shown.
 IFS= read -r -d '' GATES_CAUSES <<'CAUSES' || true # read ends at EOF with status 1: expected
-telemetry_descriptor\.json is the current \.proto	telemetry.proto changed without its descriptor (18 Nov, PR #309)	regenerate it with the one-liner at the top of shared/proto/telemetry.proto, commit, re-queue
+^✖ telemetry_descriptor\.json is the current \.proto	telemetry.proto changed without its descriptor (18 Nov, PR #309)	regenerate it with the one-liner at the top of shared/proto/telemetry.proto, commit, re-queue
 ETIMEDOUT|ECONNRESET|ECONNREFUSED|ENOTFOUND|EAI_AGAIN|ENETUNREACH|network request to	the install could not reach the package registry	nothing is wrong with the commit: re-queue it when the link is up (argo doctor)
 error TS2307: Cannot find module	a package is missing where the check ran (18 Nov: a worktree using an older checkout's modules)	if main's package.json has it, the modules there are stale (reinstall in that checkout); otherwise add the dependency
 ^\s*✗ (REQ-[A-Z]+-\d+)	a requirement has no passing test (VCRM)	npm run verify names it: fix the failing test, or map a passing test to the requirement in requirements/requirements.json
@@ -1244,9 +1244,17 @@ def names(pat, t, n=3):
         if m and m not in seen: seen.append(m)
     return seen[:n] + (["+%d more" % (len(seen) - n)] if len(seen) > n else [])
 tail = text.split("failing tests:", 1)[1] if "failing tests:" in text else text
+def lint(t, n=3): # the linter prints a file path, then "  line:col  error  message"; the rule ends the block
+    seen, cur = [], ""
+    for line in t.splitlines():
+        if line.startswith("/") and ":" not in line: cur = "/".join(line.strip().split("/")[-2:])
+        m = re.match(r"^\s+(\d+):\d+\s+error\s", line)
+        if m and cur and "%s:%s" % (cur, m.group(1)) not in seen: seen.append("%s:%s" % (cur, m.group(1)))
+    return seen[:n] + (["+%d more" % (len(seen) - n)] if len(seen) > n else [])
 found = [("failing tests", names(r"^✖ (.+?) \(\d[\d.]*ms\)$", tail)),
          ("requirements", names(r"^\s*✗ (REQ-[A-Z]+-\d+)", text)),
-         ("type errors", names(r"^(\S+\(\d+,\d+\): error TS\d+)", text))]
+         ("type errors", names(r"^(\S+\(\d+,\d+\): error TS\d+)", text)),
+         ("lint errors", lint(text))]
 found = [(k, v) for k, v in found if v]
 if mode == "brief":
     print("; ".join("%s: %s" % (k, ", ".join(v)) for k, v in found))
