@@ -37,6 +37,7 @@ const root = path.resolve(import.meta.dirname, "../..");
 const outDir = path.join(root, "test-results", "verification");
 const junitPath = path.join(outDir, "junit.xml");
 const opsJunitPath = path.join(outDir, "ops-junit.xml");
+const vpsJunitPath = path.join(outDir, "vps-junit.xml");
 const skipBuild = process.argv.includes("--no-build");
 
 function step(name: string, cmd: string, args: string[], extraEnv: Record<string, string> = {}): boolean {
@@ -49,7 +50,7 @@ function step(name: string, cmd: string, args: string[], extraEnv: Record<string
 
 mkdirSync(outDir, { recursive: true });
 // A report left by an earlier run must never stand in for a run that died before writing one.
-for (const p of [junitPath, opsJunitPath]) rmSync(p, { force: true });
+for (const p of [junitPath, opsJunitPath, vpsJunitPath]) rmSync(p, { force: true });
 const baseline = JSON.parse(readFileSync(path.join(root, "requirements/requirements.json"), "utf8")) as Baseline;
 const results: Record<string, boolean> = {};
 
@@ -83,12 +84,14 @@ results.tests = step("Test suite", process.execPath, [
 // Ops behaviour (watchdog, failover, dev isolation; REQ-OPS-004..007, FMEA FM-20..24). Hermetic:
 // launchctl, curl, pmset and friends are stubbed and HOME is a temp dir. macOS only (plutil).
 results.opsTests = step("Ops tests (bash)", "bash", ["scripts/ops/gauss-services.test.sh"], { GAUSS_OPS_JUNIT: opsJunitPath });
+// VPS kit (REQ-OPS-011): dry runs and text checks only, so it is hermetic on any host.
+results.vpsKitTests = step("VPS kit tests (bash)", "bash", ["scripts/ops/vps/vps-kit.test.sh"], { GAUSS_OPS_JUNIT: vpsJunitPath });
 
 results.build = skipBuild ? true : step("Production build", "npm", ["run", "build", "--silent"]);
 
 const commit = spawnSync("git", ["rev-parse", "--short", "HEAD"], { cwd: root, encoding: "utf8" }).stdout.trim() || "unknown";
 const readJunit = (p: string): Map<string, TestOutcome> => (existsSync(p) ? parseJunit(readFileSync(p, "utf8")) : new Map());
-const outcomes = mergeOutcomes(readJunit(junitPath), readJunit(opsJunitPath));
+const outcomes = mergeOutcomes(readJunit(junitPath), readJunit(opsJunitPath), readJunit(vpsJunitPath));
 const rows = buildMatrix(baseline, outcomes, (p) => existsSync(path.join(root, p)));
 const meta = { version: baseline.version, commit, generatedAt: new Date().toISOString() };
 const fmeaPath = path.join(root, "requirements/fmea.json");

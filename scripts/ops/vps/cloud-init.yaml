@@ -1,0 +1,11 @@
+#cloud-config
+# Optional first-boot user-data for the VM (Ubuntu LTS). It holds NO secrets: it only
+# installs git and fetches this public repo. Josh then SSHes in once and runs
+# bootstrap.sh, pasting the Tailscale auth key at the prompt.
+package_update: true
+package_upgrade: true
+packages:
+  - git
+runcmd:
+  - [ mkdir, -p, /opt/gauss ]
+  - [ git, clone, --depth, "1", "https://github.com/Pallas117/Constellation.git", /opt/gauss/src ]

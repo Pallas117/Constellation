@@ -1,6 +1,6 @@
 {
   "$comment": "Constellation requirements baseline (GAU-120). NASA SP-2016-6105 Rev 2 §6.2/§5.3. Methods: T test, A analysis, I inspection, D demonstration. T evidence = exact test names; A/I/D evidence = repo paths. Verified by `npm run verify`.",
-  "version": "1.15.0",
+  "version": "1.16.0",
   "requirements": [
     {
       "id": "REQ-ING-001",
@@ -543,6 +543,31 @@
         "deploy: local edits under .claude/ and docs/ are saved as patches, restored, and the deploy proceeds",
         "events: the saved doc-only live changes are logged",
         "deploy: a code change next to a doc change still refuses, and the doc change is not touched"
+      ]
+    },
+    {
+      "id": "REQ-OPS-011",
+      "title": "Always-on VPS kit is closed by default",
+      "statement": "The VPS kit shall keep the hub backend on 127.0.0.1 (reachable on the tailnet only through tailscale serve), take the Tailscale auth key at run time without printing it or putting it on a command line, enable the firewall (deny incoming except tailscale0) last, run services as a non-login user, verify downloaded Node and Go against published checksums, never weaken TLS, hold no keys in the repository, and leave the Argo relay stopped until a person has confirmed the other device's key fingerprint.",
+      "rationale": "An always-on hub is the first Gauss service outside this Mac; a mistake there is reachable from the internet, and Argo pins a key it sees for the first time (docs/ARGO_DTN.md; scripts/ops/vps/README.md).",
+      "parent": "GAU-223",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "vps bootstrap --dry-run exits 0 without root, network or a prompt",
+        "vps bootstrap never prints the Tailscale auth key",
+        "vps bootstrap passes the auth key to tailscale as a file, not on the command line",
+        "vps hub is exposed on the tailnet only through tailscale serve to 127.0.0.1",
+        "vps hub environment binds the backend to 127.0.0.1",
+        "vps firewall denies incoming except on tailscale0",
+        "vps firewall is enabled last, after the tailnet exposure works",
+        "vps services run as a non-login system user",
+        "vps downloads of Node and Go are checked against published checksums",
+        "vps bootstrap leaves the Argo relay stopped until fingerprints are confirmed",
+        "vps confirm-peer refuses on mismatch and is the only thing that starts the relay",
+        "vps confirm-peer asks for a typed yes before pinning",
+        "vps kit contains no keys or tokens",
+        "vps kit never weakens TLS verification"
       ]
     },
     {
