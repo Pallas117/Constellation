@@ -157,6 +157,18 @@ GATEBOX="${GAUSS_GATEBOX:-$(head -1 "$WATCH_DIR/gatebox" 2>/dev/null || true)}"
 GATEBOX_KEY="${GAUSS_GATEBOX_KEY:-$HOME/.ssh/gauss-gate}"
 GATEBOX_HOSTS="$WATCH_DIR/gatebox.known_hosts" # the gatebox's host key, pinned on first contact over the tailnet
 GATEBOX_REPO="Pallas117/Constellation"         # the only repo gauss-gate-run accepts
+# A screen that never ends held the whole train (18 Nov: #319 hung mid test suite on Talos for 25+ min, 20
+# requests behind it). Past this many seconds the ssh is killed (exit 142) and the commit is gated here.
+GATEBOX_TIMEOUT_S="${GAUSS_GATEBOX_TIMEOUT_S:-1200}"
+# Merge-only trust (GAU-239, Josh 2026-11-10: on battery nothing merged for hours although the checks
+# that need this Mac are small). With "merge" (GAUSS_GATEBOX_TRUST, or the second line of
+# $WATCH_DIR/gatebox), a merge-train request (--pr) the gatebox passed on its exact head runs only
+# test:ops here, as a small job that may start on battery and at memory warn, and the train may then
+# merge it under its usual rules. It writes NO deploy record: `deploy` still needs the full gates on
+# this Mac (the VCRM is checked here). Anything else (no --pr, gatebox unreachable, a pass line that
+# does not name the commit) runs the full gates here, as before. Off by default.
+GATEBOX_TRUST="${GAUSS_GATEBOX_TRUST:-$(sed -n 2p "$WATCH_DIR/gatebox" 2>/dev/null || true)}"
+gatebox_trusted() { [ -n "$GATEBOX" ] && [ "$GATEBOX_TRUST" = merge ]; }
 # balance: safe, reversible load shedding (GAU-126). GAUSS_BALANCE=0 turns it off.
 BALANCE="${GAUSS_BALANCE:-1}"
 LOCAL_CODER="${GAUSS_LOCAL_CODER:-$HOME/.local/bin/local-coder}"   # optional on-device model server
@@ -932,6 +944,19 @@ r = {"sha": sha, "tree": tree, "by": by, "at": at,
      "build": {"exit": step("Production build"), "via": "verify"},
      "quality": {"exit": rc("quality:full")},
      "verify": {"exit": rc("verify"), "vcrm": last(r"VCRM: (\d+/\d+)", v, str), "fmea": last(r"FMEA: (\d+/\d+)", v, str), "passed_at": last(r"VERIFY PASSED at (\w+)", v, str)}}
+# What failed, by name (18 Nov: a line saying 654/655 and VCRM 83/84 sent a session to the kept log to
+# learn which test; the result line now says it).
+def names(pat, text, n=3):
+    seen = []
+    for m in re.findall(pat, text, re.M):
+        m = m.strip()
+        if m and m not in seen: seen.append(m)
+    return seen[:n] + (["+%d more" % (len(seen) - n)] if len(seen) > n else [])
+tail = v.split("failing tests:", 1)[1] if "failing tests:" in v else ""
+q = log("quality:full") if rc("quality:full") != 0 else ""
+r["failing"] = {"tests": names(r"^✖ (.+?) \(\d[\d.]*ms\)$", tail),
+                "requirements": names(r"^\s*✗ (REQ-[A-Z]+-\d+)", v),
+                "quality": names(r"^(\S+\(\d+,\d+\): error TS\d+)", q)}
 r["passed"] = all(r[k]["exit"] == 0 for k in ("test_ops", "test", "build", "quality", "verify")) \
     and r["test"]["fail"] == 0 and r["test_ops"]["fail"] == 0 and sha.startswith(r["verify"]["passed_at"] or "-")
 print(json.dumps(r, ensure_ascii=False))
@@ -958,10 +983,13 @@ import json, sys
 r = json.load(open(sys.argv[1]))
 t, o, v = r.get("test") or {}, r.get("test_ops") or {}, r.get("verify") or {}
 fails = [k for k in ("test_ops", "test", "build", "quality", "verify") if (r.get(k) or {}).get("exit") not in (0, None)]
-print("%s %s (tree %s) by %s at %s: npm test %s/%s, test:ops %s passed, build %s, quality %s, VCRM %s, FMEA %s" % (
+f = r.get("failing") or {}
+what = "; ".join("%s: %s" % (k, ", ".join(f[k])) for k in ("tests", "requirements", "quality") if f.get(k))
+print("%s %s (tree %s) by %s at %s: npm test %s/%s, test:ops %s passed, build %s, quality %s, VCRM %s, FMEA %s%s" % (
     "PASSED" if r.get("passed") else "FAILED (" + ", ".join(fails or ["counts"]) + ")", r["sha"][:7], r["tree"][:7], r.get("by"), r.get("at"),
     t.get("pass"), t.get("tests"), o.get("pass"), "ok" if (r.get("build") or {}).get("exit") == 0 else "failed",
-    "ok" if (r.get("quality") or {}).get("exit") == 0 else "failed", v.get("vcrm"), v.get("fmea")))
+    "ok" if (r.get("quality") or {}).get("exit") == 0 else "failed", v.get("vcrm"), v.get("fmea"),
+    " | failing " + what if what and not r.get("passed") else ""))
 ' "$1"
 }
 
@@ -1039,16 +1067,24 @@ gates_branch_tips() { # gates_branch_tips <sha>: the branches, here or on origin
     done | paste -sd, -
 }
 
-gates_enqueue() { # gates_enqueue <checkout-dir>|<commit> [--pr N]: queue a gate run for that commit's tree, start the runner
+gates_enqueue() { # gates_enqueue <checkout-dir>|<commit> [--pr N [--final]]: queue a gate run for that commit's tree, start the runner
   # --pr N puts it on the merge train (train_sync, train_merge): main is merged in before the run
   # and the PR is merged after a pass, when the standing approval's conditions hold.
-  gates_resolve "${1:?usage: $0 gates enqueue <checkout-dir>|<commit> [--pr N]}" || return 1
-  local sha=$G_SHA tree=$G_TREE f pr=""
-  case "${2:-}" in
-    --pr) pr=${3:-}; [[ "$pr" =~ ^[0-9]+$ ]] || { echo "usage: $0 gates enqueue <checkout-dir>|<commit> --pr <number>" >&2; return 2; } ;;
-    "") ;;
-    *) echo "unknown option ${2} (expected --pr N)" >&2; return 2 ;;
-  esac
+  # --final: the PR can merge now (Josh approved it, or its conflict was resolved), so gate it even if
+  # it already passed and was held for a person with nothing of its own changed since (train_waits).
+  gates_resolve "${1:?usage: $0 gates enqueue <checkout-dir>|<commit> [--pr N [--final]]}" || return 1
+  local sha=$G_SHA tree=$G_TREE f pr="" final=""
+  shift
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --pr) pr=${2:-}; [[ "$pr" =~ ^[0-9]+$ ]] || { echo "usage: $0 gates enqueue <checkout-dir>|<commit> --pr <number> [--final]" >&2; return 2; }; shift 2 ;;
+      --final) final=1; shift ;;
+      "") shift ;;
+      *) echo "unknown option $1 (expected --pr N [--final])" >&2; return 2 ;;
+    esac
+  done
+  [ -z "$final" ] || [ -n "$pr" ] || { echo "--final needs --pr N" >&2; return 2; }
+  [ -z "$final" ] || rm -f "$GATES_DIR/held/$pr" # the wait is over: this run is the one before the merge
   if gate_record "$tree" >/dev/null; then
     if [ -z "$pr" ]; then
       gates_result "$sha" "$tree" SKIPPED "already passed: $(gates_summary "$GATES_DIR/$tree.json")"
@@ -1072,13 +1108,14 @@ gates_enqueue() { # gates_enqueue <checkout-dir>|<commit> [--pr N]: queue a gate
     echo "Already queued: tree ${tree:0:7} ($(req_get "$f" sha | cut -c1-7), by $(req_get "$f" by))."
     # 18 Nov: a tree queued for gates only and then enqueued with --pr kept no PR, so its pass never
     # merged. Put the request on the train (atomic rewrite; the runner only reads *.req).
-    if [ -n "$pr" ] && [ "$(req_get "$f" pr)" != "$pr" ]; then
-      { grep -v '^pr=' "$f"; echo "pr=$pr"; } >"$f.tmp" && [ -f "$f" ] && mv -f "$f.tmp" "$f" \
+    if [ -n "$pr" ] && { [ "$(req_get "$f" pr)" != "$pr" ] || { [ -n "$final" ] && [ -z "$(req_get "$f" final)" ]; }; }; then
+      { grep -v -e '^pr=' -e '^final=' "$f"; echo "pr=$pr"; [ -z "$final" ] || echo "final=1"; } >"$f.tmp" && [ -f "$f" ] && mv -f "$f.tmp" "$f" \
         && echo "It is on the merge train for PR #$pr now." || rm -f "$f.tmp"
     fi
   else
     f="$GATES_QUEUE/$(python3 -Ic 'import time; print("%.6f" % time.time())')-$tree.req"
     printf 'sha=%s\ntree=%s\nrepo=%s\nnode=%s\nby=%s\nqueued=%s\npr=%s\n' "$sha" "$tree" "$G_REPO" "$NODE" "$(deployer)" "$(date +%s)" "$pr" >"$f.tmp"
+    [ -z "$final" ] || echo "final=1" >>"$f.tmp"
     mv "$f.tmp" "$f"
     event gates_queued "${sha:0:7}" "gate run queued for ${sha:0:7}" sha="$sha" tree="$tree" by="$(deployer)"
     gates_supersede "$sha" "$f"
@@ -1139,7 +1176,7 @@ gates_start() { # start the one runner, detached from this session (own session 
   echo "Gate runner started (log: $LOGS/gates-runner.log)."
 }
 
-gates_prescreen() { # gates_prescreen <sha> <tree>: 0 when the gatebox failed the commit (result written); else 1: gate it here
+gates_prescreen() { # gates_prescreen <sha> <tree>: 0 the gatebox failed the commit (result written); 2 it passed that exact commit; 1 it said nothing: gate it here
   local sha=$1 tree=$2 log rc=0 last
   [ -n "$GATEBOX" ] || return 1
   [[ "$GATEBOX" =~ ^[A-Za-z0-9][A-Za-z0-9.-]*$ ]] || { echo "gatebox: not a host name: $GATEBOX; gating here"; return 1; }
@@ -1148,19 +1185,27 @@ gates_prescreen() { # gates_prescreen <sha> <tree>: 0 when the gatebox failed th
   echo "$(date '+%F %T') gatebox $GATEBOX: screening ${sha:0:7} ..."
   # BatchMode: never a prompt. The host key is pinned in its own file on first contact (the tailnet has
   # already authenticated the machine); a changed key is refused, and the run falls back to this Mac.
-  ssh -i "$GATEBOX_KEY" -o IdentitiesOnly=yes -o BatchMode=yes -o ConnectTimeout=15 -o ServerAliveInterval=30 \
+  # macOS has no timeout(1): perl sets the alarm and execs ssh, which SIGALRM then ends (exit 142).
+  perl -e 'alarm shift; exec @ARGV' "$GATEBOX_TIMEOUT_S" ssh -i "$GATEBOX_KEY" -o IdentitiesOnly=yes -o BatchMode=yes -o ConnectTimeout=15 -o ServerAliveInterval=30 \
     -o ServerAliveCountMax=4 -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile="$GATEBOX_HOSTS" \
     "gate@$GATEBOX" "$GATEBOX_REPO $sha" >"$log" 2>&1 </dev/null || rc=$?
   last=$(grep -E '^gates rc=' "$log" | tail -1)
   # gauss-gate-run prints "gates rc=N in S s on <sha>" after the gates; without that line (ssh 255, busy 75,
   # sha not on GitHub 65, fetch 69, a killed run) the gatebox said nothing about the commit.
   if [ "$rc" = 0 ] && [[ "$last" == "gates rc=0 "* ]]; then
-    echo "$(date '+%F %T') gatebox passed ${sha:0:7} ($last); full gates here next"; return 1
+    # A pass counts for merging only when the line names this commit (gauss-gate-run prints "... on <sha>").
+    if [[ "$last" == *" on $sha" ]]; then echo "$(date '+%F %T') gatebox passed ${sha:0:7} ($last)"; return 2; fi
+    echo "$(date '+%F %T') gatebox passed ${sha:0:7} ($last), without naming the commit; full gates here next"; return 1
   fi
   if [ "$rc" -ge 1 ] && [ "$rc" -le 63 ] && [[ "$last" == "gates rc=$rc "* ]]; then
     event gates-gatebox gates "failed on the gatebox" sha="$sha" rc:="$rc" host="$GATEBOX"
     gates_result "$sha" "$tree" FAILED "on gatebox $GATEBOX (npm ci, test, quality:full, build): $last; log $log"
     return 0
+  fi
+  if [ "$rc" = 142 ]; then
+    event gates-gatebox gates "gatebox screen timed out" sha="$sha" host="$GATEBOX" seconds:="$GATEBOX_TIMEOUT_S"
+    echo "$(date '+%F %T') gatebox could not screen ${sha:0:7} (exit 142: no answer in ${GATEBOX_TIMEOUT_S} s); gating here"
+    return 1
   fi
   echo "$(date '+%F %T') gatebox could not screen ${sha:0:7} (exit $rc: $(tail -1 "$log" 2>/dev/null)); gating here"
   return 1
@@ -1193,7 +1238,7 @@ gates_passed() { # gates_passed <checkout-dir>|<commit>: exit 0 only if that com
 }
 
 gates_run() { # gates_run [--once]: work through the queue, oldest first, then exit; --once: stop after one wait that gave up
-  local once=${1:-} self req sha tree queued rc pid me pr repo line
+  local once=${1:-} self req sha tree queued rc pid me pr repo line merge_only screened
   self="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
   # Never the folder it was started from: that is a session's checkout, often a temporary worktree removed
   # while the runner lives on (4 Nov: every git call then failed with getcwd errors).
@@ -1239,13 +1284,34 @@ gates_run() { # gates_run [--once]: work through the queue, oldest first, then e
         tail -1 "$GATES_RESULTS"; gates_after_pass "$sha" "$pr"; continue
       fi
     fi
-    if gates_prescreen "$sha" "$tree"; then rm -f "$req"; tail -1 "$GATES_RESULTS"; continue; fi
-    echo "$(date '+%F %T') gates ${sha:0:7} ..."
+    merge_only=0
+    if gatebox_trusted && [ -n "$(req_get "$req" pr)" ]; then
+      # Merge main in first, so the gatebox screens the head that would land (run-one checks it again).
+      if ! train_sync "$req"; then tail -1 "$GATES_RESULTS"; continue; fi
+      sha=$(req_get "$req" sha); tree=$(req_get "$req" tree); merge_only=1
+    fi
+    screened=0; gates_prescreen "$sha" "$tree" || screened=$?
+    if [ "$screened" = 0 ]; then rm -f "$req"; tail -1 "$GATES_RESULTS"; continue; fi
     rc=0; pr=$(req_get "$req" pr)
-    if [ -x "$HEAVY" ]; then
-      "$HEAVY" --wait "$GATES_WAIT_MIN" --name gates --label "gate queue ${sha:0:7}" -- /bin/bash "$self" gates run-one "$req" || rc=$?
+    if [ "$merge_only" = 1 ] && [ "$screened" = 2 ]; then
+      echo "$(date '+%F %T') ops tests ${sha:0:7} (merge only: the gatebox passed the rest) ..."
+      if [ -x "$HEAVY" ]; then
+        "$HEAVY" --wait "$GATES_WAIT_MIN" --max-level 2 --name gates-ops --label "ops gate ${sha:0:7}" -- /bin/bash "$self" gates run-one "$req" --gatebox-passed "$sha" || rc=$?
+      else
+        /bin/bash "$self" gates run-one "$req" --gatebox-passed "$sha" || rc=$?
+      fi
     else
-      /bin/bash "$self" gates run-one "$req" || rc=$?
+      echo "$(date '+%F %T') gates ${sha:0:7} ..."
+      if [ -x "$HEAVY" ]; then
+        "$HEAVY" --wait "$GATES_WAIT_MIN" --name gates --label "gate queue ${sha:0:7}" -- /bin/bash "$self" gates run-one "$req" || rc=$?
+      else
+        /bin/bash "$self" gates run-one "$req" || rc=$?
+      fi
+    fi
+    if [ "$rc" = 77 ] && [ -f "$req" ]; then # main moved after the gatebox screened the head: screen the new one
+      echo "$(date '+%F %T') ${sha:0:7} moved on after the gatebox screened it; screening the new head."
+      [ "$once" = --once ] && return 0
+      continue
     fi
     if [ "$rc" = 75 ] && [ -f "$req" ]; then # claude-heavy gave up waiting; the request stays first in line
       echo "$(date '+%F %T') ${sha:0:7} still waiting for memory or power; asking again."
@@ -1272,7 +1338,8 @@ gates_run() { # gates_run [--once]: work through the queue, oldest first, then e
 }
 
 gates_run_one() { # gates_run_one <request>: check out, install if the lockfile changed, gates_record, write the result
-  local req=$1 sha tree repo node by co lock out rc=0 line status
+  local req=$1 passed=${3:-} sha tree repo node by co lock out rc=0 line status
+  [ "${2:-}" = --gatebox-passed ] || passed=""
   # Withdrawn while claude-heavy waited (a session re-queued a new head): nothing to run.
   [ -f "$req" ] || { echo "Request $(basename "$req") was withdrawn; skipping."; return 0; }
   local pr; pr=$(req_get "$req" pr)
@@ -1287,6 +1354,8 @@ gates_run_one() { # gates_run_one <request>: check out, install if the lockfile 
     fi
   fi
   sha=$(req_get "$req" sha); tree=$(req_get "$req" tree); repo=$(req_get "$req" repo); node=$(req_get "$req" node); by=$(req_get "$req" by)
+  # Merge only: the gatebox vouched for one commit. If main moved since, that is no longer the head.
+  if [ -n "$passed" ] && [ "$sha" != "$passed" ]; then return 77; fi
   [ -n "$node" ] && [ -x "$node" ] && NODE=$node # the Node the session queued with (.nvmrc: Node 26)
   co=${GAUSS_GATES_CHECKOUT:-$(dirname "$repo").worktrees/gates}
   gates_fail() { gates_result "$sha" "$tree" ERROR "$1"; rm -f "$req"; return 1; }
@@ -1299,6 +1368,7 @@ gates_run_one() { # gates_run_one <request>: check out, install if the lockfile 
     git --git-dir="$repo" -c advice.detachedHead=false worktree add -q --detach "$co" "$sha" || { gates_fail "could not add the gate checkout $co at ${sha:0:7}"; return 1; }
     echo "$co" >>"$GATES_DIR/checkouts" # one per repository
   fi
+  if [ -n "$passed" ]; then gates_ops_only "$req" "$co" "$sha" "$tree" "$pr" "$repo"; return; fi
   # One install for consecutive requests with the same package-lock.json.
   [ -f "$co/package-lock.json" ] && lock=$(install_key "$co") || { gates_fail "no package-lock.json at ${sha:0:7}"; return 1; }
   if [ "$(cat "$co/node_modules/.gauss-lock" 2>/dev/null)" != "$lock" ]; then
@@ -1339,6 +1409,26 @@ gates_run_one() { # gates_run_one <request>: check out, install if the lockfile 
   [ -z "$pr" ] || train_merge "$pr" "$sha" "$tree" "$repo" || true # a pass stands whether or not it merged
 }
 
+gates_ops_only() { # gates_ops_only <request> <checkout> <sha> <tree> <pr> <repo>: the part of a gate only this Mac can run
+  # After a gatebox pass on this exact commit (GAU-239). No install: the ops tests are bash and Go.
+  # The result is for merging only; no deploy record ($GATES_DIR/<tree>.json) is written.
+  local req=$1 co=$2 sha=$3 tree=$4 pr=$5 repo=$6 rc=0 hold=0 log counts
+  log="$GATES_DIR/runs/$sha.ops.log"
+  # Under claude-heavy the gate lock is already ours; gate_lock would also wait for normal memory
+  # pressure, which a small job does not need.
+  if ! gate_lock_ours; then gate_lock; hold=$GATES_HOLD; fi
+  (cd "$co" && PATH="$(dirname "$NODE"):$PATH" npm run test:ops >"$log" 2>&1) || rc=$?
+  if [ "$hold" = 1 ]; then rmdir "$GATE_LOCK" 2>/dev/null || true; fi
+  counts=$(grep -Eo 'gauss-services: [0-9]+ passed, [0-9]+ failed' "$log" | tail -1 || true)
+  rm -f "$req"
+  if [ "$rc" != 0 ] || [[ "$counts" != *", 0 failed" ]]; then
+    gates_result "$sha" "$tree" FAILED "test:ops here (exit $rc${counts:+; $counts}) after a gatebox pass; log $log"
+    return 1
+  fi
+  gates_result "$sha" "$tree" PASSED "merge only, no deploy record: gatebox $GATEBOX passed ${sha:0:7} (npm ci, test, quality:full, build); here test:ops ${counts#gauss-services: }"
+  [ -z "$pr" ] || train_merge "$pr" "$sha" "$tree" "$repo" || true
+}
+
 # The merge train (Josh 2026-11-03, "make fixes to merge train always"): overnight, main moved
 # twice (#197, #213) and every queued gate tested a head that could no longer merge; each PR then
 # needed a session awake to merge main in, re-queue, wait and merge. A request queued with --pr
@@ -1352,6 +1442,38 @@ TRAIN_HOLD="${GAUSS_TRAIN_HOLD:-auth|rbac|crypto|tls|secret|cybertiger|passkey|b
 train_pr() { # train_pr <pr>: "state head branch base draft merge-state" on one line, or fail
   gh pr view "$1" --repo "$TRAIN_REPO" --json state,headRefOid,headRefName,baseRefName,isDraft,mergeStateStatus \
     -q '[.state, .headRefOid, .headRefName, .baseRefName, (.isDraft|tostring), .mergeStateStatus] | join(" ")' 2>/dev/null
+}
+
+# Waiting PRs are not gated again (18 Nov, Josh: "make a better merge train process"). That day #160 was
+# gated 7 times and #175 5 times: each pass was held for a person, main moved, and the same change was
+# gated again (about 7.5 min and 3% of the battery a run) with nothing able to merge it. A pass that is
+# held as a draft or for Josh leaves a note with a fingerprint of the PR's own change; while that is
+# unchanged the train answers at once instead of running. The run that matters is the one right before
+# the merge: `gates enqueue <sha> --pr N --final` (or the draft being marked ready) gates it against
+# main as it is then. A head that conflicts with main is likewise not retried until its branch moves.
+train_change() { # train_change <repo> <sha>: fingerprint of what the PR changes relative to main (stable while only main moves)
+  local base; base=$(git --git-dir="$1" merge-base refs/remotes/origin/main "$2" 2>/dev/null) || return 1
+  git --git-dir="$1" diff "$base" "$2" | git patch-id --stable | cut -d' ' -f1
+}
+train_note() { # train_note <pr> <kind: person|draft|conflict> <sha> <change> <why>
+  mkdir -p "$GATES_DIR/held"
+  printf 'kind=%s\nsha=%s\nchange=%s\nwhy=%s\nat=%s\n' "$2" "$3" "$4" "$5" "$(date +%s)" >"$GATES_DIR/held/$1.tmp" && mv -f "$GATES_DIR/held/$1.tmp" "$GATES_DIR/held/$1"
+}
+train_waits() { # train_waits <request> <head> <draft> <repo>: 0 (result written, request removed) when this PR only waits
+  local req=$1 head=$2 draft=$3 repo=$4 pr note kind was why tree
+  pr=$(req_get "$req" pr); note="$GATES_DIR/held/$pr"; tree=$(req_get "$req" tree)
+  [ -f "$note" ] && [ -z "$(req_get "$req" final)" ] || return 1
+  kind=$(req_get "$note" kind); was=$(req_get "$note" sha); why=$(req_get "$note" why)
+  case "$kind" in
+    conflict) [ "$was" = "$head" ] || return 1
+      gates_result "$head" "$tree" CONFLICT "PR #$pr still can't take main (its branch hasn't moved since ${was:0:7}): not tried again until it does" ;;
+    draft|person)
+      [ "$kind" = draft ] && [ "$draft" != true ] && return 1 # marked ready: it can merge now
+      [ "$(req_get "$note" change)" = "$(train_change "$repo" "$head")" ] || return 1
+      gates_result "$head" "$tree" HELD "PR #$pr passed on ${was:0:7} and nothing of its own has changed: not gated again while it waits ($why). When it can merge: gates enqueue ${head:0:7} --pr $pr --final" ;;
+    *) return 1 ;;
+  esac
+  rm -f "$req"
 }
 
 train_versions() { # train_versions <worktree>: settle a merge whose only conflicts are baseline "version" lines
@@ -1377,16 +1499,17 @@ PY
 }
 
 train_sync() { # train_sync <request>: merge origin/main into a train PR's head before its run; 1 = withdrawn
-  local req=$1 pr sha tree repo info state head branch base _ w new
+  local req=$1 pr sha tree repo info state head branch base draft _ w new
   pr=$(req_get "$req" pr); sha=$(req_get "$req" sha); tree=$(req_get "$req" tree); repo=$(req_get "$req" repo)
   git --git-dir="$repo" fetch -q origin 2>/dev/null || { echo "fetch failed: gating ${sha:0:7} as queued"; return 0; }
   info=$(train_pr "$pr") || { echo "GitHub unreachable: gating ${sha:0:7} as queued"; return 0; }
-  read -r state head branch base _ _ <<<"$info"
-  if [ "$state" != OPEN ]; then gates_result "$sha" "$tree" SKIPPED "PR #$pr is ${state:-gone}"; rm -f "$req"; return 1; fi
+  read -r state head branch base draft _ <<<"$info"
+  if [ "$state" != OPEN ]; then gates_result "$sha" "$tree" SKIPPED "PR #$pr is ${state:-gone}"; rm -f "$req" "$GATES_DIR/held/$pr"; return 1; fi
   if [ "$head" != "$sha" ]; then
     gates_result "$sha" "$tree" SKIPPED "PR #$pr moved on to ${head:0:7}; queue that head"; rm -f "$req"; return 1
   fi
   [ "$base" = main ] || return 0 # stacked: gated as it is; it syncs once its base has merged
+  train_waits "$req" "$head" "$draft" "$repo" && return 1
   git --git-dir="$repo" merge-base --is-ancestor refs/remotes/origin/main "$sha" && return 0
   w=$(mktemp -d -t gauss-train)/w
   git --git-dir="$repo" worktree add -q --detach "$w" "$sha" 2>/dev/null || { echo "could not prepare a merge of main; gating as queued"; return 0; }
@@ -1400,6 +1523,7 @@ train_sync() { # train_sync <request>: merge origin/main into a train PR's head 
     git -C "$w" merge --abort 2>/dev/null || true
     gates_result "$sha" "$tree" CONFLICT "PR #$pr can't take main without a person (conflict, or its branch moved)"
     phone -key "train-$pr" -every 6h "Gauss: PR #$pr needs a hand" "Main has moved and #$pr doesn't merge with it cleanly. A session needs to merge main into it."
+    train_note "$pr" conflict "$sha" "" "conflicts with main"
     rm -f "$req"
   fi
   git --git-dir="$repo" worktree remove --force "$w" 2>/dev/null || true
@@ -1429,6 +1553,10 @@ train_merge() { # train_merge <pr> <sha> <tree> <repo>: merge a PR that just pas
   fi
   if [ -n "$why" ]; then
     gates_result "$sha" "$tree" HELD "passed, not merged: $why"
+    case "$why" in # waits for a person: no more runs for the same change until it can merge (train_waits)
+      draft) train_note "$pr" draft "$sha" "$(train_change "$repo" "$sha")" "draft" ;;
+      touches*) train_note "$pr" person "$sha" "$(train_change "$repo" "$sha")" "Josh merges" ;;
+    esac
     # 12 Nov: merging one PR moved main under the next one's run, which then sat HELD until a person
     # re-queued it. Re-queue it at the front instead (train_sync merges main in), at most 3 times a day.
     [[ "$why" == "main moved during the run"* ]] && train_requeue "$pr" "$sha" "$tree" "$repo"
@@ -1436,6 +1564,7 @@ train_merge() { # train_merge <pr> <sha> <tree> <repo>: merge a PR that just pas
   fi
   if gh pr merge "$pr" --repo "$TRAIN_REPO" --merge --match-head-commit "$sha" >/dev/null 2>&1; then
     gates_result "$sha" "$tree" MERGED "PR #$pr merged by the train after its gate passed on ${sha:0:7}"
+    rm -f "$GATES_DIR/held/$pr"
     # PRs stacked on this one now belong on main (their next queued run merges main in).
     for child in $(gh pr list --repo "$TRAIN_REPO" --base "$branch" --state open --json number -q '.[].number' 2>/dev/null); do
       gh pr edit "$child" --repo "$TRAIN_REPO" --base main >/dev/null 2>&1 && echo "Retargeted PR #$child to main."
@@ -1558,7 +1687,8 @@ gates_status() {
     echo "queued: $(req_get "$f" sha | cut -c1-7) by $(req_get "$f" by) since $(date -r "$(req_get "$f" queued)" '+%F %H:%M')"
   done
   [ $n -gt 0 ] || echo "queue: empty"
-  if [ -n "$GATEBOX" ]; then echo "gatebox: $GATEBOX screens each request first"; else echo "gatebox: off (all gates run here)"; fi
+  if gatebox_trusted; then echo "gatebox: $GATEBOX screens each request first; a pass lets the train merge after the ops tests here (no deploy record)"
+  elif [ -n "$GATEBOX" ]; then echo "gatebox: $GATEBOX screens each request first"; else echo "gatebox: off (all gates run here)"; fi
   tail -5 "$GATES_RESULTS" 2>/dev/null || true
 }
 
@@ -2232,9 +2362,9 @@ case "${1:-}" in
   gates)
     case "${2:-}" in
       record) gates_record "${3:-}" ;;
-      enqueue) gates_enqueue "${3:-}" "${4:-}" "${5:-}" ;;
+      enqueue) gates_enqueue "${@:3}" ;;
       run) gates_run "${3:-}" ;;
-      run-one) gates_run_one "${3:?}" ;;
+      run-one) gates_run_one "${3:?}" "${4:-}" "${5:-}" ;;
       result) if [ "${3:-}" = status ]; then gates_status; else gates_show_result "${3:-}"; fi ;;
       passed) gates_passed "${3:-}" ;;
       queue) gates_queue ;;

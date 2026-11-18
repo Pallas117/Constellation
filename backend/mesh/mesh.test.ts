@@ -20,6 +20,7 @@ import {
   parseBattery,
   parseCharger,
   parsePower,
+  parsePowerSave,
   parseGuard,
   parsePosture,
   parseHost,
@@ -315,6 +316,26 @@ test("Argo's guard block is allowlisted; unknown codes drop alone, bad values dr
   assert.equal(parseBattery({ level: 64, charging: true, charger: { state: "bad" } })!.charger, undefined, "a bad charger block drops alone");
 });
 
+test("power-save: allowlisted reason, ranged time, off carries nothing, bad drops alone", () => {
+  const since = new Date(Date.now() - 60_000).toISOString();
+  assert.deepEqual(parsePowerSave({ on: true, since, reason: "no-pd", extra: "x" }), { on: true, since, reason: "no-pd" });
+  for (const reason of ["battery", "charger-short", "manual"]) assert.equal(parsePowerSave({ on: true, since, reason })!.reason, reason);
+  assert.deepEqual(parsePowerSave({ on: false, since, reason: "battery" }), { on: false }, "off keeps no reason");
+  const bad = [
+    { on: "yes" }, { on: true }, { on: true, since }, { on: true, reason: "battery" },
+    { on: true, since, reason: "rm -rf" }, { on: true, since: "not a time", reason: "battery" },
+    { on: true, since: new Date(Date.now() + 3_600_000).toISOString(), reason: "battery" },
+    { on: true, since: "2001-01-01T00:00:00Z", reason: "battery" },
+  ];
+  for (const b of bad) assert.equal(parsePowerSave(b), undefined, JSON.stringify(b));
+  assert.equal(parsePowerSave("on"), undefined);
+  assert.equal(parsePowerSave(null), undefined);
+  assert.deepEqual(parseReport({ ...okReport, powerSave: { on: true, since, reason: "battery" } })!.powerSave, { on: true, since, reason: "battery" });
+  assert.equal(parseReport({ ...okReport, powerSave: { on: true, reason: "x" } })!.powerSave, undefined, "a bad block drops alone");
+  assert.equal(parseReport(okReport)!.powerSave, undefined, "old Argo without the field still parses");
+  assert.equal(GUARD_CODE_TEXT["power-save"].length > 0, true);
+});
+
 test("hosting verdict uses report age, battery power, swap and Argo's guard, and says why", () => {
   const now = new Date("2026-10-23T12:05:00Z");
   const fresh = { receivedAt: "2026-10-23T12:00:00Z", now };
@@ -372,7 +393,8 @@ test("an Argo report with guard and battery reaches the device list with its rea
 
 test("Gauss knows every guard code, level and admission Argo can send", () => {
   const go = readFileSync(new URL("../../tools/argo/guard.go", import.meta.url), "utf8");
-  const codes = [...go.matchAll(/a\.add\("\w+", "([a-z-]+)"/g)].map((m) => m[1]);
+  const goCmd = readFileSync(new URL("../../tools/argo/guardcmd.go", import.meta.url), "utf8"); // power-save is added in guardStep
+  const codes = [...(go + goCmd).matchAll(/a\.add\("\w+", "([a-z-]+)"/g)].map((m) => m[1]);
   assert.ok(codes.length >= 18 && codes.includes("swap-rising"), `parsed ${codes.join(",")}`);
   for (const c of codes) assert.ok(Object.hasOwn(GUARD_CODE_TEXT, c), `Gauss drops Argo guard code ${c}`);
   const levels = go.match(/\[\.\.\.\]string\{"ok", "watch", "risk", "block"\}/);

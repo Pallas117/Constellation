@@ -56,6 +56,7 @@ import { enforceApiPolicy, isPublic } from "./rbac.js";
 import { CommerceStore } from "./commerce/store.js";
 import { createDataApiRouter, createOrgRouter, createPilotRequestHandler } from "./commerce/routers.js";
 import { EnvironmentHistory } from "./trust/environment.js";
+import { createEvidenceRouter } from "./trust/evidence-router.js";
 import { getL1Structures } from "./adapters/noaa-swpc.js";
 
 const app = express();
@@ -300,6 +301,10 @@ app.post("/api/pilot-requests", createPilotRequestHandler(commerce, Date.now, (r
 
 // Mesh & Network page: onboarding for everyone signed in, team status for operators.
 app.use("/api/mesh", mesh.ui);
+
+// Evidence view of the operator console: the pilot flow (log -> trust records -> evidence pack ->
+// PDF -> check). Operators only (API_POLICY); nothing is stored and nothing is signed here.
+app.use("/api/trust/evidence", createEvidenceRouter());
 
 // RAG endpoints: operators only (status and query; API_POLICY in rbac.ts).
 // Knowledge memory: the Cosmic Brain sidecar (backend/memory/client.ts, docs/memory-sidecar.md).
