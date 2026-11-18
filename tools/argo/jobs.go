@@ -36,6 +36,11 @@ type JobRun struct {
 	// in eclipse. This is the demand the host could not serve, the number that sizes outside compute.
 	WaitSecs  int `json:"wait_s,omitempty"`
 	PauseSecs int `json:"pause_s,omitempty"`
+	// Battery % at the start and end, and whether it ran on battery power at both (eclipse.go learns
+	// each job's battery cost from these: watts are smoothed noise for jobs this short). 0 = no battery.
+	BattStart int  `json:"batt0,omitempty"`
+	BattEnd   int  `json:"batt1,omitempty"`
+	OnBatt    bool `json:"on_batt,omitempty"`
 }
 
 const (

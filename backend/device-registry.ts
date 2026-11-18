@@ -14,6 +14,31 @@ import { createSwapPlan, rebalanceDeviceNetwork } from "./services/device-swap-m
 
 const router = express.Router();
 
+/** Fingerprint signals are client-supplied: a small flat object of short strings and finite numbers. */
+const MAX_SIGNAL_ENTRIES = 32;
+const MAX_SIGNAL_KEY_CHARS = 64;
+const MAX_SIGNAL_STRING_CHARS = 256;
+
+/** Statuses an owner may set by hand: downgrades only. "trusted" comes only from a verified proof. */
+const OWNER_SETTABLE_STATUSES: ReadonlySet<unknown> = new Set(["unverified", "untrusted", "revoked"]);
+
+type SignalsResult = { ok: true; value: Record<string, string | number> | undefined } | { ok: false };
+
+function parseFingerprintSignals(raw: unknown): SignalsResult {
+  if (raw === undefined || raw === null) return { ok: true, value: undefined };
+  if (typeof raw !== "object" || Array.isArray(raw)) return { ok: false };
+  const entries = Object.entries(raw);
+  if (entries.length > MAX_SIGNAL_ENTRIES) return { ok: false };
+  const value: Record<string, string | number> = {};
+  for (const [key, item] of entries) {
+    if (key.length > MAX_SIGNAL_KEY_CHARS) return { ok: false };
+    if (typeof item === "string" && item.length <= MAX_SIGNAL_STRING_CHARS) value[key] = item;
+    else if (typeof item === "number" && Number.isFinite(item)) value[key] = item;
+    else return { ok: false };
+  }
+  return { ok: true, value };
+}
+
 /** A request to a "/:id…" route; Express 4 always gives route params as strings. */
 type DeviceRequest = AuthenticatedRequest<{ id: string }>;
 
@@ -62,7 +87,13 @@ router.post("/register", (req: AuthenticatedRequest, res) => {
     return;
   }
 
-  const device = registerDevice(userId, fingerprintHash, typeof fingerprintSignals === "object" ? fingerprintSignals : undefined, typeof name === "string" ? name : undefined);
+  const signals = parseFingerprintSignals(fingerprintSignals);
+  if (!signals.ok) {
+    res.status(400).json({ ok: false, error: "Invalid fingerprintSignals" });
+    return;
+  }
+
+  const device = registerDevice(userId, fingerprintHash, signals.value, typeof name === "string" ? name : undefined);
   res.status(201).json({ ok: true, device });
 });
 
@@ -79,7 +110,20 @@ router.post("/:id/heartbeat", (req: DeviceRequest, res) => {
 router.post("/:id/status", (req: DeviceRequest, res) => {
   if (!requireOwnedDevice(req, res)) return;
   const { status, fingerprintHash, fingerprintSignals } = req.body ?? {};
-  const device = updateDeviceStatus(req.params.id, { status, fingerprintHash, fingerprintSignals });
+  if (status !== undefined && !OWNER_SETTABLE_STATUSES.has(status)) {
+    res.status(400).json({ ok: false, error: "status must be one of: unverified, untrusted, revoked (trusted is set only by a verified proof)" });
+    return;
+  }
+  if (fingerprintHash !== undefined && (typeof fingerprintHash !== "string" || fingerprintHash.length === 0 || fingerprintHash.length > 256)) {
+    res.status(400).json({ ok: false, error: "Invalid fingerprintHash" });
+    return;
+  }
+  const signals = parseFingerprintSignals(fingerprintSignals);
+  if (!signals.ok) {
+    res.status(400).json({ ok: false, error: "Invalid fingerprintSignals" });
+    return;
+  }
+  const device = updateDeviceStatus(req.params.id, { status, fingerprintHash, fingerprintSignals: signals.value });
   if (!device) {
     res.status(404).json({ ok: false, error: "Device not found" });
     return;
