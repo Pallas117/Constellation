@@ -66,17 +66,18 @@ const (
 
 // Battery is one battery reading. Watts are positive into the battery.
 type Battery struct {
-	Present   bool    `json:"present"`
-	Pct       int     `json:"pct"`
-	OnAC      bool    `json:"ac"`
-	Charging  bool    `json:"charging"`
-	RemainMin int     `json:"remain,omitempty"`   // the OS estimate to empty (on battery) or full; 0 unknown
-	AdapterW  float64 `json:"adapterW,omitempty"` // the charger's rating
-	SystemW   float64 `json:"systemW,omitempty"`  // what the whole machine draws, when the controller reports it
-	Cycles    int     `json:"cycles,omitempty"`
-	HealthPct int     `json:"health,omitempty"`    // the OS's "maximum capacity" vs design
-	Condition string  `json:"condition,omitempty"` // the OS's own words, e.g. "Normal", "Service Recommended"
-	LowPower  bool    `json:"lowPower,omitempty"`
+	Present   bool     `json:"present"`
+	Pct       int      `json:"pct"`
+	OnAC      bool     `json:"ac"`
+	Charging  bool     `json:"charging"`
+	RemainMin int      `json:"remain,omitempty"`   // the OS estimate to empty (on battery) or full; 0 unknown
+	AdapterW  float64  `json:"adapterW,omitempty"` // the charger's rating
+	Adapter   *Adapter `json:"adapter,omitempty"`  // what the charger negotiated (charger.go); nil = unknown
+	SystemW   float64  `json:"systemW,omitempty"`  // what the whole machine draws, when the controller reports it
+	Cycles    int      `json:"cycles,omitempty"`
+	HealthPct int      `json:"health,omitempty"`    // the OS's "maximum capacity" vs design
+	Condition string   `json:"condition,omitempty"` // the OS's own words, e.g. "Normal", "Service Recommended"
+	LowPower  bool     `json:"lowPower,omitempty"`
 }
 
 // Sample is one reading of the host. It is what the history keeps.
@@ -306,7 +307,8 @@ func assess(hist []Sample, cur Sample) Assessment {
 		case !b.OnAC && atWarn(cur.Pressure) && b.Pct <= batteryPairPct:
 			a.add("battery", "battery-low-pressure", LevelRisk, "battery %d%% with memory at warn: plug in or close the browser", b.Pct)
 		case !b.OnAC:
-			a.add("battery", "on-battery", LevelWatch, "on battery power (%d%%): light work only", b.Pct)
+			// Jobs over lightJobGB start only within their eclipse budget (eclipse.go, per job).
+			a.add("battery", "on-battery", LevelWatch, "on battery power (%d%%): light work only, heavier jobs within their eclipse budget", b.Pct)
 		}
 		if b.OnAC && a.DrainPctH >= 3 && b.Pct < 100 {
 			a.ChargerBehind = true
@@ -320,9 +322,9 @@ func assess(hist []Sample, cur Sample) Assessment {
 			if b.Pct <= batteryFloorPct {
 				lvl = LevelBlock
 			}
-			a.add("battery", "charger-behind", lvl, "plugged in but losing %.0f%%/h: the charger can't keep up%s", a.DrainPctH, adapterNote(b))
+			a.add("battery", "charger-behind", lvl, "plugged in but losing %.0f%%/h: the charger can't keep up%s", a.DrainPctH, chargerNote(b))
 		} else if b.OnAC && b.AdapterW > 0 && b.SystemW > b.AdapterW {
-			a.add("battery", "charger-weak", LevelWatch, "the machine draws %.1f W from a %.0f W charger", b.SystemW, b.AdapterW)
+			a.add("battery", "charger-weak", LevelWatch, "the machine draws %.1f W from a %.0f W charger%s", b.SystemW, b.AdapterW, chargerNote(b))
 		}
 	}
 
@@ -350,6 +352,15 @@ func assess(hist []Sample, cur Sample) Assessment {
 		}
 	}
 	return a
+}
+
+// chargerNote is the reason and remedy when the negotiation explains the shortfall: the adapter's
+// rating (as before) plus why, from the charger diagnosis. Empty when the host reports none.
+func chargerNote(b *Battery) string {
+	if why := chargerWhy(chargerOf(b, defaultWorkerW)); why != "" {
+		return ": " + why
+	}
+	return adapterNote(b)
 }
 
 func adapterNote(b *Battery) string {
@@ -666,6 +677,11 @@ func ioregInt(out, key string) (int64, bool) {
 // SystemLoad (mW) is not documented by Apple; it is shown, not decided on,
 // except against the charger's own rating.
 func applyIoreg(b *Battery, out string) {
+	if b.OnAC {
+		if a, ok := parseAdapterDetails(out); ok {
+			b.Adapter = &a
+		}
+	}
 	if v, ok := ioregInt(out, "CycleCount"); ok {
 		b.Cycles = int(v)
 	}
@@ -813,7 +829,8 @@ func readSupplies(root string) map[string]map[string]string {
 	for _, e := range ents {
 		f := map[string]string{}
 		for _, k := range []string{"type", "online", "present", "scope", "capacity", "status", "cycle_count",
-			"energy_full", "energy_full_design", "charge_full", "charge_full_design"} {
+			"energy_full", "energy_full_design", "charge_full", "charge_full_design",
+			"voltage_now", "voltage_max", "current_max"} {
 			if b, err := os.ReadFile(filepath.Join(root, e.Name(), k)); err == nil {
 				f[k] = string(b)
 			}

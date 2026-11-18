@@ -1,0 +1,26 @@
+{
+  "schema": "gauss.log-mapping/0.1",
+  "id": "jetson-orin-jsonl",
+  "version": "0.1.0",
+  "format": "jsonl",
+  "timeFormat": "iso",
+  "columns": {
+    "time": "ts",
+    "spacecraftId": "sat",
+    "modelId": "model",
+    "processorProfileId": "device",
+    "modelFormat": "engine_format",
+    "modelSha256": "engine_sha256",
+    "runtimeVersion": "trt_version",
+    "output": ["detections"],
+    "confidence": "score",
+    "latDeg": "lat",
+    "lonDeg": "lon",
+    "altKm": "alt_km"
+  },
+  "constants": { "runtime": "TensorRT" },
+  "processorProfiles": {
+    "Jetson Orin NX": "nvidia-jetson-orin-nx",
+    "Jetson AGX Orin": "nvidia-jetson-agx-orin"
+  }
+}

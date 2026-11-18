@@ -1,0 +1,17 @@
+{
+  "schema": "gauss.log-mapping/0.1",
+  "id": "gpu-h100-jsonl",
+  "version": "0.1.0",
+  "format": "jsonl",
+  "timeFormat": "unix-ms",
+  "columns": {
+    "time": "t_ms",
+    "modelId": "model",
+    "modelFormat": "format",
+    "modelSha256": "model_sha256",
+    "runtimeVersion": "ort_version",
+    "output": "text",
+    "confidence": "p"
+  },
+  "constants": { "spacecraftId": "SYNTH-H100-1", "processorProfileId": "nvidia-h100", "runtime": "onnxruntime-gpu" }
+}
