@@ -80,6 +80,20 @@ export interface GuardReading {
   headroomGB: number;
 }
 
+/** Argo's power-save mode (backend/mesh/store.ts MeshPowerSave); since and reason only while on. */
+export interface PowerSaveReading {
+  on: boolean;
+  since?: string;
+  reason?: "battery" | "charger-short" | "no-pd" | "manual";
+}
+
+/** One line for a device in power-save, or "" when it is not. */
+export function powerSaveLine(p: PowerSaveReading | undefined): string {
+  if (!p?.on) return "";
+  const why = { battery: "on battery", "charger-short": "charger can't keep up", "no-pd": "no USB-C Power Delivery", manual: "switched on by hand" }[p.reason ?? "manual"];
+  return `Power-save: ${why} · heavy work waits`;
+}
+
 /** One line from Argo's guard: what this host offers the mesh right now. */
 export function guardLine(g: GuardReading): string {
   const slots = `${g.slots} agent slot${g.slots === 1 ? "" : "s"}`;

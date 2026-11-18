@@ -364,6 +364,9 @@ stub npm 'if [ "$1" = run ]; then
       if [ "$GATEFAIL" = test ]; then echo "❌ VERIFY FAILED"; exit 1; fi
       echo "✅ VERIFY PASSED at $(git rev-parse --short HEAD)" ;;
   esac
+  if [ "$GATEFAIL" = "quality:full" ] && [ "$2" = "quality:full" ]; then
+    printf "/tmp/co/backend/replay/fetch-archive.ts\n  110:26  error  There is no cause attached to the symptom error being thrown  preserve-caught-error\n\nX 1 problem (1 error, 0 warnings)\n"
+  fi
   [ "$GATEFAIL" != "$2" ]; exit
 fi
 [ -n "$NPMNET" ] && [ "$1" = ci ] && { echo "npm error network request to https://registry.npmjs.org/x.tgz failed, reason: read ETIMEDOUT" >&2; exit 1; }
@@ -606,6 +609,9 @@ expect "gates record: a FAILED line names the failing tests and requirements" $?
 kept="$WD/gates/logs/$(basename "$rec" .json)"
 [[ "$out" == *"Failed gate output: $kept"* ]] && grep -q "VERIFY FAILED" "$kept/verify.log" && [ ! -f "$kept/test:ops.log" ]
 expect "gates record: a failed gate's output is kept beside the record, passing gates' is not" $?
+out=$(GATEFAIL=quality:full run gates record "$GW" 2>&1)
+[[ "$out" == *"FAILED (quality) ${D:0:7}"*"quality failed"*"| failing quality: replay/fetch-archive.ts:110 preserve-caught-error"* ]]
+expect "gates record: a failed quality gate names the lint error (file, line, rule)" $?
 touch "$GW/stray"; out=$(run gates record "$GW" 2>&1); [[ "$out" == *"uncommitted or untracked"* ]]; expect "gates record refuses a dirty checkout" $?
 rm -f "$GW/stray"
 # The runner inherits the LaunchAgent's env (live data paths, live origins, launchd PATH): gates must not.

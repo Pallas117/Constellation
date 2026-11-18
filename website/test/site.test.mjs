@@ -608,3 +608,7 @@ test("traffic: every indexable page has share cards and is in the sitemap; robot
   assert.deepEqual(ld["@graph"][0].sameAs, ["https://luma.com/constellation"]);
   for (const [route, page] of Object.entries(html)) if (route !== "/") assert.doesNotMatch(page, /<script/, `${route}: no data blocks elsewhere`);
 });
+
+test("client links: /gauss/, /gauss/evidence/ and /argo/ each link to the pilot brief with a plan", () => {
+  for (const path of ["/gauss/", "/gauss/evidence/", "/argo/"]) assert.match(html[path], /href="\/gauss\/apply\/\?plan=pilot"/, path);
+});
