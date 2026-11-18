@@ -1,6 +1,6 @@
 {
   "$comment": "Constellation requirements baseline (GAU-120). NASA SP-2016-6105 Rev 2 §6.2/§5.3. Methods: T test, A analysis, I inspection, D demonstration. T evidence = exact test names; A/I/D evidence = repo paths. Verified by `npm run verify`.",
-  "version": "1.17.0",
+  "version": "1.17.1",
   "requirements": [
     {
       "id": "REQ-ING-001",
@@ -1122,6 +1122,65 @@
       "verifiedBy": [
         "readiness: a fully evidenced internal requirement scores 100 and shows its reasons",
         "readiness: verification is 0 when a mapped test is skipped or missing, lower for a single test"
+      ]
+    },
+    {
+      "id": "REQ-ARG-001",
+      "title": "Argo never automates admin actions",
+      "statement": "Argo shall never run an administrator, sudo or Tailscale-changing step on its own: its remediation plan shall hold only allowlisted, non-sudo steps, and exit-node candidates shall come from an allowlist.",
+      "rationale": "A network agent running on a defence-grade host must not escalate privilege or reroute traffic without a person.",
+      "parent": "GAU-187",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "TestPlanNeverAutomatesAdminOrTailscale",
+        "TestRunnableOnlyAllowlistedNoSudoSteps",
+        "TestTailscaleExitCandidatesAreAllowListedOnly"
+      ]
+    },
+    {
+      "id": "REQ-ARG-002",
+      "title": "Argo relay accepts only authentic bundles",
+      "statement": "The Argo relay shall refuse forged or tampered bundles and shall leave bundles from an unknown sender on the hub instead of acting on them.",
+      "rationale": "Store-and-forward is only safe if what is forwarded is proven to come from a known peer, unaltered.",
+      "parent": "GAU-187",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "TestRelayRefusesForgedAndTamperedBundles",
+        "TestRelayUnknownSenderStaysOnHub"
+      ]
+    },
+    {
+      "id": "REQ-ARG-003",
+      "title": "Argo watches the awake guard without looping",
+      "statement": "Argo shall restart a stale or missing awake guard and mesh-heal, shall leave fresh and unloaded peers alone, and shall stop restarting after repeated failures and alert instead.",
+      "rationale": "The two watchers cover each other (FMEA FM-20); a crash loop must page a person, not spin.",
+      "parent": "GAU-187",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "TestWatchRestartsStaleAndMissingButSkipsUnloaded",
+        "TestWatchLeavesFreshPeersAlone",
+        "TestWatchStopsKickingACrashLoopAndAlerts"
+      ]
+    },
+    {
+      "id": "REQ-ARG-029",
+      "title": "Charger diagnosis",
+      "statement": "When a host reports what its charger negotiated, Argo shall classify the charger as no-pd (5 V or less and at most 15 W), pd-low (Power Delivery but below the measured heavy-job need) or ok, shall say why power is short and what to do in the guard's reason, shall show the state in `argo status` and send it to Gauss as an allowlisted, range-checked field, and shall report a host that gives no negotiation as unknown, never guessed.",
+      "rationale": "On 17 Nov 2026 a Mac sat on a 5 V x 1.5 A = 8 W charger and the guard said only that the charger could not keep up; the cause (no USB-C Power Delivery) and the remedy (a USB-C to USB-C cable with a fast charger) were in the controller's own readout.",
+      "parent": "GAU-195",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "TestParseAdapterDetails",
+        "TestApplyIoregAdapter",
+        "TestLinuxAdapter",
+        "TestClassifyCharger",
+        "TestChargerReasonInGuardAndAlert",
+        "TestChargerStatusAndReport",
+        "Argo's guard block is allowlisted; unknown codes drop alone, bad values drop the block"
       ]
     }
   ]
