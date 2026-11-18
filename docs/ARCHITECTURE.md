@@ -187,8 +187,8 @@ Each requirement in `requirements/requirements.json` has one "shall", a parent L
 verification method (Test, Analysis, Inspection, Demonstration) and its evidence (exact test
 names for T). `npm run verify` fails if a mapped test fails, is skipped or no longer exists, and
 writes the VCRM to `test-results/verification/`. New behaviour needs a requirement and a mapped
-test in the same PR. Known coverage gaps: Argo's Go tests and the website tests are not yet
-ingested into the VCRM (FMEA FM-20).
+test in the same PR. Argo's Go tests (short mode) are ingested by Go test name (REQ-ARG-001..003). Known coverage gap: the website tests are not yet
+ingested into the VCRM.
 
 From the same evidence the gate computes an implementation readiness score per requirement and per parent issue (`scripts/verify/readiness.ts`, read by `readiness-io.ts`; unit tests in `backend/lib/readiness.test.ts`), written to `test-results/verification/readiness.md` and `readiness.json`. It is report only. The parts are explained in `requirements/README.md`.
 
