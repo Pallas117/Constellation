@@ -1264,6 +1264,53 @@
         "TestChargerStatusAndReport",
         "Argo's guard block is allowlisted; unknown codes drop alone, bad values drop the block"
       ]
+    },
+    {
+      "id": "REQ-ARG-030",
+      "title": "Power-save mode",
+      "statement": "When a host's power budget is negative (on battery, on a charger that cannot carry the load, or on plain 5 V USB) Argo shall enter power-save at once and leave it only after the budget has been healthy for 10 minutes; while on it shall report \"power-save\" as a guard reason with the charger advice so heavy work waits, stretch its own probe, guard-sampling and mesh-report timers by a factor of 3 (a broken link still probes and reports at once), and send one warn-level text per 6 hours. A host with no battery or no reading shall never enter it, and `argo power-save on|off|auto|status` shall force, release or show it.",
+      "rationale": "On 17 Nov 2026 a Mac on an 8 W charger drained under load; Josh asked Argo to adjust settings as needed on every device. A spacecraft sheds non-essential loads in eclipse and restores them in sunlight; Argo does the same.",
+      "parent": "GAU-195",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "TestPowerSaveEntersAndLeaves",
+        "TestPowerSaveForced",
+        "TestPowerSaveStretchesTimers",
+        "TestPowerSaveHoldsHeavyWorkWithChargerAdvice",
+        "TestPowerSaveTickActsOnceAndRestores",
+        "TestPowerSaveReportStatusAndCLI"
+      ]
+    },
+    {
+      "id": "REQ-ARG-031",
+      "title": "Power-save acts only without admin rights and reversibly",
+      "statement": "In power-save Argo shall quit only menu-bar apps on a fixed allowlist, only while they are running and idle by their own reported state (Cloudflare WARP's app when warp-cli says Disconnected; the daemon stays), by a normal SIGTERM and never through UI scripting, shall record what it quit and relaunch it when power-save ends (never an app off the allowlist, never one already running), and shall only suggest admin settings (pmset, powerprofilesctl, tlp) with the exact command, never run them. External commands use pinned absolute paths and no shell.",
+      "rationale": "Automatic actions must need no admin rights and be undoable; changing settings through UI scripting needs an Automation permission prompt that blocks an unattended run.",
+      "parent": "GAU-195",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "TestPowerSaveQuitsOnlyIdleAllowlistedApps",
+        "TestPowerSaveRelaunchesWhatItQuit",
+        "TestPowerSaveSuggestsAdminSettingsNeverRuns",
+        "TestPowerSaveTickActsOnceAndRestores"
+      ]
+    },
+    {
+      "id": "REQ-ARG-032",
+      "title": "Power-save on the mesh",
+      "statement": "Argo shall send its power-save state (on or off, and while on since when and why) to Gauss as an allowlisted field; Gauss shall accept only a boolean, one of the reasons battery, charger-short, no-pd or manual, and a time that is not in the future or older than a year, drop a bad block alone, and show staff and above which devices are in power-save and why on /mesh.",
+      "rationale": "The network can place work on devices that have power to spare only if it can see which ones are saving it.",
+      "parent": "GAU-195",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "TestPowerSaveReportStatusAndCLI",
+        "power-save: allowlisted reason, ranged time, off carries nothing, bad drops alone",
+        "Gauss knows every guard code, level and admission Argo can send",
+        "battery and guard lines read plainly"
+      ]
     }
   ]
 }
