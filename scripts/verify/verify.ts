@@ -7,10 +7,11 @@
  *   3. full test suite, with a JUnit report
  *   4. ops tests (scripts/ops/gauss-services.test.sh), with their own JUnit report (GAU-163)
  *   5. production build
- *   6. VCRM: every requirement verified (no failing, skipped or missing evidence), by exact test
- *      name across both reports
- * Writes test-results/verification/{junit.xml,ops-junit.xml,ui-junit.xml,vcrm.json,vcrm.md} and the computed
- * readiness score (readiness.json, readiness.md; report only). Exits non-zero on any failure.
+ *   6. Argo Go tests (tools/argo, short mode, JSON) feed the VCRM too (FMEA FM-20)
+ *   7. VCRM: every requirement verified (no failing, skipped or missing evidence), by exact test
+ *      name across all reports
+ * Writes test-results/verification/{junit.xml,ops-junit.xml,ui-junit.xml,argo-go-test.json,vcrm.json,vcrm.md}
+ * and the computed readiness score (readiness.json, readiness.md; report only). Exits non-zero on any failure.
  *
  *   npm run verify               full gate
  *   npm run verify -- --no-build skip the build (faster while iterating)
@@ -23,6 +24,7 @@ import {
   buildMatrix,
   HIGH_RESIDUAL_RISK,
   mergeOutcomes,
+  parseGoTestJson,
   parseJunit,
   renderFmeaMarkdown,
   renderMarkdown,
@@ -41,6 +43,7 @@ const opsJunitPath = path.join(outDir, "ops-junit.xml");
 // younger than UI_REPORT_MAX_MS stands in for the run; an older one (a stale local file) is rerun below.
 const uiJunitPath = path.join(outDir, "ui-junit.xml");
 const UI_REPORT_MAX_MS = 2 * 60 * 60 * 1000;
+const argoJsonPath = path.join(outDir, "argo-go-test.json");
 const skipBuild = process.argv.includes("--no-build");
 
 function step(name: string, cmd: string, args: string[], extraEnv: Record<string, string> = {}): boolean {
@@ -53,7 +56,7 @@ function step(name: string, cmd: string, args: string[], extraEnv: Record<string
 
 mkdirSync(outDir, { recursive: true });
 // A report left by an earlier run must never stand in for a run that died before writing one.
-for (const p of [junitPath, opsJunitPath]) rmSync(p, { force: true });
+for (const p of [junitPath, opsJunitPath, argoJsonPath]) rmSync(p, { force: true });
 const baseline = JSON.parse(readFileSync(path.join(root, "requirements/requirements.json"), "utf8")) as Baseline;
 const results: Record<string, boolean> = {};
 
@@ -88,6 +91,19 @@ results.tests = step("Test suite", process.execPath, [
 // launchctl, curl, pmset and friends are stubbed and HOME is a temp dir. macOS only (plutil).
 results.opsTests = step("Ops tests (bash)", "bash", ["scripts/ops/gauss-services.test.sh"], { GAUSS_OPS_JUNIT: opsJunitPath });
 
+// Argo's Go suite (tools/argo, standard library only), short mode as `ARGO_SHORT=1 tools/argo/check.sh`
+// runs it, with JSON output so its tests count in the VCRM by Go test name (FMEA FM-20). A failing
+// test fails this step and shows as "fail" in the matrix. Needs the Go toolchain.
+console.log("\n▶ Argo Go tests (JSON, short mode)");
+{
+  const goRun = spawnSync("go", ["test", "-json", "-short", "-count=1", "./..."], {
+    cwd: path.join(root, "tools/argo"), encoding: "utf8", maxBuffer: 256 * 1024 * 1024,
+  });
+  writeFileSync(argoJsonPath, goRun.stdout ?? "");
+  results.argoTests = goRun.status === 0;
+  console.log(results.argoTests ? "✔ Argo Go tests" : `✖ Argo Go tests (exit ${goRun.status}${goRun.error ? `: ${goRun.error.message}` : ""})`);
+}
+
 results.build = skipBuild ? true : step("Production build", "npm", ["run", "build", "--silent"]);
 
 // UI tests (hermetic Playwright subset; REQ-UI-*): run now only if the gate did not just do it.
@@ -96,7 +112,12 @@ results.uiTests = uiFresh || step("UI tests (Playwright)", "npm", ["run", "test:
 
 const commit = spawnSync("git", ["rev-parse", "--short", "HEAD"], { cwd: root, encoding: "utf8" }).stdout.trim() || "unknown";
 const readJunit = (p: string): Map<string, TestOutcome> => (existsSync(p) ? parseJunit(readFileSync(p, "utf8")) : new Map());
-const outcomes = mergeOutcomes(readJunit(junitPath), readJunit(opsJunitPath), readJunit(uiJunitPath));
+const outcomes = mergeOutcomes(
+  readJunit(junitPath),
+  readJunit(opsJunitPath),
+  readJunit(uiJunitPath),
+  existsSync(argoJsonPath) ? parseGoTestJson(readFileSync(argoJsonPath, "utf8")) : new Map(),
+);
 const rows = buildMatrix(baseline, outcomes, (p) => existsSync(path.join(root, p)));
 const meta = { version: baseline.version, commit, generatedAt: new Date().toISOString() };
 const fmeaPath = path.join(root, "requirements/fmea.json");
