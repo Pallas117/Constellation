@@ -9,7 +9,8 @@ It never promotes: GAU-38 forbids automatic production model promotion. Review t
 Skips itself while `gauss-services.sh balance` has paused learning to save battery
 (~/Library/Application Support/Gauss/learning-paused).
 
-The --telemetry argument is kept for the existing LaunchAgent; the live buffer is only counted,
+The --telemetry argument is kept for the existing LaunchAgent (without it, the file the backend
+writes: $GAUSS_BEDROCK_DIR, else data/bedrock in this checkout); the live buffer is only counted,
 so the log shows how much live data has accumulated for future fine-tuning. Counting is
 incremental (GAU-156): only bytes appended since the last run are read, from a byte offset kept in
 ml/data/nightly/telemetry-count.json (counts and offsets only; the telemetry is never modified).
@@ -25,6 +26,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import resource
 import subprocess
 import sys
@@ -54,6 +56,12 @@ def run_usage(started: float) -> dict:
 COUNT_STATE = HERE.parent / "data" / "nightly" / "telemetry-count.json"
 CHUNK = 1 << 20  # read 1 MiB at a time: memory stays flat however large the buffer grows
 MARKERS = (b'"type":"canonical"', b'"type": "canonical"')
+
+
+def default_telemetry() -> Path:
+  """The file the backend appends to (backend/lib/local-db.ts): $GAUSS_BEDROCK_DIR, else this checkout's data/bedrock."""
+  bedrock = os.environ.get("GAUSS_BEDROCK_DIR")
+  return (Path(bedrock) if bedrock else HERE.parents[1] / "data" / "bedrock") / "telemetry.jsonl"
 
 
 def count_canonical(telemetry: Path, state_path: Path = COUNT_STATE) -> int:
@@ -91,10 +99,10 @@ def count_canonical(telemetry: Path, state_path: Path = COUNT_STATE) -> int:
 def main() -> int:
   started = time.monotonic()
   parser = argparse.ArgumentParser()
-  parser.add_argument("--telemetry", default="data/bedrock/telemetry.jsonl")
+  parser.add_argument("--telemetry", type=Path, default=default_telemetry())
   args = parser.parse_args()
 
-  log = {"run": datetime.now(tz=timezone.utc).isoformat(), "live_points": count_canonical(Path(args.telemetry))}
+  log = {"run": datetime.now(tz=timezone.utc).isoformat(), "live_points": count_canonical(args.telemetry)}
   if PAUSE_FLAG.exists():
     log.update(status="paused", reason="battery saving (gauss-services.sh balance)")
     log.update(run_usage(started))
