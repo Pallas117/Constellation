@@ -592,3 +592,21 @@ test("traffic: every indexable page has share cards and is in the sitemap; robot
   assert.deepEqual(ld["@graph"][0].sameAs, ["https://luma.com/constellation"]);
   for (const [route, page] of Object.entries(html)) if (route !== "/") assert.doesNotMatch(page, /<script/, `${route}: no data blocks elsewhere`);
 });
+
+test("wiring: /gauss/ says what a log needs, links a made-up sample that has the columns it names, and the form asks what runs the model", () => {
+  const page = html["/gauss/"];
+  assert.match(page, /<summary>What a log needs<\/summary>/);
+  assert.match(page, /href="\/gauss\/sample-inference-log\.csv" download/);
+  assert.match(text(page), /never guess a time zone/i, "the zone rule is stated");
+  assert.match(text(page), /nothing is dropped silently/i);
+  const csv = read("gauss/sample-inference-log.csv");
+  const [header, ...rows] = csv.trim().split("\n");
+  assert.equal(header, "inference_time,sat,model,label,score,lat,lon,alt_km");
+  assert.equal(rows.length, 7);
+  assert.ok(rows.every((r) => r.split(",").length === header.split(",").length), "every row has every column");
+  assert.ok(rows.every((r) => /DEMO-SAT-\d/.test(r)), "made-up spacecraft only, no real mission names");
+  assert.doesNotMatch(csv, /@/, "no contact details in a download");
+  assert.match(renderApplyForm("gauss"), /name="logSource"/);
+  assert.match(renderApplyForm("gauss"), /name="logFormat"/);
+  assert.doesNotMatch(text(page), /\b(compliant|certified|space-qualified|post-quantum)\b/i);
+});
