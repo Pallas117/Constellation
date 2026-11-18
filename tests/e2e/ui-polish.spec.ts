@@ -106,6 +106,18 @@ test("the storm forecast banner is one height while computing and when it lands"
   expect(after!.height).toBeCloseTo(before!.height, 0);
 });
 
+test("a storm toast sits below the console header, never over its links (1440 px)", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await mockUiApis(page);
+  await page.goto("/operator?e2e=1");
+  const header = page.locator("header").filter({ has: page.getByRole("heading", { name: "Gauss Aurora" }) });
+  const toast = page.locator("[data-sonner-toast]").filter({ hasText: "Elevated geomagnetic risk" });
+  await expect(toast).toBeVisible();
+  await expect(page.getByTestId("pill-placeholder")).toHaveCount(0); // header at its final height
+  // Let the toast settle into its slot (its enter animation slides it in).
+  await expect.poll(async () => (await toast.boundingBox())!.y, { timeout: 5_000 }).toBeGreaterThanOrEqual((await header.boundingBox())!.y + (await header.boundingBox())!.height);
+});
+
 test("the first Tab on the console reaches the page, not a toast", async ({ page }) => {
   await mockUiApis(page);
   await page.goto("/operator?e2e=1");
