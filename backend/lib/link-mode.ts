@@ -27,3 +27,18 @@ export function nextLinkState(prev: LinkState, latencyMs: number | null): LinkSt
   }
   return { mode: latencyMs < SAT_LATENCY_MS ? "CLOUD" : "SAT", latencyMs, failures: 0 };
 }
+
+/** How long one link check waits for its ping reply. */
+export const PING_TIMEOUT_MS = 2000;
+
+/**
+ * The ping for one link check. `-W` is in milliseconds on macOS and the BSDs but in seconds on
+ * Linux (iputils), so the same "-W 2000" waited up to 2000 s (33 min) on Linux. Every gate run on
+ * Talos stalled there on 18 Nov 2026: a test imports the backend, the link guardian pings on start,
+ * and the gate sandbox gets no ICMP reply. connectivity.ts also kills the child after a second more.
+ */
+export function pingCommand(host: string, platform: NodeJS.Platform = process.platform): string {
+  const bsd = platform === "darwin" || platform === "freebsd" || platform === "openbsd" || platform === "netbsd";
+  const wait = bsd ? PING_TIMEOUT_MS : Math.ceil(PING_TIMEOUT_MS / 1000);
+  return `ping -c 1 -W ${wait} ${host}`;
+}

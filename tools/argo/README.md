@@ -57,6 +57,15 @@ Optional extras:
   USB-C cable with a fast charger), `pd-low` (Power Delivery, but fewer watts than a heavy job needs) or `ok`. A host that
   reports no negotiation is unknown, never guessed. The state is in `argo status` (`charger:no-pd 5V/8W`), `argo guard`
   and the Gauss report (`battery.charger`, shown on /mesh).
+- **Power-save mode** (`powersave.go`). On battery, on a charger that can't carry the load, or on plain 5 V USB, Argo
+  enters power-save at once and leaves after 10 healthy minutes. While on it holds heavy work (guard reason
+  `power-save`, with the charger advice), runs its probes, guard sampling and mesh reports 3x slower (a broken link still
+  probes and reports at once), quits an allowlisted menu-bar app only when it is idle by its own state (Cloudflare WARP's
+  app when `warp-cli status` says Disconnected; the daemon stays) and relaunches it afterwards, and texts once per 6 h.
+  Settings that need admin rights are only suggested, with the exact command, in `argo doctor` and `argo power-save status`
+  (`sudo pmset -b powernap 0`, `sudo pmset -b displaysleep 2`, `sudo pmset -a lowpowermode 1`; Linux: `powerprofilesctl`,
+  `tlp`); Argo never runs them. `argo power-save on|off|auto|status` forces, releases or shows the mode. The state is in
+  the Gauss report (`powerSave`, shown on /mesh for staff and above).
 - **Texts that fail are not silent.** If Messages stops accepting texts (for example after a rebuild, until Allow is
   clicked), `argo status` says since when and how many are waiting or lost, a desktop banner appears after 10 min,
   and the first text after recovery says how many alerts were lost.
@@ -94,6 +103,7 @@ Then remove the `statusLine` and `claude()` lines above if you added them, and r
 |---|---|
 | `argo status` | One line, e.g. `● OK MY ts:on` or `▲ REGION HK ts:on` |
 | `argo doctor` | Full probe snapshot (secrets masked), the class, and what to do. Changes nothing. |
+| `argo private-dns [status\|profile] [--provider quad9\|cloudflare\|google] [--out FILE]` | Is DNS private on this device, and which encrypted resolver is nearest from this network (DoH round trip, by address)? `profile` writes a DNS-over-HTTPS profile you approve once (Mac, iPhone; Linux gets systemd-resolved text). Never installs anything. |
 | `argo reach [--json] [host[:port] ...]` | Can this network reach these hosts? Per host: `ok`, `dns`, `blocked` (resolves, no TCP answer), `tls_failed`, `tls_untrusted` or `uplink_down`, with what helps. Defaults: Claude's API, SWPC, NASA GSFC iSWA and CDAWeb (`ARGO_REACH_HOSTS` replaces them). Remembers blocked hosts per network; exit 2 when any host is unreachable. |
 | `argo fix` | Runs the loop once in the foreground |
 | `argo report` | Incident counts by class, how many needed a fix and were fixed, how many resolved on their own, last 10 events |
@@ -139,6 +149,8 @@ Wi-Fi security is checked on every probe: WIFI_RISK (a warning, like WPAD_RISK) 
 **Dead uplink is not DNS (GAU-247).** When the system lookup and the direct 1.1.1.1 lookup both fail, Argo dials 1.1.1.1, 9.9.9.9 and 8.8.8.8 on port 443 by address (2 s, at once). If none answers, nothing gets out at all: the class is PORT_BLOCK "uplink stalled" and the advice is to switch to the iPhone hotspot, not to flush DNS or try an exit node (which rides the same uplink). On 2026-11-18 the dorm Wi-Fi was dead for 9.6 h and the old build called it DNS 22 times; mesh-heal's IP check failed 306 of 307 times over the same hours. "Usual blip, nothing to do yet" is capped at 30 minutes like the quiet window, so one long outage in a network's history can't silence advice for hours.
 
 **One host unreachable (GAU-247).** Some networks reach the internet but not one host: on 2026-11-18 the dorm network resolved `iswa.gsfc.nasa.gov` and `cdaweb.gsfc.nasa.gov` but TCP 443 and 80 timed out (traceroute died at the exchange), while nasa.gov and SWPC worked. That is not a link class (Claude works), so `argo reach` checks named hosts: DNS, TCP to up to 4 addresses at once, and a TLS handshake with certificates verified. If anything fails it dials the IP anchors once, so a dead uplink is reported as `uplink_down` rather than as per-host blocks. Blocked hosts are kept per network in state (`blocked_hosts`, cleared when the host answers, 32 at most, 30 days). Nothing is changed and nothing is sent to the hub.
+
+**Private DNS (GAU-248).** On judith (18 Nov 2026) every lookup outside the tailnet went in plain text to 1.1.1.1 and 8.8.8.8 over whatever Wi-Fi was joined, so each network could read or change it. `argo private-dns` says whether lookups leave encrypted (Argo's profile, or Tailscale answering everything with DoH-capable tailnet resolvers) and measures Quad9, Cloudflare and Google over DNS-over-HTTPS by address from the current network: three queries each, median, nearest first, Quad9 kept when within 15 ms (privacy tie-break). The pick is remembered per network. `argo private-dns profile` writes an unsigned configuration profile (`com.apple.dnsSettings.managed`, DoH) for it, keeping tailnet and local names on the normal resolver; you open it and approve it in System Settings, or AirDrop it to the iPhone, and remove it there to undo. For the whole tailnet, a tailnet admin adds the resolver as a global nameserver with Override local DNS (Tailscale then uses DoH). There is deliberately no central DNS server for the mesh: on a roaming laptop it would take every device's DNS down when it sleeps. When a network's own DNS fails but IP and encrypted DNS work, the DNS advice starts with the profile. `argo doctor` prints a `dns:` line.
 
 **Rejoin when offline.** With no route for 90 s, Argo turns Wi-Fi on if it is off, otherwise power-cycles it (`networksetup -setairportpower <dev> off`, then `on`) so macOS auto-join picks a known network or the hotspot. It follows the loop's backoff and breaker (4 tries, then every 30 minutes), waits 20 s and re-probes, and remembers per network what worked. While offline it records the radio's state (`wifi_device`, `wifi_power`) so an outage leaves evidence. No other command runs by itself.
 
