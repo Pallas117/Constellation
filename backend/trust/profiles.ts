@@ -18,7 +18,7 @@
  * Nothing here is a statement about whether a device suits a mission.
  */
 
-export const PROFILE_LIBRARY_VERSION = "gauss.processor-profiles/0.1";
+export const PROFILE_LIBRARY_VERSION = "gauss.processor-profiles/0.2";
 
 export type EffectClass = "SEU" | "SEFI" | "SDC";
 
@@ -275,6 +275,38 @@ export const PROFILES: readonly ProcessorProfile[] = [
     limitations: [SINGLE_ENERGY(480), SOC_ONLY, MODES_TESTED("15 W, 10 W and a custom sub-10 W")],
   },
 ];
+
+/**
+ * Processors buyers fly (integration matrix, 17 Nov 2026) for which no published SEE test data was
+ * found. They are not profiles: no value is estimated or borrowed from a related device. A record
+ * naming one gets an unknown upset band that says the data are MISSING, rather than "unknown id".
+ * Move an entry into PROFILES only with a cited campaign read against its source.
+ */
+export interface MissingProfile {
+  id: string;
+  name: string;
+  /** What is missing and what was searched, dated. */
+  missing: string;
+}
+
+export const MISSING_PROFILES: readonly MissingProfile[] = [
+  {
+    id: "nvidia-jetson-agx-orin",
+    name: "NVIDIA Jetson AGX Orin module",
+    missing:
+      "MISSING: no single-event-effect cross-section for this module could be read from a published source (searched 2026-11-17). Slater et al., IEEE REDW 2023 (https://doi.org/10.1109/REDW61050.2023.10265818) reports single-event-effect tests of the module, but only its abstract was read, so no value is taken from it. The Orin NX campaign is a different module and is not used for it.",
+  },
+  {
+    id: "nvidia-h100",
+    name: "NVIDIA H100 GPU",
+    missing:
+      "MISSING: no published single-event-effect beam test of this GPU was found (searched 2026-11-17: NASA NTRS, IEEE and ACM). Field error-log studies of H100s in data centres (Cui et al., SC '25, https://doi.org/10.1145/3712285.3759821) are not beam tests, and A100 data do not stand in for it.",
+  },
+];
+
+export function findMissingProfile(id: string): MissingProfile | null {
+  return MISSING_PROFILES.find((p) => p.id === id) ?? null;
+}
 
 const cited = (p: ProcessorProfile) => p.campaigns.filter((c) => c.citation.trim() !== "" && /^https:\/\/\S+$/.test(c.url));
 
