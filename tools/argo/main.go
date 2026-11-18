@@ -195,6 +195,8 @@ func main() {
 			fmt.Fprintln(os.Stderr, "argo:", rerr)
 		}
 		os.Exit(code)
+	case "private-dns": // GAU-248: is DNS private here, the nearest encrypted resolver, a profile to install
+		err = privateDNSCmd(ctx, store, os.Args[2:], os.Stdout)
 	case "networks": // GAU-234: Wi-Fi networks in range and what Argo would join (names stay on this Mac)
 		err = printNetworks(ctx, os.Stdout)
 	case "summary": // what Argo caught, fixed and learned in the last 7 days
@@ -384,6 +386,11 @@ func doctor(ctx context.Context, p Prober) error {
 	fmt.Printf("network: %s\n", ScoreNet(s).Line())
 	if lv := systemLink(ctx, false); lv.Advice != "" {
 		fmt.Println("link: " + lv.Advice)
+	}
+	if private, why := readDNSPath(ctx).Private(); private {
+		fmt.Printf("dns: private (%s)\n", why)
+	} else {
+		fmt.Printf("dns: not private (%s); see argo private-dns\n", why)
 	}
 	for _, a := range Plan(class, s, "") {
 		fmt.Println("→", a.Say)
