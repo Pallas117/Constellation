@@ -178,7 +178,11 @@ The workflow files stay valid for when Actions return.
   to one runner (one at a time, deduped by tree, records by tree). With `--pr` it merges main into
   the PR just before the run and merges the PR after a pass only when the PR is CLEAN, contains
   main, is not a draft and touches nothing under auth, crypto/TLS, secrets, CyberTiger or keys;
-  those pass and wait for a human merge. `gates result <sha>` reads the record.
+  those pass and wait for a human merge. A PR that passed and waits (a draft, or held for a human)
+  is not gated again while only main moves: the run that counts is the one right before the merge,
+  asked for with `gates enqueue <sha> --pr N --final` (or by marking the draft ready). A PR that
+  conflicts with main is not retried until its branch moves. A FAILED line names the failing tests
+  and requirements. `gates result <sha>` reads the record.
 - **Deploy**: `gauss-services.sh deploy <sha>` refuses commits not on main or without a passing
   record, refreshes a fallback, switches live (keeping its data) and rolls back by itself if the
   services don't come up. `scripts/release/deploy.ts` (tag-based) is the older path.
