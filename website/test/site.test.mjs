@@ -206,9 +206,44 @@ test("live-view gate: a labelled pre-rendered frame behind the Argo door, no scr
   // Three movements (Josh, 5 Nov 2026): the landing is the slogan alone, the descent carries its own 01/05 captions,
   // then one door. One short, true line about Argo; no encryption claims, nothing Argo's own page says differently.
   assert.deepEqual([...home.matchAll(/class="k">(\d\d_[A-Z_]+)</g)].map((m) => m[1]), ["01_ENTER"], "one numbered kicker: the door");
-  assert.match(home, />02_CONTACT</);
+  assert.match(home, />03_CONTACT</, "02 is Argo's Space tech, on Earth (Josh, 18 Nov 2026)");
   assert.match(text(gate), /Argo is Gauss&rsquo;s network agent, and the way in\. Included for operators and staff; never sold\./);
   assert.doesNotMatch(text(gate), /encrypt|quantum|HPKE|Ed25519|RFC ?9173|Nadia|Turnstone/i);
+});
+
+test("landing: Space tech, on Earth: what Argo does today, honest, no door into the closed /argo/", () => {
+  // Josh, 18 Nov 2026: a short Argo teaser on the public landing; /argo/ stays closed; framing "Space tech, on Earth".
+  const home = html["/"];
+  const sec = home.match(/<section id="argo" class="on-earth starfield"[\s\S]*?<\/section>/)?.[0] ?? "";
+  assert.ok(sec, "the section is there");
+  assert.ok(home.indexOf('id="enter"') < home.indexOf('id="argo"') && home.indexOf('id="argo"') < home.indexOf('id="projects"'), "after the door, before the marks");
+  assert.match(sec, /<p class="label">02_ON_EARTH<\/p>/);
+  assert.match(sec, /<h2 id="argo-h">Space tech, on Earth\.<\/h2>/);
+  assert.equal(sec.match(/<li>/g).length, 3, "three habits, no more");
+  // Each line is something /argo/ already states as working today.
+  for (const want of [/one broken network from another/, /smallest fix/, /signed receipt/, /Bundle Protocol \(RFC&nbsp;9171\)/, /Certificate checks are never turned off/,
+    /Mac today, Linux in a container\. Included with Gauss for operators and staff; never sold\./])
+    assert.match(sec, want);
+  for (const rx of [/space[- ]grade/i, /space[- ]qualified/i, /mission[- ]grade/i, /military/i, /certified/i, /compliant/i, /quantum/i, /\bVPN\b/, /\bAI\b/, /encrypt/i, /relay/i, /£|\$\d|a month/i, /everyone|anyone/i])
+    assert.doesNotMatch(text(sec), rx, `found ${rx}`);
+  assert.doesNotMatch(sec, /href="\/argo\//, "no link into /argo/, which the public release closes");
+  assert.doesNotMatch(sec, /class="k"|var\(--lime\)/, "the door keeps the one lime kicker");
+  const css = read("assets/site.css");
+  assert.match(css, /\.earth-list li\{animation:rise linear both;animation-timeline:view\(\)/);
+  assert.match(css, /@media \(prefers-reduced-motion:no-preference\)\{\n    \.earth-list li\{animation:rise/, "reduced motion: it is simply there");
+});
+
+test("touch: no endless hover animation after a tap, 44 px header targets, readable descent tags, safe areas", () => {
+  const css = read("assets/site.css");
+  for (const sel of ["\n  .door:hover,.door:focus-visible,.tile:hover,.tile:focus-within,.friend:hover,.btn.ghost:hover", ".btn.radiate:hover::before", ".btn.argo.radiate:hover{"]) {
+    const at = css.indexOf(sel);
+    assert.ok(at > 0, sel);
+    assert.match(css.slice(css.lastIndexOf("@media", at), at), /^@media \(prefers-reduced-motion:no-preference\) and \(hover:hover\)\{/, `${sel} runs only where a pointer can hover`);
+  }
+  assert.match(css, /@media \(pointer:coarse\)\{\n  \.top nav a\{padding-block:11px\}/);
+  assert.match(css, /@media \(max-width:560px\)\{\.d-tags text\{font-size:12px;[^}]*paint-order:stroke;stroke:var\(--black\)/);
+  assert.match(html["/"], /<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">/);
+  assert.match(css, /\.wrap\{padding-left:max\(clamp\(16px,4vw,40px\),env\(safe-area-inset-left,0px\)\)/);
 });
 
 test("live sections have their markers, with a working static fallback", () => {

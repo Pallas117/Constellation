@@ -28,6 +28,9 @@ h2{font-size:clamp(24px,3.4vw,34px);line-height:1.15;margin:.3em 0 .5em}
 h3{font-size:19px;line-height:1.3}
 p{margin:0 0 1em}
 .wrap{max-width:1120px;margin:0 auto;padding-inline:clamp(16px,4vw,40px)}
+/* The landing runs edge to edge on notched phones (viewport-fit=cover); text keeps clear of the notch and the home bar. */
+.wrap{padding-left:max(clamp(16px,4vw,40px),env(safe-area-inset-left,0px));padding-right:max(clamp(16px,4vw,40px),env(safe-area-inset-right,0px))}
+footer.wrap{padding-bottom:max(48px,calc(24px + env(safe-area-inset-bottom,0px)))}
 .k{font:700 12px/1 var(--mono);letter-spacing:.12em;color:var(--accent);text-transform:uppercase;margin:0}
 .label{font:700 11px/1 var(--mono);letter-spacing:.12em;color:var(--muted);text-transform:uppercase}
 .lead{color:var(--muted);max-width:62ch;font-size:18px}
@@ -503,6 +506,9 @@ footer p{margin:0 0 8px;max-width:72ch}
 .d-p{fill:var(--warm)}
 .d-p.e{fill:var(--lime)}
 .d-tags text{fill:var(--muted);font:700 9px var(--mono);letter-spacing:.12em}
+/* Phones draw the descent at about 0.8 px per unit: 9-unit tags came out near 7 px. Larger there, with a black
+   knockout (not a glow) so field lines never run through the letters. */
+@media (max-width:560px){.d-tags text{font-size:12px;letter-spacing:.08em;paint-order:stroke;stroke:var(--black);stroke-width:4px;stroke-linejoin:round}}
 .d-bh{display:none}
 .d-ring{fill:none;stroke:var(--warm);stroke-width:1.6;vector-effect:non-scaling-stroke}
 @media (prefers-reduced-motion:reduce){.d-particles{display:none}}
@@ -665,7 +671,8 @@ footer p{margin:0 0 8px;max-width:72ch}
 .live-card:hover::before,.live-card:focus-within::before{opacity:1}
 .live-card:hover,.live-card:focus-within{--smoke:rgb(10 8 16 / .62);-webkit-backdrop-filter:blur(16px) saturate(160%);backdrop-filter:blur(16px) saturate(160%)}
 
-/* Hover and focus: the disk lights up. */
+/* Hover and focus: the disk lights up. On touch screens a tap leaves :hover stuck until the next tap, so the turning
+   disk and the radiating rings (endless animations) run only where a pointer can hover; a tap gets the press below. */
 .door:hover,.door:focus-visible,.tile:hover,.tile:focus-within,.friend:hover,.friend:focus-visible,
 .btn.ghost:hover,.btn.ghost:focus-visible,.subnav a:hover,.subnav a:focus-visible{
   background-image:var(--sheen),linear-gradient(var(--smoke),var(--smoke)),var(--disk-rim);background-position:-30% 0,0 0,0 0;
@@ -676,7 +683,7 @@ footer p{margin:0 0 8px;max-width:72ch}
 .btn:not(.ghost):not([aria-disabled=true]):hover,.btn:not(.ghost):not([aria-disabled=true]):focus-visible{box-shadow:0 0 0 1px rgb(var(--hot) / .7),var(--disk-glow)}
 .live-card{box-shadow:-20px 14px 70px -30px rgb(var(--ember) / .6),20px -14px 70px -30px rgb(var(--violet) / .7)}
 .door::after{background:linear-gradient(90deg,rgb(var(--ember)),rgb(var(--violet)))}  /* the hover underline joins the disk */
-@media (prefers-reduced-motion:no-preference){
+@media (prefers-reduced-motion:no-preference) and (hover:hover){
   .door:hover,.door:focus-visible,.tile:hover,.tile:focus-within,.friend:hover,.btn.ghost:hover,.subnav a:hover,.live-card:hover::before{animation:disk-turn 7s linear infinite}
 }
 @keyframes disk-turn{to{--disk:360deg}}
@@ -687,7 +694,7 @@ footer p{margin:0 0 8px;max-width:72ch}
    one, staggered, in the accretion-light colours. Quiet at rest; with reduced motion, one still ring. No script. */
 .btn.radiate{position:relative;isolation:isolate}
 .btn.radiate::before{content:"";position:absolute;inset:0;border-radius:inherit;border:2px solid rgb(var(--ember));opacity:0;pointer-events:none}
-@media (prefers-reduced-motion:no-preference){
+@media (prefers-reduced-motion:no-preference) and (hover:hover){
   .btn.radiate:hover::before,.btn.radiate:focus-visible::before{animation:radiate-wave 1.7s cubic-bezier(.15,.6,.3,1) infinite}
   .btn.radiate:hover{animation:radiate-ring 1.7s .55s cubic-bezier(.15,.6,.3,1) infinite} /* hover only: on focus the site's ring stays */
 }
@@ -705,7 +712,7 @@ footer p{margin:0 0 8px;max-width:72ch}
 .btn.argo .sail{width:24px;height:24px;flex:none}
 .btn.argo:hover,.btn.argo:focus-visible{color:#fff;background-color:transparent;
   background-image:var(--sheen),linear-gradient(var(--smoke),var(--smoke)),var(--disk-rim);background-position:-30% 0,0 0,0 0}
-@media (prefers-reduced-motion:no-preference){
+@media (prefers-reduced-motion:no-preference) and (hover:hover){
   .btn.argo.radiate:hover{animation:disk-turn 7s linear infinite,radiate-ring 1.7s .55s cubic-bezier(.15,.6,.3,1) infinite}
   .btn.argo.radiate:focus-visible{animation:disk-turn 7s linear infinite}
 }
@@ -723,3 +730,29 @@ footer p{margin:0 0 8px;max-width:72ch}
 .live-card:hover .rad-field .belt,.live-card:focus-within .rad-field .belt{fill:rgb(var(--ember) / .32)}
 .live-card:hover .rad-field .belt.out,.live-card:focus-within .rad-field .belt.out{fill:rgb(var(--violet) / .26)}
 @media (prefers-reduced-motion:reduce){.rad-field .rp{display:none}}
+
+/* Touch (phones): 44 px targets in the header, a press you can see, and no grey tap flash. */
+a,button{-webkit-tap-highlight-color:transparent}
+@media (pointer:coarse){
+  .top nav a{padding-block:11px}
+  .top nav a.signin{padding-block:10px}
+}
+@media (hover:none){a:active{opacity:.72}.btn:active{opacity:1}}
+
+/* Space tech, on Earth (landing, Josh 18 Nov 2026): what Argo does today, as three habits spacecraft have. A quiet row
+   under hairlines that fade at the end; each habit rises in as it scrolls into view (none with reduced motion). No
+   link to /argo/: it stays closed in the public release. */
+.on-earth{padding-block:clamp(56px,8vw,96px)}
+.on-earth h2{max-width:20ch}
+.earth-lede{color:var(--muted);font-size:17px;max-width:58ch;margin:0}
+.earth-list{list-style:none;margin:36px 0 0;padding:0;display:grid;gap:32px clamp(24px,4vw,48px);grid-template-columns:repeat(auto-fit,minmax(min(100%,260px),1fr))}
+.earth-list li{padding-top:18px;border-top:1px solid;border-image:linear-gradient(90deg,var(--char),var(--char) 70%,transparent) 1}
+.earth-list h3{margin:.7em 0 .45em;max-width:22ch}
+.earth-list p:not(.label){margin:0;color:var(--muted);max-width:38ch}
+.on-earth .src{margin-top:32px}
+@supports (animation-timeline:view()){
+  @media (prefers-reduced-motion:no-preference){
+    .earth-list li{animation:rise linear both;animation-timeline:view();animation-range:entry 5% entry 70%}
+  }
+}
+@keyframes rise{from{opacity:0;transform:translateY(18px)}}
