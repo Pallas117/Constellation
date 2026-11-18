@@ -60,6 +60,30 @@ export function parseJunit(xml: string): Map<string, TestOutcome> {
   return out;
 }
 
+/**
+ * Test outcomes by Go test name from `go test -json` output (tools/argo). Lines that are not JSON
+ * (build chatter) are ignored; only per-test pass/fail/skip events count, so package events and
+ * output lines never become outcomes. A name seen twice (a rerun) keeps its worst outcome.
+ */
+export function parseGoTestJson(text: string): Map<string, TestOutcome> {
+  const out = new Map<string, TestOutcome>();
+  const actions: Record<string, TestOutcome> = { pass: "pass", fail: "fail", skip: "skipped" };
+  for (const line of text.split("\n")) {
+    if (!line.startsWith("{")) continue;
+    let ev: { Action?: string; Test?: string };
+    try {
+      ev = JSON.parse(line) as { Action?: string; Test?: string };
+    } catch {
+      continue;
+    }
+    const outcome = ev.Action ? actions[ev.Action] : undefined;
+    if (!ev.Test || !outcome) continue;
+    const prev = out.get(ev.Test);
+    if (!prev || rank[outcome] > rank[prev]) out.set(ev.Test, outcome);
+  }
+  return out;
+}
+
 /** Outcomes from several reports (node's, the bash ops tests'): a name in more than one keeps its worst outcome. */
 export function mergeOutcomes(...reports: Map<string, TestOutcome>[]): Map<string, TestOutcome> {
   const out = new Map<string, TestOutcome>();
