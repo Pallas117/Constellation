@@ -537,15 +537,14 @@ footer p{margin:0 0 8px;max-width:72ch}
     @supports (timeline-scope:--descent){
       main{timeline-scope:--descent}
       .hero{border-image:none;border-bottom-color:transparent}
-      /* The descent rises over the pinned hero (the hole is still growing), so the hero's hole cross-fades into the
-         descent's own ring in place: no dark gap between the two movements. */
+      /* The descent rises over the pinned hero while the hole is still growing. Its ring rises from below the hero's
+         hole, not onto it, so a cross-fade showed two black holes at once (at every size). The hero's hole now fades
+         out over entry 35-60% and hands over exactly as the descent's art starts to fade in (60%): one black hole on
+         screen at a time, no gap between them, and the deep-space backdrop (.cosmos) behind both. */
       .descent{margin-top:-80svh}
       /* Faded out, the film is also hidden, so phones treat it as not visible and stop playing it (iOS pauses muted
          autoplay video it can't see) while the descent covers it; it plays again on the way back up. */
-      .hero .poster,.hero .film{animation:pull linear both,film-off linear both;animation-timeline:--hero,--descent;animation-range:contain 0% contain 100%,entry 50% entry 80%}
-      /* Portrait: the descent's ring rises from below the hero's hole, not onto it, so the hero's hole has gone
-         before the descent's art fades in (entry 60%): one black hole on screen at a time. */
-      @media (max-aspect-ratio:1/1){.hero .poster,.hero .film{animation-range:contain 0% contain 100%,entry 25% entry 55%}}
+      .hero .poster,.hero .film{animation:pull linear both,film-off linear both;animation-timeline:--hero,--descent;animation-range:contain 0% contain 100%,entry 35% entry 60%}
     }
     .d-earth{animation:d-in linear both;animation-timeline:--descent;animation-range:contain 14% contain 26%}
     .d-halo{animation:d-in linear both;animation-timeline:--descent;animation-range:contain 24% contain 30%}

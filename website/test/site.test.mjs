@@ -90,9 +90,10 @@ test("landing film on phones: soft-edged hole, slogan on screen, no play button,
   assert.match(css, /\.hero \.film\{pointer-events:none\}/);
   assert.match(css, /\.hero \.film::-webkit-media-controls-start-playback-button\{display:none!important/, "no iOS play button when autoplay is blocked");
   assert.match(css, /@keyframes film-off\{to\{opacity:0;visibility:hidden\}\}/, "faded film is hidden, so phones can pause it");
-  assert.match(css, /\.hero \.poster,\.hero \.film\{animation:pull linear both,film-off linear both;/);
-  assert.match(css, /@media \(max-aspect-ratio:1\/1\)\{\.hero \.poster,\.hero \.film\{animation-range:contain 0% contain 100%,entry 25% entry 55%\}\}/,
-    "portrait: the hero's hole has gone before the descent's art fades in at entry 60%");
+  assert.match(css, /\.hero \.poster,\.hero \.film\{animation:pull linear both,film-off linear both;animation-timeline:--hero,--descent;animation-range:contain 0% contain 100%,entry 35% entry 60%\}/,
+    "every size: the hero's hole has gone before the descent's art fades in");
+  assert.match(css, /\.descent-art\{animation:d-in linear both;animation-timeline:--descent;animation-range:entry 60% entry 100%\}/, "the art waits until entry 60%");
+  assert.doesNotMatch(css, /\.hero \.film\{animation-range:/, "one hand-off timing for all sizes");
 });
 
 test("terms: ethical use after ESA and NASA principles, month-to-month plans, cancel any time, refund if not satisfied; marked as a draft", () => {
