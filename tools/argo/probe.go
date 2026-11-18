@@ -61,6 +61,7 @@ func (p SystemProber) Probe(ctx context.Context) Snapshot {
 	if !s.Online {
 		return s
 	}
+	s.Link = measureLink(ctx, s.Gateway) // ~1-2 s: five pings each to the gateway and 1.1.1.1
 
 	// 8 s, not 4: system DNS goes through Tailscale (100.100.100.100), which on a
 	// flapping hotspot can take several seconds while the link settles.
