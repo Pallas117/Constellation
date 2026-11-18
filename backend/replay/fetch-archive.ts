@@ -107,7 +107,8 @@ async function hapi(id: string, parameters: string[], from: string, to: string, 
       if (n >= attempts) throw new Error(`${id}: HTTP ${response.status} after ${n} attempts`);
     } catch (error) {
       if (error instanceof Error && /^\S+: HTTP \d+/.test(error.message)) throw error;
-      if (n >= attempts) throw new Error(`${id}: request failed after ${n} attempts`); // no URL or cause text: it is logged
+      // No URL or cause text in the message (it is logged); the cause travels with the error for a debugger.
+      if (n >= attempts) throw new Error(`${id}: request failed after ${n} attempts`, { cause: error });
     }
     await sleep(wait);
   }
