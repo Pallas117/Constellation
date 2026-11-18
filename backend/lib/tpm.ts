@@ -119,7 +119,7 @@ export interface TpmInputs {
   skill: { value: number | null; samples: number; maeModel: number | null; maePersistence: number | null };
 }
 
-const OFFICIAL_SOURCES = ["noaa-swpc", "goes-swpc", "kyoto-dst"];
+const OFFICIAL_SOURCES = ["noaa-swpc", "goes-swpc", "glotec-swpc", "kyoto-dst"];
 export const MIN_TICK_SAMPLES = 20;
 
 export function readTpms(i: TpmInputs): TpmReading[] {
