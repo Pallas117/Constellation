@@ -80,6 +80,21 @@ test("landing: the tagline is the headline, over the kit's black-hole film", () 
   assert.match(home, /<img class="poster" src="\/assets\/media\/blackhole-poster\.jpg"/, "still frame without JS or video");
 });
 
+test("landing film on phones: soft-edged hole, slogan on screen, no play button, hidden once covered", () => {
+  const css = read("assets/site.css");
+  const portrait = css.match(/@media \(max-aspect-ratio:1\/1\)\{\n[\s\S]*?\n\}/)[0];
+  // The whole 16:9 frame, centred on the hole: the mask's soft edge shows while the hole is small (no hard rectangle).
+  assert.match(portrait, /\.hero \.poster,\.hero \.film\{[^}]*max-width:none;aspect-ratio:16\/9;[^}]*translate:-50% 0\}/);
+  assert.doesNotMatch(portrait, /--hole-w/, "portrait keeps the mask's side fade");
+  assert.match(css, /\.hero\{[^}]*padding-block:0\}/, "the stage starts at the top, so the slogan's foot is on screen at load");
+  assert.match(css, /\.hero \.film\{pointer-events:none\}/);
+  assert.match(css, /\.hero \.film::-webkit-media-controls-start-playback-button\{display:none!important/, "no iOS play button when autoplay is blocked");
+  assert.match(css, /@keyframes film-off\{to\{opacity:0;visibility:hidden\}\}/, "faded film is hidden, so phones can pause it");
+  assert.match(css, /\.hero \.poster,\.hero \.film\{animation:pull linear both,film-off linear both;/);
+  assert.match(css, /@media \(max-aspect-ratio:1\/1\)\{\.hero \.poster,\.hero \.film\{animation-range:contain 0% contain 100%,entry 25% entry 55%\}\}/,
+    "portrait: the hero's hole has gone before the descent's art fades in at entry 60%");
+});
+
 test("terms: ethical use after ESA and NASA principles, month-to-month plans, cancel any time, refund if not satisfied; marked as a draft", () => {
   const t = text(html["/terms/"]);
   for (const want of [/Outer Space Treaty and the Artemis Accords/, /ESA.{1,7}s and NASA.{1,7}s data policies/, /NASA.{1,7}s principles for ethical AI/, /peaceful purposes/,
