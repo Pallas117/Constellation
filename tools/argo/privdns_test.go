@@ -259,3 +259,27 @@ func TestBrokenNetworkResolverPointsToPrivateDNS(t *testing.T) {
 		t.Fatalf("login page with the profile on: %v", ids(p))
 	}
 }
+
+// Dorm Wi-Fi, 18 Nov: Quad9 56 ms / Cloudflare 64 ms, then the reverse on the next run.
+func TestPickStickyStopsFlapping(t *testing.T) {
+	run := func(m map[string]int) []ResolverRTT { return rankResolvers(context.Background(), fakeDoH(m), "x.org") }
+	if got := pickSticky(run(map[string]int{"quad9": 56, "cloudflare": 64, "google": 99}), "cloudflare"); got != "cloudflare" {
+		t.Fatalf("an 8 ms swap must not move a remembered pick: %s", got)
+	}
+	flap := run(map[string]int{"quad9": 76, "cloudflare": 58, "google": 99})
+	if pickResolver(flap) != "cloudflare" || pickSticky(flap, "quad9") != "quad9" {
+		t.Fatalf("18 ms: bare pick %s, sticky %s", pickResolver(flap), pickSticky(flap, "quad9"))
+	}
+	if got := pickSticky(run(map[string]int{"quad9": 90, "cloudflare": 60}), "quad9"); got != "cloudflare" {
+		t.Fatalf("30 ms and 1.5x faster should win: %s", got)
+	}
+	if got := pickSticky(run(map[string]int{"quad9": 300, "cloudflare": 250}), "quad9"); got != "quad9" {
+		t.Fatalf("50 ms but only 1.2x on a slow link stays: %s", got)
+	}
+	if got := pickSticky(run(map[string]int{"cloudflare": 60}), "quad9"); got != "cloudflare" {
+		t.Fatalf("a remembered pick that stopped answering is dropped: %s", got)
+	}
+	if got := pickSticky(run(map[string]int{"quad9": 60, "cloudflare": 50}), ""); got != "quad9" {
+		t.Fatalf("no memory: the privacy tie-break applies: %s", got)
+	}
+}

@@ -73,6 +73,11 @@ const (
 	dohTimeout   = 3 * time.Second
 	dohTries     = 3
 	privacySlack = 15 * time.Millisecond // Quad9 is kept when it is at most this much slower
+	// stickySlack: a network keeps its remembered pick unless another is faster by more than this
+	// and stickyRatio. Live on the dorm Wi-Fi (18 Nov) Quad9 and Cloudflare swapped places between
+	// back-to-back runs (56 vs 64 ms, then the reverse), so a bare "fastest" flapped.
+	stickySlack = 20 * time.Millisecond
+	stickyRatio = 1.25
 )
 
 // ---- DNS wire format (RFC 1035), just enough for one A query ----
@@ -226,6 +231,32 @@ func pickResolver(r []ResolverRTT) string {
 		}
 	}
 	return r[0].ID
+}
+
+// pickSticky keeps prev (this network's remembered pick) while it still answers and the best is
+// not clearly faster: more than stickySlack and stickyRatio. Otherwise it is pickResolver.
+func pickSticky(r []ResolverRTT, prev string) string {
+	best := pickResolver(r)
+	if prev == "" || best == "" || prev == best {
+		return best
+	}
+	var p, b ResolverRTT
+	for _, x := range r {
+		switch x.ID {
+		case prev:
+			p = x
+		case best:
+			b = x
+		}
+	}
+	if p.OK == 0 {
+		return best
+	}
+	gap := time.Duration(p.Ms-b.Ms) * time.Millisecond
+	if gap > stickySlack && float64(p.Ms) > stickyRatio*float64(b.Ms) {
+		return best
+	}
+	return prev
 }
 
 // dohReachable: does encrypted DNS work from here at all? Used by the probe when the network's
@@ -544,6 +575,7 @@ func privateDNSCmd(ctx context.Context, store Store, args []string, w io.Writer)
 			return
 		}
 		n := st.Networks[fp]
+		pick = pickSticky(ranked, n.PrivateDNS)
 		n.PrivateDNS = pick
 		st.Networks[fp] = n
 		_ = store.Save(st)
