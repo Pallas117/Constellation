@@ -184,9 +184,14 @@ const ApiKeys = () => {
               for your organisation's usage report.
             </p>
           </div>
-          <Button asChild variant="outline">
-            <Link to="/">Live visualisation</Link>
-          </Button>
+          <div className="flex flex-wrap gap-2">
+            <Button asChild>
+              <Link to="/account/wire">Wire your logs</Link>
+            </Button>
+            <Button asChild variant="outline">
+              <Link to="/">Live visualisation</Link>
+            </Button>
+          </div>
         </div>
       </section>
 
