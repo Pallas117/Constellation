@@ -102,7 +102,7 @@ function ago(iso?: string) {
 const MeshDashboard = () => {
   useDocumentTitle("Mesh");
 
-  const { steps, devices, me, canEnroll, canSeeTeam, canRevokeAny, error, stopped, enroll, revoke } = useMesh();
+  const { steps, devices, me, canEnroll, canSeeTeam, canRevokeAny, error, stopped, loading, enroll, revoke } = useMesh();
   const now = useNow(30_000);
   const [name, setName] = useState("");
   const [issued, setIssued] = useState<{ name: string; token: string } | null>(null);
@@ -184,7 +184,7 @@ const MeshDashboard = () => {
                 {revokeError}
               </p>
             )}
-            {canEnroll && !devices && !error && (
+            {loading && !devices && (
               <p role="status" className="font-mono text-sm text-muted-foreground">Loading devices…</p>
             )}
             {canEnroll && devices && devices.length === 0 && (
@@ -212,7 +212,7 @@ const MeshDashboard = () => {
                       return (
                         <tr key={d.name} className="border-t border-border/60 align-top">
                           <td className="py-3 pr-4">
-                            <span className="font-mono">{d.name}</span>
+                            <span className="whitespace-nowrap font-mono">{d.name}</span>
                             {(d.last?.platform || d.last?.battery) && (
                               <p className="mt-1 text-xs text-muted-foreground">
                                 {d.last.platform ? PLATFORM_LABEL[d.last.platform] : ""}
@@ -222,7 +222,9 @@ const MeshDashboard = () => {
                             {d.last?.posture && <p className="mt-1 max-w-xs text-xs text-muted-foreground">{postureLine(d.last.posture)}</p>}
                           </td>
                           <td className="py-3 pr-4">
-                            <Badge variant={s.variant}>{s.label}</Badge>
+                            <Badge variant={s.variant} className="whitespace-nowrap">
+                              {s.label}
+                            </Badge>
                             {(!d.last || deviceStage(d, now) === "rejected") && (
                               <p className="mt-1 max-w-xs text-xs text-muted-foreground">
                                 {STAGE_HELP[deviceStage(d, now) as keyof typeof STAGE_HELP]}
@@ -330,6 +332,11 @@ const MeshDashboard = () => {
             <CardTitle>Join the mesh</CardTitle>
           </CardHeader>
           <CardContent>
+            {loading && steps.length === 0 && (
+              <p role="status" className="font-mono text-sm text-muted-foreground">
+                Loading the steps…
+              </p>
+            )}
             <ol className="space-y-4">
               {steps.map((step, i) => (
                 <li key={step.id} className="space-y-1">
