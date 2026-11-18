@@ -85,7 +85,9 @@ WebSockets: `/ws/feed/space-weather`, `/ws/feed/mms-reconnection` (`backend/lib/
    calls the adapters in `backend/adapters/`: `noaa-swpc` + `rtsw-series` (RTSW L1), `kyoto-dst`,
    `goes-particles`, `swpc-products` (cross-check only), `esa-hapi` (Swarm, never used as an IMF
    source: `docs/adr/swarm-not-an-imf-source.md`), `jaxa-erg` (reachability probe), `mms-cdaweb`,
-   `mms-lasp`.
+   `mms-lasp`, `glotec` (NOAA SWPC GloTEC TEC summary over Malaysia, every 5 min, a 2.4 MB file only
+   per new 10-min step; `ionosphere` on the point, null past 60 min; TEC only, not scintillation:
+   `docs/adr/ionosphere-sources.md`).
 2. Sense checks (`backend/lib/sense-checks.ts`), then `computeCanonicalPoint`
    (`backend/physics/mhd-nowcast.ts`; also `igrf.ts`, `noaa-scales.ts`, `reconnection.ts`,
    `healpix.ts` aurora grid, `l1-structures.ts`).

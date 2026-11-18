@@ -1,6 +1,6 @@
 {
   "$comment": "Constellation requirements baseline (GAU-120). NASA SP-2016-6105 Rev 2 §6.2/§5.3. Methods: T test, A analysis, I inspection, D demonstration. T evidence = exact test names; A/I/D evidence = repo paths. Verified by `npm run verify`.",
-  "version": "1.17.0",
+  "version": "1.18.0",
   "requirements": [
     {
       "id": "REQ-ING-001",
@@ -1109,6 +1109,106 @@
         "deploy: local edits under .claude/ and docs/ are saved as patches, restored, and the deploy proceeds",
         "events: the saved doc-only live changes are logged",
         "deploy: a code change next to a doc change still refuses, and the doc change is not touched"
+      ]
+    },
+    {
+      "id": "REQ-ION-001",
+      "title": "GloTEC regional TEC summary",
+      "statement": "The ingest shall summarise NOAA SWPC GloTEC as the mean, minimum and maximum TEC in TECU over grid cells centred 2-7 N and 100-119 E and the value of the cell nearest Kuala Lumpur, each carrying source \"glotec-swpc\" and the product's own model time.",
+      "rationale": "Malaysia lies under the equatorial ionization anomaly; a regional summary with source and time keeps the value traceable and avoids holding the 5184-cell global grid.",
+      "parent": "GAU-TBC (ionosphere issue not yet created in Linear)",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "GloTEC: the Malaysian box summary matches the recorded cells, with source and model time"
+      ]
+    },
+    {
+      "id": "REQ-ION-002",
+      "title": "GloTEC range validation",
+      "statement": "The ingest shall skip any GloTEC cell whose tec is not a finite number in 0-300 TECU or whose latitude or longitude is off the globe, and shall never read a skipped cell as 0.",
+      "rationale": "A fill or corrupt cell read as 0 TECU would look like a real ionospheric collapse.",
+      "parent": "GAU-TBC (ionosphere issue not yet created in Linear)",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "GloTEC: out-of-range, non-numeric and off-globe cells are skipped, never read as 0"
+      ]
+    },
+    {
+      "id": "REQ-ION-003",
+      "title": "GloTEC malformed or inconsistent file is unknown",
+      "statement": "The ingest shall return no reading for a GloTEC file that is not a FeatureCollection, has a missing or future time tag, has a time tag different from its index entry, exceeds 8 MB, or has no valid cell in the Malaysian box.",
+      "rationale": "Unknown stays unknown; a bad file must not replace the last honest reading.",
+      "parent": "GAU-TBC (ionosphere issue not yet created in Linear)",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "GloTEC: malformed documents, a missing or future time tag, a mismatched tag and an empty box are unknown",
+        "GloTEC fetch: a malformed file or a file whose time tag disagrees with the index is rejected"
+      ]
+    },
+    {
+      "id": "REQ-ION-004",
+      "title": "GloTEC freshness bound",
+      "statement": "The served point shall carry ionosphere = null when the GloTEC model time is more than 60 minutes old or in the future.",
+      "rationale": "GloTEC steps are listed about 26 min after their valid time (observed 18 Nov 2026), so 60 min allows three missed 10-min steps (shared/policy/freshness.json, glotec_tec).",
+      "parent": "GAU-TBC (ionosphere issue not yet created in Linear)",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "GloTEC: a reading older than the freshness bound, or from the future, is unknown (null)",
+        "tick: GloTEC TEC over Malaysia rides on the point while fresh and is unknown (null) past 60 min"
+      ]
+    },
+    {
+      "id": "REQ-ION-005",
+      "title": "GloTEC rate of change",
+      "statement": "The ingest shall report the rate of change of the regional mean TEC in TECU per hour only against a baseline step 20-90 minutes older with the same cell count, and null otherwise.",
+      "rationale": "A rate over a gap or a different cell set is not comparable and would mislead.",
+      "parent": "GAU-TBC (ionosphere issue not yet created in Linear)",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "GloTEC: rate of change is TECU per hour against a 20-90 min older step, else unknown",
+        "GloTEC fetch: newest step, cold-start baseline gives the rate, an unchanged step is not downloaded again"
+      ]
+    },
+    {
+      "id": "REQ-ION-006",
+      "title": "GloTEC observation-constrained cells",
+      "statement": "The ingest shall count separately the cells whose quality_flag is 1-5 and shall count a cell with flag 0 or an out-of-range flag as not observation-constrained.",
+      "rationale": "Where no F-region observation constrains a cell GloTEC relaxes to IRI-2016 climatology, which is not a measurement.",
+      "parent": "GAU-TBC (ionosphere issue not yet created in Linear)",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "GloTEC: quality_flag 0 cells are counted as not observation-constrained"
+      ]
+    },
+    {
+      "id": "REQ-ION-007",
+      "title": "GloTEC fetches SWPC only",
+      "statement": "The ingest shall request GloTEC only from https://services.swpc.noaa.gov, with no query string or credentials, and shall accept only index entries under /products/glotec/geojson_2d_urt/.",
+      "rationale": "A mistyped or injected URL must not send the backend to another host.",
+      "parent": "GAU-TBC (ionosphere issue not yet created in Linear)",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "GloTEC: only SWPC hosts are fetched; a feed on another host is refused before any request",
+        "GloTEC: the index parses from a byte-range tail and from a full array; bad entries are dropped"
+      ]
+    },
+    {
+      "id": "REQ-ION-008",
+      "title": "GloTEC outage reporting",
+      "statement": "When the GloTEC fetch fails the source status shall report healthy = false, keep the last observed time and show its age growing in seconds.",
+      "rationale": "A stale reading must never be reported with the age of the last fetch.",
+      "parent": "GAU-TBC (ionosphere issue not yet created in Linear)",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "GloTEC fetch: an outage returns null, keeps lastSeen, and the status ages instead of staying healthy"
       ]
     },
     {
