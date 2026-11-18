@@ -9,6 +9,7 @@ import { useDocumentTitle } from "@/hooks/useDocumentTitle";
 import { useNow } from "@/hooks/useNow";
 import { batteryLabel, copyText, deviceStage, enrollCommand, guardLine, STAGE_HELP, STALE_MS } from "@/lib/mesh-onboarding";
 import { bytesLabel, stabilityScore, stabilityTone, windowLine } from "@/lib/link-stability";
+import { summariseLinks, type LinkQuality } from "@/lib/link-map";
 import { ConfirmButton } from "@/components/ui/confirm-button";
 const PLATFORM_LABEL: Record<string, string> = { macos: "macOS", linux: "Linux", windows: "Windows", ios: "iPhone", android: "Android" };
 // Mirrors hostingVerdict in backend/mesh/store.ts.
@@ -67,6 +68,61 @@ function NetCell({ net }: { net: MeshNet }) {
         {snr}
       </p>
     </div>
+  );
+}
+
+const QUALITY_VARIANT: Record<LinkQuality, "default" | "secondary" | "destructive"> = { good: "default", fair: "secondary", poor: "destructive" };
+
+// Where signal is good: each device's latest link sample, grouped by network hash or the place label its owner set.
+// No SSIDs and no locations (backend/mesh/store.ts parseLinkSample).
+function SignalMap({ devices, now }: { devices: MeshDevice[]; now: number }) {
+  const rows = summariseLinks(devices, now);
+  return (
+    <section className="px-4 pb-10 sm:px-8">
+      <Card className="min-w-0">
+        <CardHeader>
+          <CardTitle>Signal map</CardTitle>
+        </CardHeader>
+        <CardContent>
+          {rows.length === 0 ? (
+            <p className="text-sm text-muted-foreground">No link samples in the last hour. Argo adds them to its reports.</p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead className="text-left text-xs uppercase tracking-wider text-muted-foreground">
+                  <tr>
+                    <th className="py-2 pr-4">Network</th>
+                    <th className="py-2 pr-4">Quality</th>
+                    <th className="py-2 pr-4">Devices</th>
+                    <th className="py-2 pr-4">Loss</th>
+                    <th className="py-2 pr-4">Round trip</th>
+                    <th className="py-2 pr-4">Signal</th>
+                    <th className="py-2">Link</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.map((r) => (
+                    <tr key={r.key} className="border-t border-border/60 align-top">
+                      <td className="py-2 pr-4 font-medium">{r.label}</td>
+                      <td className="py-2 pr-4">
+                        <Badge variant={QUALITY_VARIANT[r.quality]}>{r.quality}</Badge>
+                        {r.lowDevices > 0 && <span className="ml-2 text-xs text-muted-foreground">low-signal mode on {r.lowDevices}</span>}
+                      </td>
+                      <td className="py-2 pr-4">{r.devices}</td>
+                      <td className="py-2 pr-4">{r.lossPct}%</td>
+                      <td className="py-2 pr-4">{r.rttMs === null ? "n/a" : `${r.rttMs} ms`}</td>
+                      <td className="py-2 pr-4">{r.signalDbm === null ? "n/a" : `${r.signalDbm} dBm (SNR ${r.snrDb} dB)`}</td>
+                      <td className="py-2">{r.classes.join(", ")}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+          <p className="mt-3 text-xs text-muted-foreground">Latest sample per device from the last hour. Networks are shown by hash or by the place label the owner set; never by name, never by location.</p>
+        </CardContent>
+      </Card>
+    </section>
   );
 }
 
@@ -344,6 +400,8 @@ const MeshDashboard = () => {
           </CardContent>
         </Card>
       </section>
+
+      {canEnroll && devices && <SignalMap devices={devices} now={now} />}
     </main>
   );
 };

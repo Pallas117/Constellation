@@ -70,6 +70,12 @@ type Tailscale struct {
 
 // Snapshot is everything one probe pass learned. Fixtures in testdata/ are
 // recorded Snapshots, so classification is tested without touching the network.
+// Anchors counts how many of several independent hosts accepted a TCP connection.
+type Anchors struct {
+	Up    int `json:"up"`
+	Total int `json:"total"`
+}
+
 type Snapshot struct {
 	Time   time.Time `json:"time"`
 	Online bool      `json:"online"`
@@ -98,6 +104,7 @@ type Snapshot struct {
 	Neighbours     []Neighbour `json:"neighbours,omitempty"` // ARP table on the default interface (neighbours.go)
 	Inbound        []Inbound   `json:"inbound,omitempty"`    // LAN devices connected to this Mac's sharing services
 	Signal         *WiFiSignal `json:"signal,omitempty"`     // Wi-Fi only; read at most every signalEvery
+	Anchors        Anchors     `json:"anchors,omitempty"`    // independent TCP anchors reached (lowsignal.go), so one dead path never reads as offline
 }
 
 // Classify picks the most fundamental failure first: there is no point

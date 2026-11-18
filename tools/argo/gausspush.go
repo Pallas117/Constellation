@@ -59,8 +59,19 @@ func pushAt(cfg Config, st State, s Store, now time.Time) {
 			return
 		}
 	}
+	// Low signal: report less often (a class change still goes at once) and without history.
+	lastClass := s.path("gauss-last-class")
+	if gap := st.Low.ReportGap(); gap > 0 {
+		prev, _ := os.ReadFile(lastClass)
+		if b, err := os.ReadFile(last); err == nil && string(prev) == string(st.Class) {
+			if t, perr := time.Parse(time.RFC3339Nano, strings.TrimSpace(string(b))); perr == nil && now.Sub(t) >= 0 && now.Sub(t) < gap {
+				return
+			}
+		}
+	}
 	code, err := sendReport(cfg, st)
 	if err == nil {
+		_ = os.WriteFile(lastClass, []byte(st.Class), 0o600)
 		_ = os.MkdirAll(s.Dir, 0o700)
 		_ = os.WriteFile(last, []byte(now.Format(time.RFC3339Nano)), 0o600)
 	}
@@ -98,10 +109,13 @@ func sendReport(cfg Config, st State) (int, error) {
 		"breakerOpen": time.Now().Before(st.BreakerUntil), "argoVersion": version, "checkedAt": st.CheckedAt,
 		"host":     hostCapacityNow(), // sizes and pressure only, so Gauss can tell which devices can host agents
 		"platform": platformName(runtime.GOOS),
-		"net":      netReport(st.Net),                                      // scores and their reasons; no SSID, BSSID or IP
-		"link":     linkReport(DefaultStore().Incidents(), st, time.Now()), // availability from the local incident log
+		"net":      netReport(st.Net), // scores and their reasons; no SSID, BSSID or IP
+	}
+	if !st.Low.On { // no history over a weak link; Gauss keeps the last full block
+		report["link"] = linkReport(DefaultStore().Incidents(), st, time.Now()) // availability from the local incident log
 	}
 	addGuard(report, DefaultStore().loadGuard(), time.Now())
+	addLowAndLink(report, cfg, st)
 	body, _ := json.Marshal(report)
 	u.Path = "/api/mesh/report"
 	req, _ := http.NewRequest(http.MethodPost, u.String(), bytes.NewReader(body))

@@ -33,6 +33,22 @@ export interface MeshReport {
   net?: MeshNet;
   link?: LinkReport;
   guard?: MeshGuard;
+  /** Low-signal mode, clock cross-check and one link measurement (backend/mesh/store.ts). */
+  lowSignal?: { on: boolean; chunkBytes: 4096 | 65536 | 1048576 };
+  clock?: { fault: boolean; skewSecs: number; sources: number };
+  linkSample?: {
+    class: "usb" | "wifi" | "ethernet" | "other";
+    bearer: "https" | "meshtastic" | "sms" | "satellite" | "cellular";
+    network?: string;
+    place?: string;
+    band?: "2.4" | "5" | "6";
+    channel?: number;
+    signalDbm?: number;
+    noiseDbm?: number;
+    lossPct: number;
+    rttMs: number;
+    low: boolean;
+  };
 }
 
 /** Argo's resource guard decision (backend/mesh/store.ts MeshGuard, GAU-195). */

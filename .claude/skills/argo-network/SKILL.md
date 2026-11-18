@@ -22,6 +22,8 @@ Design and sources: `docs/ARGO_DTN.md`. User guide: `tools/argo/README.md`.
 | Relay (DTN) | `cbor.go`, `bundle.go`, `bpsec.go`, `relay.go`, `relay_cmd.go`, `hub.go` | BPv7 bundles, blocks 192 (Ed25519) and 193 (HPKE ML-KEM-768+X25519), end-to-end receipts, data mule |
 | Standard BPSec (interop) | `bpsec9173.go`, `aeskw.go`, `testdata/rfc9173/` | RFC 9173 BIB-HMAC-SHA2 and BCB-AES-GCM in blocks 11/12, pre-placed keys, AES key wrap (RFC 3394) |
 | Link keys | `linkkeys.go` | per-pair, per-direction keys offered under argo-sig + argo-seal, confirmed by receipt; then BIB-HMAC-SHA256 (primary) + BCB-AES-256-GCM (payload); `links.key` 0600; rotate 7 d / 65,536 bundles |
+| Low signal, bearers | `lowsignal.go`, `bearer.go`, `radiostate.go`, `relay_radio.go`, `meshtastic.go` | detector with hysteresis; chunk ladder 1 MiB/64 KiB/4 KiB; fragments + XOR parity + duty budget; radio carries only BPSec-protected small bundles; Meshtastic behind `ARGO_MESHTASTIC_URL` (docs/ARGO_DTN.md "Low signal and IoT bearers") |
+| Clock, wired link, signal map | `timeintegrity.go`, `wiredlink.go`, `linksample.go`, `frontend/src/lib/link-map.ts` | Date-header cross-check (never sets the clock); "iPhone USB" advice (never changes settings); `linkSample` allowlisted, hashes only |
 | Hub | `backend/mesh/bundles.ts`, `router.ts` | device-token routes before session auth; ciphertext only; key directory (first key wins) |
 | UI | `frontend/src/pages/MeshDashboard.tsx`, `frontend/src/lib/link-stability.ts`, `website/public/argo/` | `/mesh` columns; `/argo/` is noindex, "Included", no price |
 
