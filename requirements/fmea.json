@@ -299,9 +299,11 @@
       "residualLikelihood": 2,
       "verifiedBy": [
         "fresh peers: no restarts, guard heartbeat written",
-        "stale Argo and mesh-heal: both restarted"
+        "stale Argo and mesh-heal: both restarted",
+        "TestWatchRestartsStaleAndMissingButSkipsUnloaded",
+        "TestWatchStopsKickingACrashLoopAndAlerts"
       ],
-      "gap": "Argo's side (restart a stale guard, stop after 3 an hour) is tested only in Go (tools/argo/watch_test.go: TestWatchRestartsStaleAndMissingButSkipsUnloaded, TestWatchStopsKickingACrashLoopAndAlerts), which `npm run verify` does not ingest yet; if Argo and the guard both stop, or the host does (FM-13), nothing watches"
+      "gap": "If Argo and the guard both stop, or the host does (FM-13), nothing watches; Argo's Go tests now count here (REQ-ARG-003)"
     },
     {
       "id": "FM-21",

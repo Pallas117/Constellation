@@ -546,8 +546,8 @@ var guardAdvice = map[string]string{
 	"battery-draining":     "Plug in: the battery reaches the floor within the hour.",
 	"battery-low-pressure": "Plug in or close the browser.",
 	"on-battery":           "Jobs over 1 GB start only within their eclipse budget (below). Plug in to lift it.",
-	"charger-behind":       "Use a stronger charger: this one can't keep up with the machine's draw.",
-	"charger-weak":         "Use a stronger charger: the machine draws more than this one supplies.",
+	"charger-behind":       "Use a stronger charger: this one can't keep up with the machine's draw. If it is 5 V USB, use a USB-C to USB-C cable with a fast charger.",
+	"charger-weak":         "Use a stronger charger: the machine draws more than this one supplies. If it is 5 V USB, use a USB-C to USB-C cable with a fast charger.",
 	"disk-critical":        "Free disk space now: swap needs room on the boot volume.",
 	"disk-low":             "Free disk space (rebuildable caches first).",
 	"cpu-throttled":        "Let it cool: hard surface, airflow, charger plugged in.",
@@ -604,6 +604,9 @@ func guardText(cur Sample, a Assessment, sc Scale, hist []Sample, users []Group)
 		}
 		w("\n")
 		w("power    %s\n", powerText(powerBudget(cur), defaultWorkerW))
+		if bt.OnAC {
+			w("charger  %s\n", chargerText(chargerOf(bt, defaultWorkerW)))
+		}
 		if bt.Cycles > 0 || bt.HealthPct > 0 {
 			w("         %d cycles", bt.Cycles)
 			if bt.HealthPct > 0 {
@@ -711,10 +714,17 @@ func orDash(s string) string {
 
 // guardStatus is the short suffix for `argo status`, from the last tick.
 func guardStatus(g GuardState, now time.Time) string {
-	if g.Report.At.IsZero() || now.Sub(g.Report.At) > 10*time.Minute || g.Report.Level == "ok" {
+	if g.Report.At.IsZero() || now.Sub(g.Report.At) > 10*time.Minute {
 		return ""
 	}
-	return " guard:" + g.Report.Level
+	out := ""
+	if g.Report.Level != "ok" {
+		out = " guard:" + g.Report.Level
+	}
+	if c := chargerOf(g.Batt, defaultWorkerW); c.State != ChargerUnknown { // unknown shows nothing, never a guess
+		out += fmt.Sprintf(" charger:%s %sV/%sW", c.State, trimNum(c.Volts), trimNum(c.Watts))
+	}
+	return out
 }
 
 // addGuard adds the last tick's decision and battery to a Gauss report when
@@ -728,6 +738,9 @@ func addGuard(report map[string]any, g GuardState, now time.Time) {
 		bat := map[string]any{"level": b.Pct, "charging": b.Charging, "external": b.OnAC, "lowPower": b.LowPower}
 		if p := powerBudget(Sample{Batt: b}); p.Mode != PowerUnknown { // the SWaP budget, so Gauss places work where power is spare
 			bat["power"] = p
+		}
+		if c := chargerOf(b, defaultWorkerW); c.State != ChargerUnknown { // what the charger negotiated (parseCharger); unknown sends nothing
+			bat["charger"] = c
 		}
 		report["battery"] = bat
 	}
