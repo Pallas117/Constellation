@@ -56,7 +56,9 @@ test("a refused revoke shows an error instead of looking like it worked (GAU-149
   await page.goto("/mesh");
 
   await expect(page.getByText("laptop-a")).toBeVisible(); // the mocked device is listed
+  // Revoke is a two-step button: the first click arms it, the second acts.
   await page.getByRole("button", { name: "Revoke" }).click();
+  await page.getByRole("button", { name: "Revoke device?" }).click();
 
   await expect(page.getByRole("alert")).toHaveText("Couldn't revoke the device: your role doesn't include this.");
   await expect(page.getByText(SERVER_DETAIL)).toHaveCount(0);
@@ -68,7 +70,9 @@ test("a successful revoke shows no error (GAU-149)", async ({ page }) => {
   const deletes = await mockMesh(page, 204);
   await page.goto("/mesh");
 
+  // Revoke is a two-step button: the first click arms it, the second acts.
   await page.getByRole("button", { name: "Revoke" }).click();
+  await page.getByRole("button", { name: "Revoke device?" }).click();
 
   await expect.poll(deletes).toBe(1);
   await expect(page.getByRole("alert")).toHaveCount(0);
