@@ -95,7 +95,7 @@ if [ "$DRY" = 1 ]; then
   say "would join the tailnet: auth key from TS_AUTHKEY or a silent prompt, passed as --auth-key=file:<0600 temp file>"
   run tailscale up --hostname=gauss-hub --accept-dns=false --auth-key=file:/run/gauss-bootstrap/ts-authkey
 elif tailscale ip -4 >/dev/null 2>&1; then
-  say "already on the tailnet ($(tailscale ip -4 | head -n1))"
+  say "already on the tailnet ($(tailscale ip -4 | sed -n 1p))"
 else
   KEYDIR=$(mktemp -d /run/gauss-bootstrap.XXXXXX); CLEAN+=("$KEYDIR")
   chmod 0700 "$KEYDIR"
@@ -138,7 +138,7 @@ fi
 [[ "$GO_VER" =~ ^[0-9]+\.[0-9]+(\.[0-9]+)?$ ]] || die "bad Go version: $GO_VER"
 if [ "$DRY" = 1 ]; then
   say "would fetch go${GO_VER}.linux-${GO_ARCH}.tar.gz from https://go.dev/dl/, verify the sha256 listed at https://go.dev/dl/?mode=json&include=all, unpack to /opt/go"
-elif [ ! -x /opt/go/bin/go ] || ! /opt/go/bin/go version | grep -q "go${GO_VER} "; then
+elif [ ! -x /opt/go/bin/go ] || ! /opt/go/bin/go version | grep -c "go${GO_VER} " >/dev/null; then
   T2=$(mktemp -d); CLEAN+=("$T2")
   curl -fsSL -o "$T2/dl.json" "https://go.dev/dl/?mode=json&include=all"
   want=$(node -e '
@@ -223,7 +223,7 @@ elif [ ! -f "$DATA/.config/argo/config.json" ]; then
     || die "enrolment failed (token not shown); check: journalctl -u gauss-hub -n 50"
 fi
 say "this device's key fingerprint:"
-if [ "$DRY" = 1 ]; then run runuser -u "$SVC_USER" -- argo keys; else runuser -u "$SVC_USER" -- env -i HOME="$DATA" PATH=/usr/local/bin:/usr/bin ARGO_NO_DESKTOP=1 argo keys | head -n1; fi
+if [ "$DRY" = 1 ]; then run runuser -u "$SVC_USER" -- argo keys; else runuser -u "$SVC_USER" -- env -i HOME="$DATA" PATH=/usr/local/bin:/usr/bin ARGO_NO_DESKTOP=1 argo keys | sed -n 1p; fi
 
 # --- 9. firewall (last) -------------------------------------------------------------
 say "9/9 firewall: closed except tailscale0"

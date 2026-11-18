@@ -34,7 +34,7 @@ fw=$(printf '%s\n' "$out" | grep -n 'ufw --force enable' | cut -d: -f1); sv=$(pr
 bash "$B" --repo http://example.com/x.git --dry-run >/dev/null 2>&1; [ $? = 1 ]; expect "vps bootstrap refuses a non-https repo URL" $?
 bash "$B" --ref 'main;rm -rf /' --dry-run >/dev/null 2>&1; [ $? = 1 ]; expect "vps bootstrap refuses a git ref with shell characters" $?
 bash "$B" --nope >/dev/null 2>&1; [ $? = 1 ]; expect "vps bootstrap refuses an unknown option" $?
-bash "$B" --help | grep -q -- '--dry-run'; expect "vps bootstrap --help documents --dry-run" $?
+bash "$B" --help | grep -c -- '--dry-run' >/dev/null; expect "vps bootstrap --help documents --dry-run" $?
 if [ "$(id -u)" != 0 ]; then bash "$B" >/dev/null 2>&1; [ $? = 1 ]; expect "vps bootstrap refuses to run for real without root" $?; fi
 
 # --- confirm-peer.sh ---
