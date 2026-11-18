@@ -769,7 +769,7 @@ fallback_prepare() { # fallback_prepare <dir> [sha]: check out, install, build, 
     # The checkout changes under the old record from here: drop it, so a failed install or
     # build leaves "none prepared", never a ready record describing a different checkout.
     rm -f "$FALLBACK_STATE/ready"
-    git -C "$dir" checkout -q --detach "$sha" || return 1
+    carry_checkout "$dir" "$sha" || return 1
   else
     git -C "$live" worktree add -q --detach "$dir" "$sha" || return 1; dir=$(cd "$dir" && pwd)
   fi
@@ -1549,8 +1549,53 @@ deploy_power_short() { # prints why the power can't carry a deploy, or nothing
   watts=$(pmset -g ac 2>/dev/null | sed -n 's/^ *Wattage = \([0-9]*\)W.*/\1/p')
   [ -z "$watts" ] || [ "$watts" -ge 20 ] || echo "battery ${pct}% on a ${watts} W charger"
 }
+carry_checkout() { # carry_checkout <dir> <to sha>: check out <to>; git never touches runtime data whose tracking changes
+  # GAU-211: data/bedrock/telemetry.jsonl was tracked and is now ignored, and the running backend
+  # appends to it by path (fs.appendFile). Across that commit a plain checkout refuses (changed
+  # file) or deletes it (unchanged), and going back silently replaces live's copy with the committed
+  # one (git overwrites ignored files). Moving it aside loses what is appended meanwhile, so the
+  # file never moves: for each data/ or ml/models/ path that only one side tracks, the index is set
+  # to what <to> has (git then keeps the working file as it is, same inode), and a path leaving the
+  # tree is excluded for this one command (else git refuses over an "untracked" file).
+  # Safety net: a hard link beside the file. If git removes the file all the same, the link goes
+  # back in its place. Nothing here deletes data: in doubt both copies stay and a person decides.
+  local dir=$1 to=$2 p f mode blob excl rc=0 _
+  local -a paths=()
+  while IFS= read -r p; do
+    f="$dir/$p"
+    if [ -e "$f.gauss-keep" ] && [ ! -e "$f" ]; then mv "$f.gauss-keep" "$f" || return 1; fi # an earlier run stopped before putting it back
+    [ -f "$f" ] || continue
+    if [ ! -e "$f.gauss-keep" ]; then ln "$f" "$f.gauss-keep" || return 1
+    elif ! [ "$f" -ef "$f.gauss-keep" ]; then
+      echo "$f.gauss-keep is live data left by an earlier checkout and differs from $p: keep the right one by hand (move it to $p), then retry." >&2; return 1
+    fi
+    paths+=("$p")
+  done < <(git -C "$dir" diff --name-only --no-renames --diff-filter=AD HEAD "$to" -- data ml/models)
+  excl=$(mktemp "${TMPDIR:-/tmp}/gauss-carry.XXXXXX") || return 1
+  for p in ${paths[@]+"${paths[@]}"}; do
+    if read -r mode _ blob _ < <(git -C "$dir" ls-tree "$to" -- "$p") && [ -n "$blob" ]; then
+      git -C "$dir" update-index --add --cacheinfo "$mode,$blob,$p" || rc=1
+    else
+      git -C "$dir" update-index --force-remove -- "$p" || rc=1; printf '/%s\n' "$p" >>"$excl"
+    fi
+  done
+  [ $rc != 0 ] || git -C "$dir" -c core.excludesFile="$excl" checkout -q --detach "$to" || rc=1
+  rm -f "$excl"
+  for p in ${paths[@]+"${paths[@]}"}; do
+    f="$dir/$p"
+    [ $rc = 0 ] || git -C "$dir" reset -q -- "$p" >/dev/null 2>&1 || true # refused: the index describes HEAD again
+    if [ "$f" -ef "$f.gauss-keep" ]; then rm -f "$f.gauss-keep" # untouched: drop the second name, the data stays
+    elif [ ! -e "$f" ] || [ "$(git -C "$dir" hash-object -- "$f")" = "$(git -C "$dir" rev-parse -q --verify "$to:$p")" ]; then
+      mv -f "$f.gauss-keep" "$f" || return 1 # git removed it, or wrote the committed copy (still in git) over it
+      echo "git touched $p during the checkout: live's copy is back in place." >&2
+    else
+      echo "warning: $p was replaced during the checkout (not by git); the earlier data is kept as $f.gauss-keep. Compare the two before the next deploy." >&2
+    fi
+  done
+  return $rc
+}
 switch_live() { # switch_live <dir> <from sha> <to sha>: check out, npm ci if the lockfile or Node changed, reinstall
-  git -C "$1" checkout -q --detach "$3" || return 1
+  carry_checkout "$1" "$3" || return 1
   if [ ! -d "$1/node_modules" ] || ! git -C "$1" diff --quiet "$2" "$3" -- package-lock.json || node_changed "$1"; then
     echo "package-lock.json or Node changed: installing dependencies in $1 ..."
     (cd "$1" && PATH="$(dirname "$NODE"):$PATH" npm ci --no-audit --no-fund >/dev/null) || return 1
@@ -1590,6 +1635,19 @@ deploy() { # deploy <commit> [fallback-dir]
   fi
   # Live's data files (telemetry, models) change in place and carry over; code must not.
   local dirty; dirty=$(git -C "$live" status --porcelain --untracked-files=no | cut -c4- | grep -Ev '^(data|ml/models)/' || true)
+  # Edits under .claude/ or docs/ (agent notes, docs) are saved as patches and restored, not a reason to stop.
+  # Anything else, or a rename or delete, still refuses.
+  if [ -n "$dirty" ] && ! printf '%s\n' "$dirty" | grep -Evq '^(\.claude|docs)/'; then
+    local saved="$LOGS/live-local-changes/$(date +%Y%m%d-%H%M%S)" f n=0
+    mkdir -p "$saved" && while IFS= read -r f; do
+      git -C "$live" diff HEAD -- "$f" >"$saved/$(printf '%s' "$f" | tr '/' '_').patch" \
+        && git -C "$live" checkout -q HEAD -- "$f" || { echo "Couldn't save and restore $f; not deploying." >&2; return 1; }
+      n=$((n + 1))
+    done <<<"$dirty"
+    echo "Live had $n local doc/agent-note change(s); saved as patches in $saved and restored."
+    event deploy-local-doc-changes live "saved and restored $n file(s) under .claude/ or docs/ before deploying" "saved_to=$saved"
+    dirty=""
+  fi
   [ -z "$dirty" ] || { printf 'Live has local code changes; not deploying over them:\n%s\n' "$dirty" >&2; return 1; }
   mkdir -p "$WATCH_DIR" "$LOGS"
   if ! mkdir "$DEPLOY_LOCK" 2>/dev/null; then
@@ -1620,7 +1678,7 @@ deploy() { # deploy <commit> [fallback-dir]
   fi
 
   echo "Deploying ${prev:0:7} -> ${sha:0:7} in $live ..."
-  git -C "$live" checkout -q --detach "$sha" \
+  carry_checkout "$live" "$sha" \
     || { echo "Checkout refused (a local data file conflicts with ${sha:0:7}?): nothing changed." >&2; return 1; }
   if switch_live "$live" "$prev" "$sha" && deploy_ready "$live" "$DEPLOY_WAIT"; then
     echo "$(date '+%F %T') deployed ${sha:0:7} (was ${prev:0:7})" >>"$LOGS/deploy.log"
@@ -1876,6 +1934,55 @@ resilience() { # can background work survive the lid closed, the battery, memory
   return $fail
 }
 
+# space-weather data: our latest point's quality tier. When it is ageing/stale, say whether the cause is
+# upstream (NOAA's ACTIVE RTSW spacecraft has no plasma while a standby one is current: 17 Nov 2026,
+# SOLAR1 null from 10:07Z) or our own ingest (NOAA has newer active-spacecraft plasma than our point).
+# Read-only: the backend's own response plus NOAA's public file; never changes what the backend serves.
+RTSW_URL="${GAUSS_RTSW_URL:-https://services.swpc.noaa.gov/json/rtsw/rtsw_wind_1m.json}"
+space_weather_item() {
+  local latest fresh upstream=""
+  latest=$(curl -s -m 5 http://127.0.0.1:3001/api/feed/space-weather/latest || true)
+  if [ "$(printf '%s' "$latest" | python3 -Ic 'import json,sys; print((json.load(sys.stdin).get("quality") or {}).get("tier", 3))' 2>/dev/null || echo 3)" != 0 ]; then
+    upstream=$(curl -s -m 10 --compressed "$RTSW_URL" 2>/dev/null || true)
+  fi
+  fresh=$(printf '%s\n%s' "$latest" "$upstream" | python3 -Ic '
+import json, sys
+from datetime import datetime, timezone
+def ts(t):
+    d = datetime.fromisoformat(str(t).replace("Z", "+00:00"))
+    return d if d.tzinfo else d.replace(tzinfo=timezone.utc)
+try:
+    first, _, rest = sys.stdin.read().partition("\n")
+    point = json.loads(first)
+    q = point.get("quality") or {}
+    tier = q.get("tier", 3)
+    label = {0: "live", 1: "ageing (last measurement 10-15 min old)"}.get(tier, "stale (no measurement in 15 min; just restarted?)")
+    if tier == 0:
+        print("ok space-weather data: " + label); sys.exit()
+    try:
+        rows = json.loads(rest)
+        active = sorted((r for r in rows if r.get("active") and r.get("time_tag")), key=lambda r: ts(r["time_tag"]))
+        plasma = [r for r in active if r.get("proton_speed") is not None]
+        std = [r for r in rows if not r.get("active") and r.get("proton_speed") is not None and r.get("time_tag")]
+        newest = max(ts(r["time_tag"]) for r in rows)
+        ours = ts(point["observedAt"])
+        behind = bool(plasma) and (ts(plasma[-1]["time_tag"]) - ours).total_seconds() > 600
+        gap = active and active[-1].get("proton_speed") is None and std and (datetime.now(timezone.utc) - max(ts(r["time_tag"]) for r in std)).total_seconds() <= 900
+        if gap and not behind:
+            name = active[-1].get("source", "?")
+            since = ts(plasma[-1]["time_tag"]).strftime("%H:%MZ") if plasma else "the start of the file"
+            print("ok space-weather data: upstream gap (NOAA active spacecraft %s has no plasma since %s; standby current)" % (name, since)); sys.exit()
+        if behind:
+            label += "; our ingest is behind NOAA (active data newer than ours)"
+    except Exception:
+        pass
+    print("no space-weather data: " + label)
+except Exception:
+    print("no space-weather data unavailable")
+' 2>/dev/null || echo "no space-weather data unavailable")
+  item "${fresh%% *}" "${fresh#* }"
+}
+
 check() { # pre-demo checklist
   local fail=0 ok
   network_item
@@ -1904,18 +2011,7 @@ check() { # pre-demo checklist
     fi
     item $ok "shared on your tailnet: $PUBLIC_URL (open it on your phone to confirm)"
   fi
-  local fresh
-  fresh=$(curl -s -m 5 http://127.0.0.1:3001/api/feed/space-weather/latest | python3 -Ic '
-import json, sys
-try:
-    q = json.load(sys.stdin).get("quality") or {}
-    tier = q.get("tier", 3)
-    label = {0: "live", 1: "ageing (last measurement 10-15 min old)"}.get(tier, "stale (no measurement in 15 min; just restarted?)")
-    print(("ok" if tier == 0 else "no") + " space-weather data: " + label)
-except Exception:
-    print("no space-weather data unavailable")
-' 2>/dev/null || echo "no space-weather data unavailable")
-  item "${fresh%% *}" "${fresh#* }"
+  space_weather_item
   # || true: with the backend not loaded, launchctl fails and pipefail + set -e would end the checklist here.
   local dir; dir=$(launchctl print "$UID_DOMAIN/uk.lightbound.gauss-backend" 2>/dev/null | awk -F'= ' '/working directory =/ && !d {print $2; d=1}' || true)
   local report; report=$(python3 -Ic '

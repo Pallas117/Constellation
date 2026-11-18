@@ -36,7 +36,10 @@ stub launchctl 'S="$KICKS.state"; case "$1" in
   bootstrap) l=$(basename "$3" .plist); { grep -vx "out $l" "$S" 2>/dev/null; echo "in $l"; } >"$S.t"; mv "$S.t" "$S"; echo "bootstrap $l" >>"$KICKS"; exit 0 ;;
 esac; exit 1'
 stub df 'printf "Filesystem 1G-blocks Used Available\n/dev/disk3s1s1 228 13 %s\n" "${DISKGB:-50}"'
-stub curl 'printf "%s" "$(cat "$HEALTH_FILE" 2>/dev/null || echo "${HEALTH:-200}")"' # code() reads only the HTTP status
+stub curl 'case "$*" in
+  *space-weather/latest*) [ -z "${SWLATEST:-}" ] || printf "%s" "$SWLATEST" ;;
+  *rtsw_wind_1m*) [ -z "${RTSW:-}" ] || { echo "curl $*" >>"$ACTIONS"; printf "%s" "$RTSW"; } ;;
+  *) printf "%s" "$(cat "$HEALTH_FILE" 2>/dev/null || echo "${HEALTH:-200}")" ;; esac' # code() reads only the HTTP status
 stub sudo 'exit 1'
 stub argo 'case "$1" in
   notify) [ $# -gt 1 ] || { [ -n "${OLD_ARGO:-}" ] && echo "usage: argo [status|doctor]" >&2 || echo "usage: argo notify [-key K -every 30m] TITLE MESSAGE" >&2; exit 1; }
@@ -67,7 +70,7 @@ run() { # run <args...>: gauss-services.sh with the stubs; alerts land in $LOG
     SRC="${SRC:-AC Power}" BATT="${BATT:-80%; charging; present: true}" SD="${SD:-0}" FCC="${FCC:-}" ACW="${ACW:-}" \
     LEAKY="${LEAKY:-}" LEAKFP="${LEAKFP:-12 MB}" AVAIL="${AVAIL:-50}" GAUSS_SWAP_LAST="${SWAPLAST:-/dev/null}" \
     GATEENV="${GATEENV:-}" GATES_PYTHON="${GATES_PYTHON:-}" ${GATELEAK:+ALLOWED_ORIGINS=https://live.example MESH_STORE_PATH=/live/data/mesh/devices.json COMMERCE_DB_PATH=/live/data/commerce/commerce.db GAUSS_BEDROCK_DIR=/live/data/bedrock NODE_ENV=production} \
-    ARGOSTATUS="${ARGOSTATUS:-}" LEVEL="${LEVEL:-1}" FREE="${FREE:-50}" SWAPUSED="${SWAPUSED:-1000}" OLD_ARGO="${OLD_ARGO:-}" bash "$SCRIPT" "$@"
+    SWLATEST="${SWLATEST:-}" RTSW="${RTSW:-}" ARGOSTATUS="${ARGOSTATUS:-}" LEVEL="${LEVEL:-1}" FREE="${FREE:-50}" SWAPUSED="${SWAPUSED:-1000}" OLD_ARGO="${OLD_ARGO:-}" bash "$SCRIPT" "$@"
 }
 expect() { # expect <name> <condition-exit-code>
   if [ "$2" = 0 ]; then pass=$((pass + 1)); else failed=$((failed + 1)); echo "FAIL: $1"; sed 's/^/    alerts: /' "$T/log"; fi
@@ -369,6 +372,7 @@ head_is() { [ "$(g rev-parse HEAD)" = "$1" ]; }
 mkdir -p "$LIVE/data/bedrock" "$LIVE/node_modules"
 printf 'node_modules/\nfrontend/dist/\n' >"$LIVE/.gitignore"
 echo 200 >"$LIVE/health"; echo a >"$LIVE/package-lock.json"; echo t0 >"$LIVE/data/bedrock/telemetry.jsonl"
+mkdir -p "$LIVE/docs" "$LIVE/.claude"; echo doc >"$LIVE/docs/NOTE.md"; echo skill >"$LIVE/.claude/NOTE.md"
 g add -A && g commit -qm good-a; A=$(g rev-parse HEAD)
 echo v2 >"$LIVE/backend/server.ts"; g commit -qam good-b; Bc=$(g rev-parse HEAD)
 echo 500 >"$LIVE/health"; g commit -qam bad; C=$(g rev-parse HEAD)
@@ -457,6 +461,79 @@ out=$(run deploy "$Bc" --no-fallback 2>&1); rc=$?
 [ $rc = 0 ] && head_is "$Bc" && [[ "$out" == *"warning: no fallback to refresh"* ]] && [ ! -e "$FB/ready" ]
 expect "deploy --no-fallback: warns, deploys, leaves none" $?
 main_at "$D"; run deploy "$D" --no-fallback >/dev/null 2>&1; head_is "$D"; expect "deploy back to D, the gated tree the GAU-162 checks below start from" $?
+# GAU-211: a commit that stops tracking live's telemetry file (now in .gitignore). Live appends to it in
+# place by path while the deploy runs, so the file itself must stay where it is (same inode, never moved):
+# a plain checkout refuses going forward (changed file) and going back silently writes the committed copy
+# over live's (git overwrites ignored files).
+tel="$LIVE/data/bedrock/telemetry.jsonl"; ino() { stat -f %i "$1"; }
+kept() { [ "$(cat "$tel")" = "$before" ] && [ "$(ino "$tel")" = "$inode" ] && [ ! -e "$tel.gauss-keep" ]; } # same data, same file, no link left
+saved=$(cat "$tel"); g checkout -q --detach "$D"; g rm -q --cached data/bedrock/telemetry.jsonl; echo data/bedrock/telemetry.jsonl >>"$LIVE/.gitignore"
+g add .gitignore; g commit -qm untrack; U=$(g rev-parse HEAD)
+echo 500 >"$LIVE/health"; g commit -qam bad-untrack; Ubad=$(g rev-parse HEAD)
+rm "$tel"; g checkout -q --detach "$D"; echo "$saved" >"$tel"; gated "$U"; gated "$Ubad"; main_at "$Ubad"
+echo t2 >>"$tel"; before=$(cat "$tel"); inode=$(ino "$tel")
+out=$(HEALTH_FILE="$LIVE/health" run deploy "$Ubad" --no-fallback 2>&1); rc=$?
+[ $rc = 1 ] && head_is "$D" && kept && [[ "$out" == *"Rolled back"* ]] && [ "$(g status --porcelain data)" = " M data/bedrock/telemetry.jsonl" ]
+expect "GAU-211: a failed deploy across the untracking commit rolls back with live telemetry intact" $?
+# The backend keeps appending while git checks out: this git appends the line in $T/mark by path just
+# before and just after every checkout (and, once, removes the file if $T/git-eats exists; used below).
+stub git 'if [[ " $* " != *" checkout -q --detach "* ]]; then exec /usr/bin/git "$@"; fi
+[ ! -s "'"$T"'/mark" ] || cat "'"$T"'/mark" >>"'"$tel"'"
+/usr/bin/git "$@"; rc=$?
+if [ -e "'"$T"'/git-eats" ]; then rm -f "'"$T"'/git-eats" "'"$tel"'"; fi
+[ ! -s "'"$T"'/mark" ] || cat "'"$T"'/mark" >>"'"$tel"'"
+exit $rc'
+appended() { [ "$(grep -c "^$1\$" "$tel")" = 4 ] && [ "$(grep -v "^$1\$" "$tel")" = "$before" ] && [ "$(ino "$tel")" = "$inode" ] && [ ! -e "$tel.gauss-keep" ]; }
+echo during-forward >"$T/mark"; out=$(HEALTH_FILE="$LIVE/health" run deploy "$U" --no-fallback 2>&1); rc=$?
+[ $rc = 0 ] && head_is "$U" && appended during-forward && [ -z "$(g ls-files data/bedrock)" ] && [ -z "$(g status --porcelain data)" ]
+expect "GAU-211: deploy across the untracking commit keeps live telemetry (untracked, ignored, the same file) and every line appended meanwhile" $?
+echo t3 >>"$tel"; before=$(cat "$tel")
+echo older >"$tel.gauss-keep"; out=$(HEALTH_FILE="$LIVE/health" run deploy "$D" --no-fallback 2>&1); rc=$?
+[ $rc = 1 ] && head_is "$U" && [[ "$out" == *"gauss-keep is live data left by an earlier checkout"* ]] && [ "$(cat "$tel")" = "$before" ] \
+  && [ "$(cat "$tel.gauss-keep")" = older ] && [ -z "$(g status --porcelain --untracked-files=no data)" ]
+expect "GAU-211: a differing copy left by an interrupted checkout stops the next one (neither file touched)" $?
+rm "$tel.gauss-keep"
+echo during-back >"$T/mark"; out=$(HEALTH_FILE="$LIVE/health" run deploy "$D" --no-fallback 2>&1); rc=$?
+[ $rc = 0 ] && head_is "$D" && appended during-back && [ "$(g status --porcelain data)" = " M data/bedrock/telemetry.jsonl" ]
+expect "GAU-211: deploying back to a commit that still tracks the file keeps live's copy and every line appended meanwhile" $?
+# Safety net: a git that removes the file all the same (once, in the checkout) still leaves live's data in place.
+: >"$T/mark"; before=$(cat "$tel")
+touch "$T/git-eats"; out=$(HEALTH_FILE="$LIVE/health" run deploy "$U" --no-fallback 2>&1); rc=$?
+[ $rc = 0 ] && head_is "$U" && kept && [ ! -e "$T/git-eats" ] && [[ "$out" == *"git touched data/bedrock/telemetry.jsonl"*"live's copy is back in place"* ]]
+expect "GAU-211: if git removes the file during the checkout, live's copy is put back from the hard link" $?
+mv "$tel" "$tel.gauss-keep" # as left by a run that stopped between git removing the file and the restore
+out=$(HEALTH_FILE="$LIVE/health" run deploy "$D" --no-fallback 2>&1); rc=$?
+[ $rc = 0 ] && head_is "$D" && kept
+expect "GAU-211: an interrupted restore is finished by the next checkout before anything else" $?
+rm "$T/bin/git" "$T/mark"
+# A checkout git refuses for another reason (here a local change to a file the target also changes) leaves
+# the data file, and what the index says about it, exactly as they were.
+eval "$(sed -n '/^carry_checkout()/,/^}/p' "$SCRIPT")"
+CR="$T/carry-repo"; c() { git -C "$CR" -c user.email=t@t -c user.name=t "$@"; }
+git init -q "$CR"; mkdir -p "$CR/data/bedrock"; echo r0 >"$CR/data/bedrock/telemetry.jsonl"; echo v1 >"$CR/code"
+c add -A; c commit -qm tracked; c rm -q --cached data/bedrock/telemetry.jsonl; echo data/bedrock/telemetry.jsonl >"$CR/.gitignore"; echo v2 >"$CR/code"
+c add -A; c commit -qm untracked; CU=$(c rev-parse HEAD); c checkout -q --detach HEAD~1; echo r0 >"$CR/data/bedrock/telemetry.jsonl"
+echo r1 >>"$CR/data/bedrock/telemetry.jsonl"; echo local >"$CR/code"; was=$(c status --porcelain); cino=$(ino "$CR/data/bedrock/telemetry.jsonl")
+out=$(carry_checkout "$CR" "$CU" 2>&1); rc=$?
+[ $rc = 1 ] && [ "$(c rev-parse HEAD)" != "$CU" ] && [ "$(c status --porcelain)" = "$was" ] && [ "$(ino "$CR/data/bedrock/telemetry.jsonl")" = "$cino" ] \
+  && [ "$(cat "$CR/data/bedrock/telemetry.jsonl")" = "r0
+r1" ] && [ ! -e "$CR/data/bedrock/telemetry.jsonl.gauss-keep" ]
+expect "GAU-211: a checkout git refuses for another reason leaves the data file and its index entry as they were" $?
+main_at "$D"
+# 17 Nov 2026: a live checkout whose only edit was a skill file blocked a deploy. Edits under .claude/ or docs/
+# are saved as patches and restored; any other changed path still refuses.
+main_at "$Bc"; echo "local skill text" >>"$LIVE/.claude/NOTE.md"; echo "local doc" >>"$LIVE/docs/NOTE.md"
+out=$(run deploy "$Bc" --no-fallback 2>&1); rc=$?
+SAVEDS=("$T/home/Library/Logs/gauss/live-local-changes/"*/); SAVED=${SAVEDS[0]}
+[ $rc = 0 ] && head_is "$Bc" && [[ "$out" == *"local doc/agent-note change"* ]] && [ -z "$(g status --porcelain --untracked-files=no -- .claude docs)" ] \
+  && grep -q "local skill text" "$SAVED/.claude_NOTE.md.patch" && grep -q "local doc" "$SAVED/docs_NOTE.md.patch"
+expect "deploy: local edits under .claude/ and docs/ are saved as patches, restored, and the deploy proceeds" $?
+ev 'any(e["event"]=="deploy-local-doc-changes" and "saved_to" in e for e in E)'; expect "events: the saved doc-only live changes are logged" $?
+main_at "$D"; run deploy "$D" --no-fallback >/dev/null 2>&1; head_is "$D" || expect "deploy back to D after the doc-only test" 1
+main_at "$Bc"; echo "local skill text" >>"$LIVE/.claude/NOTE.md"; echo local >>"$LIVE/backend/server.ts"
+out=$(run deploy "$Bc" --no-fallback 2>&1); [[ "$out" == *"local code changes"*"backend/server.ts"* ]] && head_is "$D" && ! grep -q "NOTE.md" <<<"${out#*server.ts}"
+expect "deploy: a code change next to a doc change still refuses, and the doc change is not touched" $?
+g checkout -q -- backend/server.ts .claude/NOTE.md
 # A deploy's install and build can run a low battery flat mid-switch (4 Nov 2026: one ran at 13% on 8 W).
 main_at "$Bc"
 out=$(SRC="Battery Power" BATT="13%; discharging; present: true" run deploy "$Bc" 2>&1); rc=$?
@@ -493,6 +570,22 @@ out=$(run deploy "$E" --emergency "hotfix for the outage" 2>&1); rc=$?
 expect "--emergency deploys without the checks, texts the phone and is recorded" $?
 out=$(run check | plain); [[ "$out" == *"✗ live = ${E:0:7}, deployed "*"EMERGENCY (hotfix for the outage)"* ]]; expect "check: an emergency deploy stays ✗" $?
 out=$(run deploy "$D" --emergency 2>&1); [ $? = 2 ] && [[ "$out" == *"needs a reason"* ]]; expect "--emergency needs a reason" $?
+# check: space-weather data. A stale point is upstream's fault when NOAA's active spacecraft has no plasma
+# while a standby one is current; it stays ✗ when NOAA has newer active data than our ingest (GAU: 17 Nov 2026).
+now_z() { date -u -v"$1" +%Y-%m-%dT%H:%M:%S; }
+rtsw() { # rtsw <active-plasma-age> <standby-age> <active-newest-age>: rows as NOAA lists them (newest first)
+  printf '[{"time_tag":"%s","active":true,"source":"SOLAR1","proton_speed":null,"proton_density":null},{"time_tag":"%s","active":false,"source":"ACE","proton_speed":400,"proton_density":5},{"time_tag":"%s","active":true,"source":"SOLAR1","proton_speed":410,"proton_density":6}]' \
+    "$(now_z "-${3}M")" "$(now_z "-${2}M")" "$(now_z "-${1}M")"
+}
+point() { printf '{"quality":{"tier":%s},"observedAt":"%sZ","spacecraft":"SOLAR1"}' "$1" "$(now_z "-$2M")"; }
+sw() { run check | plain | grep "space-weather data"; }
+out=$(SWLATEST="$(point 2 40)" RTSW="$(rtsw 40 1 1)" sw); [[ "$out" == *"✓ space-weather data: upstream gap (NOAA active spacecraft SOLAR1 has no plasma since "*"Z; standby current)"* ]]
+expect "check: a stale point with NOAA's active spacecraft out of plasma is an upstream-gap warning, not ✗" $?
+out=$(SWLATEST="$(point 2 40)" RTSW="$(rtsw 5 1 1)" sw); [[ "$out" == *"✗ space-weather data: stale"*"our ingest is behind NOAA"* ]]
+expect "check: a stale point while NOAA has newer active plasma stays ✗ (our ingest is behind)" $?
+out=$(SWLATEST="$(point 0 1)" sw); [[ "$out" == *"✓ space-weather data: live"* ]] && ! grep -q "^curl" "$T/actions"
+expect "check: a live point does not ask NOAA anything" $?
+out=$(SWLATEST="$(point 2 40)" RTSW="" sw); [[ "$out" == *"✗ space-weather data: stale"* ]]; expect "check: a stale point with NOAA unreachable stays ✗" $?
 
 # gates record: the five gates on a clean checkout (path with a space), recorded by tree
 GW="$T/gates checkout"; git clone -q "$LIVE" "$GW"; git -C "$GW" checkout -q --detach "$D"; mkdir -p "$GW/node_modules"
