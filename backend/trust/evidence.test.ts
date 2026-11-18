@@ -1,12 +1,13 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
-import { buildEvidencePack, ENVIRONMENT_NOT_SPACECRAFT, GENESIS, verifyEvidencePack, type EvidenceInputs } from "./evidence.js";
+import { VERDICT_LABEL, VERDICT_NEXT_STEP, VERDICT_ORDER } from "../../shared/policy/verdict-next-step.js";
+import { buildEvidencePack, ENVIRONMENT_NOT_SPACECRAFT, GENESIS, packWording, verifyEvidencePack, type EvidenceInputs } from "./evidence.js";
 import { renderEvidencePdf } from "./evidence-pdf.js";
 import { archivePath, clone, csv, mapping, NOW, packFromStoredInputs, rehashPack, rehashRecord, relink, replayed, sha, WINDOW } from "./fixtures/evidence-pack.js";
 import { ingestLog } from "./ingest.js";
 import { HELVETICA_BOLD_WIDTHS, HELVETICA_WIDTHS, textWidth, winAnsi, wrap } from "./pdf.js";
-import { buildTrustRecord, DEFAULT_POLICY, type TrustRecord } from "./record.js";
+import { buildTrustRecord, DEFAULT_POLICY, wordingHits, type TrustRecord, type Verdict } from "./record.js";
 
 test("evidence pack: from a log and a replayed storm, every row accounted for, and the same stored inputs give the same pack and PDF (GAU-60)", async () => {
   const a = await packFromStoredInputs();
@@ -128,4 +129,40 @@ test("PDF writer: core-14 widths, WinAnsi encoding with transliteration, and lin
     assert.ok(lines.every((l) => textWidth(l, "Helvetica", 7) <= width), `width ${width}`);
     assert.equal(lines.join("").replace(/\s/g, ""), long.replace(/\s/g, ""), "nothing lost");
   }
+});
+
+test("next step per verdict: one reviewed line for every verdict, in plain ASCII, with no claim a pack may not make (GAU-59)", async () => {
+  const verdicts: Verdict[] = ["consistent", "degraded-context", "unknown"];
+  assert.deepEqual([...VERDICT_ORDER].sort(), [...verdicts].sort(), "every verdict is ordered once");
+  for (const v of verdicts) {
+    assert.ok(VERDICT_NEXT_STEP[v].length > 40, `${v} has a next step`);
+    assert.match(VERDICT_NEXT_STEP[v], /^[\x20-\x7e]+$/, `${v} is plain ASCII, so the PDF prints it as written`);
+    assert.ok(VERDICT_LABEL[v]);
+  }
+  assert.deepEqual(wordingHits(Object.values(VERDICT_NEXT_STEP)), [], "no banned words");
+  const { pack } = await packFromStoredInputs();
+  assert.deepEqual(packWording({ ...pack, limitations: Object.values(VERDICT_NEXT_STEP) }), [], "no regulatory or at-the-spacecraft claims");
+});
+
+test("evidence pack PDF: the next step is printed for each verdict the pack holds, and only those (GAU-59)", async () => {
+  const { pack } = await packFromStoredInputs();
+  const firstWords = (v: Verdict) => VERDICT_NEXT_STEP[v].split(" ").slice(0, 4).join(" ");
+  const check = (p: typeof pack) => {
+    const text = renderEvidencePdf(p).toString("latin1");
+    for (const v of VERDICT_ORDER) {
+      const held = p.summary.verdicts[v] > 0;
+      assert.equal(text.includes(`(If ${VERDICT_LABEL[v]}) Tj`), held, `${v}: key printed only when held`);
+      assert.equal(text.includes(`(${firstWords(v)}`), held, `${v}: step printed only when held`);
+    }
+    return text;
+  };
+  check(pack);
+  // Every verdict at once, and none: the section follows the counts.
+  const all = clone(pack);
+  all.summary.verdicts = { consistent: 1, "degraded-context": 1, unknown: 1 };
+  assert.ok(check(all).includes("(What to do next) Tj"));
+  const none = clone(pack);
+  none.summary.verdicts = { consistent: 0, "degraded-context": 0, unknown: 0 };
+  assert.ok(!check(none).includes("(What to do next) Tj"));
+  assert.ok(!JSON.stringify(pack).includes(firstWords("consistent")), "the lines are not part of the hashed pack");
 });

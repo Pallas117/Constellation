@@ -67,6 +67,14 @@ test.describe("Evidence view", () => {
     const records = page.getByRole("table", { name: "Trust records" }).locator("tbody tr");
     await expect(records).toHaveCount(fixture.analysis.records.length);
     await expect(records.first()).toContainText("DEMO-SAT-1");
+    // One reviewed next step per verdict the pack holds (fixture: 2 degraded context, 1 consistent, 0 unknown).
+    const next = page.getByRole("list", { name: "What to do next" }).locator("li");
+    await expect(next).toHaveCount(2);
+    await expect(next.first()).toContainText("degraded-context");
+    await expect(next.first()).toContainText("2 records");
+    await expect(next.first()).toContainText("Give the output a second look");
+    await expect(next.nth(1)).toContainText("1 record");
+    await expect(page.getByRole("list", { name: "What to do next" })).not.toContainText("not checked by Gauss");
     await expect(page.getByText("Rows not used, with the reason")).toBeVisible();
     await expect(page.getByText(/^row 9 · /)).toBeVisible();
 
