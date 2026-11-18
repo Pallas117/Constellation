@@ -79,9 +79,32 @@ test("feed WebSockets: both paths connect at once and stay open; bad origin and 
   });
 
   const blocked = await Promise.all(streams.map((s) => feedSocket(`${base}/ws/feed/${s}`, "https://evil.example")));
-  blocked.forEach((r, i) => assert.equal(r.closeCode, 1008, `${streams[i]}: origin guard`));
+  // The guard now refuses in the upgrade handler (403, no handshake), so there is no socket to close with 1008.
+  blocked.forEach((r, i) => {
+    assert.equal(r.status, 403, `${streams[i]}: origin guard`);
+    assert.equal(r.first, null, `${streams[i]}: no data to a refused origin`);
+  });
 
   assert.equal((await feedSocket(`${base}/ws/feed/unknown`)).status, 400);
+});
+
+test("feed WebSockets: an oversize frame closes that socket with 1009 and the backend keeps serving (REQ-SEC-020)", async (t) => {
+  const { server, host } = await startBackend({ port: 0 });
+  const { port } = server.address() as { port: number };
+  const base = `ws://${host}:${port}`;
+  t.after(async () => {
+    delete process.env.AUTH_REQUIRED;
+    await stopBackend();
+  });
+  process.env.AUTH_REQUIRED = "false"; // dev bypass, so the guard admits the socket
+  const code = await new Promise<number>((resolve) => {
+    const ws = new WebSocket(`${base}/ws/feed/space-weather`);
+    ws.on("open", () => ws.send(Buffer.alloc(2 * 1024 * 1024)));
+    ws.on("close", (c) => resolve(c));
+    ws.on("error", () => {});
+  });
+  assert.equal(code, 1009);
+  assert.equal((await feedSocket(`${base}/ws/feed/space-weather`)).openAfter, true, "backend still accepts sockets");
 });
 
 test("RAG endpoints require a session and never log query text", async (t) => {
