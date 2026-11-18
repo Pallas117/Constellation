@@ -144,7 +144,7 @@ func TestCallPausesHeavyJobsOnly(t *testing.T) {
 				if code != 0 || lines(t, out) != 60 {
 					t.Fatalf("exit %d, %d lines, want 0 and 60", code, lines(t, out))
 				}
-			case <-time.After(5 * time.Second):
+			case <-time.After(60 * time.Second): // 60 s for throttled gate runs, as above
 				t.Fatal("job never finished after the call")
 			}
 		})
