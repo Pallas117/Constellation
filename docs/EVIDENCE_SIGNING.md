@@ -33,6 +33,14 @@ What the result means:
 
 The keyring is the trust anchor: take it from Gauss through a channel other than the pack (the repository at a release tag, or handed over at contract), never from the pack itself. The PDF prints the signing key id, so you can also compare it with the id Gauss gave you.
 
+## In the operator console (GAU-59)
+
+Operators and admins can run the same flow in the app at `/operator/evidence`: load a log (or the synthetic sample), read the trust records, download `pack.json` and `pack.pdf`, and check a pack. It is the command line underneath: the page starts `trust:ingest` for the log and shows the lines `trust:verify` prints, so the pack and the result are the same either way (`backend/trust/evidence-router.ts`).
+
+- The page **cannot sign** and there is no signing route. A pack built there says "Not signed"; the key holder signs the downloaded file on the host as below, then the page (or the customer, offline) can check the signed file.
+- Without a signature the check says FAILED, as `trust:verify` does. "Integrity only" is `--allow-unsigned`.
+- Nothing is kept on the server: the log sits in a private temporary folder while the run lasts (about 20 s for a stored storm) and is then removed. Logs over 1 MB, and windows that are not a stored storm, are run from the command line.
+
 ## Sign
 
 Packs are signed when they are made (`npm run trust:ingest -- … --pack pack.json --pdf pack.pdf --sign-key <key file>`) or afterwards:
