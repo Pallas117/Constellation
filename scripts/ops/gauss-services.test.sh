@@ -66,7 +66,7 @@ run() { # run <args...>: gauss-services.sh with the stubs; alerts land in $LOG
     GAUSS_SUDOERS="$T/sudoers" MLX="${MLX:-0}" MLXPORT="${MLXPORT:-8089}" ACTIONS="$T/actions" GAUSS_BALANCE="${GAUSS_BALANCE:-1}" \
     LOADED="${LOADED:-}" HEALTH="${HEALTH:-200}" HEALTH_FILE="${HEALTH_FILE:-}" GAUSS_DEPLOY_WAIT=0 DISKGB="${DISKGB:-50}" \
     GATEFAIL="${GATEFAIL:-}" MOVEMAIN="${MOVEMAIN:-}" GAUSS_BY=test-user BOOT="${BOOT:-1000}" GAUSS_DIAG_DIRS="$T/diag" GAUSS_EVENTS_MAX_KB="${GAUSS_EVENTS_MAX_KB:-5120}" \
-    WAKE="${WAKE:-1000}" GAUSS_GATEBOX_TRUST="${GAUSS_GATEBOX_TRUST:-}" GAUSS_DEV_DRY="${GAUSS_DEV_DRY:-0}" GAUSS_GATES_START=0 HEAVYGIVEUP="${HEAVYGIVEUP:-}" NPMNET="${NPMNET:-}" GAUSS_GATEBOX="${GAUSS_GATEBOX:-}" GAUSS_FLEET_MEMORY="${GAUSS_FLEET_MEMORY:-}" GAUSS_GATEBOX_KEY="$T/gatebox-key" GBRC="${GBRC:-}" GAUSS_GATES_EXPIRE_H="${GAUSS_GATES_EXPIRE_H:-72}" GAUSS_GATES_HOOK_S="${GAUSS_GATES_HOOK_S:-300}" GAUSS_DEV_API_PORT="${GAUSS_DEV_API_PORT:-3101}" \
+    WAKE="${WAKE:-1000}" GAUSS_GATEBOX_TRUST="${GAUSS_GATEBOX_TRUST:-}" GAUSS_DEV_DRY="${GAUSS_DEV_DRY:-0}" GAUSS_GATES_START=0 HEAVYGIVEUP="${HEAVYGIVEUP:-}" NPMNET="${NPMNET:-}" GAUSS_GATEBOX="${GAUSS_GATEBOX:-}" GAUSS_GATEBOX_TIMEOUT_S="${GAUSS_GATEBOX_TIMEOUT_S:-}" GAUSS_FLEET_MEMORY="${GAUSS_FLEET_MEMORY:-}" GAUSS_GATEBOX_KEY="$T/gatebox-key" GBRC="${GBRC:-}" GAUSS_GATES_EXPIRE_H="${GAUSS_GATES_EXPIRE_H:-72}" GAUSS_GATES_HOOK_S="${GAUSS_GATES_HOOK_S:-300}" GAUSS_DEV_API_PORT="${GAUSS_DEV_API_PORT:-3101}" \
     SRC="${SRC:-AC Power}" BATT="${BATT:-80%; charging; present: true}" SD="${SD:-0}" FCC="${FCC:-}" ACW="${ACW:-}" \
     LEAKY="${LEAKY:-}" LEAKFP="${LEAKFP:-12 MB}" AVAIL="${AVAIL:-50}" GAUSS_SWAP_LAST="${SWAPLAST:-/dev/null}" \
     GATEENV="${GATEENV:-}" GATES_PYTHON="${GATES_PYTHON:-}" ${GATELEAK:+ALLOWED_ORIGINS=https://live.example MESH_STORE_PATH=/live/data/mesh/devices.json COMMERCE_DB_PATH=/live/data/commerce/commerce.db GAUSS_BEDROCK_DIR=/live/data/bedrock NODE_ENV=production} \
@@ -677,7 +677,7 @@ rm -f "$(grep -l "sha=$N" "$GQ"/*.req)"
 # Gatebox (GAU-223): the Oracle VM screens each request first over the tailnet. GBRC is the stub's
 # exit code; "say" adds the "gates rc=N in S s on <sha>" line gauss-gate-run prints after the gates ran
 # ("anon" leaves the commit out of it, as an older gauss-gate-run would).
-stub ssh 'echo "ssh $*" >>"$ACTIONS"; a=${@: -1}; case "$GBRC" in say*) r=${GBRC#say}; echo "gates rc=$r in 90 s on ${a##* }"; exit "$r" ;; anon*) r=${GBRC#anon}; echo "gates rc=$r in 90 s"; exit "$r" ;; *) echo "ssh: connect to host gatebox port 22: Operation timed out" >&2; exit "${GBRC:-255}" ;; esac'
+stub ssh 'echo "ssh $*" >>"$ACTIONS"; a=${@: -1}; case "$GBRC" in hang) sleep 5; exit 0 ;; say*) r=${GBRC#say}; echo "gates rc=$r in 90 s on ${a##* }"; exit "$r" ;; anon*) r=${GBRC#anon}; echo "gates rc=$r in 90 s"; exit "$r" ;; *) echo "ssh: connect to host gatebox port 22: Operation timed out" >&2; exit "${GBRC:-255}" ;; esac'
 : >"$T/gatebox-key"
 g checkout -q --detach "$E"; echo gb1 >"$LIVE/backend/server.ts"; g commit -qam gb1; GB1=$(g rev-parse HEAD); g checkout -q --detach "$E"
 (cd "$LIVE" && run gates enqueue "$GB1" >/dev/null 2>&1)
@@ -699,6 +699,12 @@ g checkout -q --detach "$E"; echo gb3 >"$LIVE/backend/server.ts"; g commit -qam 
 out=$(GAUSS_GATEBOX=gatebox GBRC=1 run gates run 2>&1)
 [ "$(tail -1 "$GR" | cut -d' ' -f2,4)" = "$GB3 PASSED" ] && grep -q '^heavy --wait' "$T/actions"
 expect "gates run: a gatebox exit without its result line is not a failure of the commit" $?
+g checkout -q --detach "$E"; echo gb5 >"$LIVE/backend/server.ts"; g commit -qam gb5; GB5=$(g rev-parse HEAD); g checkout -q --detach "$E"
+(cd "$LIVE" && run gates enqueue "$GB5" >/dev/null 2>&1)
+out=$(GAUSS_GATEBOX=gatebox GAUSS_GATEBOX_TIMEOUT_S=1 GBRC=hang run gates run 2>&1)
+[[ "$out" == *"gatebox could not screen ${GB5:0:7} (exit 142: no answer in 1 s)"* ]] && grep -q '^heavy --wait' "$T/actions" \
+  && [ "$(tail -1 "$GR" | cut -d' ' -f2,4)" = "$GB5 PASSED" ]
+expect "gates run: a gatebox screen that hangs past its time limit is cut off and gated here (18 Nov hang)" $?
 g checkout -q --detach "$E"; echo gb4 >"$LIVE/backend/server.ts"; g commit -qam gb4; GB4=$(g rev-parse HEAD); g checkout -q --detach "$E"
 (cd "$LIVE" && run gates enqueue "$GB4" >/dev/null 2>&1)
 out=$(GAUSS_GATEBOX='-oProxyCommand=x' GBRC=say1 run gates run 2>&1)

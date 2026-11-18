@@ -157,6 +157,9 @@ GATEBOX="${GAUSS_GATEBOX:-$(head -1 "$WATCH_DIR/gatebox" 2>/dev/null || true)}"
 GATEBOX_KEY="${GAUSS_GATEBOX_KEY:-$HOME/.ssh/gauss-gate}"
 GATEBOX_HOSTS="$WATCH_DIR/gatebox.known_hosts" # the gatebox's host key, pinned on first contact over the tailnet
 GATEBOX_REPO="Pallas117/Constellation"         # the only repo gauss-gate-run accepts
+# A screen that never ends held the whole train (18 Nov: #319 hung mid test suite on Talos for 25+ min, 20
+# requests behind it). Past this many seconds the ssh is killed (exit 142) and the commit is gated here.
+GATEBOX_TIMEOUT_S="${GAUSS_GATEBOX_TIMEOUT_S:-1200}"
 # Merge-only trust (GAU-239, Josh 2026-11-10: on battery nothing merged for hours although the checks
 # that need this Mac are small). With "merge" (GAUSS_GATEBOX_TRUST, or the second line of
 # $WATCH_DIR/gatebox), a merge-train request (--pr) the gatebox passed on its exact head runs only
@@ -1189,7 +1192,8 @@ gates_prescreen() { # gates_prescreen <sha> <tree>: 0 the gatebox failed the com
   echo "$(date '+%F %T') gatebox $GATEBOX: screening ${sha:0:7} ..."
   # BatchMode: never a prompt. The host key is pinned in its own file on first contact (the tailnet has
   # already authenticated the machine); a changed key is refused, and the run falls back to this Mac.
-  ssh -i "$GATEBOX_KEY" -o IdentitiesOnly=yes -o BatchMode=yes -o ConnectTimeout=15 -o ServerAliveInterval=30 \
+  # macOS has no timeout(1): perl sets the alarm and execs ssh, which SIGALRM then ends (exit 142).
+  perl -e 'alarm shift; exec @ARGV' "$GATEBOX_TIMEOUT_S" ssh -i "$GATEBOX_KEY" -o IdentitiesOnly=yes -o BatchMode=yes -o ConnectTimeout=15 -o ServerAliveInterval=30 \
     -o ServerAliveCountMax=4 -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile="$GATEBOX_HOSTS" \
     "gate@$GATEBOX" "$GATEBOX_REPO $sha" >"$log" 2>&1 </dev/null || rc=$?
   last=$(grep -E '^gates rc=' "$log" | tail -1)
@@ -1204,6 +1208,11 @@ gates_prescreen() { # gates_prescreen <sha> <tree>: 0 the gatebox failed the com
     event gates-gatebox gates "failed on the gatebox" sha="$sha" rc:="$rc" host="$GATEBOX"
     gates_result "$sha" "$tree" FAILED "on gatebox $GATEBOX (npm ci, test, quality:full, build): $last; log $log"
     return 0
+  fi
+  if [ "$rc" = 142 ]; then
+    event gates-gatebox gates "gatebox screen timed out" sha="$sha" host="$GATEBOX" seconds:="$GATEBOX_TIMEOUT_S"
+    echo "$(date '+%F %T') gatebox could not screen ${sha:0:7} (exit 142: no answer in ${GATEBOX_TIMEOUT_S} s); gating here"
+    return 1
   fi
   echo "$(date '+%F %T') gatebox could not screen ${sha:0:7} (exit $rc: $(tail -1 "$log" 2>/dev/null)); gating here"
   return 1

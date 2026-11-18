@@ -1,6 +1,6 @@
 {
   "$comment": "Constellation requirements baseline (GAU-120). NASA SP-2016-6105 Rev 2 §6.2/§5.3. Methods: T test, A analysis, I inspection, D demonstration. T evidence = exact test names; A/I/D evidence = repo paths. Verified by `npm run verify`.",
-  "version": "1.17.2",
+  "version": "1.18.0",
   "requirements": [
     {
       "id": "REQ-ING-001",
@@ -632,6 +632,31 @@
       ]
     },
     {
+      "id": "REQ-OPS-011",
+      "title": "Always-on VPS kit is closed by default",
+      "statement": "The VPS kit shall keep the hub backend on 127.0.0.1 (reachable on the tailnet only through tailscale serve), take the Tailscale auth key at run time without printing it or putting it on a command line, enable the firewall (deny incoming except tailscale0) last, run services as a non-login user, verify downloaded Node and Go against published checksums, never weaken TLS, hold no keys in the repository, and leave the Argo relay stopped until a person has confirmed the other device's key fingerprint.",
+      "rationale": "An always-on hub is the first Gauss service outside this Mac; a mistake there is reachable from the internet, and Argo pins a key it sees for the first time (docs/ARGO_DTN.md; scripts/ops/vps/README.md).",
+      "parent": "GAU-223",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "vps bootstrap --dry-run exits 0 without root, network or a prompt",
+        "vps bootstrap never prints the Tailscale auth key",
+        "vps bootstrap passes the auth key to tailscale as a file, not on the command line",
+        "vps hub is exposed on the tailnet only through tailscale serve to 127.0.0.1",
+        "vps hub environment binds the backend to 127.0.0.1",
+        "vps firewall denies incoming except on tailscale0",
+        "vps firewall is enabled last, after the tailnet exposure works",
+        "vps services run as a non-login system user",
+        "vps downloads of Node and Go are checked against published checksums",
+        "vps bootstrap leaves the Argo relay stopped until fingerprints are confirmed",
+        "vps confirm-peer refuses on mismatch and is the only thing that starts the relay",
+        "vps confirm-peer asks for a typed yes before pinning",
+        "vps kit contains no keys or tokens",
+        "vps kit never weakens TLS verification"
+      ]
+    },
+    {
       "id": "REQ-WM-001",
       "title": "Deterministic, tamper-evident world records",
       "statement": "Every world-state record shall have a deterministic id and a SHA-256 checksum over its canonical content, and validation shall reject records whose content, id or schema do not match.",
@@ -912,6 +937,45 @@
       "owner": "Josh",
       "evidence": [
         "docs/CRYPTO_INVENTORY.md"
+      ]
+    },
+    {
+      "id": "REQ-TR-017",
+      "title": "Custom replay window is bounded and validated",
+      "statement": "The replay archive fetch for a customer's own dates shall accept only a window with an explicit time zone that ends after it starts and not in the future, shall split any period over 31 days into contiguous archives that cover it exactly, and shall accept only an allowlisted slug as the archive id.",
+      "rationale": "GAU-59 (M1): the paid pilot judges a customer's own period. Bounds protect the open upstream (iSWA) and keep one archive replayable on the 8 GB host; the slug allowlist keeps customer input out of file paths.",
+      "parent": "GAU-59",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "custom replay window: bounds are validated (zone required, from before to, not in the future) and the id is an allowlisted slug (GAU-59)",
+        "custom replay window: a period over 31 days is split into contiguous archives that cover it exactly (GAU-59)"
+      ]
+    },
+    {
+      "id": "REQ-TR-018",
+      "title": "Custom replay archive has the named-event format and provenance",
+      "statement": "A replay archive fetched for a customer window shall have the same format as a named-event archive and shall record its source, terms, retrieval time and dataset ids, shall contain no Kyoto Dst, and shall treat the upstream as untrusted by retrying only rate-limit and server errors with back-off, failing on any other error or on an empty answer, and never echoing upstream text in an error.",
+      "rationale": "GAU-59 (M1): the pilot evidence pack records the archive hash, so the archive must say where its data came from and when; Kyoto terms are unchecked and the repository is public.",
+      "parent": "GAU-59",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "custom replay window: the archive has the named-event format and records source, retrieval time and dataset ids (GAU-59)",
+        "custom replay window: 429 and 5xx back off and retry, a 404 or an empty answer fails with a reason, upstream text is not echoed (GAU-59)"
+      ]
+    },
+    {
+      "id": "REQ-TR-019",
+      "title": "Ingest names the archive safely and reports rows outside its window",
+      "statement": "The log ingest shall take its archive by allowlisted slug or by explicit path, never both, and shall list by row every accepted log row whose time lies outside the archive window as not judged, with the reason.",
+      "rationale": "GAU-59 (M1): a customer log rarely matches the archive to the minute; a row with no environment must be named, never silently given an unknown verdict.",
+      "parent": "GAU-59",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "custom archive ingest: --replay takes only a slug, --archive a path outside the repo, never both (GAU-59)",
+        "custom archive ingest: rows outside the archive window are named per row; rows inside are judged against the custom archive (GAU-59)"
       ]
     },
     {
@@ -1199,6 +1263,53 @@
         "TestChargerReasonInGuardAndAlert",
         "TestChargerStatusAndReport",
         "Argo's guard block is allowlisted; unknown codes drop alone, bad values drop the block"
+      ]
+    },
+    {
+      "id": "REQ-ARG-030",
+      "title": "Power-save mode",
+      "statement": "When a host's power budget is negative (on battery, on a charger that cannot carry the load, or on plain 5 V USB) Argo shall enter power-save at once and leave it only after the budget has been healthy for 10 minutes; while on it shall report \"power-save\" as a guard reason with the charger advice so heavy work waits, stretch its own probe, guard-sampling and mesh-report timers by a factor of 3 (a broken link still probes and reports at once), and send one warn-level text per 6 hours. A host with no battery or no reading shall never enter it, and `argo power-save on|off|auto|status` shall force, release or show it.",
+      "rationale": "On 17 Nov 2026 a Mac on an 8 W charger drained under load; Josh asked Argo to adjust settings as needed on every device. A spacecraft sheds non-essential loads in eclipse and restores them in sunlight; Argo does the same.",
+      "parent": "GAU-195",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "TestPowerSaveEntersAndLeaves",
+        "TestPowerSaveForced",
+        "TestPowerSaveStretchesTimers",
+        "TestPowerSaveHoldsHeavyWorkWithChargerAdvice",
+        "TestPowerSaveTickActsOnceAndRestores",
+        "TestPowerSaveReportStatusAndCLI"
+      ]
+    },
+    {
+      "id": "REQ-ARG-031",
+      "title": "Power-save acts only without admin rights and reversibly",
+      "statement": "In power-save Argo shall quit only menu-bar apps on a fixed allowlist, only while they are running and idle by their own reported state (Cloudflare WARP's app when warp-cli says Disconnected; the daemon stays), by a normal SIGTERM and never through UI scripting, shall record what it quit and relaunch it when power-save ends (never an app off the allowlist, never one already running), and shall only suggest admin settings (pmset, powerprofilesctl, tlp) with the exact command, never run them. External commands use pinned absolute paths and no shell.",
+      "rationale": "Automatic actions must need no admin rights and be undoable; changing settings through UI scripting needs an Automation permission prompt that blocks an unattended run.",
+      "parent": "GAU-195",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "TestPowerSaveQuitsOnlyIdleAllowlistedApps",
+        "TestPowerSaveRelaunchesWhatItQuit",
+        "TestPowerSaveSuggestsAdminSettingsNeverRuns",
+        "TestPowerSaveTickActsOnceAndRestores"
+      ]
+    },
+    {
+      "id": "REQ-ARG-032",
+      "title": "Power-save on the mesh",
+      "statement": "Argo shall send its power-save state (on or off, and while on since when and why) to Gauss as an allowlisted field; Gauss shall accept only a boolean, one of the reasons battery, charger-short, no-pd or manual, and a time that is not in the future or older than a year, drop a bad block alone, and show staff and above which devices are in power-save and why on /mesh.",
+      "rationale": "The network can place work on devices that have power to spare only if it can see which ones are saving it.",
+      "parent": "GAU-195",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "TestPowerSaveReportStatusAndCLI",
+        "power-save: allowlisted reason, ranged time, off carries nothing, bad drops alone",
+        "Gauss knows every guard code, level and admission Argo can send",
+        "battery and guard lines read plainly"
       ]
     }
   ]
