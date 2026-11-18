@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { WebSocket } from "ws";
+import { auth } from "./better-auth.js";
 import { isAllowedOrigin, startBackend, stopBackend } from "./server.ts";
 
 function withNodeEnv(value: string | undefined, fn: () => void) {
@@ -141,4 +142,41 @@ test("RAG endpoints require a session and never log query text", async (t) => {
   }
   assert.notEqual(status, 401);
   assert.ok(!logged.some((line) => line.includes(secret)), `query text leaked into logs:\n${logged.join("\n")}`);
+});
+
+test("RAG endpoints are operator-only: a signed-in user gets 403, an operator does not (REQ-SEC-016)", async (t) => {
+  const { server, host } = await startBackend({ port: 0 });
+  const { port } = server.address() as { port: number };
+  const base = `http://${host}:${port}/api/rag`;
+
+  // Stand in for the session lookup the guard performs, so the real guard and API policy run.
+  const api = auth.api as unknown as { getSession: (...args: unknown[]) => Promise<unknown> };
+  const realGetSession = api.getSession;
+  let role = "user";
+  api.getSession = async () => ({
+    session: { token: "test-session" },
+    user: { id: "test-user", email: "member@example.com", role },
+  });
+  t.after(async () => {
+    api.getSession = realGetSession;
+    delete process.env.AUTH_REQUIRED;
+    await stopBackend();
+  });
+  process.env.AUTH_REQUIRED = "true";
+
+  const status = (path: string) => fetch(`${base}${path}`).then((r) => r.status);
+  const query = () =>
+    fetch(`${base}/query`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ query: "x" }) }).then(
+      (r) => r.status,
+    );
+
+  role = "user";
+  assert.equal(await status("/status"), 403);
+  assert.equal(await query(), 403);
+
+  role = "operator";
+  assert.notEqual(await status("/status"), 403);
+  assert.notEqual(await status("/status"), 401);
+  assert.notEqual(await query(), 403);
+  assert.notEqual(await query(), 401);
 });
