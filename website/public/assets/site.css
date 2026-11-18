@@ -528,7 +528,7 @@ footer p{margin:0 0 8px;max-width:72ch}
     .descent-steps li:focus-within{opacity:1!important;visibility:visible!important;transform:none!important}
     .descent-note{text-align:center}
     @media (max-width:560px){.descent-art{transform:scale(1.4)}
-      .descent-steps{padding-top:24px;background:linear-gradient(180deg,rgb(5 5 5 / 0),var(--black) 24px)}}
+      .descent-steps{padding-top:24px;background:linear-gradient(180deg,rgb(5 5 5 / 0),rgb(5 5 5 / .86) 24px)}}
     .d-bh{display:inline;transform-origin:0 0;animation:d-shrink linear both;animation-timeline:--descent;animation-range:contain 0% contain 30%}
     .d-bh image{animation:d-out linear both;animation-timeline:--descent;animation-range:contain 2% contain 20%}
     /* One black hole on screen at a time: the hero's film fades as the descent rises, then the descent's own
@@ -756,3 +756,35 @@ a,button{-webkit-tap-highlight-color:transparent}
   }
 }
 @keyframes rise{from{opacity:0;transform:translateY(18px)}}
+
+/* Deep space behind the whole landing (Josh, 18 Nov 2026: "stars in the back, then nebula, then fields; more smooth and
+   integrated"). One fixed backdrop of three planes behind every section, so the page reads as one sky instead of
+   separate panels; the sections' own star planes scroll with the page in front of it, which gives the parallax.
+   - far stars: always there, drifting slowly as you scroll;
+   - nebula: faint violet and ember clouds that gather as you pass the black hole (light as gradients, not a glow);
+   - fields: Earth-style dipole field lines (tools/make_fields.py) that rise in under the last sections.
+   Compositor-only motion (transform, opacity) on a scroll timeline. Reduced motion or no scroll timelines: the stars and
+   a faint nebula, still; no fields. No lime here: the page's one lime signal stays in the descent and the door. */
+.cosmos{position:fixed;inset:0;z-index:-1;pointer-events:none;overflow:hidden;contain:strict}
+.cosmos i{position:absolute;inset:-12%;display:block}
+.c-far{opacity:.5;background-size:233px 233px;background-image:radial-gradient(.8px .8px at 14% 22%,rgb(243 240 232 / .8),transparent 70%),
+  radial-gradient(.8px .8px at 61% 9%,rgb(243 240 232 / .6),transparent 70%),radial-gradient(1px 1px at 83% 47%,rgb(243 240 232 / .7),transparent 70%),
+  radial-gradient(.7px .7px at 37% 63%,rgb(203 182 214 / .7),transparent 70%),radial-gradient(.8px .8px at 72% 88%,rgb(243 240 232 / .5),transparent 70%),
+  radial-gradient(.7px .7px at 6% 79%,rgb(243 240 232 / .45),transparent 70%)}
+.c-nebula{opacity:.45;background:radial-gradient(ellipse 46% 30% at 24% 36%,rgb(142 108 196 / .17),transparent 70%),
+  radial-gradient(ellipse 34% 24% at 72% 60%,rgb(240 120 42 / .075),transparent 70%),
+  radial-gradient(ellipse 58% 38% at 58% 28%,rgb(203 182 214 / .06),transparent 72%),
+  radial-gradient(ellipse 30% 44% at 86% 18%,rgb(142 108 196 / .1),transparent 70%),
+  radial-gradient(ellipse 40% 26% at 30% 82%,rgb(142 108 196 / .08),transparent 70%)}
+.c-fields{opacity:0;background:url(media/fields.svg) 50% 100%/cover no-repeat}
+@supports (animation-timeline:scroll()){
+  @media (prefers-reduced-motion:no-preference){
+    .cosmos i{will-change:transform,opacity}
+    .c-far{animation:c-far linear both;animation-timeline:scroll(root)}
+    .c-nebula{animation:c-nebula linear both;animation-timeline:scroll(root);animation-range:4% 36%}
+    .c-fields{animation:c-fields linear both;animation-timeline:scroll(root);animation-range:62% 92%}
+  }
+}
+@keyframes c-far{to{transform:translateY(-7%)}}
+@keyframes c-nebula{from{opacity:0;transform:scale(1.18) translateY(5%)}to{opacity:1;transform:none}}
+@keyframes c-fields{from{opacity:0;transform:translateY(8%) scale(.96)}to{opacity:1;transform:none}}

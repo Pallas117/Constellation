@@ -233,6 +233,29 @@ test("landing: Space tech, on Earth: what Argo does today, honest, no door into 
   assert.match(css, /@media \(prefers-reduced-motion:no-preference\)\{\n    \.earth-list li\{animation:rise/, "reduced motion: it is simply there");
 });
 
+test("landing backdrop: stars, then nebula, then fields, one fixed sky; decorative, compositor-only, calm with reduced motion", () => {
+  const home = html["/"];
+  assert.equal(home.match(/class="cosmos"/g).length, 1);
+  assert.match(home, /<div class="cosmos" aria-hidden="true"><i class="c-far"><\/i><i class="c-nebula"><\/i><i class="c-fields"><\/i><\/div>/);
+  const css = read("assets/site.css");
+  const block = css.slice(css.indexOf(".cosmos{"), css.indexOf("@keyframes c-fields"));
+  assert.match(block, /^\.cosmos\{position:fixed;inset:0;z-index:-1;pointer-events:none/, "behind everything, never takes a tap");
+  assert.doesNotMatch(block, /--lime|CCFF00|blur\(|box-shadow|filter:/i, "no lime, no glow, no blur filters");
+  // Order on the scroll: nebula gathers past the black hole, fields rise in at the foot.
+  assert.match(block, /\.c-nebula\{animation:c-nebula linear both;animation-timeline:scroll\(root\);animation-range:4% 36%\}/);
+  assert.match(block, /\.c-fields\{animation:c-fields linear both;animation-timeline:scroll\(root\);animation-range:62% 92%\}/);
+  assert.match(block, /@media \(prefers-reduced-motion:no-preference\)\{\n    \.cosmos i\{will-change:transform,opacity\}/, "motion only when asked for");
+  assert.match(block, /\.c-fields\{opacity:0;/, "reduced motion or no scroll timelines: no fields, stars and a faint nebula only");
+  for (const k of ["c-far", "c-nebula", "c-fields"]) {
+    const kf = css.match(new RegExp(`@keyframes ${k}\\{[^\\n]*\\}`))[0];
+    assert.doesNotMatch(kf.replace(/transform|opacity/g, ""), /[a-z-]+:/, `${k} animates transform and opacity only`);
+  }
+  const fields = read("assets/media/fields.svg");
+  assert.ok(fields.length < 4096, "fields art stays tiny");
+  assert.match(fields, /^<svg xmlns="http:\/\/www\.w3\.org\/2000\/svg" viewBox="0 0 1000 1000"/);
+  assert.doesNotMatch(fields, /<script|<image|href=/, "lines only");
+});
+
 test("touch: no endless hover animation after a tap, 44 px header targets, readable descent tags, safe areas", () => {
   const css = read("assets/site.css");
   for (const sel of ["\n  .door:hover,.door:focus-visible,.tile:hover,.tile:focus-within,.friend:hover,.btn.ghost:hover", ".btn.radiate:hover::before", ".btn.argo.radiate:hover{"]) {
