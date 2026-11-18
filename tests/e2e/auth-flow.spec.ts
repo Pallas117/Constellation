@@ -65,7 +65,9 @@ test.describe('Authentication Flow & Route Splitting', () => {
     await expect(page).toHaveURL(/.*\/login/);
     
     // Verify the sign-in page
-    await expect(page.locator('h1')).toHaveText(/Sign in to Gauss/);
+    // Sign-in draws over the live landing page, which stays mounted (and hidden from assistive tech) behind it.
+    await expect(page.getByRole('dialog', { name: /Sign in to Gauss/ })).toBeVisible();
+    await expect(page.getByRole('heading', { level: 1, name: /Sign in to Gauss/ })).toBeVisible();
   });
 
   test('Authenticates successfully and launches the Mission Control HUD', async ({ page }) => {
