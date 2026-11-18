@@ -880,6 +880,13 @@ kids=0; while read -r k; do kill -0 "$k" 2>/dev/null && { kids=$((kids + 1)); ki
   && grep -q "^[^ ]* $P14 [^ ]* PASSED" "$GR" && [ -z "$(ls "$GQ")" ]
 expect "gates run: a hung after-pass hook is stopped (its children too) and the queue goes on" $?
 rm -f "$HOOKD/after-pass"
+# 18 Nov: a tree queued for gates only, then enqueued with --pr, dropped the PR (its pass never merged).
+P15=$(tc "$M3" f15.txt f15); (cd "$LIVE" && run gates enqueue "$P15" >/dev/null 2>&1)
+out=$(cd "$LIVE" && run gates enqueue "$P15" --pr 44 2>&1)
+[ "$(ls "$GQ" | grep -c '\.req$')" = 1 ] && grep -qx "pr=44" "$GQ"/*.req && [ "$(grep -c '^pr=' "$GQ"/*.req)" = 1 ] \
+  && grep -qx "sha=$P15" "$GQ"/*.req && [[ "$out" == *"on the merge train for PR #44"* ]] && [ -z "$(ls "$GQ" | grep -v '\.req$')" ]
+expect "gates enqueue: a tree already queued for gates only joins the train when enqueued again with --pr" $?
+rm -f "$GQ"/*.req
 # The pass contract for scripts (merge-approved.sh): the record for the exact tree, not the last line's wording.
 out=$(cd "$LIVE" && run gates passed "$P11"); rc1=$?; (cd "$LIVE" && run gates passed "$P12" >/dev/null); rc2=$?
 (cd "$LIVE" && run gates passed 0000000 >/dev/null 2>&1); rc3=$?

@@ -1070,6 +1070,12 @@ gates_enqueue() { # gates_enqueue <checkout-dir>|<commit> [--pr N]: queue a gate
   mkdir -p "$GATES_QUEUE"
   if f=$(gates_queued "$tree"); then
     echo "Already queued: tree ${tree:0:7} ($(req_get "$f" sha | cut -c1-7), by $(req_get "$f" by))."
+    # 18 Nov: a tree queued for gates only and then enqueued with --pr kept no PR, so its pass never
+    # merged. Put the request on the train (atomic rewrite; the runner only reads *.req).
+    if [ -n "$pr" ] && [ "$(req_get "$f" pr)" != "$pr" ]; then
+      { grep -v '^pr=' "$f"; echo "pr=$pr"; } >"$f.tmp" && [ -f "$f" ] && mv -f "$f.tmp" "$f" \
+        && echo "It is on the merge train for PR #$pr now." || rm -f "$f.tmp"
+    fi
   else
     f="$GATES_QUEUE/$(python3 -Ic 'import time; print("%.6f" % time.time())')-$tree.req"
     printf 'sha=%s\ntree=%s\nrepo=%s\nnode=%s\nby=%s\nqueued=%s\npr=%s\n' "$sha" "$tree" "$G_REPO" "$NODE" "$(deployer)" "$(date +%s)" "$pr" >"$f.tmp"
