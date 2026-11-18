@@ -66,7 +66,7 @@ run() { # run <args...>: gauss-services.sh with the stubs; alerts land in $LOG
     GAUSS_SUDOERS="$T/sudoers" MLX="${MLX:-0}" MLXPORT="${MLXPORT:-8089}" ACTIONS="$T/actions" GAUSS_BALANCE="${GAUSS_BALANCE:-1}" \
     LOADED="${LOADED:-}" HEALTH="${HEALTH:-200}" HEALTH_FILE="${HEALTH_FILE:-}" GAUSS_DEPLOY_WAIT=0 DISKGB="${DISKGB:-50}" \
     GATEFAIL="${GATEFAIL:-}" MOVEMAIN="${MOVEMAIN:-}" GAUSS_BY=test-user BOOT="${BOOT:-1000}" GAUSS_DIAG_DIRS="$T/diag" GAUSS_EVENTS_MAX_KB="${GAUSS_EVENTS_MAX_KB:-5120}" \
-    WAKE="${WAKE:-1000}" GAUSS_DEV_DRY="${GAUSS_DEV_DRY:-0}" GAUSS_GATES_START=0 HEAVYGIVEUP="${HEAVYGIVEUP:-}" NPMNET="${NPMNET:-}" GAUSS_GATEBOX="${GAUSS_GATEBOX:-}" GAUSS_FLEET_MEMORY="${GAUSS_FLEET_MEMORY:-}" GAUSS_GATEBOX_KEY="$T/gatebox-key" GBRC="${GBRC:-}" GAUSS_GATES_EXPIRE_H="${GAUSS_GATES_EXPIRE_H:-72}" GAUSS_DEV_API_PORT="${GAUSS_DEV_API_PORT:-3101}" \
+    WAKE="${WAKE:-1000}" GAUSS_DEV_DRY="${GAUSS_DEV_DRY:-0}" GAUSS_GATES_START=0 HEAVYGIVEUP="${HEAVYGIVEUP:-}" NPMNET="${NPMNET:-}" GAUSS_GATEBOX="${GAUSS_GATEBOX:-}" GAUSS_FLEET_MEMORY="${GAUSS_FLEET_MEMORY:-}" GAUSS_GATEBOX_KEY="$T/gatebox-key" GBRC="${GBRC:-}" GAUSS_GATES_EXPIRE_H="${GAUSS_GATES_EXPIRE_H:-72}" GAUSS_GATES_HOOK_S="${GAUSS_GATES_HOOK_S:-300}" GAUSS_DEV_API_PORT="${GAUSS_DEV_API_PORT:-3101}" \
     SRC="${SRC:-AC Power}" BATT="${BATT:-80%; charging; present: true}" SD="${SD:-0}" FCC="${FCC:-}" ACW="${ACW:-}" \
     LEAKY="${LEAKY:-}" LEAKFP="${LEAKFP:-12 MB}" AVAIL="${AVAIL:-50}" GAUSS_SWAP_LAST="${SWAPLAST:-/dev/null}" \
     GATEENV="${GATEENV:-}" GATES_PYTHON="${GATES_PYTHON:-}" ${GATELEAK:+ALLOWED_ORIGINS=https://live.example MESH_STORE_PATH=/live/data/mesh/devices.json COMMERCE_DB_PATH=/live/data/commerce/commerce.db GAUSS_BEDROCK_DIR=/live/data/bedrock NODE_ENV=production} \
@@ -838,6 +838,10 @@ M2=$(tc "$M1" main.txt main-2); g push -q origin "$M2:refs/heads/main" && g fetc
 out=$(cd "$LIVE" && run gates enqueue "$P5" --pr 13 2>&1)
 [[ "$out" == *"main has moved past it: queueing"* ]] && [ "$(ls "$GQ" | grep -c '\.req$')" = 1 ] && ! grep -q "gh merge" "$T/actions"
 expect "train: an already-passed head that main moved past is queued to sync, not merged" $?
+# 18 Nov: gates result showed only QUEUED for a re-queued commit, hiding the verdict it already had.
+out=$(cd "$LIVE" && run gates result "$P5" 2>&1); rc=$?
+[ $rc = 3 ] && [[ "$(sed -n 1p <<<"$out")" =~ ^earlier:\ [^\ ]+\ $P5\ [^\ ]+\ (PASSED|HELD|MERGED|SKIPPED) ]] && [[ "$(tail -1 <<<"$out")" == QUEUED* ]]
+expect "gates result: a re-queued commit shows its earlier verdict first, QUEUED last" $?
 # 12 Nov: the runner dropped such a request as SKIPPED (its tree had passed) before the train step,
 # so the PR never landed. It must merge main in, gate the new head and merge it.
 : >"$T/actions"; run gates run >/dev/null 2>&1; N5=$(git --git-dir="$ORIGIN" rev-parse refs/heads/train)
@@ -857,6 +861,45 @@ expect "train: a head main moved past during its run is re-queued at the front, 
 [ "$N7" != "$P7" ] && git --git-dir="$ORIGIN" merge-base --is-ancestor "$M3" "$N7" && grep -q "^[^ ]* $P7 [^ ]* MOVED merged main into PR #21" "$GR" \
   && grep -qx "gh merge 21 $N7" "$T/actions" && [ -z "$(ls "$GQ")" ]
 expect "train: the re-queued head gets main merged in, passes and is merged in the same pass" $?
+# 18 Nov: a pass the train can't merge itself (held for Josh, or a draft) waited up to 30 min for the
+# merge job; the train merged another PR meanwhile, main moved, and the pass was run again (9 of 37 runs).
+# The after-pass hook runs right after each pass, before the next request can move main.
+HOOKD="$WD/gates/hooks"; mkdir -p "$HOOKD"; : >"$T/hook.log"
+printf '#!/bin/bash\necho "hook $*" >>"%s"\necho "merge job says hi"\n' "$T/hook.log" >"$HOOKD/after-pass"; chmod +x "$HOOKD/after-pass"
+P10=$(tc "$M3" backend/auth-more.ts x); P11=$(tc "$M3" f11.txt f11); P12=$(tc "$M3" f12.txt f12)
+g push -q origin "$P10:refs/heads/held10" "$P11:refs/heads/q11" "$P12:refs/heads/q12" && g fetch -q origin
+echo "OPEN held10 main false CLEAN" >"$GHD/pr41"; echo "OPEN q11 main false CLEAN" >"$GHD/pr42"; echo "OPEN q12 main false CLEAN" >"$GHD/pr43"
+(cd "$LIVE" && run gates enqueue "$P10" --pr 41 >/dev/null 2>&1; run gates enqueue "$P11" --pr 42 >/dev/null 2>&1)
+out=$(run gates run 2>&1)
+grep -qx "hook $P10 41" "$T/hook.log" && grep -qx "hook $P11 42" "$T/hook.log" && [[ "$out" == *"  hook: merge job says hi"* ]] \
+  && [ "$(grep -n "after-pass hook for ${P10:0:7}" <<<"$out" | cut -d: -f1)" -lt "$(grep -n "gates ${P11:0:7} \.\.\." <<<"$out" | cut -d: -f1)" ]
+expect "gates run: the after-pass hook runs after each pass (held or merged), before the next request starts" $?
+: >"$T/hook.log"; (cd "$LIVE" && run gates enqueue "$P12" --pr 43 >/dev/null 2>&1); GATEFAIL=test run gates run >/dev/null 2>&1
+grep -q "^[^ ]* $P12 [^ ]* FAILED" "$GR" && [ ! -s "$T/hook.log" ]; expect "gates run: no after-pass hook after a failed gate" $?
+printf '#!/bin/bash\nsleep 60 &\necho $! >>"%s"\nsleep 60\n' "$T/hook-kids" >"$HOOKD/after-pass"; P13=$(tc "$M3" f13.txt f13); P14=$(tc "$M3" f14.txt f14)
+(cd "$LIVE" && run gates enqueue "$P13" >/dev/null 2>&1; run gates enqueue "$P14" >/dev/null 2>&1)
+t0=$SECONDS; out=$(GAUSS_GATES_HOOK_S=1 run gates run 2>&1); rc=$?
+kids=0; while read -r k; do kill -0 "$k" 2>/dev/null && { kids=$((kids + 1)); kill "$k"; }; done <"$T/hook-kids"
+[ $rc = 0 ] && [ $((SECONDS - t0)) -lt 45 ] && [ $kids = 0 ] && [ "$(grep -c "after-pass hook stopped after 1 s" <<<"$out")" = 2 ] \
+  && grep -q "^[^ ]* $P14 [^ ]* PASSED" "$GR" && [ -z "$(ls "$GQ")" ]
+expect "gates run: a hung after-pass hook is stopped (its children too) and the queue goes on" $?
+rm -f "$HOOKD/after-pass"
+# 18 Nov: a tree queued for gates only, then enqueued with --pr, dropped the PR (its pass never merged).
+P15=$(tc "$M3" f15.txt f15); (cd "$LIVE" && run gates enqueue "$P15" >/dev/null 2>&1)
+out=$(cd "$LIVE" && run gates enqueue "$P15" --pr 44 2>&1)
+[ "$(ls "$GQ" | grep -c '\.req$')" = 1 ] && grep -qx "pr=44" "$GQ"/*.req && [ "$(grep -c '^pr=' "$GQ"/*.req)" = 1 ] \
+  && grep -qx "sha=$P15" "$GQ"/*.req && [[ "$out" == *"on the merge train for PR #44"* ]] && [ -z "$(ls "$GQ" | grep -v '\.req$')" ]
+expect "gates enqueue: a tree already queued for gates only joins the train when enqueued again with --pr" $?
+rm -f "$GQ"/*.req
+# The pass contract for scripts (merge-approved.sh): the record for the exact tree, not the last line's wording.
+out=$(cd "$LIVE" && run gates passed "$P11"); rc1=$?; (cd "$LIVE" && run gates passed "$P12" >/dev/null); rc2=$?
+(cd "$LIVE" && run gates passed 0000000 >/dev/null 2>&1); rc3=$?
+[ $rc1 = 0 ] && [[ "$out" == "PASSED ${P11:0:7}"* ]] && [ $rc2 = 1 ] && [ $rc3 = 2 ]
+expect "gates passed: exit 0 only for a commit whose exact tree passed (1 not passed, 2 unknown commit)" $?
+(cd "$LIVE" && run gates enqueue "$P11" >/dev/null 2>&1); echo "sha=$P11" >"$GQ/9.000000-$(tree_of "$P11").req"; echo "tree=$(tree_of "$P11")" >>"$GQ/9.000000-$(tree_of "$P11").req"
+(cd "$LIVE" && run gates result "$P11" >/dev/null); rcq=$?; (cd "$LIVE" && run gates passed "$P11" >/dev/null); rcp=$?
+[ $rcq = 3 ] && [ $rcp = 0 ]; expect "gates passed: a passed commit queued again still counts as passed (gates result says QUEUED)" $?
+rm -f "$GQ"/*.req
 # Queue tooling: reorder by PR, list the queue by PR, list passes that wait for a person.
 P8=$(tc "$M3" f8.txt f8); P9=$(tc "$M3" f9.txt f9); g push -q origin "$P8:refs/heads/q8" "$P9:refs/heads/q9" && g fetch -q origin
 (cd "$LIVE" && run gates enqueue "$P8" --pr 31 >/dev/null 2>&1; run gates enqueue "$P9" --pr 32 >/dev/null 2>&1)
@@ -866,6 +909,16 @@ expect "gates priority: a PR moves to the front, and gates queue lists requests 
 out=$(run gates priority 31 back 2>&1); last=$(ls "$GQ" | sort | tail -1); grep -qx "pr=31" "$GQ/$last"
 expect "gates priority: a PR moves to the back" $?
 out=$(run gates priority 99 front 2>&1); [ $? = 1 ] && [[ "$out" == *"Nothing queued for 99"* ]]; expect "gates priority: an unknown PR is refused" $?
+# 17 Nov: keys matched as prefixes, so "99" hit any sha starting 99 (the test above failed ~1 run in
+# 128, failing PR #259's gates) and PR 3 would have moved PR 31.
+out=$(run gates priority 3 front 2>&1); [ $? = 1 ] && [[ "$out" == *"Nothing queued for 3"* ]]
+expect "gates priority: a PR number never matches a longer PR number" $?
+before=$(ls "$GQ" | sort); out=$(run gates priority "${P8:0:5}" front 2>&1); rc=$?
+[ "$rc" != 0 ] && [ "$(ls "$GQ" | sort)" = "$before" ]
+expect "gates priority: a short sha prefix moves nothing" $?
+out=$(run gates priority "${P8:0:7}" front 2>&1); first=$(ls "$GQ" | sort | sed -n 1p); grep -qx "pr=31" "$GQ/$first"
+expect "gates priority: a 7-character sha moves its request" $?
+out=$(run gates priority 'pr=.*' front 2>&1); [ $? = 2 ]; expect "gates priority: a key that is not a PR or sha is a usage error" $?
 rm -f "$GQ"/*.req
 # 18 Nov: requirements PRs each bump the baseline "version" and conflicted with each other (#284, #286).
 # A conflict on that line alone is settled as main's version plus one patch step and gated; any other
