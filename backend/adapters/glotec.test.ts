@@ -180,7 +180,7 @@ test("GloTEC fetch: an outage returns null, keeps lastSeen, and the status ages 
     assert.equal(status.healthy, false);
     assert.equal(status.lastSeen, "2026-11-18T01:35:00.000Z");
     assert.equal(status.latencySeconds, 3 * 3600);
-    assert.match(status.message, /503/);
+    assert.match(status.message ?? "", /503/);
   } finally {
     globalThis.fetch = realFetch;
   }
@@ -193,14 +193,14 @@ test("GloTEC fetch: a malformed file or a file whose time tag disagrees with the
     globalThis.fetch = (async (input: URL | string) =>
       String(input).endsWith("geojson_2d_urt.json") ? new Response(INDEX_TAIL, { status: 206 }) : new Response("{not json")) as typeof fetch;
     assert.equal(await fetchGlotec(NOW), null);
-    assert.match(getGlotecStatus().message, /not valid JSON/);
+    assert.match(getGlotecStatus().message ?? "", /not valid JSON/);
     globalThis.fetch = (async (input: URL | string) =>
       String(input).endsWith("geojson_2d_urt.json") ? new Response(INDEX_TAIL, { status: 206 }) : new Response(JSON.stringify(doc("2026-11-17T00:00:00Z")))) as typeof fetch;
     assert.equal(await fetchGlotec(NOW), null);
-    assert.match(getGlotecStatus().message, /failed validation/);
+    assert.match(getGlotecStatus().message ?? "", /failed validation/);
     globalThis.fetch = (async () => new Response("x".repeat(10), { headers: { "content-length": String(9 * 1024 * 1024) } })) as typeof fetch;
     assert.equal(await fetchGlotec(NOW), null);
-    assert.match(getGlotecStatus().message, /larger than 8 MB/);
+    assert.match(getGlotecStatus().message ?? "", /larger than 8 MB/);
   } finally {
     globalThis.fetch = realFetch;
   }
