@@ -1,0 +1,1853 @@
+{
+  "options": {
+    "events": [
+      {
+        "id": "jan-2026",
+        "title": "19 Jan 2026 radiation and geomagnetic storm",
+        "start": "2026-01-19T00:00:00Z",
+        "end": "2026-01-20T02:00:00Z"
+      },
+      {
+        "id": "may-2024",
+        "title": "10–11 May 2024 (Gannon storm)",
+        "start": "2024-05-10T12:00:00Z",
+        "end": "2024-05-11T06:00:00Z"
+      },
+      {
+        "id": "oct-2024",
+        "title": "10 Oct 2024",
+        "start": "2024-10-10T12:00:00Z",
+        "end": "2024-10-11T03:00:00Z"
+      },
+      {
+        "id": "apr-2025",
+        "title": null,
+        "start": null,
+        "end": null
+      },
+      {
+        "id": "aug10-2025",
+        "title": null,
+        "start": null,
+        "end": null
+      },
+      {
+        "id": "dec-2025",
+        "title": null,
+        "start": null,
+        "end": null
+      },
+      {
+        "id": "feb-2025",
+        "title": null,
+        "start": null,
+        "end": null
+      },
+      {
+        "id": "jun1-2025",
+        "title": null,
+        "start": null,
+        "end": null
+      },
+      {
+        "id": "jun11-2025",
+        "title": null,
+        "start": null,
+        "end": null
+      },
+      {
+        "id": "jun4-2025",
+        "title": null,
+        "start": null,
+        "end": null
+      },
+      {
+        "id": "mar10-2025",
+        "title": null,
+        "start": null,
+        "end": null
+      },
+      {
+        "id": "mar20-2025",
+        "title": null,
+        "start": null,
+        "end": null
+      },
+      {
+        "id": "nov12-2025",
+        "title": null,
+        "start": null,
+        "end": null
+      },
+      {
+        "id": "nov7-2025",
+        "title": null,
+        "start": null,
+        "end": null
+      },
+      {
+        "id": "sep-2025",
+        "title": null,
+        "start": null,
+        "end": null
+      }
+    ],
+    "mappings": [
+      {
+        "schema": "gauss.log-mapping/0.1",
+        "id": "generic-csv",
+        "version": "0.1.0",
+        "format": "csv",
+        "timeFormat": "iso",
+        "columns": {
+          "time": "inference_time",
+          "spacecraftId": "sat",
+          "modelId": "model",
+          "output": [
+            "label"
+          ],
+          "confidence": "score",
+          "latDeg": "lat",
+          "lonDeg": "lon",
+          "altKm": "alt_km"
+        }
+      }
+    ],
+    "sample": {
+      "name": "generic-inferences.csv",
+      "mappingId": "generic-csv",
+      "eventId": "jan-2026",
+      "text": "inference_time,sat,model,label,score,lat,lon,alt_km\r\n2026-01-19T02:10:00Z,DEMO-SAT-1,cloudmask-v3.2,clear,0.94,12.4,101.7,525\r\n2026-01-19T04:50:30Z,DEMO-SAT-1,cloudmask-v3.2,cloud,0.88,,,\r\n2026-01-19T04:50:30Z,DEMO-SAT-1,cloudmask-v3.2,cloud,0.88,,,\r\n2026-01-19T03:00:00Z,DEMO-SAT-1,cloudmask-v3.2,cloud,0.81,,,\r\n2026-01-19T05:00:00,DEMO-SAT-1,cloudmask-v3.2,cloud,0.80,,,\r\n2026-01-19T05:10:00Z,DEMO-SAT-2,ship-detect-v1.4,\"vessel, small \"\"fishing\"\"\",0.71,-30.5,-45.0,525\r\n2026-01-19T05:20:00Z,DEMO-SAT-2,ship-detect-v1.4,vessel,1.7,,,\r\nnot-a-time,DEMO-SAT-2,ship-detect-v1.4,vessel,0.5,,,\r\n2026-01-19T05:30:00Z,DEMO-SAT-2,ship-detect-v1.4,vessel\r\n"
+    },
+    "maxLogBytes": 1000000,
+    "keys": [
+      {
+        "keyId": "ed25519:fd861c573a359f169d67fc7e9cd9f073",
+        "purposes": [
+          "evidence-pack"
+        ],
+        "status": "current"
+      },
+      {
+        "keyId": "ed25519:4337a6c2faf6104ba515d546285eea8f",
+        "purposes": [
+          "release-artifact"
+        ],
+        "status": "current"
+      }
+    ],
+    "keyring": "backend/trust/signing-keys.json",
+    "signOnHost": "npm run trust:sign -- pack.json --sign-key <private key file> --pdf pack.pdf"
+  },
+  "analysis": {
+    "summary": {
+      "file": {
+        "sha256": "3c5026d9c5f6ae6973fecb4b8b71313b8348ebc7005b9dbed26a1ddab1db8f91",
+        "bytes": 648,
+        "rows": 9
+      },
+      "mapping": {
+        "id": "generic-csv",
+        "version": "0.1.0"
+      },
+      "accepted": 3,
+      "rejected": [
+        {
+          "row": 3,
+          "errors": [
+            "duplicate of row 2 (same spacecraft, model and time)"
+          ]
+        },
+        {
+          "row": 4,
+          "errors": [
+            "out of order: earlier than row 2 for spacecraft DEMO-SAT-1"
+          ]
+        },
+        {
+          "row": 5,
+          "errors": [
+            "time \"2026-01-19T05:00:00\" has no time zone; set assumeUtc in the mapping only if the customer confirms UTC"
+          ]
+        },
+        {
+          "row": 7,
+          "errors": [
+            "confidence must be a number from 0 to 1"
+          ]
+        },
+        {
+          "row": 8,
+          "errors": [
+            "time \"not-a-time\" is not an ISO 8601 date and time"
+          ]
+        },
+        {
+          "row": 9,
+          "errors": [
+            "row has 4 fields, the header has 8"
+          ]
+        }
+      ],
+      "verdicts": {
+        "consistent": 1,
+        "degraded-context": 2
+      }
+    },
+    "records": [
+      {
+        "schema": "gauss.trust-record/0.1",
+        "generatedAt": "2026-01-20T02:00:00.000Z",
+        "inference": {
+          "time": "2026-01-19T02:10:00.000Z",
+          "spacecraftId": "DEMO-SAT-1",
+          "modelId": "cloudmask-v3.2",
+          "processorProfileId": null,
+          "output": {
+            "label": "clear"
+          },
+          "confidence": 0.94,
+          "ingest": {
+            "fileSha256": "3c5026d9c5f6ae6973fecb4b8b71313b8348ebc7005b9dbed26a1ddab1db8f91",
+            "row": 1,
+            "mappingId": "generic-csv",
+            "mappingVersion": "0.1.0"
+          }
+        },
+        "environmentSource": "replay jan-2026",
+        "environment": {
+          "radiation": {
+            "value": {
+              "level": 1,
+              "label": "S1"
+            },
+            "source": "NOAA S-scale from GOES ≥10 MeV integral protons",
+            "sourceUrl": "https://services.swpc.noaa.gov/json/goes/primary/integral-protons-6-hour.json",
+            "fetchedAt": "2026-01-19T02:10:00.000Z",
+            "observedAt": "2026-01-19T02:05:00.000Z",
+            "ageSeconds": 300,
+            "confidence": "high",
+            "method": "measured: GOES >=10 MeV protons 42 pfu",
+            "limitations": [
+              "Measured by GOES at geostationary orbit, not at this spacecraft's position."
+            ]
+          },
+          "geomagnetic": {
+            "value": {
+              "level": 0,
+              "label": "G0"
+            },
+            "source": "NOAA G-scale from planetary Kp",
+            "sourceUrl": "https://services.swpc.noaa.gov/products/noaa-planetary-k-index.json",
+            "fetchedAt": "2026-01-19T02:10:00.000Z",
+            "observedAt": "2026-01-18T21:00:00.000Z",
+            "ageSeconds": 18600,
+            "confidence": "high",
+            "method": "measured: Kp 3.00 (last completed 3-hour Kp)",
+            "limitations": [
+              "Last completed 3-hour Kp: can lag a rising storm by up to 3 h."
+            ]
+          },
+          "radioBlackout": {
+            "value": {
+              "level": 0,
+              "label": "R0"
+            },
+            "source": "NOAA R-scale from GOES 0.1–0.8 nm X-rays",
+            "sourceUrl": "https://services.swpc.noaa.gov/json/goes/primary/xrays-6-hour.json",
+            "fetchedAt": "2026-01-19T02:10:00.000Z",
+            "observedAt": "2026-01-19T02:09:00.000Z",
+            "ageSeconds": 60,
+            "confidence": "high",
+            "method": "measured: GOES 0.1-0.8nm X-rays 4.6e-6 W/m² (C4.6)",
+            "limitations": [
+              "Affects dayside HF radio and GNSS links, not onboard electronics directly."
+            ]
+          },
+          "particleFlux": {
+            "value": {
+              "value": 42.15359878540039,
+              "unit": "pfu",
+              "channel": ">=10 MeV",
+              "satellite": "GOES-18"
+            },
+            "source": "GOES-18 integral protons",
+            "sourceUrl": "https://services.swpc.noaa.gov/json/goes/primary/integral-protons-6-hour.json",
+            "observedAt": "2026-01-19T02:05:00.000Z",
+            "fetchedAt": "2026-01-19T02:10:00.000Z",
+            "ageSeconds": 300,
+            "confidence": "high",
+            "method": "measured",
+            "limitations": [
+              "Measured by GOES at geostationary orbit, not at this spacecraft's position.",
+              "Integral flux above 10 MeV; not a spectrum at this spacecraft."
+            ]
+          },
+          "kp": {
+            "value": {
+              "value": 3,
+              "kind": "planetary-3h"
+            },
+            "source": "NOAA planetary Kp",
+            "sourceUrl": "https://services.swpc.noaa.gov/products/noaa-planetary-k-index.json",
+            "observedAt": "2026-01-18T21:00:00.000Z",
+            "fetchedAt": "2026-01-19T02:10:00.000Z",
+            "ageSeconds": 18600,
+            "confidence": "high",
+            "method": "measured",
+            "limitations": [
+              "Last completed 3-hour Kp: can lag a rising storm by up to 3 h."
+            ]
+          },
+          "dst": {
+            "value": {
+              "value": -76.02915722409382
+            },
+            "source": "Gauss nowcast model",
+            "sourceUrl": null,
+            "observedAt": "2026-01-19T02:09:00.000Z",
+            "fetchedAt": "2026-01-19T02:10:00.000Z",
+            "ageSeconds": 60,
+            "confidence": "low",
+            "method": "model: O'Brien & McPherron (2000) ring-current, from solarWind.speed, magneticField.z, solarWind.dynamicPressure",
+            "limitations": [
+              "Modelled, not measured; it under-reads intense storms (−276 vs −406 nT measured, May 2024 replay)."
+            ]
+          }
+        },
+        "orbit": {
+          "position": {
+            "value": {
+              "latDeg": 12.4,
+              "lonDeg": 101.7,
+              "altKm": 525
+            },
+            "source": "Supplied ephemeris",
+            "sourceUrl": null,
+            "observedAt": "2026-01-19T02:10:00.000Z",
+            "fetchedAt": null,
+            "ageSeconds": 0,
+            "confidence": "high",
+            "method": "as supplied",
+            "limitations": [
+              "Read as geocentric latitude and longitude, altitude above a 6371.2 km sphere."
+            ]
+          },
+          "saa": {
+            "value": null,
+            "source": "South Atlantic Anomaly from IGRF-14 |B| (AMS-01 thresholds, Fiandrini et al. 2002/2003)",
+            "sourceUrl": null,
+            "observedAt": null,
+            "fetchedAt": null,
+            "ageSeconds": null,
+            "confidence": "none",
+            "method": "unknown",
+            "limitations": [
+              "The B thresholds were set at about 320–390 km; not applied at 525 km (range 300–450 km)"
+            ]
+          },
+          "fieldStrength": {
+            "value": 32484,
+            "source": "IGRF-14 (IAGA V-MOD)",
+            "sourceUrl": "https://www.ngdc.noaa.gov/IAGA/vmod/coeffs/igrf14coeffs.txt",
+            "observedAt": "2026-01-19T02:10:00.000Z",
+            "fetchedAt": null,
+            "ageSeconds": 0,
+            "confidence": "high",
+            "method": "spherical-harmonic synthesis to degree 13 at the position and date",
+            "limitations": [
+              "Earth's internal (main) field only: no external or storm-time field."
+            ]
+          },
+          "lShell": {
+            "value": 1.086,
+            "source": "Computed from the supplied ephemeris",
+            "sourceUrl": null,
+            "observedAt": "2026-01-19T02:10:00.000Z",
+            "fetchedAt": null,
+            "ageSeconds": 0,
+            "confidence": "medium",
+            "method": "centred-dipole L = (r/RE)/cos²(magnetic latitude), IGRF-14 2025 dipole pole",
+            "limitations": [
+              "Centred-dipole approximation: differs most from the full-field L where the field is least dipolar, including the South Atlantic Anomaly."
+            ]
+          }
+        },
+        "upsetRisk": {
+          "value": null,
+          "source": "Processor radiation profile",
+          "sourceUrl": null,
+          "observedAt": null,
+          "fetchedAt": null,
+          "ageSeconds": null,
+          "confidence": "none",
+          "method": "unknown",
+          "limitations": [
+            "No processor profile given; an upset-risk band needs a cited profile (PR-02, GAU-58)."
+          ]
+        },
+        "checks": [
+          {
+            "id": "l1-field-magnitude",
+            "status": "pass",
+            "reason": "ACE Bt and |B| agree in all 30 samples of the last 30 min"
+          },
+          {
+            "id": "l1-plasma-tracking",
+            "status": "pass",
+            "reason": "ACE speed varied 26 km/s with |B| 7.7–8.4 nT over the last 60 min"
+          },
+          {
+            "id": "goes-proton-spectrum",
+            "status": "pass",
+            "reason": "Integral flux falls with energy across >=10 MeV, >=50 MeV, >=100 MeV"
+          },
+          {
+            "id": "goes-proton-channels",
+            "status": "pass",
+            "reason": ">=10 MeV, >=50 MeV, >=100 MeV: current and varying"
+          },
+          {
+            "id": "goes-xray",
+            "status": "pass",
+            "reason": "0.1-0.8nm: current and varying"
+          },
+          {
+            "id": "noaa-scales",
+            "status": "unknown",
+            "reason": "NOAA scales not available"
+          }
+        ],
+        "verdict": {
+          "value": "consistent",
+          "reasons": [
+            "Radiation S1 and geomagnetic G0, below the policy thresholds (S2, G3); required inputs current and unflagged",
+            "South Atlantic Anomaly not assessed: The B thresholds were set at about 320–390 km; not applied at 525 km (range 300–450 km)"
+          ],
+          "policy": {
+            "id": "gauss-default-0.1",
+            "degradedAtRadiation": 2,
+            "degradedAtGeomagnetic": 3,
+            "requireOrbitContext": false
+          }
+        },
+        "limitations": [
+          "This record describes the space environment when the inference ran. It says nothing about the spacecraft's hardware or whether the output was right.",
+          "Radiation and particle readings come from GOES at geostationary orbit, not from this spacecraft's orbit.",
+          "Advisory only: Gauss has no telecommand authority over any spacecraft.",
+          "No regulatory or compliance claim is made."
+        ],
+        "recordId": "tr_5359a1a3f07d7e7f9c8e",
+        "hash": "922ad2cac6c701b2a2c78b0d3a5a9f37893197158a1aefac5457ac25018bc8af"
+      },
+      {
+        "schema": "gauss.trust-record/0.1",
+        "generatedAt": "2026-01-20T02:00:00.000Z",
+        "inference": {
+          "time": "2026-01-19T04:50:30.000Z",
+          "spacecraftId": "DEMO-SAT-1",
+          "modelId": "cloudmask-v3.2",
+          "processorProfileId": null,
+          "output": {
+            "label": "cloud"
+          },
+          "confidence": 0.88,
+          "ingest": {
+            "fileSha256": "3c5026d9c5f6ae6973fecb4b8b71313b8348ebc7005b9dbed26a1ddab1db8f91",
+            "row": 2,
+            "mappingId": "generic-csv",
+            "mappingVersion": "0.1.0"
+          }
+        },
+        "environmentSource": "replay jan-2026",
+        "environment": {
+          "radiation": {
+            "value": {
+              "level": 2,
+              "label": "S2"
+            },
+            "source": "NOAA S-scale from GOES ≥10 MeV integral protons",
+            "sourceUrl": "https://services.swpc.noaa.gov/json/goes/primary/integral-protons-6-hour.json",
+            "fetchedAt": "2026-01-19T04:50:00.000Z",
+            "observedAt": "2026-01-19T04:45:00.000Z",
+            "ageSeconds": 330,
+            "confidence": "high",
+            "method": "measured: GOES >=10 MeV protons 109 pfu",
+            "limitations": [
+              "Measured by GOES at geostationary orbit, not at this spacecraft's position."
+            ]
+          },
+          "geomagnetic": {
+            "value": {
+              "level": 0,
+              "label": "G0"
+            },
+            "source": "NOAA G-scale from planetary Kp",
+            "sourceUrl": "https://services.swpc.noaa.gov/products/noaa-planetary-k-index.json",
+            "fetchedAt": "2026-01-19T04:50:00.000Z",
+            "observedAt": "2026-01-19T00:00:00.000Z",
+            "ageSeconds": 17430,
+            "confidence": "high",
+            "method": "measured: Kp 3.33 (last completed 3-hour Kp)",
+            "limitations": [
+              "Last completed 3-hour Kp: can lag a rising storm by up to 3 h."
+            ]
+          },
+          "radioBlackout": {
+            "value": {
+              "level": 0,
+              "label": "R0"
+            },
+            "source": "NOAA R-scale from GOES 0.1–0.8 nm X-rays",
+            "sourceUrl": "https://services.swpc.noaa.gov/json/goes/primary/xrays-6-hour.json",
+            "fetchedAt": "2026-01-19T04:50:00.000Z",
+            "observedAt": "2026-01-19T04:49:00.000Z",
+            "ageSeconds": 90,
+            "confidence": "high",
+            "method": "measured: GOES 0.1-0.8nm X-rays 3.0e-6 W/m² (C3.0)",
+            "limitations": [
+              "Affects dayside HF radio and GNSS links, not onboard electronics directly."
+            ]
+          },
+          "particleFlux": {
+            "value": {
+              "value": 109.27397155761719,
+              "unit": "pfu",
+              "channel": ">=10 MeV",
+              "satellite": "GOES-18"
+            },
+            "source": "GOES-18 integral protons",
+            "sourceUrl": "https://services.swpc.noaa.gov/json/goes/primary/integral-protons-6-hour.json",
+            "observedAt": "2026-01-19T04:45:00.000Z",
+            "fetchedAt": "2026-01-19T04:50:00.000Z",
+            "ageSeconds": 330,
+            "confidence": "high",
+            "method": "measured",
+            "limitations": [
+              "Measured by GOES at geostationary orbit, not at this spacecraft's position.",
+              "Integral flux above 10 MeV; not a spectrum at this spacecraft."
+            ]
+          },
+          "kp": {
+            "value": {
+              "value": 3.33,
+              "kind": "planetary-3h"
+            },
+            "source": "NOAA planetary Kp",
+            "sourceUrl": "https://services.swpc.noaa.gov/products/noaa-planetary-k-index.json",
+            "observedAt": "2026-01-19T00:00:00.000Z",
+            "fetchedAt": "2026-01-19T04:50:00.000Z",
+            "ageSeconds": 17430,
+            "confidence": "high",
+            "method": "measured",
+            "limitations": [
+              "Last completed 3-hour Kp: can lag a rising storm by up to 3 h."
+            ]
+          },
+          "dst": {
+            "value": {
+              "value": -66.99676292917118
+            },
+            "source": "Gauss nowcast model",
+            "sourceUrl": null,
+            "observedAt": "2026-01-19T04:49:00.000Z",
+            "fetchedAt": "2026-01-19T04:50:00.000Z",
+            "ageSeconds": 90,
+            "confidence": "low",
+            "method": "model: O'Brien & McPherron (2000) ring-current, from solarWind.speed, magneticField.z, solarWind.dynamicPressure",
+            "limitations": [
+              "Modelled, not measured; it under-reads intense storms (−276 vs −406 nT measured, May 2024 replay)."
+            ]
+          }
+        },
+        "orbit": {
+          "position": {
+            "value": null,
+            "source": "Spacecraft position",
+            "sourceUrl": null,
+            "observedAt": null,
+            "fetchedAt": null,
+            "ageSeconds": null,
+            "confidence": "none",
+            "method": "unknown",
+            "limitations": [
+              "No ephemeris or TLE given."
+            ]
+          },
+          "saa": {
+            "value": null,
+            "source": "South Atlantic Anomaly",
+            "sourceUrl": null,
+            "observedAt": null,
+            "fetchedAt": null,
+            "ageSeconds": null,
+            "confidence": "none",
+            "method": "unknown",
+            "limitations": [
+              "No ephemeris or TLE given."
+            ]
+          },
+          "fieldStrength": {
+            "value": null,
+            "source": "IGRF-14 (IAGA V-MOD)",
+            "sourceUrl": null,
+            "observedAt": null,
+            "fetchedAt": null,
+            "ageSeconds": null,
+            "confidence": "none",
+            "method": "unknown",
+            "limitations": [
+              "No ephemeris or TLE given."
+            ]
+          },
+          "lShell": {
+            "value": null,
+            "source": "L-shell",
+            "sourceUrl": null,
+            "observedAt": null,
+            "fetchedAt": null,
+            "ageSeconds": null,
+            "confidence": "none",
+            "method": "unknown",
+            "limitations": [
+              "No ephemeris or TLE given."
+            ]
+          }
+        },
+        "upsetRisk": {
+          "value": null,
+          "source": "Processor radiation profile",
+          "sourceUrl": null,
+          "observedAt": null,
+          "fetchedAt": null,
+          "ageSeconds": null,
+          "confidence": "none",
+          "method": "unknown",
+          "limitations": [
+            "No processor profile given; an upset-risk band needs a cited profile (PR-02, GAU-58)."
+          ]
+        },
+        "checks": [
+          {
+            "id": "l1-field-magnitude",
+            "status": "pass",
+            "reason": "ACE Bt and |B| agree in all 30 samples of the last 30 min"
+          },
+          {
+            "id": "l1-plasma-tracking",
+            "status": "pass",
+            "reason": "ACE speed varied 14 km/s with |B| 8.2–8.5 nT over the last 60 min"
+          },
+          {
+            "id": "goes-proton-spectrum",
+            "status": "pass",
+            "reason": "Integral flux falls with energy across >=10 MeV, >=50 MeV, >=100 MeV"
+          },
+          {
+            "id": "goes-proton-channels",
+            "status": "pass",
+            "reason": ">=10 MeV, >=50 MeV, >=100 MeV: current and varying"
+          },
+          {
+            "id": "goes-xray",
+            "status": "pass",
+            "reason": "0.1-0.8nm: current and varying"
+          },
+          {
+            "id": "noaa-scales",
+            "status": "unknown",
+            "reason": "NOAA scales not available"
+          }
+        ],
+        "verdict": {
+          "value": "degraded-context",
+          "reasons": [
+            "Radiation storm S2 at geostationary orbit when the inference ran",
+            "South Atlantic Anomaly not assessed: No ephemeris or TLE given."
+          ],
+          "policy": {
+            "id": "gauss-default-0.1",
+            "degradedAtRadiation": 2,
+            "degradedAtGeomagnetic": 3,
+            "requireOrbitContext": false
+          }
+        },
+        "limitations": [
+          "This record describes the space environment when the inference ran. It says nothing about the spacecraft's hardware or whether the output was right.",
+          "Radiation and particle readings come from GOES at geostationary orbit, not from this spacecraft's orbit.",
+          "Advisory only: Gauss has no telecommand authority over any spacecraft.",
+          "No regulatory or compliance claim is made."
+        ],
+        "recordId": "tr_b49a9e3e923c45c9e678",
+        "hash": "416ef05a504cacddb3d636edc6841c875e919aec65232aa1448adaf36a8874d8"
+      },
+      {
+        "schema": "gauss.trust-record/0.1",
+        "generatedAt": "2026-01-20T02:00:00.000Z",
+        "inference": {
+          "time": "2026-01-19T05:10:00.000Z",
+          "spacecraftId": "DEMO-SAT-2",
+          "modelId": "ship-detect-v1.4",
+          "processorProfileId": null,
+          "output": {
+            "label": "vessel, small \"fishing\""
+          },
+          "confidence": 0.71,
+          "ingest": {
+            "fileSha256": "3c5026d9c5f6ae6973fecb4b8b71313b8348ebc7005b9dbed26a1ddab1db8f91",
+            "row": 6,
+            "mappingId": "generic-csv",
+            "mappingVersion": "0.1.0"
+          }
+        },
+        "environmentSource": "replay jan-2026",
+        "environment": {
+          "radiation": {
+            "value": {
+              "level": 2,
+              "label": "S2"
+            },
+            "source": "NOAA S-scale from GOES ≥10 MeV integral protons",
+            "sourceUrl": "https://services.swpc.noaa.gov/json/goes/primary/integral-protons-6-hour.json",
+            "fetchedAt": "2026-01-19T05:10:00.000Z",
+            "observedAt": "2026-01-19T05:05:00.000Z",
+            "ageSeconds": 300,
+            "confidence": "high",
+            "method": "measured: GOES >=10 MeV protons 122 pfu",
+            "limitations": [
+              "Measured by GOES at geostationary orbit, not at this spacecraft's position."
+            ]
+          },
+          "geomagnetic": {
+            "value": {
+              "level": 0,
+              "label": "G0"
+            },
+            "source": "NOAA G-scale from planetary Kp",
+            "sourceUrl": "https://services.swpc.noaa.gov/products/noaa-planetary-k-index.json",
+            "fetchedAt": "2026-01-19T05:10:00.000Z",
+            "observedAt": "2026-01-19T00:00:00.000Z",
+            "ageSeconds": 18600,
+            "confidence": "high",
+            "method": "measured: Kp 3.33 (last completed 3-hour Kp)",
+            "limitations": [
+              "Last completed 3-hour Kp: can lag a rising storm by up to 3 h."
+            ]
+          },
+          "radioBlackout": {
+            "value": {
+              "level": 0,
+              "label": "R0"
+            },
+            "source": "NOAA R-scale from GOES 0.1–0.8 nm X-rays",
+            "sourceUrl": "https://services.swpc.noaa.gov/json/goes/primary/xrays-6-hour.json",
+            "fetchedAt": "2026-01-19T05:10:00.000Z",
+            "observedAt": "2026-01-19T05:09:00.000Z",
+            "ageSeconds": 60,
+            "confidence": "high",
+            "method": "measured: GOES 0.1-0.8nm X-rays 3.1e-6 W/m² (C3.0)",
+            "limitations": [
+              "Affects dayside HF radio and GNSS links, not onboard electronics directly."
+            ]
+          },
+          "particleFlux": {
+            "value": {
+              "value": 121.606201171875,
+              "unit": "pfu",
+              "channel": ">=10 MeV",
+              "satellite": "GOES-18"
+            },
+            "source": "GOES-18 integral protons",
+            "sourceUrl": "https://services.swpc.noaa.gov/json/goes/primary/integral-protons-6-hour.json",
+            "observedAt": "2026-01-19T05:05:00.000Z",
+            "fetchedAt": "2026-01-19T05:10:00.000Z",
+            "ageSeconds": 300,
+            "confidence": "high",
+            "method": "measured",
+            "limitations": [
+              "Measured by GOES at geostationary orbit, not at this spacecraft's position.",
+              "Integral flux above 10 MeV; not a spectrum at this spacecraft."
+            ]
+          },
+          "kp": {
+            "value": {
+              "value": 3.33,
+              "kind": "planetary-3h"
+            },
+            "source": "NOAA planetary Kp",
+            "sourceUrl": "https://services.swpc.noaa.gov/products/noaa-planetary-k-index.json",
+            "observedAt": "2026-01-19T00:00:00.000Z",
+            "fetchedAt": "2026-01-19T05:10:00.000Z",
+            "ageSeconds": 18600,
+            "confidence": "high",
+            "method": "measured",
+            "limitations": [
+              "Last completed 3-hour Kp: can lag a rising storm by up to 3 h."
+            ]
+          },
+          "dst": {
+            "value": {
+              "value": -65.98047183119412
+            },
+            "source": "Gauss nowcast model",
+            "sourceUrl": null,
+            "observedAt": "2026-01-19T05:09:00.000Z",
+            "fetchedAt": "2026-01-19T05:10:00.000Z",
+            "ageSeconds": 60,
+            "confidence": "low",
+            "method": "model: O'Brien & McPherron (2000) ring-current, from solarWind.speed, magneticField.z, solarWind.dynamicPressure",
+            "limitations": [
+              "Modelled, not measured; it under-reads intense storms (−276 vs −406 nT measured, May 2024 replay)."
+            ]
+          }
+        },
+        "orbit": {
+          "position": {
+            "value": {
+              "latDeg": -30.5,
+              "lonDeg": -45,
+              "altKm": 525
+            },
+            "source": "Supplied ephemeris",
+            "sourceUrl": null,
+            "observedAt": "2026-01-19T05:10:00.000Z",
+            "fetchedAt": null,
+            "ageSeconds": 0,
+            "confidence": "high",
+            "method": "as supplied",
+            "limitations": [
+              "Read as geocentric latitude and longitude, altitude above a 6371.2 km sphere."
+            ]
+          },
+          "saa": {
+            "value": null,
+            "source": "South Atlantic Anomaly from IGRF-14 |B| (AMS-01 thresholds, Fiandrini et al. 2002/2003)",
+            "sourceUrl": null,
+            "observedAt": null,
+            "fetchedAt": null,
+            "ageSeconds": null,
+            "confidence": "none",
+            "method": "unknown",
+            "limitations": [
+              "The B thresholds were set at about 320–390 km; not applied at 525 km (range 300–450 km)"
+            ]
+          },
+          "fieldStrength": {
+            "value": 18786,
+            "source": "IGRF-14 (IAGA V-MOD)",
+            "sourceUrl": "https://www.ngdc.noaa.gov/IAGA/vmod/coeffs/igrf14coeffs.txt",
+            "observedAt": "2026-01-19T05:10:00.000Z",
+            "fetchedAt": null,
+            "ageSeconds": 0,
+            "confidence": "high",
+            "method": "spherical-harmonic synthesis to degree 13 at the position and date",
+            "limitations": [
+              "Earth's internal (main) field only: no external or storm-time field."
+            ]
+          },
+          "lShell": {
+            "value": 1.264,
+            "source": "Computed from the supplied ephemeris",
+            "sourceUrl": null,
+            "observedAt": "2026-01-19T05:10:00.000Z",
+            "fetchedAt": null,
+            "ageSeconds": 0,
+            "confidence": "medium",
+            "method": "centred-dipole L = (r/RE)/cos²(magnetic latitude), IGRF-14 2025 dipole pole",
+            "limitations": [
+              "Centred-dipole approximation: differs most from the full-field L where the field is least dipolar, including the South Atlantic Anomaly."
+            ]
+          }
+        },
+        "upsetRisk": {
+          "value": null,
+          "source": "Processor radiation profile",
+          "sourceUrl": null,
+          "observedAt": null,
+          "fetchedAt": null,
+          "ageSeconds": null,
+          "confidence": "none",
+          "method": "unknown",
+          "limitations": [
+            "No processor profile given; an upset-risk band needs a cited profile (PR-02, GAU-58)."
+          ]
+        },
+        "checks": [
+          {
+            "id": "l1-field-magnitude",
+            "status": "pass",
+            "reason": "ACE Bt and |B| agree in all 30 samples of the last 30 min"
+          },
+          {
+            "id": "l1-plasma-tracking",
+            "status": "pass",
+            "reason": "ACE speed varied 14 km/s with |B| 8.2–8.5 nT over the last 60 min"
+          },
+          {
+            "id": "goes-proton-spectrum",
+            "status": "pass",
+            "reason": "Integral flux falls with energy across >=10 MeV, >=50 MeV, >=100 MeV"
+          },
+          {
+            "id": "goes-proton-channels",
+            "status": "pass",
+            "reason": ">=10 MeV, >=50 MeV, >=100 MeV: current and varying"
+          },
+          {
+            "id": "goes-xray",
+            "status": "pass",
+            "reason": "0.1-0.8nm: current and varying"
+          },
+          {
+            "id": "noaa-scales",
+            "status": "unknown",
+            "reason": "NOAA scales not available"
+          }
+        ],
+        "verdict": {
+          "value": "degraded-context",
+          "reasons": [
+            "Radiation storm S2 at geostationary orbit when the inference ran",
+            "South Atlantic Anomaly not assessed: The B thresholds were set at about 320–390 km; not applied at 525 km (range 300–450 km)"
+          ],
+          "policy": {
+            "id": "gauss-default-0.1",
+            "degradedAtRadiation": 2,
+            "degradedAtGeomagnetic": 3,
+            "requireOrbitContext": false
+          }
+        },
+        "limitations": [
+          "This record describes the space environment when the inference ran. It says nothing about the spacecraft's hardware or whether the output was right.",
+          "Radiation and particle readings come from GOES at geostationary orbit, not from this spacecraft's orbit.",
+          "Advisory only: Gauss has no telecommand authority over any spacecraft.",
+          "No regulatory or compliance claim is made."
+        ],
+        "recordId": "tr_a9c30a2ccebe02336778",
+        "hash": "638e606420954a5cb96972d6e1d9b1dca91988d033e9292bcb570d3c40d3b4b8"
+      }
+    ],
+    "pack": {
+      "schema": "gauss.evidence-pack/0.1",
+      "window": {
+        "from": "2026-01-19T00:00:00.000Z",
+        "to": "2026-01-20T02:00:00.000Z"
+      },
+      "generatedAt": "2026-01-20T02:00:00.000Z",
+      "inputs": {
+        "log": {
+          "fileSha256": "3c5026d9c5f6ae6973fecb4b8b71313b8348ebc7005b9dbed26a1ddab1db8f91",
+          "bytes": 648,
+          "rows": 9,
+          "mappingId": "generic-csv",
+          "mappingVersion": "0.1.0",
+          "rejected": [
+            {
+              "row": 3,
+              "errors": [
+                "duplicate of row 2 (same spacecraft, model and time)"
+              ]
+            },
+            {
+              "row": 4,
+              "errors": [
+                "out of order: earlier than row 2 for spacecraft DEMO-SAT-1"
+              ]
+            },
+            {
+              "row": 5,
+              "errors": [
+                "time \"2026-01-19T05:00:00\" has no time zone; set assumeUtc in the mapping only if the customer confirms UTC"
+              ]
+            },
+            {
+              "row": 7,
+              "errors": [
+                "confidence must be a number from 0 to 1"
+              ]
+            },
+            {
+              "row": 8,
+              "errors": [
+                "time \"not-a-time\" is not an ISO 8601 date and time"
+              ]
+            },
+            {
+              "row": 9,
+              "errors": [
+                "row has 4 fields, the header has 8"
+              ]
+            }
+          ]
+        },
+        "environment": {
+          "source": "replay jan-2026",
+          "archiveSha256": "e244daca86b037c821796910b109a2ee347428e99d430e8181cb551e8f5ec676"
+        },
+        "policy": {
+          "id": "gauss-default-0.1",
+          "degradedAtRadiation": 2,
+          "degradedAtGeomagnetic": 3,
+          "requireOrbitContext": false
+        },
+        "software": {
+          "name": "Gauss",
+          "commit": "e2e-fixture",
+          "requirementsVersion": "1.17.0",
+          "trustRecordSchema": "gauss.trust-record/0.1"
+        },
+        "previousPackHash": null
+      },
+      "scope": {
+        "spacecraft": [
+          "DEMO-SAT-1",
+          "DEMO-SAT-2"
+        ],
+        "models": [
+          "cloudmask-v3.2",
+          "ship-detect-v1.4"
+        ],
+        "processorProfiles": []
+      },
+      "summary": {
+        "records": 3,
+        "verdicts": {
+          "consistent": 1,
+          "degraded-context": 2,
+          "unknown": 0
+        },
+        "bySpacecraft": [
+          {
+            "spacecraftId": "DEMO-SAT-1",
+            "verdicts": {
+              "consistent": 1,
+              "degraded-context": 1,
+              "unknown": 0
+            }
+          },
+          {
+            "spacecraftId": "DEMO-SAT-2",
+            "verdicts": {
+              "consistent": 0,
+              "degraded-context": 1,
+              "unknown": 0
+            }
+          }
+        ],
+        "reasons": [
+          {
+            "reason": "South Atlantic Anomaly not assessed",
+            "count": 3
+          },
+          {
+            "reason": "Radiation storm S2 at geostationary orbit when the inference ran",
+            "count": 2
+          },
+          {
+            "reason": "Radiation S1 and geomagnetic G0, below the policy thresholds",
+            "count": 1
+          }
+        ]
+      },
+      "chain": {
+        "head": "b8078c571f3d542da3a9761f456728cc48c60d0fed5c0325aa75a221ac01e107",
+        "links": [
+          {
+            "recordId": "tr_5359a1a3f07d7e7f9c8e",
+            "recordHash": "922ad2cac6c701b2a2c78b0d3a5a9f37893197158a1aefac5457ac25018bc8af",
+            "link": "34f48f74b70ea68e92309b1ecc8436bc2627d61a576ef4bd84311427914009d5"
+          },
+          {
+            "recordId": "tr_b49a9e3e923c45c9e678",
+            "recordHash": "416ef05a504cacddb3d636edc6841c875e919aec65232aa1448adaf36a8874d8",
+            "link": "dc621cea1018ebaee632cb6a9fdade13ecfe665555682921dc93b5e8e73edd1e"
+          },
+          {
+            "recordId": "tr_a9c30a2ccebe02336778",
+            "recordHash": "638e606420954a5cb96972d6e1d9b1dca91988d033e9292bcb570d3c40d3b4b8",
+            "link": "b8078c571f3d542da3a9761f456728cc48c60d0fed5c0325aa75a221ac01e107"
+          }
+        ]
+      },
+      "records": [
+        {
+          "schema": "gauss.trust-record/0.1",
+          "generatedAt": "2026-01-20T02:00:00.000Z",
+          "inference": {
+            "time": "2026-01-19T02:10:00.000Z",
+            "spacecraftId": "DEMO-SAT-1",
+            "modelId": "cloudmask-v3.2",
+            "processorProfileId": null,
+            "output": {
+              "label": "clear"
+            },
+            "confidence": 0.94,
+            "ingest": {
+              "fileSha256": "3c5026d9c5f6ae6973fecb4b8b71313b8348ebc7005b9dbed26a1ddab1db8f91",
+              "row": 1,
+              "mappingId": "generic-csv",
+              "mappingVersion": "0.1.0"
+            }
+          },
+          "environmentSource": "replay jan-2026",
+          "environment": {
+            "radiation": {
+              "value": {
+                "level": 1,
+                "label": "S1"
+              },
+              "source": "NOAA S-scale from GOES ≥10 MeV integral protons",
+              "sourceUrl": "https://services.swpc.noaa.gov/json/goes/primary/integral-protons-6-hour.json",
+              "fetchedAt": "2026-01-19T02:10:00.000Z",
+              "observedAt": "2026-01-19T02:05:00.000Z",
+              "ageSeconds": 300,
+              "confidence": "high",
+              "method": "measured: GOES >=10 MeV protons 42 pfu",
+              "limitations": [
+                "Measured by GOES at geostationary orbit, not at this spacecraft's position."
+              ]
+            },
+            "geomagnetic": {
+              "value": {
+                "level": 0,
+                "label": "G0"
+              },
+              "source": "NOAA G-scale from planetary Kp",
+              "sourceUrl": "https://services.swpc.noaa.gov/products/noaa-planetary-k-index.json",
+              "fetchedAt": "2026-01-19T02:10:00.000Z",
+              "observedAt": "2026-01-18T21:00:00.000Z",
+              "ageSeconds": 18600,
+              "confidence": "high",
+              "method": "measured: Kp 3.00 (last completed 3-hour Kp)",
+              "limitations": [
+                "Last completed 3-hour Kp: can lag a rising storm by up to 3 h."
+              ]
+            },
+            "radioBlackout": {
+              "value": {
+                "level": 0,
+                "label": "R0"
+              },
+              "source": "NOAA R-scale from GOES 0.1–0.8 nm X-rays",
+              "sourceUrl": "https://services.swpc.noaa.gov/json/goes/primary/xrays-6-hour.json",
+              "fetchedAt": "2026-01-19T02:10:00.000Z",
+              "observedAt": "2026-01-19T02:09:00.000Z",
+              "ageSeconds": 60,
+              "confidence": "high",
+              "method": "measured: GOES 0.1-0.8nm X-rays 4.6e-6 W/m² (C4.6)",
+              "limitations": [
+                "Affects dayside HF radio and GNSS links, not onboard electronics directly."
+              ]
+            },
+            "particleFlux": {
+              "value": {
+                "value": 42.15359878540039,
+                "unit": "pfu",
+                "channel": ">=10 MeV",
+                "satellite": "GOES-18"
+              },
+              "source": "GOES-18 integral protons",
+              "sourceUrl": "https://services.swpc.noaa.gov/json/goes/primary/integral-protons-6-hour.json",
+              "observedAt": "2026-01-19T02:05:00.000Z",
+              "fetchedAt": "2026-01-19T02:10:00.000Z",
+              "ageSeconds": 300,
+              "confidence": "high",
+              "method": "measured",
+              "limitations": [
+                "Measured by GOES at geostationary orbit, not at this spacecraft's position.",
+                "Integral flux above 10 MeV; not a spectrum at this spacecraft."
+              ]
+            },
+            "kp": {
+              "value": {
+                "value": 3,
+                "kind": "planetary-3h"
+              },
+              "source": "NOAA planetary Kp",
+              "sourceUrl": "https://services.swpc.noaa.gov/products/noaa-planetary-k-index.json",
+              "observedAt": "2026-01-18T21:00:00.000Z",
+              "fetchedAt": "2026-01-19T02:10:00.000Z",
+              "ageSeconds": 18600,
+              "confidence": "high",
+              "method": "measured",
+              "limitations": [
+                "Last completed 3-hour Kp: can lag a rising storm by up to 3 h."
+              ]
+            },
+            "dst": {
+              "value": {
+                "value": -76.02915722409382
+              },
+              "source": "Gauss nowcast model",
+              "sourceUrl": null,
+              "observedAt": "2026-01-19T02:09:00.000Z",
+              "fetchedAt": "2026-01-19T02:10:00.000Z",
+              "ageSeconds": 60,
+              "confidence": "low",
+              "method": "model: O'Brien & McPherron (2000) ring-current, from solarWind.speed, magneticField.z, solarWind.dynamicPressure",
+              "limitations": [
+                "Modelled, not measured; it under-reads intense storms (−276 vs −406 nT measured, May 2024 replay)."
+              ]
+            }
+          },
+          "orbit": {
+            "position": {
+              "value": {
+                "latDeg": 12.4,
+                "lonDeg": 101.7,
+                "altKm": 525
+              },
+              "source": "Supplied ephemeris",
+              "sourceUrl": null,
+              "observedAt": "2026-01-19T02:10:00.000Z",
+              "fetchedAt": null,
+              "ageSeconds": 0,
+              "confidence": "high",
+              "method": "as supplied",
+              "limitations": [
+                "Read as geocentric latitude and longitude, altitude above a 6371.2 km sphere."
+              ]
+            },
+            "saa": {
+              "value": null,
+              "source": "South Atlantic Anomaly from IGRF-14 |B| (AMS-01 thresholds, Fiandrini et al. 2002/2003)",
+              "sourceUrl": null,
+              "observedAt": null,
+              "fetchedAt": null,
+              "ageSeconds": null,
+              "confidence": "none",
+              "method": "unknown",
+              "limitations": [
+                "The B thresholds were set at about 320–390 km; not applied at 525 km (range 300–450 km)"
+              ]
+            },
+            "fieldStrength": {
+              "value": 32484,
+              "source": "IGRF-14 (IAGA V-MOD)",
+              "sourceUrl": "https://www.ngdc.noaa.gov/IAGA/vmod/coeffs/igrf14coeffs.txt",
+              "observedAt": "2026-01-19T02:10:00.000Z",
+              "fetchedAt": null,
+              "ageSeconds": 0,
+              "confidence": "high",
+              "method": "spherical-harmonic synthesis to degree 13 at the position and date",
+              "limitations": [
+                "Earth's internal (main) field only: no external or storm-time field."
+              ]
+            },
+            "lShell": {
+              "value": 1.086,
+              "source": "Computed from the supplied ephemeris",
+              "sourceUrl": null,
+              "observedAt": "2026-01-19T02:10:00.000Z",
+              "fetchedAt": null,
+              "ageSeconds": 0,
+              "confidence": "medium",
+              "method": "centred-dipole L = (r/RE)/cos²(magnetic latitude), IGRF-14 2025 dipole pole",
+              "limitations": [
+                "Centred-dipole approximation: differs most from the full-field L where the field is least dipolar, including the South Atlantic Anomaly."
+              ]
+            }
+          },
+          "upsetRisk": {
+            "value": null,
+            "source": "Processor radiation profile",
+            "sourceUrl": null,
+            "observedAt": null,
+            "fetchedAt": null,
+            "ageSeconds": null,
+            "confidence": "none",
+            "method": "unknown",
+            "limitations": [
+              "No processor profile given; an upset-risk band needs a cited profile (PR-02, GAU-58)."
+            ]
+          },
+          "checks": [
+            {
+              "id": "l1-field-magnitude",
+              "status": "pass",
+              "reason": "ACE Bt and |B| agree in all 30 samples of the last 30 min"
+            },
+            {
+              "id": "l1-plasma-tracking",
+              "status": "pass",
+              "reason": "ACE speed varied 26 km/s with |B| 7.7–8.4 nT over the last 60 min"
+            },
+            {
+              "id": "goes-proton-spectrum",
+              "status": "pass",
+              "reason": "Integral flux falls with energy across >=10 MeV, >=50 MeV, >=100 MeV"
+            },
+            {
+              "id": "goes-proton-channels",
+              "status": "pass",
+              "reason": ">=10 MeV, >=50 MeV, >=100 MeV: current and varying"
+            },
+            {
+              "id": "goes-xray",
+              "status": "pass",
+              "reason": "0.1-0.8nm: current and varying"
+            },
+            {
+              "id": "noaa-scales",
+              "status": "unknown",
+              "reason": "NOAA scales not available"
+            }
+          ],
+          "verdict": {
+            "value": "consistent",
+            "reasons": [
+              "Radiation S1 and geomagnetic G0, below the policy thresholds (S2, G3); required inputs current and unflagged",
+              "South Atlantic Anomaly not assessed: The B thresholds were set at about 320–390 km; not applied at 525 km (range 300–450 km)"
+            ],
+            "policy": {
+              "id": "gauss-default-0.1",
+              "degradedAtRadiation": 2,
+              "degradedAtGeomagnetic": 3,
+              "requireOrbitContext": false
+            }
+          },
+          "limitations": [
+            "This record describes the space environment when the inference ran. It says nothing about the spacecraft's hardware or whether the output was right.",
+            "Radiation and particle readings come from GOES at geostationary orbit, not from this spacecraft's orbit.",
+            "Advisory only: Gauss has no telecommand authority over any spacecraft.",
+            "No regulatory or compliance claim is made."
+          ],
+          "recordId": "tr_5359a1a3f07d7e7f9c8e",
+          "hash": "922ad2cac6c701b2a2c78b0d3a5a9f37893197158a1aefac5457ac25018bc8af"
+        },
+        {
+          "schema": "gauss.trust-record/0.1",
+          "generatedAt": "2026-01-20T02:00:00.000Z",
+          "inference": {
+            "time": "2026-01-19T04:50:30.000Z",
+            "spacecraftId": "DEMO-SAT-1",
+            "modelId": "cloudmask-v3.2",
+            "processorProfileId": null,
+            "output": {
+              "label": "cloud"
+            },
+            "confidence": 0.88,
+            "ingest": {
+              "fileSha256": "3c5026d9c5f6ae6973fecb4b8b71313b8348ebc7005b9dbed26a1ddab1db8f91",
+              "row": 2,
+              "mappingId": "generic-csv",
+              "mappingVersion": "0.1.0"
+            }
+          },
+          "environmentSource": "replay jan-2026",
+          "environment": {
+            "radiation": {
+              "value": {
+                "level": 2,
+                "label": "S2"
+              },
+              "source": "NOAA S-scale from GOES ≥10 MeV integral protons",
+              "sourceUrl": "https://services.swpc.noaa.gov/json/goes/primary/integral-protons-6-hour.json",
+              "fetchedAt": "2026-01-19T04:50:00.000Z",
+              "observedAt": "2026-01-19T04:45:00.000Z",
+              "ageSeconds": 330,
+              "confidence": "high",
+              "method": "measured: GOES >=10 MeV protons 109 pfu",
+              "limitations": [
+                "Measured by GOES at geostationary orbit, not at this spacecraft's position."
+              ]
+            },
+            "geomagnetic": {
+              "value": {
+                "level": 0,
+                "label": "G0"
+              },
+              "source": "NOAA G-scale from planetary Kp",
+              "sourceUrl": "https://services.swpc.noaa.gov/products/noaa-planetary-k-index.json",
+              "fetchedAt": "2026-01-19T04:50:00.000Z",
+              "observedAt": "2026-01-19T00:00:00.000Z",
+              "ageSeconds": 17430,
+              "confidence": "high",
+              "method": "measured: Kp 3.33 (last completed 3-hour Kp)",
+              "limitations": [
+                "Last completed 3-hour Kp: can lag a rising storm by up to 3 h."
+              ]
+            },
+            "radioBlackout": {
+              "value": {
+                "level": 0,
+                "label": "R0"
+              },
+              "source": "NOAA R-scale from GOES 0.1–0.8 nm X-rays",
+              "sourceUrl": "https://services.swpc.noaa.gov/json/goes/primary/xrays-6-hour.json",
+              "fetchedAt": "2026-01-19T04:50:00.000Z",
+              "observedAt": "2026-01-19T04:49:00.000Z",
+              "ageSeconds": 90,
+              "confidence": "high",
+              "method": "measured: GOES 0.1-0.8nm X-rays 3.0e-6 W/m² (C3.0)",
+              "limitations": [
+                "Affects dayside HF radio and GNSS links, not onboard electronics directly."
+              ]
+            },
+            "particleFlux": {
+              "value": {
+                "value": 109.27397155761719,
+                "unit": "pfu",
+                "channel": ">=10 MeV",
+                "satellite": "GOES-18"
+              },
+              "source": "GOES-18 integral protons",
+              "sourceUrl": "https://services.swpc.noaa.gov/json/goes/primary/integral-protons-6-hour.json",
+              "observedAt": "2026-01-19T04:45:00.000Z",
+              "fetchedAt": "2026-01-19T04:50:00.000Z",
+              "ageSeconds": 330,
+              "confidence": "high",
+              "method": "measured",
+              "limitations": [
+                "Measured by GOES at geostationary orbit, not at this spacecraft's position.",
+                "Integral flux above 10 MeV; not a spectrum at this spacecraft."
+              ]
+            },
+            "kp": {
+              "value": {
+                "value": 3.33,
+                "kind": "planetary-3h"
+              },
+              "source": "NOAA planetary Kp",
+              "sourceUrl": "https://services.swpc.noaa.gov/products/noaa-planetary-k-index.json",
+              "observedAt": "2026-01-19T00:00:00.000Z",
+              "fetchedAt": "2026-01-19T04:50:00.000Z",
+              "ageSeconds": 17430,
+              "confidence": "high",
+              "method": "measured",
+              "limitations": [
+                "Last completed 3-hour Kp: can lag a rising storm by up to 3 h."
+              ]
+            },
+            "dst": {
+              "value": {
+                "value": -66.99676292917118
+              },
+              "source": "Gauss nowcast model",
+              "sourceUrl": null,
+              "observedAt": "2026-01-19T04:49:00.000Z",
+              "fetchedAt": "2026-01-19T04:50:00.000Z",
+              "ageSeconds": 90,
+              "confidence": "low",
+              "method": "model: O'Brien & McPherron (2000) ring-current, from solarWind.speed, magneticField.z, solarWind.dynamicPressure",
+              "limitations": [
+                "Modelled, not measured; it under-reads intense storms (−276 vs −406 nT measured, May 2024 replay)."
+              ]
+            }
+          },
+          "orbit": {
+            "position": {
+              "value": null,
+              "source": "Spacecraft position",
+              "sourceUrl": null,
+              "observedAt": null,
+              "fetchedAt": null,
+              "ageSeconds": null,
+              "confidence": "none",
+              "method": "unknown",
+              "limitations": [
+                "No ephemeris or TLE given."
+              ]
+            },
+            "saa": {
+              "value": null,
+              "source": "South Atlantic Anomaly",
+              "sourceUrl": null,
+              "observedAt": null,
+              "fetchedAt": null,
+              "ageSeconds": null,
+              "confidence": "none",
+              "method": "unknown",
+              "limitations": [
+                "No ephemeris or TLE given."
+              ]
+            },
+            "fieldStrength": {
+              "value": null,
+              "source": "IGRF-14 (IAGA V-MOD)",
+              "sourceUrl": null,
+              "observedAt": null,
+              "fetchedAt": null,
+              "ageSeconds": null,
+              "confidence": "none",
+              "method": "unknown",
+              "limitations": [
+                "No ephemeris or TLE given."
+              ]
+            },
+            "lShell": {
+              "value": null,
+              "source": "L-shell",
+              "sourceUrl": null,
+              "observedAt": null,
+              "fetchedAt": null,
+              "ageSeconds": null,
+              "confidence": "none",
+              "method": "unknown",
+              "limitations": [
+                "No ephemeris or TLE given."
+              ]
+            }
+          },
+          "upsetRisk": {
+            "value": null,
+            "source": "Processor radiation profile",
+            "sourceUrl": null,
+            "observedAt": null,
+            "fetchedAt": null,
+            "ageSeconds": null,
+            "confidence": "none",
+            "method": "unknown",
+            "limitations": [
+              "No processor profile given; an upset-risk band needs a cited profile (PR-02, GAU-58)."
+            ]
+          },
+          "checks": [
+            {
+              "id": "l1-field-magnitude",
+              "status": "pass",
+              "reason": "ACE Bt and |B| agree in all 30 samples of the last 30 min"
+            },
+            {
+              "id": "l1-plasma-tracking",
+              "status": "pass",
+              "reason": "ACE speed varied 14 km/s with |B| 8.2–8.5 nT over the last 60 min"
+            },
+            {
+              "id": "goes-proton-spectrum",
+              "status": "pass",
+              "reason": "Integral flux falls with energy across >=10 MeV, >=50 MeV, >=100 MeV"
+            },
+            {
+              "id": "goes-proton-channels",
+              "status": "pass",
+              "reason": ">=10 MeV, >=50 MeV, >=100 MeV: current and varying"
+            },
+            {
+              "id": "goes-xray",
+              "status": "pass",
+              "reason": "0.1-0.8nm: current and varying"
+            },
+            {
+              "id": "noaa-scales",
+              "status": "unknown",
+              "reason": "NOAA scales not available"
+            }
+          ],
+          "verdict": {
+            "value": "degraded-context",
+            "reasons": [
+              "Radiation storm S2 at geostationary orbit when the inference ran",
+              "South Atlantic Anomaly not assessed: No ephemeris or TLE given."
+            ],
+            "policy": {
+              "id": "gauss-default-0.1",
+              "degradedAtRadiation": 2,
+              "degradedAtGeomagnetic": 3,
+              "requireOrbitContext": false
+            }
+          },
+          "limitations": [
+            "This record describes the space environment when the inference ran. It says nothing about the spacecraft's hardware or whether the output was right.",
+            "Radiation and particle readings come from GOES at geostationary orbit, not from this spacecraft's orbit.",
+            "Advisory only: Gauss has no telecommand authority over any spacecraft.",
+            "No regulatory or compliance claim is made."
+          ],
+          "recordId": "tr_b49a9e3e923c45c9e678",
+          "hash": "416ef05a504cacddb3d636edc6841c875e919aec65232aa1448adaf36a8874d8"
+        },
+        {
+          "schema": "gauss.trust-record/0.1",
+          "generatedAt": "2026-01-20T02:00:00.000Z",
+          "inference": {
+            "time": "2026-01-19T05:10:00.000Z",
+            "spacecraftId": "DEMO-SAT-2",
+            "modelId": "ship-detect-v1.4",
+            "processorProfileId": null,
+            "output": {
+              "label": "vessel, small \"fishing\""
+            },
+            "confidence": 0.71,
+            "ingest": {
+              "fileSha256": "3c5026d9c5f6ae6973fecb4b8b71313b8348ebc7005b9dbed26a1ddab1db8f91",
+              "row": 6,
+              "mappingId": "generic-csv",
+              "mappingVersion": "0.1.0"
+            }
+          },
+          "environmentSource": "replay jan-2026",
+          "environment": {
+            "radiation": {
+              "value": {
+                "level": 2,
+                "label": "S2"
+              },
+              "source": "NOAA S-scale from GOES ≥10 MeV integral protons",
+              "sourceUrl": "https://services.swpc.noaa.gov/json/goes/primary/integral-protons-6-hour.json",
+              "fetchedAt": "2026-01-19T05:10:00.000Z",
+              "observedAt": "2026-01-19T05:05:00.000Z",
+              "ageSeconds": 300,
+              "confidence": "high",
+              "method": "measured: GOES >=10 MeV protons 122 pfu",
+              "limitations": [
+                "Measured by GOES at geostationary orbit, not at this spacecraft's position."
+              ]
+            },
+            "geomagnetic": {
+              "value": {
+                "level": 0,
+                "label": "G0"
+              },
+              "source": "NOAA G-scale from planetary Kp",
+              "sourceUrl": "https://services.swpc.noaa.gov/products/noaa-planetary-k-index.json",
+              "fetchedAt": "2026-01-19T05:10:00.000Z",
+              "observedAt": "2026-01-19T00:00:00.000Z",
+              "ageSeconds": 18600,
+              "confidence": "high",
+              "method": "measured: Kp 3.33 (last completed 3-hour Kp)",
+              "limitations": [
+                "Last completed 3-hour Kp: can lag a rising storm by up to 3 h."
+              ]
+            },
+            "radioBlackout": {
+              "value": {
+                "level": 0,
+                "label": "R0"
+              },
+              "source": "NOAA R-scale from GOES 0.1–0.8 nm X-rays",
+              "sourceUrl": "https://services.swpc.noaa.gov/json/goes/primary/xrays-6-hour.json",
+              "fetchedAt": "2026-01-19T05:10:00.000Z",
+              "observedAt": "2026-01-19T05:09:00.000Z",
+              "ageSeconds": 60,
+              "confidence": "high",
+              "method": "measured: GOES 0.1-0.8nm X-rays 3.1e-6 W/m² (C3.0)",
+              "limitations": [
+                "Affects dayside HF radio and GNSS links, not onboard electronics directly."
+              ]
+            },
+            "particleFlux": {
+              "value": {
+                "value": 121.606201171875,
+                "unit": "pfu",
+                "channel": ">=10 MeV",
+                "satellite": "GOES-18"
+              },
+              "source": "GOES-18 integral protons",
+              "sourceUrl": "https://services.swpc.noaa.gov/json/goes/primary/integral-protons-6-hour.json",
+              "observedAt": "2026-01-19T05:05:00.000Z",
+              "fetchedAt": "2026-01-19T05:10:00.000Z",
+              "ageSeconds": 300,
+              "confidence": "high",
+              "method": "measured",
+              "limitations": [
+                "Measured by GOES at geostationary orbit, not at this spacecraft's position.",
+                "Integral flux above 10 MeV; not a spectrum at this spacecraft."
+              ]
+            },
+            "kp": {
+              "value": {
+                "value": 3.33,
+                "kind": "planetary-3h"
+              },
+              "source": "NOAA planetary Kp",
+              "sourceUrl": "https://services.swpc.noaa.gov/products/noaa-planetary-k-index.json",
+              "observedAt": "2026-01-19T00:00:00.000Z",
+              "fetchedAt": "2026-01-19T05:10:00.000Z",
+              "ageSeconds": 18600,
+              "confidence": "high",
+              "method": "measured",
+              "limitations": [
+                "Last completed 3-hour Kp: can lag a rising storm by up to 3 h."
+              ]
+            },
+            "dst": {
+              "value": {
+                "value": -65.98047183119412
+              },
+              "source": "Gauss nowcast model",
+              "sourceUrl": null,
+              "observedAt": "2026-01-19T05:09:00.000Z",
+              "fetchedAt": "2026-01-19T05:10:00.000Z",
+              "ageSeconds": 60,
+              "confidence": "low",
+              "method": "model: O'Brien & McPherron (2000) ring-current, from solarWind.speed, magneticField.z, solarWind.dynamicPressure",
+              "limitations": [
+                "Modelled, not measured; it under-reads intense storms (−276 vs −406 nT measured, May 2024 replay)."
+              ]
+            }
+          },
+          "orbit": {
+            "position": {
+              "value": {
+                "latDeg": -30.5,
+                "lonDeg": -45,
+                "altKm": 525
+              },
+              "source": "Supplied ephemeris",
+              "sourceUrl": null,
+              "observedAt": "2026-01-19T05:10:00.000Z",
+              "fetchedAt": null,
+              "ageSeconds": 0,
+              "confidence": "high",
+              "method": "as supplied",
+              "limitations": [
+                "Read as geocentric latitude and longitude, altitude above a 6371.2 km sphere."
+              ]
+            },
+            "saa": {
+              "value": null,
+              "source": "South Atlantic Anomaly from IGRF-14 |B| (AMS-01 thresholds, Fiandrini et al. 2002/2003)",
+              "sourceUrl": null,
+              "observedAt": null,
+              "fetchedAt": null,
+              "ageSeconds": null,
+              "confidence": "none",
+              "method": "unknown",
+              "limitations": [
+                "The B thresholds were set at about 320–390 km; not applied at 525 km (range 300–450 km)"
+              ]
+            },
+            "fieldStrength": {
+              "value": 18786,
+              "source": "IGRF-14 (IAGA V-MOD)",
+              "sourceUrl": "https://www.ngdc.noaa.gov/IAGA/vmod/coeffs/igrf14coeffs.txt",
+              "observedAt": "2026-01-19T05:10:00.000Z",
+              "fetchedAt": null,
+              "ageSeconds": 0,
+              "confidence": "high",
+              "method": "spherical-harmonic synthesis to degree 13 at the position and date",
+              "limitations": [
+                "Earth's internal (main) field only: no external or storm-time field."
+              ]
+            },
+            "lShell": {
+              "value": 1.264,
+              "source": "Computed from the supplied ephemeris",
+              "sourceUrl": null,
+              "observedAt": "2026-01-19T05:10:00.000Z",
+              "fetchedAt": null,
+              "ageSeconds": 0,
+              "confidence": "medium",
+              "method": "centred-dipole L = (r/RE)/cos²(magnetic latitude), IGRF-14 2025 dipole pole",
+              "limitations": [
+                "Centred-dipole approximation: differs most from the full-field L where the field is least dipolar, including the South Atlantic Anomaly."
+              ]
+            }
+          },
+          "upsetRisk": {
+            "value": null,
+            "source": "Processor radiation profile",
+            "sourceUrl": null,
+            "observedAt": null,
+            "fetchedAt": null,
+            "ageSeconds": null,
+            "confidence": "none",
+            "method": "unknown",
+            "limitations": [
+              "No processor profile given; an upset-risk band needs a cited profile (PR-02, GAU-58)."
+            ]
+          },
+          "checks": [
+            {
+              "id": "l1-field-magnitude",
+              "status": "pass",
+              "reason": "ACE Bt and |B| agree in all 30 samples of the last 30 min"
+            },
+            {
+              "id": "l1-plasma-tracking",
+              "status": "pass",
+              "reason": "ACE speed varied 14 km/s with |B| 8.2–8.5 nT over the last 60 min"
+            },
+            {
+              "id": "goes-proton-spectrum",
+              "status": "pass",
+              "reason": "Integral flux falls with energy across >=10 MeV, >=50 MeV, >=100 MeV"
+            },
+            {
+              "id": "goes-proton-channels",
+              "status": "pass",
+              "reason": ">=10 MeV, >=50 MeV, >=100 MeV: current and varying"
+            },
+            {
+              "id": "goes-xray",
+              "status": "pass",
+              "reason": "0.1-0.8nm: current and varying"
+            },
+            {
+              "id": "noaa-scales",
+              "status": "unknown",
+              "reason": "NOAA scales not available"
+            }
+          ],
+          "verdict": {
+            "value": "degraded-context",
+            "reasons": [
+              "Radiation storm S2 at geostationary orbit when the inference ran",
+              "South Atlantic Anomaly not assessed: The B thresholds were set at about 320–390 km; not applied at 525 km (range 300–450 km)"
+            ],
+            "policy": {
+              "id": "gauss-default-0.1",
+              "degradedAtRadiation": 2,
+              "degradedAtGeomagnetic": 3,
+              "requireOrbitContext": false
+            }
+          },
+          "limitations": [
+            "This record describes the space environment when the inference ran. It says nothing about the spacecraft's hardware or whether the output was right.",
+            "Radiation and particle readings come from GOES at geostationary orbit, not from this spacecraft's orbit.",
+            "Advisory only: Gauss has no telecommand authority over any spacecraft.",
+            "No regulatory or compliance claim is made."
+          ],
+          "recordId": "tr_a9c30a2ccebe02336778",
+          "hash": "638e606420954a5cb96972d6e1d9b1dca91988d033e9292bcb570d3c40d3b4b8"
+        }
+      ],
+      "limitations": [
+        "Environment, not spacecraft: this pack describes the space environment when each inference ran, from public monitors and models. Nothing in it was measured on the spacecraft, and it says nothing about the spacecraft's hardware or whether any output was right.",
+        "Advisory only: Gauss has no telecommand authority over any spacecraft.",
+        "No regulatory or compliance claim is made.",
+        "Integrity and authorship: the hashes show whether the pack changed after it was made. A valid signature from a key in the published Gauss keyring shows that Gauss made it; an unsigned pack shows integrity only, given a trusted copy of the pack hash.",
+        "Radiation and particle readings come from GOES at geostationary orbit, not from this spacecraft's orbit.",
+        "Measured by GOES at geostationary orbit, not at this spacecraft's position.",
+        "Last completed 3-hour Kp: can lag a rising storm by up to 3 h.",
+        "Affects dayside HF radio and GNSS links, not onboard electronics directly.",
+        "Integral flux above 10 MeV; not a spectrum at this spacecraft.",
+        "Modelled, not measured; it under-reads intense storms (−276 vs −406 nT measured, May 2024 replay).",
+        "Read as geocentric latitude and longitude, altitude above a 6371.2 km sphere.",
+        "Earth's internal (main) field only: no external or storm-time field.",
+        "Centred-dipole approximation: differs most from the full-field L where the field is least dipolar, including the South Atlantic Anomaly."
+      ],
+      "signature": null,
+      "packId": "ep_5cc6d72c81cdaf5446fc",
+      "packHash": "d0f16c80db06814891ad24be2b5dba99a7caf653803c4e72aa4207189ff2cf24"
+    },
+    "signed": false,
+    "signOnHost": "npm run trust:sign -- pack.json --sign-key <private key file> --pdf pack.pdf"
+  },
+  "verify": {
+    "unsigned": {
+      "ok": false,
+      "problems": [
+        "the pack is not signed, so nothing shows who made it (integrity only)"
+      ],
+      "notes": [],
+      "lines": [
+        "ep_5cc6d72c81cdaf5446fc.json: FAILED",
+        "  - the pack is not signed, so nothing shows who made it (integrity only)"
+      ],
+      "keyring": "backend/trust/signing-keys.json"
+    },
+    "integrity": {
+      "ok": true,
+      "problems": [],
+      "notes": [
+        "NOT SIGNED: integrity only. Nothing shows who made this pack; compare its pack hash with a copy you trust."
+      ],
+      "lines": [
+        "ep_5cc6d72c81cdaf5446fc.json: OK. 3 records, pack hash d0f16c80db06814891ad24be2b5dba99a7caf653803c4e72aa4207189ff2cf24",
+        "  NOTE: NOT SIGNED: integrity only. Nothing shows who made this pack; compare its pack hash with a copy you trust."
+      ],
+      "keyring": "backend/trust/signing-keys.json"
+    }
+  }
+}
