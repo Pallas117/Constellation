@@ -172,3 +172,29 @@ test("pilot requests: valid leads stored, bad input rejected, honeypot dropped, 
     server.close();
   }
 });
+
+test("pilot requests: addresses with nothing in the last hour are forgotten (GAU-209)", () => {
+  const store = new CommerceStore(":memory:");
+  let t = Date.parse("2026-10-10T08:00:00Z");
+  const handler = createPilotRequestHandler(store, () => t);
+  const send = (ip: string, body: object) => {
+    let status = 0;
+    const res = { status: (code: number) => ((status = code), res), json: () => res } as unknown as express.Response;
+    handler({ ip, body } as express.Request, res);
+    return status;
+  };
+  const lead = { name: "Ada", email: "ada@xorbita.space", company: "xOrbita" };
+  for (let i = 0; i < 50; i += 1) assert.equal(send(`198.51.100.${i}`, lead), 201);
+  assert.equal(handler.trackedIps(), 50);
+  assert.equal(send("203.0.113.1", { name: "" }), 400, "a rejected request leaves no entry");
+  assert.equal(handler.trackedIps(), 50);
+
+  t += 61 * 60 * 1000;
+  assert.equal(send("203.0.113.2", lead), 201);
+  assert.equal(handler.trackedIps(), 1, "stale addresses swept");
+
+  // The per-IP limit itself is unchanged.
+  assert.equal(send("203.0.113.2", lead), 201);
+  assert.equal(send("203.0.113.2", lead), 201);
+  assert.equal(send("203.0.113.2", lead), 429);
+});
