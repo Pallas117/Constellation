@@ -26,6 +26,36 @@ test("tail read returns the last lines in order without reading the whole file (
   assert.equal(JSON.parse(all[0]).i, 0);
 });
 
+test("tail read touches only a bounded chunk of a file far larger than the tail (REQ-PER-001)", async () => {
+  // ~12 MB file; the last 10 lines live in the final 64 KB chunk, so one read should suffice.
+  const line = JSON.stringify({ pad: "x".repeat(110) });
+  const lineBytes = Buffer.byteLength(line) + 1;
+  const file = await tmpFile((line + "\n").repeat(100_000));
+  const fileBytes = lineBytes * 100_000;
+
+  // Count bytes through the FileHandle read seam (no change to production code).
+  const probe = await fs.open(file, "r");
+  const proto = Object.getPrototypeOf(probe) as { read: (...args: unknown[]) => Promise<{ bytesRead: number }> };
+  await probe.close();
+  const realRead = proto.read;
+  let bytesRead = 0;
+  proto.read = async function (this: unknown, ...args: unknown[]) {
+    const result = await realRead.apply(this, args);
+    bytesRead += result.bytesRead;
+    return result;
+  };
+  let tail: string[];
+  try {
+    tail = await readTailLines(file, 10);
+  } finally {
+    proto.read = realRead;
+  }
+  assert.equal(tail.length, 10);
+  assert.ok(bytesRead > 0, "the seam saw the read");
+  assert.ok(fileBytes > 100 * 64 * 1024, "the file is far larger than one chunk");
+  assert.ok(bytesRead <= 2 * 64 * 1024, `read ${bytesRead} of ${fileBytes} bytes`);
+});
+
 test("tail read keeps multi-byte UTF-8 intact across chunk boundaries (GAU-117)", async () => {
   const lines = Array.from({ length: 5_000 }, (_, i) => JSON.stringify({ i, s: "Ω≈µ°–".repeat(7) }));
   const file = await tmpFile(lines.join("\n"));
