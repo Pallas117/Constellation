@@ -632,6 +632,31 @@
       ]
     },
     {
+      "id": "REQ-OPS-011",
+      "title": "Always-on VPS kit is closed by default",
+      "statement": "The VPS kit shall keep the hub backend on 127.0.0.1 (reachable on the tailnet only through tailscale serve), take the Tailscale auth key at run time without printing it or putting it on a command line, enable the firewall (deny incoming except tailscale0) last, run services as a non-login user, verify downloaded Node and Go against published checksums, never weaken TLS, hold no keys in the repository, and leave the Argo relay stopped until a person has confirmed the other device's key fingerprint.",
+      "rationale": "An always-on hub is the first Gauss service outside this Mac; a mistake there is reachable from the internet, and Argo pins a key it sees for the first time (docs/ARGO_DTN.md; scripts/ops/vps/README.md).",
+      "parent": "GAU-223",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "vps bootstrap --dry-run exits 0 without root, network or a prompt",
+        "vps bootstrap never prints the Tailscale auth key",
+        "vps bootstrap passes the auth key to tailscale as a file, not on the command line",
+        "vps hub is exposed on the tailnet only through tailscale serve to 127.0.0.1",
+        "vps hub environment binds the backend to 127.0.0.1",
+        "vps firewall denies incoming except on tailscale0",
+        "vps firewall is enabled last, after the tailnet exposure works",
+        "vps services run as a non-login system user",
+        "vps downloads of Node and Go are checked against published checksums",
+        "vps bootstrap leaves the Argo relay stopped until fingerprints are confirmed",
+        "vps confirm-peer refuses on mismatch and is the only thing that starts the relay",
+        "vps confirm-peer asks for a typed yes before pinning",
+        "vps kit contains no keys or tokens",
+        "vps kit never weakens TLS verification"
+      ]
+    },
+    {
       "id": "REQ-WM-001",
       "title": "Deterministic, tamper-evident world records",
       "statement": "Every world-state record shall have a deterministic id and a SHA-256 checksum over its canonical content, and validation shall reject records whose content, id or schema do not match.",
@@ -1182,6 +1207,128 @@
       ]
     },
     {
+      "id": "REQ-DEV-001",
+      "title": "Swap timer idle with no devices",
+      "statement": "The swap timer's tick shall append no telemetry line and change no device when no device is registered.",
+      "rationale": "An idle tick otherwise appends about 3,840 telemetry lines a day to the line-capped live file (backend/services/device-swap-manager.ts scheduledRebalance, GAU-228).",
+      "parent": "GAU-228",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "GAU-228: the swap timer's tick does nothing until a device is registered, then rebalances it"
+      ]
+    },
+    {
+      "id": "REQ-DEV-002",
+      "title": "Swap plan and quality are operator-only",
+      "statement": "The API policy shall require the operator role for GET /api/device/swap/plan and for POST /api/device/:id/quality.",
+      "rationale": "Both change or reveal how work is spread across devices (backend/rbac.ts:68,70); the exact path /device/swap/plan must beat /device/:id.",
+      "parent": "GAU-120",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "role matrix"
+      ]
+    },
+    {
+      "id": "REQ-FEED-001",
+      "title": "Space-object catalogue needs a session",
+      "statement": "The system shall answer GET /api/feed/space-objects with HTTP 401 when the request has no session.",
+      "rationale": "The route is in the user tier of the API policy (backend/server.ts:373, backend/rbac.ts); only the landing feeds are public.",
+      "parent": "GAU-120",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "landing feeds are public; other API routes still require a session"
+      ]
+    },
+    {
+      "id": "REQ-LNK-001",
+      "title": "Link mode drops to AIRGAP after two failed checks",
+      "statement": "The link guardian shall switch to AIRGAP only after 2 consecutive failed link checks, and shall keep the previous mode after a single failed check.",
+      "rationale": "One lost ping used to stop every external fetch for 30 s; the 17% AIRGAP readings on the hotspot were mostly single lost pings (backend/lib/link-mode.ts, AIRGAP_AFTER = 2).",
+      "parent": "GAU-120",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "one lost ping keeps the last mode: fetches don't stop for a blip",
+        "2 lost pings in a row switch to AIRGAP"
+      ]
+    },
+    {
+      "id": "REQ-LNK-002",
+      "title": "Link mode by latency",
+      "statement": "The link guardian shall report SAT when an answered link check takes 150 ms or more and CLOUD when it takes less than 150 ms.",
+      "rationale": "SAT mode throttles the live feeds to save bandwidth (backend/lib/link-mode.ts SAT_LATENCY_MS = 150; backend/server.ts broadcast).",
+      "parent": "GAU-120",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "a ping that answers resets the count and picks CLOUD or SAT by latency"
+      ]
+    },
+    {
+      "id": "REQ-AUTH-001",
+      "title": "Sign-in options carry no secret",
+      "statement": "GET /api/sso-options shall answer a caller with no session with HTTP 200 and a body of the Google and GitHub enabled flags and the allowed domain only, containing no credential.",
+      "rationale": "The login page needs to know which methods to offer before sign-in (backend/server.ts:249).",
+      "parent": "GAU-120",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "sso-options is public and reports Google SSO off without credentials"
+      ]
+    },
+    {
+      "id": "REQ-ADP-001",
+      "title": "JAXA ERG probe is never a healthy feed",
+      "statement": "The JAXA ERG adapter shall report healthy false and no last-seen time for every probe outcome, including a reachable catalogue.",
+      "rationale": "The probe ingests no particle data, so it must not make a source look live (backend/adapters/jaxa-erg.ts, GAU-55, GAU-63).",
+      "parent": "GAU-55",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "JAXA: catalog reachability is not reported as a healthy data feed (GAU-55)",
+        "JAXA: a failure or an unexpected page is never a healthy feed (GAU-63)"
+      ]
+    },
+    {
+      "id": "REQ-GATE-001",
+      "title": "Gate reports missing or skipped tests",
+      "statement": "The verification gate shall mark a requirement unverified when any mapped test is missing or skipped, and failed when any mapped test fails.",
+      "rationale": "Evidence is by exact test name, so a renamed test must not pass silently (scripts/verify/vcrm.ts buildMatrix).",
+      "parent": "GAU-120",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "VCRM: verified only with all evidence passing; missing, failing or skipped tests are reported (GAU-120)"
+      ]
+    },
+    {
+      "id": "REQ-GATE-002",
+      "title": "Baseline validator requires a shall",
+      "statement": "The baseline validator shall report a problem for any requirement whose statement does not contain \"shall\".",
+      "rationale": "A statement without a shall is not a requirement (scripts/verify/vcrm.ts validateBaseline).",
+      "parent": "GAU-120",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "VCRM: baseline rules enforce id, 'shall', method and evidence (GAU-120)"
+      ]
+    },
+    {
+      "id": "REQ-WS-001",
+      "title": "Feed sockets refuse a foreign origin",
+      "statement": "The feed WebSocket servers shall close with code 1008 any connection whose Origin header is not an allowed origin.",
+      "rationale": "A page on another site must not read the live feeds with a visitor's session (backend/server.ts guardSocketConnection, GAU-201).",
+      "parent": "GAU-201",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "feed WebSockets: both paths connect at once and stay open; bad origin and unknown path refused (GAU-201)"
+      ]
+    },
+    {
       "id": "REQ-ARG-001",
       "title": "Argo never automates admin actions",
       "statement": "Argo shall never run an administrator, sudo or Tailscale-changing step on its own: its remediation plan shall hold only allowlisted, non-sudo steps, and exit-node candidates shall come from an allowlist.",
@@ -1238,6 +1385,53 @@
         "TestChargerReasonInGuardAndAlert",
         "TestChargerStatusAndReport",
         "Argo's guard block is allowlisted; unknown codes drop alone, bad values drop the block"
+      ]
+    },
+    {
+      "id": "REQ-ARG-030",
+      "title": "Power-save mode",
+      "statement": "When a host's power budget is negative (on battery, on a charger that cannot carry the load, or on plain 5 V USB) Argo shall enter power-save at once and leave it only after the budget has been healthy for 10 minutes; while on it shall report \"power-save\" as a guard reason with the charger advice so heavy work waits, stretch its own probe, guard-sampling and mesh-report timers by a factor of 3 (a broken link still probes and reports at once), and send one warn-level text per 6 hours. A host with no battery or no reading shall never enter it, and `argo power-save on|off|auto|status` shall force, release or show it.",
+      "rationale": "On 17 Nov 2026 a Mac on an 8 W charger drained under load; Josh asked Argo to adjust settings as needed on every device. A spacecraft sheds non-essential loads in eclipse and restores them in sunlight; Argo does the same.",
+      "parent": "GAU-195",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "TestPowerSaveEntersAndLeaves",
+        "TestPowerSaveForced",
+        "TestPowerSaveStretchesTimers",
+        "TestPowerSaveHoldsHeavyWorkWithChargerAdvice",
+        "TestPowerSaveTickActsOnceAndRestores",
+        "TestPowerSaveReportStatusAndCLI"
+      ]
+    },
+    {
+      "id": "REQ-ARG-031",
+      "title": "Power-save acts only without admin rights and reversibly",
+      "statement": "In power-save Argo shall quit only menu-bar apps on a fixed allowlist, only while they are running and idle by their own reported state (Cloudflare WARP's app when warp-cli says Disconnected; the daemon stays), by a normal SIGTERM and never through UI scripting, shall record what it quit and relaunch it when power-save ends (never an app off the allowlist, never one already running), and shall only suggest admin settings (pmset, powerprofilesctl, tlp) with the exact command, never run them. External commands use pinned absolute paths and no shell.",
+      "rationale": "Automatic actions must need no admin rights and be undoable; changing settings through UI scripting needs an Automation permission prompt that blocks an unattended run.",
+      "parent": "GAU-195",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "TestPowerSaveQuitsOnlyIdleAllowlistedApps",
+        "TestPowerSaveRelaunchesWhatItQuit",
+        "TestPowerSaveSuggestsAdminSettingsNeverRuns",
+        "TestPowerSaveTickActsOnceAndRestores"
+      ]
+    },
+    {
+      "id": "REQ-ARG-032",
+      "title": "Power-save on the mesh",
+      "statement": "Argo shall send its power-save state (on or off, and while on since when and why) to Gauss as an allowlisted field; Gauss shall accept only a boolean, one of the reasons battery, charger-short, no-pd or manual, and a time that is not in the future or older than a year, drop a bad block alone, and show staff and above which devices are in power-save and why on /mesh.",
+      "rationale": "The network can place work on devices that have power to spare only if it can see which ones are saving it.",
+      "parent": "GAU-195",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "TestPowerSaveReportStatusAndCLI",
+        "power-save: allowlisted reason, ranged time, off carries nothing, bad drops alone",
+        "Gauss knows every guard code, level and admission Argo can send",
+        "battery and guard lines read plainly"
       ]
     }
   ]
