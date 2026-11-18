@@ -772,6 +772,22 @@
       ]
     },
     {
+      "id": "REQ-TR-020",
+      "title": "Evidence view in the operator console",
+      "statement": "The operator console shall let an operator or admin, and no lower role, turn an inference log into trust records and an evidence pack identical to the one the trust:ingest command writes, download it as JSON and PDF, and check a pack with the same result lines as the trust:verify command, and shall offer no way to sign a pack.",
+      "rationale": "M1 pilot-ready (GAU-59): a buyer is shown the flow in the app, and it must be the same pack and the same check as the command line, with the signing key never reachable from a browser (GAU-67).",
+      "parent": "GAU-59",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "evidence routes: operators and admins only; no session 401, user and staff 403 (GAU-59)",
+        "evidence routes: there is no signing route, and nothing private in the options",
+        "evidence verify: the same lines `npm run trust:verify` prints (GAU-59)",
+        "evidence pdf: exactly the CLI's rendering; none for a pack that does not verify",
+        "pilot run: the console's pack is the one `trust:ingest --pack` writes, and nothing is left on disk"
+      ]
+    },
+    {
       "id": "REQ-TR-005",
       "title": "Trust-record usage metering",
       "statement": "The system shall log every trust record it returns to a customer, once, with the issuing API key, spacecraft and UTC month, in an append-only log that refuses updates and deletes; shall return no records when that log cannot be written; and shall export per-spacecraft, per-month counts as CSV that adds up to the records returned, with fields safe to open in a spreadsheet.",
@@ -921,6 +937,45 @@
       "owner": "Josh",
       "evidence": [
         "docs/CRYPTO_INVENTORY.md"
+      ]
+    },
+    {
+      "id": "REQ-TR-017",
+      "title": "Custom replay window is bounded and validated",
+      "statement": "The replay archive fetch for a customer's own dates shall accept only a window with an explicit time zone that ends after it starts and not in the future, shall split any period over 31 days into contiguous archives that cover it exactly, and shall accept only an allowlisted slug as the archive id.",
+      "rationale": "GAU-59 (M1): the paid pilot judges a customer's own period. Bounds protect the open upstream (iSWA) and keep one archive replayable on the 8 GB host; the slug allowlist keeps customer input out of file paths.",
+      "parent": "GAU-59",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "custom replay window: bounds are validated (zone required, from before to, not in the future) and the id is an allowlisted slug (GAU-59)",
+        "custom replay window: a period over 31 days is split into contiguous archives that cover it exactly (GAU-59)"
+      ]
+    },
+    {
+      "id": "REQ-TR-018",
+      "title": "Custom replay archive has the named-event format and provenance",
+      "statement": "A replay archive fetched for a customer window shall have the same format as a named-event archive and shall record its source, terms, retrieval time and dataset ids, shall contain no Kyoto Dst, and shall treat the upstream as untrusted by retrying only rate-limit and server errors with back-off, failing on any other error or on an empty answer, and never echoing upstream text in an error.",
+      "rationale": "GAU-59 (M1): the pilot evidence pack records the archive hash, so the archive must say where its data came from and when; Kyoto terms are unchecked and the repository is public.",
+      "parent": "GAU-59",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "custom replay window: the archive has the named-event format and records source, retrieval time and dataset ids (GAU-59)",
+        "custom replay window: 429 and 5xx back off and retry, a 404 or an empty answer fails with a reason, upstream text is not echoed (GAU-59)"
+      ]
+    },
+    {
+      "id": "REQ-TR-019",
+      "title": "Ingest names the archive safely and reports rows outside its window",
+      "statement": "The log ingest shall take its archive by allowlisted slug or by explicit path, never both, and shall list by row every accepted log row whose time lies outside the archive window as not judged, with the reason.",
+      "rationale": "GAU-59 (M1): a customer log rarely matches the archive to the minute; a row with no environment must be named, never silently given an unknown verdict.",
+      "parent": "GAU-59",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "custom archive ingest: --replay takes only a slug, --archive a path outside the repo, never both (GAU-59)",
+        "custom archive ingest: rows outside the archive window are named per row; rows inside are judged against the custom archive (GAU-59)"
       ]
     },
     {

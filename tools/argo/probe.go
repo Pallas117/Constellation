@@ -16,6 +16,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
@@ -71,11 +72,17 @@ func (p SystemProber) Probe(ctx context.Context) Snapshot {
 		s.DNSDirectOK = directLookup(ctx, "api.anthropic.com")
 		if !s.DNSDirectOK { // DNS or the whole uplink? Only an IP dial can tell (uplink.go)
 			s.IPUp = boolPtr(ipReachable(ctx, tcpDial))
+			if *s.IPUp { // IP gets out: does encrypted DNS? (privdns.go)
+				s.DoHOK = boolPtr(dohReachable(ctx, dohOnce))
+			}
 		}
 	} else {
 		s.DNS = Result{OK: true}
 	}
 	s.Captive = probeCaptive(ctx)
+	if s.Captive.Err == ErrPortal && runtime.GOOS == "darwin" { // can encrypted DNS hide the login page?
+		s.DNSProfile = strings.Contains(run(ctx, "/usr/bin/profiles", "list"), profileID)
+	}
 	s.API = httpProbe(ctx, apiURL)
 	if r, body := httpGet(ctx, traceURL); r.OK {
 		s.PublicIP, s.Loc = parseTrace(body)

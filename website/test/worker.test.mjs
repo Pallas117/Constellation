@@ -13,9 +13,9 @@ import { RECORDED_AT, fixture, makeFetch } from "./fixtures/fetch.mjs";
 import { memoryKV } from "./fixtures/kv.mjs";
 import { makeAccess } from "./fixtures/access.mjs";
 import { accessIdentity, isAdmin, isStaff } from "../worker/auth.js";
-import { getAccount, listApplications, putAccount, saveApplication, senderOf } from "../worker/data.js";
+import { getAccount, getApplication, listApplications, putAccount, saveApplication, senderOf } from "../worker/data.js";
 import { applyEvent, createPortal, formEncode, signPayload, verifySignature } from "../worker/stripe.js";
-import { billingStatus, isAcademicEmail } from "../worker/tiers.js";
+import { TIERS, billingStatus, isAcademicEmail } from "../worker/tiers.js";
 import { APP_CSP } from "../worker/headers.js";
 import { eduCard } from "../worker/app.js";
 import { formatIn, renderPlanner, tzOffset, zonedToUtc } from "../worker/timezones.js";
@@ -322,6 +322,16 @@ test("public release: each form's page asks by email instead, and carries the pa
   assert.match(await (await call("/gauss/apply/?plan=%22%3E%3Cscript%3E")).text(), /<li>Package: Pilot · \$25k–\$50k<\/li>/, "unknown package: the pilot");
 });
 
+test("client links, public release: plan and src show in the mailto subject; bad values are ignored, never echoed", async () => {
+  const page = await (await call("/gauss/apply/?plan=fleet_integration&src=acme-intro")).text();
+  assert.match(page, /subject=Gauss%20brief%20%C2%B7%20Fleet%20Integration%20%C2%B7%20src%20acme-intro&amp;/);
+  for (const bad of ["%22%3E%3Cscript%3Ex", "UPPER", "-x", "a".repeat(25), "a%20b"]) {
+    const res = await (await call(`/gauss/apply/?plan=pilot&src=${bad}`)).text();
+    assert.doesNotMatch(res, /<script|UPPER|aaaaaaaa|src%20/, `src ${bad} ignored`);
+    assert.match(res, /subject=Gauss%20brief%20%C2%B7%20Pilot&amp;/);
+  }
+});
+
 test("public release: pages offer pilots and an email route; later plans are in development; nothing links to sign-in", async () => {
   const gauss = await (await call("/gauss/")).text();
   assert.equal((gauss.match(/<span class="label">In development<\/span>/g) || []).length, 3);
@@ -443,6 +453,23 @@ test("apply page: the package in the link is preselected; unknown values fall ba
   const { env } = await appEnv();
   assert.match(await (await send(env, new Request("https://lightbound.space/gauss/apply/?plan=mission_integration"))).text(), /<option value="mission_integration" selected>/);
   assert.match(await (await send(env, new Request("https://lightbound.space/gauss/apply/?plan=%22%3E%3Cscript%3E"))).text(), /<option value="pilot" selected>/);
+});
+
+test("client links: src is kept as a hidden field, stored with the application, shown to admin; bad src is dropped", async () => {
+  const { env, access } = await appEnv();
+  const page = await (await send(env, new Request("https://lightbound.space/gauss/apply/?plan=pilot&src=acme-intro"))).text();
+  assert.match(page, /<input type="hidden" name="src" value="acme-intro">/);
+  assert.doesNotMatch(await (await send(env, new Request("https://lightbound.space/gauss/apply/?src=%22%3E%3Cb%3E"))).text(), /name="src"/);
+  assert.equal((await send(env, post("/api/apply", { ...goodGauss, src: "acme-intro" }))).status, 303);
+  assert.equal((await send(env, post("/api/apply", { ...goodGauss, email: "b@example.test", src: "<b>x</b>" }))).status, 303);
+  const apps = await listApplications(env);
+  const stored = await Promise.all(apps.map((a) => getApplication(env, a.id)));
+  assert.deepEqual(stored.map((a) => a.src).sort(), ["acme-intro", undefined]);
+  const admin = await (await send(env, await as(access, "boss@example.test", "/app/admin/"))).text();
+  assert.match(admin, /from link: acme-intro/);
+  assert.match(admin, /Links to send a client/);
+  for (const t of TIERS) assert.ok(admin.includes(`<code>https://lightbound.space/gauss/apply/?plan=${t.id}</code>`), `link for ${t.id}`);
+  assert.doesNotMatch(admin, /<script/);
 });
 
 // ---- Workspace, billing and admin ----
@@ -1210,6 +1237,65 @@ test("canonical origin: plain HTTP and www on the custom domain redirect to http
   assert.match(body, /^Contact: mailto:jzwnathan@lightbound\.uk$/m);
   assert.match(body, /^Canonical: https:\/\/lightbound\.space\/\.well-known\/security\.txt$/m);
   assert.ok(Date.parse(SECURITY_TXT_EXPIRES) > Date.now() + 90 * 86_400_000, "security.txt expiry is at least 90 days away");
+});
+
+// ---- Offline pilot steps in the workspace ----
+test("workspace: the pilot's steps show the current step with dates, and how to send logs", async () => {
+  const { env, access } = await appEnv();
+  await putAccount(env, { email: "ops@example.test", tier: "pilot", billing: { status: "due" } }, "test");
+  let page = await (await send(env, await as(access, "ops@example.test", "/app/"))).text();
+  assert.match(page, /Now: Approved \(quote\)/, "no quote yet");
+  await putAccount(env, { email: "ops@example.test", tier: "pilot", quote: 2_800_000, approvedAt: "2026-11-03T00:00:00.000Z", billing: { status: "due" } }, "test");
+  page = await (await send(env, await as(access, "ops@example.test", "/app/"))).text();
+  assert.match(page, /<li class="done">Brief received<\/li><li class="done">Approved \(quote\) <span class="muted">· 3 Nov 2026<\/span><\/li><li class="here" aria-current="step">Paid<\/li><li class="">Logs received<\/li>/);
+  assert.doesNotMatch(page, /Stripe|securely|card details/, "no payment-method talk");
+  await putAccount(env, { email: "ops@example.test", tier: "pilot", quote: 2_800_000, approvedAt: "2026-11-03T00:00:00.000Z", billing: { status: "paid", updatedAt: "2026-11-05T00:00:00.000Z" } }, "test");
+  page = await (await send(env, await as(access, "ops@example.test", "/app/"))).text();
+  assert.match(page, /Now: Logs received/);
+  assert.match(page, /Paid <span class="muted">· 5 Nov 2026<\/span>/);
+  assert.match(page, /href="mailto:jzwnathan@lightbound\.uk\?subject=Gauss%20pilot%3A%20inference%20logs"/);
+  assert.match(page, /CSV, JSON or JSONL/);
+  assert.match(page, /href="\/gauss\/evidence\/"/);
+  assert.match(page, /There is no upload form yet/);
+  await putAccount(env, { email: "ops@example.test", tier: "pilot", quote: 2_800_000, billing: { status: "paid" }, logsAt: "2026-11-10T00:00:00.000Z", evidenceAt: "2026-11-16T00:00:00.000Z" }, "test");
+  page = await (await send(env, await as(access, "ops@example.test", "/app/"))).text();
+  assert.match(page, /Now: Evidence ready/);
+  assert.match(page, /Logs received <span class="muted">· 10 Nov 2026<\/span>/);
+  assert.match(page, /Evidence ready <span class="muted">· 16 Nov 2026<\/span>/);
+  assert.doesNotMatch(page, /Send your logs by email/, "instructions go once logs are in");
+});
+
+test("admin: sets logs received and evidence ready for an account, keeps the dates, and clears them when unticked", async () => {
+  const { env, access } = await appEnv();
+  const form = async (body) => send(env, await formPost(access, "boss@example.test", "/app/admin/account", body));
+  await form({ email: "lead@example.test", tier: "pilot", quote: "30000", action: "save" });
+  let a = await getAccount(env, "lead@example.test");
+  assert.deepEqual([typeof a.approvedAt, a.logsAt, a.evidenceAt], ["string", null, null]);
+  await form({ email: "lead@example.test", tier: "pilot", quote: "30000", logs: "yes", action: "save" });
+  a = await getAccount(env, "lead@example.test");
+  assert.equal(typeof a.logsAt, "string");
+  const first = [a.approvedAt, a.logsAt];
+  await form({ email: "lead@example.test", tier: "pilot", quote: "30000", logs: "yes", evidence: "yes", action: "save" });
+  a = await getAccount(env, "lead@example.test");
+  assert.deepEqual([a.approvedAt, a.logsAt], first, "dates stay once set");
+  assert.equal(typeof a.evidenceAt, "string");
+  const admin = await (await send(env, await as(access, "boss@example.test", "/app/admin/"))).text();
+  assert.match(admin, /name="logs" value="yes" checked> Logs received/);
+  assert.match(admin, /name="evidence" value="yes" checked> Evidence ready/);
+  await form({ email: "lead@example.test", tier: "pilot", quote: "30000", action: "save" });
+  a = await getAccount(env, "lead@example.test");
+  assert.deepEqual([a.logsAt, a.evidenceAt], [null, null]);
+  await form({ email: "lead@example.test", tier: "pilot", quote: "30000", logs: "yes", evidence: "yes", pilot: "", action: "save" });
+  const before = await getAccount(env, "lead@example.test");
+  const again = await form({ email: "lead@example.test", action: "add" });
+  assert.equal(again.status, 409, "the add form refuses an address that already has an account");
+  assert.match(await again.text(), /already has an account/);
+  assert.deepEqual(await getAccount(env, "lead@example.test"), before, "nothing is overwritten");
+  assert.match(await (await send(env, await as(access, "boss@example.test", "/app/admin/"))).text(), /name="action" value="add">Add account/);
+  assert.equal((await form({ email: "fresh@example.test", tier: "pilot", quote: "30000", action: "add" })).status, 303, "a new address is added");
+  assert.equal((await getAccount(env, "fresh@example.test")).tier, "pilot");
+  const other = await send(env, await formPost(access, "ops@example.test", "/app/admin/account", { email: "lead@example.test", logs: "yes", action: "save" }));
+  assert.equal(other.status, 403, "only admin");
 });
 
 // ---- Evidence delivery: signed packs attached by admin, downloaded only by their own account ----
