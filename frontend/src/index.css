@@ -91,6 +91,47 @@
     letter-spacing: 0.12em;
   }
 
+  /* Sign-in over the live view (components/AuthStage.tsx). Depth from layering,
+     not glows: a smoked veil over the scene, and a card lit from the top with a
+     hairline highlight. Motion is a short rise; reduced motion drops it above. */
+  .auth-stage-veil {
+    background:
+      linear-gradient(to bottom, hsl(var(--background) / 0.35), hsl(var(--background) / 0.75)),
+      radial-gradient(ellipse at center, transparent 0%, hsl(var(--background) / 0.6) 75%);
+    backdrop-filter: blur(6px) saturate(0.85);
+    -webkit-backdrop-filter: blur(6px) saturate(0.85);
+    animation: auth-stage-fade 320ms ease-out both;
+  }
+
+  .auth-stage-card {
+    animation: auth-stage-rise 360ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
+  }
+
+  .auth-stage-card > .hud-panel {
+    background-image: linear-gradient(to bottom, hsl(var(--foreground) / 0.045), transparent 38%);
+    background-color: hsl(var(--panel) / 0.92);
+  }
+
+  /* Hairline highlight on the top edge, fading out at both ends. */
+  .auth-stage-card > .hud-panel::before {
+    content: "";
+    position: absolute;
+    inset: 0 12% auto;
+    height: 1px;
+    background: linear-gradient(to right, transparent, hsl(var(--foreground) / 0.22), transparent);
+    pointer-events: none;
+  }
+
+  @keyframes auth-stage-fade {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+
+  @keyframes auth-stage-rise {
+    from { opacity: 0; transform: translateY(8px); }
+    to { opacity: 1; transform: none; }
+  }
+
   /* Readout label: JetBrains Mono, muted, as in the HUD */
   .stat-label {
     @apply font-mono text-[10px] font-bold uppercase leading-none text-muted-foreground;
