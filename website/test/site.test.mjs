@@ -261,6 +261,8 @@ test("phones: wide tables scroll inside their box; hidden labels can't widen the
   const css = read("assets/site.css");
   assert.match(css, /\.sr\{position:absolute/);
   assert.match(css, /\.tw\{overflow-x:auto;position:relative\}/);
+  // Unsocial hours in the planner grid differ by more than colour (WCAG 1.4.1): a dotted underline, named in the legend.
+  assert.match(css, /\.planner td\.quiet\{[^}]*text-decoration:underline dotted/);
 });
 
 // ---- Budgets: beat a heavy reference site on weight, on an 8 GB laptop or a phone on a hotspot ----

@@ -17,7 +17,7 @@
 import { FEEDS, configured, feedState, readFeed, refreshFeeds } from "./feeds.js";
 import { renderEduActions, renderEduPlans, renderEvents, renderConstellationDoor, renderEventIcs, renderGaussDoor, renderIcs, renderLaunches, renderPlans, renderSupport, renderWeather } from "./render.js";
 import { eduMode, eduStaffLabel } from "./tiers.js";
-import { plannerParams, renderPlanner } from "./timezones.js";
+import { pickedZone, plannerParams, renderPlanner } from "./timezones.js";
 import { handleApply, renderApplyForm, renderContact, renderSent } from "./forms.js";
 import { handleApp } from "./app.js";
 import { handleWebhook } from "./stripe.js";
@@ -38,7 +38,7 @@ const LIVE_PAGES = {
     launches: (f, t) => renderLaunches(f.launches, t),
     weather: (f, t) => renderWeather(f.weather, t),
     "gauss-door": (f, t) => renderGaussDoor(f.weather, t),
-    events: (f, t) => renderEvents(f.events, t),
+    events: (f, t, url) => renderEvents(f.events, t, pickedZone(url)),
     support: (f, t, url, env) => renderSupport(isFull(env) ? env.SUPPORT_URL : ""),
   }),
   "/constellation/time/": () => ({ planner: (f, t, url) => renderPlanner(plannerParams(url, t)) }),
