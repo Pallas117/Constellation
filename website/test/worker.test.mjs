@@ -80,8 +80,9 @@ test("refresh: fills KV, then leaves fresh feeds alone (LL2 allows 15 calls an h
   assert.deepEqual([first.news, first.ukri, first.uksa, first.programmes], ["updated", "updated", "updated", "not configured"]);
   assert.equal(f.calls.length, 9, "six for the public pages, three for members (news, UKRI, UKSA)");
   assert.equal((await readFeed(env, "launches")).data.length, 10);
-  assert.deepEqual(core(await refreshFeeds(env, { fetchImpl: f, now: RECORDED_AT + 10 * MIN })), { launches: "fresh", weather: "fresh", events: "fresh" });
+  assert.deepEqual(core(await refreshFeeds(env, { fetchImpl: f, now: RECORDED_AT + 2 * MIN })), { launches: "fresh", weather: "fresh", events: "fresh" });
   assert.equal(f.calls.length, 9, "no upstream calls while fresh");
+  assert.deepEqual(core(await refreshFeeds(env, { fetchImpl: f, now: RECORDED_AT + 5 * MIN })), { launches: "fresh", weather: "updated", events: "fresh" }, "space weather every 5 minutes");
   assert.deepEqual(core(await refreshFeeds(env, { fetchImpl: f, now: RECORDED_AT + 15 * MIN })), { launches: "fresh", weather: "updated", events: "fresh" });
   assert.deepEqual(core(await refreshFeeds(env, { fetchImpl: f, now: RECORDED_AT + 30 * MIN })), { launches: "updated", weather: "updated", events: "fresh" });
   const later = await refreshFeeds(env, { fetchImpl: f, now: RECORDED_AT + 180 * MIN });
@@ -159,7 +160,7 @@ test("refresh: the optional LL2 key goes to LL2 only, in its Token header, and n
 
 test("feed state: live, then stale (still shown, labelled), offline when there is nothing", () => {
   const rec = { data: [1], fetchedAt: new Date(RECORDED_AT).toISOString() };
-  assert.equal(feedState("weather", rec, RECORDED_AT + 30 * MIN).state, "live");
+  assert.equal(feedState("weather", rec, RECORDED_AT + 10 * MIN).state, "live");
   assert.equal(feedState("weather", rec, RECORDED_AT + (FEEDS.weather.staleMin + 1) * MIN).state, "stale");
   assert.equal(feedState("launches", rec, RECORDED_AT + 100 * MIN).state, "live");
   assert.equal(feedState("launches", null).state, "offline");
