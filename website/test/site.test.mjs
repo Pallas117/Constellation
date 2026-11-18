@@ -256,6 +256,22 @@ test("flow: the header sticks on every page; anchors land below it", () => {
   assert.match(css, /scroll-padding-top:76px/);
 });
 
+test("tap targets: every <details> summary, in pages or Worker markup, is at least 24 px high (WCAG 2.5.8)", () => {
+  const worker = join(pub, "..", "worker");
+  const sources = [...walk(pub).filter((f) => f.endsWith(".html")), ...readdirSync(worker).filter((f) => f.endsWith(".js")).map((f) => join(worker, f))]
+    .map((f) => readFileSync(f, "utf8")).join("\n");
+  assert.doesNotMatch(sources, /<details(?![^>]*\bclass=")/, "every <details> has a class its summary rule can target");
+  const classes = new Set([...sources.matchAll(/<details class="([a-z-]+)"/g)].map((m) => m[1]));
+  assert.ok(classes.has("evid") && classes.has("interests"), `found ${[...classes]}`);
+  const css = read("assets/site.css");
+  for (const c of classes) {
+    const rule = css.match(new RegExp(`\\.${c} summary\\{([^}]*)\\}`));
+    assert.ok(rule, `.${c} summary has a rule`);
+    const h = rule[1].match(/min-height:(\d+)px/);
+    assert.ok(h && Number(h[1]) >= 24, `.${c} summary min-height ≥ 24px`);
+  }
+});
+
 test("phones: wide tables scroll inside their box; hidden labels can't widen the page", () => {
   // .sr is position:absolute; unless the scroll box is its containing block it escapes the clip (planner was 874 px at 375).
   const css = read("assets/site.css");

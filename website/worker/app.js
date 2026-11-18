@@ -37,6 +37,28 @@ function pilotTrack(step) {
   return `<ol class="track">${PILOT_STEPS.map((s, i) => `<li class="${i < at ? "done" : i === at ? "here" : ""}"${i === at ? ' aria-current="step"' : ""}>${esc(s)}</li>`).join("")}</ol>`;
 }
 
+// The offline pilot, step by step, worked out from the account record (nothing extra to keep in step):
+// brief received (an account exists) → approved with a quote → paid → logs received → evidence ready.
+// Dates: approvedAt, billing.updatedAt, logsAt and evidenceAt; older records without a date show the step without one.
+export const OFFLINE_STEPS = Object.freeze(["Brief received", "Approved (quote)", "Paid", "Logs received", "Evidence ready"]);
+export function offlinePilot(account, brief) {
+  const done = [true, !!account?.tier && (!!account.quote || account.tier !== "pilot"), unlocked(billingStatus(account)), !!account?.logsAt, !!account?.evidenceAt];
+  const dates = [brief?.at, account?.approvedAt, done[2] ? account?.billing?.updatedAt : null, account?.logsAt, account?.evidenceAt];
+  const here = done.indexOf(false);
+  return OFFLINE_STEPS.map((label, i) => ({ label, done: done[i], current: i === (here === -1 ? done.length - 1 : here), at: done[i] ? dates[i] ?? null : null }));
+}
+const LOGS_MAIL = `mailto:jzwnathan@lightbound.uk?subject=${encodeURIComponent("Gauss pilot: inference logs")}`;
+function pilotCard(account, brief) {
+  const steps = offlinePilot(account, brief);
+  const li = (s) => `<li class="${s.done && !s.current ? "done" : s.current ? "here" : ""}"${s.current ? ' aria-current="step"' : ""}>${esc(s.label)}${s.at ? ` <span class="muted">· ${esc(day(s.at))}</span>` : ""}</li>`;
+  const now = steps.find((s) => s.current);
+  const sendLogs = account.logsAt ? "" : `<p class="m">Send your logs by email to <a href="${LOGS_MAIL}">jzwnathan@lightbound.uk</a> from the address you signed in with. ` +
+    `Inference logs as CSV, JSON or JSONL (one record per line) work; remove personal data and credentials first. There is no upload form yet. ` +
+    `See what you get back in the <a href="/gauss/evidence/">sample evidence report</a>.</p>`;
+  return `<article class="tile"><h2 class="label">Pilot</h2><p class="t">Now: ${esc(now.label)}</p><ol class="track">${steps.map(li).join("")}</ol>${sendLogs}` +
+    `<p class="m">This pilot runs offline: you send inference logs, and we return a signed evidence pack.</p></article>`;
+}
+
 const postButton = (action, label, cls = "btn") => `<form method="post" action="${action}" class="inline"><button class="${cls}">${esc(label)}</button></form>`;
 // Stripe's hosted invoice page (https), or a same-origin path (the local stand-in); anything else is not shown.
 const linkable = (u) => /^(https:\/\/[^\s"<>]*|\/(?![\/\\])[^\s"<>]*)$/.test(u ?? "");
@@ -176,7 +198,7 @@ export function renderWorkspace({ email, account, admin, weather, consoleUrl, su
     `<p class="lead">${esc(account.org ? `${account.org} · ` : "")}${esc(tier.outcome)}</p>` +
     (consoleBtn ? `<p class="actions">${consoleBtn}</p>` : "") +
     `<div class="tiles">${billingCard(account, tier)}` +
-    (open ? `<article class="tile"><h2 class="label">Pilot</h2>${account.pilot ? pilotTrack(account.pilot) : `<p class="m">Not started. We'll set this up with you.</p>`}</article>` : "") +
+    (tier.id === "pilot" ? pilotCard(account, applications.find((a) => a.kind === "gauss")) : open ? `<article class="tile"><h2 class="label">Pilot</h2>${account.pilot ? pilotTrack(account.pilot) : `<p class="m">Not started. We'll set this up with you.</p>`}</article>` : "") +
     spaceTile(weather) +
     (member ? memberCard(supportUrl) : "") + evidence + argo + edu + staff + `</div>` +
     `<div class="two plan-lists"><div><h2 class="label">${open ? "Included" : "What you get"}: ${esc(tier.name)}</h2><ul class="ticks">${list(tier.features)}</ul></div>` +
@@ -193,6 +215,7 @@ const quoteInput = (cents) => `<label class="money"><span>$</span><input name="q
 // Defaults to "automatic" (keep, or reset to due when the plan or quote changes); the current state shows as a tag.
 const billingSelect = () => `<select name="billing" aria-label="Billing override">${opt("", "Billing: automatic", "")}${Object.entries(BILLING).map(([k, l]) => opt(k, `Set: ${l}`, null)).join("")}</select>`;
 const pilotSelect = (cur) => `<select name="pilot" aria-label="Pilot step">${opt("", "No pilot", cur)}${PILOT_STEPS.map((s) => opt(s, s, cur)).join("")}</select>`;
+const stepCheck = (on, name, label, id) => `<label class="check" for="${id}"><input id="${id}" type="checkbox" name="${name}" value="yes"${on ? " checked" : ""}> ${label}</label>`;
 const invoiceCheck = (on, id) => `<label class="check" for="${id}"><input id="${id}" type="checkbox" name="invoice" value="yes"${on ? " checked" : ""}> Allow invoice</label>`;
 const communitySelect = (cur) => `<select name="community" aria-label="Constellation">${opt("", "Not a member", cur)}${opt("member", "Constellation member", cur)}</select>`;
 
@@ -230,7 +253,7 @@ export function renderAdmin({ applications, accounts, details, invited, error, c
   const rows = accounts.map((u, i) => {
     const status = u.billing ? billingStatus({ tier: u.tier, billing: { status: u.billing, dueAt: u.dueAt, paidUntil: u.paidUntil } }) : null;
     return `<tr><td>${esc(u.email)}<br><span class="muted">${esc(u.org ?? "")}</span></td><td><form method="post" action="/app/admin/account" class="inline">` +
-      `<input type="hidden" name="email" value="${esc(u.email)}">${tierSelect(u.tier)} ${quoteInput(u.quote)} ${billingSelect()} ${invoiceCheck(u.invoice, `acct-inv-${i}`)} ${pilotSelect(u.pilot)} ${communitySelect(u.community)} ` +
+      `<input type="hidden" name="email" value="${esc(u.email)}">${tierSelect(u.tier)} ${quoteInput(u.quote)} ${billingSelect()} ${invoiceCheck(u.invoice, `acct-inv-${i}`)} ${pilotSelect(u.pilot)} ${stepCheck(u.logsAt, "logs", "Logs received", `acct-logs-${i}`)} ${stepCheck(u.evidenceAt, "evidence", "Evidence ready", `acct-ev-${i}`)} ${communitySelect(u.community)} ` +
       `<button class="btn ghost" name="action" value="save">Save</button> <button class="btn ghost" name="action" value="delete">Remove</button></form>` +
       `${status ? `<span class="tag${status === "overdue" || status === "past_due" ? " warn" : ""}">${esc(BILLING[status] ?? status)}</span>` : ""}` +
       `${u.argo === "requested" ? `<form method="post" action="/app/admin/argo" class="inline"><input type="hidden" name="email" value="${esc(u.email)}"> <span class="tag warn">Argo: setup requested</span> <button class="btn ghost">Mark Argo setup sent</button></form>` : u.argo === "sent" ? ` <span class="tag">Argo: setup sent</span>` : ""}` +
@@ -248,9 +271,9 @@ export function renderAdmin({ applications, accounts, details, invited, error, c
     `<form method="post" action="/app/admin/invite" class="inline add"><label class="sr" for="inv-email">Email</label><input id="inv-email" name="email" type="email" placeholder="email@example.com" required> ` +
     `<label class="sr" for="inv-name">Name</label><input id="inv-name" name="name" placeholder="Name" maxlength="100"> <button class="btn">Invite</button></form>` +
     (accounts.some((u) => u.argo === "requested") ? `<p class="banner" role="status">Gauss Argo setup requested by ${accounts.filter((u) => u.argo === "requested").length}: email each their install link, then press "Mark Argo setup sent" below.</p>` : "") +
-    `<h2>Accounts (${accounts.length} of ${cap})</h2><div class="tw"><table class="table"><thead><tr><th>Email</th><th>Plan, quote ($), billing, invoice, pilot, membership</th></tr></thead><tbody>${rows}</tbody></table></div>` +
+    `<h2>Accounts (${accounts.length} of ${cap})</h2><div class="tw"><table class="table"><thead><tr><th>Email</th><th>Plan, quote ($), billing, invoice, pilot, logs and evidence, membership</th></tr></thead><tbody>${rows}</tbody></table></div>` +
     `<form method="post" action="/app/admin/account" class="inline add"><label class="sr" for="new-email">Email</label><input id="new-email" name="email" type="email" placeholder="email@company.com" required> ` +
-    `${tierSelect("")} ${quoteInput(0)} ${billingSelect()} ${invoiceCheck(false, "new-inv")} ${pilotSelect("")} ${communitySelect("")} <button class="btn" name="action" value="save">Add account</button></form>` +
+    `${tierSelect("")} ${quoteInput(0)} ${billingSelect()} ${invoiceCheck(false, "new-inv")} ${pilotSelect("")} ${stepCheck(false, "logs", "Logs received", "new-logs")} ${stepCheck(false, "evidence", "Evidence ready", "new-ev")} ${communitySelect("")} <button class="btn" name="action" value="add">Add account</button></form>` +
     `<h2>Decided (${done.length})</h2>${done.length ? `<ul class="apps">${done.map(card).join("")}</ul>` : `<p class="muted">None yet.</p>`}` +
     `<p class="note">Quotes must sit inside the plan's published range. Paid plans move to Active or Paid when Stripe confirms; "Billing" overrides that by hand. ` +
     `"Allow invoice" lets that customer ask for a Stripe invoice (${INVOICE_DAYS} days to pay) instead of paying by card: their workspace opens at once and locks if the invoice goes overdue. ` +
@@ -453,7 +476,7 @@ export async function handleApp(request, env, url, { respond, fillPage, fetchImp
         const prev = (await getAccount(env, app.email)) ?? { email: app.email };
         const base = { ...prev, name: prev.name ?? app.name, org: prev.org ?? app.org ?? null };
         await putAccount(env, app.kind === "gauss"
-          ? { ...base, tier: tier.id, quote: quoteFrom(form, tier), invoice: form.get("invoice") === "yes", billing: { ...(prev.billing ?? {}), ...FRESH, status: tier.billing === "invoice" ? "invoiced" : "due" }, pilot: prev.pilot ?? (tier.id === "pilot" ? "Scoping" : null) }
+          ? { ...base, tier: tier.id, quote: quoteFrom(form, tier), invoice: form.get("invoice") === "yes", billing: { ...(prev.billing ?? {}), ...FRESH, status: tier.billing === "invoice" ? "invoiced" : "due" }, pilot: prev.pilot ?? (tier.id === "pilot" ? "Scoping" : null), approvedAt: prev.approvedAt ?? new Date().toISOString() }
           : { ...base, community: "member", invitedAt: new Date().toISOString() }, id.email);
         if (app.kind === "constellation") return back(`/app/admin/?invited=${await flash(env, app.email)}`);
       }
@@ -485,13 +508,18 @@ export async function handleApp(request, env, url, { respond, fillPage, fetchImp
         await deleteAllEvidence(env, email);
         return back("/app/admin/");
       }
-      const prev = (await getAccount(env, email)) ?? { email };
+      const existing = await getAccount(env, email);
+      // The add form is a full overwrite, so for an address that already has an account it refuses; the account's own row edits it.
+      if (form.get("action") === "add" && existing) return fail(409, "That address already has an account. Change it from its row in the account list (Save there); nothing was changed.");
+      const prev = existing ?? { email };
       const quote = quoteFrom(form, tier);
       const changed = (tier?.id ?? null) !== (prev.tier ?? null) || (quote ?? null) !== (prev.quote ?? null);
       const override = Object.hasOwn(BILLING, form.get("billing") ?? "") ? form.get("billing") : null;
       const status = override ?? (changed ? (tier?.billing === "invoice" ? "invoiced" : tier ? "due" : null) : prev.billing?.status ?? null);
       const billing = status ? { ...(prev.billing ?? {}), ...(changed ? FRESH : override ? { eventAt: null } : {}), status } : prev.billing ?? null;
-      await putAccount(env, { ...prev, tier: tier?.id ?? null, quote, invoice: form.get("invoice") === "yes", billing, pilot, community }, id.email);
+      await putAccount(env, { ...prev, tier: tier?.id ?? null, quote, invoice: form.get("invoice") === "yes", billing, pilot, community,
+        // Dates are kept once set; ticking sets today, unticking clears. Approval is dated the first time a plan is set.
+        approvedAt: prev.approvedAt ?? (tier ? new Date().toISOString() : null), logsAt: form.get("logs") === "yes" ? prev.logsAt ?? new Date().toISOString() : null, evidenceAt: form.get("evidence") === "yes" ? prev.evidenceAt ?? new Date().toISOString() : null }, id.email);
       return back("/app/admin/");
     }
     return fail(404, "Not found");
