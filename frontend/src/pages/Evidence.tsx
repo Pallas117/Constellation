@@ -295,7 +295,32 @@ export default function Evidence() {
                 <Fact label="Environment">{pack.inputs.environment.source}</Fact>
               </dl>
 
-              <div className="overflow-x-auto">
+              {/* Phone: one card per record, so the verdict is never off-screen. */}
+              <ul aria-label="Trust records" className="space-y-3 sm:hidden">
+                {analysis.records.map((r) => (
+                  <li key={r.recordId} className="rounded border border-charcoal p-3">
+                    <div className="flex items-start justify-between gap-2">
+                      <p className="min-w-0 font-mono text-xs tabular-nums">
+                        <span className="text-muted-foreground">row {r.inference.ingest?.row ?? "—"} · </span>
+                        {utc(r.inference.time)}
+                      </p>
+                      <StatusBadge tone={VERDICT_TONE[r.verdict.value] ?? "caution"} className="shrink-0">
+                        {r.verdict.value}
+                      </StatusBadge>
+                    </div>
+                    <p className="mt-2 break-all font-mono text-xs">
+                      {r.inference.spacecraftId} · {r.inference.modelId}
+                    </p>
+                    <p className="mt-1 font-mono text-xs text-muted-foreground">
+                      radiation {r.environment.radiation.value?.label ?? "—"} · geomagnetic {r.environment.geomagnetic.value?.label ?? "—"} · SAA{" "}
+                      {r.orbit.saa.value === null ? "—" : r.orbit.saa.value ? "inside" : "outside"}
+                    </p>
+                    {r.verdict.reasons[0] && <p className="mt-2 text-xs text-muted-foreground">{r.verdict.reasons[0]}</p>}
+                  </li>
+                ))}
+              </ul>
+
+              <div className="hidden overflow-x-auto sm:block">
                 <table className="w-full min-w-[640px] text-left text-xs">
                   <caption className="sr-only">Trust records</caption>
                   <thead>
@@ -369,7 +394,7 @@ export default function Evidence() {
                         This page cannot sign. The signing key stays with its holder, who signs the downloaded pack on the host and unlocks the key
                         there:
                       </p>
-                      <pre className="overflow-x-auto rounded border border-charcoal bg-background p-2 font-mono text-xs">{analysis.signOnHost}</pre>
+                      <pre className="whitespace-pre-wrap break-words rounded border border-charcoal bg-background p-2 font-mono text-xs">{analysis.signOnHost}</pre>
                     </>
                   )}
                 </div>

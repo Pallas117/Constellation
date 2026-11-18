@@ -74,7 +74,7 @@ test.describe("Evidence view", () => {
     await expect(page.getByText(fixture.analysis.pack.packHash)).toBeVisible();
     await expect(page.getByText("Not signed", { exact: true })).toBeVisible();
     await expect(page.getByText(fixture.options.signOnHost)).toBeVisible();
-    await expect(page.getByRole("button", { name: /sign/i })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: /^sign/i })).toHaveCount(0); // no "Sign" action (a file input is a button too)
     await shot(page, "evidence-desktop-pack");
 
     const [json] = await Promise.all([page.waitForEvent("download"), page.getByRole("button", { name: "Download pack.json" }).click()]);
@@ -147,6 +147,9 @@ test.describe("Evidence view", () => {
 
     await page.setViewportSize({ width: 375, height: 812 });
     await build(page);
+    // On a phone each record is a card with its verdict in view, not a table to scroll sideways.
+    await expect(page.getByRole("list", { name: "Trust records" }).getByRole("listitem")).toHaveCount(fixture.analysis.records.length);
+    await expect(page.getByRole("table", { name: "Trust records" })).toBeHidden();
     await page.getByRole("checkbox", { name: /Integrity only/ }).check();
     await page.getByRole("button", { name: "Verify pack" }).click();
     await expect(page.getByRole("status", { name: "Verification result" })).toContainText("OK");
