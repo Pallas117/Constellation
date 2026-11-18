@@ -1,0 +1,36 @@
+# Argo as a relay peer on the VPS ("vps" device on the local hub). Not enabled by
+# bootstrap.sh: confirm-peer.sh enables it only after Josh has confirmed the other
+# device's key fingerprint, because Argo pins a key it sees for the first time.
+[Unit]
+Description=Argo relay peer (store-and-forward)
+After=gauss-hub.service
+Requires=gauss-hub.service
+
+[Service]
+Type=simple
+User=gauss
+Group=gauss
+Environment=HOME=/var/lib/gauss
+Environment=ARGO_INTERVAL=60s
+Environment=ARGO_NO_DESKTOP=1
+# Publish this device's public key (fails quietly if the hub is still starting).
+ExecStartPre=-/usr/local/bin/argo keys publish
+ExecStart=/usr/local/bin/argo loop
+Restart=on-failure
+RestartSec=10
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/gauss
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryMax=512M
+
+[Install]
+WantedBy=multi-user.target
