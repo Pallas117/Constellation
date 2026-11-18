@@ -466,6 +466,33 @@
       ]
     },
     {
+      "id": "REQ-SEC-020",
+      "title": "WebSocket pre-handshake authorisation",
+      "statement": "The WebSocket feeds shall check origin, session and role before the handshake, refuse with 401/403 on the raw socket, count failures against the extracted client address, and cap a frame at 4096 bytes.",
+      "rationale": "An unauthenticated socket held open, and a 100 MiB default frame, are cheap resource attacks; behind the local proxy the raw address is always loopback.",
+      "parent": "GAU-25",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "ws upgrades: a guard refusal answers 401/403 before the handshake and no socket opens (REQ-SEC-020)",
+        "ws upgrades: a frame over maxPayload closes the connection with 1009 (REQ-SEC-020)",
+        "feed WebSockets: an oversize frame closes that socket with 1009 and the backend keeps serving (REQ-SEC-020)",
+        "an unauthenticated WebSocket upgrade is refused with 401 before it opens (REQ-SEC-020)"
+      ]
+    },
+    {
+      "id": "REQ-SEC-021",
+      "title": "Blocked CORS origin is not a server error",
+      "statement": "A request from a disallowed origin shall be answered without CORS headers and without a 500 or a logged stack (nowcast error text is fixed in code; no test yet).",
+      "rationale": "Error text can carry internal URLs; a 500 for a hostile origin pollutes logs and monitoring.",
+      "parent": "GAU-25",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "a disallowed CORS origin gets no Access-Control-Allow-Origin and no 500 (REQ-SEC-021)"
+      ]
+    },
+    {
       "id": "REQ-SEC-002",
       "title": "Upstream courtesy",
       "statement": "Adapters shall poll no faster than these minimum intervals: NOAA, JAXA, LASP and GOES 60 s; ESA 10 s; SWPC products 2 min; MMS and Kyoto Dst 10 min; and after consecutive failures a source shall wait 10 s, doubling to at most 10 min, before its next attempt.",
