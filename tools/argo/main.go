@@ -45,6 +45,8 @@ type Config struct {
 	InboxDir      string   `json:"inbox_dir,omitempty"`       // where received files land; default ~/Downloads/Argo
 	QuietHours    string   `json:"quiet_hours,omitempty"`     // no non-urgent texts in these hours; default 23:00-07:00, "off" for none
 	Place         string   `json:"place,omitempty"`           // short label for the shared signal map (letters, digits, space, - and _); never a location
+	FadingAlert   string   `json:"fading_alert,omitempty"`    // "off": no "Wi-Fi is fading" text (range.go); status still shows it
+	LaptopAlert   string   `json:"laptop_alert,omitempty"`    // "off": watch phones only, as before (range.go)
 }
 
 func (c Config) peers() []Peer {
@@ -92,6 +94,8 @@ func main() {
 	cfg, store := loadConfig(), DefaultStore()
 	phone := newPhoneFor(cfg)
 	loop := Loop{Prober: SystemProber{ExitNodes: cfg.ExitNodes, SignalCache: store.path("signal.json")}, Store: store, Fx: realEffects{phone: phone}, AppWatch: true, Link: systemLink}
+	loop.NoFadeAlert = strings.EqualFold(cfg.FadingAlert, "off")
+	laptops := !strings.EqualFold(cfg.LaptopAlert, "off")
 	if phone != nil {
 		phone.PreferSMS = func() bool { return store.Load().Low.PreferSMS() }
 	}
@@ -138,7 +142,7 @@ func main() {
 		return withLock(store, func() {
 			flush()
 			phase(60*time.Second, func(c context.Context) { loop.Tick(c) })
-			watchDevices(ctx, cfg.Devices, store, phone, time.Now())
+			watchDevices(ctx, cfg.Devices, laptops, store, phone, time.Now())
 			maybeSendWeekly(store, phone, time.Now())
 		})
 	}
@@ -146,7 +150,7 @@ func main() {
 	var err error
 	switch cmd {
 	case "status":
-		fmt.Println(statusLine(store.Load(), time.Now()) + guardStatus(store.loadGuard(), time.Now()) + gaussStatus(store, time.Now()) + phoneStatus(store.Dir, time.Now()))
+		fmt.Println(statusLine(store.Load(), time.Now()) + guardStatus(store.loadGuard(), time.Now()) + gaussStatus(store, time.Now()) + rangeStatus(store, time.Now()) + phoneStatus(store.Dir, time.Now()))
 	case "doctor":
 		err = doctor(ctx, loop.Prober)
 	case "fix":
@@ -232,7 +236,7 @@ func main() {
 			fmt.Println("watch: done")
 		})
 	case "devices": // which watched tailnet devices (default: your phones) are offline
-		lines := watchDevices(ctx, cfg.Devices, store, nil, time.Now())
+		lines := watchDevices(ctx, cfg.Devices, laptops, store, nil, time.Now())
 		for _, l := range lines {
 			fmt.Println(l)
 		}
@@ -372,7 +376,7 @@ func statusLine(st State, now time.Time) string {
 	if age := now.Sub(st.CheckedAt); age > 10*time.Minute {
 		line += fmt.Sprintf(" (stale %s)", age.Round(time.Minute))
 	}
-	return line
+	return line + fadeStatus(st, now)
 }
 
 func doctor(ctx context.Context, p Prober) error {
