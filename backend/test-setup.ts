@@ -1,6 +1,7 @@
 // Loaded via `node --import` for `npm test`: keeps tests from appending to the
-// tracked data/bedrock/telemetry.jsonl by pointing bedrock at a throwaway dir,
-// and from opening the real .auth.db (anything importing backend/better-auth.ts).
+// checkout's data/bedrock/telemetry.jsonl (live data, untracked since GAU-211)
+// by pointing bedrock at a throwaway dir, and from opening the real .auth.db
+// (anything importing backend/better-auth.ts).
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";

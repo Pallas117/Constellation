@@ -19,6 +19,7 @@
 #   scripts/ops/gauss-services.sh gates enqueue <checkout-dir>|<commit>   hand a gate run to the queue; the session can then be archived
 #   scripts/ops/gauss-services.sh gates queue | priority <pr|sha> front|back | waiting   see/reorder the train, list passes waiting for a person
 #   scripts/ops/gauss-services.sh gates result <checkout-dir>|<commit>|status   the queue's one-line result (exit 0 passed, 1 failed, 3 queued)
+#   scripts/ops/gauss-services.sh gates passed <commit>    exit 0 only if that commit's exact tree has a passing record (for scripts)
 #   scripts/ops/gauss-services.sh events [--since 2h] [--json]     timeline: watchdog, failover, deploys, alerts, boots (events.jsonl)
 #
 # Three layers (GAU-158): dev (any other checkout, foreground, own ports and data,
@@ -138,6 +139,14 @@ GATES_SRC="$GATES_DIR/runner.src"      # sha= blob= from= at=: the commit the ru
 HEAVY="${GAUSS_HEAVY:-$HOME/.local/bin/claude-heavy}"
 GATES_WAIT_MIN="${GAUSS_GATES_WAIT_MIN:-120}" # one claude-heavy wait; the runner asks again when it gives up
 GATES_EXPIRE_H="${GAUSS_GATES_EXPIRE_H:-72}"   # a request still waiting after this is dropped (EXPIRED)
+# After-pass hook (18 Nov): a pass the train can't merge itself (a draft, or a PR touching held paths that
+# Josh approved in ~/.claude/merge-approvals.tsv) waited up to 30 min for the merge job; meanwhile the
+# train merged another PR, main moved, and the pass had to be re-run (9 of 37 PR runs on 17-18 Nov).
+# The runner now runs this executable, if present, right after each pass and before the next request:
+# `<hook> <sha> [<pr>]`, capped at GAUSS_GATES_HOOK_S seconds. It decides nothing here; the merge
+# rules stay in the hook (and each merge there still needs the pass on the exact head, main in it, CLEAN).
+GATES_HOOK="${GAUSS_GATES_HOOK:-$GATES_DIR/hooks/after-pass}"
+GATES_HOOK_S="${GAUSS_GATES_HOOK_S:-300}"
 # Gatebox (GAU-207 sizing, GAU-223): an Oracle Always Free VM on the tailnet runs the Linux-portable
 # gates (npm ci, npm test, quality:full, build) on the exact commit, fetched from public GitHub, through
 # the gate user's forced command (scripts/ops/gatebox/cloud-init.yaml). The ops tests and the VCRM need
@@ -769,7 +778,7 @@ fallback_prepare() { # fallback_prepare <dir> [sha]: check out, install, build, 
     # The checkout changes under the old record from here: drop it, so a failed install or
     # build leaves "none prepared", never a ready record describing a different checkout.
     rm -f "$FALLBACK_STATE/ready"
-    git -C "$dir" checkout -q --detach "$sha" || return 1
+    carry_checkout "$dir" "$sha" || return 1
   else
     git -C "$live" worktree add -q --detach "$dir" "$sha" || return 1; dir=$(cd "$dir" && pwd)
   fi
@@ -895,9 +904,12 @@ gates_record() { # gates_record <checkout-dir>: run the gates on a clean checkou
   for g in "${GATES[@]}"; do
     gate_lock
     echo "gate $g ..."
+    local t0=$SECONDS
     rc=0; (cd "$dir" && env "${scrub[@]}" PATH="$(dirname "$NODE")${pydir:+:$pydir}:$PATH" npm run "$g" >"$tmp/$g.log" 2>&1) || rc=$?
     if [ "$GATES_HOLD" = 1 ]; then rmdir "$GATE_LOCK" 2>/dev/null || true; fi; GATES_HOLD=0
     echo "$rc" >"$tmp/$g.rc"
+    # Per-gate time in the run log (runs/<sha>.log), so the slow gate can be measured, not guessed.
+    echo "gate $g: exit $rc in $((SECONDS - t0)) s"
   done
   [ "$(git -C "$dir" rev-parse HEAD)" = "$sha" ] && [ -z "$(git -C "$dir" status --porcelain)" ] \
     || { echo "$dir changed while the gates ran; not recording." >&2; return 1; }
@@ -1058,6 +1070,12 @@ gates_enqueue() { # gates_enqueue <checkout-dir>|<commit> [--pr N]: queue a gate
   mkdir -p "$GATES_QUEUE"
   if f=$(gates_queued "$tree"); then
     echo "Already queued: tree ${tree:0:7} ($(req_get "$f" sha | cut -c1-7), by $(req_get "$f" by))."
+    # 18 Nov: a tree queued for gates only and then enqueued with --pr kept no PR, so its pass never
+    # merged. Put the request on the train (atomic rewrite; the runner only reads *.req).
+    if [ -n "$pr" ] && [ "$(req_get "$f" pr)" != "$pr" ]; then
+      { grep -v '^pr=' "$f"; echo "pr=$pr"; } >"$f.tmp" && [ -f "$f" ] && mv -f "$f.tmp" "$f" \
+        && echo "It is on the merge train for PR #$pr now." || rm -f "$f.tmp"
+    fi
   else
     f="$GATES_QUEUE/$(python3 -Ic 'import time; print("%.6f" % time.time())')-$tree.req"
     printf 'sha=%s\ntree=%s\nrepo=%s\nnode=%s\nby=%s\nqueued=%s\npr=%s\n' "$sha" "$tree" "$G_REPO" "$NODE" "$(deployer)" "$(date +%s)" "$pr" >"$f.tmp"
@@ -1148,8 +1166,34 @@ gates_prescreen() { # gates_prescreen <sha> <tree>: 0 when the gatebox failed th
   return 1
 }
 
+gates_after_pass() { # gates_after_pass <sha> [<pr>]: run the after-pass hook (GATES_HOOK) if there is one; never fails the runner
+  [ -x "$GATES_HOOK" ] || return 0
+  local rc=0 out
+  echo "$(date '+%F %T') after-pass hook for ${1:0:7}${2:+ (PR #$2)} ..."
+  out=$(mktemp -t gauss-hook) || return 0
+  # Its own process group, killed whole after GATES_HOOK_S (macOS has no timeout(1)); output to a file, not
+  # a pipe, so a child that outlives it (a hung gh) can't hold the queue. No terminal, no stdin.
+  perl -e '$t = shift; $p = fork; die "fork: $!" unless defined $p;
+    if (!$p) { setpgrp(0, 0); exec @ARGV or exit 127 }
+    $SIG{ALRM} = sub { kill "TERM", -$p; sleep 1; kill "KILL", -$p; exit 142 }; alarm $t;
+    waitpid($p, 0); exit($? & 127 ? 128 + ($? & 127) : $? >> 8)' "$GATES_HOOK_S" "$GATES_HOOK" "$1" ${2:+"$2"} </dev/null >"$out" 2>&1 || rc=$?
+  sed 's/^/  hook: /' "$out"; rm -f "$out"
+  if [ "$rc" = 142 ]; then echo "$(date '+%F %T') after-pass hook stopped after ${GATES_HOOK_S} s"
+  elif [ "$rc" != 0 ]; then echo "$(date '+%F %T') after-pass hook exited $rc"; fi
+  return 0
+}
+
+gates_passed() { # gates_passed <checkout-dir>|<commit>: exit 0 only if that commit's exact tree has a passing record
+  # The contract for scripts such as merge-approved.sh: the record, not the wording of the latest result
+  # line (18 Nov: "SKIPPED already passed" didn't match its pattern and left #172 unmerged; a commit
+  # re-queued after a pass shows QUEUED). Exit 0 passed, 1 no passing record, 2 unknown commit.
+  gates_resolve "${1:?usage: $0 gates passed <checkout-dir>|<commit>}" >/dev/null 2>&1 || { echo "Unknown commit '$1'."; return 2; }
+  if gate_record "$G_TREE" >/dev/null; then gates_summary "$GATES_DIR/$G_TREE.json"; return 0; fi
+  echo "NOT PASSED ${G_SHA:0:7} (tree ${G_TREE:0:7}): no passing gate record"; return 1
+}
+
 gates_run() { # gates_run [--once]: work through the queue, oldest first, then exit; --once: stop after one wait that gave up
-  local once=${1:-} self req sha tree queued rc pid me pr repo
+  local once=${1:-} self req sha tree queued rc pid me pr repo line
   self="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
   # Never the folder it was started from: that is a session's checkout, often a temporary worktree removed
   # while the runner lives on (4 Nov: every git call then failed with getcwd errors).
@@ -1180,7 +1224,7 @@ gates_run() { # gates_run [--once]: work through the queue, oldest first, then e
       pr=$(req_get "$req" pr)
       if [ -z "$pr" ]; then
         gates_result "$sha" "$tree" SKIPPED "already passed: $(gates_summary "$GATES_DIR/$tree.json")"
-        rm -f "$req"; continue
+        rm -f "$req"; gates_after_pass "$sha"; continue
       fi
       # A train request whose head already passed still has to land (12 Nov: #265 passed, main moved,
       # the re-queue was dropped here as SKIPPED and never merged). Merge main in first; if that left
@@ -1192,12 +1236,12 @@ gates_run() { # gates_run [--once]: work through the queue, oldest first, then e
         gates_result "$sha" "$tree" SKIPPED "already passed: going straight to the merge"
         rm -f "$req"
         train_merge "$pr" "$sha" "$tree" "$repo" || true
-        tail -1 "$GATES_RESULTS"; continue
+        tail -1 "$GATES_RESULTS"; gates_after_pass "$sha" "$pr"; continue
       fi
     fi
     if gates_prescreen "$sha" "$tree"; then rm -f "$req"; tail -1 "$GATES_RESULTS"; continue; fi
     echo "$(date '+%F %T') gates ${sha:0:7} ..."
-    rc=0
+    rc=0; pr=$(req_get "$req" pr)
     if [ -x "$HEAVY" ]; then
       "$HEAVY" --wait "$GATES_WAIT_MIN" --name gates --label "gate queue ${sha:0:7}" -- /bin/bash "$self" gates run-one "$req" || rc=$?
     else
@@ -1216,7 +1260,13 @@ gates_run() { # gates_run [--once]: work through the queue, oldest first, then e
     if [ -f "$req" ]; then # run-one died before it could say why
       gates_result "$sha" "$tree" ERROR "gate run exited $rc without a result (log: $LOGS/gates-runner.log)"; rm -f "$req"
     fi
-    tail -1 "$GATES_RESULTS"
+    line=$(tail -1 "$GATES_RESULTS"); echo "$line"
+    # A pass (merged, held, or gates only) runs the hook before the next request can move main. Not after a
+    # REQUEUED line: main already moved past that head, and the train re-gates it next.
+    case $(cut -d' ' -f4 <<<"$line") in
+      PASSED|MERGED|HELD) gates_after_pass "$(cut -d' ' -f2 <<<"$line")" "$pr" ;;
+      SKIPPED) [[ "$line" == *" already passed: "* ]] && gates_after_pass "$(cut -d' ' -f2 <<<"$line")" "$pr" ;;
+    esac
   done
   echo "$(date '+%F %T') gate queue empty."
 }
@@ -1304,6 +1354,28 @@ train_pr() { # train_pr <pr>: "state head branch base draft merge-state" on one 
     -q '[.state, .headRefOid, .headRefName, .baseRefName, (.isDraft|tostring), .mergeStateStatus] | join(" ")' 2>/dev/null
 }
 
+train_versions() { # train_versions <worktree>: settle a merge whose only conflicts are baseline "version" lines
+  # 18 Nov (Josh: "yes, add it"): every requirements PR bumps requirements.json/fmea.json "version", so
+  # each one conflicted with the next on the train (#284, #286) and needed a person. Take main's version
+  # plus one patch step; anything else in conflict (another line, another file, invalid JSON) still fails.
+  local w=$1 files f
+  files=$(git -C "$w" diff --name-only --diff-filter=U) || return 1
+  [ -n "$files" ] || return 1
+  while IFS= read -r f; do
+    case "$f" in requirements/requirements.json|requirements/fmea.json) ;; *) return 1 ;; esac
+    python3 -I - "$w/$f" <<'PY' || return 1
+import json, re, sys
+p = sys.argv[1]; s = open(p).read()
+hunk = re.compile(r'<<<<<<< [^\n]*\n(  "version": "[^"\n]*",\n)=======\n  "version": "(\d+)\.(\d+)\.(\d+)",\n>>>>>>> [^\n]*\n')
+out = hunk.sub(lambda m: '  "version": "%s.%s.%d",\n' % (m.group(2), m.group(3), int(m.group(4)) + 1), s)
+if out == s or re.search(r'^(<<<<<<<|=======|>>>>>>>)', out, re.M): sys.exit(1)
+json.loads(out); open(p, "w").write(out)
+PY
+    git -C "$w" add -- "$f" || return 1
+  done <<<"$files"
+  git -C "$w" commit -q --no-edit >/dev/null
+}
+
 train_sync() { # train_sync <request>: merge origin/main into a train PR's head before its run; 1 = withdrawn
   local req=$1 pr sha tree repo info state head branch base _ w new
   pr=$(req_get "$req" pr); sha=$(req_get "$req" sha); tree=$(req_get "$req" tree); repo=$(req_get "$req" repo)
@@ -1318,7 +1390,8 @@ train_sync() { # train_sync <request>: merge origin/main into a train PR's head 
   git --git-dir="$repo" merge-base --is-ancestor refs/remotes/origin/main "$sha" && return 0
   w=$(mktemp -d -t gauss-train)/w
   git --git-dir="$repo" worktree add -q --detach "$w" "$sha" 2>/dev/null || { echo "could not prepare a merge of main; gating as queued"; return 0; }
-  if git -C "$w" merge -q --no-edit -m "Merge origin/main into $branch (merge train)" refs/remotes/origin/main >/dev/null 2>&1 \
+  if { git -C "$w" merge -q --no-edit -m "Merge origin/main into $branch (merge train)" refs/remotes/origin/main >/dev/null 2>&1 \
+       || train_versions "$w"; } \
      && new=$(git -C "$w" rev-parse HEAD) && git -C "$w" push -q origin "$new:refs/heads/$branch" 2>/dev/null; then
     sed -i '' -e "s/^sha=.*/sha=$new/" -e "s/^tree=.*/tree=$(git -C "$w" rev-parse "$new^{tree}")/" "$req"
     gates_result "$sha" "$tree" MOVED "merged main into PR #$pr: gating ${new:0:7} instead"
@@ -1378,6 +1451,10 @@ gates_show_result() { # gates_show_result <checkout-dir>|<commit>: the latest li
   local arg=${1:?usage: $0 gates result <checkout-dir>|<commit>|status} tree="" line f
   if gates_resolve "$arg" 2>/dev/null; then tree=$G_TREE; else tree=$arg; fi # a session's worktree may be gone: match a prefix
   if [ ${#tree} = 40 ] && f=$(gates_queued "$tree"); then
+    # 18 Nov: a re-queued commit showed only this line, hiding the verdict it already had (17 Nov lesson).
+    # The earlier verdict goes first; the QUEUED line stays last, where scripts read it.
+    line=$(awk -v t="$tree" '(index($2, t) == 1 || index($3, t) == 1) && $4 != "REQUEUED"' "$GATES_RESULTS" 2>/dev/null | tail -1)
+    [ -n "$line" ] && echo "earlier: $line"
     echo "QUEUED ${tree:0:7} since $(date -r "$(req_get "$f" queued)" '+%F %H:%M') by $(req_get "$f" by); runner: $(gates_runner_pid >/dev/null && echo working || echo 'not running (the awake guard restarts it within a minute)')"
     return 3
   fi
@@ -1426,12 +1503,23 @@ gates_queue() { # gates queue: the queue in run order, with each request's PR
 
 gates_priority() { # gates priority <pr number|sha> front|back: move that request in the queue
   local key=${1:?usage: $0 gates priority <pr|sha> front|back} where=${2:-front} f b n=0 head
-  case "$where" in front) head=1$(date +%s) ;; back) head=9$(date +%s) ;; *) echo "usage: $0 gates priority <pr|sha> front|back" >&2; return 2 ;; esac
+  # front: "0" + a countdown, so the newest front move sorts first (before re-queues at "1<time>" and
+  # plain requests at "<time>"); "1<time>" put a later front move behind an earlier one (17 Nov).
+  case "$where" in front) head=0$(python3 -Ic 'import time; print("%016d" % (10**16 - int(time.time() * 1e6)))') ;; back) head=9$(date +%s) ;; *) echo "usage: $0 gates priority <pr|sha> front|back" >&2; return 2 ;; esac
+  # A PR number matches exactly; a sha matches by prefix only from 7 hex characters. (17 Nov: "99"
+  # matched any sha starting 99, so the unknown-PR test failed about 1 run in 128 and PR #259's
+  # gates with it; "27" would also have moved PR #278.)
+  local pat
+  case "$key" in
+    *[!0-9a-f]*|"") echo "usage: $0 gates priority <pr|sha> front|back" >&2; return 2 ;;
+    *[!0-9]*) [ ${#key} -ge 7 ] || { echo "A sha needs at least 7 characters: $key" >&2; return 2; }; pat="^sha=$key" ;;
+    *) pat="^pr=$key\$"; [ ${#key} -ge 7 ] && pat="$pat|^sha=$key" ;;
+  esac
   while IFS= read -r f; do
     [ -n "$f" ] || continue
     b=$(basename "$f")
     mv "$f" "$GATES_QUEUE/$head.$(printf '%06d' "$n")-${b#*-}"; n=$((n + 1))
-  done < <(grep -l -E "^(pr=$key|sha=$key)" "$GATES_QUEUE"/*.req 2>/dev/null)
+  done < <(grep -l -E "$pat" "$GATES_QUEUE"/*.req 2>/dev/null)
   [ $n -gt 0 ] || { echo "Nothing queued for $key." >&2; return 1; }
   echo "Moved $n request(s) for $key to the $where."
   gates_queue
@@ -1549,8 +1637,53 @@ deploy_power_short() { # prints why the power can't carry a deploy, or nothing
   watts=$(pmset -g ac 2>/dev/null | sed -n 's/^ *Wattage = \([0-9]*\)W.*/\1/p')
   [ -z "$watts" ] || [ "$watts" -ge 20 ] || echo "battery ${pct}% on a ${watts} W charger"
 }
+carry_checkout() { # carry_checkout <dir> <to sha>: check out <to>; git never touches runtime data whose tracking changes
+  # GAU-211: data/bedrock/telemetry.jsonl was tracked and is now ignored, and the running backend
+  # appends to it by path (fs.appendFile). Across that commit a plain checkout refuses (changed
+  # file) or deletes it (unchanged), and going back silently replaces live's copy with the committed
+  # one (git overwrites ignored files). Moving it aside loses what is appended meanwhile, so the
+  # file never moves: for each data/ or ml/models/ path that only one side tracks, the index is set
+  # to what <to> has (git then keeps the working file as it is, same inode), and a path leaving the
+  # tree is excluded for this one command (else git refuses over an "untracked" file).
+  # Safety net: a hard link beside the file. If git removes the file all the same, the link goes
+  # back in its place. Nothing here deletes data: in doubt both copies stay and a person decides.
+  local dir=$1 to=$2 p f mode blob excl rc=0 _
+  local -a paths=()
+  while IFS= read -r p; do
+    f="$dir/$p"
+    if [ -e "$f.gauss-keep" ] && [ ! -e "$f" ]; then mv "$f.gauss-keep" "$f" || return 1; fi # an earlier run stopped before putting it back
+    [ -f "$f" ] || continue
+    if [ ! -e "$f.gauss-keep" ]; then ln "$f" "$f.gauss-keep" || return 1
+    elif ! [ "$f" -ef "$f.gauss-keep" ]; then
+      echo "$f.gauss-keep is live data left by an earlier checkout and differs from $p: keep the right one by hand (move it to $p), then retry." >&2; return 1
+    fi
+    paths+=("$p")
+  done < <(git -C "$dir" diff --name-only --no-renames --diff-filter=AD HEAD "$to" -- data ml/models)
+  excl=$(mktemp "${TMPDIR:-/tmp}/gauss-carry.XXXXXX") || return 1
+  for p in ${paths[@]+"${paths[@]}"}; do
+    if read -r mode _ blob _ < <(git -C "$dir" ls-tree "$to" -- "$p") && [ -n "$blob" ]; then
+      git -C "$dir" update-index --add --cacheinfo "$mode,$blob,$p" || rc=1
+    else
+      git -C "$dir" update-index --force-remove -- "$p" || rc=1; printf '/%s\n' "$p" >>"$excl"
+    fi
+  done
+  [ $rc != 0 ] || git -C "$dir" -c core.excludesFile="$excl" checkout -q --detach "$to" || rc=1
+  rm -f "$excl"
+  for p in ${paths[@]+"${paths[@]}"}; do
+    f="$dir/$p"
+    [ $rc = 0 ] || git -C "$dir" reset -q -- "$p" >/dev/null 2>&1 || true # refused: the index describes HEAD again
+    if [ "$f" -ef "$f.gauss-keep" ]; then rm -f "$f.gauss-keep" # untouched: drop the second name, the data stays
+    elif [ ! -e "$f" ] || [ "$(git -C "$dir" hash-object -- "$f")" = "$(git -C "$dir" rev-parse -q --verify "$to:$p")" ]; then
+      mv -f "$f.gauss-keep" "$f" || return 1 # git removed it, or wrote the committed copy (still in git) over it
+      echo "git touched $p during the checkout: live's copy is back in place." >&2
+    else
+      echo "warning: $p was replaced during the checkout (not by git); the earlier data is kept as $f.gauss-keep. Compare the two before the next deploy." >&2
+    fi
+  done
+  return $rc
+}
 switch_live() { # switch_live <dir> <from sha> <to sha>: check out, npm ci if the lockfile or Node changed, reinstall
-  git -C "$1" checkout -q --detach "$3" || return 1
+  carry_checkout "$1" "$3" || return 1
   if [ ! -d "$1/node_modules" ] || ! git -C "$1" diff --quiet "$2" "$3" -- package-lock.json || node_changed "$1"; then
     echo "package-lock.json or Node changed: installing dependencies in $1 ..."
     (cd "$1" && PATH="$(dirname "$NODE"):$PATH" npm ci --no-audit --no-fund >/dev/null) || return 1
@@ -1633,7 +1766,7 @@ deploy() { # deploy <commit> [fallback-dir]
   fi
 
   echo "Deploying ${prev:0:7} -> ${sha:0:7} in $live ..."
-  git -C "$live" checkout -q --detach "$sha" \
+  carry_checkout "$live" "$sha" \
     || { echo "Checkout refused (a local data file conflicts with ${sha:0:7}?): nothing changed." >&2; return 1; }
   if switch_live "$live" "$prev" "$sha" && deploy_ready "$live" "$DEPLOY_WAIT"; then
     echo "$(date '+%F %T') deployed ${sha:0:7} (was ${prev:0:7})" >>"$LOGS/deploy.log"
@@ -2103,6 +2236,7 @@ case "${1:-}" in
       run) gates_run "${3:-}" ;;
       run-one) gates_run_one "${3:?}" ;;
       result) if [ "${3:-}" = status ]; then gates_status; else gates_show_result "${3:-}"; fi ;;
+      passed) gates_passed "${3:-}" ;;
       queue) gates_queue ;;
       priority) gates_priority "${3:-}" "${4:-front}" ;;
       waiting) gates_waiting ;;
