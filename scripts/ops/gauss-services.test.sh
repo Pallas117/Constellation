@@ -838,6 +838,10 @@ M2=$(tc "$M1" main.txt main-2); g push -q origin "$M2:refs/heads/main" && g fetc
 out=$(cd "$LIVE" && run gates enqueue "$P5" --pr 13 2>&1)
 [[ "$out" == *"main has moved past it: queueing"* ]] && [ "$(ls "$GQ" | grep -c '\.req$')" = 1 ] && ! grep -q "gh merge" "$T/actions"
 expect "train: an already-passed head that main moved past is queued to sync, not merged" $?
+# 18 Nov: gates result showed only QUEUED for a re-queued commit, hiding the verdict it already had.
+out=$(cd "$LIVE" && run gates result "$P5" 2>&1); rc=$?
+[ $rc = 3 ] && [[ "$(sed -n 1p <<<"$out")" =~ ^earlier:\ [^\ ]+\ $P5\ [^\ ]+\ (PASSED|HELD|MERGED|SKIPPED) ]] && [[ "$(tail -1 <<<"$out")" == QUEUED* ]]
+expect "gates result: a re-queued commit shows its earlier verdict first, QUEUED last" $?
 # 12 Nov: the runner dropped such a request as SKIPPED (its tree had passed) before the train step,
 # so the PR never landed. It must merge main in, gate the new head and merge it.
 : >"$T/actions"; run gates run >/dev/null 2>&1; N5=$(git --git-dir="$ORIGIN" rev-parse refs/heads/train)
@@ -866,6 +870,16 @@ expect "gates priority: a PR moves to the front, and gates queue lists requests 
 out=$(run gates priority 31 back 2>&1); last=$(ls "$GQ" | sort | tail -1); grep -qx "pr=31" "$GQ/$last"
 expect "gates priority: a PR moves to the back" $?
 out=$(run gates priority 99 front 2>&1); [ $? = 1 ] && [[ "$out" == *"Nothing queued for 99"* ]]; expect "gates priority: an unknown PR is refused" $?
+# 17 Nov: keys matched as prefixes, so "99" hit any sha starting 99 (the test above failed ~1 run in
+# 128, failing PR #259's gates) and PR 3 would have moved PR 31.
+out=$(run gates priority 3 front 2>&1); [ $? = 1 ] && [[ "$out" == *"Nothing queued for 3"* ]]
+expect "gates priority: a PR number never matches a longer PR number" $?
+before=$(ls "$GQ" | sort); out=$(run gates priority "${P8:0:5}" front 2>&1); rc=$?
+[ "$rc" != 0 ] && [ "$(ls "$GQ" | sort)" = "$before" ]
+expect "gates priority: a short sha prefix moves nothing" $?
+out=$(run gates priority "${P8:0:7}" front 2>&1); first=$(ls "$GQ" | sort | sed -n 1p); grep -qx "pr=31" "$GQ/$first"
+expect "gates priority: a 7-character sha moves its request" $?
+out=$(run gates priority 'pr=.*' front 2>&1); [ $? = 2 ]; expect "gates priority: a key that is not a PR or sha is a usage error" $?
 rm -f "$GQ"/*.req
 printf '%s 13 true CLEAN Brand refresh\n%s 21 false CLEAN Already merged head\n' "$N5" "$P8" >"$GHD/open"
 out=$(cd "$LIVE" && run gates waiting 2>&1)
