@@ -1,0 +1,50 @@
+# Argo on a Linux laptop or server ("Talos"): the network and resource guard loop, as a normal
+# user. bootstrap.sh --install-service fills in @USER@ and @HOME@ and installs this as
+# /etc/systemd/system/gauss-argo.service. Nothing here holds a secret.
+# UNTESTED ON A REAL LINUX HOST (18 Nov 2026). If Argo logs "read-only file system" or
+# "permission denied", the hardening below is the first place to look.
+[Unit]
+Description=Gauss Argo (network and power guard loop)
+Wants=network-online.target
+After=network-online.target tailscaled.service
+# Keep trying for as long as it takes: a laptop on a hotspot may be offline for hours.
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=@USER@
+Environment=HOME=@HOME@
+Environment=ARGO_INTERVAL=60s
+Environment=ARGO_NO_DESKTOP=1
+ExecStart=@HOME@/.local/bin/argo loop
+# Self-healing: a crash is restarted after 10 s. A clean stop (systemctl stop) stays stopped.
+Restart=on-failure
+RestartSec=10
+# Hardening: no new privileges, no capabilities, the system and home read-only except Argo's own
+# state and config (bootstrap.sh creates both), which is all `argo loop` writes.
+NoNewPrivileges=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=@HOME@/.local/state/argo @HOME@/.config/argo
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+SystemCallArchitectures=native
+UMask=0077
+MemoryMax=512M
+TasksMax=128
+
+[Install]
+WantedBy=multi-user.target

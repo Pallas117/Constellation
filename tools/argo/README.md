@@ -502,6 +502,13 @@ podman run --rm --network host argo:dev doctor     # one-off diagnosis
 
 `argo loop` (the image's default) checks every `ARGO_INTERVAL` (default 60s; the full probe still runs at most every ~5 min on a stable network). On Linux, route and gateway come from `/proc`, proxies from the environment, alerts are log lines on stdout (no Messages app, so phone texts are off), and Claude Code stale-daemon checks are skipped. `--network host` is what lets it see the host's real network.
 
+**Linux laptops on battery.** The guard's battery rules are the same code on Linux as on macOS: the 10% floor, the eclipse budget for heavy jobs on battery, and the brownout pause. They read `/sys/class/power_supply`. Two readings are Linux-only:
+
+- *Plugged in but discharging.* When a charger is online and the kernel reports the battery as `Discharging` (with a non-zero `power_now`, or `current_now` x `voltage_now`), the guard raises `charger-weak` at once, without waiting for the history to show a drain: watch (light work), risk at 35% (no new jobs, where running ones are paused), block at the 10% floor. `argo status` and `argo guard` say "plugged in but the battery is still draining (12.3 W): use a stronger charger". A zero rate is not a drain (some firmware says `Discharging` when idle at full).
+- *Charge limit.* Where the battery has `charge_control_end_threshold`, `argo guard` prints it ("charges to 80% (charge limit)") and a battery resting at its limit shows "held at its 80% charge limit" instead of looking like a weak charger. Where the file is absent it says the laptop offers none; Argo never sets it.
+
+Both stay on the device (they are not in the Gauss report). They are tested against hand-written fixture directories (`testdata/power_supply/`), not a real laptop: UNVERIFIED on real hardware. Known limit: with two system batteries (some ThinkPads) Argo reads one of them, not the sum. A systemd unit for `argo loop` on a laptop is in `scripts/ops/talos/`.
+
 ## Tests
 
 ```bash
