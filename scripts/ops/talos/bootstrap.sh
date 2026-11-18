@@ -115,7 +115,8 @@ main() {
     lid=$(grep -hs '^HandleLidSwitch' "$ROOT/etc/systemd/logind.conf" "$ROOT"/etc/systemd/logind.conf.d/*.conf 2>/dev/null | tr '\n' ' ' || true)
     echo "lid       ${lid:-systemd default (suspend on lid close, also on mains)}"
   )
-  if printf '%s\n' "$facts" | grep -q '^__discharging' && printf '%s\n' "$facts" | grep -q '^__online=1'; then
+  # here-strings, not pipes: under pipefail a reader that quits early can fail the pipeline at random
+  if grep -q '^__discharging' <<<"$facts" && grep -q '^__online=1' <<<"$facts"; then
     facts="$facts
 power     PLUGGED IN BUT DISCHARGING: this charger cannot carry the machine. Use a stronger one."
   fi
@@ -180,7 +181,7 @@ for v in (d.get("BackendState"), (d.get("CurrentTailnet") or {}).get("Name"), u.
       ts_stop 4
     else
       note "on tailnet '$tailnet' as '$login': this machine is '$host' at $ip"
-      if tailscale debug prefs 2>/dev/null | grep -q '"RunSSH": *true'; then
+      if grep -q '"RunSSH": *true' <<<"$(tailscale debug prefs 2>/dev/null)"; then
         note "Tailscale SSH: ON (fine for first contact; turn it off before adding the gate user)"
       else
         note "Tailscale SSH: off or not readable"
