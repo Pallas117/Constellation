@@ -58,6 +58,7 @@ export interface BatteryReading {
   lowPower: boolean;
   external?: boolean;
   power?: { mode: "positive" | "negative" | "eclipse"; sourceW: number; loadW: number; marginW: number };
+  charger?: { state: "no-pd" | "pd-low" | "ok"; volts: number; watts: number };
 }
 
 /**
@@ -68,7 +69,9 @@ export function batteryLabel(b: BatteryReading): string {
   const source = b.external === undefined ? (b.charging ? " charging" : "") : b.external ? (b.charging ? " charging" : " · plugged in") : " · on battery";
   const p = b.power;
   const margin = p?.mode === "positive" ? ` · ${p.marginW} W spare` : p?.mode === "negative" ? ` · charger ${-p.marginW} W short` : "";
-  return `${b.level}%${source}${margin}${b.lowPower ? " · low power" : ""}`;
+  const c = b.charger;
+  const charger = c?.state === "no-pd" ? ` · 5 V USB, no fast charging (${c.watts} W)` : c?.state === "pd-low" ? ` · charger only ${c.watts} W` : "";
+  return `${b.level}%${source}${margin}${charger}${b.lowPower ? " · low power" : ""}`;
 }
 
 export interface GuardReading {

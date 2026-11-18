@@ -50,6 +50,11 @@ Optional extras:
   whenever sending to the main handle fails, for example while the SIM is expired; `argo phone fallback off`
   removes it. It catches failures Messages reports at once. An SMS that Messages accepts and the iPhone fails
   later is only caught by the delivery check (Full Disk Access for `~/.local/bin/argo`).
+- **Charger diagnosis.** Argo reads what the charger negotiated (macOS: `ioreg` AdapterDetails; Linux: `/sys/class/power_supply`)
+  and says why power is short: `no-pd` (5 V or less and at most 15 W: plain USB, no USB-C Power Delivery; use a USB-C to
+  USB-C cable with a fast charger), `pd-low` (Power Delivery, but fewer watts than a heavy job needs) or `ok`. A host that
+  reports no negotiation is unknown, never guessed. The state is in `argo status` (`charger:no-pd 5V/8W`), `argo guard`
+  and the Gauss report (`battery.charger`, shown on /mesh).
 - **Texts that fail are not silent.** If Messages stops accepting texts (for example after a rebuild, until Allow is
   clicked), `argo status` says since when and how many are waiting or lost, a desktop banner appears after 10 min,
   and the first text after recovery says how many alerts were lost.
