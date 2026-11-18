@@ -225,11 +225,11 @@ test("landing: you scroll into Gauss: the open view named, the rest veiled, one 
   assert.doesNotMatch(gate, /<script|<iframe|<canvas|<video|<object|<embed/);
   // Before sign-in: the live view's own readings, by name. A still has no numbers, and the page says so.
   assert.deepEqual([...open.matchAll(/<li>([^<]+)<\/li>/g)].map((m) => m[1]), ["Magnetopause", "Solar wind", "IMF Bz", "Kp"]);
-  assert.match(open, /<p>The Gauss live view: Earth&rsquo;s magnetic field, traced from the solar wind\.<\/p>/);
+  assert.match(open, /<p>The Gauss live view, traced from the solar wind\.<\/p>/);
   assert.match(open, /<p class="src">A still frame, so the numbers are left out\.<\/p>/);
   assert.doesNotMatch(text(open), /\d/, "no readings are shown from a still");
   // Past the sign-in: names only. No invented data behind the veils, no pictures, no links into closed areas.
-  assert.deepEqual([...held.matchAll(/<li><span class="label">([^<]+)<\/span><span class="held">Members only<\/span><\/li>/g)].map((m) => m[1]), ["Field model", "Operator console", "Mesh"]);
+  assert.deepEqual([...held.matchAll(/<li><span class="label">([^<]+)<\/span><span class="held">Members only<\/span><\/li>/g)].map((m) => m[1]), ["Field model", "Operator console", "Argo Mesh"]);
   assert.equal(held.match(/<li>/g).length, 3);
   assert.doesNotMatch(held, /\d|<img|<a /, "veiled panels carry a name and nothing else");
   // One door, and one or two quiet lines by it: what is withheld is withheld on purpose. No claims about how sign-in works.
