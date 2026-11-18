@@ -74,7 +74,10 @@ type Snapshot struct {
 	Time   time.Time `json:"time"`
 	Online bool      `json:"online"`
 	// DNSDirectOK: the system lookup failed but 1.1.1.1 answered directly.
-	DNSDirectOK    bool        `json:"dns_direct_ok,omitempty"`
+	DNSDirectOK bool `json:"dns_direct_ok,omitempty"`
+	// IPUp: both lookups failed, so the IP anchors were dialled (uplink.go); false means nothing
+	// gets out at all. nil when not measured.
+	IPUp           *bool       `json:"ip_up,omitempty"`
 	Gateway        string      `json:"gateway,omitempty"`
 	GatewayMAC     string      `json:"gateway_mac,omitempty"`
 	PublicIP       string      `json:"public_ip,omitempty"`
@@ -108,6 +111,9 @@ func Classify(s Snapshot) (Class, string) {
 		return Offline, "no default route"
 	case s.Captive.Err == ErrPortal:
 		return Captive, "captive.apple.com did not return Success"
+	case (s.DNS.Err != "" || s.API.Err == ErrDNS) && !s.DNSDirectOK && uplinkDead(s):
+		// Not DNS: no lookup answers because nothing gets out (GAU-247, 2026-11-18 dorm Wi-Fi).
+		return PortBlock, "nothing gets out: DNS times out and 1.1.1.1, 9.9.9.9 and 8.8.8.8 don't answer by IP either (uplink stalled)"
 	case s.DNS.Err != "" || s.API.Err == ErrDNS:
 		if s.DNSDirectOK {
 			return DNS, "the local resolver (Tailscale MagicDNS) is not answering; 1.1.1.1 resolves api.anthropic.com, so the network itself is fine"
@@ -153,6 +159,9 @@ func Classify(s Snapshot) (Class, string) {
 // PORT_BLOCK is the whole uplink stalling (a shared Wi-Fi or a phone losing
 // data), not something blocking Claude.
 func uplinkStalled(s Snapshot) bool {
+	if uplinkDead(s) {
+		return true
+	}
 	switch s.Captive.Err {
 	case ErrTimeout, ErrRefused, ErrOther:
 		return true
