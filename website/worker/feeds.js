@@ -1,5 +1,5 @@
 // Live feeds for lightbound.space: upcoming launches (The Space Devs Launch Library 2), space weather
-// (NOAA SWPC) and Constellation's events (its public Luma calendar). A cron trigger refreshes them into KV every 15 minutes. Pages and the API only ever read
+// (NOAA SWPC) and Constellation's events (its public Luma calendar). A cron trigger runs every 5 minutes and refreshes each feed into KV when it is due (space weather every run; launches every 30 minutes, within Launch Library 2's rate limit). Pages and the API only ever read
 // KV, so visitor traffic never reaches the upstream services (LL2 allows 15 anonymous calls an hour; see ll2Auth).
 // A failed refresh keeps the last good data and records the error; /api/health reports both.
 //
@@ -33,7 +33,7 @@ export const SOURCES = Object.freeze({
 // refreshMin: how often to call upstream. staleMin: when the page starts saying "stale".
 export const FEEDS = Object.freeze({
   launches: { key: "feed:launches", refreshMin: 30, staleMin: 120 },
-  weather: { key: "feed:weather", refreshMin: 15, staleMin: 45 },
+  weather: { key: "feed:weather", refreshMin: 5, staleMin: 20 },
   // Optional: Luma being down never makes /api/health fail.
   events: { key: "feed:events", refreshMin: 180, staleMin: 1440, optional: true },
   // members: for signed-in members' opportunities only, so a public release (release.js) doesn't fetch them.

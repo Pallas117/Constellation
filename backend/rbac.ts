@@ -101,6 +101,11 @@ export const API_POLICY: ReadonlyArray<Policy> = [
   { method: "GET", path: "/system/tpm", access: "operator" }, // TPM values (GAU-122); /health has the public summary
   { method: "GET", path: "/swx/structures", access: "operator" }, // L1 structure candidates (GAU-154)
   { method: "POST", path: "/ai/nowcast/infer", access: "operator" },
+  // Evidence view (GAU-59): pilot flow on a log; no signing route exists (backend/trust/evidence-router.ts)
+  { method: "GET", path: "/trust/evidence/options", access: "operator" },
+  { method: "POST", path: "/trust/evidence/analyse", access: "operator" },
+  { method: "POST", path: "/trust/evidence/pdf", access: "operator" },
+  { method: "POST", path: "/trust/evidence/verify", access: "operator" },
   { method: "GET", path: "/device/swap/plan", access: "operator" },
   { method: "POST", path: "/device/swap/rebalance", access: "operator" },
   { method: "POST", path: "/device/:id/quality", access: "operator" },

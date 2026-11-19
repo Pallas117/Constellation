@@ -1,0 +1,34 @@
+# Gauss hub backend on the VPS. Listens on 127.0.0.1 only; `tailscale serve` is the
+# only thing that puts it on the tailnet (bootstrap.sh sets that up). Secrets live in
+# /etc/gauss/hub.env (root:root 0600), never in this file or the repo.
+[Unit]
+Description=Gauss hub backend (127.0.0.1:3001, tailnet via tailscale serve)
+After=network-online.target tailscaled.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=gauss
+Group=gauss
+WorkingDirectory=/opt/gauss/src
+EnvironmentFile=/etc/gauss/hub.env
+ExecStart=/usr/local/bin/node --import tsx backend/server.ts
+Restart=on-failure
+RestartSec=5
+# Sandbox: it writes only its own data and the auth database in the checkout.
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/gauss /opt/gauss/src
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryMax=2G
+
+[Install]
+WantedBy=multi-user.target

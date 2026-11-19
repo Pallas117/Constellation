@@ -14,9 +14,9 @@
  */
 import { readFileSync } from "node:fs";
 import { basename } from "node:path";
-import { verifyEvidencePack, type EvidencePack } from "../../backend/trust/evidence.js";
-import { renderEvidencePdf } from "../../backend/trust/evidence-pdf.js";
-import { loadKeyring, PUBLISHED_KEYRING_PATH, verifyFileSignature, verifyPackSignature, type FileSignature, type Keyring } from "../../backend/trust/signing.js";
+import type { EvidencePack } from "../../backend/trust/evidence.js";
+import { checkLines, checkPack } from "../../backend/trust/pack-check.js";
+import { loadKeyring, PUBLISHED_KEYRING_PATH, verifyFileSignature, type FileSignature, type Keyring } from "../../backend/trust/signing.js";
 
 const args = process.argv.slice(2);
 const VALUE_FLAGS = new Set(["--pdf", "--keyring", "--hash", "--file", "--sig"]);
@@ -33,14 +33,13 @@ if (!packPath && !filePath) {
 }
 
 function report(subject: string, problems: string[], notes: string[], ok: string): never {
-  if (problems.length) {
-    console.error(`${subject}: FAILED`);
-    for (const p of problems) console.error(`  - ${p}`);
-  } else {
-    console.log(`${subject}: OK. ${ok}`);
-  }
-  for (const n of notes) console.log(`  NOTE: ${n}`);
-  process.exit(problems.length ? 1 : 0);
+  print(checkLines(subject, problems, notes, ok), problems.length > 0);
+}
+
+/** The FAILED block goes to stderr; an OK line and every NOTE to stdout. */
+function print(lines: string[], failed: boolean): never {
+  for (const line of lines) (failed && !line.startsWith("  NOTE: ") ? console.error : console.log)(line);
+  process.exit(failed ? 1 : 0);
 }
 
 const keyringPath = opt("--keyring") ?? PUBLISHED_KEYRING_PATH;
@@ -59,19 +58,12 @@ if (filePath) {
 }
 
 const pack = JSON.parse(readFileSync(packPath, "utf8")) as EvidencePack;
-const problems = verifyEvidencePack(pack);
-const notes: string[] = [];
-let signer = "";
-if (!pack?.signature && args.includes("--allow-unsigned")) {
-  notes.push("NOT SIGNED: integrity only. Nothing shows who made this pack; compare its pack hash with a copy you trust.");
-} else if (pack && typeof pack === "object") {
-  const check = verifyPackSignature(pack, keyring);
-  problems.push(...check.problems);
-  notes.push(...check.notes);
-  if (check.key) signer = `; signed by key ${check.key.keyId} on ${pack.signature?.signedAt} (keyring ${keyringPath})`;
-}
 const pdfPath = opt("--pdf");
-if (pdfPath && problems.length === 0 && !renderEvidencePdf(pack).equals(readFileSync(pdfPath))) problems.push(`${pdfPath} is not the rendering of this pack`);
-const expected = opt("--hash");
-if (expected && expected !== pack.packHash) problems.push(`pack hash ${pack.packHash} is not the expected ${expected}`);
-report(packPath, problems, notes, `${pack.records.length} records, pack hash ${pack.packHash}${signer}${pdfPath ? `; ${pdfPath} matches` : ""}`);
+const check = checkPack(pack, keyring, {
+  subject: packPath,
+  keyringLabel: keyringPath,
+  allowUnsigned: args.includes("--allow-unsigned"),
+  pdf: pdfPath ? { bytes: readFileSync(pdfPath), label: pdfPath } : undefined,
+  expectedHash: opt("--hash"),
+});
+print(check.lines, !check.ok);

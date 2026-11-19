@@ -339,3 +339,18 @@ test("a source that keeps failing backs off (10 s doubling to 10 min) and logs o
     console.warn = realWarn;
   }
 });
+
+test("GAU-244: a tick with no measurement behind it is saved as canonical-stale, not as canonical history", async () => {
+  const { bedrock } = await import("../lib/local-db.js");
+  const worker = new IngestionWorker() as unknown as TimedWorker;
+  const now = Date.now();
+  for (const key of ["noaa", "esa", "jaxa", "mms", "lasp", "goes", "kyoto-dst", "swpc-products", "ml-forecast"]) worker.lastFetch.set(key, now);
+  const point = await tickPoint(worker);
+  assert.equal(point.quality.stale, true, "no readout: the served point is flagged stale");
+  const [last] = await bedrock.getRecent(1);
+  assert.equal(last?.type, "canonical-stale");
+  assert.equal((last?.data as CanonicalSpaceWeatherPoint).timestamp, point.timestamp);
+  const history = await bedrock.getCanonicalSince(Date.parse(point.timestamp) - 1, 50);
+  assert.ok(!history.some((p) => p.timestamp === point.timestamp), "a restart does not reload it as an observation");
+  assert.equal(bedrock.rejectedPoints, 0, "stale is not an error");
+});
