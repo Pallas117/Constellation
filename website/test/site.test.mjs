@@ -80,6 +80,22 @@ test("landing: the tagline is the headline, over the kit's black-hole film", () 
   assert.match(home, /<img class="poster" src="\/assets\/media\/blackhole-poster\.jpg"/, "still frame without JS or video");
 });
 
+test("landing film on phones: soft-edged hole, slogan on screen, no play button, hidden once covered", () => {
+  const css = read("assets/site.css");
+  const portrait = css.match(/@media \(max-aspect-ratio:1\/1\)\{\n[\s\S]*?\n\}/)[0];
+  // The whole 16:9 frame, centred on the hole: the mask's soft edge shows while the hole is small (no hard rectangle).
+  assert.match(portrait, /\.hero \.poster,\.hero \.film\{[^}]*max-width:none;aspect-ratio:16\/9;[^}]*translate:-50% 0\}/);
+  assert.doesNotMatch(portrait, /--hole-w/, "portrait keeps the mask's side fade");
+  assert.match(css, /\.hero\{[^}]*padding-block:0\}/, "the stage starts at the top, so the slogan's foot is on screen at load");
+  assert.match(css, /\.hero \.film\{pointer-events:none\}/);
+  assert.match(css, /\.hero \.film::-webkit-media-controls-start-playback-button\{display:none!important/, "no iOS play button when autoplay is blocked");
+  assert.match(css, /@keyframes film-off\{to\{opacity:0;visibility:hidden\}\}/, "faded film is hidden, so phones can pause it");
+  assert.match(css, /\.hero \.poster,\.hero \.film\{animation:pull linear both,film-off linear both;animation-timeline:--hero,--descent;animation-range:contain 0% contain 100%,entry 35% entry 60%\}/,
+    "every size: the hero's hole has gone before the descent's art fades in");
+  assert.match(css, /\.descent-art\{animation:d-in linear both;animation-timeline:--descent;animation-range:entry 60% entry 100%\}/, "the art waits until entry 60%");
+  assert.doesNotMatch(css, /\.hero \.film\{animation-range:/, "one hand-off timing for all sizes");
+});
+
 test("terms: ethical use after ESA and NASA principles, month-to-month plans, cancel any time, refund if not satisfied; marked as a draft", () => {
   const t = text(html["/terms/"]);
   for (const want of [/Outer Space Treaty and the Artemis Accords/, /ESA.{1,7}s and NASA.{1,7}s data policies/, /NASA.{1,7}s principles for ethical AI/, /peaceful purposes/,
@@ -191,9 +207,71 @@ test("live-view gate: a labelled pre-rendered frame behind the Argo door, no scr
   // Three movements (Josh, 5 Nov 2026): the landing is the slogan alone, the descent carries its own 01/05 captions,
   // then one door. One short, true line about Argo; no encryption claims, nothing Argo's own page says differently.
   assert.deepEqual([...home.matchAll(/class="k">(\d\d_[A-Z_]+)</g)].map((m) => m[1]), ["01_ENTER"], "one numbered kicker: the door");
-  assert.match(home, />02_CONTACT</);
+  assert.match(home, />03_CONTACT</, "02 is Argo's Space tech, on Earth (Josh, 18 Nov 2026)");
   assert.match(text(gate), /Argo is Gauss&rsquo;s network agent, and the way in\. Included for operators and staff; never sold\./);
   assert.doesNotMatch(text(gate), /encrypt|quantum|HPKE|Ed25519|RFC ?9173|Nadia|Turnstone/i);
+});
+
+test("landing: Space tech, on Earth: what Argo does today, honest, no door into the closed /argo/", () => {
+  // Josh, 18 Nov 2026: a short Argo teaser on the public landing; /argo/ stays closed; framing "Space tech, on Earth".
+  const home = html["/"];
+  const sec = home.match(/<section id="argo" class="on-earth starfield"[\s\S]*?<\/section>/)?.[0] ?? "";
+  assert.ok(sec, "the section is there");
+  assert.ok(home.indexOf('id="enter"') < home.indexOf('id="argo"') && home.indexOf('id="argo"') < home.indexOf('id="projects"'), "after the door, before the marks");
+  assert.match(sec, /<p class="label">02_ON_EARTH<\/p>/);
+  assert.match(sec, /<h2 id="argo-h">Space tech, on Earth\.<\/h2>/);
+  assert.equal(sec.match(/<li>/g).length, 3, "three habits, no more");
+  // Each line is something /argo/ already states as working today.
+  for (const want of [/one broken network from another/, /smallest fix/, /signed receipt/, /Bundle Protocol \(RFC&nbsp;9171\)/, /Certificate checks are never turned off/,
+    /Mac today, Linux in a container\. Included with Gauss for operators and staff; never sold\./])
+    assert.match(sec, want);
+  for (const rx of [/space[- ]grade/i, /space[- ]qualified/i, /mission[- ]grade/i, /military/i, /certified/i, /compliant/i, /quantum/i, /\bVPN\b/, /\bAI\b/, /encrypt/i, /relay/i, /£|\$\d|a month/i, /everyone|anyone/i])
+    assert.doesNotMatch(text(sec), rx, `found ${rx}`);
+  assert.doesNotMatch(sec, /href="\/argo\//, "no link into /argo/, which the public release closes");
+  assert.doesNotMatch(sec, /class="k"|var\(--lime\)/, "the door keeps the one lime kicker");
+  const css = read("assets/site.css");
+  assert.match(css, /\.earth-list li\{animation:rise linear both;animation-timeline:view\(\)/);
+  assert.match(css, /@media \(prefers-reduced-motion:no-preference\)\{\n    \.earth-list li\{animation:rise/, "reduced motion: it is simply there");
+});
+
+test("landing backdrop: stars, then nebula, then fields, one fixed sky; decorative, compositor-only, calm with reduced motion", () => {
+  const home = html["/"];
+  assert.equal(home.match(/class="cosmos"/g).length, 1);
+  assert.match(home, /<div class="cosmos" aria-hidden="true"><i class="c-far"><\/i><i class="c-nebula"><\/i><i class="c-fields"><\/i><\/div>/);
+  const css = read("assets/site.css");
+  const block = css.slice(css.indexOf(".cosmos{"), css.indexOf("@keyframes c-fields"));
+  assert.match(block, /^\.cosmos\{position:fixed;inset:0;z-index:-1;pointer-events:none/, "behind everything, never takes a tap");
+  assert.doesNotMatch(block, /--lime|CCFF00|blur\(|box-shadow|filter:/i, "no lime, no glow, no blur filters");
+  // Order on the scroll: nebula gathers past the black hole, fields rise in at the foot.
+  assert.match(block, /\.c-nebula\{animation:c-nebula linear both;animation-timeline:scroll\(root\);animation-range:4% 36%\}/);
+  assert.match(block, /\.c-fields\{animation:c-fields linear both;animation-timeline:scroll\(root\);animation-range:62% 92%\}/);
+  assert.match(block, /@media \(prefers-reduced-motion:no-preference\)\{\n    \.cosmos i\{will-change:transform,opacity\}/, "motion only when asked for");
+  assert.match(block, /\.c-fields\{opacity:0;/, "reduced motion or no scroll timelines: no fields, stars and a faint nebula only");
+  for (const k of ["c-far", "c-nebula", "c-fields"]) {
+    const kf = css.match(new RegExp(`@keyframes ${k}\\{[^\\n]*\\}`))[0];
+    assert.doesNotMatch(kf.replace(/transform|opacity/g, ""), /[a-z-]+:/, `${k} animates transform and opacity only`);
+  }
+  // One sky across the site: every other page draws the same far stars, fixed and decorative.
+  assert.match(css, /\.c-far,body\.page::before\{background-size:233px 233px,233px 233px,233px 233px,377px 377px,377px 377px,377px 377px;background-image:var\(--far-stars\)\}/);
+  assert.match(css, /body\.page::before\{content:"";position:fixed;inset:-12%;z-index:-1;pointer-events:none;opacity:\.45\}/);
+  for (const route of ["/gauss/", "/constellation/", "/turnstone/", "/education/", "/privacy/"]) assert.match(html[route], /<body class="page[ "]/, `${route} gets the sky`);
+  const fields = read("assets/media/fields.svg");
+  assert.ok(fields.length < 4096, "fields art stays tiny");
+  assert.match(fields, /^<svg xmlns="http:\/\/www\.w3\.org\/2000\/svg" viewBox="0 0 1000 1000"/);
+  assert.doesNotMatch(fields, /<script|<image|href=/, "lines only");
+});
+
+test("touch: no endless hover animation after a tap, 44 px header targets, readable descent tags, safe areas", () => {
+  const css = read("assets/site.css");
+  for (const sel of ["\n  .door:hover,.door:focus-visible,.tile:hover,.tile:focus-within,.friend:hover,.btn.ghost:hover", ".btn.radiate:hover::before", ".btn.argo.radiate:hover{"]) {
+    const at = css.indexOf(sel);
+    assert.ok(at > 0, sel);
+    assert.match(css.slice(css.lastIndexOf("@media", at), at), /^@media \(prefers-reduced-motion:no-preference\) and \(hover:hover\)\{/, `${sel} runs only where a pointer can hover`);
+  }
+  assert.match(css, /@media \(pointer:coarse\)\{\n  \.top nav a\{padding-block:11px\}/);
+  assert.match(css, /@media \(max-width:560px\)\{\.d-tags text\{font-size:12px;[^}]*paint-order:stroke;stroke:var\(--black\)/);
+  assert.match(html["/"], /<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">/);
+  assert.match(css, /\.wrap\{padding-left:max\(clamp\(16px,4vw,40px\),env\(safe-area-inset-left,0px\)\)/);
 });
 
 test("live sections have their markers, with a working static fallback", () => {
@@ -607,6 +685,24 @@ test("traffic: every indexable page has share cards and is in the sitemap; robot
   assert.equal(ld["@graph"][0].name, "Lightbound Limited");
   assert.deepEqual(ld["@graph"][0].sameAs, ["https://luma.com/constellation"]);
   for (const [route, page] of Object.entries(html)) if (route !== "/") assert.doesNotMatch(page, /<script/, `${route}: no data blocks elsewhere`);
+});
+
+test("wiring: /gauss/ says what a log needs, links a made-up sample that has the columns it names, and the form asks what runs the model", () => {
+  const page = html["/gauss/"];
+  assert.match(page, /<summary>What a log needs<\/summary>/);
+  assert.match(page, /href="\/gauss\/sample-inference-log\.csv" download/);
+  assert.match(text(page), /never guess a time zone/i, "the zone rule is stated");
+  assert.match(text(page), /nothing is dropped silently/i);
+  const csv = read("gauss/sample-inference-log.csv");
+  const [header, ...rows] = csv.trim().split("\n");
+  assert.equal(header, "inference_time,sat,model,label,score,lat,lon,alt_km");
+  assert.equal(rows.length, 7);
+  assert.ok(rows.every((r) => r.split(",").length === header.split(",").length), "every row has every column");
+  assert.ok(rows.every((r) => /DEMO-SAT-\d/.test(r)), "made-up spacecraft only, no real mission names");
+  assert.doesNotMatch(csv, /@/, "no contact details in a download");
+  assert.match(renderApplyForm("gauss"), /name="logSource"/);
+  assert.match(renderApplyForm("gauss"), /name="logFormat"/);
+  assert.doesNotMatch(text(page), /\b(compliant|certified|space-qualified|post-quantum)\b/i);
 });
 
 test("client links: /gauss/, /gauss/evidence/ and /argo/ each link to the pilot brief with a plan", () => {
