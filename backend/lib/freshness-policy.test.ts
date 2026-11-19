@@ -58,6 +58,7 @@ const TEST_FILE = /\.(?:test|spec)\.[cm]?[jt]sx?$/;
 const ALLOWED: Record<string, string> = {
   "backend/mesh/store.ts:MESH_STALE_MS": "mesh device-report staleness, not a measurement (out of scope)",
   "backend/passkey-policy.ts:STEP_UP_MAX_AGE_MS": "how recent a passkey check must be for a step-up (auth), not a measurement age",
+  "backend/mesh/store.ts:POSTURE_MAX_AGE_MS": "age of Argo's device security posture report (GAU-238), not a measurement (out of scope)",
   "frontend/src/components/MeshStatusPill.tsx:STALE_MS": "mesh device-report staleness, not a measurement (out of scope)",
   "frontend/src/lib/mesh-onboarding.ts:STALE_MS": "mesh device-report staleness, not a measurement (out of scope)",
   "frontend/src/hooks/useSpaceWeather.ts:STALENESS_RECHECK_MS": "how often the UI re-checks ages, not an age limit",

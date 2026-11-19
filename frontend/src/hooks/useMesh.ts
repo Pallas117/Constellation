@@ -9,7 +9,7 @@ import {
   parseMeshOnboarding,
   type MeshOnboarding,
 } from "@/lib/api/mesh";
-import type { BatteryReading, GuardReading } from "@/lib/mesh-onboarding";
+import type { BatteryReading, GuardReading, PostureReading, PowerSaveReading } from "@/lib/mesh-onboarding";
 import type { LinkReport } from "@/lib/link-stability";
 import { usePolledFeed, useFeedSession } from "./usePolledFeed";
 
@@ -33,6 +33,8 @@ export interface MeshReport {
   net?: MeshNet;
   link?: LinkReport;
   guard?: MeshGuard;
+  powerSave?: PowerSaveReading;
+  posture?: PostureReading; // `argo posture` statuses (backend/mesh/store.ts MeshPosture, GAU-238)
 }
 
 /** Argo's resource guard decision (backend/mesh/store.ts MeshGuard, GAU-195). */
@@ -164,7 +166,9 @@ export function useMesh() {
   const devices = devicesFeed.data;
   const error = onboardingFeed.error ?? devicesFeed.error;
   const stopped = onboardingFeed.status === "sign-in-required" || devicesFeed.status === "sign-in-required";
-  return { steps, devices, me, canEnroll, canSeeTeam, canRevokeAny, error, stopped, enroll, revoke };
+  // Still waiting for a first answer: onboarding, then (if this caller may enrol) the device list.
+  const loading = !error && !stopped && (!onboarding || (canEnroll && !devices));
+  return { steps, devices, me, canEnroll, canSeeTeam, canRevokeAny, error, stopped, loading, enroll, revoke };
 }
 
 /** Argo's non-blocking warnings: the device works, but someone should look. */

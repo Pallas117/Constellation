@@ -66,17 +66,22 @@ const (
 
 // Battery is one battery reading. Watts are positive into the battery.
 type Battery struct {
-	Present   bool    `json:"present"`
-	Pct       int     `json:"pct"`
-	OnAC      bool    `json:"ac"`
-	Charging  bool    `json:"charging"`
-	RemainMin int     `json:"remain,omitempty"`   // the OS estimate to empty (on battery) or full; 0 unknown
-	AdapterW  float64 `json:"adapterW,omitempty"` // the charger's rating
-	SystemW   float64 `json:"systemW,omitempty"`  // what the whole machine draws, when the controller reports it
-	Cycles    int     `json:"cycles,omitempty"`
-	HealthPct int     `json:"health,omitempty"`    // the OS's "maximum capacity" vs design
-	Condition string  `json:"condition,omitempty"` // the OS's own words, e.g. "Normal", "Service Recommended"
-	LowPower  bool    `json:"lowPower,omitempty"`
+	Present   bool     `json:"present"`
+	Pct       int      `json:"pct"`
+	OnAC      bool     `json:"ac"`
+	Charging  bool     `json:"charging"`
+	RemainMin int      `json:"remain,omitempty"`   // the OS estimate to empty (on battery) or full; 0 unknown
+	AdapterW  float64  `json:"adapterW,omitempty"` // the charger's rating
+	Adapter   *Adapter `json:"adapter,omitempty"`  // what the charger negotiated (charger.go); nil = unknown
+	SystemW   float64  `json:"systemW,omitempty"`  // what the whole machine draws, when the controller reports it
+	Cycles    int      `json:"cycles,omitempty"`
+	HealthPct int      `json:"health,omitempty"`    // the OS's "maximum capacity" vs design
+	Condition string   `json:"condition,omitempty"` // the OS's own words, e.g. "Normal", "Service Recommended"
+	LowPower  bool     `json:"lowPower,omitempty"`
+	// Linux only (linuxBattery), kept on this device: never part of the Gauss report.
+	DrainOnAC      bool    `json:"acDrain,omitempty"` // a charger is online, yet the kernel says the battery is discharging
+	DrainW         float64 `json:"drainW,omitempty"`  // the battery's own discharge rate while discharging; 0 unknown
+	ChargeLimitPct int     `json:"limit,omitempty"`   // charge_control_end_threshold, 1-100; 0 = not offered or unreadable
 }
 
 // Sample is one reading of the host. It is what the history keeps.
@@ -321,9 +326,22 @@ func assess(hist []Sample, cur Sample) Assessment {
 			if b.Pct <= batteryFloorPct {
 				lvl = LevelBlock
 			}
-			a.add("battery", "charger-behind", lvl, "plugged in but losing %.0f%%/h: the charger can't keep up%s", a.DrainPctH, adapterNote(b))
+			a.add("battery", "charger-behind", lvl, "plugged in but losing %.0f%%/h: the charger can't keep up%s", a.DrainPctH, chargerNote(b))
 		} else if b.OnAC && b.AdapterW > 0 && b.SystemW > b.AdapterW {
-			a.add("battery", "charger-weak", LevelWatch, "the machine draws %.1f W from a %.0f W charger", b.SystemW, b.AdapterW)
+			a.add("battery", "charger-weak", LevelWatch, "the machine draws %.1f W from a %.0f W charger%s", b.SystemW, b.AdapterW, chargerNote(b))
+		} else if b.OnAC && b.DrainOnAC {
+			// Linux (18 Nov, nomad mode): the kernel itself says the battery is discharging with a
+			// charger online. That is evidence now, before an hour of history can show a drain
+			// (charger-behind above takes over once it does). Same levels as charger-behind: new
+			// jobs stop where brownout.go sheds running ones, and nothing runs at the floor.
+			lvl := LevelWatch
+			if b.Pct <= shedPct {
+				lvl = LevelRisk
+			}
+			if b.Pct <= batteryFloorPct {
+				lvl = LevelBlock
+			}
+			a.add("battery", "charger-weak", lvl, "plugged in but the battery is still discharging%s: the charger can't carry the load%s", drainWatts(b), chargerNote(b))
 		}
 	}
 
@@ -351,6 +369,15 @@ func assess(hist []Sample, cur Sample) Assessment {
 		}
 	}
 	return a
+}
+
+// chargerNote is the reason and remedy when the negotiation explains the shortfall: the adapter's
+// rating (as before) plus why, from the charger diagnosis. Empty when the host reports none.
+func chargerNote(b *Battery) string {
+	if why := chargerWhy(chargerOf(b, defaultWorkerW)); why != "" {
+		return ": " + why
+	}
+	return adapterNote(b)
 }
 
 func adapterNote(b *Battery) string {
@@ -667,6 +694,11 @@ func ioregInt(out, key string) (int64, bool) {
 // SystemLoad (mW) is not documented by Apple; it is shown, not decided on,
 // except against the charger's own rating.
 func applyIoreg(b *Battery, out string) {
+	if b.OnAC {
+		if a, ok := parseAdapterDetails(out); ok {
+			b.Adapter = &a
+		}
+	}
 	if v, ok := ioregInt(out, "CycleCount"); ok {
 		b.Cycles = int(v)
 	}
@@ -770,12 +802,17 @@ func worse(a, b string) string {
 // name → content, for every supply on the host.
 func linuxBattery(supplies map[string]map[string]string) Battery {
 	var b Battery
+	var status string // the system battery's status word
+	var hasRate bool  // it reported a discharge rate
+	var rateW float64
+	supplyOnline := false
 	for _, f := range supplies {
 		v := func(k string) string { return strings.TrimSpace(f[k]) }
 		switch v("type") {
 		case "Mains", "USB":
 			if v("online") == "1" {
 				b.OnAC = true
+				supplyOnline = true
 			}
 		case "Battery":
 			if v("present") == "0" || v("scope") == "Device" { // a mouse's battery is not ours
@@ -787,6 +824,20 @@ func linuxBattery(supplies map[string]map[string]string) Battery {
 			b.Charging = st == "Charging"
 			if st == "Charging" || st == "Full" || st == "Not charging" {
 				b.OnAC = true
+			}
+			status, hasRate, rateW = st, false, 0
+			// The battery's own rate: power_now (µW), else current_now (µA) x voltage_now (µV). Some
+			// drivers sign it negative while discharging, so the size is what counts.
+			if p := v("power_now"); p != "" {
+				x, err := strconv.ParseFloat(p, 64)
+				hasRate, rateW = err == nil, math.Abs(x)/1e6
+			} else if c := v("current_now"); c != "" {
+				x, err := strconv.ParseFloat(c, 64)
+				uv, _ := strconv.ParseFloat(v("voltage_now"), 64)
+				hasRate, rateW = err == nil && uv > 0, math.Abs(x)/1e6*uv/1e6
+			}
+			if n, err := strconv.Atoi(v("charge_control_end_threshold")); err == nil && n >= 1 && n <= 100 {
+				b.ChargeLimitPct = n
 			}
 			b.Cycles, _ = strconv.Atoi(v("cycle_count"))
 			full, design := v("energy_full"), v("energy_full_design")
@@ -803,7 +854,60 @@ func linuxBattery(supplies map[string]map[string]string) Battery {
 	if !b.Present {
 		return Battery{}
 	}
+	// Discharging: keep the rate when it is a sane figure. With a charger online that is a charger
+	// that can't carry the load, unless the rate reads zero (some firmware says "Discharging" while
+	// idle at full or at a charge limit). No rate file: the kernel's word stands, watts unknown.
+	if status == "Discharging" {
+		if hasRate && rateW > 0 && rateW <= maxBatteryW {
+			b.DrainW = round1(rateW)
+		}
+		b.DrainOnAC = supplyOnline && !(hasRate && rateW == 0)
+	}
 	return b
+}
+
+// maxBatteryW bounds a discharge reading: above this it is a driver error, not a laptop.
+const maxBatteryW = 500
+
+// drainWatts is " (12.3 W)" when the battery reported its discharge rate, else "".
+func drainWatts(b *Battery) string {
+	if b == nil || b.DrainW <= 0 {
+		return ""
+	}
+	return fmt.Sprintf(" (%s W)", trimNum(b.DrainW))
+}
+
+// batteryNote is the plain-English line for `argo status` and `argo guard` when a plugged-in
+// laptop is not gaining charge: either the charger is too weak, or the battery is doing what it
+// was told (a charge limit). "" otherwise; a host that reports neither says nothing.
+func batteryNote(b *Battery) string {
+	switch {
+	case b == nil || !b.Present || !b.OnAC:
+		return ""
+	case b.DrainOnAC:
+		return fmt.Sprintf("plugged in but the battery is still draining%s: use a stronger charger", drainWatts(b))
+	case b.ChargeLimitPct > 0 && b.ChargeLimitPct < 100 && !b.Charging && b.Pct >= b.ChargeLimitPct-chargeLimitSlackPct:
+		return fmt.Sprintf("held at its %d%% charge limit", b.ChargeLimitPct)
+	}
+	return ""
+}
+
+// chargeLimitSlackPct: firmware lets the battery sag a few points below the limit before it
+// charges again, so "held" covers that band.
+const chargeLimitSlackPct = 5
+
+// chargeLimitText says whether this laptop has a charge limit and what it is set to. Only Linux
+// reads one (charge_control_end_threshold), so other systems say nothing instead of guessing.
+func chargeLimitText(b *Battery, goos string) string {
+	switch {
+	case b == nil || !b.Present || goos != "linux":
+		return ""
+	case b.ChargeLimitPct == 0:
+		return "this laptop offers no charge limit Argo can read"
+	case b.ChargeLimitPct >= 100:
+		return "no charge limit set (this laptop offers one)"
+	}
+	return fmt.Sprintf("charges to %d%% (charge limit)", b.ChargeLimitPct)
 }
 
 // readSupplies reads the files linuxBattery needs for every supply under
@@ -814,7 +918,9 @@ func readSupplies(root string) map[string]map[string]string {
 	for _, e := range ents {
 		f := map[string]string{}
 		for _, k := range []string{"type", "online", "present", "scope", "capacity", "status", "cycle_count",
-			"energy_full", "energy_full_design", "charge_full", "charge_full_design"} {
+			"energy_full", "energy_full_design", "charge_full", "charge_full_design",
+			"voltage_now", "voltage_max", "current_max",
+			"power_now", "current_now", "charge_control_end_threshold"} {
 			if b, err := os.ReadFile(filepath.Join(root, e.Name(), k)); err == nil {
 				f[k] = string(b)
 			}

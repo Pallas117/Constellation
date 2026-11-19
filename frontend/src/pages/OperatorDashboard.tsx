@@ -11,6 +11,7 @@ const LINKS = [
   ["/", "Live view"],
   ["/heliophysics", "Field model"],
   ["/protection", "Protection"],
+  ["/operator/evidence", "Evidence"],
   ["/account/api", "API keys"],
 ] as const;
 

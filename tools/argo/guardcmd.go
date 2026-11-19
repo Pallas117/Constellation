@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -98,6 +99,9 @@ func (c Config) workerGB() float64 {
 func guardStep(s Store, cfg Config, cur Sample) (Assessment, GuardState) {
 	hist := s.guardHistory()
 	a := assess(hist, cur)
+	if ps := s.loadPowerSave(); ps.On { // the mode's reason for holding heavy work, with the charger advice (powersave.go)
+		a.add("power", "power-save", LevelWatch, "%s", powerSaveGuardText(ps, cur.Batt))
+	}
 	prev := s.loadGuard()
 	sc := autoscale(prev.Scale, a, targetSlots(cur, a, cfg.slotGB()), cur.At)
 	open, closed := healStep(prev.Open, a, cur.At)
@@ -108,10 +112,25 @@ func guardStep(s Store, cfg Config, cur Sample) (Assessment, GuardState) {
 	return a, g
 }
 
+const guardSampleEvery = time.Minute // the LaunchAgent's tick; power-save stretches it
+
+// sampleDue says whether the guard should read the host now. Normally every tick; in power-save
+// every powerSaveFactor ticks (a few seconds of slack for the timer's jitter).
+func sampleDue(saving bool, last, now time.Time) bool {
+	if !saving || last.IsZero() || now.Before(last) {
+		return true
+	}
+	return now.Sub(last) >= stretch(guardSampleEvery, true)-5*time.Second
+}
+
 // guardTick runs on every Argo tick: a cheap sample (no system_profiler, no
 // ps), then the GAU-165 early warnings, rate-limited per key.
 func guardTick(ctx context.Context, s Store, cfg Config, phone *Phone, now time.Time) {
+	if !sampleDue(s.loadPowerSave().On, s.loadGuard().Report.At, now) { // power-save stretches the sampling too
+		return
+	}
 	cur := sampleHost(ctx, false)
+	powerSaveTick(ctx, s, realAppFx(), phone, cur.Batt, now, os.Stderr)
 	a, _ := guardStep(s, cfg, cur)
 	if phone == nil {
 		return
@@ -546,8 +565,9 @@ var guardAdvice = map[string]string{
 	"battery-draining":     "Plug in: the battery reaches the floor within the hour.",
 	"battery-low-pressure": "Plug in or close the browser.",
 	"on-battery":           "Jobs over 1 GB start only within their eclipse budget (below). Plug in to lift it.",
-	"charger-behind":       "Use a stronger charger: this one can't keep up with the machine's draw.",
-	"charger-weak":         "Use a stronger charger: the machine draws more than this one supplies.",
+	"charger-behind":       "Use a stronger charger: this one can't keep up with the machine's draw. If it is 5 V USB, use a USB-C to USB-C cable with a fast charger.",
+	"power-save":           "Power-save is on: heavy jobs wait and Argo's checks run less often. It ends by itself after 10 calm minutes on a charger that keeps up.",
+	"charger-weak":         "Use a stronger charger: the machine draws more than this one supplies. If it is 5 V USB, use a USB-C to USB-C cable with a fast charger.",
 	"disk-critical":        "Free disk space now: swap needs room on the boot volume.",
 	"disk-low":             "Free disk space (rebuildable caches first).",
 	"cpu-throttled":        "Let it cool: hard surface, airflow, charger plugged in.",
@@ -604,6 +624,15 @@ func guardText(cur Sample, a Assessment, sc Scale, hist []Sample, users []Group)
 		}
 		w("\n")
 		w("power    %s\n", powerText(powerBudget(cur), defaultWorkerW))
+		if bt.OnAC {
+			w("charger  %s\n", chargerText(chargerOf(bt, defaultWorkerW)))
+		}
+		if note := batteryNote(bt); note != "" {
+			w("         %s\n", note)
+		}
+		if lim := chargeLimitText(bt, runtime.GOOS); lim != "" {
+			w("         %s\n", lim)
+		}
 		if bt.Cycles > 0 || bt.HealthPct > 0 {
 			w("         %d cycles", bt.Cycles)
 			if bt.HealthPct > 0 {
@@ -711,10 +740,20 @@ func orDash(s string) string {
 
 // guardStatus is the short suffix for `argo status`, from the last tick.
 func guardStatus(g GuardState, now time.Time) string {
-	if g.Report.At.IsZero() || now.Sub(g.Report.At) > 10*time.Minute || g.Report.Level == "ok" {
+	if g.Report.At.IsZero() || now.Sub(g.Report.At) > 10*time.Minute {
 		return ""
 	}
-	return " guard:" + g.Report.Level
+	out := ""
+	if g.Report.Level != "ok" {
+		out = " guard:" + g.Report.Level
+	}
+	if c := chargerOf(g.Batt, defaultWorkerW); c.State != ChargerUnknown { // unknown shows nothing, never a guess
+		out += fmt.Sprintf(" charger:%s %sV/%sW", c.State, trimNum(c.Volts), trimNum(c.Watts))
+	}
+	if note := batteryNote(g.Batt); note != "" { // Linux: plugged in but draining, or held at a charge limit
+		out += " (" + note + ")"
+	}
+	return out
 }
 
 // addGuard adds the last tick's decision and battery to a Gauss report when
@@ -728,6 +767,9 @@ func addGuard(report map[string]any, g GuardState, now time.Time) {
 		bat := map[string]any{"level": b.Pct, "charging": b.Charging, "external": b.OnAC, "lowPower": b.LowPower}
 		if p := powerBudget(Sample{Batt: b}); p.Mode != PowerUnknown { // the SWaP budget, so Gauss places work where power is spare
 			bat["power"] = p
+		}
+		if c := chargerOf(b, defaultWorkerW); c.State != ChargerUnknown { // what the charger negotiated (parseCharger); unknown sends nothing
+			bat["charger"] = c
 		}
 		report["battery"] = bat
 	}
