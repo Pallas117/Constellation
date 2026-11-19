@@ -57,7 +57,10 @@ func TestEclipsePausesOnBatteryAndResumes(t *testing.T) {
 		if code != 0 || lines(t, out) != 60 {
 			t.Fatalf("after resuming: exit %d, %d lines, want 0 and 60", code, lines(t, out))
 		}
-	case <-time.After(5 * time.Second):
+	// 60 s, not 5: the rest of the job is about 0.5 s of work, but on a throttled gate run (battery, eco
+	// clamp) it took 12 s and the old limit failed PR #331's gate on 18 Nov. The limit only has to tell
+	// "resumed and finished" from "never resumed".
+	case <-time.After(60 * time.Second):
 		t.Fatal("job never finished after power returned")
 	}
 	log, _ := os.ReadFile(r.store.path("guard.log"))
@@ -141,7 +144,7 @@ func TestCallPausesHeavyJobsOnly(t *testing.T) {
 				if code != 0 || lines(t, out) != 60 {
 					t.Fatalf("exit %d, %d lines, want 0 and 60", code, lines(t, out))
 				}
-			case <-time.After(5 * time.Second):
+			case <-time.After(60 * time.Second): // 60 s for throttled gate runs, as above
 				t.Fatal("job never finished after the call")
 			}
 		})

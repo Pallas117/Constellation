@@ -6,7 +6,7 @@
  * live alongside.
  */
 
-import { type ReactNode, type RefObject } from 'react';
+import { useLayoutEffect, useRef, type ReactNode, type RefObject } from 'react';
 import { LayerToggles } from './ui/LayerToggles';
 import { ScreenshotButton } from './ui/ScreenshotButton';
 import { PerformanceMonitor } from './ui/PerformanceMonitor';
@@ -26,8 +26,25 @@ export function ConsoleHeader({
     /** Page-specific links and status pills. */
     actions?: ReactNode;
 }) {
+    // Toasts sit just below the header (components/ui/sonner.tsx). It wraps to two or three rows
+    // with more links and pills, so its real bottom edge is published, not a fixed offset.
+    const headerRef = useRef<HTMLElement>(null);
+    useLayoutEffect(() => {
+        const el = headerRef.current;
+        if (!el) return;
+        const root = document.documentElement;
+        const publish = () => root.style.setProperty('--console-header-bottom', `${Math.round(el.getBoundingClientRect().bottom) + 12}px`);
+        publish();
+        const observer = new ResizeObserver(publish);
+        observer.observe(el);
+        return () => {
+            observer.disconnect();
+            root.style.removeProperty('--console-header-bottom');
+        };
+    }, []);
+
     return (
-        <header className="pointer-events-auto flex flex-wrap items-center justify-between gap-x-4 gap-y-2 rounded-lg border border-charcoal bg-panel/95 px-4 py-3 animate-fade-in-up">
+        <header ref={headerRef} className="pointer-events-auto flex flex-wrap items-center justify-between gap-x-4 gap-y-2 rounded-lg border border-charcoal bg-panel/95 px-4 py-3 animate-fade-in-up">
             <div className="flex min-w-0 items-center gap-4">
                 {/* Brand Book: clear space is half the symbol height, so 32 px tall with a 16 px gap. The title names it. */}
                 <img src="/gauss-aurora-mark.svg" alt="" width={78} height={32} className="hidden h-8 w-auto shrink-0 sm:block" />

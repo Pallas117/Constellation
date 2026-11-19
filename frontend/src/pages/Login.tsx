@@ -11,6 +11,7 @@ import { passkeySupport, type PasskeySupport } from "@/lib/passkey-support";
 import { apiBase } from "@/lib/api/base-url";
 import { safeRedirectPath } from "@/lib/safe-redirect";
 import { useDocumentTitle } from "@/hooks/useDocumentTitle";
+import { AuthStage } from "@/components/AuthStage";
 
 const SSO_FAILED_MESSAGE = "Single sign-on failed. Use your Lightbound Google Workspace account.";
 const SIGNED_OUT_MESSAGE = { idle: "Signed out after a stretch with no activity.", user: "Signed out." } as const;
@@ -128,7 +129,7 @@ export default function Login() {
   };
 
   return (
-    <main className="flex min-h-screen w-full items-center justify-center bg-background px-4 py-10 text-foreground">
+    <AuthStage label="Sign in to Gauss">
       <div className="hud-panel w-full max-w-sm p-8">
         <p className="brand-label">00_SIGN_IN · GAUSS AURORA</p>
         <h1 className="mt-2 text-2xl font-semibold leading-tight">Sign in to Gauss.</h1>
@@ -269,6 +270,6 @@ export default function Login() {
           ← Back to the live landing page
         </Link>
       </div>
-    </main>
+    </AuthStage>
   );
 }

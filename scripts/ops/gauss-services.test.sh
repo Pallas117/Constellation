@@ -36,7 +36,10 @@ stub launchctl 'S="$KICKS.state"; case "$1" in
   bootstrap) l=$(basename "$3" .plist); { grep -vx "out $l" "$S" 2>/dev/null; echo "in $l"; } >"$S.t"; mv "$S.t" "$S"; echo "bootstrap $l" >>"$KICKS"; exit 0 ;;
 esac; exit 1'
 stub df 'printf "Filesystem 1G-blocks Used Available\n/dev/disk3s1s1 228 13 %s\n" "${DISKGB:-50}"'
-stub curl 'printf "%s" "$(cat "$HEALTH_FILE" 2>/dev/null || echo "${HEALTH:-200}")"' # code() reads only the HTTP status
+stub curl 'case "$*" in
+  *space-weather/latest*) [ -z "${SWLATEST:-}" ] || printf "%s" "$SWLATEST" ;;
+  *rtsw_wind_1m*) [ -z "${RTSW:-}" ] || { echo "curl $*" >>"$ACTIONS"; printf "%s" "$RTSW"; } ;;
+  *) printf "%s" "$(cat "$HEALTH_FILE" 2>/dev/null || echo "${HEALTH:-200}")" ;; esac' # code() reads only the HTTP status
 stub sudo 'exit 1'
 stub argo 'case "$1" in
   notify) [ $# -gt 1 ] || { [ -n "${OLD_ARGO:-}" ] && echo "usage: argo [status|doctor]" >&2 || echo "usage: argo notify [-key K -every 30m] TITLE MESSAGE" >&2; exit 1; }
@@ -63,11 +66,11 @@ run() { # run <args...>: gauss-services.sh with the stubs; alerts land in $LOG
     GAUSS_SUDOERS="$T/sudoers" MLX="${MLX:-0}" MLXPORT="${MLXPORT:-8089}" ACTIONS="$T/actions" GAUSS_BALANCE="${GAUSS_BALANCE:-1}" \
     LOADED="${LOADED:-}" HEALTH="${HEALTH:-200}" HEALTH_FILE="${HEALTH_FILE:-}" GAUSS_DEPLOY_WAIT=0 DISKGB="${DISKGB:-50}" \
     GATEFAIL="${GATEFAIL:-}" MOVEMAIN="${MOVEMAIN:-}" GAUSS_BY=test-user BOOT="${BOOT:-1000}" GAUSS_DIAG_DIRS="$T/diag" GAUSS_EVENTS_MAX_KB="${GAUSS_EVENTS_MAX_KB:-5120}" \
-    WAKE="${WAKE:-1000}" GAUSS_DEV_DRY="${GAUSS_DEV_DRY:-0}" GAUSS_GATES_START=0 HEAVYGIVEUP="${HEAVYGIVEUP:-}" NPMNET="${NPMNET:-}" GAUSS_GATEBOX="${GAUSS_GATEBOX:-}" GAUSS_FLEET_MEMORY="${GAUSS_FLEET_MEMORY:-}" GAUSS_GATEBOX_KEY="$T/gatebox-key" GBRC="${GBRC:-}" GAUSS_GATES_EXPIRE_H="${GAUSS_GATES_EXPIRE_H:-72}" GAUSS_DEV_API_PORT="${GAUSS_DEV_API_PORT:-3101}" \
+    WAKE="${WAKE:-1000}" GAUSS_GATEBOX_TRUST="${GAUSS_GATEBOX_TRUST:-}" GAUSS_DEV_DRY="${GAUSS_DEV_DRY:-0}" GAUSS_GATES_START=0 HEAVYGIVEUP="${HEAVYGIVEUP:-}" NPMNET="${NPMNET:-}" GAUSS_GATEBOX="${GAUSS_GATEBOX:-}" GAUSS_GATEBOX_PROBE="${GAUSS_GATEBOX_PROBE:-true}" GAUSS_GATEBOX_WAIT_S="${GAUSS_GATEBOX_WAIT_S:-0}" GAUSS_GATEBOX_POLL_S="${GAUSS_GATEBOX_POLL_S:-1}" GAUSS_GATEBOX_TIMEOUT_S="${GAUSS_GATEBOX_TIMEOUT_S:-}" GAUSS_FLEET_MEMORY="${GAUSS_FLEET_MEMORY:-}" GAUSS_GATEBOX_KEY="$T/gatebox-key" GBRC="${GBRC:-}" GAUSS_GATES_EXPIRE_H="${GAUSS_GATES_EXPIRE_H:-72}" GAUSS_GATES_HOOK_S="${GAUSS_GATES_HOOK_S:-300}" GAUSS_DEV_API_PORT="${GAUSS_DEV_API_PORT:-3101}" \
     SRC="${SRC:-AC Power}" BATT="${BATT:-80%; charging; present: true}" SD="${SD:-0}" FCC="${FCC:-}" ACW="${ACW:-}" \
     LEAKY="${LEAKY:-}" LEAKFP="${LEAKFP:-12 MB}" AVAIL="${AVAIL:-50}" GAUSS_SWAP_LAST="${SWAPLAST:-/dev/null}" \
     GATEENV="${GATEENV:-}" GATES_PYTHON="${GATES_PYTHON:-}" ${GATELEAK:+ALLOWED_ORIGINS=https://live.example MESH_STORE_PATH=/live/data/mesh/devices.json COMMERCE_DB_PATH=/live/data/commerce/commerce.db GAUSS_BEDROCK_DIR=/live/data/bedrock NODE_ENV=production} \
-    ARGOSTATUS="${ARGOSTATUS:-}" LEVEL="${LEVEL:-1}" FREE="${FREE:-50}" SWAPUSED="${SWAPUSED:-1000}" OLD_ARGO="${OLD_ARGO:-}" bash "$SCRIPT" "$@"
+    SWLATEST="${SWLATEST:-}" RTSW="${RTSW:-}" ARGOSTATUS="${ARGOSTATUS:-}" LEVEL="${LEVEL:-1}" FREE="${FREE:-50}" SWAPUSED="${SWAPUSED:-1000}" OLD_ARGO="${OLD_ARGO:-}" bash "$SCRIPT" "$@"
 }
 expect() { # expect <name> <condition-exit-code>
   if [ "$2" = 0 ]; then pass=$((pass + 1)); else failed=$((failed + 1)); echo "FAIL: $1"; sed 's/^/    alerts: /' "$T/log"; fi
@@ -117,7 +120,17 @@ SRC="Battery Power" BATT="45%; discharging; 1:00 remaining present: true" run aw
 [[ " $(alerts) " == *" plug-ahead "* ]] && grep -q "plug in to keep merging" "$T/log"; expect "plug ahead: under 50% with gates queued, they wait: text" $?
 SRC="AC Power" BATT="45%; charging; present: true" run awake guard
 [ -z "$(alerts)" ]; expect "plug ahead: on AC, no text" $?
-rm -f "$PQ"/*.req
+# 17 Nov: with claude-heavy's eclipse budget (a gate runs on battery at 38%, ~8% each) the texts use its numbers.
+mkdir -p "$T/home/.local/bin"
+printf '%s\n' '#!/bin/bash' '[ "$1 $2" = "--need gates" ] && echo "38 8"' >"$T/home/.local/bin/claude-heavy"; chmod +x "$T/home/.local/bin/claude-heavy"
+SRC="Battery Power" BATT="45%; discharging; 1:00 remaining present: true" run awake guard
+[[ " $(alerts) " == *" plug-ahead "* ]] && grep -q "need about 16% of battery; at 45% the queue stops at 38%" "$T/log"; expect "plug ahead: claude-heavy's budget (38%, 8%/gate): 45% with two gates queued, text early" $?
+SRC="Battery Power" BATT="36%; discharging; 1:00 remaining present: true" run awake guard
+[[ " $(alerts) " == *" plug-ahead "* ]] && grep -q "Under 38% on battery they wait" "$T/log"; expect "plug ahead: under claude-heavy's 38% line, they wait: text" $?
+printf '%s\n' '#!/bin/bash' 'echo "not numbers"' >"$T/home/.local/bin/claude-heavy"
+SRC="Battery Power" BATT="45%; discharging; 1:00 remaining present: true" run awake guard
+grep -q "Under 50% on battery they wait" "$T/log"; expect "plug ahead: an older claude-heavy (no --need): the 50% line" $?
+rm -f "$T/home/.local/bin/claude-heavy" "$PQ"/*.req
 SRC="Battery Power" BATT="9%; discharging; 0:20 remaining present: true" run awake guard
 [ "$(alerts)" = "battery-critical" ]; expect "9% on battery: at the floor" $?
 SRC="Battery Power" BATT="55%; discharging; 4:00 remaining present: true" run awake guard
@@ -344,12 +357,16 @@ stub npm 'if [ "$1" = run ]; then
     test:ops) echo "gauss-services: 99 passed, 0 failed"; echo "ok  	argo	1.0s" ;;
     test|build) echo "$2 is not a gate: verify runs it" >&2; exit 9 ;;
     verify) echo "▶ Test suite"
-      if [ "$GATEFAIL" = test ]; then printf "ℹ tests 5\nℹ pass 4\nℹ fail 1\n✖ Test suite (exit 1)\n"; else printf "ℹ tests 5\nℹ pass 5\nℹ fail 0\n✔ Test suite\n"; fi
+      if [ "$GATEFAIL" = test ]; then printf "ℹ tests 5\nℹ pass 4\nℹ fail 1\n\n✖ failing tests:\n\ntest at backend/x.test.ts:1:1\n✖ the broken test (1.5ms)\n  AssertionError\n✖ Test suite (exit 1)\n"; else printf "ℹ tests 5\nℹ pass 5\nℹ fail 0\n✔ Test suite\n"; fi
       printf "▶ Production build\n✔ Production build\n"
-      echo "▶ VCRM: 40/40 requirements verified"; echo "▶ FMEA: 12/14 failure modes mitigated"
+      if [ "$GATEFAIL" = test ]; then echo "▶ VCRM: 39/40 requirements verified"; echo "  ✗ REQ-X-001: test failed: \"the broken test\""; else echo "▶ VCRM: 40/40 requirements verified"; fi
+      echo "▶ FMEA: 12/14 failure modes mitigated"
       if [ "$GATEFAIL" = test ]; then echo "❌ VERIFY FAILED"; exit 1; fi
       echo "✅ VERIFY PASSED at $(git rev-parse --short HEAD)" ;;
   esac
+  if [ "$GATEFAIL" = "quality:full" ] && [ "$2" = "quality:full" ]; then
+    printf "/tmp/co/backend/replay/fetch-archive.ts\n  110:26  error  There is no cause attached to the symptom error being thrown  preserve-caught-error\n\nX 1 problem (1 error, 0 warnings)\n"
+  fi
   [ "$GATEFAIL" != "$2" ]; exit
 fi
 [ -n "$NPMNET" ] && [ "$1" = ci ] && { echo "npm error network request to https://registry.npmjs.org/x.tgz failed, reason: read ETIMEDOUT" >&2; exit 1; }
@@ -359,6 +376,7 @@ head_is() { [ "$(g rev-parse HEAD)" = "$1" ]; }
 mkdir -p "$LIVE/data/bedrock" "$LIVE/node_modules"
 printf 'node_modules/\nfrontend/dist/\n' >"$LIVE/.gitignore"
 echo 200 >"$LIVE/health"; echo a >"$LIVE/package-lock.json"; echo t0 >"$LIVE/data/bedrock/telemetry.jsonl"
+mkdir -p "$LIVE/docs" "$LIVE/.claude"; echo doc >"$LIVE/docs/NOTE.md"; echo skill >"$LIVE/.claude/NOTE.md"
 g add -A && g commit -qm good-a; A=$(g rev-parse HEAD)
 echo v2 >"$LIVE/backend/server.ts"; g commit -qam good-b; Bc=$(g rev-parse HEAD)
 echo 500 >"$LIVE/health"; g commit -qam bad; C=$(g rev-parse HEAD)
@@ -447,6 +465,79 @@ out=$(run deploy "$Bc" --no-fallback 2>&1); rc=$?
 [ $rc = 0 ] && head_is "$Bc" && [[ "$out" == *"warning: no fallback to refresh"* ]] && [ ! -e "$FB/ready" ]
 expect "deploy --no-fallback: warns, deploys, leaves none" $?
 main_at "$D"; run deploy "$D" --no-fallback >/dev/null 2>&1; head_is "$D"; expect "deploy back to D, the gated tree the GAU-162 checks below start from" $?
+# GAU-211: a commit that stops tracking live's telemetry file (now in .gitignore). Live appends to it in
+# place by path while the deploy runs, so the file itself must stay where it is (same inode, never moved):
+# a plain checkout refuses going forward (changed file) and going back silently writes the committed copy
+# over live's (git overwrites ignored files).
+tel="$LIVE/data/bedrock/telemetry.jsonl"; ino() { stat -f %i "$1"; }
+kept() { [ "$(cat "$tel")" = "$before" ] && [ "$(ino "$tel")" = "$inode" ] && [ ! -e "$tel.gauss-keep" ]; } # same data, same file, no link left
+saved=$(cat "$tel"); g checkout -q --detach "$D"; g rm -q --cached data/bedrock/telemetry.jsonl; echo data/bedrock/telemetry.jsonl >>"$LIVE/.gitignore"
+g add .gitignore; g commit -qm untrack; U=$(g rev-parse HEAD)
+echo 500 >"$LIVE/health"; g commit -qam bad-untrack; Ubad=$(g rev-parse HEAD)
+rm "$tel"; g checkout -q --detach "$D"; echo "$saved" >"$tel"; gated "$U"; gated "$Ubad"; main_at "$Ubad"
+echo t2 >>"$tel"; before=$(cat "$tel"); inode=$(ino "$tel")
+out=$(HEALTH_FILE="$LIVE/health" run deploy "$Ubad" --no-fallback 2>&1); rc=$?
+[ $rc = 1 ] && head_is "$D" && kept && [[ "$out" == *"Rolled back"* ]] && [ "$(g status --porcelain data)" = " M data/bedrock/telemetry.jsonl" ]
+expect "GAU-211: a failed deploy across the untracking commit rolls back with live telemetry intact" $?
+# The backend keeps appending while git checks out: this git appends the line in $T/mark by path just
+# before and just after every checkout (and, once, removes the file if $T/git-eats exists; used below).
+stub git 'if [[ " $* " != *" checkout -q --detach "* ]]; then exec /usr/bin/git "$@"; fi
+[ ! -s "'"$T"'/mark" ] || cat "'"$T"'/mark" >>"'"$tel"'"
+/usr/bin/git "$@"; rc=$?
+if [ -e "'"$T"'/git-eats" ]; then rm -f "'"$T"'/git-eats" "'"$tel"'"; fi
+[ ! -s "'"$T"'/mark" ] || cat "'"$T"'/mark" >>"'"$tel"'"
+exit $rc'
+appended() { [ "$(grep -c "^$1\$" "$tel")" = 4 ] && [ "$(grep -v "^$1\$" "$tel")" = "$before" ] && [ "$(ino "$tel")" = "$inode" ] && [ ! -e "$tel.gauss-keep" ]; }
+echo during-forward >"$T/mark"; out=$(HEALTH_FILE="$LIVE/health" run deploy "$U" --no-fallback 2>&1); rc=$?
+[ $rc = 0 ] && head_is "$U" && appended during-forward && [ -z "$(g ls-files data/bedrock)" ] && [ -z "$(g status --porcelain data)" ]
+expect "GAU-211: deploy across the untracking commit keeps live telemetry (untracked, ignored, the same file) and every line appended meanwhile" $?
+echo t3 >>"$tel"; before=$(cat "$tel")
+echo older >"$tel.gauss-keep"; out=$(HEALTH_FILE="$LIVE/health" run deploy "$D" --no-fallback 2>&1); rc=$?
+[ $rc = 1 ] && head_is "$U" && [[ "$out" == *"gauss-keep is live data left by an earlier checkout"* ]] && [ "$(cat "$tel")" = "$before" ] \
+  && [ "$(cat "$tel.gauss-keep")" = older ] && [ -z "$(g status --porcelain --untracked-files=no data)" ]
+expect "GAU-211: a differing copy left by an interrupted checkout stops the next one (neither file touched)" $?
+rm "$tel.gauss-keep"
+echo during-back >"$T/mark"; out=$(HEALTH_FILE="$LIVE/health" run deploy "$D" --no-fallback 2>&1); rc=$?
+[ $rc = 0 ] && head_is "$D" && appended during-back && [ "$(g status --porcelain data)" = " M data/bedrock/telemetry.jsonl" ]
+expect "GAU-211: deploying back to a commit that still tracks the file keeps live's copy and every line appended meanwhile" $?
+# Safety net: a git that removes the file all the same (once, in the checkout) still leaves live's data in place.
+: >"$T/mark"; before=$(cat "$tel")
+touch "$T/git-eats"; out=$(HEALTH_FILE="$LIVE/health" run deploy "$U" --no-fallback 2>&1); rc=$?
+[ $rc = 0 ] && head_is "$U" && kept && [ ! -e "$T/git-eats" ] && [[ "$out" == *"git touched data/bedrock/telemetry.jsonl"*"live's copy is back in place"* ]]
+expect "GAU-211: if git removes the file during the checkout, live's copy is put back from the hard link" $?
+mv "$tel" "$tel.gauss-keep" # as left by a run that stopped between git removing the file and the restore
+out=$(HEALTH_FILE="$LIVE/health" run deploy "$D" --no-fallback 2>&1); rc=$?
+[ $rc = 0 ] && head_is "$D" && kept
+expect "GAU-211: an interrupted restore is finished by the next checkout before anything else" $?
+rm "$T/bin/git" "$T/mark"
+# A checkout git refuses for another reason (here a local change to a file the target also changes) leaves
+# the data file, and what the index says about it, exactly as they were.
+eval "$(sed -n '/^carry_checkout()/,/^}/p' "$SCRIPT")"
+CR="$T/carry-repo"; c() { git -C "$CR" -c user.email=t@t -c user.name=t "$@"; }
+git init -q "$CR"; mkdir -p "$CR/data/bedrock"; echo r0 >"$CR/data/bedrock/telemetry.jsonl"; echo v1 >"$CR/code"
+c add -A; c commit -qm tracked; c rm -q --cached data/bedrock/telemetry.jsonl; echo data/bedrock/telemetry.jsonl >"$CR/.gitignore"; echo v2 >"$CR/code"
+c add -A; c commit -qm untracked; CU=$(c rev-parse HEAD); c checkout -q --detach HEAD~1; echo r0 >"$CR/data/bedrock/telemetry.jsonl"
+echo r1 >>"$CR/data/bedrock/telemetry.jsonl"; echo local >"$CR/code"; was=$(c status --porcelain); cino=$(ino "$CR/data/bedrock/telemetry.jsonl")
+out=$(carry_checkout "$CR" "$CU" 2>&1); rc=$?
+[ $rc = 1 ] && [ "$(c rev-parse HEAD)" != "$CU" ] && [ "$(c status --porcelain)" = "$was" ] && [ "$(ino "$CR/data/bedrock/telemetry.jsonl")" = "$cino" ] \
+  && [ "$(cat "$CR/data/bedrock/telemetry.jsonl")" = "r0
+r1" ] && [ ! -e "$CR/data/bedrock/telemetry.jsonl.gauss-keep" ]
+expect "GAU-211: a checkout git refuses for another reason leaves the data file and its index entry as they were" $?
+main_at "$D"
+# 17 Nov 2026: a live checkout whose only edit was a skill file blocked a deploy. Edits under .claude/ or docs/
+# are saved as patches and restored; any other changed path still refuses.
+main_at "$Bc"; echo "local skill text" >>"$LIVE/.claude/NOTE.md"; echo "local doc" >>"$LIVE/docs/NOTE.md"
+out=$(run deploy "$Bc" --no-fallback 2>&1); rc=$?
+SAVEDS=("$T/home/Library/Logs/gauss/live-local-changes/"*/); SAVED=${SAVEDS[0]}
+[ $rc = 0 ] && head_is "$Bc" && [[ "$out" == *"local doc/agent-note change"* ]] && [ -z "$(g status --porcelain --untracked-files=no -- .claude docs)" ] \
+  && grep -q "local skill text" "$SAVED/.claude_NOTE.md.patch" && grep -q "local doc" "$SAVED/docs_NOTE.md.patch"
+expect "deploy: local edits under .claude/ and docs/ are saved as patches, restored, and the deploy proceeds" $?
+ev 'any(e["event"]=="deploy-local-doc-changes" and "saved_to" in e for e in E)'; expect "events: the saved doc-only live changes are logged" $?
+main_at "$D"; run deploy "$D" --no-fallback >/dev/null 2>&1; head_is "$D" || expect "deploy back to D after the doc-only test" 1
+main_at "$Bc"; echo "local skill text" >>"$LIVE/.claude/NOTE.md"; echo local >>"$LIVE/backend/server.ts"
+out=$(run deploy "$Bc" --no-fallback 2>&1); [[ "$out" == *"local code changes"*"backend/server.ts"* ]] && head_is "$D" && ! grep -q "NOTE.md" <<<"${out#*server.ts}"
+expect "deploy: a code change next to a doc change still refuses, and the doc change is not touched" $?
+g checkout -q -- backend/server.ts .claude/NOTE.md
 # A deploy's install and build can run a low battery flat mid-switch (4 Nov 2026: one ran at 13% on 8 W).
 main_at "$Bc"
 out=$(SRC="Battery Power" BATT="13%; discharging; present: true" run deploy "$Bc" 2>&1); rc=$?
@@ -490,6 +581,22 @@ out=$(run check | plain); [[ "$out" == *"✓ console certificate for ops.example
 out=$(run check | plain); [[ "$out" == *"✗ console certificate for ops.example.test: "*" days left (renew it with ops-cert.sh)"* ]]; expect "check: a console certificate within 14 days of expiry fails the check" $?
 rm -rf "$T/home/.local/state/gauss-ops-cert" "$T/console.key"
 out=$(run deploy "$D" --emergency 2>&1); [ $? = 2 ] && [[ "$out" == *"needs a reason"* ]]; expect "--emergency needs a reason" $?
+# check: space-weather data. A stale point is upstream's fault when NOAA's active spacecraft has no plasma
+# while a standby one is current; it stays ✗ when NOAA has newer active data than our ingest (GAU: 17 Nov 2026).
+now_z() { date -u -v"$1" +%Y-%m-%dT%H:%M:%S; }
+rtsw() { # rtsw <active-plasma-age> <standby-age> <active-newest-age>: rows as NOAA lists them (newest first)
+  printf '[{"time_tag":"%s","active":true,"source":"SOLAR1","proton_speed":null,"proton_density":null},{"time_tag":"%s","active":false,"source":"ACE","proton_speed":400,"proton_density":5},{"time_tag":"%s","active":true,"source":"SOLAR1","proton_speed":410,"proton_density":6}]' \
+    "$(now_z "-${3}M")" "$(now_z "-${2}M")" "$(now_z "-${1}M")"
+}
+point() { printf '{"quality":{"tier":%s},"observedAt":"%sZ","spacecraft":"SOLAR1"}' "$1" "$(now_z "-$2M")"; }
+sw() { run check | plain | grep "space-weather data"; }
+out=$(SWLATEST="$(point 2 40)" RTSW="$(rtsw 40 1 1)" sw); [[ "$out" == *"✓ space-weather data: upstream gap (NOAA active spacecraft SOLAR1 has no plasma since "*"Z; standby current)"* ]]
+expect "check: a stale point with NOAA's active spacecraft out of plasma is an upstream-gap warning, not ✗" $?
+out=$(SWLATEST="$(point 2 40)" RTSW="$(rtsw 5 1 1)" sw); [[ "$out" == *"✗ space-weather data: stale"*"our ingest is behind NOAA"* ]]
+expect "check: a stale point while NOAA has newer active plasma stays ✗ (our ingest is behind)" $?
+out=$(SWLATEST="$(point 0 1)" sw); [[ "$out" == *"✓ space-weather data: live"* ]] && ! grep -q "^curl" "$T/actions"
+expect "check: a live point does not ask NOAA anything" $?
+out=$(SWLATEST="$(point 2 40)" RTSW="" sw); [[ "$out" == *"✗ space-weather data: stale"* ]]; expect "check: a stale point with NOAA unreachable stays ✗" $?
 
 # gates record: the five gates on a clean checkout (path with a space), recorded by tree
 GW="$T/gates checkout"; git clone -q "$LIVE" "$GW"; git -C "$GW" checkout -q --detach "$D"; mkdir -p "$GW/node_modules"
@@ -503,9 +610,15 @@ out=$(run gates); [[ "$out" == *"PASSED ${D:0:7}"* ]]; expect "gates lists the r
 out=$(GATEFAIL=test run gates record "$GW" 2>&1); rc=$?
 [ $rc != 0 ] && [[ "$out" == *"FAILED (test, verify) ${D:0:7}"* ]] && ! python3 -Ic 'import json,sys; sys.exit(0 if json.load(open(sys.argv[1]))["passed"] else 1)' "$rec"
 expect "gates record: a failing gate is recorded as FAILED, so the tree can't be deployed" $?
+[[ "$out" == *"VCRM 39/40, FMEA 12/14 | failing tests: the broken test; requirements: REQ-X-001"* ]] \
+  && python3 -Ic 'import json,sys; f=json.load(open(sys.argv[1]))["failing"]; sys.exit(0 if f["tests"]==["the broken test"] and f["requirements"]==["REQ-X-001"] and f["quality"]==[] else 1)' "$rec"
+expect "gates record: a FAILED line names the failing tests and requirements" $?
 kept="$WD/gates/logs/$(basename "$rec" .json)"
 [[ "$out" == *"Failed gate output: $kept"* ]] && grep -q "VERIFY FAILED" "$kept/verify.log" && [ ! -f "$kept/test:ops.log" ]
 expect "gates record: a failed gate's output is kept beside the record, passing gates' is not" $?
+out=$(GATEFAIL=quality:full run gates record "$GW" 2>&1)
+[[ "$out" == *"FAILED (quality) ${D:0:7}"*"quality failed"*"| failing quality: replay/fetch-archive.ts:110 preserve-caught-error"* ]]
+expect "gates record: a failed quality gate names the lint error (file, line, rule)" $?
 touch "$GW/stray"; out=$(run gates record "$GW" 2>&1); [[ "$out" == *"uncommitted or untracked"* ]]; expect "gates record refuses a dirty checkout" $?
 rm -f "$GW/stray"
 # The runner inherits the LaunchAgent's env (live data paths, live origins, launchd PATH): gates must not.
@@ -569,8 +682,9 @@ out=$(NPMNET=1 run gates run --once 2>&1); [[ "$out" == *"lost the network"* ]] 
   && ! grep -q " $N " "$GR"; expect "gates run: an install that loses the network keeps the request queued, with no result line" $?
 rm -f "$(grep -l "sha=$N" "$GQ"/*.req)"
 # Gatebox (GAU-223): the Oracle VM screens each request first over the tailnet. GBRC is the stub's
-# exit code; "say" adds the "gates rc=N" line gauss-gate-run prints after the gates ran.
-stub ssh 'echo "ssh $*" >>"$ACTIONS"; case "$GBRC" in say*) r=${GBRC#say}; echo "gates rc=$r in 90 s"; exit "$r" ;; *) echo "ssh: connect to host gatebox port 22: Operation timed out" >&2; exit "${GBRC:-255}" ;; esac'
+# exit code; "say" adds the "gates rc=N in S s on <sha>" line gauss-gate-run prints after the gates ran
+# ("anon" leaves the commit out of it, as an older gauss-gate-run would).
+stub ssh 'echo "ssh $*" >>"$ACTIONS"; a=${@: -1}; case "$GBRC" in hang) sleep 5; exit 0 ;; say*) r=${GBRC#say}; [ -f "$HOME/gatebox-out" ] && cat "$HOME/gatebox-out"; echo "gates rc=$r in 90 s on ${a##* }"; exit "$r" ;; anon*) r=${GBRC#anon}; echo "gates rc=$r in 90 s"; exit "$r" ;; *) echo "ssh: connect to host gatebox port 22: Operation timed out" >&2; exit "${GBRC:-255}" ;; esac'
 : >"$T/gatebox-key"
 g checkout -q --detach "$E"; echo gb1 >"$LIVE/backend/server.ts"; g commit -qam gb1; GB1=$(g rev-parse HEAD); g checkout -q --detach "$E"
 (cd "$LIVE" && run gates enqueue "$GB1" >/dev/null 2>&1)
@@ -578,6 +692,30 @@ out=$(GAUSS_GATEBOX=gatebox GBRC=say1 run gates run 2>&1)
 [ "$(tail -1 "$GR" | cut -d' ' -f2,4-7)" = "$GB1 FAILED on gatebox gatebox" ] && [ -z "$(ls "$GQ")" ] && ! grep -q '^heavy ' "$T/actions" \
   && grep -q "^ssh .*-o BatchMode=yes .*gate@gatebox Pallas117/Constellation $GB1\$" "$T/actions" && [ ! -f "$WD/gates/$(tree_of "$GB1").json" ]
 expect "gates run: a commit the gatebox fails is FAILED without a local run, and no deploy record is written" $?
+# gates why: a gatebox failure is named in the result line, and diagnosed with the known cause and its fix
+printf '%s\n' 'ok 1' '✖ failing tests:' '' '✖ telemetry_descriptor.json is the current .proto (56.69ms)' >"$T/home/gatebox-out"
+(cd "$LIVE" && run gates enqueue "$GB1" >/dev/null 2>&1); GAUSS_GATEBOX=gatebox GBRC=say1 run gates run >/dev/null 2>&1
+[[ "$(tail -1 "$GR")" == *"; failing tests: telemetry_descriptor.json is the current .proto; log "* ]]; expect "gates run: a gatebox failure names the failing test in its result line" $?
+out=$(run gates why "${GB1:0:9}"); rc=$?
+[ $rc = 0 ] && [[ "$out" == "Why ${GB1:0:7} failed"* && "$out" == *"cause: telemetry.proto changed without its descriptor"* && "$out" == *"fix:   regenerate it"* \
+  && "$out" != *"cause: a failing test"* && "$out" == *"Before re-queueing: npm run -s check:changed"* ]]
+expect "gates why: a known failure gets its cause and fix, without the general advice" $?
+printf '%s\n' '✖ failing tests:' '' '✖ something nobody has met (3ms)' >"$T/home/gatebox-out"
+(cd "$LIVE" && run gates enqueue "$GB1" >/dev/null 2>&1); GAUSS_GATEBOX=gatebox GBRC=say1 run gates run >/dev/null 2>&1
+out=$(run gates why "$GB1")
+[[ "$out" == *"failing tests: something nobody has met"* && "$out" == *"cause: a failing test"* ]]; expect "gates why: an unknown failing test is named, with the general advice" $?
+# 18 Nov, PR #321: a PASSING descriptor test in the log was blamed; and the lint errors were not named
+printf '%s\n' '✔ telemetry_descriptor.json is the current .proto (9.1ms)' '' '/home/gate/work.x/frontend/src/components/scene/CameraTween.tsx' '  22:3  error  Error: Cannot access refs during render' '' '✖ 1 problem (1 error, 0 warnings)' >"$T/home/gatebox-out"
+(cd "$LIVE" && run gates enqueue "$GB1" >/dev/null 2>&1); GAUSS_GATEBOX=gatebox GBRC=say1 run gates run >/dev/null 2>&1
+out=$(run gates why "$GB1")
+[[ "$out" == *"lint errors: scene/CameraTween.tsx:22"* && "$out" == *"cause: a lint error"* && "$out" != *"telemetry.proto changed"* ]]
+expect "gates why: lint errors are named by file and line, and a passing test is not blamed" $?
+rm -f "$T/home/gatebox-out"
+(cd "$LIVE" && run gates enqueue "$GB1" >/dev/null 2>&1); GAUSS_GATEBOX=gatebox GBRC=say1 run gates run >/dev/null 2>&1
+out=$(run gates why "$GB1")
+[[ "$out" == *"cause: none of the known causes match"* && "$out" == *"add a row to GATES_CAUSES"* ]]; expect "gates why: no match says so and asks for a new row" $?
+out=$(run gates why 0000000); rc=$?
+[ $rc = 3 ] && [[ "$out" == "No failed gate on record for 0000000"* ]]; expect "gates why: a commit with no failure exits 3" $?
 (cd "$LIVE" && run gates enqueue "$GB1" >/dev/null 2>&1)
 out=$(GAUSS_GATEBOX=gatebox GBRC=say0 run gates run 2>&1)
 [[ "$out" == *"gatebox passed ${GB1:0:7}"* ]] && grep -q '^heavy --wait' "$T/actions" && [ "$(tail -1 "$GR" | cut -d' ' -f2,4)" = "$GB1 PASSED" ]
@@ -592,6 +730,12 @@ g checkout -q --detach "$E"; echo gb3 >"$LIVE/backend/server.ts"; g commit -qam 
 out=$(GAUSS_GATEBOX=gatebox GBRC=1 run gates run 2>&1)
 [ "$(tail -1 "$GR" | cut -d' ' -f2,4)" = "$GB3 PASSED" ] && grep -q '^heavy --wait' "$T/actions"
 expect "gates run: a gatebox exit without its result line is not a failure of the commit" $?
+g checkout -q --detach "$E"; echo gb5 >"$LIVE/backend/server.ts"; g commit -qam gb5; GB5=$(g rev-parse HEAD); g checkout -q --detach "$E"
+(cd "$LIVE" && run gates enqueue "$GB5" >/dev/null 2>&1)
+out=$(GAUSS_GATEBOX=gatebox GAUSS_GATEBOX_TIMEOUT_S=1 GBRC=hang run gates run 2>&1)
+[[ "$out" == *"gatebox could not screen ${GB5:0:7} (exit 142: no answer in 1 s)"* ]] && grep -q '^heavy --wait' "$T/actions" \
+  && [ "$(tail -1 "$GR" | cut -d' ' -f2,4)" = "$GB5 PASSED" ]
+expect "gates run: a gatebox screen that hangs past its time limit is cut off and gated here (18 Nov hang)" $?
 g checkout -q --detach "$E"; echo gb4 >"$LIVE/backend/server.ts"; g commit -qam gb4; GB4=$(g rev-parse HEAD); g checkout -q --detach "$E"
 (cd "$LIVE" && run gates enqueue "$GB4" >/dev/null 2>&1)
 out=$(GAUSS_GATEBOX='-oProxyCommand=x' GBRC=say1 run gates run 2>&1)
@@ -599,6 +743,40 @@ out=$(GAUSS_GATEBOX='-oProxyCommand=x' GBRC=say1 run gates run 2>&1)
 expect "gates run: a gatebox setting that is not a host name is never passed to ssh" $?
 out=$(GAUSS_GATEBOX=gatebox run gates result status 2>&1); [[ "$out" == *"gatebox: gatebox screens each request first"* ]]
 expect "gates result status: names the gatebox when one is set" $?
+# Several gatebox addresses (19 Nov: Talos dropped off its fixed LAN IP and every gate fell back to this Mac).
+newgb() { g checkout -q --detach "$E"; echo "$1" >"$LIVE/backend/server.ts"; g commit -qam "$1"; g rev-parse HEAD; g checkout -q --detach "$E"; }
+stub gbprobe 'echo "probe $1" >>"$ACTIONS"; [ "$1" = talos.local ]'
+GB6=$(newgb gb6); (cd "$LIVE" && run gates enqueue "$GB6" >/dev/null 2>&1)
+out=$(GAUSS_GATEBOX="192.0.2.9 talos.local" GAUSS_GATEBOX_PROBE="$T/bin/gbprobe" GBRC=say1 run gates run 2>&1)
+grep -q '^probe 192.0.2.9$' "$T/actions" && grep -q "^ssh .*-o HostKeyAlias=192.0.2.9 gate@talos.local Pallas117/Constellation $GB6\$" "$T/actions" \
+  && [ "$(tail -1 "$GR" | cut -d' ' -f2,4-7)" = "$GB6 FAILED on gatebox talos.local" ]
+expect "gates run: the first gatebox address that answers is used, and its key is checked against the first address's" $?
+GB7=$(newgb gb7); (cd "$LIVE" && run gates enqueue "$GB7" >/dev/null 2>&1)
+out=$(GAUSS_GATEBOX='talos.local -oProxyCommand=x' GBRC=say1 run gates run 2>&1)
+[[ "$out" == *"gatebox: not a host name: -oProxyCommand=x"* ]] && ! grep -q '^ssh ' "$T/actions" && [ "$(tail -1 "$GR" | cut -d' ' -f2,4)" = "$GB7 PASSED" ]
+expect "gates run: one gatebox address that is not a host name keeps the whole list away from ssh" $?
+# A gatebox that comes back within the wait is used instead of the local gates.
+stub gbslow 'n=$(cat "$HOME/probes" 2>/dev/null || echo 0); echo $((n + 1)) >"$HOME/probes"; [ "$n" -ge 2 ]'
+rm -f "$T/home/probes" "$WD/gates/gatebox.down"
+GB8=$(newgb gb8); (cd "$LIVE" && run gates enqueue "$GB8" >/dev/null 2>&1)
+out=$(GAUSS_GATEBOX=gatebox GAUSS_GATEBOX_PROBE="$T/bin/gbslow" GAUSS_GATEBOX_WAIT_S=30 GAUSS_GATEBOX_POLL_S=1 GBRC=say1 run gates run 2>&1)
+[[ "$out" == *"gatebox (gatebox) not answering; waiting up to 1 min"* ]] && [[ "$out" == *"gatebox answered at gatebox"* ]] \
+  && grep -q "gate@gatebox Pallas117/Constellation $GB8\$" "$T/actions" && [ ! -f "$WD/gates/gatebox.down" ] \
+  && [ "$(tail -1 "$GR" | cut -d' ' -f2,4)" = "$GB8 FAILED" ]
+expect "gates run: a gatebox that answers again within the wait screens the commit (no local run)" $?
+# One that stays off is waited for once; the next request gates here at once.
+stub gbdown 'exit 1'
+rm -f "$WD/gates/gatebox.down"
+GB9=$(newgb gb9); (cd "$LIVE" && run gates enqueue "$GB9" >/dev/null 2>&1)
+out=$(GAUSS_GATEBOX=gatebox GAUSS_GATEBOX_PROBE="$T/bin/gbdown" GAUSS_GATEBOX_WAIT_S=2 GAUSS_GATEBOX_POLL_S=1 run gates run 2>&1)
+[[ "$out" == *"did not answer in 1 min; gating here"* ]] && ! grep -q '^ssh ' "$T/actions" && [ -f "$WD/gates/gatebox.down" ] \
+  && [ "$(tail -1 "$GR" | cut -d' ' -f2,4)" = "$GB9 PASSED" ]
+expect "gates run: a gatebox that stays off is waited for once, then the gates run here" $?
+GB10=$(newgb gb10); (cd "$LIVE" && run gates enqueue "$GB10" >/dev/null 2>&1)
+out=$(GAUSS_GATEBOX=gatebox GAUSS_GATEBOX_PROBE="$T/bin/gbdown" GAUSS_GATEBOX_WAIT_S=2 GAUSS_GATEBOX_POLL_S=1 run gates run 2>&1)
+[[ "$out" == *"gatebox (gatebox) has not answered since"* ]] && [[ "$out" != *"waiting up to"* ]] && [ "$(tail -1 "$GR" | cut -d' ' -f2,4)" = "$GB10 PASSED" ]
+expect "gates run: during the same outage the next request does not wait again" $?
+rm -f "$WD/gates/gatebox.down"
 g checkout -q --detach "$E"; echo h1 >"$LIVE/backend/server.ts"; g commit -qam h1; H1=$(g rev-parse HEAD)
 echo h2 >"$LIVE/backend/server.ts"; g commit -qam h2; H2=$(g rev-parse HEAD); g checkout -q --detach "$E"
 (cd "$LIVE" && run gates enqueue "$H1" >/dev/null 2>&1); out=$(cd "$LIVE" && run gates enqueue "$H2" 2>&1)
@@ -742,12 +920,67 @@ M2=$(tc "$M1" main.txt main-2); g push -q origin "$M2:refs/heads/main" && g fetc
 out=$(cd "$LIVE" && run gates enqueue "$P5" --pr 13 2>&1)
 [[ "$out" == *"main has moved past it: queueing"* ]] && [ "$(ls "$GQ" | grep -c '\.req$')" = 1 ] && ! grep -q "gh merge" "$T/actions"
 expect "train: an already-passed head that main moved past is queued to sync, not merged" $?
+# 18 Nov: gates result showed only QUEUED for a re-queued commit, hiding the verdict it already had.
+out=$(cd "$LIVE" && run gates result "$P5" 2>&1); rc=$?
+[ $rc = 3 ] && [[ "$(sed -n 1p <<<"$out")" =~ ^earlier:\ [^\ ]+\ $P5\ [^\ ]+\ (PASSED|HELD|MERGED|SKIPPED) ]] && [[ "$(tail -1 <<<"$out")" == QUEUED* ]]
+expect "gates result: a re-queued commit shows its earlier verdict first, QUEUED last" $?
 # 12 Nov: the runner dropped such a request as SKIPPED (its tree had passed) before the train step,
 # so the PR never landed. It must merge main in, gate the new head and merge it.
 : >"$T/actions"; run gates run >/dev/null 2>&1; N5=$(git --git-dir="$ORIGIN" rev-parse refs/heads/train)
 [ "$N5" != "$P5" ] && grep -q "^[^ ]* $P5 [^ ]* MOVED merged main into PR #13" "$GR" && grep -qx "gh merge 13 $N5" "$T/actions" \
   && ! grep -q "^[^ ]* $P5 [^ ]* SKIPPED already passed: PASSED" <(tail -3 "$GR") && [ -z "$(ls "$GQ")" ]
 expect "train: the runner syncs and merges an already-passed train head instead of skipping it" $?
+rm -f "$GQ"/*.req
+# Merge-only trust (GAU-239): with GAUSS_GATEBOX_TRUST=merge a train request the gatebox passed on its
+# exact head runs only test:ops here, as a small job, and may merge; it never writes a deploy record.
+gbt() { GAUSS_GATEBOX=gatebox GAUSS_GATEBOX_TRUST=merge "$@"; }
+mo() { g push -q origin "$1:refs/heads/$2" && g fetch -q origin; echo "OPEN $2 main false CLEAN" >"$GHD/pr$3"; (cd "$LIVE" && run gates enqueue "$1" --pr "$3" >/dev/null 2>&1); }
+Q1=$(tc "$M2" q1.txt q1); mo "$Q1" gb-ok 21
+out=$(GBRC=say0 gbt run gates run 2>&1)
+grep -q "^[^ ]* $Q1 [^ ]* PASSED merge only, no deploy record: gatebox gatebox passed ${Q1:0:7} .*test:ops 99 passed, 0 failed" "$GR" \
+  && grep -q "^[^ ]* $Q1 [^ ]* MERGED PR #21" "$GR" && grep -qx "gh merge 21 $Q1" "$T/actions" && [ -z "$(ls "$GQ")" ]
+expect "merge only: a train head the gatebox passed is merged after the ops tests here" $?
+grep -q "^heavy --wait [0-9]* --max-level 2 --name gates-ops .* gates run-one .* --gatebox-passed $Q1\$" "$T/actions" && ! grep -q -- "--name gates " "$T/actions"
+expect "merge only: the ops tests run as a small job (may start on battery), not as the full gate" $?
+[ ! -f "$WD/gates/$(tree_of "$Q1").json" ] && [ ! -f "$WD/gates/runs/$Q1.install.log" ] && [ -f "$WD/gates/runs/$Q1.ops.log" ]
+expect "merge only: no deploy record is written and nothing is installed" $?
+Q2=$(tc "$M1" q2.txt q2); mo "$Q2" gb-behind 22
+out=$(GBRC=say0 gbt run gates run 2>&1); N2=$(git --git-dir="$ORIGIN" rev-parse refs/heads/gb-behind)
+[ "$N2" != "$Q2" ] && git --git-dir="$ORIGIN" merge-base --is-ancestor "$M2" "$N2" && grep -q "^ssh .*gate@gatebox Pallas117/Constellation $N2\$" "$T/actions" \
+  && ! grep -q "^ssh .* $Q2\$" "$T/actions" && grep -q "^[^ ]* $N2 [^ ]* PASSED merge only" "$GR" && grep -qx "gh merge 22 $N2" "$T/actions"
+expect "merge only: main is merged in first, and the gatebox screens the head that lands" $?
+Q3=$(tc "$M2" q3.txt q3); mo "$Q3" gb-opsfail 23
+out=$(GBRC=say0 GATEFAIL=test:ops gbt run gates run 2>&1)
+grep -q "^[^ ]* $Q3 [^ ]* FAILED test:ops here (exit 1" "$GR" && ! grep -q "gh merge 23" "$T/actions" && [ -z "$(ls "$GQ")" ]
+expect "merge only: failing ops tests here fail the request; nothing is merged" $?
+Q4=$(tc "$M2" q4.txt q4); mo "$Q4" gb-anon 24
+out=$(GBRC=anon0 gbt run gates run 2>&1)
+[[ "$out" == *"without naming the commit"* ]] && grep -q "^heavy --wait [0-9]* --name gates " "$T/actions" && ! grep -q "merge only" <<<"$(grep " $Q4 " "$GR")" \
+  && [ -f "$WD/gates/$(tree_of "$Q4").json" ] && grep -qx "gh merge 24 $Q4" "$T/actions"
+expect "merge only: a gatebox pass that does not name the commit gets the full gates here" $?
+Q5=$(tc "$M2" q5.txt q5); mo "$Q5" gb-down 25
+out=$(GBRC=255 gbt run gates run 2>&1)
+grep -q "^heavy --wait [0-9]* --name gates " "$T/actions" && [ -f "$WD/gates/$(tree_of "$Q5").json" ] && grep -qx "gh merge 25 $Q5" "$T/actions"
+expect "merge only: an unreachable gatebox falls back to the full gates here" $?
+Q6=$(tc "$M2" backend/auth-more.ts x); mo "$Q6" gb-auth 26
+out=$(GBRC=say0 gbt run gates run 2>&1)
+grep -q "^[^ ]* $Q6 [^ ]* HELD passed, not merged: touches backend/auth-more.ts" "$GR" && ! grep -q "gh merge 26" "$T/actions"
+expect "merge only: the train's hold rules still apply (auth waits for Josh)" $?
+Q7=$(tc "$M2" q7.txt q7); (cd "$LIVE" && run gates enqueue "$Q7" >/dev/null 2>&1)
+out=$(GBRC=say0 gbt run gates run 2>&1)
+grep -q "^heavy --wait [0-9]* --name gates " "$T/actions" && [ -f "$WD/gates/$(tree_of "$Q7").json" ] && ! grep -q " $Q7 [^ ]* PASSED merge only" "$GR"
+expect "merge only: a request without --pr (a deploy record) always gets the full gates here" $?
+Q8=$(tc "$M2" q8.txt q8); mo "$Q8" gb-moved 27; req=$(ls "$GQ"/*.req)
+gbt run gates run-one "$req" --gatebox-passed "$Q7" >/dev/null 2>&1; rc=$?
+[ $rc = 77 ] && [ -f "$req" ] && ! grep -q " $Q8 " "$GR"
+expect "merge only: a pass for another commit is never used; the request stays queued to be screened again" $?
+rm -f "$GQ"/*.req
+Q9=$(tc "$M2" q9.txt q9); mo "$Q9" gb-off 28
+out=$(GAUSS_GATEBOX=gatebox GBRC=say0 run gates run 2>&1)
+grep -q "^heavy --wait [0-9]* --name gates " "$T/actions" && [ -f "$WD/gates/$(tree_of "$Q9").json" ] && ! grep -q " $Q9 [^ ]* PASSED merge only" "$GR"
+expect "merge only: off by default; a gatebox pass alone still gets the full gates here" $?
+out=$(gbt run gates result status 2>&1); [[ "$out" == *"a pass lets the train merge after the ops tests here (no deploy record)"* ]]
+expect "gates result status: says when a gatebox pass is trusted for merging" $?
 rm -f "$GQ"/*.req
 # 12 Nov: merging one PR moved main under the next one's run; it sat HELD until a person re-queued it.
 M3=$(tc "$M2" main.txt main-3); g push -q origin "$M3:refs/heads/side"; g push -q origin "$M2:refs/heads/main"; g fetch -q origin
@@ -761,6 +994,85 @@ expect "train: a head main moved past during its run is re-queued at the front, 
 [ "$N7" != "$P7" ] && git --git-dir="$ORIGIN" merge-base --is-ancestor "$M3" "$N7" && grep -q "^[^ ]* $P7 [^ ]* MOVED merged main into PR #21" "$GR" \
   && grep -qx "gh merge 21 $N7" "$T/actions" && [ -z "$(ls "$GQ")" ]
 expect "train: the re-queued head gets main merged in, passes and is merged in the same pass" $?
+# 18 Nov: a pass the train can't merge itself (held for Josh, or a draft) waited up to 30 min for the
+# merge job; the train merged another PR meanwhile, main moved, and the pass was run again (9 of 37 runs).
+# The after-pass hook runs right after each pass, before the next request can move main.
+HOOKD="$WD/gates/hooks"; mkdir -p "$HOOKD"; : >"$T/hook.log"
+printf '#!/bin/bash\necho "hook $*" >>"%s"\necho "merge job says hi"\n' "$T/hook.log" >"$HOOKD/after-pass"; chmod +x "$HOOKD/after-pass"
+P10=$(tc "$M3" backend/auth-more.ts x); P11=$(tc "$M3" f11.txt f11); P12=$(tc "$M3" f12.txt f12)
+g push -q origin "$P10:refs/heads/held10" "$P11:refs/heads/q11" "$P12:refs/heads/q12" && g fetch -q origin
+echo "OPEN held10 main false CLEAN" >"$GHD/pr41"; echo "OPEN q11 main false CLEAN" >"$GHD/pr42"; echo "OPEN q12 main false CLEAN" >"$GHD/pr43"
+(cd "$LIVE" && run gates enqueue "$P10" --pr 41 >/dev/null 2>&1; run gates enqueue "$P11" --pr 42 >/dev/null 2>&1)
+out=$(run gates run 2>&1)
+grep -qx "hook $P10 41" "$T/hook.log" && grep -qx "hook $P11 42" "$T/hook.log" && [[ "$out" == *"  hook: merge job says hi"* ]] \
+  && [ "$(grep -n "after-pass hook for ${P10:0:7}" <<<"$out" | cut -d: -f1)" -lt "$(grep -n "gates ${P11:0:7} \.\.\." <<<"$out" | cut -d: -f1)" ]
+expect "gates run: the after-pass hook runs after each pass (held or merged), before the next request starts" $?
+: >"$T/hook.log"; (cd "$LIVE" && run gates enqueue "$P12" --pr 43 >/dev/null 2>&1); GATEFAIL=test run gates run >/dev/null 2>&1
+grep -q "^[^ ]* $P12 [^ ]* FAILED" "$GR" && [ ! -s "$T/hook.log" ]; expect "gates run: no after-pass hook after a failed gate" $?
+printf '#!/bin/bash\nsleep 60 &\necho $! >>"%s"\nsleep 60\n' "$T/hook-kids" >"$HOOKD/after-pass"; P13=$(tc "$M3" f13.txt f13); P14=$(tc "$M3" f14.txt f14)
+(cd "$LIVE" && run gates enqueue "$P13" >/dev/null 2>&1; run gates enqueue "$P14" >/dev/null 2>&1)
+t0=$SECONDS; out=$(GAUSS_GATES_HOOK_S=1 run gates run 2>&1); rc=$?
+kids=0; while read -r k; do kill -0 "$k" 2>/dev/null && { kids=$((kids + 1)); kill "$k"; }; done <"$T/hook-kids"
+[ $rc = 0 ] && [ $((SECONDS - t0)) -lt 45 ] && [ $kids = 0 ] && [ "$(grep -c "after-pass hook stopped after 1 s" <<<"$out")" = 2 ] \
+  && grep -q "^[^ ]* $P14 [^ ]* PASSED" "$GR" && [ -z "$(ls "$GQ")" ]
+expect "gates run: a hung after-pass hook is stopped (its children too) and the queue goes on" $?
+rm -f "$HOOKD/after-pass"
+# 18 Nov: a tree queued for gates only, then enqueued with --pr, dropped the PR (its pass never merged).
+P15=$(tc "$M3" f15.txt f15); (cd "$LIVE" && run gates enqueue "$P15" >/dev/null 2>&1)
+out=$(cd "$LIVE" && run gates enqueue "$P15" --pr 44 2>&1)
+[ "$(ls "$GQ" | grep -c '\.req$')" = 1 ] && grep -qx "pr=44" "$GQ"/*.req && [ "$(grep -c '^pr=' "$GQ"/*.req)" = 1 ] \
+  && grep -qx "sha=$P15" "$GQ"/*.req && [[ "$out" == *"on the merge train for PR #44"* ]] && [ -z "$(ls "$GQ" | grep -v '\.req$')" ]
+expect "gates enqueue: a tree already queued for gates only joins the train when enqueued again with --pr" $?
+rm -f "$GQ"/*.req
+# The pass contract for scripts (merge-approved.sh): the record for the exact tree, not the last line's wording.
+out=$(cd "$LIVE" && run gates passed "$P11"); rc1=$?; (cd "$LIVE" && run gates passed "$P12" >/dev/null); rc2=$?
+(cd "$LIVE" && run gates passed 0000000 >/dev/null 2>&1); rc3=$?
+[ $rc1 = 0 ] && [[ "$out" == "PASSED ${P11:0:7}"* ]] && [ $rc2 = 1 ] && [ $rc3 = 2 ]
+expect "gates passed: exit 0 only for a commit whose exact tree passed (1 not passed, 2 unknown commit)" $?
+(cd "$LIVE" && run gates enqueue "$P11" >/dev/null 2>&1); echo "sha=$P11" >"$GQ/9.000000-$(tree_of "$P11").req"; echo "tree=$(tree_of "$P11")" >>"$GQ/9.000000-$(tree_of "$P11").req"
+(cd "$LIVE" && run gates result "$P11" >/dev/null); rcq=$?; (cd "$LIVE" && run gates passed "$P11" >/dev/null); rcp=$?
+[ $rcq = 3 ] && [ $rcp = 0 ]; expect "gates passed: a passed commit queued again still counts as passed (gates result says QUEUED)" $?
+rm -f "$GQ"/*.req
+# 18 Nov: #160 was gated 7 times and #175 5 times in a day: each pass was held for a person, main moved,
+# and the same change was gated again with nothing able to merge it. A held pass now waits without runs
+# until its own change differs, it stops being a draft, or it is queued with --final.
+runs_of() { grep -c "^[^ ]* [^ ]* [^ ]* PASSED" "$GR"; } # gate runs so far
+W1=$(tc "$M3" backend/auth-wait.ts a); D1=$(tc "$M3" d52.txt d); g push -q origin "$W1:refs/heads/w51" "$D1:refs/heads/d52" && g fetch -q origin
+echo "OPEN w51 main false CLEAN" >"$GHD/pr51"; echo "OPEN d52 main true CLEAN" >"$GHD/pr52"
+(cd "$LIVE" && run gates enqueue "$W1" --pr 51 >/dev/null 2>&1; run gates enqueue "$D1" --pr 52 >/dev/null 2>&1); run gates run >/dev/null 2>&1
+grep -q "^[^ ]* $W1 [^ ]* HELD passed, not merged: touches backend/auth-wait.ts" "$GR" && grep -q "^[^ ]* $D1 [^ ]* HELD passed, not merged: draft" "$GR" \
+  && grep -qx "kind=person" "$WD/gates/held/51" && grep -qx "kind=draft" "$WD/gates/held/52" && grep -qx "sha=$W1" "$WD/gates/held/51"
+expect "train: a pass held for a person or as a draft leaves a note" $?
+M4=$(tc "$M3" main.txt main-4); g push -q origin "$M4:refs/heads/main" && g fetch -q origin
+n=$(runs_of); (cd "$LIVE" && run gates enqueue "$W1" --pr 51 >/dev/null 2>&1; run gates enqueue "$D1" --pr 52 >/dev/null 2>&1); out=$(run gates run 2>&1)
+[ "$(runs_of)" = "$n" ] && [ -z "$(ls "$GQ")" ] && [ "$(git --git-dir="$ORIGIN" rev-parse refs/heads/w51)" = "$W1" ] && [ "$(git --git-dir="$ORIGIN" rev-parse refs/heads/d52)" = "$D1" ] \
+  && grep -q "^[^ ]* $W1 [^ ]* HELD PR #51 passed on ${W1:0:7} and nothing of its own has changed: not gated again while it waits (Josh merges). When it can merge: gates enqueue ${W1:0:7} --pr 51 --final" "$GR" \
+  && grep -q "^[^ ]* $D1 [^ ]* HELD PR #52 passed on ${D1:0:7} and nothing of its own has changed: not gated again while it waits (draft)" "$GR"
+expect "train: after main moves, a PR that only waits is not gated or merged into again" $?
+out=$(cd "$LIVE" && run gates enqueue "$W1" --final 2>&1); [ $? = 2 ] && [[ "$out" == *"--final needs --pr"* ]]; expect "train: --final needs --pr" $?
+n=$(runs_of); (cd "$LIVE" && run gates enqueue "$W1" --pr 51 --final >/dev/null 2>&1); grep -qx "final=1" "$GQ"/*.req; f1=$?
+: >"$T/actions"; run gates run >/dev/null 2>&1; W2=$(git --git-dir="$ORIGIN" rev-parse refs/heads/w51)
+[ $f1 = 0 ] && [ "$(runs_of)" = $((n + 1)) ] && [ "$W2" != "$W1" ] && git --git-dir="$ORIGIN" merge-base --is-ancestor "$M4" "$W2" \
+  && grep -q "^[^ ]* $W1 [^ ]* MOVED merged main into PR #51" "$GR" && grep -q "^[^ ]* $W2 [^ ]* PASSED" "$GR" && ! grep -q "gh merge 51" "$T/actions" \
+  && grep -qx "sha=$W2" "$WD/gates/held/51"
+expect "train: --final gates a waiting PR against main as it is now (still merged by Josh, not the train)" $?
+g fetch -q origin; W3=$(tc "$W2" backend/auth-wait.ts b); g push -q origin "$W3:refs/heads/w51" && g fetch -q origin
+n=$(runs_of); (cd "$LIVE" && run gates enqueue "$W3" --pr 51 >/dev/null 2>&1); run gates run >/dev/null 2>&1
+[ "$(runs_of)" = $((n + 1)) ] && grep -q "^[^ ]* $W3 [^ ]* PASSED" "$GR"; expect "train: a waiting PR whose own change differs is gated again" $?
+echo "OPEN d52 main false CLEAN" >"$GHD/pr52"; : >"$T/actions"; (cd "$LIVE" && run gates enqueue "$D1" --pr 52 >/dev/null 2>&1); run gates run >/dev/null 2>&1
+D2=$(git --git-dir="$ORIGIN" rev-parse refs/heads/d52)
+[ "$D2" != "$D1" ] && grep -qx "gh merge 52 $D2" "$T/actions" && [ ! -e "$WD/gates/held/52" ]
+expect "train: a draft marked ready is synced, gated and merged, and its note is gone" $?
+K1=$(tc "$M3" main.txt clash-53); g push -q origin "$K1:refs/heads/k53" && g fetch -q origin; echo "OPEN k53 main false CLEAN" >"$GHD/pr53"
+: >"$T/log"; (cd "$LIVE" && run gates enqueue "$K1" --pr 53 >/dev/null 2>&1); run gates run >/dev/null 2>&1
+(cd "$LIVE" && run gates enqueue "$K1" --pr 53 >/dev/null 2>&1); run gates run >/dev/null 2>&1
+[ "$(grep -c "^[^ ]* $K1 [^ ]* CONFLICT PR #53 can't take main" "$GR")" = 1 ] && [ "$(grep -c "^[^ ]* $K1 [^ ]* CONFLICT PR #53 still can't take main" "$GR")" = 1 ] \
+  && [ "$(alerts | tr ' ' '\n' | grep -cx train-53)" -le 1 ] && [ -z "$(ls "$GQ")" ]
+expect "train: a conflict is tried and texted once per head, not on every enqueue" $?
+K2=$(tc "$M4" k53.txt resolved); g push -q -f origin "$K2:refs/heads/k53" && g fetch -q origin; : >"$T/actions"
+(cd "$LIVE" && run gates enqueue "$K2" --pr 53 >/dev/null 2>&1); run gates run >/dev/null 2>&1
+grep -qx "gh merge 53 $K2" "$T/actions"; expect "train: once the conflicting branch moves, it is gated and merged" $?
+rm -f "$GQ"/*.req; git --git-dir="$ORIGIN" update-ref refs/heads/main "$M3"; g fetch -q origin # main back where the tests below expect it
 # Queue tooling: reorder by PR, list the queue by PR, list passes that wait for a person.
 P8=$(tc "$M3" f8.txt f8); P9=$(tc "$M3" f9.txt f9); g push -q origin "$P8:refs/heads/q8" "$P9:refs/heads/q9" && g fetch -q origin
 (cd "$LIVE" && run gates enqueue "$P8" --pr 31 >/dev/null 2>&1; run gates enqueue "$P9" --pr 32 >/dev/null 2>&1)
@@ -770,6 +1082,34 @@ expect "gates priority: a PR moves to the front, and gates queue lists requests 
 out=$(run gates priority 31 back 2>&1); last=$(ls "$GQ" | sort | tail -1); grep -qx "pr=31" "$GQ/$last"
 expect "gates priority: a PR moves to the back" $?
 out=$(run gates priority 99 front 2>&1); [ $? = 1 ] && [[ "$out" == *"Nothing queued for 99"* ]]; expect "gates priority: an unknown PR is refused" $?
+# 17 Nov: keys matched as prefixes, so "99" hit any sha starting 99 (the test above failed ~1 run in
+# 128, failing PR #259's gates) and PR 3 would have moved PR 31.
+out=$(run gates priority 3 front 2>&1); [ $? = 1 ] && [[ "$out" == *"Nothing queued for 3"* ]]
+expect "gates priority: a PR number never matches a longer PR number" $?
+before=$(ls "$GQ" | sort); out=$(run gates priority "${P8:0:5}" front 2>&1); rc=$?
+[ "$rc" != 0 ] && [ "$(ls "$GQ" | sort)" = "$before" ]
+expect "gates priority: a short sha prefix moves nothing" $?
+out=$(run gates priority "${P8:0:7}" front 2>&1); first=$(ls "$GQ" | sort | sed -n 1p); grep -qx "pr=31" "$GQ/$first"
+expect "gates priority: a 7-character sha moves its request" $?
+out=$(run gates priority 'pr=.*' front 2>&1); [ $? = 2 ]; expect "gates priority: a key that is not a PR or sha is a usage error" $?
+rm -f "$GQ"/*.req
+# 18 Nov: requirements PRs each bump the baseline "version" and conflicted with each other (#284, #286).
+# A conflict on that line alone is settled as main's version plus one patch step and gated; any other
+# conflict, even in the same file, still waits for a person.
+RJ() { printf '{\n  "version": "%s",\n  "requirements": [\n    {"id": "%s"},\n    {"id": "M"},\n    {"id": "%s"}\n  ]\n}' "$@"; }
+R0=$(tc "$M3" requirements/requirements.json "$(RJ 1.0.0 A Z)")
+RM=$(tc "$R0" requirements/requirements.json "$(RJ 1.1.0 A Y)")   # main: 1.1.0, Z -> Y
+RP=$(tc "$R0" requirements/requirements.json "$(RJ 1.0.1 B Z)")   # PR: 1.0.1, A -> B (version line only clashes)
+RX=$(tc "$R0" requirements/requirements.json "$(RJ 1.0.1 A X)")   # PR: 1.0.1, Z -> X (clashes with main's Y too)
+g push -q origin "$RM:refs/heads/main" "$RP:refs/heads/reqs" "$RX:refs/heads/reqclash" && g fetch -q origin
+echo "OPEN reqs main false CLEAN" >"$GHD/pr41"; echo "OPEN reqclash main false CLEAN" >"$GHD/pr42"; : >"$T/actions"
+(cd "$LIVE" && run gates enqueue "$RP" --pr 41 >/dev/null 2>&1; run gates enqueue "$RX" --pr 42 >/dev/null 2>&1); run gates run >/dev/null 2>&1
+NR=$(git --git-dir="$ORIGIN" rev-parse refs/heads/reqs); rj=$(git --git-dir="$ORIGIN" show "$NR:requirements/requirements.json")
+[ "$NR" != "$RP" ] && git --git-dir="$ORIGIN" merge-base --is-ancestor "$RM" "$NR" && [ "$(git --git-dir="$ORIGIN" rev-parse "$NR^1")" = "$RP" ] \
+  && [ "$rj" = "$(RJ 1.1.1 B Y)" ] && grep -q "^[^ ]* $RP [^ ]* MOVED merged main into PR #41" "$GR" && grep -qx "gh merge 41 $NR" "$T/actions"
+expect "train: a conflict on the requirements baseline version alone is settled (main's version + 1 patch), gated and merged" $?
+grep -q "^[^ ]* $RX [^ ]* CONFLICT PR #42" "$GR" && [ "$(git --git-dir="$ORIGIN" rev-parse refs/heads/reqclash)" = "$RX" ] && ! grep -q "gh merge 42" "$T/actions"
+expect "train: a requirements conflict beyond the version line still waits for a person" $?
 rm -f "$GQ"/*.req
 printf '%s 13 true CLEAN Brand refresh\n%s 21 false CLEAN Already merged head\n' "$N5" "$P8" >"$GHD/open"
 out=$(cd "$LIVE" && run gates waiting 2>&1)
