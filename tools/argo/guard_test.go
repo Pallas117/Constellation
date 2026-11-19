@@ -305,7 +305,7 @@ func TestAssessTrends(t *testing.T) {
 	}
 	cur.Batt = &Battery{Present: true, Pct: 50, OnAC: true}
 	if a := assess(drainHist[:len(drainHist)-1], cur); !a.ChargerBehind || a.Level != LevelRisk {
-		t.Errorf("charger behind: %+v", a)
+		t.Errorf("charger behind, floor 1.3 h away (30 %%/h from 50 %%): want risk: %+v", a)
 	}
 }
 
@@ -725,5 +725,225 @@ func TestAdmitUsesAvailableAtNormal(t *testing.T) {
 	}
 	if yes, _ := admit(assess(hist, cur), 1); yes {
 		t.Error("admitted 1 GB on 0.5 GB headroom with paging unknown")
+	}
+}
+
+// TestSlowChargerIsAWatchAndDoesNotCapRAM (2 Nov, Josh: "the 8W should be fine"): an 8 W
+// charger losing 4 %/h at 40 % is ~7.5 h from the floor, so a 1.8 GB gate may start.
+func TestSlowChargerIsAWatchAndDoesNotCapRAM(t *testing.T) {
+	if h := float64(40-batteryFloorPct) / 4; h < chargerBehindRiskH {
+		t.Fatalf("test premise: %.1f h to the floor", h)
+	}
+	slow := Assessment{Level: LevelWatch, HeadroomGB: 3, Findings: []Finding{{Resource: "battery", Code: "charger-behind", Level: LevelWatch}}}
+	if ok, why := admit(slow, 1.8); !ok {
+		t.Fatalf("a slow charger capped a 1.8 GB gate: %s", why)
+	}
+	onBatt := Assessment{Level: LevelWatch, HeadroomGB: 3, Findings: []Finding{{Resource: "battery", Code: "on-battery", Level: LevelWatch}}}
+	if ok, _ := admit(onBatt, 1.8); ok {
+		t.Fatal("running on battery must keep the light-work cap")
+	}
+}
+
+// ---- eclipse energy budget (eclipse.go) ----
+
+func battRun(name string, start, end int) JobRun {
+	return JobRun{At: t0, Name: name, PeakGB: 1, Outcome: "exit 0", BattStart: start, BattEnd: end, OnBatt: true}
+}
+
+func eclipseSample(pct int) Sample {
+	s := calm()
+	s.Batt = &Battery{Present: true, Pct: pct}
+	return s
+}
+
+func TestBatteryCost(t *testing.T) {
+	if c, n := batteryCost(nil, "gates"); c != eclipseDefaultCost || n != 0 {
+		t.Errorf("no runs: %d%% from %d, want the %d%% default", c, n, eclipseDefaultCost)
+	}
+	two := []JobRun{battRun("gates", 60, 54), battRun("gates", 54, 48)}
+	if c, n := batteryCost(two, "gates"); c != eclipseDefaultCost || n != 0 {
+		t.Errorf("two runs: %d%% from %d, want the default until 3", c, n)
+	}
+	ac := battRun("gates", 60, 50)
+	ac.OnBatt = false // plugged in at one end: not a battery cost
+	paused := battRun("gates", 70, 50)
+	paused.PauseSecs = 600 // a paused job's drop is the rest of the Mac's
+	charged := battRun("gates", 40, 45)
+	runs := []JobRun{
+		battRun("gates", 90, 70), // oldest: falls out of the newest five
+		battRun("gates", 80, 73), battRun("gates", 73, 68), ac, paused, charged,
+		battRun("gates-on-battery-4242", 68, 62), // claude-heavy's override name teaches the job's own cost
+		battRun("e2e", 60, 30),                   // another job
+		battRun("gates", 62, 58), battRun("gates", 58, 49),
+	}
+	// Newest five gates runs on battery: 9, 4, 6, 5, 7 -> sorted 4 5 6 7 9 -> median 6.
+	if c, n := batteryCost(runs, "gates"); c != 6 || n != 5 {
+		t.Errorf("gates cost %d%% from %d runs, want 6%% from 5", c, n)
+	}
+	// claude-heavy's median of an even count is the upper one: 2, 3, 5, 6 -> 5.
+	even := []JobRun{battRun("go", 50, 48), battRun("go", 48, 45), battRun("go", 45, 40), battRun("go", 40, 34)}
+	if c, _ := batteryCost(even, "go"); c != 5 {
+		t.Errorf("even count: %d%%, want the upper median 5%%", c)
+	}
+	// Runs too short to move the battery still cost at least 1%.
+	flat := []JobRun{battRun("lint", 50, 50), battRun("lint", 50, 50), battRun("lint", 50, 50)}
+	if c, n := batteryCost(flat, "lint"); c != 1 || n != 3 {
+		t.Errorf("flat runs: %d%% from %d, want 1%% from 3", c, n)
+	}
+}
+
+func TestUnpluggedPlan(t *testing.T) {
+	if h := planHours(time.Time{}, t0); h != 0 {
+		t.Errorf("no plan: %d h", h)
+	}
+	if h := planHours(t0.Add(-time.Minute), t0); h != 0 {
+		t.Errorf("a passed plan: %d h", h)
+	}
+	if h := planHours(t0.Add(3*time.Hour+time.Minute), t0); h != 4 {
+		t.Errorf("3 h 1 min left: %d h, want 4 (rounded up, as claude-heavy)", h)
+	}
+	if h := planHours(t0.Add(2*time.Hour), t0); h != 2 {
+		t.Errorf("exactly 2 h left: %d h", h)
+	}
+	dir := t.TempDir()
+	plan := filepath.Join(dir, "gauss-unplugged")
+	if !readPlan(plan).IsZero() || !readPlan("").IsZero() {
+		t.Error("a missing plan file should read as no plan")
+	}
+	_ = os.WriteFile(plan, []byte(strconv.FormatInt(t0.Add(4*time.Hour).Unix(), 10)+"\n"), 0o600)
+	if got := readPlan(plan); !got.Equal(t0.Add(4 * time.Hour)) {
+		t.Errorf("plan read as %v", got)
+	}
+	_ = os.WriteFile(plan, []byte("soon"), 0o600)
+	if !readPlan(plan).IsZero() {
+		t.Error("garbage in the plan file should read as no plan")
+	}
+}
+
+func TestEclipseBudgetAdmission(t *testing.T) {
+	gates := []JobRun{battRun("gates", 80, 74), battRun("gates", 74, 68), battRun("gates", 68, 62)} // 6%/run
+	if e := eclipseFor(calm(), gates, "gates", time.Time{}); e != nil {
+		t.Fatalf("no battery: budget %+v", e)
+	}
+	plugged := eclipseSample(40)
+	plugged.Batt.OnAC = true
+	if e := eclipseFor(plugged, gates, "gates", time.Time{}); e != nil {
+		t.Fatalf("on AC: budget %+v", e)
+	}
+
+	cases := []struct {
+		name  string
+		pct   int
+		runs  []JobRun
+		plan  time.Duration // 0 = no unplugged plan
+		mem   float64
+		admit bool
+		want  string
+	}{
+		{"measured cost fits: 30 + 6 = 36", 36, gates, 0, 1.8, true, "within the eclipse budget of 36%"},
+		{"one short of the measured budget", 35, gates, 0, 1.8, false, "needs 36% (30% reserve + gates ~6%/run (median of 3 measured))"},
+		{"unknown job: 30 + 8 default = 38", 37, nil, 0, 1.8, false, "needs 38%"},
+		{"unknown job at the default budget", 38, nil, 0, 1.8, true, "default until 3 runs"},
+		{"4 h unplugged: 30 + 6 + 24 = 60", 59, gates, 3*time.Hour + 30*time.Minute, 1.8, false, "+ 4 h unplugged x 6%/h"},
+		{"4 h unplugged, enough battery", 60, gates, 3*time.Hour + 30*time.Minute, 1.8, true, "eclipse budget of 60%"},
+		{"a light job ignores the budget", 32, nil, 0, 0.5, true, "ok"},
+		{"battery-low stays a risk", 18, gates, 0, 1.8, false, "host at risk"},
+		{"the 10% floor still blocks", 9, gates, 0, 0.3, false, "host at block"},
+		{"well over budget, RAM still checked", 90, gates, 0, 25, false, "GB free after keeping"},
+	}
+	for _, c := range cases {
+		cur := eclipseSample(c.pct)
+		plan := time.Time{}
+		if c.plan > 0 {
+			plan = cur.At.Add(c.plan)
+		}
+		ok, why := admitIn(assess(nil, cur), c.mem, eclipseFor(cur, c.runs, "gates", plan))
+		if ok != c.admit || !strings.Contains(why, c.want) {
+			t.Errorf("%s: admitted %v (%s), want %v with %q", c.name, ok, why, c.admit, c.want)
+		}
+	}
+
+	// Battery-draining (under an hour to the floor) is still a risk, budget or not.
+	d := eclipseSample(70)
+	d.Batt.RemainMin = 60
+	if ok, why := admitIn(assess(nil, d), 1.8, eclipseFor(d, gates, "gates", time.Time{})); ok || !strings.Contains(why, "min to the 10% floor") {
+		t.Errorf("draining battery admitted a gate: %s", why)
+	}
+	// Another watch finding (memory at warn, not coping) keeps the light-work cap within budget.
+	w := eclipseSample(90)
+	w.Pressure = "warn"
+	if ok, why := admitIn(assess(nil, w), 1.8, eclipseFor(w, gates, "gates", time.Time{})); ok || !strings.Contains(why, "light work only") {
+		t.Errorf("memory warn on battery admitted a 1.8 GB job: %s", why)
+	}
+	// Without a budget (mesh callers), on battery keeps the cap as before.
+	if ok, _ := admitIn(assess(nil, eclipseSample(90)), 1.8, nil); ok {
+		t.Error("no budget: on battery admitted a 1.8 GB job")
+	}
+}
+
+// TestGuardRunEclipseBudget: a guarded run on battery is admitted within its budget, refused outside it
+// (the unplugged plan raising the need), and records battery % at both ends for the next budget.
+func TestGuardRunEclipseBudget(t *testing.T) {
+	pcts := []int{50, 47} // admission, then the reading when the job ends
+	r := fakeRunner(t)
+	r.name = "gates"
+	i := 0
+	r.assess = func() (Sample, Assessment) {
+		s := eclipseSample(pcts[min(i, len(pcts)-1)])
+		s.At = time.Now()
+		i++
+		return s, assess(nil, s)
+	}
+	if code, err := r.run(1.8, 0, 0, []string{"sleep", "0.1"}); err != nil || code != 0 {
+		t.Fatalf("a 1.8 GB job at 50%% on battery (needs 38%%): exit %d %v", code, err)
+	}
+	runs := r.store.jobRuns()
+	if len(runs) != 1 || runs[0].BattStart != 50 || runs[0].BattEnd != 47 || !runs[0].OnBatt {
+		t.Fatalf("battery not recorded: %+v", runs)
+	}
+
+	// Two hours unplugged: 30 + 8 + 12 = 50%, so the next run at 47% waits, and never starts.
+	plan := filepath.Join(t.TempDir(), "gauss-unplugged")
+	_ = os.WriteFile(plan, []byte(strconv.FormatInt(time.Now().Add(2*time.Hour-time.Minute).Unix(), 10)), 0o600)
+	r.planFile, pcts, i = plan, []int{47}, 0
+	marker := filepath.Join(t.TempDir(), "ran")
+	if code, _ := r.run(1.8, 0, 0, []string{"touch", marker}); code != exitTempFail {
+		t.Errorf("over-budget job exit %d, want 75", code)
+	}
+	if _, err := os.Stat(marker); err == nil {
+		t.Error("an over-budget job ran")
+	}
+	if b, _ := os.ReadFile(r.store.path("guard.log")); !strings.Contains(string(b), "needs 50%") {
+		t.Errorf("refusal doesn't give the budget: %s", b)
+	}
+
+	// On AC the battery is still recorded, but not as a battery cost.
+	r.planFile = ""
+	r.assess = func() (Sample, Assessment) {
+		s := eclipseSample(60)
+		s.Batt.OnAC = true
+		return s, assess(nil, s)
+	}
+	if code, _ := r.run(1.8, 0, 0, []string{"sleep", "0.1"}); code != 0 {
+		t.Fatalf("on AC: exit %d", code)
+	}
+	if runs = r.store.jobRuns(); len(runs) != 2 || runs[1].OnBatt || runs[1].BattStart != 60 {
+		t.Errorf("AC run recorded as %+v", runs[len(runs)-1])
+	}
+}
+
+func TestEclipseText(t *testing.T) {
+	runs := []JobRun{battRun("gates", 80, 74), battRun("gates", 74, 68), battRun("gates", 68, 62), battRun("e2e", 60, 50)}
+	out := eclipseText(eclipseSample(37), runs, time.Time{})
+	for _, want := range []string{"on battery at 37%", "gates", "36%  starts", "e2e", "38%  waits"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("eclipse text lacks %q:\n%s", want, out)
+		}
+	}
+	if out := eclipseText(calm(), runs, time.Time{}); out != "" {
+		t.Errorf("no battery, no plan: %q", out)
+	}
+	if out := eclipseText(calm(), runs, t0.Add(90*time.Minute)); !strings.Contains(out, "2 h left") || !strings.Contains(out, "= 42%") {
+		t.Errorf("plan line: %q", out)
 	}
 }

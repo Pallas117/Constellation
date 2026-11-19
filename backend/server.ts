@@ -10,7 +10,6 @@ import {
   authenticateSocket,
   roleSatisfies,
   type AuthContext,
-  type AuthRole,
   type AuthenticatedRequest,
 } from "./auth.js";
 import { CyberTigerDaemon } from "./cybertiger/daemon.js";
@@ -31,6 +30,7 @@ import type {
   IngestionTickResult,
   NowcastInferenceRequest,
 } from "./types.js";
+import { bodyErrorResponse } from "./lib/body-errors.js";
 import { withFreshness } from "./lib/freshness.js";
 import { canSend, sweepDeadSockets, trackLiveness, WS_HEARTBEAT_MS } from "./lib/socket-keepalive.js";
 import { IngestionWorker, liveIngestSources } from "./worker/ingest-loop.js";
@@ -40,13 +40,13 @@ import { createSwapPlan, scheduledRebalance } from "./services/device-swap-manag
 import { encodeCanonicalPoint } from "./lib/proto.js";
 import { linkGuardian } from "./lib/connectivity.js";
 import { bedrock } from "./lib/local-db.js";
-import { routeUpgrades } from "./lib/ws-upgrade.js";
+import { routeUpgrades, type UpgradeDecision } from "./lib/ws-upgrade.js";
 import { retentionFromEnv, startTelemetryRetention } from "./lib/telemetry-retention.js";
 import { queryLimit } from "./lib/query-limit.js";
 import { auroraMapReply, encodedReply, sendJsonList } from "./lib/json-response.js";
 import { diskFreeBytes, overall, readTpms } from "./lib/tpm.js";
 import { SPACE_OBJECT_CATALOG } from "./lib/space-object-catalog.js";
-import { auth, ssoAllowedDomain, ssoGithubEnabled, ssoGoogleEnabled } from "./better-auth.js";
+import { auth, CLIENT_IP_HEADER, ssoAllowedDomain, ssoGithubEnabled, ssoGoogleEnabled } from "./better-auth.js";
 import { toNodeHandler } from "better-auth/node";
 import { SelfHealerAgent } from "./cybertiger/self-healer.js";
 import { bootSwitches } from "./lib/boot-switches.js";
@@ -56,6 +56,7 @@ import { enforceApiPolicy, isPublic } from "./rbac.js";
 import { CommerceStore } from "./commerce/store.js";
 import { createDataApiRouter, createOrgRouter, createPilotRequestHandler } from "./commerce/routers.js";
 import { EnvironmentHistory } from "./trust/environment.js";
+import { createEvidenceRouter } from "./trust/evidence-router.js";
 import { getL1Structures } from "./adapters/noaa-swpc.js";
 
 const app = express();
@@ -124,14 +125,21 @@ app.use(
         callback(null, true);
         return;
       }
-      console.warn(`[CORS] Blocked origin: ${origin}`);
-      callback(new Error("CORS blocked"));
+      // Not an Error: that reaches the error handler (stack in the log, 500). Without CORS headers
+      // the browser blocks the response itself.
+      console.warn(`[CORS] Blocked origin: ${JSON.stringify(String(origin).slice(0, 200))}`);
+      callback(null, false);
     },
     credentials: true,
   }),
 );
 
-// Better-Auth handler
+// Better-Auth handler. It rate-limits by CLIENT_IP_HEADER; set it here from the
+// address CyberTiger trusts so a client can't pick its own bucket.
+app.use("/api/auth", (req, _res, next) => {
+  req.headers[CLIENT_IP_HEADER] = cyberTiger.extractClientIp(req);
+  next();
+});
 app.all("/api/auth/*", toNodeHandler(auth));
 
 function withAsyncMiddleware(
@@ -183,6 +191,7 @@ async function currentTpms() {
   return readTpms({
     pipeline: worker.getPipelineLatency(),
     failedWrites: bedrock.failedWrites,
+    rejectedPoints: bedrock.rejectedPoints,
     diskFreeBytes: await diskFreeBytes(bedrock.dataDir),
     rssBytes: process.memoryUsage().rss,
     sources: getSourceStatus(),
@@ -288,10 +297,14 @@ app.use("/api", enforceApiPolicy);
 app.use("/api/orgs", createOrgRouter(commerce));
 
 // Public "Request a pilot" form on the landing page.
-app.post("/api/pilot-requests", createPilotRequestHandler(commerce));
+app.post("/api/pilot-requests", createPilotRequestHandler(commerce, Date.now, (req) => cyberTiger.extractClientIp(req)));
 
 // Mesh & Network page: onboarding for everyone signed in, team status for operators.
 app.use("/api/mesh", mesh.ui);
+
+// Evidence view of the operator console: the pilot flow (log -> trust records -> evidence pack ->
+// PDF -> check). Operators only (API_POLICY); nothing is stored and nothing is signed here.
+app.use("/api/trust/evidence", createEvidenceRouter());
 
 // RAG endpoints: operators only (status and query; API_POLICY in rbac.ts).
 // Knowledge memory: the Cosmic Brain sidecar (backend/memory/client.ts, docs/memory-sidecar.md).
@@ -600,7 +613,9 @@ app.post("/api/ai/nowcast/infer", async (req: AuthenticatedRequest, res) => {
     });
     res.json(response);
   } catch (error) {
-    res.status(500).json({ error: error instanceof Error ? error.message : "Inference failed" });
+    // The message can carry the upstream ML URL: log the error name only, answer a fixed text.
+    console.error(`[nowcast] inference failed (${error instanceof Error ? error.name : "unknown"})`);
+    res.status(500).json({ error: "Inference failed" });
   }
 });
 
@@ -619,14 +634,40 @@ app.post("/api/ai/nowcast/train", async (_req, res) => {
 
 const server = http.createServer(app);
 
-const wsSpaceWeather = new WebSocketServer({ noServer: true });
-const wsMmsRecon = new WebSocketServer({ noServer: true });
+// Clients never send data frames that matter; ws's default maxPayload is 100 MiB.
+const WS_MAX_PAYLOAD_BYTES = 4096;
+const wsSpaceWeather = new WebSocketServer({ noServer: true, maxPayload: WS_MAX_PAYLOAD_BYTES });
+const wsMmsRecon = new WebSocketServer({ noServer: true, maxPayload: WS_MAX_PAYLOAD_BYTES });
+
+/** Origin + session + role, checked before the handshake. Failures count against the real client address. */
+async function guardUpgrade(req: http.IncomingMessage): Promise<UpgradeDecision<AuthContext>> {
+  const requestOrigin = typeof req.headers.origin === "string" ? req.headers.origin : null;
+  const ip = cyberTiger.extractClientIp(req as unknown as express.Request);
+  const record = (status: 401 | 403) =>
+    cyberTiger.recordResponse({ requestId: `ws-${Date.now()}`, ip, method: "WS", path: (req.url ?? "/ws").split("?")[0], status });
+  if (!isAllowedOrigin(requestOrigin)) {
+    record(403);
+    return { allow: false, status: 403 };
+  }
+  const auth = await authenticateSocket(req);
+  if (!auth) {
+    record(401);
+    return { allow: false, status: 401 };
+  }
+  if (!roleSatisfies(auth.role, "user")) {
+    record(403);
+    return { allow: false, status: 403 };
+  }
+  return { allow: true, context: auth };
+}
+
 routeUpgrades(
   server,
   new Map([
     ["/ws/feed/space-weather", wsSpaceWeather],
     ["/ws/feed/mms-reconnection", wsMmsRecon],
   ]),
+  guardUpgrade,
 );
 trackLiveness(wsSpaceWeather);
 trackLiveness(wsMmsRecon);
@@ -654,38 +695,11 @@ function broadcast(wss: WebSocketServer, topic: string, payload: unknown): void 
   }
 }
 
-async function guardSocketConnection(
-  socket: AuthedSocket,
-  requiredRole: AuthRole,
-  req: http.IncomingMessage,
-): Promise<boolean> {
-  const requestOrigin = typeof req.headers.origin === "string" ? req.headers.origin : null;
-  if (!isAllowedOrigin(requestOrigin)) {
-    socket.close(1008, "CORS blocked");
-    return false;
-  }
-
-  const auth = await authenticateSocket(req);
-  if (!auth || !roleSatisfies(auth.role, requiredRole)) {
-    if (req.socket.remoteAddress) {
-      cyberTiger.recordResponse({
-        requestId: `ws-${Date.now()}`,
-        ip: req.socket.remoteAddress,
-        method: "WS",
-        path: req.url ?? "/ws",
-        status: 403,
-      });
-    }
-    socket.close(1008, "Unauthorized");
-    return false;
-  }
+wsSpaceWeather.on("connection", (socket: AuthedSocket, _req: http.IncomingMessage, auth: AuthContext) => {
   socket.auth = auth;
-  return true;
-}
-
-wsSpaceWeather.on("connection", async (socket: AuthedSocket, req) => {
-  const allowed = await guardSocketConnection(socket, "user", req);
-  if (!allowed) return;
+  // An oversize frame (maxPayload) or a protocol error emits "error" here; with no listener Node
+  // throws and the whole backend dies. ws closes the socket itself (1009 etc.); log nothing from the peer.
+  socket.on("error", () => undefined);
 
   socket.send(
     JSON.stringify({
@@ -700,9 +714,11 @@ wsSpaceWeather.on("connection", async (socket: AuthedSocket, req) => {
   );
 });
 
-wsMmsRecon.on("connection", async (socket: AuthedSocket, req) => {
-  const allowed = await guardSocketConnection(socket, "user", req);
-  if (!allowed) return;
+wsMmsRecon.on("connection", (socket: AuthedSocket, _req: http.IncomingMessage, auth: AuthContext) => {
+  socket.auth = auth;
+  // An oversize frame (maxPayload) or a protocol error emits "error" here; with no listener Node
+  // throws and the whole backend dies. ws closes the socket itself (1009 etc.); log nothing from the peer.
+  socket.on("error", () => undefined);
 
   socket.send(
     JSON.stringify({
@@ -835,7 +851,17 @@ export async function stopBackend(): Promise<void> {
   backendStarted = false;
 }
 
-app.use((error: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+app.use((error: unknown, req: express.Request, res: express.Response, _next: express.NextFunction) => {
+  // GAU-231: a bad request body is the client's mistake (400/413/415), not a server fault.
+  // express.json() runs before the security headers, so set the one a JSON answer needs here.
+  const bodyError = bodyErrorResponse(error);
+  if (bodyError) {
+    // Never log the error itself: body-parser attaches the raw body to it.
+    console.warn(`[backend] rejected request body: ${bodyError.status} ${bodyError.error} (${req.method} ${req.path})`);
+    res.setHeader("x-content-type-options", "nosniff");
+    res.status(bodyError.status).json({ error: bodyError.error });
+    return;
+  }
   console.error("[backend] unhandled error", error);
   res.status(500).json({ error: "Internal server error" });
 });

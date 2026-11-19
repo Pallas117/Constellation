@@ -11,16 +11,24 @@ import {
   GUARD_LEVELS,
   MESH_CLASSES,
   MeshStore,
+  POSTURE_ITEMS,
+  POSTURE_MAX_AGE_MS,
+  POSTURE_STATUSES,
   assessHosting,
+  assessMemory,
   hostingVerdict,
   parseBattery,
+  parseCharger,
   parsePower,
+  parsePowerSave,
   parseGuard,
+  parsePosture,
   parseHost,
   parseNet,
   parseReport,
   type MeshGuard,
   type MeshHost,
+  type MeshReport,
 } from "./store.js";
 
 async function withApp(fn: (base: string, store: MeshStore) => Promise<void>) {
@@ -182,6 +190,26 @@ test("network scores are allowlisted; nothing unmeasured is invented", () => {
   assert.equal(parseReport(okReport)!.net, undefined, "older Argo: no block");
 });
 
+test("net.radio: Argo's radio profile is allowlisted field by field (GAU-188)", () => {
+  const net = { privacy: 70, privacyWhy: [], rttMs: 29, speed: "excellent", signal: "excellent", rssi: -35, noise: -98 };
+  // The 2026-10-23 hotspot: crowded 2.4 GHz ch10, Wi-Fi hop clean, loss upstream.
+  const radio = {
+    band: "2.4", channel: 10, widthMHz: 20, phy: "ax", mcs: 9, txMbps: 114, coChannel: 1, overlapping: 3,
+    gwLossPct: 0, gwJitterMs: 1, netLossPct: 40, netJitterMs: 400, netRttMs: 967, path: "upstream",
+  };
+  assert.deepEqual(parseNet({ ...net, radio })!.radio, radio);
+  assert.deepEqual(parseNet({ ...net, radio: { netLossPct: 0, path: "ok" } })!.radio, { netLossPct: 0, path: "ok" }, "wired: link quality only");
+  assert.equal(parseNet({ ...net, radio: { ssid: "HomeNet", bssid: "aa:bb" } })!.radio, undefined, "names are never kept");
+  for (const bad of [
+    { band: "3.6" }, { channel: 0 }, { widthMHz: 30 }, { phy: "802.11ax" }, { mcs: 16 }, { netLossPct: 101 },
+    { path: "somewhere" }, { overlapping: -1 }, { channel: 10.5 },
+  ]) {
+    const parsed = parseNet({ ...net, radio: { ...radio, ...bad } });
+    assert.ok(parsed, `a bad radio field must not drop the report: ${JSON.stringify(bad)}`);
+    assert.equal(parsed.radio, undefined, JSON.stringify(bad));
+  }
+});
+
 test("platform is allowlisted and phones never host", () => {
   assert.equal(parseReport({ ...okReport, platform: "ios" })!.platform, "ios");
   assert.equal(parseReport({ ...okReport, platform: "playstation" })!.platform, undefined);
@@ -296,6 +324,36 @@ test("Argo's guard block is allowlisted; unknown codes drop alone, bad values dr
     assert.equal(parsePower({ ...power, ...bad }), undefined, JSON.stringify(bad));
   }
   assert.equal(parseBattery({ level: 64, charging: true, power: { mode: "bad" } })!.power, undefined, "a bad power block drops alone");
+  // The charger's negotiation (tools/argo/charger.go): allowlisted state, ranged numbers, drops alone.
+  const charger = { state: "no-pd", volts: 5, watts: 8 };
+  assert.deepEqual(parseCharger({ ...charger, extra: "x" }), charger);
+  assert.deepEqual(parseCharger({ state: "ok", volts: 20, watts: 30 }), { state: "ok", volts: 20, watts: 30 });
+  assert.deepEqual(parseBattery({ level: 64, charging: true, external: true, charger })!.charger, charger);
+  for (const bad of [{ state: "fast" }, { state: undefined }, { volts: 0 }, { volts: 61 }, { volts: "5" }, { watts: -1 }, { watts: 501 }, { watts: undefined }]) {
+    assert.equal(parseCharger({ ...charger, ...bad }), undefined, JSON.stringify(bad));
+  }
+  assert.equal(parseCharger("no-pd"), undefined);
+  assert.equal(parseBattery({ level: 64, charging: true, charger: { state: "bad" } })!.charger, undefined, "a bad charger block drops alone");
+});
+
+test("power-save: allowlisted reason, ranged time, off carries nothing, bad drops alone", () => {
+  const since = new Date(Date.now() - 60_000).toISOString();
+  assert.deepEqual(parsePowerSave({ on: true, since, reason: "no-pd", extra: "x" }), { on: true, since, reason: "no-pd" });
+  for (const reason of ["battery", "charger-short", "manual"]) assert.equal(parsePowerSave({ on: true, since, reason })!.reason, reason);
+  assert.deepEqual(parsePowerSave({ on: false, since, reason: "battery" }), { on: false }, "off keeps no reason");
+  const bad = [
+    { on: "yes" }, { on: true }, { on: true, since }, { on: true, reason: "battery" },
+    { on: true, since, reason: "rm -rf" }, { on: true, since: "not a time", reason: "battery" },
+    { on: true, since: new Date(Date.now() + 3_600_000).toISOString(), reason: "battery" },
+    { on: true, since: "2001-01-01T00:00:00Z", reason: "battery" },
+  ];
+  for (const b of bad) assert.equal(parsePowerSave(b), undefined, JSON.stringify(b));
+  assert.equal(parsePowerSave("on"), undefined);
+  assert.equal(parsePowerSave(null), undefined);
+  assert.deepEqual(parseReport({ ...okReport, powerSave: { on: true, since, reason: "battery" } })!.powerSave, { on: true, since, reason: "battery" });
+  assert.equal(parseReport({ ...okReport, powerSave: { on: true, reason: "x" } })!.powerSave, undefined, "a bad block drops alone");
+  assert.equal(parseReport(okReport)!.powerSave, undefined, "old Argo without the field still parses");
+  assert.equal(GUARD_CODE_TEXT["power-save"].length > 0, true);
 });
 
 test("hosting verdict uses report age, battery power, swap and Argo's guard, and says why", () => {
@@ -355,13 +413,75 @@ test("an Argo report with guard and battery reaches the device list with its rea
 
 test("Gauss knows every guard code, level and admission Argo can send", () => {
   const go = readFileSync(new URL("../../tools/argo/guard.go", import.meta.url), "utf8");
-  const codes = [...go.matchAll(/a\.add\("\w+", "([a-z-]+)"/g)].map((m) => m[1]);
+  const goCmd = readFileSync(new URL("../../tools/argo/guardcmd.go", import.meta.url), "utf8"); // power-save is added in guardStep
+  const codes = [...(go + goCmd).matchAll(/a\.add\("\w+", "([a-z-]+)"/g)].map((m) => m[1]);
   assert.ok(codes.length >= 18 && codes.includes("swap-rising"), `parsed ${codes.join(",")}`);
   for (const c of codes) assert.ok(Object.hasOwn(GUARD_CODE_TEXT, c), `Gauss drops Argo guard code ${c}`);
   const levels = go.match(/\[\.\.\.\]string\{"ok", "watch", "risk", "block"\}/);
   assert.ok(levels, "guard.go level names changed");
   assert.deepEqual([...GUARD_LEVELS], ["ok", "watch", "risk", "block"]);
   for (const a of GUARD_ADMISSIONS) assert.ok(go.includes(`next.Admission = "${a}"`), `Argo never sends admission ${a}`);
+});
+
+const postureNow = new Date("2026-11-10T12:30:00Z");
+const postureItems = { disk: "ok", firewall: "fail", updates: "ok", integrity: "ok", tailkey: "warn", argo: "unknown", sharing: "ok" };
+
+test("Argo's posture block is allowlisted: known items and statuses only, with a sane check time", () => {
+  const at = "2026-11-10T12:00:00Z";
+  assert.deepEqual(parsePosture({ at, items: postureItems }, postureNow), { at: "2026-11-10T12:00:00.000Z", items: postureItems });
+  // Anything else Argo (or an attacker) adds is dropped: extra items, detail text, identifiers.
+  const noisy = { at, items: { ...postureItems, serial: "C02XXXX", "<script>": "ok", __proto__: "ok" }, detail: "FileVault is Off", host: "judith" };
+  assert.deepEqual(parsePosture(noisy, postureNow), { at: "2026-11-10T12:00:00.000Z", items: postureItems });
+  // A bad status drops that item alone; statuses are never coerced.
+  assert.deepEqual(parsePosture({ at, items: { disk: "ok", firewall: "OK", updates: "great", integrity: 1, tailkey: null, argo: ["ok"], sharing: { status: "ok" } } }, postureNow)!.items, { disk: "ok" });
+  for (const bad of [
+    undefined,
+    null,
+    "ok",
+    [],
+    {},
+    { at },
+    { at, items: [] },
+    { at, items: "ok" },
+    { at, items: {} },
+    { at, items: { disk: "passed" } },
+    { at: "soon", items: postureItems },
+    { at: 1762776000000, items: postureItems },
+    { at: "2026-11-10T12:00:00Z".padEnd(41, " "), items: postureItems },
+    { at: "2026-11-10T12:41:00Z", items: postureItems }, // more than 10 min in the future
+    { at: "2026-11-10T09:29:00Z", items: postureItems }, // older than 3 h
+  ]) {
+    assert.equal(parsePosture(bad, postureNow), undefined, JSON.stringify(bad));
+  }
+  const r = parseReport({ ...okReport, posture: { at, items: postureItems } }, postureNow)!;
+  assert.deepEqual(r.posture!.items, postureItems);
+  assert.equal(parseReport(okReport, postureNow)!.posture, undefined, "older Argo: no block");
+  assert.equal(parseReport({ ...okReport, posture: { at, items: { disk: "<b>" } } }, postureNow)!.posture, undefined, "a bad block never fails the report");
+});
+
+test("Gauss knows every posture item and status Argo can send", () => {
+  const go = readFileSync(new URL("../../tools/argo/posture.go", import.meta.url), "utf8");
+  const ids = go.match(/var postureIDs = \[\]string\{([^}]+)\}/);
+  assert.ok(ids, "posture.go postureIDs line changed");
+  assert.deepEqual(ids![1].split(",").map((s) => s.trim().replace(/"/g, "")), [...POSTURE_ITEMS]);
+  for (const s of POSTURE_STATUSES) assert.ok(new RegExp(`posture\\w+\\s*= "${s}"`).test(go), `Argo never sends status ${s}`);
+});
+
+test("posture arrives about hourly: the last one is kept between reports until it is too old", () => {
+  const store = new MeshStore(null);
+  const enrolled = store.enroll("judith", "staff@example.com");
+  assert.ok("device" in enrolled);
+  const device = enrolled.device;
+  const at = "2026-11-10T12:00:00Z";
+  store.record(device, parseReport({ ...okReport, posture: { at, items: postureItems } }, postureNow)!);
+  assert.deepEqual(store.list(postureNow)[0].last!.posture!.items, postureItems);
+  store.record(device, parseReport(okReport, new Date("2026-11-10T12:31:00Z"))!);
+  assert.equal(store.list(postureNow)[0].last!.posture!.at, "2026-11-10T12:00:00.000Z", "kept from the earlier report");
+  const newer = { at: "2026-11-10T13:00:00Z", items: { ...postureItems, firewall: "ok" } };
+  store.record(device, parseReport({ ...okReport, posture: newer }, new Date("2026-11-10T13:00:30Z"))!);
+  assert.equal(store.list(postureNow)[0].last!.posture!.items.firewall, "ok", "a newer block replaces it");
+  store.record(device, parseReport(okReport, new Date(Date.parse(newer.at) + POSTURE_MAX_AGE_MS + 60_000))!);
+  assert.equal(store.list(postureNow)[0].last!.posture, undefined, "dropped once older than 3 h");
 });
 
 test("a refused report is remembered (at most once a minute) so the page can say why a device looks silent", async () => {
@@ -382,4 +502,73 @@ test("onboarding points new devices at argo guard", () => {
   const steps = onboardingSteps([]);
   assert.ok(steps.find((s) => s.id === "guard")?.command === "argo guard");
   assert.match(steps.find((s) => s.id === "enroll")!.detail, /first report/);
+});
+
+// Fleet memory watch (GAU-240): the hub's view of each device's memory, from what Argo already reports.
+const MEM_NOW = new Date("2026-11-11T04:00:00Z");
+const memHost = (pressure: MeshHost["pressure"]): MeshHost => ({ ramGB: 8, pressure, swapUsedGB: 1, diskFreeGB: 20, cpus: 8, os: "macos" });
+const memReport = (over: Partial<MeshReport> = {}): MeshReport => ({ ...parseReport(okReport)!, receivedAt: MEM_NOW.toISOString(), ...over });
+const memGuard = (g: Partial<MeshGuard> = {}) => guard({ at: MEM_NOW.toISOString(), ...g });
+
+test("memory state: critical and risk come only from fresh guard codes or kernel pressure (GAU-240)", () => {
+  const state = (over: Partial<MeshReport>) => assessMemory(memReport(over), MEM_NOW);
+  assert.deepEqual(state({ host: memHost("normal"), guard: memGuard() }), { state: "ok", why: [] });
+  assert.deepEqual(state({ guard: memGuard({ level: "block", reasons: ["mem-critical", "battery-low"] }) }), { state: "critical", why: ["memory pressure critical"] });
+  assert.deepEqual(state({ guard: memGuard({ level: "risk", reasons: ["mem-paging"] }) }), { state: "critical", why: ["swapping out fast: memory short"] });
+  assert.deepEqual(state({ host: memHost("critical") }), { state: "critical", why: ["memory pressure critical"] }, "kernel pressure alone, older Argo");
+  assert.deepEqual(state({ guard: memGuard({ level: "risk", reasons: ["swap-rising", "mem-warn-sustained"] }) }), {
+    state: "risk",
+    why: ["swap climbing at warn", "memory at warn for 30+ of the last 60 min"],
+  });
+  assert.equal(state({ guard: memGuard({ level: "watch", reasons: ["no-headroom"] }) }).state, "watch", "a full machine is not a failing one");
+  assert.equal(state({ guard: memGuard({ level: "risk", reasons: ["no-headroom"] }) }).state, "risk");
+  assert.deepEqual(state({ host: memHost("warn"), guard: memGuard({ level: "watch", reasons: ["mem-warn-coping"] }) }), { state: "watch", why: ["memory at warn but coping"] });
+  assert.deepEqual(state({ host: memHost("warn") }), { state: "watch", why: ["memory pressure at warn"] });
+  assert.equal(state({ guard: memGuard({ level: "risk", reasons: ["battery-low", "disk-low"] }) }).state, "ok", "battery and disk findings are not memory");
+});
+
+test("memory state: what the hub cannot know is unknown, never ok (GAU-240)", () => {
+  assert.deepEqual(assessMemory(undefined, MEM_NOW), { state: "unknown", why: ["no report yet"] });
+  assert.deepEqual(assessMemory(memReport({ platform: "ios", guard: memGuard({ reasons: ["mem-critical"] }) }), MEM_NOW).state, "unknown");
+  assert.deepEqual(assessMemory(memReport(), MEM_NOW), { state: "unknown", why: ["no memory reading in the report"] });
+  const old = memReport({ receivedAt: "2026-11-11T03:40:00Z", guard: memGuard({ at: "2026-11-11T03:40:00Z", reasons: ["mem-critical"] }) });
+  assert.deepEqual(assessMemory(old, MEM_NOW), { state: "unknown", why: ["no report for 20 min"] }, "a stale critical says nothing about now");
+  // A guard reading much older than the report it rides on is ignored; kernel pressure still counts.
+  const lag = memReport({ host: memHost("warn"), guard: memGuard({ at: "2026-11-11T03:00:00Z", reasons: ["mem-critical"] }) });
+  assert.equal(assessMemory(lag, MEM_NOW).state, "watch");
+  assert.equal(assessMemory(memReport({ receivedAt: "not a time", host: memHost("normal") }), MEM_NOW).state, "unknown");
+});
+
+test("fleet memory: the device list, the worsening signal and the watcher's file agree (GAU-240)", async () => {
+  const fs = await import("node:fs");
+  const os = await import("node:os");
+  const path = await import("node:path");
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "mesh-mem-"));
+  const store = new MeshStore(path.join(dir, "devices.json"));
+  const mac = store.byToken((store.enroll("judith", "u") as { token: string }).token)!;
+  const box = store.byToken((store.enroll("devbox", "u") as { token: string }).token)!;
+  store.enroll("never", "u");
+
+  assert.equal(store.record(mac, memReport({ host: memHost("normal"), guard: memGuard() }), MEM_NOW), undefined, "ok is not a signal");
+  const risk = memReport({ guard: memGuard({ level: "risk", reasons: ["swap-rising"] }) });
+  assert.deepEqual(store.record(box, risk, MEM_NOW), { state: "risk", why: ["swap climbing at warn"] });
+  assert.equal(store.record(box, risk, MEM_NOW), undefined, "the same state again is not signalled twice");
+  const critical = memReport({ guard: memGuard({ level: "block", reasons: ["mem-critical"] }) });
+  assert.equal(store.record(box, critical, MEM_NOW)?.state, "critical", "worse again is signalled");
+  assert.equal(store.record(box, risk, MEM_NOW), undefined, "getting better is not signalled");
+
+  store.record(box, critical, MEM_NOW);
+  assert.deepEqual(store.fleetMemory(MEM_NOW).map((d) => `${d.name}:${d.state}`), ["devbox:critical", "judith:ok", "never:unknown"]);
+  const listed = store.list(MEM_NOW).find((d) => d.name === "devbox")!;
+  assert.equal(listed.memory, "critical");
+  assert.deepEqual(listed.memoryWhy, ["memory pressure critical"]);
+
+  const file = path.join(dir, "fleet-memory.json");
+  const written = JSON.parse(fs.readFileSync(file, "utf8")) as { at: string; staleAfterMs: number; devices: Array<Record<string, unknown>> };
+  assert.equal(written.at, MEM_NOW.toISOString());
+  assert.equal(written.staleAfterMs, 15 * 60_000);
+  assert.deepEqual(written.devices[0], { name: "devbox", state: "critical", why: ["memory pressure critical"], reportedAt: MEM_NOW.toISOString() });
+  assert.deepEqual(Object.keys(written.devices[0]).sort(), ["name", "reportedAt", "state", "why"], "states and reasons only: no token hash, no network details");
+  assert.equal(fs.statSync(file).mode & 0o777, 0o600);
+  assert.equal(fs.readFileSync(file, "utf8").includes("tokenHash"), false);
 });

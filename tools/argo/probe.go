@@ -16,6 +16,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -62,6 +63,9 @@ func (p SystemProber) Probe(ctx context.Context) Snapshot {
 	go func() { ts <- parseTailscale(run(ctx, tailscaleCLI(), "status", "--json"), p.ExitNodes) }()
 	if s.Online {
 		realNetChecks().run(ctx, &s, probeBudget)
+		if s.Captive.Err == ErrPortal && runtime.GOOS == "darwin" { // can encrypted DNS hide the login page?
+			s.DNSProfile = strings.Contains(run(ctx, "/usr/bin/profiles", "list"), profileID)
+		}
 	}
 	s.Tailscale = <-ts
 	s.Tailscale.MeshHealOpen = meshHealCircuitOpen(time.Now())
@@ -79,6 +83,10 @@ type netChecks struct {
 	lookup func(ctx context.Context, host string) error // system resolver
 	direct func(ctx context.Context, host string) bool  // 1.1.1.1, bypassing the system resolver
 	get    func(ctx context.Context, u string) (Result, string)
+	// Optional (nil = skipped, as in tests that stall the three above):
+	link func(ctx context.Context, gateway string) *LinkQuality // pings to the gateway and 1.1.1.1 (radio.go)
+	ipUp func(ctx context.Context) bool                         // IP dial when both DNS paths fail (uplink.go)
+	doh  func(ctx context.Context) bool                         // encrypted DNS when IP gets out (privdns.go)
 }
 
 func realNetChecks() netChecks {
@@ -89,6 +97,9 @@ func realNetChecks() netChecks {
 		},
 		direct: directLookup,
 		get:    httpGet,
+		link:   measureLink,
+		ipUp:   func(ctx context.Context) bool { return ipReachable(ctx, tcpDial) },
+		doh:    func(ctx context.Context) bool { return dohReachable(ctx, dohOnce) },
 	}
 }
 
@@ -108,12 +119,22 @@ func (c netChecks) run(ctx context.Context, s *Snapshot, budget time.Duration) {
 		}()
 	}
 	start(func() { s.Captive = probeCaptiveWith(ctx, c.get) })
+	if c.link != nil { // beside the rest: two pings of up to 8 s each must not sit in front of the budget
+		gw := s.Gateway
+		start(func() { s.Link = c.link(ctx, gw) })
+	}
 	start(func() {
 		dctx, cancel := context.WithTimeout(ctx, dnsTimeout)
 		defer cancel()
 		if err := c.lookup(dctx, "api.anthropic.com"); err != nil {
 			s.DNS = Result{Err: ErrDNS, Detail: err.Error()}
 			s.DNSDirectOK = c.direct(ctx, "api.anthropic.com")
+			if !s.DNSDirectOK && c.ipUp != nil { // DNS or the whole uplink? Only an IP dial can tell (uplink.go)
+				s.IPUp = boolPtr(c.ipUp(ctx))
+				if *s.IPUp && c.doh != nil { // IP gets out: does encrypted DNS? (privdns.go)
+					s.DoHOK = boolPtr(c.doh(ctx))
+				}
+			}
 		} else {
 			s.DNS = Result{OK: true}
 		}

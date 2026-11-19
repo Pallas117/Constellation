@@ -58,6 +58,7 @@ export interface BatteryReading {
   lowPower: boolean;
   external?: boolean;
   power?: { mode: "positive" | "negative" | "eclipse"; sourceW: number; loadW: number; marginW: number };
+  charger?: { state: "no-pd" | "pd-low" | "ok"; volts: number; watts: number };
 }
 
 /**
@@ -68,7 +69,9 @@ export function batteryLabel(b: BatteryReading): string {
   const source = b.external === undefined ? (b.charging ? " charging" : "") : b.external ? (b.charging ? " charging" : " · plugged in") : " · on battery";
   const p = b.power;
   const margin = p?.mode === "positive" ? ` · ${p.marginW} W spare` : p?.mode === "negative" ? ` · charger ${-p.marginW} W short` : "";
-  return `${b.level}%${source}${margin}${b.lowPower ? " · low power" : ""}`;
+  const c = b.charger;
+  const charger = c?.state === "no-pd" ? ` · 5 V USB, no fast charging (${c.watts} W)` : c?.state === "pd-low" ? ` · charger only ${c.watts} W` : "";
+  return `${b.level}%${source}${margin}${charger}${b.lowPower ? " · low power" : ""}`;
 }
 
 export interface GuardReading {
@@ -77,11 +80,56 @@ export interface GuardReading {
   headroomGB: number;
 }
 
+/** Argo's power-save mode (backend/mesh/store.ts MeshPowerSave); since and reason only while on. */
+export interface PowerSaveReading {
+  on: boolean;
+  since?: string;
+  reason?: "battery" | "charger-short" | "no-pd" | "manual";
+}
+
+/** One line for a device in power-save, or "" when it is not. */
+export function powerSaveLine(p: PowerSaveReading | undefined): string {
+  if (!p?.on) return "";
+  const why = { battery: "on battery", "charger-short": "charger can't keep up", "no-pd": "no USB-C Power Delivery", manual: "switched on by hand" }[p.reason ?? "manual"];
+  return `Power-save: ${why} · heavy work waits`;
+}
+
 /** One line from Argo's guard: what this host offers the mesh right now. */
 export function guardLine(g: GuardReading): string {
   const slots = `${g.slots} agent slot${g.slots === 1 ? "" : "s"}`;
   const label = { open: "open", full: "full", limited: "light work only", closed: "closed to new work" }[g.admission];
   return `Argo guard: ${label} · ${slots} · ${g.headroomGB} GB free`;
+}
+
+export type PostureStatus = "ok" | "warn" | "fail" | "unknown";
+export interface PostureReading {
+  at: string;
+  items: Partial<Record<"disk" | "firewall" | "updates" | "integrity" | "tailkey" | "argo" | "sharing", PostureStatus>>;
+}
+
+const POSTURE_LABEL: Record<keyof PostureReading["items"], string> = {
+  disk: "disk encryption",
+  firewall: "firewall",
+  updates: "automatic updates",
+  integrity: "system integrity",
+  tailkey: "tailnet key",
+  argo: "Argo version",
+  sharing: "sharing services",
+};
+
+/**
+ * One line from `argo posture` (docs/DEVICE_SECURITY_BASELINE.md): how many checks pass and which need a look.
+ * "not read" is a check Argo could not make, never counted as passing. Details and fixes: `argo posture` on the device.
+ */
+export function postureLine(p: PostureReading): string {
+  const ids = Object.keys(POSTURE_LABEL) as Array<keyof PostureReading["items"]>;
+  const seen = ids.filter((id) => p.items[id]);
+  const names = (s: PostureStatus) => seen.filter((id) => p.items[id] === s).map((id) => POSTURE_LABEL[id]);
+  const parts = [`Security: ${names("ok").length} of ${seen.length} checks ok`];
+  if (names("fail").length) parts.push(`failing: ${names("fail").join(", ")}`);
+  if (names("warn").length) parts.push(`warning: ${names("warn").join(", ")}`);
+  if (names("unknown").length) parts.push(`not read: ${names("unknown").join(", ")}`);
+  return parts.join(" · ");
 }
 
 /**

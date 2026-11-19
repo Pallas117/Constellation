@@ -37,7 +37,7 @@ Flow, all in CSS:
 ## How it runs itself
 
 ```
-cron every 15 min ──► worker/feeds.js ──► KV (feed:launches, feed:weather)
+cron every 5 min ──► worker/feeds.js ──► KV (feed:launches, feed:weather)
                        │  Launch Library 2 (every 30 min)          ▲
                        │  NOAA SWPC scales, Kp, solar wind         │ read only
 visitor ──► Cloudflare ─┬─ static file (free, no Worker run) ──────┘
@@ -79,15 +79,17 @@ customer ── Manage billing ──► Stripe billing portal (cards, invoices,
 ```
 
 **Packages and prices** come from the sales plan ("Gauss Aurora sales feature list and onboarding
-flow", Gauss Aurora repo `docs/SALES_FEATURE_LIST_AND_ONBOARDING.md`, 21 Aug 2026). They live in
-`worker/tiers.js`:
+flow", Gauss Aurora repo `docs/SALES_FEATURE_LIST_AND_ONBOARDING.md`, 21 Aug 2026), converted from pounds to US dollars
+(Josh, 3 Nov 2026: one currency everywhere) at $1.34 to the pound (ECB reference rate, 2 Nov 2026) and rounded. Charges and
+invoices are in USD; a UK Stripe account paying out in pounds adds a currency-conversion fee (check Stripe's UK pricing
+before the first charge). They live in `worker/tiers.js`:
 
 | Package | Range | Paid how |
 |---|---|---|
-| Design-partner pilot | £20k–£40k per pilot | One Stripe payment, or one invoice if allowed |
-| Fleet Integration | £60k–£125k a year | Yearly Stripe subscription, or a yearly invoice if allowed |
-| Mission integration | £120k–£300k one-off | Invoiced by milestone |
-| Flight Candidate Adapter (gated) | £750k–£2.5m one-off | Invoiced by milestone |
+| Design-partner pilot | $25k–$50k per pilot | One Stripe payment, or one invoice if allowed |
+| Fleet Integration | $80k–$160k a year | Yearly Stripe subscription, or a yearly invoice if allowed |
+| Mission integration | $150k–$400k one-off | Invoiced by milestone |
+| Flight Candidate Adapter (gated) | $1m–$3.3m one-off | Invoiced by milestone |
 
 Each customer pays a fixed quote that you set inside the range when you approve them. The public
 pages and the workspace don't say how payment is taken (a test checks); the privacy notice still
@@ -201,7 +203,7 @@ old `argo-glyph-provisional.svg` stays only while the Access login page set-up (
   `https://lightbound.space/terms/` in Stripe's public business details. Checkout fails until that's set.
 - **UK VAT:**
   - Lightbound must register once UK taxable turnover passes £90,000 in 12 months (gov.uk, VAT Notice 700/1). Three
-    Gauss pilots at £20k–£40k would do it.
+    Gauss pilots near the top of $25k–$50k (about £19k–£37k each at $1.34 to the pound) would do it.
   - The standard rate is 20% (gov.uk/vat-rates).
   - Prices shown to UK consumers should include VAT once registered (UNVERIFIED: check with the accountant).
   - Self-serve plans are UK-only for now: a UK seller owes EU VAT from the first sale to an EU consumer (see Gauss
@@ -424,7 +426,7 @@ Worker shares Cloudflare's outbound IPs with other users who use them up: the fi
 HTTP 429 on every refresh, while the same URL answered from a home connection. With `LL2_API_KEY` set (a key from
 The Space Devs' Patreon), the Worker sends `Authorization: Token <key>` to `ll.thespacedevs.com` and to no other
 host, never follows a redirect with it, and ignores a value that isn't a plain token. The key is never stored or
-logged. Setting the secret takes effect at once; the next cron run (within 15 minutes) retries the feed, and
+logged. Setting the secret takes effect at once; the next cron run (within 5 minutes) retries the feed, and
 `/api/launches` turns `live`. Without the key, the page says the launch data is offline.
 
 Each deploy, from a clean checkout of the exact commit whose gates passed (`npm run test:website`, and
@@ -438,7 +440,7 @@ npm run smoke:website -- https://lightbound-site.<account>.workers.dev $(git rev
 
 `smoke:website` checks every public page and its security headers, the 404s, the email routes, the feeds,
 and that `/api/health` names the commit you meant to deploy. The first visit after a deploy fetches the feeds
-once; after that the cron runs every 15 minutes.
+once; after that the cron runs every 5 minutes (space weather each run; the slower feeds when they are due).
 
 **Then lightbound.space** (the DNS change, so only with Josh's go-ahead):
 1. Uncomment `routes` in `wrangler.jsonc`, deploy again, and run the smoke check against `https://lightbound.space`.
@@ -530,3 +532,6 @@ site:dev` previews the launch.
   when `LL2_API_KEY` is set (Launch, above); check `/api/launches` turns `live` after setting it.
 - Cloudflare's default `Cache-Control` for `site.css` and the pages (expected: revalidate every
   time). Check with `curl -I` after the first deploy.
+
+## Evidence delivery (full release only)
+After an offline pilot, an admin attaches the signed evidence pack to an account in `/app/admin/` (Evidence, per account): the PDF, the pack JSON and the public keyring. Only `.pdf` that starts `%PDF-` and `.json` that parses are accepted, at most 8 MB each and 10 files per account, stored in the DATA namespace (`evid:<email>:<id>`). The account owner sees them in `/app/` and downloads them from `/app/evidence/<id>` (attachment, nosniff, private, no-store); the key is built from the signed-in address, so another account's id answers 404. The card shows the offline check from `docs/EVIDENCE_SIGNING.md`. Removing an account removes its files. A public release answers 404 for all of it.

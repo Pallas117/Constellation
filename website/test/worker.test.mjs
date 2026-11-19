@@ -13,10 +13,11 @@ import { RECORDED_AT, fixture, makeFetch } from "./fixtures/fetch.mjs";
 import { memoryKV } from "./fixtures/kv.mjs";
 import { makeAccess } from "./fixtures/access.mjs";
 import { accessIdentity, isAdmin, isStaff } from "../worker/auth.js";
-import { getAccount, listApplications, putAccount, saveApplication, senderOf } from "../worker/data.js";
+import { getAccount, getApplication, listApplications, putAccount, saveApplication, senderOf } from "../worker/data.js";
 import { applyEvent, createPortal, formEncode, signPayload, verifySignature } from "../worker/stripe.js";
-import { billingStatus, isAcademicEmail } from "../worker/tiers.js";
+import { TIERS, billingStatus, isAcademicEmail } from "../worker/tiers.js";
 import { APP_CSP } from "../worker/headers.js";
+import { eduCard } from "../worker/app.js";
 import { formatIn, renderPlanner, tzOffset, zonedToUtc } from "../worker/timezones.js";
 import { listCalls, rsvp, saveCall } from "../worker/calls.js";
 import { PROGRAMMES_URL, newsJson, programmesCsv, ukriXml, uksaAtom } from "./fixtures/opportunities.mjs";
@@ -79,8 +80,9 @@ test("refresh: fills KV, then leaves fresh feeds alone (LL2 allows 15 calls an h
   assert.deepEqual([first.news, first.ukri, first.uksa, first.programmes], ["updated", "updated", "updated", "not configured"]);
   assert.equal(f.calls.length, 9, "six for the public pages, three for members (news, UKRI, UKSA)");
   assert.equal((await readFeed(env, "launches")).data.length, 10);
-  assert.deepEqual(core(await refreshFeeds(env, { fetchImpl: f, now: RECORDED_AT + 10 * MIN })), { launches: "fresh", weather: "fresh", events: "fresh" });
+  assert.deepEqual(core(await refreshFeeds(env, { fetchImpl: f, now: RECORDED_AT + 2 * MIN })), { launches: "fresh", weather: "fresh", events: "fresh" });
   assert.equal(f.calls.length, 9, "no upstream calls while fresh");
+  assert.deepEqual(core(await refreshFeeds(env, { fetchImpl: f, now: RECORDED_AT + 5 * MIN })), { launches: "fresh", weather: "updated", events: "fresh" }, "space weather every 5 minutes");
   assert.deepEqual(core(await refreshFeeds(env, { fetchImpl: f, now: RECORDED_AT + 15 * MIN })), { launches: "fresh", weather: "updated", events: "fresh" });
   assert.deepEqual(core(await refreshFeeds(env, { fetchImpl: f, now: RECORDED_AT + 30 * MIN })), { launches: "updated", weather: "updated", events: "fresh" });
   const later = await refreshFeeds(env, { fetchImpl: f, now: RECORDED_AT + 180 * MIN });
@@ -158,7 +160,7 @@ test("refresh: the optional LL2 key goes to LL2 only, in its Token header, and n
 
 test("feed state: live, then stale (still shown, labelled), offline when there is nothing", () => {
   const rec = { data: [1], fetchedAt: new Date(RECORDED_AT).toISOString() };
-  assert.equal(feedState("weather", rec, RECORDED_AT + 30 * MIN).state, "live");
+  assert.equal(feedState("weather", rec, RECORDED_AT + 10 * MIN).state, "live");
   assert.equal(feedState("weather", rec, RECORDED_AT + (FEEDS.weather.staleMin + 1) * MIN).state, "stale");
   assert.equal(feedState("launches", rec, RECORDED_AT + 100 * MIN).state, "live");
   assert.equal(feedState("launches", null).state, "offline");
@@ -315,10 +317,20 @@ test("public release: each form's page asks by email instead, and carries the pa
     assert.match(page, /href="mailto:jzwnathan@lightbound\.uk\?subject=[^"]+&amp;body=/, `${path}: a mailto with the questions`);
   }
   const fleet = await (await call("/gauss/apply/?plan=fleet_integration&sent=1")).text();
-  assert.match(fleet, /<li>Package: Fleet Integration · £60k–£125k a year<\/li>/);
+  assert.match(fleet, /<li>Package: Fleet Integration · \$80k–\$160k a year<\/li>/);
   assert.match(fleet, /subject=Gauss%20brief%20%C2%B7%20Fleet%20Integration&amp;/);
   assert.doesNotMatch(fleet, /RECEIVED/, "nothing was sent, so nothing says so");
-  assert.match(await (await call("/gauss/apply/?plan=%22%3E%3Cscript%3E")).text(), /<li>Package: Pilot · £20k–£40k<\/li>/, "unknown package: the pilot");
+  assert.match(await (await call("/gauss/apply/?plan=%22%3E%3Cscript%3E")).text(), /<li>Package: Pilot · \$25k–\$50k<\/li>/, "unknown package: the pilot");
+});
+
+test("client links, public release: plan and src show in the mailto subject; bad values are ignored, never echoed", async () => {
+  const page = await (await call("/gauss/apply/?plan=fleet_integration&src=acme-intro")).text();
+  assert.match(page, /subject=Gauss%20brief%20%C2%B7%20Fleet%20Integration%20%C2%B7%20src%20acme-intro&amp;/);
+  for (const bad of ["%22%3E%3Cscript%3Ex", "UPPER", "-x", "a".repeat(25), "a%20b"]) {
+    const res = await (await call(`/gauss/apply/?plan=pilot&src=${bad}`)).text();
+    assert.doesNotMatch(res, /<script|UPPER|aaaaaaaa|src%20/, `src ${bad} ignored`);
+    assert.match(res, /subject=Gauss%20brief%20%C2%B7%20Pilot&amp;/);
+  }
 });
 
 test("public release: pages offer pilots and an email route; later plans are in development; nothing links to sign-in", async () => {
@@ -390,7 +402,7 @@ const post = (path, body, headers = {}) => new Request(`https://lightbound.space
   headers: { origin: "https://lightbound.space", "content-type": "application/x-www-form-urlencoded", "cf-connecting-ip": "203.0.113.9", ...headers },
 });
 const goodGauss = { kind: "gauss", name: "Ops Example", email: "ops@example.test", org: "Example Space", role: "Mission ops",
-  missionType: "Earth observation", stage: "Launched and operating", groundStack: "Yamcs / XTCE", dataAccess: "Historical packet archive",
+  missionType: "Earth observation", stage: "Launched and operating", groundStack: "Yamcs / XTCE", logSource: "Embedded Linux module (for example NVIDIA Jetson)", logFormat: "CSV", dataAccess: "Historical packet archive",
   plan: "fleet_integration", timeline: "This quarter", message: "Two smallsats flying ONNX models; we want evidence after the May storm.", consent: "yes" };
 async function send(env, request) {
   const { ctx, settle } = context();
@@ -408,9 +420,25 @@ test("apply: a good pilot brief is stored and redirected (post/redirect/get), wi
   assert.deepEqual([app.kind, app.email, app.plan, app.status], ["gauss", "ops@example.test", "fleet_integration", "new"]);
   const stored = env.DATA.map.get(`app:${app.id}`);
   assert.equal(JSON.parse(stored.v).groundStack, "Yamcs / XTCE", "readiness answers kept");
+  assert.equal(JSON.parse(stored.v).logSource, "Embedded Linux module (for example NVIDIA Jetson)", "what runs the onboard model is kept");
+  assert.equal(JSON.parse(stored.v).logFormat, "CSV", "the log format is kept");
   assert.ok(stored.exp - Date.now() / 1000 > 179 * 86400 && stored.exp - Date.now() / 1000 <= 180 * 86400);
   assert.match(await (await send(env, new Request("https://lightbound.space/gauss/apply/?sent=1"))).text(), /we'll reply with a fixed quote/);
   assert.match(await (await send(env, new Request("https://lightbound.space/constellation/apply/?sent=1"))).text(), /Membership is free and by invitation/);
+});
+
+test("apply: the log questions are required and only known answers are accepted; none leads the answer", async () => {
+  const { env } = await appEnv();
+  for (const [field, value] of [["logSource", ""], ["logFormat", ""], ["logSource", "A thing we made up"], ["logFormat", "<b>CSV</b>"]]) {
+    const res = await send(env, post("/api/apply", { ...goodGauss, [field]: value }));
+    assert.notEqual(res.status, 303, `${field}=${JSON.stringify(value)} is refused`);
+    assert.equal((await listApplications(env)).length, 0, "nothing stored");
+  }
+  const page = await (await send(env, new Request("https://lightbound.space/gauss/apply/"))).text();
+  for (const name of ["groundStack", "logSource", "logFormat"]) {
+    const select = page.match(new RegExp(`<select id="f-${name}"[^>]*>([\\s\\S]*?)</select>`))?.[1] ?? "";
+    assert.match(select, /<option value="Not sure" selected>/, `${name}: the default is "Not sure", not a stack we'd like to hear`);
+  }
 });
 
 test("apply: bad input comes back with errors and the values escaped; nothing stored", async () => {
@@ -442,6 +470,23 @@ test("apply page: the package in the link is preselected; unknown values fall ba
   const { env } = await appEnv();
   assert.match(await (await send(env, new Request("https://lightbound.space/gauss/apply/?plan=mission_integration"))).text(), /<option value="mission_integration" selected>/);
   assert.match(await (await send(env, new Request("https://lightbound.space/gauss/apply/?plan=%22%3E%3Cscript%3E"))).text(), /<option value="pilot" selected>/);
+});
+
+test("client links: src is kept as a hidden field, stored with the application, shown to admin; bad src is dropped", async () => {
+  const { env, access } = await appEnv();
+  const page = await (await send(env, new Request("https://lightbound.space/gauss/apply/?plan=pilot&src=acme-intro"))).text();
+  assert.match(page, /<input type="hidden" name="src" value="acme-intro">/);
+  assert.doesNotMatch(await (await send(env, new Request("https://lightbound.space/gauss/apply/?src=%22%3E%3Cb%3E"))).text(), /name="src"/);
+  assert.equal((await send(env, post("/api/apply", { ...goodGauss, src: "acme-intro" }))).status, 303);
+  assert.equal((await send(env, post("/api/apply", { ...goodGauss, email: "b@example.test", src: "<b>x</b>" }))).status, 303);
+  const apps = await listApplications(env);
+  const stored = await Promise.all(apps.map((a) => getApplication(env, a.id)));
+  assert.deepEqual(stored.map((a) => a.src).sort(), ["acme-intro", undefined]);
+  const admin = await (await send(env, await as(access, "boss@example.test", "/app/admin/"))).text();
+  assert.match(admin, /from link: acme-intro/);
+  assert.match(admin, /Links to send a client/);
+  for (const t of TIERS) assert.ok(admin.includes(`<code>https://lightbound.space/gauss/apply/?plan=${t.id}</code>`), `link for ${t.id}`);
+  assert.doesNotMatch(admin, /<script/);
 });
 
 // ---- Workspace, billing and admin ----
@@ -497,7 +542,7 @@ test("workspace: an approved quote shows Pay; checkout goes to Stripe with the q
   const res = await send(env, await as(access, "ops@example.test", "/app/"));
   assert.equal(res.headers.get("content-security-policy"), APP_CSP);
   const page = await res.text();
-  assert.match(page, /<p class="big">£28,000 one-off<\/p><p class="t">Payment due<\/p>/);
+  assert.match(page, /<p class="big">\$28,000 one-off<\/p><p class="t">Payment due<\/p>/);
   assert.match(page, /<form method="post" action="\/app\/checkout" class="inline"><button class="btn">Pay now<\/button><\/form>/);
   assert.doesNotMatch(page, /Stripe|securely|card details|Request an invoice/, "no payment-method talk; invoices only where allowed");
   assert.doesNotMatch(page, /Open the Gauss console|Console link/, "locked until paid");
@@ -508,7 +553,7 @@ test("workspace: an approved quote shows Pay; checkout goes to Stripe with the q
   const { url, body, auth } = stripe.calls[0];
   assert.equal(url, "https://api.stripe.com/v1/checkout/sessions");
   assert.equal(auth, "Bearer test-placeholder");
-  assert.deepEqual([body.get("mode"), body.get("line_items[0][price_data][currency]"), body.get("line_items[0][price_data][unit_amount]")], ["payment", "gbp", "2800000"]);
+  assert.deepEqual([body.get("mode"), body.get("line_items[0][price_data][currency]"), body.get("line_items[0][price_data][unit_amount]")], ["payment", "usd", "2800000"]);
   assert.deepEqual([body.get("client_reference_id"), body.get("metadata[email]"), body.get("metadata[plan]"), body.get("customer_creation")], ["ops@example.test", "ops@example.test", "pilot", "always"]);
   assert.equal(body.get("success_url"), "https://lightbound.space/app/?checkout=success");
   assert.equal((await withFetch(stripe, async () => send(env, await formPost(access, "ops@example.test", "/app/checkout", {}, "https://evil.example")))).status, 403);
@@ -553,7 +598,7 @@ test("invoices: only where an admin allows them; Stripe emails one invoice; paid
   const [cust, inv, item] = stripe.calls.map((c) => c.body);
   assert.deepEqual([cust.get("email"), cust.get("name")], ["fleet@example.test", "Example Ltd"]);
   assert.deepEqual([inv.get("customer"), inv.get("collection_method"), inv.get("days_until_due"), inv.get("metadata[plan]")], ["cus_new", "send_invoice", "30", "fleet_integration"]);
-  assert.deepEqual([item.get("invoice"), item.get("amount"), item.get("currency"), item.get("description")], ["in_1", "7500000", "gbp", "Gauss: Fleet Integration, 12 months"]);
+  assert.deepEqual([item.get("invoice"), item.get("amount"), item.get("currency"), item.get("description")], ["in_1", "7500000", "usd", "Gauss: Fleet Integration, 12 months"]);
   let acct = await getAccount(env, "fleet@example.test");
   assert.deepEqual([acct.billing.status, acct.billing.customer, acct.billing.invoice], ["invoice_open", "cus_new", "in_1"]);
   const sent = await (await send(env, await as(access, "fleet@example.test", "/app/?invoice=sent"))).text();
@@ -640,13 +685,13 @@ test("admin: only ADMIN_EMAILS; approval needs a quote inside the published rang
   assert.match(adminPage, /Earth observation · Launched and operating · Yamcs \/ XTCE/);
   const [app] = await listApplications(env);
   const decide = async (email, quote, origin) => send(env, await formPost(access, email, "/app/admin/decide", { id: app.id, decision: "approve", tier: "fleet_integration", quote }, origin));
-  assert.equal((await decide("ops@example.test", "75000")).status, 403, "customers cannot approve");
-  assert.equal((await decide("boss@example.test", "75000", "https://evil.example")).status, 403, "cross-site");
-  assert.equal((await decide("boss@example.test", "15000")).headers.get("location"), "/app/admin/?error=quote", "below the £60k floor");
+  assert.equal((await decide("ops@example.test", "100000")).status, 403, "customers cannot approve");
+  assert.equal((await decide("boss@example.test", "100000", "https://evil.example")).status, 403, "cross-site");
+  assert.equal((await decide("boss@example.test", "15000")).headers.get("location"), "/app/admin/?error=quote", "below the $80k floor");
   assert.equal(await getAccount(env, "ops@example.test"), null);
-  assert.equal((await decide("boss@example.test", "75000")).status, 303);
+  assert.equal((await decide("boss@example.test", "100000")).status, 303);
   const acct = await getAccount(env, "ops@example.test");
-  assert.deepEqual([acct.tier, acct.quote, acct.billing.status, acct.updatedBy], ["fleet_integration", 7_500_000, "due", "boss@example.test"]);
+  assert.deepEqual([acct.tier, acct.quote, acct.billing.status, acct.updatedBy], ["fleet_integration", 10_000_000, "due", "boss@example.test"]);
   assert.equal((await listApplications(env))[0].status, "approved");
 });
 
@@ -749,12 +794,12 @@ test("education departments: a yearly quote from admin, an invoice with 30 days 
   await send(env, await formPost(access, "boss@example.test", "/app/admin/decide", { id: app.id, decision: "department", quote: "3000" }));
   let lee = await getAccount(env, "lee@physics.example.org");
   assert.deepEqual([lee.edu.plan, lee.edu.quote, lee.edu.billing.status, lee.org, lee.tier ?? null], ["department", 300_000, "due", "Example University", null]);
-  assert.match(await (await send(env, await as(access, "lee@physics.example.org", "/app/"))).text(), /£3,000 a year[\s\S]*Request the invoice/);
+  assert.match(await (await send(env, await as(access, "lee@physics.example.org", "/app/"))).text(), /\$3,000 a year[\s\S]*Request the invoice/);
   const stripe = stripeMock();
   const inv = await withFetch(stripe, async () => send(env, await formPost(access, "lee@physics.example.org", "/app/edu/invoice")));
   assert.equal(inv.headers.get("location"), "/app/?invoice=sent");
   const item = stripe.calls.find((c) => c.url.endsWith("/v1/invoiceitems")).body;
-  assert.deepEqual([item.get("amount"), item.get("currency"), item.get("description"), item.get("metadata[product]"), item.get("metadata[offer]")], ["300000", "gbp", "Gauss for Education: department licence, 12 months", "edu", "department"]);
+  assert.deepEqual([item.get("amount"), item.get("currency"), item.get("description"), item.get("metadata[product]"), item.get("metadata[offer]")], ["300000", "usd", "Gauss for Education: department licence, 12 months", "edu", "department"]);
   lee = await getAccount(env, "lee@physics.example.org");
   assert.equal(lee.edu.billing.status, "invoice_open");
   assert.match(await (await send(env, await as(access, "lee@physics.example.org", "/app/edu/"))).text(), /Classroom\./, "open while the invoice is within its terms");
@@ -1209,4 +1254,188 @@ test("canonical origin: plain HTTP and www on the custom domain redirect to http
   assert.match(body, /^Contact: mailto:jzwnathan@lightbound\.uk$/m);
   assert.match(body, /^Canonical: https:\/\/lightbound\.space\/\.well-known\/security\.txt$/m);
   assert.ok(Date.parse(SECURITY_TXT_EXPIRES) > Date.now() + 90 * 86_400_000, "security.txt expiry is at least 90 days away");
+});
+
+// ---- Offline pilot steps in the workspace ----
+test("workspace: the pilot's steps show the current step with dates, and how to send logs", async () => {
+  const { env, access } = await appEnv();
+  await putAccount(env, { email: "ops@example.test", tier: "pilot", billing: { status: "due" } }, "test");
+  let page = await (await send(env, await as(access, "ops@example.test", "/app/"))).text();
+  assert.match(page, /Now: Approved \(quote\)/, "no quote yet");
+  await putAccount(env, { email: "ops@example.test", tier: "pilot", quote: 2_800_000, approvedAt: "2026-11-03T00:00:00.000Z", billing: { status: "due" } }, "test");
+  page = await (await send(env, await as(access, "ops@example.test", "/app/"))).text();
+  assert.match(page, /<li class="done">Brief received<\/li><li class="done">Approved \(quote\) <span class="muted">· 3 Nov 2026<\/span><\/li><li class="here" aria-current="step">Paid<\/li><li class="">Logs received<\/li>/);
+  assert.doesNotMatch(page, /Stripe|securely|card details/, "no payment-method talk");
+  await putAccount(env, { email: "ops@example.test", tier: "pilot", quote: 2_800_000, approvedAt: "2026-11-03T00:00:00.000Z", billing: { status: "paid", updatedAt: "2026-11-05T00:00:00.000Z" } }, "test");
+  page = await (await send(env, await as(access, "ops@example.test", "/app/"))).text();
+  assert.match(page, /Now: Logs received/);
+  assert.match(page, /Paid <span class="muted">· 5 Nov 2026<\/span>/);
+  assert.match(page, /href="mailto:jzwnathan@lightbound\.uk\?subject=Gauss%20pilot%3A%20inference%20logs"/);
+  assert.match(page, /CSV, JSON or JSONL/);
+  assert.match(page, /href="\/gauss\/evidence\/"/);
+  assert.match(page, /There is no upload form yet/);
+  await putAccount(env, { email: "ops@example.test", tier: "pilot", quote: 2_800_000, billing: { status: "paid" }, logsAt: "2026-11-10T00:00:00.000Z", evidenceAt: "2026-11-16T00:00:00.000Z" }, "test");
+  page = await (await send(env, await as(access, "ops@example.test", "/app/"))).text();
+  assert.match(page, /Now: Evidence ready/);
+  assert.match(page, /Logs received <span class="muted">· 10 Nov 2026<\/span>/);
+  assert.match(page, /Evidence ready <span class="muted">· 16 Nov 2026<\/span>/);
+  assert.doesNotMatch(page, /Send your logs by email/, "instructions go once logs are in");
+});
+
+test("admin: sets logs received and evidence ready for an account, keeps the dates, and clears them when unticked", async () => {
+  const { env, access } = await appEnv();
+  const form = async (body) => send(env, await formPost(access, "boss@example.test", "/app/admin/account", body));
+  await form({ email: "lead@example.test", tier: "pilot", quote: "30000", action: "save" });
+  let a = await getAccount(env, "lead@example.test");
+  assert.deepEqual([typeof a.approvedAt, a.logsAt, a.evidenceAt], ["string", null, null]);
+  await form({ email: "lead@example.test", tier: "pilot", quote: "30000", logs: "yes", action: "save" });
+  a = await getAccount(env, "lead@example.test");
+  assert.equal(typeof a.logsAt, "string");
+  const first = [a.approvedAt, a.logsAt];
+  await form({ email: "lead@example.test", tier: "pilot", quote: "30000", logs: "yes", evidence: "yes", action: "save" });
+  a = await getAccount(env, "lead@example.test");
+  assert.deepEqual([a.approvedAt, a.logsAt], first, "dates stay once set");
+  assert.equal(typeof a.evidenceAt, "string");
+  const admin = await (await send(env, await as(access, "boss@example.test", "/app/admin/"))).text();
+  assert.match(admin, /name="logs" value="yes" checked> Logs received/);
+  assert.match(admin, /name="evidence" value="yes" checked> Evidence ready/);
+  await form({ email: "lead@example.test", tier: "pilot", quote: "30000", action: "save" });
+  a = await getAccount(env, "lead@example.test");
+  assert.deepEqual([a.logsAt, a.evidenceAt], [null, null]);
+  await form({ email: "lead@example.test", tier: "pilot", quote: "30000", logs: "yes", evidence: "yes", pilot: "", action: "save" });
+  const before = await getAccount(env, "lead@example.test");
+  const again = await form({ email: "lead@example.test", action: "add" });
+  assert.equal(again.status, 409, "the add form refuses an address that already has an account");
+  assert.match(await again.text(), /already has an account/);
+  assert.deepEqual(await getAccount(env, "lead@example.test"), before, "nothing is overwritten");
+  assert.match(await (await send(env, await as(access, "boss@example.test", "/app/admin/"))).text(), /name="action" value="add">Add account/);
+  assert.equal((await form({ email: "fresh@example.test", tier: "pilot", quote: "30000", action: "add" })).status, 303, "a new address is added");
+  assert.equal((await getAccount(env, "fresh@example.test")).tier, "pilot");
+  const other = await send(env, await formPost(access, "ops@example.test", "/app/admin/account", { email: "lead@example.test", logs: "yes", action: "save" }));
+  assert.equal(other.status, 403, "only admin");
+});
+
+// ---- Evidence delivery: signed packs attached by admin, downloaded only by their own account ----
+const upload = async (access, email, to, name, bytes, type = "application/octet-stream") => {
+  const fd = new FormData();
+  fd.set("email", to);
+  fd.set("file", new File([bytes], name, { type }));
+  return send(access.env.__env, await as(access, email, "/app/admin/evidence", { method: "POST", body: fd, headers: { origin: "https://lightbound.space" } }));
+};
+
+async function evidenceEnv() {
+  const { env, access } = await appEnv();
+  access.env.__env = env;
+  await putAccount(env, { email: "ops@example.test", tier: "pilot", billing: { status: "paid", paidUntil: "2099-01-01T00:00:00.000Z" } }, "test");
+  await putAccount(env, { email: "other@example.test", tier: "pilot", billing: { status: "paid", paidUntil: "2099-01-01T00:00:00.000Z" } }, "test");
+  return { env, access };
+}
+const PDF = new TextEncoder().encode("%PDF-1.7\n%test pack\n");
+const PACK = new TextEncoder().encode(JSON.stringify({ pack: "x", signature: "y" }));
+
+test("evidence: admin attaches a PDF and pack JSON; the owner lists and downloads them as attachments, nosniff", async () => {
+  const { env, access } = await evidenceEnv();
+  assert.equal((await upload(access, "boss@example.test", "ops@example.test", "../../Pack Report (v1).PDF", PDF)).headers.get("location"), "/app/admin/");
+  assert.equal((await upload(access, "boss@example.test", "ops@example.test", "pack.json", PACK)).headers.get("location"), "/app/admin/");
+  const page = await (await send(env, await as(access, "ops@example.test", "/app/"))).text();
+  assert.match(page, /Evidence pack/);
+  assert.match(page, /Pack-Report-v1\.pdf/, "the name is sanitised: no path, no spaces or brackets");
+  assert.match(page, /npm run trust:verify -- pack\.json --pdf pack\.pdf --keyring signing-keys\.json/);
+  const links = [...page.matchAll(/href="\/app\/evidence\/([a-z0-9]+)"/g)].map((m) => m[1]);
+  assert.equal(links.length, 2);
+  for (const id of links) {
+    const res = await send(env, await as(access, "ops@example.test", `/app/evidence/${id}`));
+    assert.equal(res.status, 200);
+    assert.match(res.headers.get("content-disposition"), /^attachment; filename="[A-Za-z0-9._-]+\.(pdf|json)"$/);
+    assert.equal(res.headers.get("x-content-type-options"), "nosniff");
+    assert.match(res.headers.get("content-type"), /^application\/(pdf|json)$/);
+    assert.equal(res.headers.get("cache-control"), "private, no-store");
+  }
+  const body = await (await send(env, await as(access, "ops@example.test", `/app/evidence/${links[0]}`))).arrayBuffer();
+  assert.ok(body.byteLength === PDF.length || body.byteLength === PACK.length, "the stored bytes come back whole");
+  assert.match(await (await send(env, await as(access, "boss@example.test", "/app/admin/"))).text(), /Evidence \(2\)/);
+});
+
+test("evidence: another account gets 404, signed-out gets 401, and a non-admin cannot attach", async () => {
+  const { env, access } = await evidenceEnv();
+  await upload(access, "boss@example.test", "ops@example.test", "pack.json", PACK);
+  const id = /href="\/app\/evidence\/([a-z0-9]+)"/.exec(await (await send(env, await as(access, "ops@example.test", "/app/"))).text())[1];
+  assert.equal((await send(env, await as(access, "other@example.test", `/app/evidence/${id}`))).status, 404);
+  assert.equal((await send(env, await as(access, "boss@example.test", `/app/evidence/${id}`))).status, 404, "even an admin only sees their own account's files here");
+  assert.doesNotMatch(await (await send(env, await as(access, "other@example.test", "/app/"))).text(), /Evidence pack/);
+  assert.equal((await send(env, new Request(`https://lightbound.space/app/evidence/${id}`))).status, 401);
+  assert.equal((await send(env, await as(access, "ops@example.test", "/app/evidence/..%2F..%2Facct"))).status, 404);
+  assert.equal((await upload(access, "other@example.test", "other@example.test", "pack.json", PACK)).status, 403);
+  assert.equal((await listEvidenceKeys(env)).length, 1);
+});
+const listEvidenceKeys = async (env) => (await env.DATA.list({ prefix: "evid:" })).keys;
+
+test("evidence: anything that isn't a real PDF or JSON, or is too big, is refused; the account must exist", async () => {
+  const { env, access } = await evidenceEnv();
+  const code = async (to, name, bytes) => new URL((await upload(access, "boss@example.test", to, name, bytes)).headers.get("location"), "https://x.test").searchParams.get("error");
+  assert.equal(await code("ops@example.test", "run.exe", new TextEncoder().encode("MZ")), "evidence-type");
+  assert.equal(await code("ops@example.test", "fake.pdf", new TextEncoder().encode("<html>")), "evidence-type", "name says PDF, content is not");
+  assert.equal(await code("ops@example.test", "bad.json", new TextEncoder().encode("{nope")), "evidence-type");
+  assert.equal(await code("ops@example.test", "page.html", new TextEncoder().encode("<b>x</b>")), "evidence-type");
+  assert.equal(await code("ops@example.test", "big.pdf", new Uint8Array(8 * 1024 * 1024 + 100_000).fill(1)), "evidence-size");
+  assert.equal(await code("nobody@example.test", "pack.json", PACK), "evidence-none");
+  assert.equal((await listEvidenceKeys(env)).length, 0);
+  for (let i = 0; i < 10; i++) assert.equal(await code("ops@example.test", `p${i}.json`, PACK), null);
+  assert.equal(await code("ops@example.test", "p11.json", PACK), "evidence-full");
+  assert.match(await (await send(env, await as(access, "boss@example.test", "/app/admin/?error=evidence-type"))).text(), /only a PDF or a JSON file is accepted/);
+});
+
+test("evidence: admin can remove a file, and removing the account removes its files", async () => {
+  const { env, access } = await evidenceEnv();
+  await upload(access, "boss@example.test", "ops@example.test", "a.json", PACK);
+  await upload(access, "boss@example.test", "ops@example.test", "b.json", PACK);
+  const [first] = await listEvidenceKeys(env);
+  await send(env, await formPost(access, "boss@example.test", "/app/admin/evidence/delete", { email: "ops@example.test", id: first.name.split(":").pop() }));
+  assert.equal((await listEvidenceKeys(env)).length, 1);
+  await send(env, await formPost(access, "boss@example.test", "/app/admin/account", { email: "ops@example.test", action: "delete" }));
+  assert.equal((await listEvidenceKeys(env)).length, 0);
+});
+
+const countLists = (env) => { const real = env.DATA.list.bind(env.DATA); const calls = []; env.DATA.list = async (o) => { calls.push(o?.prefix); return real(o); }; return calls; };
+
+test("evidence: an account with no files costs no list() call on /app/ or /app/admin/, and the count follows add and remove", async () => {
+  const { env, access } = await evidenceEnv();
+  const calls = countLists(env);
+  assert.equal((await send(env, await as(access, "ops@example.test", "/app/"))).status, 200);
+  assert.equal((await send(env, await as(access, "boss@example.test", "/app/admin/"))).status, 200);
+  assert.equal(calls.filter((p) => p?.startsWith("evid:")).length, 0, "evidenceCount 0: the evidence prefix is never listed");
+  await upload(access, "boss@example.test", "ops@example.test", "a.json", PACK);
+  assert.equal((await getAccount(env, "ops@example.test")).evidenceCount, 1);
+  assert.equal((await listAccountsMeta(env)).find((a) => a.email === "ops@example.test").evidenceCount, 1, "the count is in the list metadata");
+  calls.length = 0;
+  assert.match(await (await send(env, await as(access, "ops@example.test", "/app/"))).text(), /Evidence pack/);
+  assert.equal(calls.filter((p) => p?.startsWith("evid:")).length, 1, "listed once, only for the account that has files");
+  const [first] = await listEvidenceKeys(env);
+  await send(env, await formPost(access, "boss@example.test", "/app/admin/evidence/delete", { email: "ops@example.test", id: first.name.split(":").pop() }));
+  assert.equal((await getAccount(env, "ops@example.test")).evidenceCount, 0);
+});
+const listAccountsMeta = async (env) => (await env.DATA.list({ prefix: "acct:" })).keys.map((k) => ({ email: k.name.slice(5), ...k.metadata }));
+
+test("evidence: a failing list() still renders /app/ and /app/admin/ without the evidence list", async () => {
+  const { env, access } = await evidenceEnv();
+  await upload(access, "boss@example.test", "ops@example.test", "a.json", PACK);
+  const real = env.DATA.list.bind(env.DATA);
+  env.DATA.list = async (o) => { if (o?.prefix?.startsWith("evid:")) throw new Error("KV list limit exceeded"); return real(o); };
+  const app = await send(env, await as(access, "ops@example.test", "/app/"));
+  assert.equal(app.status, 200);
+  assert.doesNotMatch(await app.text(), /Evidence pack/);
+  const admin = await send(env, await as(access, "boss@example.test", "/app/admin/"));
+  assert.equal(admin.status, 200);
+  assert.match(await admin.text(), /Evidence \(0\)/);
+});
+
+test("app: a backslash after the first slash is not a linkable invoice address", () => {
+  const card = (invoiceUrl) => eduCard({}, { email: "s@example.test", edu: { plan: "department", billing: { status: "invoice_open", invoiceUrl } } }, "s@example.test");
+  for (const bad of ["/\\evil.example", "//evil.example", "javascript:alert(1)", "http://x.test/"]) assert.doesNotMatch(card(bad), /View invoice/, bad);
+  for (const good of ["https://invoice.stripe.com/i/x", "/app/"]) assert.match(card(good), /View invoice/, good);
+});
+
+test("evidence: a public release keeps every evidence route closed", async () => {
+  const closed = { ...env, RELEASE: "public" };
+  for (const [path, method] of [["/app/evidence/abcdef12", "GET"], ["/app/admin/evidence", "POST"], ["/app/admin/evidence/delete", "POST"]]) assert.equal((await send(closed, new Request(`https://lightbound.space${path}`, { method }))).status, 404, `${method} ${path}`);
 });

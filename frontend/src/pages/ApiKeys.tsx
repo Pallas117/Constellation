@@ -63,7 +63,8 @@ function OrgKeys({ org, onChange }: { org: Org; onChange: () => void }) {
         {org.limits.api ? (
           <p className="text-sm text-muted-foreground">
             {org.limits.requestsPerMinute} requests/minute per key · {org.limits.requestsPerDay.toLocaleString()} requests/day for the
-            organisation · up to {Math.round(org.limits.maxLookbackMs / 3_600_000)}h of history per request
+            organisation · {org.limits.pointsPerDay.toLocaleString()} data points/day · up to{" "}
+            {Math.round(org.limits.maxLookbackMs / 3_600_000)}h of history per request
           </p>
         ) : (
           <div className="space-y-2 text-sm text-muted-foreground">
@@ -183,9 +184,14 @@ const ApiKeys = () => {
               for your organisation's usage report.
             </p>
           </div>
-          <Button asChild variant="outline">
-            <Link to="/">Live visualisation</Link>
-          </Button>
+          <div className="flex flex-wrap gap-2">
+            <Button asChild>
+              <Link to="/account/wire">Wire your logs</Link>
+            </Button>
+            <Button asChild variant="outline">
+              <Link to="/">Live visualisation</Link>
+            </Button>
+          </div>
         </div>
       </section>
 

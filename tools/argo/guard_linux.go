@@ -19,7 +19,11 @@ func sampleHost(ctx context.Context, _ bool) Sample {
 		s.Pressure = worse(s.Pressure, psiPressure(some, full))
 	}
 	s.Load1 = parseLoad(readFile("/proc/loadavg"))
-	if b := linuxBattery(readSupplies("/sys/class/power_supply")); b.Present {
+	supplies := readSupplies("/sys/class/power_supply")
+	if b := linuxBattery(supplies); b.Present {
+		if b.OnAC {
+			b.Adapter = linuxAdapter(supplies)
+		}
 		s.Batt = &b
 	}
 	return s
@@ -28,3 +32,6 @@ func sampleHost(ctx context.Context, _ bool) Sample {
 func memoryUsers(ctx context.Context) []Group {
 	return parsePSGroups(run(ctx, "ps", "-eo", "rss=,comm="))
 }
+
+// liveCall: no call detection on Linux hosts (headless mesh nodes).
+func liveCall(context.Context) string { return "" }
