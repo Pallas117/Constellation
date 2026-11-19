@@ -150,6 +150,8 @@ type Loop struct {
 	Fx      Effects
 	Out     func(string) // foreground output; nil in the LaunchAgent
 	Pushers []func(State)
+	// Link says which link the probe used and whether a better one is up (wiredlink.go); nil in tests.
+	Link func(ctx context.Context, lowSignal bool) LinkVia
 	// AppWatch turns on the app data watch (leak.go); only the real agent sets it, so tests
 	// never run lsof or nettop.
 	AppWatch bool
@@ -195,6 +197,13 @@ func (l Loop) Tick(ctx context.Context) State {
 	}
 	st.Gateway, st.GatewayMAC, st.PublicIP = snap.Gateway, snap.GatewayMAC, snap.PublicIP
 	st.Net = ScoreNet(snap)
+	if st.Low.Observe(sampleFor(snap, st.Net, st.Low), now) {
+		l.say("low-signal mode %s", map[bool]string{true: "on", false: "off"}[st.Low.On])
+	}
+	if l.Link != nil && snap.Online {
+		lv := l.Link(ctx, st.Low.On)
+		st.Via, st.Advice = lv.Via, lv.Advice
+	}
 	if fp != "" {
 		l.shield(ctx, &st, snap, fp)
 	}
@@ -205,7 +214,7 @@ func (l Loop) Tick(ctx context.Context) State {
 			l.resolve(&st, prev, now, "", fp)
 		}
 		if class != prev && !prev.Blocking() && prev != "" { // recoveries are notified by resolve
-			l.Fx.Notify("Argo: "+string(class), reason+"\n"+st.Net.Line())
+			l.Fx.Notify("Argo: "+string(class), reason+"\n"+st.Net.Line()+adviceSuffix(st))
 		}
 		st.Class, st.Reason = class, reason
 		l.finish(st)
@@ -231,7 +240,7 @@ func (l Loop) Tick(ctx context.Context) State {
 		case quiet > 0: // this network usually clears it by itself: say so only if it lasts longer
 			st.NotifyDue = now.Add(quiet)
 		default: // rate limit: only on class change
-			l.Fx.Notify("Argo: "+string(class), reason+"\n"+st.Net.Line()+fixHint(Plan(class, snap, st.Networks[fp].Fixes[class])))
+			l.Fx.Notify("Argo: "+string(class), reason+"\n"+st.Net.Line()+adviceSuffix(st)+fixHint(Plan(class, snap, st.Networks[fp].Fixes[class])))
 			st.Notified = true
 		}
 	}

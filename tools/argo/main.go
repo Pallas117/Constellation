@@ -45,6 +45,7 @@ type Config struct {
 	GuardWorkerGB float64  `json:"guard_worker_gb,omitempty"` // RAM one job worker (test file, browser) holds (default 0.5)
 	InboxDir      string   `json:"inbox_dir,omitempty"`       // where received files land; default ~/Downloads/Argo
 	QuietHours    string   `json:"quiet_hours,omitempty"`     // no non-urgent texts in these hours; default 23:00-07:00, "off" for none
+	Place         string   `json:"place,omitempty"`           // short label for the shared signal map (letters, digits, space, - and _); never a location
 }
 
 func (c Config) peers() []Peer {
@@ -91,7 +92,10 @@ func main() {
 	}
 	cfg, store := loadConfig(), DefaultStore()
 	phone := newPhoneFor(cfg)
-	loop := Loop{Prober: SystemProber{ExitNodes: cfg.ExitNodes, SignalCache: store.path("signal.json")}, Store: store, Fx: realEffects{phone: phone}, AppWatch: true}
+	loop := Loop{Prober: SystemProber{ExitNodes: cfg.ExitNodes, SignalCache: store.path("signal.json")}, Store: store, Fx: realEffects{phone: phone}, AppWatch: true, Link: systemLink}
+	if phone != nil {
+		phone.PreferSMS = func() bool { return store.Load().Low.PreferSMS() }
+	}
 	flush := func() {
 		if phone != nil {
 			phone.Flush() // deliver alerts queued while offline
@@ -121,6 +125,7 @@ func main() {
 		thirdpartyTick(tpFilesIn(configDir()), phone, time.Now()) // texts once per new third-party change; two small file reads
 		_ = withLock(store, func() { phase(20*time.Second, func(c context.Context) { guardTick(c, store, cfg, phone, time.Now()) }) })
 		phase(30*time.Second, func(c context.Context) { relayTick(c, cfg, store, phone) }) // store-and-forward (relay.go); takes its own lock
+		phase(15*time.Second, func(c context.Context) { clockTick(c, cfg, store, time.Now()) })
 		// Read-only posture checks hourly and the update check daily (posture.go, update.go).
 		phase(25*time.Second, func(c context.Context) { securityTick(c, cfg, store, time.Now()) })
 		var skip bool
@@ -374,7 +379,16 @@ func statusLine(st State, now time.Time) string {
 			ts = "ts:" + st.Tailscale.ExitNode
 		}
 	}
-	line := fmt.Sprintf("%s %s %s %s", icon, st.Class, orUnknown(st.Loc), ts)
+	line := fmt.Sprintf("%s %s %s %s", icon, st.Class, orUnknown(st.Loc), ts) + st.Low.Label()
+	if st.Via != "" {
+		line += " via:" + st.Via
+	}
+	if st.Clock.Fault {
+		line += "\n  " + st.Clock.String()
+	}
+	if st.Advice != "" {
+		line += "\n  " + st.Advice
+	}
 	if age := now.Sub(st.CheckedAt); age > 10*time.Minute {
 		line += fmt.Sprintf(" (stale %s)", age.Round(time.Minute))
 	}
@@ -391,6 +405,9 @@ func doctor(ctx context.Context, p Prober) error {
 	fmt.Printf("network: %s\n", n.Line())
 	for _, a := range n.Advice {
 		fmt.Println("radio →", a)
+	}
+	if lv := systemLink(ctx, false); lv.Advice != "" {
+		fmt.Println("link: " + lv.Advice)
 	}
 	if private, why := readDNSPath(ctx).Private(); private {
 		fmt.Printf("dns: private (%s)\n", why)

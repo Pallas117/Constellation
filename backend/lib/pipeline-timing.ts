@@ -6,6 +6,7 @@ export const STAGE_BUDGET_MS: Record<string, number> = {
   noaa: 8_000,
   esa: 8_000,
   goes: 8_000,
+  glotec: 12_000, // 2.4 MB product plus a one-off baseline file after a restart
   "swpc-products": 8_000,
   "kyoto-dst": 8_000,
   jaxa: 8_000,
