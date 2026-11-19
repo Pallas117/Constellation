@@ -40,6 +40,8 @@ type Phone struct {
 	// Fallback gets an alert by iMessage when sending to To fails (an expired SIM, a number
 	// iMessage no longer knows). It catches failures Messages reports; a text Messages accepts
 	// and the iPhone later fails needs the delivery check (Full Disk Access) to be caught.
+	// PreferSMS, when set and true, sends by SMS first: data probes are failing (lowsignal.go).
+	PreferSMS    func() bool
 	Fallback     string
 	sendFallback func(to, text string) error // replaced in tests
 }
@@ -244,7 +246,16 @@ func (p *Phone) deliver(pending []string) {
 // sendLogged sends one text and records it in the egress log once it has left.
 func (p *Phone) sendLogged(text string) error {
 	to, route := p.To, p.Route
-	err := p.send(to, text)
+	send := p.send
+	if p.PreferSMS != nil && p.PreferSMS() && strings.HasPrefix(to, "+") {
+		// Data probes are failing (low-signal mode): an SMS needs only the phone's cellular
+		// signal, and an iMessage would sit waiting for data.
+		if send = p.sendRelay; send == nil {
+			send = smsFirst
+		}
+		route = "sms-low-signal"
+	}
+	err := send(to, text)
 	if err != nil && p.Fallback != "" && p.sendFallback != nil {
 		if p.sendFallback(p.Fallback, text) == nil {
 			to, route, err = p.Fallback, "fallback", nil

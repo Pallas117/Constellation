@@ -24,6 +24,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	rand2 "math/rand/v2"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -100,10 +101,24 @@ type outItem struct {
 	Done      time.Time `json:"done,omitempty"`
 	Offer     string    `json:"offer,omitempty"`    // for a link key offer: the key's id
 	LinkKey   string    `json:"link_key,omitempty"` // the id of the link key protecting it, if any
+	RadioAt   time.Time `json:"radio_at,omitempty"` // last handed to a radio bearer (relay_radio.go)
 }
 
 // internal items (receipts, link key offers) are not files the user sent.
 func (it *outItem) internal() bool { return it.Receipt || it.Offer != "" }
+
+// priority orders what leaves first: receipts (small, they unblock senders),
+// then key offers and other small non-file bundles such as alerts, then bulk
+// file chunks. Lower goes first.
+func (it *outItem) priority() int {
+	switch {
+	case it.Receipt:
+		return 0
+	case it.Offer != "" || it.Transfer == "":
+		return 1
+	}
+	return 2
+}
 
 type inTransfer struct {
 	From    string    `json:"from"`
@@ -182,6 +197,13 @@ type Relay struct {
 	NoResendReceipt bool
 	// NoHubRecheck turns off re-uploading bundles the hub lost (simulation only).
 	NoHubRecheck bool
+	// Low is the low-signal verdict (lowsignal.go): smaller chunks, slower
+	// retries, a cap on bulk uploads per sync. The zero value is normal.
+	Low LowSignal
+	// Rand returns a number in [0,1) for retry jitter; nil uses math/rand/v2.
+	Rand func() float64
+	// Radio is an optional non-internet bearer for small bundles (bearer.go).
+	Radio *BearerRadio
 }
 
 func (r *Relay) now() time.Time {
@@ -347,7 +369,7 @@ func decodeADU(p []byte) (adu, error) {
 	}
 	idx, err1 := d.uint()
 	cnt, err2 := d.uint()
-	if err1 != nil || err2 != nil || cnt == 0 || cnt > maxSendBytes/chunkSize+1 || idx >= cnt {
+	if err1 != nil || err2 != nil || cnt == 0 || cnt > uint64(maxSendBytes/chunkLadder[len(chunkLadder)-1]+1) || idx >= cnt {
 		return a, bad
 	}
 	a.Index, a.Count = int(idx), int(cnt)
@@ -438,7 +460,11 @@ func (r *Relay) Send(ctx context.Context, device, path string, ttl time.Duration
 		return "", 0, err
 	}
 	size := uint64(info.Size())
-	count := int((size + chunkSize - 1) / chunkSize)
+	csize := r.Low.ChunkBytes()
+	if csize < chunkSize && size > lowMaxFileBytes {
+		return "", 0, fmt.Errorf("the link is weak (%s chunks) and this file is %d MB; the limit now is %d MB, try again on a better link", humanBytes(csize), size>>20, lowMaxFileBytes>>20)
+	}
+	count := int((size + uint64(csize) - 1) / uint64(csize))
 	if count == 0 {
 		count = 1 // an empty file is still one bundle
 	}
@@ -446,7 +472,7 @@ func (r *Relay) Send(ctx context.Context, device, path string, ttl time.Duration
 		return "", 0, err
 	}
 	name := safeName(filepath.Base(path))
-	buf := make([]byte, chunkSize)
+	buf := make([]byte, csize)
 	for i := range count {
 		n, err := io.ReadFull(f, buf)
 		if err != nil && !errors.Is(err, io.ErrUnexpectedEOF) && !errors.Is(err, io.EOF) {
@@ -544,6 +570,32 @@ func (s SyncReport) String() string {
 	return line
 }
 
+// retryFor is the wait before the next try: exponential with jitter, and
+// longer in low-signal mode so a bad link never sees a retry storm.
+func (r *Relay) retryFor(attempts int) time.Duration {
+	rnd := rand2.Float64
+	if r.Rand != nil {
+		rnd = r.Rand
+	}
+	base, ceil := retryBase, retryMax
+	if r.Low.On {
+		base, ceil = retryBase*time.Duration(r.Low.TimeoutScale()), 2*retryMax
+	}
+	return jitterBackoff(attempts, base, ceil, rnd())
+}
+
+// chunkFor recovers the chunk size a sender used from a transfer's size and
+// chunk count. The ladder sizes give distinct counts for any file of more
+// than one chunk, so the answer is unique.
+func chunkFor(size uint64, count int) (int, bool) {
+	for _, c := range chunkLadder {
+		if want := max(1, int((size+uint64(c)-1)/uint64(c))); want == count {
+			return c, true
+		}
+	}
+	return 0, false
+}
+
 func retryDelay(attempts int) time.Duration {
 	d := retryBase << max(attempts-1, 0)
 	if d > retryMax || d <= 0 {
@@ -559,6 +611,7 @@ func (r *Relay) Sync(ctx context.Context) SyncReport {
 	rep := SyncReport{}
 	now := r.now()
 	r.expire(st, now, &rep)
+	r.radioSync(ctx, st, &rep)
 	if r.Hub == nil {
 		return rep
 	}
@@ -626,11 +679,14 @@ func pending(st *relayState, want string) []*outItem {
 		}
 	}
 	sort.Slice(out, func(i, j int) bool {
-		if out[i].Receipt != out[j].Receipt {
-			return out[i].Receipt
+		if pi, pj := out[i].priority(), out[j].priority(); pi != pj {
+			return pi < pj
 		}
 		if !out[i].Created.Equal(out[j].Created) {
 			return out[i].Created.Before(out[j].Created)
+		}
+		if out[i].Transfer == out[j].Transfer && out[i].Chunk != out[j].Chunk {
+			return out[i].Chunk < out[j].Chunk // resume in order
 		}
 		return out[i].Key < out[j].Key
 	})
@@ -639,10 +695,15 @@ func pending(st *relayState, want string) []*outItem {
 
 // upload returns false when the hub could not be reached at all.
 func (r *Relay) upload(ctx context.Context, st *relayState, now time.Time, rep *SyncReport) bool {
-	reached := false
+	reached, bulk := false, 0
 	for _, it := range pending(st, stateQueued) {
 		if now.Before(it.NextTry) {
 			continue
+		}
+		if it.priority() == 2 && r.Low.On {
+			if bulk++; bulk > lowBulkPerSync {
+				break // a weak link gets a few chunks per round, never a flood
+			}
 		}
 		raw, err := os.ReadFile(r.outPath(it.Key))
 		if err != nil {
@@ -669,7 +730,7 @@ func (r *Relay) upload(ctx context.Context, st *relayState, now time.Time, rep *
 		default:
 			st.Hub.record(false, now)
 			it.Attempts++
-			it.NextTry = now.Add(retryDelay(it.Attempts))
+			it.NextTry = now.Add(r.retryFor(it.Attempts))
 			rep.Errors = append(rep.Errors, Mask(err.Error()))
 			return reached // offline or hub down: stop for this round
 		}
@@ -961,7 +1022,8 @@ func (r *Relay) queueReceipt(st *relayState, p Primary, now time.Time, signed bo
 }
 
 func (r *Relay) storeChunk(st *relayState, from string, a adu, expires time.Time) (acceptResult, error) {
-	if want := max(1, int((a.Size+chunkSize-1)/chunkSize)); a.Count != want {
+	csize, ok := chunkFor(a.Size, a.Count)
+	if !ok {
 		return acceptRejected, errors.New("chunk count does not match the file size")
 	}
 	id := hex.EncodeToString(a.Transfer)
@@ -976,9 +1038,9 @@ func (r *Relay) storeChunk(st *relayState, from string, a adu, expires time.Time
 	if p.From != from || p.Size != a.Size || p.Count != a.Count || string(p.Sum) != string(a.Sum) {
 		return acceptRejected, errors.New("chunk does not match its transfer")
 	}
-	wantLen := chunkSize
+	wantLen := csize
 	if a.Index == a.Count-1 {
-		wantLen = int(a.Size) - (a.Count-1)*chunkSize
+		wantLen = int(a.Size) - (a.Count-1)*csize
 	}
 	if len(a.Data) != wantLen {
 		return acceptRejected, errors.New("chunk has the wrong length")

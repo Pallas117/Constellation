@@ -85,6 +85,7 @@ func (p SystemProber) Probe(ctx context.Context) Snapshot {
 		s.DNSProfile = strings.Contains(run(ctx, "/usr/bin/profiles", "list"), profileID)
 	}
 	s.API = httpProbe(ctx, apiURL)
+	s.Anchors = probeAnchors(ctx)
 	if r, body := httpGet(ctx, traceURL); r.OK {
 		s.PublicIP, s.Loc = parseTrace(body)
 	}
