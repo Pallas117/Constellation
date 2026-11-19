@@ -5,15 +5,16 @@
 @layer base {
   :root {
     /* Lightbound Brand Room (9 Oct 2026): black first, warm white type,
-       one lime signal per view. HSL triplets for shadcn tokens. */
+       one lime signal per view. HSL triplets for shadcn tokens. Risk and
+       category take the Brand Book (15 Oct) danger and simulated values. */
     --black: 0 0% 2%;            /* #050505 deck ground */
     --panel: 180 10% 6%;         /* #0D1010 panels */
     --charcoal: 180 6% 15%;      /* #252A2A card edges, rails */
     --warm-white: 44 31% 93%;    /* #F3F0E8 text on black */
     --signal: 72 100% 50%;       /* #CCFF00 one signal per view */
     --amber: 39 77% 60%;         /* #E7B14A caution, deadlines */
-    --sun: 17 64% 46%;           /* #C2552A risk */
-    --earth: 208 70% 45%;        /* #2378C4 category */
+    --sun: 17 64% 53%;           /* #D4673B danger: risk, always with the word */
+    --earth: 208 70% 52%;        /* #318ADA category, SIMULATED */
 
     --background: var(--black);
     --foreground: var(--warm-white);
@@ -88,6 +89,47 @@
   .brand-label {
     @apply font-mono text-[11px] font-bold uppercase text-signal;
     letter-spacing: 0.12em;
+  }
+
+  /* Sign-in over the live view (components/AuthStage.tsx). Depth from layering,
+     not glows: a smoked veil over the scene, and a card lit from the top with a
+     hairline highlight. Motion is a short rise; reduced motion drops it above. */
+  .auth-stage-veil {
+    background:
+      linear-gradient(to bottom, hsl(var(--background) / 0.35), hsl(var(--background) / 0.75)),
+      radial-gradient(ellipse at center, transparent 0%, hsl(var(--background) / 0.6) 75%);
+    backdrop-filter: blur(6px) saturate(0.85);
+    -webkit-backdrop-filter: blur(6px) saturate(0.85);
+    animation: auth-stage-fade 320ms ease-out both;
+  }
+
+  .auth-stage-card {
+    animation: auth-stage-rise 360ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
+  }
+
+  .auth-stage-card > .hud-panel {
+    background-image: linear-gradient(to bottom, hsl(var(--foreground) / 0.045), transparent 38%);
+    background-color: hsl(var(--panel) / 0.92);
+  }
+
+  /* Hairline highlight on the top edge, fading out at both ends. */
+  .auth-stage-card > .hud-panel::before {
+    content: "";
+    position: absolute;
+    inset: 0 12% auto;
+    height: 1px;
+    background: linear-gradient(to right, transparent, hsl(var(--foreground) / 0.22), transparent);
+    pointer-events: none;
+  }
+
+  @keyframes auth-stage-fade {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+
+  @keyframes auth-stage-rise {
+    from { opacity: 0; transform: translateY(8px); }
+    to { opacity: 1; transform: none; }
   }
 
   /* Readout label: JetBrains Mono, muted, as in the HUD */

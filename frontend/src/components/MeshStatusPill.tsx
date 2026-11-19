@@ -1,13 +1,16 @@
 import { Link } from "react-router-dom";
 import { useMesh, WARNING_CLASSES } from "@/hooks/useMesh";
 import { useNow } from "@/hooks/useNow";
+import { PillPlaceholder } from "@/components/ui/pill-placeholder";
 
 const STALE_MS = 15 * 60 * 1000;
 
 /** Live team-network summary for the operator console; hidden from viewers. */
 export function MeshStatusPill() {
-  const { devices, canSeeTeam } = useMesh();
+  const { devices, canSeeTeam, loading } = useMesh();
   const now = useNow(60_000);
+  // Loading: hold the pill's place so the console header doesn't reflow when the list arrives.
+  if (loading) return <PillPlaceholder label="Mesh: checking…" className="min-w-[11.5rem]" />;
   if (!canSeeTeam || !devices) return null;
 
   const healthy = devices.filter(

@@ -31,7 +31,13 @@ func Plan(c Class, s Snapshot, remembered string) []Action {
 		a = append(a, offlinePlan(s)...)
 	case Captive:
 		a = append(a, Action{ID: "open-portal", Say: "Wi-Fi login page detected; opening it.", Command: "open http://captive.apple.com", Auto: true})
+		if s.DNSProfile {
+			a = append(a, Action{ID: "pause-private-dns", Say: "If the login page won't load, remove the Argo private DNS profile in System Settings (search \"Profiles\"), log in, then add it back with argo private-dns profile."})
+		}
 	case DNS:
+		if s.DoHOK != nil && *s.DoHOK { // the network's resolver is broken; encrypted DNS goes around it
+			a = append(a, Action{ID: "private-dns", Say: "This network's DNS is broken but encrypted DNS works. Switch this device to it once and a network's resolver stops mattering: run this, then approve the profile in Settings.", Command: "argo private-dns profile"})
+		}
 		if s.DNSDirectOK && s.Tailscale.Running { // the network answers; Tailscale's resolver doesn't
 			a = append(a, Action{ID: "check-magicdns", Say: "Tailscale's DNS is stuck while the network's DNS works. Toggle Tailscale off and on, or for now:", Command: "tailscale set --accept-dns=false"})
 		}
@@ -55,7 +61,8 @@ func Plan(c Class, s Snapshot, remembered string) []Action {
 	case TLSIntercept:
 		a = append(a, Action{ID: "leave-network", Say: "This network is intercepting TLS. Do not trust it: switch network or use a MY/SG exit node. Never disable certificate checks."})
 	case PortBlock, Region:
-		if len(s.Tailscale.ExitCandidates) > 0 {
+		// An exit node rides the same uplink: it can't help when nothing gets through at all.
+		if len(s.Tailscale.ExitCandidates) > 0 && !uplinkStalled(s) {
 			n := s.Tailscale.ExitCandidates[0]
 			a = append(a, Action{ID: "exit-node", Say: "Route via the allow-listed exit node " + n + ":", Command: "tailscale set --exit-node=" + n + " --exit-node-allow-lan-access"})
 		}
@@ -90,8 +97,8 @@ func switchAdvice(c Class, s Snapshot) string {
 		return "The iPhone's mobile data is stalling. On the phone, turn Airplane mode on for 5 seconds and off again, " +
 			"or connect it by USB cable, which holds better than the Wi-Fi hotspot."
 	case uplinkStalled(s):
-		return "This Wi-Fi is connected but nothing gets through (Apple's check fails too), so it is the network, not a block on Claude. " +
-			"Shared Wi-Fi often does this when busy: switch to the iPhone hotspot."
+		return "This Wi-Fi is connected but nothing gets through, so it is the network's internet, not DNS or a block on Claude, and nothing on this Mac will fix it. " +
+			"Switch to the iPhone hotspot (a USB cable holds better than Wi-Fi)."
 	}
 	return "This network lets other sites through but drops connections to Claude. Switch to the iPhone hotspot."
 }
@@ -268,7 +275,9 @@ func (l Loop) Tick(ctx context.Context) State {
 
 	plan := Plan(class, snap, st.Networks[fp].Fixes[class])
 	// A blip this network always has: say that first, instead of advice that won't help.
-	if p50, p90, k := st.Networks[fp].usualRecovery(class); k >= minRecoverSamples && now.Sub(st.IncidentAt) < p90 {
+	// Capped like quietFor: one long outage in the history must not make "nothing to do yet" the
+	// advice for hours (the dorm's 9.6 h dead uplink, filed as DNS on 2026-11-18, set p90 to 9.6 h).
+	if p50, p90, k := st.Networks[fp].usualRecovery(class); k >= minRecoverSamples && p90 <= quietMax && now.Sub(st.IncidentAt) < p90 {
 		plan = append([]Action{{ID: "usual-blip", Say: fmt.Sprintf("This network usually recovers from %s by itself (median %s, 9 in 10 within %s, over the last %d times). Nothing to do yet.",
 			class, p50.Round(time.Second), p90.Round(time.Second), k)}}, plan...)
 	}
@@ -282,6 +291,10 @@ func (l Loop) Tick(ctx context.Context) State {
 		l.say("→ %s", line)
 		if a.Auto && class == Offline && now.Sub(st.IncidentAt) < offlineRejoinAfter {
 			continue // a network switch: give it time before resetting Wi-Fi
+		}
+		if a.Auto && class == Offline && snap.InCall && now.Sub(st.IncidentAt) < callRejoinAfter {
+			l.say("  (a call is live: Wi-Fi is left alone until the outage reaches %s)", callRejoinAfter)
+			continue // the call may still be riding it out; a reset would surely drop it
 		}
 		// GAU-234: with a saved network in range, attempts alternate between joining it and a Wi-Fi
 		// restart, so one step per attempt (a restart right after a join would undo it).
@@ -413,9 +426,14 @@ func ids(a []Action) []string {
 	return out
 }
 
+// firstSay is the first step's advice for a text. A step whose Say introduces a command ("Flush
+// the resolver cache:") would end the text on a colon, so it points to where the command is.
 func firstSay(a []Action) string {
 	if len(a) == 0 {
 		return ""
+	}
+	if say := strings.TrimSpace(a[0].Say); a[0].Command != "" && strings.HasSuffix(say, ":") {
+		return strings.TrimSuffix(say, ":") + " (the command is in argo doctor)."
 	}
 	return a[0].Say
 }

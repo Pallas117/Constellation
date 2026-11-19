@@ -8,7 +8,7 @@ Formal conformity requires organizational policy, governance evidence, independe
 
 ## Implemented Countermeasures (Code)
 
-- Access control and RBAC (`viewer`, `operator`, `admin`) through Supabase auth metadata.
+- Access control and RBAC (`user`, `staff`, `operator`, `admin`) through better-auth roles on the local auth database (`backend/rbac.ts`).
 - Security middleware for API requests:
   - request inspection
   - signature detection

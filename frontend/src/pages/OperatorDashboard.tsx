@@ -7,6 +7,14 @@ import { StatusBadge } from "@/components/brand/StatusBadge";
 import { Button } from "@/components/ui/button";
 import { useDocumentTitle } from "@/hooks/useDocumentTitle";
 
+const LINKS = [
+  ["/", "Live view"],
+  ["/heliophysics", "Field model"],
+  ["/protection", "Protection"],
+  ["/operator/evidence", "Evidence"],
+  ["/account/api", "API keys"],
+] as const;
+
 export default function OperatorDashboard() {
   useDocumentTitle("Operator console");
 
@@ -17,9 +25,14 @@ export default function OperatorDashboard() {
       <SpaceWeatherVisualization
         headerActions={
           <>
-            <Button asChild variant="ghost" size="sm">
-              <Link to="/protection">Protection research</Link>
-            </Button>
+            {/* Every page an operator can open, so the console is never a dead end. */}
+            <nav aria-label="Console" className="flex flex-wrap items-center gap-1">
+              {LINKS.map(([to, label]) => (
+                <Button key={to} asChild variant="ghost" size="sm">
+                  <Link to={to}>{label}</Link>
+                </Button>
+              ))}
+            </nav>
             <L1StructuresPill />
             <MeshStatusPill />
             <StatusBadge tone="neutral">Alerts on</StatusBadge>
