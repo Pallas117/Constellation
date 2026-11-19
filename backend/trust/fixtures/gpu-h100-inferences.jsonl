@@ -1,0 +1,2 @@
+{"t_ms":1768788600000,"model":"scene-captioner","format":"onnx","model_sha256":"61bd33dfa5ad74a2cdc657a80dc001c77c326130e89cf217d0715a7313b05a39","ort_version":"1.22.0","text":"coastline, low cloud","p":0.83}
+{"t_ms":1768788660000,"model":"scene-captioner","format":"onnx","model_sha256":"61bd33dfa5ad74a2cdc657a80dc001c77c326130e89cf217d0715a7313b05a39","ort_version":"1.22.0","text":"open ocean","p":0.77}

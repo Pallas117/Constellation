@@ -50,9 +50,10 @@ without printing values; `npm run check:backend-env` shows backend settings with
 masked. Run `chmod 600 .env`. Never commit `.env` (it is git-ignored), never paste it into a
 ticket, and never put a key or secret in a URL.
 
-**Keep data outside the checkout.** The repository tracks a sample `data/bedrock/telemetry.jsonl`;
-a backend writing there makes `git checkout` of a new release fail. Point the four storage
-variables below at a data directory of your choice.
+**Keep data outside the checkout.** By default telemetry goes to `data/bedrock/telemetry.jsonl`
+inside the checkout. It is git-ignored now; older releases tracked a sample file there, and moving
+between the two with a backend writing to it makes `git checkout` refuse or overwrite the file
+(see Troubleshooting). Point the four storage variables below at a data directory of your choice.
 
 | Variable | Default | Secret | Purpose |
 |---|---|---|---|
@@ -220,15 +221,19 @@ since is lost).
   `/api/v1/data/sources/status` and outbound HTTPS to the providers in section 1.
 - **TPM amber or red:** `data_age` or `official_sources_down` = upstream unreachable (firewall,
   provider outage); `disk_free` = free space or move old archives elsewhere; `persist_failures` =
-  disk or permissions on `GAUSS_BEDROCK_DIR`; `loop_liveness` or `tick_p95` = CPU starved;
+  disk or permissions on `GAUSS_BEDROCK_DIR`; `rejected_points` = a feed delivered impossible values,
+  fills or points with no measurement time (each is kept as `canonical-rejected` with its reasons); `loop_liveness` or `tick_p95` = CPU starved;
   `memory_rss` = restart and report it.
 - **400 "invalid JSON" or 413 on a POST:** the body was not valid JSON, or was over 2 MB (send
   fewer items per request). These are answered before the key is checked.
 - **500 on a POST:** "Could not record usage" means the commerce database is not writable (disk, permissions);
   nothing was issued, so retrying is safe.
 - **`git checkout` refuses because of `data/bedrock/telemetry.jsonl`:** the backend is writing
-  inside the checkout. Stop it, copy the file into your data directory, set `GAUSS_BEDROCK_DIR`,
-  then `git checkout -- data/bedrock/telemetry.jsonl` and continue.
+  inside the checkout and you are moving from a release that tracked the file to one that ignores
+  it. Stop it, copy the file into your data directory, set `GAUSS_BEDROCK_DIR`,
+  then `git checkout -- data/bedrock/telemetry.jsonl` and continue. Going back to an older release
+  is worse: git replaces the ignored file with the old sample without asking, so move it out first.
+  `scripts/ops/gauss-services.sh deploy` keeps the file in place in both directions.
 
 When reporting a problem, include the `x-request-id` response header and the TPM status. Never
 send `.env`, database files, API keys or session cookies.

@@ -61,10 +61,11 @@ export const PerformanceMonitor = ({ visible = true }: PerformanceMonitorProps) 
   // Render rate of the 3D scene; only a slow frame rate earns a colour.
   return (
     <span
-      className={`font-mono text-[11px] tabular-nums ${stats.fps < 30 ? 'text-caution' : 'text-muted-foreground'}`}
+      // Fixed width and one decimal: the readout changes 6 times a second and must not nudge the header.
+      className={`inline-block min-w-[13ch] text-right font-mono text-[11px] tabular-nums ${stats.fps < 30 ? 'text-caution' : 'text-muted-foreground'}`}
       title="Scene render rate and mean frame time"
     >
-      {stats.fps} fps · {stats.avgFrameTime} ms
+      {stats.fps} fps · {stats.avgFrameTime.toFixed(1)} ms
     </span>
   );
 };

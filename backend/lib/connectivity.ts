@@ -1,7 +1,7 @@
 import { exec } from "node:child_process";
 import { promisify } from "node:util";
 
-import { nextLinkState, type ConnectivityMode, type LinkState } from "./link-mode.js";
+import { nextLinkState, pingCommand, PING_TIMEOUT_MS, type ConnectivityMode, type LinkState } from "./link-mode.js";
 
 const execAsync = promisify(exec);
 
@@ -41,8 +41,8 @@ class LinkGuardian {
     let latency: number | null;
     try {
       const start = Date.now();
-      // Using ping -c 1 for macOS/Linux compatibility
-      await execAsync(`ping -c 1 -W 2000 ${this.PING_HOST}`);
+      // The -W unit differs by platform (link-mode.ts); the exec timeout is the backstop on any of them.
+      await execAsync(pingCommand(this.PING_HOST), { timeout: PING_TIMEOUT_MS + 1000 });
       latency = Date.now() - start;
     } catch {
       latency = null;

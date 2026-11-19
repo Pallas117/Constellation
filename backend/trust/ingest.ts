@@ -35,9 +35,28 @@ export interface LogMapping {
     altKm?: string;
     tleLine1?: string;
     tleLine2?: string;
+    /** Model artefact (GAU-245): format, SHA-256 of the ONNX file or TensorRT engine, runtime and its version. */
+    modelFormat?: string;
+    modelSha256?: string;
+    runtime?: string;
+    runtimeVersion?: string;
   };
-  /** Values that are the same for the whole file, e.g. one file per spacecraft. */
-  constants?: { spacecraftId?: string; modelId?: string; processorProfileId?: string };
+  /** Values that are the same for the whole file, e.g. one file per spacecraft or per engine build. */
+  constants?: {
+    spacecraftId?: string;
+    modelId?: string;
+    processorProfileId?: string;
+    modelFormat?: string;
+    modelSha256?: string;
+    runtime?: string;
+    runtimeVersion?: string;
+  };
+  /**
+   * When the processorProfileId column holds the log's own device name (e.g. "Jetson AGX Orin"),
+   * this table turns it into a Gauss profile id. A device name not in the table rejects the row,
+   * so a typo can't quietly leave a record without its profile.
+   */
+  processorProfiles?: Record<string, string>;
 }
 
 export interface IngestedRow {
@@ -69,6 +88,16 @@ export function mappingProblems(m: unknown): string[] {
     const pos = [c.latDeg, c.lonDeg, c.altKm].filter(Boolean).length;
     if (pos !== 0 && pos !== 3) p.push("latDeg, lonDeg and altKm go together");
     if (Boolean(c.tleLine1) !== Boolean(c.tleLine2)) p.push("tleLine1 and tleLine2 go together");
+    const k = x.constants ?? {};
+    const artefact = ["modelFormat", "modelSha256", "runtime", "runtimeVersion"] as const;
+    const has = (f: (typeof artefact)[number]) => Boolean(c[f] || k[f]);
+    if (artefact.some(has) && !(has("modelFormat") && has("modelSha256"))) p.push("a model artefact needs modelFormat and modelSha256 (a column or a constant)");
+    if (x.processorProfiles !== undefined) {
+      const t = x.processorProfiles;
+      if (!t || typeof t !== "object" || Array.isArray(t) || Object.values(t).some((v) => typeof v !== "string" || v.trim() === "")) {
+        p.push("processorProfiles must map device names to profile ids");
+      } else if (!c.processorProfileId) p.push("processorProfiles needs a processorProfileId column");
+    }
   }
   return p;
 }
@@ -149,7 +178,23 @@ function bodyFrom(rec: Record<string, unknown>, m: LogMapping): { body: Record<s
     modelId: c.modelId ? rec[c.modelId] : m.constants?.modelId,
   };
   const profile = c.processorProfileId ? rec[c.processorProfileId] : m.constants?.processorProfileId;
-  if (profile !== undefined && profile !== "") body.processorProfileId = profile;
+  if (profile !== undefined && profile !== null && profile !== "") {
+    if (m.processorProfiles && c.processorProfileId) {
+      const mapped = Object.hasOwn(m.processorProfiles, String(profile)) ? m.processorProfiles[String(profile)] : undefined;
+      if (mapped === undefined) errors.push(`device "${String(profile)}" is not in the mapping's processorProfiles table`);
+      else body.processorProfileId = mapped;
+    } else body.processorProfileId = profile;
+  }
+  const pick = (f: "modelFormat" | "modelSha256" | "runtime" | "runtimeVersion") => {
+    const v = c[f] ? rec[c[f]] : m.constants?.[f];
+    return v === undefined || v === "" ? null : v;
+  };
+  const [format, sha256, runtime, runtimeVersion] = [pick("modelFormat"), pick("modelSha256"), pick("runtime"), pick("runtimeVersion")];
+  if (c.modelFormat || c.modelSha256 || m.constants?.modelFormat || m.constants?.modelSha256) {
+    // A mapping that names an artefact needs it on every row: an empty cell is rejected by the
+    // record's validation, not skipped. Formats match case-insensitively ("ONNX", "TensorRT").
+    body.modelArtifact = { format: typeof format === "string" ? format.toLowerCase() : format, sha256, runtime, runtimeVersion };
+  }
   if (Array.isArray(c.output)) body.output = Object.fromEntries(c.output.map((k) => [k, rec[k] ?? null]));
   else if (c.output) body.output = rec[c.output] ?? null;
   if (c.confidence && rec[c.confidence] !== undefined && rec[c.confidence] !== "") {
@@ -175,7 +220,7 @@ function recordsFrom(text: string, m: LogMapping): { records: Array<{ row: numbe
     if ("error" in parsed) return { error: parsed.error };
     const [header, ...rest] = parsed.rows.filter((r) => !(r.length === 1 && r[0] === ""));
     if (!header) return { error: "the file is empty" };
-    const used = [m.columns.time, m.columns.spacecraftId, m.columns.modelId, m.columns.processorProfileId, m.columns.confidence, m.columns.latDeg, m.columns.lonDeg, m.columns.altKm, m.columns.tleLine1, m.columns.tleLine2, ...(Array.isArray(m.columns.output) ? m.columns.output : [m.columns.output])].filter(
+    const used = [m.columns.time, m.columns.spacecraftId, m.columns.modelId, m.columns.processorProfileId, m.columns.confidence, m.columns.latDeg, m.columns.lonDeg, m.columns.altKm, m.columns.tleLine1, m.columns.tleLine2, m.columns.modelFormat, m.columns.modelSha256, m.columns.runtime, m.columns.runtimeVersion, ...(Array.isArray(m.columns.output) ? m.columns.output : [m.columns.output])].filter(
       (x): x is string => typeof x === "string",
     );
     const missing = used.filter((col) => !header.includes(col));
@@ -245,10 +290,12 @@ export function ingestLog(bytes: Buffer, mapping: LogMapping): IngestReport {
       continue;
     }
     const req = r.request;
-    const key = `${req.spacecraftId}\u0000${req.modelId}\u0000${req.time}`;
+    // Two engine builds of one model may run side by side, so the engine hash is part of the key.
+    const engine = req.modelArtifact?.sha256 ?? "";
+    const key = `${req.spacecraftId}\u0000${req.modelId}\u0000${engine}\u0000${req.time}`;
     const dup = seen.get(key);
     if (dup !== undefined) {
-      rejected.push({ row, errors: [`duplicate of row ${dup} (same spacecraft, model and time)`] });
+      rejected.push({ row, errors: [`duplicate of row ${dup} (same spacecraft, model${engine ? ", engine" : ""} and time)`] });
       continue;
     }
     const ms = Date.parse(req.time);

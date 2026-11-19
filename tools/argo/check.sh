@@ -1,6 +1,7 @@
 #!/bin/bash
 # Argo's full check, the one the gate runs (npm run test:ops) and install.sh runs before it
 # replaces the binary. Fails on the first problem:
+#   0. no dependencies: go.mod has no require and go.sum is empty
 #   1. gofmt: no unformatted file
 #   2. go vet for this Mac and for Linux (ground stations, the container)
 #   3. builds for darwin/arm64, linux/amd64 and linux/arm64 (Linux without cgo, as the container)
@@ -20,6 +21,12 @@ step() { printf '== argo check: %s\n' "$*"; }
 step gofmt
 unformatted=$(gofmt -l .)
 [ -z "$unformatted" ] || { printf 'unformatted (run gofmt -w):\n%s\n' "$unformatted" >&2; exit 1; }
+
+step "no dependencies (standard library only)"
+if [ -s go.sum ] || grep -qE '^[[:space:]]*require\b' go.mod; then
+  echo "tools/argo must stay standard library only: go.mod has a require, or go.sum is not empty" >&2
+  exit 1
+fi
 
 step vet
 go vet ./...

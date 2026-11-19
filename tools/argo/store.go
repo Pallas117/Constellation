@@ -77,6 +77,11 @@ type Net struct {
 	Devices     int                  `json:"devices,omitempty"`
 	SuspectAt   time.Time            `json:"suspect_at,omitempty"`
 	SeenInbound map[string]time.Time `json:"seen_inbound,omitempty"`
+	// BlockedHosts: host:port this network could not reach while others worked (`argo reach`,
+	// reach.go), with when it was last seen; cleared when it answers, capped and expiring.
+	BlockedHosts map[string]time.Time `json:"blocked_hosts,omitempty"`
+	// PrivateDNS: the nearest encrypted resolver measured on this network (privdns.go), a provider id.
+	PrivateDNS string `json:"private_dns,omitempty"`
 }
 
 const (
