@@ -31,7 +31,13 @@ func Plan(c Class, s Snapshot, remembered string) []Action {
 		a = append(a, offlinePlan(s)...)
 	case Captive:
 		a = append(a, Action{ID: "open-portal", Say: "Wi-Fi login page detected; opening it.", Command: "open http://captive.apple.com", Auto: true})
+		if s.DNSProfile {
+			a = append(a, Action{ID: "pause-private-dns", Say: "If the login page won't load, remove the Argo private DNS profile in System Settings (search \"Profiles\"), log in, then add it back with argo private-dns profile."})
+		}
 	case DNS:
+		if s.DoHOK != nil && *s.DoHOK { // the network's resolver is broken; encrypted DNS goes around it
+			a = append(a, Action{ID: "private-dns", Say: "This network's DNS is broken but encrypted DNS works. Switch this device to it once and a network's resolver stops mattering: run this, then approve the profile in Settings.", Command: "argo private-dns profile"})
+		}
 		if s.DNSDirectOK && s.Tailscale.Running { // the network answers; Tailscale's resolver doesn't
 			a = append(a, Action{ID: "check-magicdns", Say: "Tailscale's DNS is stuck while the network's DNS works. Toggle Tailscale off and on, or for now:", Command: "tailscale set --accept-dns=false"})
 		}

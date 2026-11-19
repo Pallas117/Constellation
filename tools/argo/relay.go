@@ -202,7 +202,7 @@ type Relay struct {
 	// Rand returns a number in [0,1) for retry jitter; nil uses math/rand/v2.
 	Rand func() float64
 	// Radio is an optional non-internet bearer for small bundles (bearer.go).
-	Radio *Radio
+	Radio *BearerRadio
 }
 
 func (r *Relay) now() time.Time {

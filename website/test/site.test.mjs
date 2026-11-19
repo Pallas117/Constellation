@@ -256,6 +256,22 @@ test("flow: the header sticks on every page; anchors land below it", () => {
   assert.match(css, /scroll-padding-top:76px/);
 });
 
+test("tap targets: every <details> summary, in pages or Worker markup, is at least 24 px high (WCAG 2.5.8)", () => {
+  const worker = join(pub, "..", "worker");
+  const sources = [...walk(pub).filter((f) => f.endsWith(".html")), ...readdirSync(worker).filter((f) => f.endsWith(".js")).map((f) => join(worker, f))]
+    .map((f) => readFileSync(f, "utf8")).join("\n");
+  assert.doesNotMatch(sources, /<details(?![^>]*\bclass=")/, "every <details> has a class its summary rule can target");
+  const classes = new Set([...sources.matchAll(/<details class="([a-z-]+)"/g)].map((m) => m[1]));
+  assert.ok(classes.has("evid") && classes.has("interests"), `found ${[...classes]}`);
+  const css = read("assets/site.css");
+  for (const c of classes) {
+    const rule = css.match(new RegExp(`\\.${c} summary\\{([^}]*)\\}`));
+    assert.ok(rule, `.${c} summary has a rule`);
+    const h = rule[1].match(/min-height:(\d+)px/);
+    assert.ok(h && Number(h[1]) >= 24, `.${c} summary min-height ≥ 24px`);
+  }
+});
+
 test("phones: wide tables scroll inside their box; hidden labels can't widen the page", () => {
   // .sr is position:absolute; unless the scroll box is its containing block it escapes the clip (planner was 874 px at 375).
   const css = read("assets/site.css");
@@ -591,4 +607,26 @@ test("traffic: every indexable page has share cards and is in the sitemap; robot
   assert.equal(ld["@graph"][0].name, "Lightbound Limited");
   assert.deepEqual(ld["@graph"][0].sameAs, ["https://luma.com/constellation"]);
   for (const [route, page] of Object.entries(html)) if (route !== "/") assert.doesNotMatch(page, /<script/, `${route}: no data blocks elsewhere`);
+});
+
+test("wiring: /gauss/ says what a log needs, links a made-up sample that has the columns it names, and the form asks what runs the model", () => {
+  const page = html["/gauss/"];
+  assert.match(page, /<summary>What a log needs<\/summary>/);
+  assert.match(page, /href="\/gauss\/sample-inference-log\.csv" download/);
+  assert.match(text(page), /never guess a time zone/i, "the zone rule is stated");
+  assert.match(text(page), /nothing is dropped silently/i);
+  const csv = read("gauss/sample-inference-log.csv");
+  const [header, ...rows] = csv.trim().split("\n");
+  assert.equal(header, "inference_time,sat,model,label,score,lat,lon,alt_km");
+  assert.equal(rows.length, 7);
+  assert.ok(rows.every((r) => r.split(",").length === header.split(",").length), "every row has every column");
+  assert.ok(rows.every((r) => /DEMO-SAT-\d/.test(r)), "made-up spacecraft only, no real mission names");
+  assert.doesNotMatch(csv, /@/, "no contact details in a download");
+  assert.match(renderApplyForm("gauss"), /name="logSource"/);
+  assert.match(renderApplyForm("gauss"), /name="logFormat"/);
+  assert.doesNotMatch(text(page), /\b(compliant|certified|space-qualified|post-quantum)\b/i);
+});
+
+test("client links: /gauss/, /gauss/evidence/ and /argo/ each link to the pilot brief with a plan", () => {
+  for (const path of ["/gauss/", "/gauss/evidence/", "/argo/"]) assert.match(html[path], /href="\/gauss\/apply\/\?plan=pilot"/, path);
 });

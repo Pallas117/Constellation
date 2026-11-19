@@ -17,6 +17,7 @@ Design and sources: `docs/ARGO_DTN.md`. User guide: `tools/argo/README.md`.
 | Per-network memory | `store.go` | `State`, `Net{Fixes, Recover}`, `Fingerprint` (sha256 of gateway MAC + IP prefix); incidents in `~/.local/state/argo/incidents.jsonl` |
 | Scores | `netscore.go`, `wifi.go`, `linkstats.go` | privacy/speed/signal; availability = 1 − down/observed over 24 h and 7 d |
 | Reports to Gauss | `gausspush.go` → `backend/mesh/store.ts` `parseReport` | every field allowlisted and range-checked on the backend; `MESH_CLASSES` must match `classify.go` (contract test) |
+| DNS and reachability | `uplink.go`, `privdns.go`, `reach.go` | dead uplink vs DNS (IP anchors); encrypted DNS (DoH ranking, `argo private-dns`, profile); per-host blocks (`argo reach`) |
 | Resource guard | `guard*.go` | memory/battery/disk admission (GAU-195) |
 | Alerts | `notify.go`, `phone.go` | class change only; OFFLINE never texts; usual blips stay quiet (see Rules) |
 | Relay (DTN) | `cbor.go`, `bundle.go`, `bpsec.go`, `relay.go`, `relay_cmd.go`, `hub.go` | BPv7 bundles, blocks 192 (Ed25519) and 193 (HPKE ML-KEM-768+X25519), end-to-end receipts, data mule |
@@ -52,6 +53,21 @@ Design and sources: `docs/ARGO_DTN.md`. User guide: `tools/argo/README.md`.
 - Public copy (website test): no "post-quantum"/PQC, "VPN", "untraceable", grade or compliance claims; no Argo price.
 - Never self-merge changes to crypto, device-token routes or public copy (outside the standing approval).
 - Run `~/gauss/bin/gauss-guard` before reading Argo's state files.
+
+## DNS: diagnose, then fix the right layer (GAU-247, GAU-248)
+A failed lookup has four different causes; tell them apart with evidence before advising anything:
+| Evidence (probe fields) | Meaning | Class and advice |
+|---|---|---|
+| system lookup fails, `dns_direct_ok` true | Tailscale's MagicDNS resolver is stuck; the network is fine | DNS: `check-magicdns` |
+| both lookups fail, `ip_up` false (1.1.1.1/9.9.9.9/8.8.8.8:443 by IP all silent) | the uplink is dead, not DNS | PORT_BLOCK "uplink stalled": hotspot; no flush, no exit node |
+| both fail, `ip_up` true, `doh_ok` true | the network's resolver or its port-53 filter is broken | DNS: `private-dns` first (encrypted DNS goes around it) |
+| both fail, `ip_up` true, `doh_ok` false | DNS really is blocked here, encrypted too | DNS: flush, then switch network |
+
+- Replay check: mesh-heal's `uplink down` lines (`~/.local/share/mesh-heal/mesh-heal.log`; its URLs include `https://1.1.1.1`) are independent IP-level evidence. On 18 Nov 2026 a 9.6 h "DNS" incident had 306/307 checks down: it was the uplink.
+- One host unreachable while others work (NASA GSFC iSWA/CDAWeb from the dorm's TM line, 18 Nov) is not a link class: `argo reach` names it (`blocked`, `tls_failed`, `tls_untrusted`, `dns`, `uplink_down`) and remembers it per network. Advice is another network or device; nothing on the Mac fixes it.
+- Privacy: judith's ordinary lookups went in plain text to 1.1.1.1/8.8.8.8 (Tailscale's resolver was supplemental for ts.net only; the tailnet configures no resolvers). `argo private-dns` reads `scutil --dns`, `tailscale dns status` and `profiles list`, ranks Quad9/Cloudflare/Google by DoH round trip by address (Quad9 wins within 15 ms), remembers the pick per network, and `profile` writes an unsigned `com.apple.dnsSettings.managed` profile the person approves (Mac and iPhone; Linux gets systemd-resolved DoT text). Argo never installs it, never sets ProhibitDisablement, never changes Tailscale DNS (that is the tailnet admin: global nameserver + Override local DNS, which Tailscale upgrades to DoH).
+- No central DNS server for the mesh: on a roaming, sleeping laptop it would take every device's DNS down and need port 53 on the tailnet. Each device picks its own nearest anycast resolver ("fewest hops" = lowest round trip; hop counts are not measured).
+- The profile keeps tailnet and local names (`ts.net`, the tailnet suffix, `gauss.internal`, `local`, `lan`, `home.arpa`) on the normal resolver via `NeverConnect`, or MagicDNS can break. Captive portals with the profile on are UNVERIFIED: the CAPTIVE plan says to remove it, log in and add it back.
 
 ## Security self-check (before handing back; report each item as pass / n/a / fixed)
 Built from Argo's security review (#243, 5 Nov) and the 17 Nov backend sweep of the hub routes. It is the same format as the backend and website checks.
@@ -89,6 +105,8 @@ Heavy jobs go through `claude-heavy`. A Go package or one node test file may use
 - An older Gauss answers the relay routes with a non-JSON 404. Argo treats that as "retry later", not a refusal.
 - The 24 h log on the hostel hotspot: 24 drops, median 3 min, p95 about 1 h. Calibrate simulations from `argo link`, not guesses.
 - The toolchain is pinned in `go.mod` (`toolchain go1.26.10`; `crypto/hpke` needs 1.26). Build with `go build -o /dev/null .` or `-o ~/somewhere`: a plain `go build` leaves an `argo` binary in `tools/argo` (ignored, but don't ship it).
+- Go's `http.Transport` with a custom `DialContext`/`TLSClientConfig` speaks HTTP/1.1 unless `ForceAttemptHTTP2` is set; Quad9's DoH answers HTTP/1.1 with 505 (18 Nov 2026).
+- Never put the tailnet name (`tailXXXX.ts.net`) in fixtures: the repo is public. Replace it with `tail0000.ts.net`.
 - RFC 9173 errata matter:
   - Errata 9192 (reported 2026-09-28, UNVERIFIED) reads A.3's IPPT as using the bare primary block. The published example and dtn7-rs wrap it in a byte string. Argo wraps by default; `BarePrimary` selects the bare form. HDTN's choice is unknown.
   - Errata 7002: A.4 reuses one AES-GCM IV for two targets. `addBCB` therefore takes one target per BCB. Never set `BCBConfig.IV` outside golden tests.

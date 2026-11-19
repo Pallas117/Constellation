@@ -59,7 +59,7 @@ func relayFor(cfg Config, store Store, phone *Phone) (*Relay, bool, error) {
 		fmt.Fprintln(os.Stderr, "argo: radio bearer off:", err)
 	} else if m != nil {
 		low := r.Low
-		r.Radio = &Radio{Bearers: []Bearer{m}, Loss: func() float64 { return recentLoss(low) }}
+		r.Radio = &BearerRadio{Bearers: []Bearer{m}, Loss: func() float64 { return recentLoss(low) }}
 	}
 	return r, created, nil
 }

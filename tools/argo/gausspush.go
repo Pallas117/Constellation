@@ -43,10 +43,20 @@ func gaussStatus(s Store, now time.Time) string {
 
 const minReportGap = 15 * time.Second
 
+// reportGap is the least time between reports. In power-save the mesh report cadence stretches
+// to powerSaveFactor ticks, unless the link is broken: then Gauss hears at once.
+func reportGap(saving bool, st State) time.Duration {
+	if saving && !st.Class.Blocking() {
+		return stretch(time.Minute, true)
+	}
+	return minReportGap
+}
+
 // pushToGauss reports once per check, pausing after a refused token.
 func pushToGauss(cfg Config, st State) { pushAt(cfg, st, DefaultStore(), time.Now()) }
 
 func pushAt(cfg Config, st State, s Store, now time.Time) {
+	gap := reportGap(s.loadPowerSave().On, st)
 	if r, ok := s.loadRefused(); ok && now.Sub(r.At) < refusedPause {
 		return
 	}
@@ -55,7 +65,7 @@ func pushAt(cfg Config, st State, s Store, now time.Time) {
 	// of collecting a 429 (launchd.log 2026-10-24/25).
 	last := s.path("gauss-last-report")
 	if b, err := os.ReadFile(last); err == nil {
-		if t, perr := time.Parse(time.RFC3339Nano, strings.TrimSpace(string(b))); perr == nil && now.Sub(t) >= 0 && now.Sub(t) < minReportGap {
+		if t, perr := time.Parse(time.RFC3339Nano, strings.TrimSpace(string(b))); perr == nil && now.Sub(t) >= 0 && now.Sub(t) < gap {
 			return
 		}
 	}
@@ -116,6 +126,7 @@ func sendReport(cfg Config, st State) (int, error) {
 	}
 	addGuard(report, DefaultStore().loadGuard(), time.Now())
 	addLowAndLink(report, cfg, st)
+	addPowerSave(report, DefaultStore().loadPowerSave())
 	postureSent := addPosture(report, DefaultStore(), time.Now()) // item → status only, about hourly (posture.go)
 	body, _ := json.Marshal(report)
 	u.Path = "/api/mesh/report"

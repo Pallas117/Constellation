@@ -269,7 +269,7 @@ func sealedChunk(t *testing.T, size int) (n1, n2 *testNode, raw []byte, key stri
 func TestRadioRefusesBulkOversizeAndUnprotected(t *testing.T) {
 	a, _, raw, _ := sealedChunk(t, 10)
 	fa, _ := pair("lora", 200, 0.01, 1)
-	r := &Radio{Bearers: []Bearer{fa}, Now: func() time.Time { return lsT0 }}
+	r := &BearerRadio{Bearers: []Bearer{fa}, Now: func() time.Time { return lsT0 }}
 	if err := r.Submit("x", 2, raw, lsT0.Add(time.Hour)); !errors.Is(err, errNotForRadio) {
 		t.Fatalf("bulk priority: %v", err)
 	}
@@ -297,7 +297,7 @@ func TestRadioPriorityAndPathDiversity(t *testing.T) {
 	_, _, raw, _ := sealedChunk(t, 10)
 	lora, loraPeer := pair("lora", 200, 0.05, 1)
 	sat, satPeer := pair("sbd", 340, 0.05, 5)
-	r := &Radio{Bearers: []Bearer{sat, lora}, Now: func() time.Time { return lsT0 }}
+	r := &BearerRadio{Bearers: []Bearer{sat, lora}, Now: func() time.Time { return lsT0 }}
 	exp := lsT0.Add(time.Hour)
 	_ = r.Submit("status", RadioStatus, raw, exp)
 	_ = r.Submit("alert", RadioAlert, raw[:len(raw):len(raw)], exp)
@@ -321,7 +321,7 @@ func TestRadioPriorityAndPathDiversity(t *testing.T) {
 		t.Fatalf("lora delivered %d, sbd delivered %d", gotL, gotS)
 	}
 	// The same alert arrives by both bearers at one receiver: still one delivery.
-	rr := &Radio{Bearers: []Bearer{loraPeer, satPeer}}
+	rr := &BearerRadio{Bearers: []Bearer{loraPeer, satPeer}}
 	loraPeer.inbox, satPeer.inbox = nil, nil
 	for _, f := range lora.sent {
 		loraPeer.inbox = append(loraPeer.inbox, f)
@@ -335,7 +335,7 @@ func TestRadioPriorityAndPathDiversity(t *testing.T) {
 	// A status bundle alone uses only the cheapest bearer.
 	lora2, _ := pair("lora", 200, 0.05, 1)
 	sat2, _ := pair("sbd", 340, 0.05, 5)
-	r2 := &Radio{Bearers: []Bearer{sat2, lora2}, Now: func() time.Time { return lsT0 }}
+	r2 := &BearerRadio{Bearers: []Bearer{sat2, lora2}, Now: func() time.Time { return lsT0 }}
 	_ = r2.Submit("status", RadioStatus, raw, exp)
 	r2.Pump(ctx)
 	if len(lora2.sent) == 0 || len(sat2.sent) != 0 {
@@ -346,7 +346,7 @@ func TestRadioPriorityAndPathDiversity(t *testing.T) {
 func TestRadioPumpRespectsDutyBudgetAndAlertsFirst(t *testing.T) {
 	now := lsT0
 	lora, peer := pair("lora", 200, 0.0005, 1) // 0.05% of an hour = 1.8 s = 18 frames of 100 ms
-	r := &Radio{Bearers: []Bearer{lora}, Now: func() time.Time { return now }}
+	r := &BearerRadio{Bearers: []Bearer{lora}, Now: func() time.Time { return now }}
 	exp := now.Add(48 * time.Hour)
 	// Several different bundles: one status and four alerts; alerts must leave first.
 	_, _, statusRaw, _ := sealedChunk(t, 10)
@@ -385,7 +385,7 @@ func TestRadioHoldsFailingBearerWithBackoff(t *testing.T) {
 	now := lsT0
 	lora, _ := pair("lora", 200, 0.05, 1)
 	lora.fail = true
-	r := &Radio{Bearers: []Bearer{lora}, Now: func() time.Time { return now }, Rand: func() float64 { return 0.5 }}
+	r := &BearerRadio{Bearers: []Bearer{lora}, Now: func() time.Time { return now }, Rand: func() float64 { return 0.5 }}
 	_ = r.Submit("a", RadioAlert, raw, now.Add(time.Hour))
 	r.Pump(ctx)
 	r.Pump(ctx)
@@ -415,8 +415,8 @@ func TestRelaySendsReceiptOverRadioWhenHubIsDown(t *testing.T) {
 	la, lb := pair("lora", 200, 0.01, 1)
 	lb.drop = func(n int) bool { return n == 1 }
 	a.Hub, b.Hub = nil, nil
-	a.Radio = &Radio{Bearers: []Bearer{la}, Loss: func() float64 { return 0.1 }}
-	b.Radio = &Radio{Bearers: []Bearer{lb}, Loss: func() float64 { return 0.1 }}
+	a.Radio = &BearerRadio{Bearers: []Bearer{la}, Loss: func() float64 { return 0.1 }}
+	b.Radio = &BearerRadio{Bearers: []Bearer{lb}, Loss: func() float64 { return 0.1 }}
 	b.Sync(ctx) // sends the receipt over the radio
 	if len(lb.sent) == 0 {
 		t.Fatal("the receipt should have gone over the radio")

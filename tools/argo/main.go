@@ -15,6 +15,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"syscall"
@@ -134,7 +135,7 @@ func main() {
 		var skip bool
 		phase(10*time.Second, func(c context.Context) {
 			gw, mac := localGateway(c)
-			skip = skipTick(store.Load(), gw, mac, time.Now(), onBattery(store.loadGuard()))
+			skip = skipTickSaving(store.Load(), gw, mac, time.Now(), onBattery(store.loadGuard()), store.loadPowerSave().On)
 		})
 		if skip {
 			return nil
@@ -150,9 +151,15 @@ func main() {
 	var err error
 	switch cmd {
 	case "status":
-		fmt.Println(statusLine(store.Load(), time.Now()) + guardStatus(store.loadGuard(), time.Now()) + gaussStatus(store, time.Now()) + rangeStatus(store, time.Now()) + phoneStatus(store.Dir, time.Now()))
+		fmt.Println(statusLine(store.Load(), time.Now()) + guardStatus(store.loadGuard(), time.Now()) + powerSaveStatus(store.loadPowerSave()) + gaussStatus(store, time.Now()) + rangeStatus(store, time.Now()) + phoneStatus(store.Dir, time.Now()))
 	case "doctor":
 		err = doctor(ctx, loop.Prober)
+		if err == nil {
+			doctorPowerSave(ctx, store, os.Stdout)
+		}
+	case "power-save": // force or inspect power-save mode (powersave.go)
+		sample := sampleHost(ctx, false)
+		err = powerSaveCmd(ctx, os.Args[2:], store, realAppFx(), sample.Batt, runtime.GOOS, time.Now(), os.Stdout)
 	case "fix":
 		loop.Out = func(s string) { fmt.Println(s) }
 		switch {
@@ -199,6 +206,8 @@ func main() {
 			fmt.Fprintln(os.Stderr, "argo:", rerr)
 		}
 		os.Exit(code)
+	case "private-dns": // GAU-248: is DNS private here, the nearest encrypted resolver, a profile to install
+		err = privateDNSCmd(ctx, store, os.Args[2:], os.Stdout)
 	case "networks": // GAU-234: Wi-Fi networks in range and what Argo would join (names stay on this Mac)
 		err = printNetworks(ctx, os.Stdout)
 	case "summary": // what Argo caught, fixed and learned in the last 7 days
@@ -320,15 +329,21 @@ func isIPhoneHotspot(gw string) bool { return gw == "172.20.10.1" } // Personal 
 const hotspotBatteryEvery = 150 * time.Second
 
 func skipTick(st State, gw, mac string, now time.Time, battery bool) bool {
+	return skipTickSaving(st, gw, mac, now, battery, false)
+}
+
+// skipTickSaving is skipTick with the probe intervals stretched while power-save is on
+// (powersave.go). A broken link or a new gateway still probes at once.
+func skipTickSaving(st State, gw, mac string, now time.Time, battery, saving bool) bool {
 	switch {
 	case st.CheckedAt.IsZero(), st.Class.Blocking():
 		return false
 	case gw != st.Gateway || mac != st.GatewayMAC:
 		return false
 	case isIPhoneHotspot(gw):
-		return battery && now.Sub(st.CheckedAt) < hotspotBatteryEvery
+		return (battery || saving) && now.Sub(st.CheckedAt) < stretch(hotspotBatteryEvery, saving)
 	}
-	return now.Sub(st.CheckedAt) < fullCheckEvery
+	return now.Sub(st.CheckedAt) < stretch(fullCheckEvery, saving)
 }
 
 // onBattery reads the guard's last sample (written every tick); unknown counts as AC.
@@ -385,9 +400,18 @@ func doctor(ctx context.Context, p Prober) error {
 	b, _ := json.MarshalIndent(s, "", "  ")
 	fmt.Println(Mask(string(b)))
 	fmt.Printf("\nclass: %s — %s\n", class, reason)
-	fmt.Printf("network: %s\n", ScoreNet(s).Line())
+	n := ScoreNet(s)
+	fmt.Printf("network: %s\n", n.Line())
+	for _, a := range n.Advice {
+		fmt.Println("radio →", a)
+	}
 	if lv := systemLink(ctx, false); lv.Advice != "" {
 		fmt.Println("link: " + lv.Advice)
+	}
+	if private, why := readDNSPath(ctx).Private(); private {
+		fmt.Printf("dns: private (%s)\n", why)
+	} else {
+		fmt.Printf("dns: not private (%s); see argo private-dns\n", why)
 	}
 	for _, a := range Plan(class, s, "") {
 		fmt.Println("→", a.Say)
