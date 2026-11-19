@@ -61,6 +61,7 @@ const ALLOWED: Record<string, string> = {
   "backend/mesh/store.ts:POSTURE_MAX_AGE_MS": "age of Argo's device security posture report (GAU-238), not a measurement (out of scope)",
   "frontend/src/components/MeshStatusPill.tsx:STALE_MS": "mesh device-report staleness, not a measurement (out of scope)",
   "frontend/src/lib/mesh-onboarding.ts:STALE_MS": "mesh device-report staleness, not a measurement (out of scope)",
+  "frontend/src/lib/link-map.ts:SAMPLE_MAX_AGE_MS": "age of an Argo link sample in a mesh device report, network telemetry not a space-weather measurement (out of scope)",
   "frontend/src/hooks/useSpaceWeather.ts:STALENESS_RECHECK_MS": "how often the UI re-checks ages, not an age limit",
   "website/worker/calls.js:INDEX_MAX_AGE": "age of the cached calls index, not of a measurement (out of scope)",
 };

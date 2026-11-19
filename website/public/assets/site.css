@@ -28,6 +28,9 @@ h2{font-size:clamp(24px,3.4vw,34px);line-height:1.15;margin:.3em 0 .5em}
 h3{font-size:19px;line-height:1.3}
 p{margin:0 0 1em}
 .wrap{max-width:1120px;margin:0 auto;padding-inline:clamp(16px,4vw,40px)}
+/* The landing runs edge to edge on notched phones (viewport-fit=cover); text keeps clear of the notch and the home bar. */
+.wrap{padding-left:max(clamp(16px,4vw,40px),env(safe-area-inset-left,0px));padding-right:max(clamp(16px,4vw,40px),env(safe-area-inset-right,0px))}
+footer.wrap{padding-bottom:max(48px,calc(24px + env(safe-area-inset-bottom,0px)))}
 .k{font:700 12px/1 var(--mono);letter-spacing:.12em;color:var(--accent);text-transform:uppercase;margin:0}
 .label{font:700 11px/1 var(--mono);letter-spacing:.12em;color:var(--muted);text-transform:uppercase}
 .lead{color:var(--muted);max-width:62ch;font-size:18px}
@@ -73,20 +76,34 @@ p{margin:0 0 1em}
    past and the slogan recedes; then the descent rises over it and takes the ring. Without scroll-driven animations, or with
    reduced motion, it is one screen: the still frame at full size and the slogan. The slogan sits on the 8px grid at the
    foot of the screen, left-aligned with the header mark. The hole's edge is a mask, not a halo. */
-.hero{position:relative;border-bottom:1px solid var(--char);isolation:isolate}
+/* No section padding: the stage starts at the top of the screen, so the slogan's 96px foot is on screen at load. */
+.hero{position:relative;border-bottom:1px solid var(--char);isolation:isolate;padding-block:0}
 .hero-stage{position:relative;min-height:max(560px,100svh);display:grid;align-items:end;overflow:hidden;isolation:isolate;--hole:50% 44%}
 .hero .poster,.hero .film{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;z-index:-2;transform-origin:var(--hole)}
+/* The film is decoration: taps go through it, and iOS (Low Power Mode blocks autoplay) shows no play button over it;
+   the poster frame shows instead. */
+.hero .film{pointer-events:none}
+.hero .film::-webkit-media-controls-start-playback-button{display:none!important;-webkit-appearance:none}
+.hero .film::-webkit-media-controls{display:none!important}
 .hero-stage::after{content:"";position:absolute;inset:0;z-index:-1;background:linear-gradient(180deg,rgba(5,5,5,.55) 0,rgba(5,5,5,0) 22%,rgba(5,5,5,0) 40%,rgba(5,5,5,.92) 88%),linear-gradient(90deg,rgba(5,5,5,.7) 0,rgba(5,5,5,.35) 45%,rgba(5,5,5,0) 70%)}
 .hero-copy{padding-block:120px 96px;width:100%;transform-origin:0 100%}
 .hero h1{font-size:clamp(56px,9vw,128px);line-height:.95;letter-spacing:-.025em;margin:0}
 @media (prefers-reduced-motion:reduce){.hero .film{display:none}html{scroll-behavior:auto}}
-/* Portrait screens: the film fills the top of the hero and fades to black, so the copy sits on black. */
+/* Portrait screens: the film fills the top of the hero and fades to black, so the copy sits on black. The film keeps
+   its whole 16:9 frame (wider than the screen, centred on the hole, clipped by the stage), so the disc runs off the
+   narrow screen at full size, yet while the hole is small and far its soft mask shows on every side: no hard-edged
+   rectangle. The hole's centre in the film is 50% 48% (measured on the poster). */
 @media (max-aspect-ratio:1/1){
-  .hero-stage{--hole:50% 36%;--hole-w:120%} /* the disc runs off the narrow screen; no side fade */
-  .hero .poster,.hero .film{height:62%}
+  .hero-stage{--hole:50% 48%}
+  .hero .poster,.hero .film{height:62%;width:auto;max-width:none;aspect-ratio:16/9;inset:0 auto auto 50%;translate:-50% 0}
   .hero-stage::after{background:linear-gradient(180deg,rgba(5,5,5,.5) 0,rgba(5,5,5,0) 16%,rgba(5,5,5,0) 36%,var(--black) 62%)}
   .hero-copy{padding-block:56vw 64px}
   .hero h1{font-size:clamp(44px,13vw,104px)}
+}
+/* Phones on their side: one screen, not 560px, with the slogan clear of the header. */
+@media (min-aspect-ratio:1/1) and (max-height:560px){
+  .hero-stage{min-height:max(320px,100svh)}
+  .hero-copy{padding-block:88px 40px}
 }
 /* The pull. Scroll-driven, no script: over the hero's first screen of scroll the hole grows from a distant point to
    full size (its edge soft-masked, so no rectangle shows while it is small), a plane of stars rushes outward past
@@ -427,6 +444,11 @@ footer p{margin:0 0 8px;max-width:72ch}
 .opp .why{color:var(--warm)}
 .interests{margin:16px 0 8px;border:1px solid var(--char);border-radius:10px;padding:12px 18px}
 .interests summary{cursor:pointer;font-weight:600;min-height:32px;display:flex;align-items:center}
+.log-needs{margin:12px 0 0;border:1px solid var(--char);border-radius:10px;padding:8px 16px}
+.log-needs summary{cursor:pointer;font-weight:600;min-height:32px;display:flex;align-items:center}
+.log-needs ul{margin:8px 0;padding-left:20px;display:grid;gap:8px}
+.log-needs p{margin:8px 0}
+.log-needs code{font-family:var(--mono,ui-monospace,monospace);font-size:.9em;overflow-wrap:anywhere}
 .interest-grid{display:grid;gap:10px 18px;grid-template-columns:repeat(auto-fill,minmax(min(100%,220px),1fr));margin-top:12px}
 .news{list-style:none;margin:0;padding:0;display:grid;gap:10px}
 .news li{overflow-wrap:anywhere}
@@ -490,6 +512,9 @@ footer p{margin:0 0 8px;max-width:72ch}
 .d-p{fill:var(--warm)}
 .d-p.e{fill:var(--lime)}
 .d-tags text{fill:var(--muted);font:700 9px var(--mono);letter-spacing:.12em}
+/* Phones draw the descent at about 0.8 px per unit: 9-unit tags came out near 7 px. Larger there, with a black
+   knockout (not a glow) so field lines never run through the letters. */
+@media (max-width:560px){.d-tags text{font-size:12px;letter-spacing:.08em;paint-order:stroke;stroke:var(--black);stroke-width:4px;stroke-linejoin:round}}
 .d-bh{display:none}
 .d-ring{fill:none;stroke:var(--warm);stroke-width:1.6;vector-effect:non-scaling-stroke}
 @media (prefers-reduced-motion:reduce){.d-particles{display:none}}
@@ -509,7 +534,7 @@ footer p{margin:0 0 8px;max-width:72ch}
     .descent-steps li:focus-within{opacity:1!important;visibility:visible!important;transform:none!important}
     .descent-note{text-align:center}
     @media (max-width:560px){.descent-art{transform:scale(1.4)}
-      .descent-steps{padding-top:24px;background:linear-gradient(180deg,rgb(5 5 5 / 0),var(--black) 24px)}}
+      .descent-steps{padding-top:24px;background:linear-gradient(180deg,rgb(5 5 5 / 0),rgb(5 5 5 / .86) 24px)}}
     .d-bh{display:inline;transform-origin:0 0;animation:d-shrink linear both;animation-timeline:--descent;animation-range:contain 0% contain 30%}
     .d-bh image{animation:d-out linear both;animation-timeline:--descent;animation-range:contain 2% contain 20%}
     /* One black hole on screen at a time: the hero's film fades as the descent rises, then the descent's own
@@ -518,10 +543,14 @@ footer p{margin:0 0 8px;max-width:72ch}
     @supports (timeline-scope:--descent){
       main{timeline-scope:--descent}
       .hero{border-image:none;border-bottom-color:transparent}
-      /* The descent rises over the pinned hero (the hole is still growing), so the hero's hole cross-fades into the
-         descent's own ring in place: no dark gap between the two movements. */
+      /* The descent rises over the pinned hero while the hole is still growing. Its ring rises from below the hero's
+         hole, not onto it, so a cross-fade showed two black holes at once (at every size). The hero's hole now fades
+         out over entry 35-60% and hands over exactly as the descent's art starts to fade in (60%): one black hole on
+         screen at a time, no gap between them, and the deep-space backdrop (.cosmos) behind both. */
       .descent{margin-top:-80svh}
-      .hero .poster,.hero .film{animation:pull linear both,d-out linear both;animation-timeline:--hero,--descent;animation-range:contain 0% contain 100%,entry 50% entry 80%}
+      /* Faded out, the film is also hidden, so phones treat it as not visible and stop playing it (iOS pauses muted
+         autoplay video it can't see) while the descent covers it; it plays again on the way back up. */
+      .hero .poster,.hero .film{animation:pull linear both,film-off linear both;animation-timeline:--hero,--descent;animation-range:contain 0% contain 100%,entry 35% entry 60%}
     }
     .d-earth{animation:d-in linear both;animation-timeline:--descent;animation-range:contain 14% contain 26%}
     .d-halo{animation:d-in linear both;animation-timeline:--descent;animation-range:contain 24% contain 30%}
@@ -535,6 +564,7 @@ footer p{margin:0 0 8px;max-width:72ch}
 /* The ring ends exactly on the north-pole halo (numbers printed by tools/make_descent.py). */
 @keyframes d-shrink{0%{transform:none;opacity:1}85%{opacity:1}100%{transform:translate(0px,-37px) scale(.1014,.0304);opacity:0}}
 @keyframes d-out{to{opacity:0}}
+@keyframes film-off{to{opacity:0;visibility:hidden}}
 @keyframes d-in{from{opacity:0}}
 @keyframes d-draw{from{stroke-dashoffset:1}to{stroke-dashoffset:0}}
 @keyframes d-step{0%{opacity:0;visibility:hidden;transform:translateY(10px)}20%,80%{opacity:1;visibility:visible;transform:none}100%{opacity:0;visibility:hidden;transform:translateY(-10px)}}
@@ -646,7 +676,8 @@ footer p{margin:0 0 8px;max-width:72ch}
 .live-card:hover::before,.live-card:focus-within::before{opacity:1}
 .live-card:hover,.live-card:focus-within{--smoke:rgb(10 8 16 / .62);-webkit-backdrop-filter:blur(16px) saturate(160%);backdrop-filter:blur(16px) saturate(160%)}
 
-/* Hover and focus: the disk lights up. */
+/* Hover and focus: the disk lights up. On touch screens a tap leaves :hover stuck until the next tap, so the turning
+   disk and the radiating rings (endless animations) run only where a pointer can hover; a tap gets the press below. */
 .door:hover,.door:focus-visible,.tile:hover,.tile:focus-within,.friend:hover,.friend:focus-visible,
 .btn.ghost:hover,.btn.ghost:focus-visible,.subnav a:hover,.subnav a:focus-visible{
   background-image:var(--sheen),linear-gradient(var(--smoke),var(--smoke)),var(--disk-rim);background-position:-30% 0,0 0,0 0;
@@ -657,7 +688,7 @@ footer p{margin:0 0 8px;max-width:72ch}
 .btn:not(.ghost):not([aria-disabled=true]):hover,.btn:not(.ghost):not([aria-disabled=true]):focus-visible{box-shadow:0 0 0 1px rgb(var(--hot) / .7),var(--disk-glow)}
 .live-card{box-shadow:-20px 14px 70px -30px rgb(var(--ember) / .6),20px -14px 70px -30px rgb(var(--violet) / .7)}
 .door::after{background:linear-gradient(90deg,rgb(var(--ember)),rgb(var(--violet)))}  /* the hover underline joins the disk */
-@media (prefers-reduced-motion:no-preference){
+@media (prefers-reduced-motion:no-preference) and (hover:hover){
   .door:hover,.door:focus-visible,.tile:hover,.tile:focus-within,.friend:hover,.btn.ghost:hover,.subnav a:hover,.live-card:hover::before{animation:disk-turn 7s linear infinite}
 }
 @keyframes disk-turn{to{--disk:360deg}}
@@ -668,7 +699,7 @@ footer p{margin:0 0 8px;max-width:72ch}
    one, staggered, in the accretion-light colours. Quiet at rest; with reduced motion, one still ring. No script. */
 .btn.radiate{position:relative;isolation:isolate}
 .btn.radiate::before{content:"";position:absolute;inset:0;border-radius:inherit;border:2px solid rgb(var(--ember));opacity:0;pointer-events:none}
-@media (prefers-reduced-motion:no-preference){
+@media (prefers-reduced-motion:no-preference) and (hover:hover){
   .btn.radiate:hover::before,.btn.radiate:focus-visible::before{animation:radiate-wave 1.7s cubic-bezier(.15,.6,.3,1) infinite}
   .btn.radiate:hover{animation:radiate-ring 1.7s .55s cubic-bezier(.15,.6,.3,1) infinite} /* hover only: on focus the site's ring stays */
 }
@@ -686,7 +717,7 @@ footer p{margin:0 0 8px;max-width:72ch}
 .btn.argo .sail{width:24px;height:24px;flex:none}
 .btn.argo:hover,.btn.argo:focus-visible{color:#fff;background-color:transparent;
   background-image:var(--sheen),linear-gradient(var(--smoke),var(--smoke)),var(--disk-rim);background-position:-30% 0,0 0,0 0}
-@media (prefers-reduced-motion:no-preference){
+@media (prefers-reduced-motion:no-preference) and (hover:hover){
   .btn.argo.radiate:hover{animation:disk-turn 7s linear infinite,radiate-ring 1.7s .55s cubic-bezier(.15,.6,.3,1) infinite}
   .btn.argo.radiate:focus-visible{animation:disk-turn 7s linear infinite}
 }
@@ -704,3 +735,69 @@ footer p{margin:0 0 8px;max-width:72ch}
 .live-card:hover .rad-field .belt,.live-card:focus-within .rad-field .belt{fill:rgb(var(--ember) / .32)}
 .live-card:hover .rad-field .belt.out,.live-card:focus-within .rad-field .belt.out{fill:rgb(var(--violet) / .26)}
 @media (prefers-reduced-motion:reduce){.rad-field .rp{display:none}}
+
+/* Touch (phones): 44 px targets in the header, a press you can see, and no grey tap flash. */
+a,button{-webkit-tap-highlight-color:transparent}
+@media (pointer:coarse){
+  .top nav a{padding-block:11px}
+  .top nav a.signin{padding-block:10px}
+}
+@media (hover:none){a:active{opacity:.72}.btn:active{opacity:1}}
+
+/* Space tech, on Earth (landing, Josh 18 Nov 2026): what Argo does today, as three habits spacecraft have. A quiet row
+   under hairlines that fade at the end; each habit rises in as it scrolls into view (none with reduced motion). No
+   link to /argo/: it stays closed in the public release. */
+.on-earth{padding-block:clamp(56px,8vw,96px)}
+.on-earth h2{max-width:20ch}
+.earth-lede{color:var(--muted);font-size:17px;max-width:58ch;margin:0}
+.earth-list{list-style:none;margin:36px 0 0;padding:0;display:grid;gap:32px clamp(24px,4vw,48px);grid-template-columns:repeat(auto-fit,minmax(min(100%,260px),1fr))}
+.earth-list li{padding-top:18px;border-top:1px solid;border-image:linear-gradient(90deg,var(--char),var(--char) 70%,transparent) 1}
+.earth-list h3{margin:.7em 0 .45em;max-width:22ch}
+.earth-list p:not(.label){margin:0;color:var(--muted);max-width:38ch}
+.on-earth .src{margin-top:32px}
+@supports (animation-timeline:view()){
+  @media (prefers-reduced-motion:no-preference){
+    .earth-list li{animation:rise linear both;animation-timeline:view();animation-range:entry 5% entry 70%}
+  }
+}
+@keyframes rise{from{opacity:0;transform:translateY(18px)}}
+
+/* Deep space behind the whole landing (Josh, 18 Nov 2026: "stars in the back, then nebula, then fields; more smooth and
+   integrated"). One fixed backdrop of three planes behind every section, so the page reads as one sky instead of
+   separate panels; the sections' own star planes scroll with the page in front of it, which gives the parallax.
+   - far stars: always there, drifting slowly as you scroll;
+   - nebula: faint violet and ember clouds that gather as you pass the black hole (light as gradients, not a glow);
+   - fields: Earth-style dipole field lines (tools/make_fields.py) that rise in under the last sections.
+   Compositor-only motion (transform, opacity) on a scroll timeline. Reduced motion or no scroll timelines: the stars and
+   a faint nebula, still; no fields. No lime here: the page's one lime signal stays in the descent and the door. */
+.cosmos{position:fixed;inset:0;z-index:-1;pointer-events:none;overflow:hidden;contain:strict}
+.cosmos i{position:absolute;inset:-12%;display:block}
+/* The far stars are shared: the landing's backdrop and every other page (below) draw the same plane, so moving
+   between pages stays in one sky. */
+:root{--far-stars:radial-gradient(1.2px 1.2px at 14% 22%,rgb(243 240 232 / .8),transparent 70%),
+  radial-gradient(1.2px 1.2px at 61% 9%,rgb(243 240 232 / .6),transparent 70%),radial-gradient(1.4px 1.4px at 83% 47%,rgb(243 240 232 / .7),transparent 70%),
+  radial-gradient(1.1px 1.1px at 37% 63%,rgb(203 182 214 / .7),transparent 70%),radial-gradient(1.2px 1.2px at 72% 88%,rgb(243 240 232 / .5),transparent 70%),
+  radial-gradient(1.1px 1.1px at 6% 79%,rgb(243 240 232 / .45),transparent 70%)}
+/* Two tile sizes (233 and 377 px: their pattern repeats only every ~88,000 px), so no lattice shows. */
+.c-far,body.page::before{background-size:233px 233px,233px 233px,233px 233px,377px 377px,377px 377px,377px 377px;background-image:var(--far-stars)}
+.c-far{opacity:.5}
+/* Every other page: the same far stars, fixed behind the content (quieter than on the landing, which has the whole
+   scene), drifting slowly as you scroll; still with reduced motion. Panels and cards keep their own grounds on top. */
+body.page::before{content:"";position:fixed;inset:-12%;z-index:-1;pointer-events:none;opacity:.45}
+.c-nebula{opacity:.45;background:radial-gradient(ellipse 46% 30% at 24% 36%,rgb(142 108 196 / .17),transparent 70%),
+  radial-gradient(ellipse 34% 24% at 72% 60%,rgb(240 120 42 / .075),transparent 70%),
+  radial-gradient(ellipse 58% 38% at 58% 28%,rgb(203 182 214 / .06),transparent 72%),
+  radial-gradient(ellipse 30% 44% at 86% 18%,rgb(142 108 196 / .1),transparent 70%),
+  radial-gradient(ellipse 40% 26% at 30% 82%,rgb(142 108 196 / .08),transparent 70%)}
+.c-fields{opacity:0;background:url(media/fields.svg) 50% 100%/cover no-repeat}
+@supports (animation-timeline:scroll()){
+  @media (prefers-reduced-motion:no-preference){
+    .cosmos i{will-change:transform,opacity}
+    .c-far,body.page::before{animation:c-far linear both;animation-timeline:scroll(root)}
+    .c-nebula{animation:c-nebula linear both;animation-timeline:scroll(root);animation-range:4% 36%}
+    .c-fields{animation:c-fields linear both;animation-timeline:scroll(root);animation-range:62% 92%}
+  }
+}
+@keyframes c-far{to{transform:translateY(-7%)}}
+@keyframes c-nebula{from{opacity:0;transform:scale(1.18) translateY(5%)}to{opacity:1;transform:none}}
+@keyframes c-fields{from{opacity:0;transform:translateY(8%) scale(.96)}to{opacity:1;transform:none}}

@@ -33,6 +33,22 @@ export interface MeshReport {
   net?: MeshNet;
   link?: LinkReport;
   guard?: MeshGuard;
+  /** Low-signal mode, clock cross-check and one link measurement (backend/mesh/store.ts). */
+  lowSignal?: { on: boolean; chunkBytes: 4096 | 65536 | 1048576 };
+  clock?: { fault: boolean; skewSecs: number; sources: number };
+  linkSample?: {
+    class: "usb" | "wifi" | "ethernet" | "other";
+    bearer: "https" | "meshtastic" | "sms" | "satellite" | "cellular";
+    network?: string;
+    place?: string;
+    band?: "2.4" | "5" | "6";
+    channel?: number;
+    signalDbm?: number;
+    noiseDbm?: number;
+    lossPct: number;
+    rttMs: number;
+    low: boolean;
+  };
   powerSave?: PowerSaveReading;
   posture?: PostureReading; // `argo posture` statuses (backend/mesh/store.ts MeshPosture, GAU-238)
 }
@@ -162,7 +178,9 @@ export function useMesh() {
   const devices = devicesFeed.data;
   const error = onboardingFeed.error ?? devicesFeed.error;
   const stopped = onboardingFeed.status === "sign-in-required" || devicesFeed.status === "sign-in-required";
-  return { steps, devices, me, canEnroll, canSeeTeam, canRevokeAny, error, stopped, enroll, revoke };
+  // Still waiting for a first answer: onboarding, then (if this caller may enrol) the device list.
+  const loading = !error && !stopped && (!onboarding || (canEnroll && !devices));
+  return { steps, devices, me, canEnroll, canSeeTeam, canRevokeAny, error, stopped, loading, enroll, revoke };
 }
 
 /** Argo's non-blocking warnings: the device works, but someone should look. */
