@@ -80,6 +80,33 @@ message SenseChecks {
 }
 
 // GOES 0.1-0.8 nm irradiance, W m^-2.
+// GloTEC regional TEC over Malaysia, TECU = 1e16 electrons m^-2. Not a scintillation index.
+message IonosphereTec {
+  optional string source = 1;
+  optional string observed_at = 2;
+  message Region {
+    optional double lat_min = 1;
+    optional double lat_max = 2;
+    optional double lon_min = 3;
+    optional double lon_max = 4;
+  }
+  Region region = 3;
+  optional int32 cells = 4;
+  optional int32 constrained_cells = 5;
+  optional double mean_tecu = 6;
+  optional double min_tecu = 7;
+  optional double max_tecu = 8;
+  message Cell {
+    optional double lat = 1;
+    optional double lon = 2;
+    optional double tecu = 3;
+    optional int32 quality_flag = 4;
+  }
+  Cell nearest_kl = 9;
+  optional double rate_tecu_per_hour = 10;
+  optional string rate_baseline_at = 11;
+}
+
 message XrayReading {
   optional double value = 1;
   optional string band = 2;
@@ -220,6 +247,9 @@ message CanonicalPoint {
 
   // Wire schema version, "sw.point/2.0.0".
   optional string schema = 23;
+
+  // Additive in sw.point/2.0.0: absent = unknown.
+  IonosphereTec ionosphere = 24;
 }
 
 message MhdState {

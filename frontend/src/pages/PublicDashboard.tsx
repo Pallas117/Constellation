@@ -2,7 +2,6 @@ import { useMemo, useRef, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { hasRole, roleOf } from '@/lib/roles';
 import { Globe, KeyRound, Lock, LogIn, Orbit } from 'lucide-react';
-import { motion } from 'framer-motion';
 import { GaussGlobe } from '@/components/GaussGlobe';
 import { SceneBoundary } from '@/components/ErrorBoundary';
 import { PilotPanels } from '@/components/PilotPanels';
@@ -33,12 +32,6 @@ const NAV_LINK =
 
 // The one way in for a visitor: same smoked glass, a warm-white edge instead of charcoal.
 const SIGN_IN_LINK = NAV_LINK.replace('border-charcoal/70', 'border-foreground/45').replace('text-foreground/90', 'text-foreground');
-
-const fadeIn = (delay: number) => ({
-  initial: { opacity: 0 },
-  animate: { opacity: 1 },
-  transition: { duration: 0.8, delay, ease: 'easeOut' as const },
-});
 
 export default function PublicDashboard() {
   useDocumentTitle();
@@ -94,9 +87,8 @@ export default function PublicDashboard() {
       <SceneHoverTip model={modelInfo} live={Boolean(drivers)} />
 
       {/* Top edge: identity left, navigation right */}
-      <motion.header
-        {...fadeIn(0)}
-        className="pointer-events-none absolute inset-x-0 top-0 z-10 flex items-start justify-between gap-3 p-3 md:p-5"
+      {/* CSS fades (no animation library on the landing chunk); prefers-reduced-motion stops them in index.css. */}
+      <header className="pointer-events-none animate-fade-in absolute inset-x-0 top-0 z-10 flex items-start justify-between gap-3 p-3 md:p-5"
       >
         <div className="flex min-w-0 flex-col items-start gap-1.5">
           <h1 className="text-xl font-semibold tracking-tight md:text-2xl">Gauss Aurora</h1>
@@ -142,12 +134,10 @@ export default function PublicDashboard() {
             </Link>
           )}
         </nav>
-      </motion.header>
+      </header>
 
       {/* Bottom edge: live readouts left, pilot offers right */}
-      <motion.div
-        {...fadeIn(0.4)}
-        className="pointer-events-none absolute inset-x-0 bottom-0 z-10 flex flex-col items-start gap-2 p-3 md:flex-row md:items-end md:justify-between md:p-5"
+      <div className="pointer-events-none animate-fade-in [animation-delay:400ms] absolute inset-x-0 bottom-0 z-10 flex flex-col items-start gap-2 p-3 md:flex-row md:items-end md:justify-between md:p-5"
       >
         <HudCluster label="Live readouts" className="p-1.5">
           <dl className="flex flex-wrap items-end gap-0.5">
@@ -218,7 +208,7 @@ export default function PublicDashboard() {
         </HudCluster>
 
         <PilotPanels className="max-w-full" />
-      </motion.div>
+      </div>
     </div>
   );
 }

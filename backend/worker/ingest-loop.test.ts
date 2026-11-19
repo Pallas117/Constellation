@@ -174,7 +174,7 @@ test("stop() cancels a pending start-up retry, so it never ticks after a restart
 test("tick attaches only current GOES particle readings to the canonical point (GAU-112)", async () => {
   const worker = new IngestionWorker() as unknown as TimedWorker & { goes: unknown };
   const now = Date.now();
-  for (const key of ["noaa", "esa", "jaxa", "mms", "lasp", "goes", "kyoto-dst", "swpc-products", "ml-forecast"]) worker.lastFetch.set(key, now);
+  for (const key of ["noaa", "esa", "jaxa", "mms", "lasp", "goes", "kyoto-dst", "swpc-products", "glotec", "ml-forecast"]) worker.lastFetch.set(key, now);
   const fresh = { value: 0.25, energy: ">=10 MeV", satellite: "GOES-18", timestamp: new Date(now - 5 * 60_000).toISOString() };
   const old = { value: 150, energy: ">=2 MeV", satellite: "GOES-19", timestamp: new Date(now - 45 * 60_000).toISOString() };
   worker.goes = { protons: fresh, electrons: old };
@@ -213,7 +213,7 @@ test("the worker exposes its last forecast for the API to serve (GAU-115)", () =
 test("tick uses measured Kyoto Dst while fresh, and the model once it is stale (GAU-116)", async () => {
   const worker = new IngestionWorker() as unknown as TimedWorker & { kyotoDst: unknown };
   const now = Date.now();
-  for (const key of ["noaa", "esa", "jaxa", "mms", "lasp", "goes", "kyoto-dst", "swpc-products", "ml-forecast"]) worker.lastFetch.set(key, now);
+  for (const key of ["noaa", "esa", "jaxa", "mms", "lasp", "goes", "kyoto-dst", "swpc-products", "glotec", "ml-forecast"]) worker.lastFetch.set(key, now);
   worker.kyotoDst = { dst: -123, timestamp: new Date(now - 30 * 60_000).toISOString() };
   const measured = (await tickPoint(worker)).indices;
   assert.equal(measured.dst, -123);
@@ -234,7 +234,7 @@ test("FMEA: a failed telemetry write is counted and reported, and the tick still
   await fs.mkdir(file); // a directory where the file should be: every append fails with EISDIR
   const worker = new IngestionWorker() as unknown as TimedWorker;
   const now = Date.now();
-  for (const key of ["noaa", "esa", "jaxa", "mms", "lasp", "goes", "kyoto-dst", "swpc-products", "ml-forecast"]) worker.lastFetch.set(key, now);
+  for (const key of ["noaa", "esa", "jaxa", "mms", "lasp", "goes", "kyoto-dst", "swpc-products", "glotec", "ml-forecast"]) worker.lastFetch.set(key, now);
   const before = bedrock.failedWrites;
   try {
     const result = await worker.tick();
@@ -248,14 +248,14 @@ test("FMEA: a failed telemetry write is counted and reported, and the tick still
 
 test("GAU-228: GAUSS_LASP=0 / GAUSS_MMS=0 leave those sources out of the live worker: not fetched, not reported", async () => {
   assert.equal(liveIngestSources({ mms: true, lasp: true }), undefined, "default: every source, as before");
-  assert.deepEqual(liveIngestSources({ mms: false, lasp: false }), ["noaa", "kyoto-dst", "goes", "swpc-products", "esa", "jaxa"]);
+  assert.deepEqual(liveIngestSources({ mms: false, lasp: false }), ["noaa", "kyoto-dst", "goes", "glotec", "swpc-products", "esa", "jaxa"]);
   const sources = liveIngestSources({ mms: true, lasp: false });
   assert.ok(sources?.includes("mms") && !sources.includes("lasp"));
 
   const worker = new IngestionWorker(undefined, { sources, publish: false, respectLink: false }) as unknown as TimedWorker;
   const now = Date.now();
   // Everything else was fetched just now, so LASP is the only source due this tick.
-  for (const key of ["noaa", "esa", "jaxa", "mms", "goes", "kyoto-dst", "swpc-products", "ml-forecast"]) worker.lastFetch.set(key, now);
+  for (const key of ["noaa", "esa", "jaxa", "mms", "goes", "kyoto-dst", "swpc-products", "glotec", "ml-forecast"]) worker.lastFetch.set(key, now);
   const urls: string[] = [];
   const realFetch = globalThis.fetch;
   globalThis.fetch = (async (input: string | URL | Request) => {
@@ -277,7 +277,7 @@ test("tick: a 7 h old completed Kp of 6 is unknown and can't make the tier sever
   const now = Date.now();
   const run = async (kpHoursAgo: number) => {
     const worker = new IngestionWorker() as unknown as TimedWorker & { noaa: unknown; kpReading: unknown };
-    for (const key of ["noaa", "esa", "jaxa", "mms", "lasp", "goes", "kyoto-dst", "swpc-products", "ml-forecast"]) worker.lastFetch.set(key, now);
+    for (const key of ["noaa", "esa", "jaxa", "mms", "lasp", "goes", "kyoto-dst", "swpc-products", "glotec", "ml-forecast"]) worker.lastFetch.set(key, now);
     const kpReading = { value: 6, kind: "planetary-3h", observedAt: new Date(now - kpHoursAgo * 3_600_000).toISOString() };
     const field = { x: 2, y: 1, z: -12 };
     worker.noaa = {
@@ -301,6 +301,29 @@ test("tick: a 7 h old completed Kp of 6 is unknown and can't make the tier sever
   const current = await run(2);
   assert.equal(current.indices.kp, 6);
   assert.equal(current.alerts.stormTier, "severe", "a current Kp 6 with Bz -12 is");
+});
+
+test("tick: GloTEC TEC over Malaysia rides on the point while fresh and is unknown (null) past 60 min", async () => {
+  const now = Date.now();
+  const reading = (minutesAgo: number) => ({
+    source: "glotec-swpc",
+    observedAt: new Date(now - minutesAgo * 60_000).toISOString(),
+    region: { latMin: 2, latMax: 7, lonMin: 100, lonMax: 119 },
+    cells: 8, constrainedCells: 4, meanTecu: 44, minTecu: 41, maxTecu: 46,
+    nearestKl: { lat: 3.75, lon: 102.5, tecu: 43, qualityFlag: 5 },
+    rateTecuPerHour: 2, rateBaselineAt: new Date(now - (minutesAgo + 30) * 60_000).toISOString(),
+  });
+  const run = async (minutesAgo: number | null) => {
+    const worker = new IngestionWorker() as unknown as TimedWorker & { glotec: unknown };
+    for (const key of ["noaa", "esa", "jaxa", "mms", "lasp", "goes", "kyoto-dst", "swpc-products", "glotec", "ml-forecast"]) worker.lastFetch.set(key, now);
+    worker.glotec = minutesAgo === null ? null : reading(minutesAgo);
+    return tickPoint(worker);
+  };
+  const fresh = await run(30);
+  assert.equal(fresh.ionosphere?.source, "glotec-swpc");
+  assert.equal(fresh.ionosphere?.meanTecu, 44);
+  assert.equal((await run(61)).ionosphere, null, "61 min old is unknown");
+  assert.equal((await run(null)).ionosphere, null, "never fetched is unknown");
 });
 
 test("a source that keeps failing backs off (10 s doubling to 10 min) and logs once per run, then recovers", async () => {
@@ -344,7 +367,7 @@ test("GAU-244: a tick with no measurement behind it is saved as canonical-stale,
   const { bedrock } = await import("../lib/local-db.js");
   const worker = new IngestionWorker() as unknown as TimedWorker;
   const now = Date.now();
-  for (const key of ["noaa", "esa", "jaxa", "mms", "lasp", "goes", "kyoto-dst", "swpc-products", "ml-forecast"]) worker.lastFetch.set(key, now);
+  for (const key of ["noaa", "esa", "jaxa", "mms", "lasp", "goes", "kyoto-dst", "swpc-products", "glotec", "ml-forecast"]) worker.lastFetch.set(key, now);
   const point = await tickPoint(worker);
   assert.equal(point.quality.stale, true, "no readout: the served point is flagged stale");
   const [last] = await bedrock.getRecent(1);

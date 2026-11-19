@@ -19,6 +19,7 @@ const KEYS = [
   "dst_kyoto",
   "goes_particles",
   "goes_xray",
+  "glotec_tec",
   "noaa_scales",
   "esa_swarm_hapi",
   "mms_fgm_l2",
