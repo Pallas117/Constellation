@@ -402,7 +402,7 @@ const post = (path, body, headers = {}) => new Request(`https://lightbound.space
   headers: { origin: "https://lightbound.space", "content-type": "application/x-www-form-urlencoded", "cf-connecting-ip": "203.0.113.9", ...headers },
 });
 const goodGauss = { kind: "gauss", name: "Ops Example", email: "ops@example.test", org: "Example Space", role: "Mission ops",
-  missionType: "Earth observation", stage: "Launched and operating", groundStack: "Yamcs / XTCE", dataAccess: "Historical packet archive",
+  missionType: "Earth observation", stage: "Launched and operating", groundStack: "Yamcs / XTCE", logSource: "Embedded Linux module (for example NVIDIA Jetson)", logFormat: "CSV", dataAccess: "Historical packet archive",
   plan: "fleet_integration", timeline: "This quarter", message: "Two smallsats flying ONNX models; we want evidence after the May storm.", consent: "yes" };
 async function send(env, request) {
   const { ctx, settle } = context();
@@ -420,9 +420,25 @@ test("apply: a good pilot brief is stored and redirected (post/redirect/get), wi
   assert.deepEqual([app.kind, app.email, app.plan, app.status], ["gauss", "ops@example.test", "fleet_integration", "new"]);
   const stored = env.DATA.map.get(`app:${app.id}`);
   assert.equal(JSON.parse(stored.v).groundStack, "Yamcs / XTCE", "readiness answers kept");
+  assert.equal(JSON.parse(stored.v).logSource, "Embedded Linux module (for example NVIDIA Jetson)", "what runs the onboard model is kept");
+  assert.equal(JSON.parse(stored.v).logFormat, "CSV", "the log format is kept");
   assert.ok(stored.exp - Date.now() / 1000 > 179 * 86400 && stored.exp - Date.now() / 1000 <= 180 * 86400);
   assert.match(await (await send(env, new Request("https://lightbound.space/gauss/apply/?sent=1"))).text(), /we'll reply with a fixed quote/);
   assert.match(await (await send(env, new Request("https://lightbound.space/constellation/apply/?sent=1"))).text(), /Membership is free and by invitation/);
+});
+
+test("apply: the log questions are required and only known answers are accepted; none leads the answer", async () => {
+  const { env } = await appEnv();
+  for (const [field, value] of [["logSource", ""], ["logFormat", ""], ["logSource", "A thing we made up"], ["logFormat", "<b>CSV</b>"]]) {
+    const res = await send(env, post("/api/apply", { ...goodGauss, [field]: value }));
+    assert.notEqual(res.status, 303, `${field}=${JSON.stringify(value)} is refused`);
+    assert.equal((await listApplications(env)).length, 0, "nothing stored");
+  }
+  const page = await (await send(env, new Request("https://lightbound.space/gauss/apply/"))).text();
+  for (const name of ["groundStack", "logSource", "logFormat"]) {
+    const select = page.match(new RegExp(`<select id="f-${name}"[^>]*>([\\s\\S]*?)</select>`))?.[1] ?? "";
+    assert.match(select, /<option value="Not sure" selected>/, `${name}: the default is "Not sure", not a stack we'd like to hear`);
+  }
 });
 
 test("apply: bad input comes back with errors and the values escaped; nothing stored", async () => {
