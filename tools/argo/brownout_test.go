@@ -71,7 +71,8 @@ func TestBrownoutShedsAndRestoresARunningJob(t *testing.T) {
 		if code != 0 || lines(t, out) != 60 {
 			t.Fatalf("exit %d, %d lines", code, lines(t, out))
 		}
-	case <-time.After(5 * time.Second):
+	// 60 s, as in eclipse_test.go: a throttled gate run (battery) took over 5 s and failed PR #315 on 19 Nov.
+	case <-time.After(60 * time.Second):
 		t.Fatal("job never resumed at 50%")
 	}
 }
