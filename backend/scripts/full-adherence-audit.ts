@@ -11,19 +11,6 @@ type CheckResult = {
   detail: string;
 };
 
-function hasRbacCreds(): boolean {
-  const required = [
-    "RBAC_VIEWER_EMAIL",
-    "RBAC_VIEWER_PASSWORD",
-    "RBAC_OPERATOR_EMAIL",
-    "RBAC_OPERATOR_PASSWORD",
-  ];
-  return required.every((key) => {
-    const value = process.env[key];
-    return typeof value === "string" && value.trim().length > 0;
-  });
-}
-
 // Checks run with the Node that runs this audit. A login shell (bash -l) re-reads the
 // profile, which can put another Node first; native modules built for this one then fail
 // to load (NODE_MODULE_VERSION mismatch) and the test step fails for no code reason.
@@ -81,23 +68,11 @@ function main(): void {
   const checks: CheckResult[] = [];
 
   checks.push(runCommand("TypeScript Lint", "npm run lint"));
+  // Includes the RBAC role matrix and 401/403 enforcement, in process (backend/rbac.test.ts).
   checks.push(runCommand("Unit/Integration Tests", "npm test"));
   checks.push(runCommand("Production Build", "npm run build"));
   checks.push(runCommand("Backend Environment Sanity", "npm run check:backend-env"));
   checks.push(runCommand("Security Compliance Mapping Check", "npm run check:security-compliance"));
-
-  if (hasRbacCreds()) {
-    checks.push(runCommand("RBAC Runtime Smoke Test", "npm run test:rbac"));
-  } else {
-    checks.push({
-      name: "RBAC Runtime Smoke Test",
-      command: "npm run test:rbac",
-      status: "WARN",
-      exitCode: null,
-      detail:
-        "Skipped: RBAC credentials missing. Set RBAC_VIEWER/OPERATOR email+password env vars to enable runtime auth verification.",
-    });
-  }
 
   console.log("Full Adherence Audit");
   console.log("====================");

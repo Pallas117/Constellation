@@ -8,7 +8,7 @@ interface HUDProps {
 
 /** One telemetry row. Only non-nominal values get a status word, so problems stand out. */
 const DataRow = ({ label, value, unit, status }: { label: string; value: string; unit: string; status?: ReadoutStatus | null }) => (
-  <div className="flex items-center justify-between gap-3 border-b border-charcoal py-1.5 last:border-b-0">
+  <div className="flex min-h-[2.1875rem] items-center justify-between gap-3 border-b border-charcoal py-1.5 last:border-b-0">
     <dt className="font-mono text-xs uppercase tracking-[0.06em] text-muted-foreground">{label}</dt>
     <dd className="flex items-center gap-2 font-mono tabular-nums">
       {status && status.tone !== 'nominal' && <StatusBadge tone={status.tone}>{status.word}</StatusBadge>}

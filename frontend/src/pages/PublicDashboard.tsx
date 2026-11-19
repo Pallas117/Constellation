@@ -1,7 +1,7 @@
 import { useMemo, useRef, useState } from 'react';
-import { Link } from 'react-router-dom';
-import { Globe, KeyRound, Lock, Orbit } from 'lucide-react';
-import { motion } from 'framer-motion';
+import { Link, useLocation } from 'react-router-dom';
+import { hasRole, roleOf } from '@/lib/roles';
+import { Globe, KeyRound, Lock, LogIn, Orbit } from 'lucide-react';
 import { GaussGlobe } from '@/components/GaussGlobe';
 import { SceneBoundary } from '@/components/ErrorBoundary';
 import { PilotPanels } from '@/components/PilotPanels';
@@ -15,6 +15,8 @@ import { useNow } from '@/hooks/useNow';
 import { useSession } from '@/lib/auth-client';
 import { beltVisuals, liveDrivers, standoffIfReference } from '@/lib/physics/live-drivers';
 import { useDocumentTitle } from '@/hooks/useDocumentTitle';
+import { overlayState } from '@/lib/auth-stage';
+import { loadLogin } from '@/pages/load-login';
 
 const LAYERS = {
   earth: true,
@@ -28,18 +30,18 @@ const LAYERS = {
 const NAV_LINK =
   'inline-flex h-8 items-center gap-1.5 rounded-md border border-charcoal/70 bg-black/55 px-2.5 text-xs font-medium text-foreground/90 backdrop-blur-md transition-colors hover:bg-white/10 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring';
 
-const fadeIn = (delay: number) => ({
-  initial: { opacity: 0 },
-  animate: { opacity: 1 },
-  transition: { duration: 0.8, delay, ease: 'easeOut' as const },
-});
+// The one way in for a visitor: same smoked glass, a warm-white edge instead of charcoal.
+const SIGN_IN_LINK = NAV_LINK.replace('border-charcoal/70', 'border-foreground/45').replace('text-foreground/90', 'text-foreground');
 
 export default function PublicDashboard() {
   useDocumentTitle();
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const location = useLocation();
   const { data: session } = useSession();
   const signedIn = Boolean(session?.user?.id);
+  // Only offer the console to roles that can open it; anyone else would be bounced straight back here.
+  const operator = signedIn && hasRole(roleOf(session?.user), 'operator');
   const [modelInfo, setModelInfo] = useState<MagnetosphereModelInfo | null>(null);
 
   // The public latest L1 point, once a minute, drives the traced field lines.
@@ -85,9 +87,8 @@ export default function PublicDashboard() {
       <SceneHoverTip model={modelInfo} live={Boolean(drivers)} />
 
       {/* Top edge: identity left, navigation right */}
-      <motion.header
-        {...fadeIn(0)}
-        className="pointer-events-none absolute inset-x-0 top-0 z-10 flex items-start justify-between gap-3 p-3 md:p-5"
+      {/* CSS fades (no animation library on the landing chunk); prefers-reduced-motion stops them in index.css. */}
+      <header className="pointer-events-none animate-fade-in absolute inset-x-0 top-0 z-10 flex items-start justify-between gap-3 p-3 md:p-5"
       >
         <div className="flex min-w-0 flex-col items-start gap-1.5">
           <h1 className="text-xl font-semibold tracking-tight md:text-2xl">Gauss Aurora</h1>
@@ -103,10 +104,25 @@ export default function PublicDashboard() {
               Field model
             </Link>
           )}
-          <Link to="/operator" className={NAV_LINK}>
-            <Lock className="h-3.5 w-3.5" aria-hidden="true" />
-            Operator Portal
-          </Link>
+          {operator && (
+            <Link to="/operator" className={NAV_LINK}>
+              <Lock className="h-3.5 w-3.5" aria-hidden="true" />
+              Operator console
+            </Link>
+          )}
+          {!signedIn && (
+            // Opens over this scene (it keeps running); the chunk is warmed on intent.
+            <Link
+              to="/login"
+              state={overlayState(location)}
+              onPointerEnter={() => void loadLogin()}
+              onFocus={() => void loadLogin()}
+              className={SIGN_IN_LINK}
+            >
+              <LogIn className="h-3.5 w-3.5" aria-hidden="true" />
+              Sign in
+            </Link>
+          )}
           <Link to="/member" className={NAV_LINK}>
             <Globe className="h-3.5 w-3.5" aria-hidden="true" />
             Member Hub
@@ -118,12 +134,10 @@ export default function PublicDashboard() {
             </Link>
           )}
         </nav>
-      </motion.header>
+      </header>
 
       {/* Bottom edge: live readouts left, pilot offers right */}
-      <motion.div
-        {...fadeIn(0.4)}
-        className="pointer-events-none absolute inset-x-0 bottom-0 z-10 flex flex-col items-start gap-2 p-3 md:flex-row md:items-end md:justify-between md:p-5"
+      <div className="pointer-events-none animate-fade-in [animation-delay:400ms] absolute inset-x-0 bottom-0 z-10 flex flex-col items-start gap-2 p-3 md:flex-row md:items-end md:justify-between md:p-5"
       >
         <HudCluster label="Live readouts" className="p-1.5">
           <dl className="flex flex-wrap items-end gap-0.5">
@@ -194,7 +208,7 @@ export default function PublicDashboard() {
         </HudCluster>
 
         <PilotPanels className="max-w-full" />
-      </motion.div>
+      </div>
     </div>
   );
 }

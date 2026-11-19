@@ -15,6 +15,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"syscall"
@@ -34,12 +35,16 @@ type Config struct {
 	ExitNodes map[string]string `json:"exit_nodes,omitempty"` // tailscale hostname → country (MY/SG only)
 	PhoneTo   string            `json:"phone_to,omitempty"`   // your own iMessage handle for phone alerts
 	// "sms" sends SMS first: iMessages to your own number arrive silently, with no banner.
-	PhoneService  string   `json:"phone_service,omitempty"`
+	PhoneService string `json:"phone_service,omitempty"`
+	// A second handle (best an Apple ID email) that gets an alert by iMessage when the first
+	// one fails, e.g. while the SIM is expired. Set with `argo phone fallback <email>`.
+	PhoneFallback string   `json:"phone_fallback,omitempty"`
 	Watch         []Peer   `json:"watch,omitempty"`           // LaunchAgents Argo keeps alive; default: awake guard + mesh-heal
 	Devices       []string `json:"devices,omitempty"`         // tailnet hostnames to watch; default: this user's phones
 	GuardSlotGB   float64  `json:"guard_slot_gb,omitempty"`   // RAM one mesh agent slot reserves (default 2)
 	GuardWorkerGB float64  `json:"guard_worker_gb,omitempty"` // RAM one job worker (test file, browser) holds (default 0.5)
 	InboxDir      string   `json:"inbox_dir,omitempty"`       // where received files land; default ~/Downloads/Argo
+	QuietHours    string   `json:"quiet_hours,omitempty"`     // no non-urgent texts in these hours; default 23:00-07:00, "off" for none
 }
 
 func (c Config) peers() []Peer {
@@ -116,10 +121,12 @@ func main() {
 		thirdpartyTick(tpFilesIn(configDir()), phone, time.Now()) // texts once per new third-party change; two small file reads
 		_ = withLock(store, func() { phase(20*time.Second, func(c context.Context) { guardTick(c, store, cfg, phone, time.Now()) }) })
 		phase(30*time.Second, func(c context.Context) { relayTick(c, cfg, store, phone) }) // store-and-forward (relay.go); takes its own lock
+		// Read-only posture checks hourly and the update check daily (posture.go, update.go).
+		phase(25*time.Second, func(c context.Context) { securityTick(c, cfg, store, time.Now()) })
 		var skip bool
 		phase(10*time.Second, func(c context.Context) {
 			gw, mac := localGateway(c)
-			skip = skipTick(store.Load(), gw, mac, time.Now(), onBattery(store.loadGuard()))
+			skip = skipTickSaving(store.Load(), gw, mac, time.Now(), onBattery(store.loadGuard()), store.loadPowerSave().On)
 		})
 		if skip {
 			return nil
@@ -135,9 +142,15 @@ func main() {
 	var err error
 	switch cmd {
 	case "status":
-		fmt.Println(statusLine(store.Load(), time.Now()) + guardStatus(store.loadGuard(), time.Now()) + gaussStatus(store, time.Now()))
+		fmt.Println(statusLine(store.Load(), time.Now()) + guardStatus(store.loadGuard(), time.Now()) + powerSaveStatus(store.loadPowerSave()) + gaussStatus(store, time.Now()) + phoneStatus(store.Dir, time.Now()))
 	case "doctor":
 		err = doctor(ctx, loop.Prober)
+		if err == nil {
+			doctorPowerSave(ctx, store, os.Stdout)
+		}
+	case "power-save": // force or inspect power-save mode (powersave.go)
+		sample := sampleHost(ctx, false)
+		err = powerSaveCmd(ctx, os.Args[2:], store, realAppFx(), sample.Batt, runtime.GOOS, time.Now(), os.Stdout)
 	case "fix":
 		loop.Out = func(s string) { fmt.Println(s) }
 		switch {
@@ -178,6 +191,14 @@ func main() {
 			case <-time.After(every):
 			}
 		}
+	case "reach": // GAU-247: is this one host reachable from this network, and what helps if not
+		code, rerr := reachCmd(ctx, store, os.Args[2:])
+		if rerr != nil {
+			fmt.Fprintln(os.Stderr, "argo:", rerr)
+		}
+		os.Exit(code)
+	case "private-dns": // GAU-248: is DNS private here, the nearest encrypted resolver, a profile to install
+		err = privateDNSCmd(ctx, store, os.Args[2:], os.Stdout)
 	case "networks": // GAU-234: Wi-Fi networks in range and what Argo would join (names stay on this Mac)
 		err = printNetworks(ctx, os.Stdout)
 	case "summary": // what Argo caught, fixed and learned in the last 7 days
@@ -250,6 +271,8 @@ func main() {
 		} else {
 			fmt.Print(scaleText(p))
 		}
+	case "attention": // what texts now, what waits for the digest
+		err = attentionCmd(os.Args[2:], cfg, store)
 	case "notify": // for mesh-heal, the awake guard and Claude Code hooks
 		err = notifyCmd(os.Args[2:], phone, store, time.Now())
 	case "phone":
@@ -271,10 +294,14 @@ func main() {
 		err = uninstall(store)
 	case "send", "outbox", "inbox", "sync", "keys", "mule", "link":
 		err = relayMain(cmd, os.Args[2:], cfg, store, phone, os.Stdout)
+	case "posture": // read-only device security checks against docs/DEVICE_SECURITY_BASELINE.md
+		err = postureCmd(ctx, os.Args[2:], store, os.Stdout)
+	case "update": // signed releases: check (default) or apply; never automatic (update.go)
+		err = updateCmd(ctx, os.Args[2:], cfg, newUpdater(store), os.Stdout)
 	case "version":
 		fmt.Println("argo", version)
 	default:
-		fmt.Fprintln(os.Stderr, "usage: argo [status|doctor|fix|report|on|off|preflight|run -- cmd|phone <handle>|test|off|imessage|sms|notify TITLE MSG|egress [off|on]|dns check|plan [--zone Z] [--json] [--alert]|thirdparty [list|check|accept|seen]|guard [admit|run]|heal [--json]|scale [--json]|watch|summary [--send]|enroll URL DEVICE|install|uninstall|version]\n       argo [send [-ttl D] DEVICE FILE|outbox|inbox|sync|keys [list|publish|trust DEVICE]|mule export|import DIR|link]")
+		fmt.Fprintln(os.Stderr, "usage: argo [status|doctor|fix|report|on|off|preflight|run -- cmd|phone <handle>|test|off|imessage|sms|notify TITLE MSG|attention [replay]|egress [off|on]|dns check|plan [--zone Z] [--json] [--alert]|thirdparty [list|check|accept|seen]|guard [admit|run]|heal [--json]|scale [--json]|watch|summary [--send]|enroll URL DEVICE|install|uninstall|version]\n       argo [send [-ttl D] DEVICE FILE|outbox|inbox|sync|keys [list|publish|trust DEVICE]|mule export|import DIR|link]")
 		os.Exit(2)
 	}
 	if err != nil {
@@ -298,15 +325,21 @@ func isIPhoneHotspot(gw string) bool { return gw == "172.20.10.1" } // Personal 
 const hotspotBatteryEvery = 150 * time.Second
 
 func skipTick(st State, gw, mac string, now time.Time, battery bool) bool {
+	return skipTickSaving(st, gw, mac, now, battery, false)
+}
+
+// skipTickSaving is skipTick with the probe intervals stretched while power-save is on
+// (powersave.go). A broken link or a new gateway still probes at once.
+func skipTickSaving(st State, gw, mac string, now time.Time, battery, saving bool) bool {
 	switch {
 	case st.CheckedAt.IsZero(), st.Class.Blocking():
 		return false
 	case gw != st.Gateway || mac != st.GatewayMAC:
 		return false
 	case isIPhoneHotspot(gw):
-		return battery && now.Sub(st.CheckedAt) < hotspotBatteryEvery
+		return (battery || saving) && now.Sub(st.CheckedAt) < stretch(hotspotBatteryEvery, saving)
 	}
-	return now.Sub(st.CheckedAt) < fullCheckEvery
+	return now.Sub(st.CheckedAt) < stretch(fullCheckEvery, saving)
 }
 
 // onBattery reads the guard's last sample (written every tick); unknown counts as AC.
@@ -354,7 +387,16 @@ func doctor(ctx context.Context, p Prober) error {
 	b, _ := json.MarshalIndent(s, "", "  ")
 	fmt.Println(Mask(string(b)))
 	fmt.Printf("\nclass: %s — %s\n", class, reason)
-	fmt.Printf("network: %s\n", ScoreNet(s).Line())
+	n := ScoreNet(s)
+	fmt.Printf("network: %s\n", n.Line())
+	for _, a := range n.Advice {
+		fmt.Println("radio →", a)
+	}
+	if private, why := readDNSPath(ctx).Private(); private {
+		fmt.Printf("dns: private (%s)\n", why)
+	} else {
+		fmt.Printf("dns: not private (%s); see argo private-dns\n", why)
+	}
 	for _, a := range Plan(class, s, "") {
 		fmt.Println("→", a.Say)
 		if a.Command != "" {

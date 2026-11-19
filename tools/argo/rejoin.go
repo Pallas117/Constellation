@@ -56,6 +56,7 @@ func probeOfflineWiFi(ctx context.Context, s *Snapshot) {
 	if s.WiFiPower == "On" {
 		s.JoinCandidates = joinCandidates(ctx, s.WiFiDevice)
 	}
+	s.InCall = liveCall(ctx) != ""
 }
 
 // offlinePlan is the OFFLINE ladder.

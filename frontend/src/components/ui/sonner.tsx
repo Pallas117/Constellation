@@ -10,9 +10,10 @@ const Toaster = ({ ...props }: ToasterProps) => {
     <Sonner
       theme="dark"
       // Clear of the console header and side columns: top centre below the
-      // header on wide screens; at the bottom on phones, where the header wraps.
+      // header on wide screens (its measured bottom edge, set by ConsoleHeader; it
+      // wraps to more rows as links are added); at the bottom on phones.
       position={phone ? "bottom-center" : "top-center"}
-      offset={phone ? 16 : 112}
+      offset={phone ? 16 : "var(--console-header-bottom, 112px)"}
       className="toaster group"
       toastOptions={{
         classNames: {

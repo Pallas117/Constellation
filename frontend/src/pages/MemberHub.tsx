@@ -3,23 +3,24 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Globe, Sparkles, ShieldCheck } from "lucide-react";
 import { useDocumentTitle } from "@/hooks/useDocumentTitle";
+import { useSession } from "@/lib/auth-client";
 
 const PILLARS = [
   {
     title: "Open Science",
-    body: "Heliophysics and magnetohydrodynamics are kept open to the community. With a member account, contributors can visualise geomagnetic stress and support critical infrastructure.",
+    body: "Heliophysics stays open: the live view is public, and a member account adds the field model and the last 24 hours of solar wind behind it.",
     icon: Globe,
     point: "Live space weather on the open landing page",
   },
   {
     title: "Free & Invite-Only",
-    body: "Membership is free and by invitation. There is no fee, and members are not expected to provide compute or fund model training; operators run the secure mission-critical control plane.",
+    body: "Membership is free and by invitation. There is no fee, and members are not asked to provide compute or fund model training.",
     icon: Sparkles,
     point: "Free to join, by invitation",
   },
   {
     title: "Operator Separation",
-    body: "The network preserves a stable operator login flow for mission operators. Operator access remains separate from member contributions and visualisations.",
+    body: "The operator console and device protection need an operator role. Member accounts never see them, and they never see member data.",
     icon: ShieldCheck,
     point: "Clear boundaries between open data and protected control",
   },
@@ -27,6 +28,8 @@ const PILLARS = [
 
 export default function MemberHub() {
   useDocumentTitle("Member hub");
+  const { data: session } = useSession();
+  const signedIn = Boolean(session?.user?.id);
 
   return (
     <main className="min-h-dvh w-full bg-background px-4 py-8 text-foreground sm:px-8">
@@ -39,18 +42,23 @@ export default function MemberHub() {
                 Open access to magnetohydrodynamics, SDA, and network contributions.
               </h1>
               <p className="mt-4 max-w-2xl text-sm leading-7 text-muted-foreground">
-                Membership is free and invite-only. No operator credentials are required: a member account opens the
-                heliophysics visualisations, shows how the SDA is evolving, and lets you join the network as a
-                contributor.
+                Membership is free and invite-only. A member account opens the field model and the solar-wind history
+                behind the live view; no operator role is needed.
               </p>
             </div>
             <div className="flex flex-col gap-3 sm:flex-row">
               <Button asChild variant="outline">
                 <Link to="/heliophysics">Explore magnetohydrodynamics</Link>
               </Button>
-              <Button asChild>
-                <Link to="/login">Sign in</Link>
-              </Button>
+              {signedIn ? (
+                <Button asChild>
+                  <Link to="/">Back to the live view</Link>
+                </Button>
+              ) : (
+                <Button asChild>
+                  <Link to="/login">Sign in</Link>
+                </Button>
+              )}
             </div>
           </div>
         </section>

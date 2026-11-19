@@ -168,24 +168,48 @@ function median(values: number[]): number {
   return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
 }
 
-/** Finite values of a[from, to) and the share of the window they cover. */
-function windowValues(a: Float64Array, from: number, to: number): { values: number[]; coverage: number } {
-  const values: number[] = [];
-  for (let i = Math.max(0, from); i < Math.min(a.length, to); i++) if (finite(a[i])) values.push(a[i]);
-  return { values, coverage: values.length / Math.max(1, to - from) };
+let scratch = new Float64Array(64);
+
+/**
+ * Median of the finite values of a[from, to), or NaN when there are none. The rolling windows
+ * (10-15 minutes, at every minute of 24 h) are the detector's hot loop, so this insertion-sorts
+ * into a reused buffer instead of copying and sorting an array. Stable, so it equals `median`.
+ */
+function windowMedian(a: Float64Array, from: number, to: number): number {
+  const lo = Math.max(0, from);
+  const hi = Math.min(a.length, to);
+  if (scratch.length < hi - lo) scratch = new Float64Array(hi - lo);
+  let m = 0;
+  for (let i = lo; i < hi; i++) {
+    const x = a[i];
+    if (!finite(x)) continue;
+    let j = m++;
+    for (; j > 0 && scratch[j - 1] > x; j--) scratch[j] = scratch[j - 1];
+    scratch[j] = x;
+  }
+  if (m === 0) return NaN;
+  const mid = m >> 1;
+  return m % 2 ? scratch[mid] : (scratch[mid - 1] + scratch[mid]) / 2;
+}
+
+/** How many minutes of a[from, to) have data. */
+function count(a: Float64Array, from: number, to: number): number {
+  let c = 0;
+  for (let i = Math.max(0, from); i < Math.min(a.length, to); i++) if (finite(a[i])) c += 1;
+  return c;
 }
 
 /** Rolling median over ±k/2 minutes, ignoring missing minutes. */
 function smooth(a: Float64Array, minutes = SMOOTH_MIN): Float64Array {
   const half = minutes >> 1;
-  const out = new Float64Array(a.length).fill(NaN);
-  for (let j = 0; j < a.length; j++) out[j] = median(windowValues(a, j - half, j + half + 1).values);
+  const out = new Float64Array(a.length);
+  for (let j = 0; j < a.length; j++) out[j] = windowMedian(a, j - half, j + half + 1);
   return out;
 }
 
 /** Share of a[from..to] (inclusive) that has data. */
 function share(a: Float64Array, from: number, to: number): number {
-  return windowValues(a, from, to + 1).coverage;
+  return count(a, from, to + 1) / Math.max(1, to + 1 - from);
 }
 
 function confidenceFromCoverage(coverage: number, strong: boolean): DetectionConfidence {
@@ -265,16 +289,20 @@ export function detectL1Structures(samples: L1Sample[]): L1Structures {
   }
   const iso = (i: number) => new Date(t0 + i * MINUTE_MS).toISOString();
 
-  // Shocks: medians of the 10 minutes before and after each minute.
+  // Shocks: medians of the 10 minutes before and after each minute. The window after minute i is
+  // the one before minute i + w, so each is computed once: before(a)[i] is the median of a[i − w, i).
   const w = SHOCK_THRESHOLDS.windowMin;
+  const before = (a: Float64Array) => Float64Array.from({ length: n }, (_, i) => windowMedian(a, i - w, i));
+  const [vBefore, nBefore, bBefore] = [before(v), before(den), before(bt)];
   const jumpAt = (i: number) => {
-    const windows = [v, v, den, den, bt, bt].map((a, k) => windowValues(a, k % 2 ? i : i - w, k % 2 ? i + w : i));
-    const [v1, v2, n1, n2, b1, b2] = windows.map((x) => median(x.values));
+    const [v1, v2, n1, n2, b1, b2] = [vBefore[i], vBefore[i + w], nBefore[i], nBefore[i + w], bBefore[i], bBefore[i + w]];
     if (![v1, v2, n1, n2, b1, b2].every(finite) || n1 <= 0 || b1 <= 0) return null;
-    const jump = { i, v1, v2, n1, n2, dV: v2 - v1, nr: n2 / n1, br: b2 / b1, coverage: Math.min(...windows.map((x) => x.coverage)) };
+    const jump = { i, v1, v2, n1, n2, dV: v2 - v1, nr: n2 / n1, br: b2 / b1, coverage: 0 };
     const passes =
       jump.dV >= SHOCK_THRESHOLDS.deltaSpeedKmS && jump.nr >= SHOCK_THRESHOLDS.densityRatio && jump.br >= SHOCK_THRESHOLDS.fieldRatio;
-    return passes ? jump : null;
+    if (!passes) return null;
+    jump.coverage = Math.min(...[v, den, bt].flatMap((a) => [count(a, i - w, i), count(a, i, i + w)])) / w;
+    return jump;
   };
   const shocks: ShockCandidate[] = [];
   for (let i = w; i < n - w; i++) {
@@ -312,8 +340,8 @@ export function detectL1Structures(samples: L1Sample[]): L1Structures {
   const fieldOnlyDiscontinuities: FieldOnlyCandidate[] = [];
   const nearShock = (i: number) => shocks.some((sh) => Math.abs(Date.parse(sh.time) - (t0 + i * MINUTE_MS)) <= 60 * MINUTE_MS);
   for (let i = w; i < n - w; i++) {
-    const b1 = median(windowValues(bt, i - w, i).values);
-    const b2 = median(windowValues(bt, i, i + w).values);
+    const b1 = bBefore[i];
+    const b2 = bBefore[i + w];
     if (!finite(b1) || !finite(b2) || b1 <= 0 || b2 / b1 < FIELD_ONLY_RATIO || nearShock(i)) continue;
     const from = Math.max(0, i - 30);
     const to = Math.min(n, i + 30);
