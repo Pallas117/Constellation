@@ -178,7 +178,9 @@ export function useMesh() {
   const devices = devicesFeed.data;
   const error = onboardingFeed.error ?? devicesFeed.error;
   const stopped = onboardingFeed.status === "sign-in-required" || devicesFeed.status === "sign-in-required";
-  return { steps, devices, me, canEnroll, canSeeTeam, canRevokeAny, error, stopped, enroll, revoke };
+  // Still waiting for a first answer: onboarding, then (if this caller may enrol) the device list.
+  const loading = !error && !stopped && (!onboarding || (canEnroll && !devices));
+  return { steps, devices, me, canEnroll, canSeeTeam, canRevokeAny, error, stopped, loading, enroll, revoke };
 }
 
 /** Argo's non-blocking warnings: the device works, but someone should look. */

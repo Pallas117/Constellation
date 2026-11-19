@@ -1370,6 +1370,69 @@
       ]
     },
     {
+      "id": "REQ-WEB-001",
+      "title": "Public release closes the account routes",
+      "statement": "In the public release the website Worker shall answer 404 with Cache-Control no-store to the sign-in and workspace pages (/app/, /app/admin/, /app/checkout), the Argo page, the application endpoint (/api/apply) and the payment webhook (/api/stripe/webhook), whatever the HTTP method.",
+      "rationale": "A public site must not expose account, form or payment routes before they are opened on purpose.",
+      "parent": "GAU-178",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "public release: sign-in, the workspace, Argo, form posts and the webhook answer 404, whatever the method"
+      ]
+    },
+    {
+      "id": "REQ-WEB-002",
+      "title": "Workspace needs a valid Access token",
+      "statement": "The website Worker shall answer 401 to a workspace request unless it carries a Cloudflare Access token with a valid signature, the configured audience and issuer, and an unexpired time.",
+      "rationale": "The workspace holds accounts and billing; a forged, expired or bare-header identity must never count.",
+      "parent": "GAU-228",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "sign-in: only a valid Access JWT for our team and application counts",
+        "workspace: signed out gets 401; pending applicants see their status; members see Constellation"
+      ]
+    },
+    {
+      "id": "REQ-WEB-003",
+      "title": "Pilot brief input is validated and bots store nothing",
+      "statement": "The website Worker shall store no pilot brief from a post that is invalid (HTTP 422), cross-site (403), of an unsupported content type (415), over five an hour from one address (429) or has the honeypot field filled (success redirect shown to the sender).",
+      "rationale": "Public form input is untrusted; abuse must not reach storage and bots must not learn they were dropped.",
+      "parent": "GAU-228",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "apply: bad input comes back with errors and the values escaped; nothing stored",
+        "apply: cross-site posts, bots, odd encodings and floods are turned away"
+      ]
+    },
+    {
+      "id": "REQ-WEB-004",
+      "title": "Payment webhook accepts only a valid signature",
+      "statement": "The website Worker shall reject with HTTP 400, leaving the account's billing status unchanged, a Stripe webhook whose signature uses a wrong secret, is older than 5 minutes or does not match the payload.",
+      "rationale": "Plan unlock and cancellation must follow only events Stripe signed.",
+      "parent": "GAU-228",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "stripe: form encoding and webhook signatures (wrong secret, stale or tampered payloads rejected)",
+        "stripe webhook: verified events unlock, renew, fail and cancel plans; forged ones change nothing"
+      ]
+    },
+    {
+      "id": "REQ-WEB-005",
+      "title": "Pages carry no scripts and load nothing from elsewhere",
+      "statement": "Every website page shall carry a Content-Security-Policy meta tag equal to the Worker's header, contain no script element other than a non-executed JSON-LD block, no inline style or event handler, and load no src, srcset or stylesheet from outside https://lightbound.space.",
+      "rationale": "No client-side code or third-party request means no script-injection or tracking path from the pages.",
+      "parent": "GAU-228",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "security: strict CSP, no scripts, no inline styles or handlers, nothing loaded from elsewhere"
+      ]
+    },
+    {
       "id": "REQ-ARG-004",
       "title": "Argo names the link problem",
       "statement": "Argo shall classify each network probe into one of eleven classes (OK, OFFLINE, CAPTIVE, DNS, DEAD_PROXY, STALE_DAEMON, TLS_INTERCEPT, PORT_BLOCK, REGION, WPAD_RISK, WIFI_RISK), choosing the most fundamental failure first.",
