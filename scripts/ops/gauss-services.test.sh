@@ -364,6 +364,9 @@ stub npm 'if [ "$1" = run ]; then
       if [ "$GATEFAIL" = test ]; then echo "❌ VERIFY FAILED"; exit 1; fi
       echo "✅ VERIFY PASSED at $(git rev-parse --short HEAD)" ;;
   esac
+  if [ "$GATEFAIL" = "quality:full" ] && [ "$2" = "quality:full" ]; then
+    printf "/tmp/co/backend/replay/fetch-archive.ts\n  110:26  error  There is no cause attached to the symptom error being thrown  preserve-caught-error\n\nX 1 problem (1 error, 0 warnings)\n"
+  fi
   [ "$GATEFAIL" != "$2" ]; exit
 fi
 [ -n "$NPMNET" ] && [ "$1" = ci ] && { echo "npm error network request to https://registry.npmjs.org/x.tgz failed, reason: read ETIMEDOUT" >&2; exit 1; }
@@ -606,6 +609,9 @@ expect "gates record: a FAILED line names the failing tests and requirements" $?
 kept="$WD/gates/logs/$(basename "$rec" .json)"
 [[ "$out" == *"Failed gate output: $kept"* ]] && grep -q "VERIFY FAILED" "$kept/verify.log" && [ ! -f "$kept/test:ops.log" ]
 expect "gates record: a failed gate's output is kept beside the record, passing gates' is not" $?
+out=$(GATEFAIL=quality:full run gates record "$GW" 2>&1)
+[[ "$out" == *"FAILED (quality) ${D:0:7}"*"quality failed"*"| failing quality: replay/fetch-archive.ts:110 preserve-caught-error"* ]]
+expect "gates record: a failed quality gate names the lint error (file, line, rule)" $?
 touch "$GW/stray"; out=$(run gates record "$GW" 2>&1); [[ "$out" == *"uncommitted or untracked"* ]]; expect "gates record refuses a dirty checkout" $?
 rm -f "$GW/stray"
 # The runner inherits the LaunchAgent's env (live data paths, live origins, launchd PATH): gates must not.
@@ -671,7 +677,7 @@ rm -f "$(grep -l "sha=$N" "$GQ"/*.req)"
 # Gatebox (GAU-223): the Oracle VM screens each request first over the tailnet. GBRC is the stub's
 # exit code; "say" adds the "gates rc=N in S s on <sha>" line gauss-gate-run prints after the gates ran
 # ("anon" leaves the commit out of it, as an older gauss-gate-run would).
-stub ssh 'echo "ssh $*" >>"$ACTIONS"; a=${@: -1}; case "$GBRC" in hang) sleep 5; exit 0 ;; say*) r=${GBRC#say}; echo "gates rc=$r in 90 s on ${a##* }"; exit "$r" ;; anon*) r=${GBRC#anon}; echo "gates rc=$r in 90 s"; exit "$r" ;; *) echo "ssh: connect to host gatebox port 22: Operation timed out" >&2; exit "${GBRC:-255}" ;; esac'
+stub ssh 'echo "ssh $*" >>"$ACTIONS"; a=${@: -1}; case "$GBRC" in hang) sleep 5; exit 0 ;; say*) r=${GBRC#say}; [ -f "$HOME/gatebox-out" ] && cat "$HOME/gatebox-out"; echo "gates rc=$r in 90 s on ${a##* }"; exit "$r" ;; anon*) r=${GBRC#anon}; echo "gates rc=$r in 90 s"; exit "$r" ;; *) echo "ssh: connect to host gatebox port 22: Operation timed out" >&2; exit "${GBRC:-255}" ;; esac'
 : >"$T/gatebox-key"
 g checkout -q --detach "$E"; echo gb1 >"$LIVE/backend/server.ts"; g commit -qam gb1; GB1=$(g rev-parse HEAD); g checkout -q --detach "$E"
 (cd "$LIVE" && run gates enqueue "$GB1" >/dev/null 2>&1)
@@ -679,6 +685,30 @@ out=$(GAUSS_GATEBOX=gatebox GBRC=say1 run gates run 2>&1)
 [ "$(tail -1 "$GR" | cut -d' ' -f2,4-7)" = "$GB1 FAILED on gatebox gatebox" ] && [ -z "$(ls "$GQ")" ] && ! grep -q '^heavy ' "$T/actions" \
   && grep -q "^ssh .*-o BatchMode=yes .*gate@gatebox Pallas117/Constellation $GB1\$" "$T/actions" && [ ! -f "$WD/gates/$(tree_of "$GB1").json" ]
 expect "gates run: a commit the gatebox fails is FAILED without a local run, and no deploy record is written" $?
+# gates why: a gatebox failure is named in the result line, and diagnosed with the known cause and its fix
+printf '%s\n' 'ok 1' '✖ failing tests:' '' '✖ telemetry_descriptor.json is the current .proto (56.69ms)' >"$T/home/gatebox-out"
+(cd "$LIVE" && run gates enqueue "$GB1" >/dev/null 2>&1); GAUSS_GATEBOX=gatebox GBRC=say1 run gates run >/dev/null 2>&1
+[[ "$(tail -1 "$GR")" == *"; failing tests: telemetry_descriptor.json is the current .proto; log "* ]]; expect "gates run: a gatebox failure names the failing test in its result line" $?
+out=$(run gates why "${GB1:0:9}"); rc=$?
+[ $rc = 0 ] && [[ "$out" == "Why ${GB1:0:7} failed"* && "$out" == *"cause: telemetry.proto changed without its descriptor"* && "$out" == *"fix:   regenerate it"* \
+  && "$out" != *"cause: a failing test"* && "$out" == *"Before re-queueing: npm run -s check:changed"* ]]
+expect "gates why: a known failure gets its cause and fix, without the general advice" $?
+printf '%s\n' '✖ failing tests:' '' '✖ something nobody has met (3ms)' >"$T/home/gatebox-out"
+(cd "$LIVE" && run gates enqueue "$GB1" >/dev/null 2>&1); GAUSS_GATEBOX=gatebox GBRC=say1 run gates run >/dev/null 2>&1
+out=$(run gates why "$GB1")
+[[ "$out" == *"failing tests: something nobody has met"* && "$out" == *"cause: a failing test"* ]]; expect "gates why: an unknown failing test is named, with the general advice" $?
+# 18 Nov, PR #321: a PASSING descriptor test in the log was blamed; and the lint errors were not named
+printf '%s\n' '✔ telemetry_descriptor.json is the current .proto (9.1ms)' '' '/home/gate/work.x/frontend/src/components/scene/CameraTween.tsx' '  22:3  error  Error: Cannot access refs during render' '' '✖ 1 problem (1 error, 0 warnings)' >"$T/home/gatebox-out"
+(cd "$LIVE" && run gates enqueue "$GB1" >/dev/null 2>&1); GAUSS_GATEBOX=gatebox GBRC=say1 run gates run >/dev/null 2>&1
+out=$(run gates why "$GB1")
+[[ "$out" == *"lint errors: scene/CameraTween.tsx:22"* && "$out" == *"cause: a lint error"* && "$out" != *"telemetry.proto changed"* ]]
+expect "gates why: lint errors are named by file and line, and a passing test is not blamed" $?
+rm -f "$T/home/gatebox-out"
+(cd "$LIVE" && run gates enqueue "$GB1" >/dev/null 2>&1); GAUSS_GATEBOX=gatebox GBRC=say1 run gates run >/dev/null 2>&1
+out=$(run gates why "$GB1")
+[[ "$out" == *"cause: none of the known causes match"* && "$out" == *"add a row to GATES_CAUSES"* ]]; expect "gates why: no match says so and asks for a new row" $?
+out=$(run gates why 0000000); rc=$?
+[ $rc = 3 ] && [[ "$out" == "No failed gate on record for 0000000"* ]]; expect "gates why: a commit with no failure exits 3" $?
 (cd "$LIVE" && run gates enqueue "$GB1" >/dev/null 2>&1)
 out=$(GAUSS_GATEBOX=gatebox GBRC=say0 run gates run 2>&1)
 [[ "$out" == *"gatebox passed ${GB1:0:7}"* ]] && grep -q '^heavy --wait' "$T/actions" && [ "$(tail -1 "$GR" | cut -d' ' -f2,4)" = "$GB1 PASSED" ]
