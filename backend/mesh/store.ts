@@ -36,7 +36,37 @@ export interface MeshReport {
   net?: MeshNet;
   link?: MeshLink;
   guard?: MeshGuard;
+  powerSave?: MeshPowerSave;
+  posture?: MeshPosture;
 }
+
+/**
+ * Argo's power-save mode (tools/argo/powersave.go): on while the power budget is negative (battery, a
+ * charger that can't keep up, plain 5 V USB) or when forced by hand. since and reason are only present while on.
+ */
+export const MESH_POWER_SAVE_REASONS = ["battery", "charger-short", "no-pd", "manual"] as const;
+export interface MeshPowerSave {
+  on: boolean;
+  since?: string; // ISO time it started
+  reason?: (typeof MESH_POWER_SAVE_REASONS)[number];
+}
+
+/**
+ * Device security posture from `argo posture` (tools/argo/posture.go, GAU-238):
+ * one status per baseline item (docs/DEVICE_SECURITY_BASELINE.md) and when it
+ * was checked. Statuses only: no detail text, no identifiers. Argo sends it
+ * about hourly, so the store keeps the last one between reports.
+ */
+export const POSTURE_ITEMS = ["disk", "firewall", "updates", "integrity", "tailkey", "argo", "sharing"] as const;
+export type PostureItem = (typeof POSTURE_ITEMS)[number];
+export const POSTURE_STATUSES = ["ok", "warn", "fail", "unknown"] as const;
+export type PostureStatus = (typeof POSTURE_STATUSES)[number];
+export interface MeshPosture {
+  at: string;
+  items: Partial<Record<PostureItem, PostureStatus>>;
+}
+/** A posture older than this no longer describes the device and is dropped. */
+export const POSTURE_MAX_AGE_MS = 3 * 60 * 60 * 1000;
 
 /**
  * Link stability from Argo's incident log (tools/argo/linkstats.go), for the
@@ -102,6 +132,30 @@ export interface MeshNet {
   signal: NetGrade | "n/a";
   rssi?: number;
   noise?: number;
+  radio?: MeshRadio;
+}
+
+/**
+ * Argo's radio profile and link quality (GAU-188): counts and grades only, never a
+ * network name. "path" says where loss comes from: the Wi-Fi hop ("local") or past it.
+ */
+export const RADIO_BANDS = ["2.4", "5", "6"] as const;
+export const LINK_PATHS = ["ok", "local", "upstream", "not measured"] as const;
+export interface MeshRadio {
+  band?: (typeof RADIO_BANDS)[number];
+  channel?: number;
+  widthMHz?: number;
+  phy?: string;
+  mcs?: number;
+  txMbps?: number;
+  coChannel?: number;
+  overlapping?: number;
+  gwLossPct?: number;
+  gwJitterMs?: number;
+  netLossPct?: number;
+  netJitterMs?: number;
+  netRttMs?: number;
+  path?: (typeof LINK_PATHS)[number];
 }
 
 /** Reported by Argo (macOS, Linux) or by a phone Shortcut/automation (iOS, Android). */
@@ -115,7 +169,20 @@ export interface MeshBattery {
   lowPower: boolean;
   external?: boolean; // on mains power (Argo sends it; phones don't)
   power?: MeshPower; // Argo's power budget (tools/argo/power.go); phones don't send it
+  charger?: MeshCharger; // what the charger negotiated (tools/argo/charger.go); phones don't send it
 }
+
+/**
+ * What the charger negotiated with the machine (tools/argo/charger.go). no-pd = 5 V USB or less and at most
+ * 15 W, no USB-C Power Delivery; pd-low = Power Delivery but too few watts for a heavy job. Argo sends nothing
+ * when the host reports no negotiation (unknown is never guessed).
+ */
+export interface MeshCharger {
+  state: "no-pd" | "pd-low" | "ok";
+  volts: number;
+  watts: number;
+}
+const CHARGER_STATES: readonly MeshCharger["state"][] = ["no-pd", "pd-low", "ok"];
 
 /**
  * Argo's SWaP power budget: the charger's derated supply, what the machine draws and the margin.
@@ -154,6 +221,7 @@ export const GUARD_CODE_TEXT = {
   "on-battery": "on battery power",
   "charger-behind": "charger can't keep up",
   "charger-weak": "charger weaker than the draw",
+  "power-save": "power-save on: heavy work waits",
   "disk-critical": "disk nearly full",
   "disk-low": "disk low",
   "disk-tight": "disk under 20 GB free",
@@ -339,6 +407,30 @@ export function parsePower(value: unknown): MeshPower | undefined {
   return { mode, sourceW, loadW, marginW };
 }
 
+/** Argo's power-save block; a bad value drops it. Off carries no since or reason; on needs both. */
+export function parsePowerSave(value: unknown): MeshPowerSave | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const p = value as Record<string, unknown>;
+  if (typeof p.on !== "boolean") return undefined;
+  if (!p.on) return { on: false };
+  const reason = MESH_POWER_SAVE_REASONS.includes(p.reason as MeshPowerSave["reason"] & string) ? (p.reason as MeshPowerSave["reason"]) : null;
+  const since = text(p.since, 40);
+  const t = Date.parse(since);
+  if (!reason || Number.isNaN(t) || t > Date.now() + 5 * 60_000 || t < Date.now() - 365 * 86_400_000) return undefined;
+  return { on: true, since: new Date(t).toISOString(), reason };
+}
+
+/** Argo's charger block; a bad state or number drops it (the battery block itself stays). */
+export function parseCharger(value: unknown): MeshCharger | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const c = value as Record<string, unknown>;
+  const state = CHARGER_STATES.includes(c.state as MeshCharger["state"]) ? (c.state as MeshCharger["state"]) : null;
+  const volts = num(c.volts, 60);
+  const watts = num(c.watts, 500);
+  if (!state || volts === null || watts === null || volts === 0 || watts === 0) return undefined;
+  return { state, volts, watts };
+}
+
 /** Battery from a phone reporter: integer percent 0-100 and two flags; anything else drops the block. */
 export function parseBattery(value: unknown): MeshBattery | undefined {
   if (!value || typeof value !== "object") return undefined;
@@ -349,12 +441,14 @@ export function parseBattery(value: unknown): MeshBattery | undefined {
   if (!(level >= 0 && level <= 100)) return undefined;
   if (typeof b.charging !== "boolean") return undefined;
   const power = parsePower(b.power);
+  const charger = parseCharger(b.charger);
   return {
     level,
     charging: b.charging,
     lowPower: b.lowPower === true,
     ...(typeof b.external === "boolean" ? { external: b.external } : {}),
     ...(power ? { power } : {}),
+    ...(charger ? { charger } : {}),
   };
 }
 
@@ -379,6 +473,28 @@ export function parseGuard(value: unknown): MeshGuard | undefined {
   return { at, level, admission, slots, headroomGB, reasons, warnMin, swapRiseGB, minToFloor };
 }
 
+/**
+ * Argo's posture block: only known items with known statuses are kept; an
+ * unknown item or status is dropped alone. A bad, future (over 10 min) or
+ * stale check time, or no valid item at all, drops the block.
+ */
+export function parsePosture(value: unknown, now = new Date()): MeshPosture | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const p = value as Record<string, unknown>;
+  const at = typeof p.at === "string" && p.at.length <= 40 ? p.at : "";
+  const t = Date.parse(at);
+  if (Number.isNaN(t) || t > now.getTime() + 10 * 60 * 1000 || t < now.getTime() - POSTURE_MAX_AGE_MS) return undefined;
+  if (!p.items || typeof p.items !== "object" || Array.isArray(p.items)) return undefined;
+  const raw = p.items as Record<string, unknown>;
+  const items: MeshPosture["items"] = {};
+  for (const id of POSTURE_ITEMS) {
+    const s = Object.hasOwn(raw, id) ? raw[id] : undefined;
+    if (POSTURE_STATUSES.includes(s as PostureStatus)) items[id] = s as PostureStatus;
+  }
+  if (Object.keys(items).length === 0) return undefined;
+  return { at: new Date(t).toISOString(), items };
+}
+
 const WHY_RE = /^[A-Za-z0-9 ()/,.-]{1,80}$/;
 const int = (value: unknown, min: number, max: number) =>
   typeof value === "number" && Number.isInteger(value) && value >= min && value <= max ? value : null;
@@ -397,7 +513,47 @@ export function parseNet(value: unknown): MeshNet | undefined {
   const rssi = int(n.rssi, -120, 0);
   const noise = int(n.noise, -120, 0);
   const measured = signal !== "n/a" && signal !== "not measured" && rssi !== null && noise !== null;
-  return { privacy, privacyWhy, rttMs, speed, signal, ...(measured ? { rssi, noise } : {}) };
+  const radio = parseRadio(n.radio);
+  return { privacy, privacyWhy, rttMs, speed, signal, ...(measured ? { rssi, noise } : {}), ...(radio ? { radio } : {}) };
+}
+
+const WIDTHS: ReadonlySet<number> = new Set([20, 40, 80, 160, 320]);
+
+/**
+ * The optional radio block: every field allowlisted or range-checked. A bad field drops
+ * the whole block (never the report), so a confused probe can't half-describe a link.
+ */
+export function parseRadio(value: unknown): MeshRadio | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const r = value as Record<string, unknown>;
+  const out: MeshRadio = {};
+  const nums: [keyof MeshRadio, number, number][] = [
+    ["channel", 1, 233], ["mcs", 0, 15], ["txMbps", 1, 10_000], ["coChannel", 0, 500], ["overlapping", 0, 500],
+    ["gwLossPct", 0, 100], ["gwJitterMs", 0, 60_000], ["netLossPct", 0, 100], ["netJitterMs", 0, 60_000], ["netRttMs", 0, 60_000],
+  ];
+  for (const [key, min, max] of nums) {
+    if (r[key] === undefined) continue;
+    const v = int(r[key], min, max);
+    if (v === null) return undefined;
+    (out as Record<string, number>)[key] = v;
+  }
+  if (r.widthMHz !== undefined) {
+    if (typeof r.widthMHz !== "number" || !WIDTHS.has(r.widthMHz)) return undefined;
+    out.widthMHz = r.widthMHz;
+  }
+  if (r.band !== undefined) {
+    if (!RADIO_BANDS.includes(r.band as MeshRadio["band"] & string)) return undefined;
+    out.band = r.band as MeshRadio["band"];
+  }
+  if (r.phy !== undefined) {
+    if (typeof r.phy !== "string" || !/^[a-z]{1,3}$/.test(r.phy)) return undefined;
+    out.phy = r.phy;
+  }
+  if (r.path !== undefined) {
+    if (!LINK_PATHS.includes(r.path as MeshRadio["path"] & string)) return undefined;
+    out.path = r.path as MeshRadio["path"];
+  }
+  return Object.keys(out).length ? out : undefined;
 }
 
 /** Allowlisted, range-checked host capacity; anything outside the ranges drops the whole block. */
@@ -440,6 +596,8 @@ export function parseReport(body: unknown, now = new Date()): MeshReport | null 
     ...(parseNet(b.net) ? { net: parseNet(b.net) } : {}),
     ...(parseLink(b.link) ? { link: parseLink(b.link) } : {}),
     ...(parseGuard(b.guard) ? { guard: parseGuard(b.guard) } : {}),
+    ...(parsePowerSave(b.powerSave) ? { powerSave: parsePowerSave(b.powerSave) } : {}),
+    ...(parsePosture(b.posture, now) ? { posture: parsePosture(b.posture, now) } : {}),
   };
 }
 
@@ -501,6 +659,9 @@ export class MeshStore {
    */
   record(device: MeshDevice, report: MeshReport, now = new Date()): { state: MemoryState; why: string[] } | undefined {
     const before = assessMemory(device.last, now).state;
+    // Argo sends posture about hourly: carry the last one forward until it is too old to stand for the device.
+    const prev = device.last?.posture;
+    if (!report.posture && prev && Date.parse(report.receivedAt) - Date.parse(prev.at) <= POSTURE_MAX_AGE_MS) report.posture = prev;
     device.last = report;
     delete device.rejectedAt;
     this.persist();

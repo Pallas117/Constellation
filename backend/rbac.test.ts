@@ -31,6 +31,9 @@ function declaredRoutes(): string[] {
   for (const m of read("pattern/router.ts").matchAll(/router\.(get|post|put|patch|delete)\("([^"]+)"/g)) {
     out.push(`${m[1].toUpperCase()} ${("/operator-pattern" + m[2]).replace(/\/$/, "")}`);
   }
+  for (const m of read("trust/evidence-router.ts").matchAll(/router\.(get|post|put|patch|delete)\("([^"]+)"/g)) {
+    out.push(`${m[1].toUpperCase()} /trust/evidence${m[2]}`);
+  }
   // Handled before the policy middleware by design (see rbac.ts header).
   return out.filter((r) => r !== "GET /sso-options");
 }
@@ -58,6 +61,8 @@ test("role matrix", () => {
     ["DELETE", "/mesh/devices/judith", "staff"],
     ["POST", "/rag/query", "operator"],
     ["GET", "/swx/structures", "operator"], // L1 structure candidates (GAU-154)
+    ["POST", "/trust/evidence/analyse", "operator"], // Evidence view (GAU-59)
+    ["POST", "/trust/evidence/verify", "operator"],
     ["GET", "/security/cybertiger/events", "admin"],
     ["POST", "/ai/nowcast/train", "admin"],
     ["GET", "/admin/users", "admin"],

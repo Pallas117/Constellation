@@ -22,7 +22,10 @@ const FIELD = {
   link: { label: "A link about your work (optional)", type: "url", max: 300, auto: "url", required: false },
   missionType: { label: "Mission type", type: "select", options: opts("Earth observation", "Communications", "Critical communications", "Navigation", "Science or cislunar", "Other"), required: true },
   stage: { label: "Programme stage", type: "select", options: opts("Concept or design", "In development", "Launched and operating"), required: true },
-  groundStack: { label: "Ground stack", type: "select", options: opts("Yamcs / XTCE", "Other CCSDS ground stack", "Custom", "Not sure"), required: true },
+  // "Not sure" is first so the form never nudges anyone into naming a stack they don't use.
+  groundStack: { label: "Ground stack", type: "select", options: opts("Not sure", "Yamcs / XTCE", "Other CCSDS ground stack", "Custom or in-house"), required: true },
+  logSource: { label: "What runs your onboard model", type: "select", options: opts("Not sure", "Embedded Linux module (for example NVIDIA Jetson)", "Data-centre GPU in orbit", "Vision processing unit", "No onboard AI yet"), required: true },
+  logFormat: { label: "Format of the logs you could share", type: "select", options: opts("Not sure", "CSV", "JSON or JSONL", "Yamcs or XTCE archive", "Something else"), required: true },
   dataAccess: { label: "Evidence you can share", type: "select", options: opts("Historical packet archive", "Live or near-live feed", "Agreed synthetic fixture", "Not yet"), required: true },
   plan: { label: "Package", type: "select", options: PLANS, required: true },
   timeline: { label: "Target start", type: "select", options: opts("This quarter", "Next quarter", "Later"), required: true },
@@ -42,7 +45,7 @@ export const KINDS = Object.freeze({
   gauss: {
     steps: [
       { legend: "Fit", label: "01_FIT", fields: ["name", "email", "org", "role"] },
-      { legend: "Readiness", label: "02_READINESS", fields: ["missionType", "stage", "groundStack", "dataAccess"] },
+      { legend: "Readiness", label: "02_READINESS", fields: ["missionType", "stage", "groundStack", "logSource", "logFormat", "dataAccess"] },
       { legend: "Pilot brief", label: "03_PILOT_BRIEF", fields: ["plan", "timeline", "message"] },
     ],
     labels: { email: "Work email", message: "Your highest-value outcome, and how we'd know the pilot succeeded" },
@@ -64,13 +67,17 @@ export const KINDS = Object.freeze({
     button: "Send",
   },
 });
+/** Query values from a client link (/gauss/apply/?plan=<id>&src=<campaign>): only a known plan and a short lowercase slug get through; anything else is ignored. */
+export const cleanPlan = (v) => (TIERS.some((t) => t.id === v) ? v : "");
+export const cleanSrc = (v) => (typeof v === "string" && /^[a-z0-9][a-z0-9-]{0,23}$/.test(v) ? v : "");
+export const clientLink = (origin, planId, src = "") => `${origin}/gauss/apply/?plan=${planId}${cleanSrc(src) ? `&src=${src}` : ""}`;
 /** Where each form's page lives. */
 export const applyPath = (kind) => ({ edu: "/education/apply/", workshop: "/constellation/workshops/" })[kind] ?? `/${kind}/apply/`;
 const fieldsOf = (kind) => KINDS[kind].steps.flatMap((st) => st.fields);
 
 const label = (kind, f) => KINDS[kind].labels[f] ?? FIELD[f].label;
 const SHORT = { name: "name", email: "email", org: "company", role: "role", referrer: "referral", link: "link", missionType: "mission type", stage: "programme stage",
-  groundStack: "ground stack", dataAccess: "evidence", plan: "package", timeline: "target start", message: "message", consent: "privacy agreement",
+  groundStack: "ground stack", logSource: "onboard model", logFormat: "log format", dataAccess: "evidence", plan: "package", timeline: "target start", message: "message", consent: "privacy agreement",
   interest: "what you'd like", platform: "platform", devices: "devices", note: "note", institution: "university or school", eduRole: "role", course: "course", seats: "how many people", topic: "workshop", format: "format", groupSize: "group size" };
 
 function control(kind, f, value, error) {
@@ -99,7 +106,7 @@ export function renderApplyForm(kind, values = {}, errors = {}) {
   }).join("");
   return (
     `<form class="form" method="post" action="/api/apply">${summary}` +
-    `<input type="hidden" name="kind" value="${kind}">${steps}` +
+    `<input type="hidden" name="kind" value="${kind}">${cleanSrc(values.src) ? `<input type="hidden" name="src" value="${esc(values.src)}">` : ""}${steps}` +
     `<div class="hp" aria-hidden="true"><label for="f-website">Leave this empty</label><input id="f-website" name="website" tabindex="-1" autocomplete="off"></div>` +
     `<label class="check"><input type="checkbox" name="consent" value="yes" required${values.consent ? " checked" : ""}> <span>Lightbound may keep this for up to ${APPLICATION_DAYS} days to review it. <a href="/privacy/">Privacy</a></span></label>` +
     (errors.consent ? `<p class="err">${esc(errors.consent)}</p>` : "") +
@@ -138,12 +145,12 @@ const BY_EMAIL = {
 };
 
 /** The email route: the form's questions, and a mailto link that carries them (and the chosen package), never any answers. */
-export function renderContact(kind, { plan = "" } = {}) {
+export function renderContact(kind, { plan = "", src = "" } = {}) {
   const [title, lead, button, subject] = BY_EMAIL[kind];
   const tier = kind === "gauss" ? (TIERS.find((t) => t.id === plan) ?? TIERS[0]) : null;
   const asks = fieldsOf(kind).filter((f) => f !== "email").map((f) => [label(kind, f), f === "plan" && tier ? optionLabel(tier) : ""]);
   const body = `${asks.map(([q, a]) => `${q}: ${a}`).join("\n\n")}\n`;
-  const mailto = `mailto:${CONTACT}?subject=${encodeURIComponent(tier ? `${subject} · ${tier.short}` : subject)}&body=${encodeURIComponent(body)}`;
+  const mailto = `mailto:${CONTACT}?subject=${encodeURIComponent([subject, tier && tier.short, cleanSrc(src) && `src ${src}`].filter(Boolean).join(" · "))}&body=${encodeURIComponent(body)}`;
   return `<div class="sent"><p class="k">BY_EMAIL</p><h2>${esc(title)}</h2><p class="lead">${esc(lead)}</p>` +
     `<ul class="ticks">${asks.map(([q, a]) => `<li>${esc(q)}${a ? `: ${esc(a)}` : ""}</li>`).join("")}</ul>` +
     `<p class="actions"><a class="btn" href="${esc(mailto)}">${esc(button)}</a></p>` +
@@ -169,6 +176,7 @@ export function validate(kind, form) {
   }
   if (form.get("consent") !== "yes") errors.consent = "Please agree, so we can keep your application to review it.";
   else values.consent = "yes";
+  values.src = cleanSrc(String(form.get("src") ?? "")); // where the lead came from (a client link); never required
   return { values, errors };
 }
 
@@ -197,7 +205,7 @@ export async function handleApply(request, env, respond, fillPage) {
   if (Object.keys(errors).length) return fillPage(applyPath(kind), { apply: () => renderApplyForm(kind, values, errors) }, 422);
   if (await rateLimited(env, request.headers.get("cf-connecting-ip") ?? "unknown"))
     return fillPage(applyPath(kind), { apply: () => `<div class="form-errors" role="alert"><p>Too many applications from this connection. Please try again in an hour.</p></div>` }, 429);
-  const { consent, ...fields } = values;
-  await saveApplication(env, { kind, ...fields, consent: true });
+  const { consent, src, ...fields } = values;
+  await saveApplication(env, { kind, ...fields, ...(src ? { src } : {}), consent: true });
   return done();
 }
