@@ -128,13 +128,14 @@ const App = () => (
     <ThemeProvider>
         <QueryClientProvider client={queryClient}>
           <TooltipProvider>
-            <Toaster />
-            <Sonner />
             <BrowserRouter>
               <Suspense fallback={<div className="min-h-[100dvh] bg-background" />}>
                 <AppRoutes />
               </Suspense>
             </BrowserRouter>
+            {/* After the page in the DOM: Tab reaches the page first, toasts after (F8/Alt+T still jump to them). */}
+            <Toaster />
+            <Sonner />
           </TooltipProvider>
         </QueryClientProvider>
     </ThemeProvider>

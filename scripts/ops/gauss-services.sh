@@ -173,6 +173,45 @@ GATEBOX_TIMEOUT_S="${GAUSS_GATEBOX_TIMEOUT_S:-1200}"
 # does not name the commit) runs the full gates here, as before. Off by default.
 GATEBOX_TRUST="${GAUSS_GATEBOX_TRUST:-$(sed -n 2p "$WATCH_DIR/gatebox" 2>/dev/null || true)}"
 gatebox_trusted() { [ -n "$GATEBOX" ] && [ "$GATEBOX_TRUST" = merge ]; }
+# Several addresses (19 Nov: Talos on a fixed LAN IP dropped off when it changed network, and every gate
+# fell back to this Mac: 85 min on battery, paused by Argo on an 8 W charger, against ~3 min on Talos).
+# The first line may list the same machine's addresses, space separated, e.g. its LAN IP, its .local
+# name and its tailnet name: the first whose ssh port answers within GATEBOX_PROBE_S is used. Every
+# address must show the host key pinned for the FIRST one (HostKeyAlias), so a name added later is
+# checked against the key already trusted, never accepted on its own first contact.
+GATEBOX_PROBE_S="${GAUSS_GATEBOX_PROBE_S:-3}"
+# A gatebox that drops off is waited for, once per outage, before the full gates run here: probed every
+# GATEBOX_POLL_S for up to GATEBOX_WAIT_S. A machine coming back on the Wi-Fi saves a 30-90 min local
+# run; one that stays off costs this wait once, then requests gate here at once until it answers again.
+GATEBOX_WAIT_S="${GAUSS_GATEBOX_WAIT_S:-900}"
+GATEBOX_POLL_S="${GAUSS_GATEBOX_POLL_S:-30}"
+gatebox_probe() { # gatebox_probe <host>: 0 when its ssh port accepts a TCP connection within GATEBOX_PROBE_S
+  if [ -n "${GAUSS_GATEBOX_PROBE:-}" ]; then "$GAUSS_GATEBOX_PROBE" "$1"; return; fi # tests
+  perl -MIO::Socket::INET -e 'exit(IO::Socket::INET->new(PeerAddr => $ARGV[0], PeerPort => 22, Proto => "tcp", Timeout => $ARGV[1]) ? 0 : 1)' "$1" "$GATEBOX_PROBE_S" 2>/dev/null
+}
+gatebox_pick() { # gatebox_pick: print the first configured address that answers; 1 when none does
+  local h
+  for h in $GATEBOX; do gatebox_probe "$h" && { echo "$h"; return 0; }; done
+  return 1
+}
+gatebox_reach() { # gatebox_reach: print an address that answers, waiting for it once per outage (see GATEBOX_WAIT_S)
+  local h down="$GATES_DIR/gatebox.down" since now end
+  if h=$(gatebox_pick); then rm -f "$down"; echo "$h"; return 0; fi
+  now=$(date +%s); since=$(cat "$down" 2>/dev/null || true)
+  if [[ "$since" =~ ^[0-9]+$ ]] && [ $((now - since)) -ge "$GATEBOX_WAIT_S" ]; then
+    echo "$(date '+%F %T') gatebox ($GATEBOX) has not answered since $(date -r "$since" '+%H:%M'); gating here" >&2
+    return 1
+  fi
+  [[ "$since" =~ ^[0-9]+$ ]] || { since=$now; mkdir -p "$GATES_DIR"; echo "$since" >"$down"; }
+  end=$((since + GATEBOX_WAIT_S))
+  echo "$(date '+%F %T') gatebox ($GATEBOX) not answering; waiting up to $(( (end - now + 59) / 60 )) min for it before gating here" >&2
+  while [ "$(date +%s)" -lt "$end" ]; do
+    sleep "$GATEBOX_POLL_S"
+    if h=$(gatebox_pick); then rm -f "$down"; echo "$(date '+%F %T') gatebox answered at $h" >&2; echo "$h"; return 0; fi
+  done
+  echo "$(date '+%F %T') gatebox ($GATEBOX) did not answer in $(( (GATEBOX_WAIT_S + 59) / 60 )) min; gating here" >&2
+  return 1
+}
 # balance: safe, reversible load shedding (GAU-126). GAUSS_BALANCE=0 turns it off.
 BALANCE="${GAUSS_BALANCE:-1}"
 LOCAL_CODER="${GAUSS_LOCAL_CODER:-$HOME/.local/bin/local-coder}"   # optional on-device model server
@@ -1188,18 +1227,22 @@ gates_start() { # start the one runner, detached from this session (own session 
 }
 
 gates_prescreen() { # gates_prescreen <sha> <tree>: 0 the gatebox failed the commit (result written); 2 it passed that exact commit; 1 it said nothing: gate it here
-  local sha=$1 tree=$2 log rc=0 last
+  local sha=$1 tree=$2 log rc=0 last h first="" host
   [ -n "$GATEBOX" ] || return 1
-  [[ "$GATEBOX" =~ ^[A-Za-z0-9][A-Za-z0-9.-]*$ ]] || { echo "gatebox: not a host name: $GATEBOX; gating here"; return 1; }
+  for h in $GATEBOX; do # every address must be a plain host name or IP before any reaches ssh
+    [[ "$h" =~ ^[A-Za-z0-9][A-Za-z0-9.-]*$ ]] || { echo "gatebox: not a host name: $h; gating here"; return 1; }
+    [ -n "$first" ] || first=$h
+  done
   [ -r "$GATEBOX_KEY" ] || { echo "gatebox: no key at $GATEBOX_KEY; gating here"; return 1; }
+  host=$(gatebox_reach) || return 1
   mkdir -p "$GATES_DIR/logs"; log="$GATES_DIR/logs/gatebox-${sha:0:12}.log"
-  echo "$(date '+%F %T') gatebox $GATEBOX: screening ${sha:0:7} ..."
+  echo "$(date '+%F %T') gatebox $host: screening ${sha:0:7} ..."
   # BatchMode: never a prompt. The host key is pinned in its own file on first contact (the tailnet has
   # already authenticated the machine); a changed key is refused, and the run falls back to this Mac.
   # macOS has no timeout(1): perl sets the alarm and execs ssh, which SIGALRM then ends (exit 142).
   perl -e 'alarm shift; exec @ARGV' "$GATEBOX_TIMEOUT_S" ssh -i "$GATEBOX_KEY" -o IdentitiesOnly=yes -o BatchMode=yes -o ConnectTimeout=15 -o ServerAliveInterval=30 \
-    -o ServerAliveCountMax=4 -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile="$GATEBOX_HOSTS" \
-    "gate@$GATEBOX" "$GATEBOX_REPO $sha" >"$log" 2>&1 </dev/null || rc=$?
+    -o ServerAliveCountMax=4 -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile="$GATEBOX_HOSTS" -o HostKeyAlias="$first" \
+    "gate@$host" "$GATEBOX_REPO $sha" >"$log" 2>&1 </dev/null || rc=$?
   last=$(grep -E '^gates rc=' "$log" | tail -1)
   # gauss-gate-run prints "gates rc=N in S s on <sha>" after the gates; without that line (ssh 255, busy 75,
   # sha not on GitHub 65, fetch 69, a killed run) the gatebox said nothing about the commit.
@@ -1209,13 +1252,13 @@ gates_prescreen() { # gates_prescreen <sha> <tree>: 0 the gatebox failed the com
     echo "$(date '+%F %T') gatebox passed ${sha:0:7} ($last), without naming the commit; full gates here next"; return 1
   fi
   if [ "$rc" -ge 1 ] && [ "$rc" -le 63 ] && [[ "$last" == "gates rc=$rc "* ]]; then
-    event gates-gatebox gates "failed on the gatebox" sha="$sha" rc:="$rc" host="$GATEBOX"
+    event gates-gatebox gates "failed on the gatebox" sha="$sha" rc:="$rc" host="$host"
     local what; what=$(gates_log_findings brief "$log") # by name, so the result line says which test (see gates why)
-    gates_result "$sha" "$tree" FAILED "on gatebox $GATEBOX (npm ci, test, quality:full, build): $last${what:+; $what}; log $log"
+    gates_result "$sha" "$tree" FAILED "on gatebox $host (npm ci, test, quality:full, build): $last${what:+; $what}; log $log"
     return 0
   fi
   if [ "$rc" = 142 ]; then
-    event gates-gatebox gates "gatebox screen timed out" sha="$sha" host="$GATEBOX" seconds:="$GATEBOX_TIMEOUT_S"
+    event gates-gatebox gates "gatebox screen timed out" sha="$sha" host="$host" seconds:="$GATEBOX_TIMEOUT_S"
     echo "$(date '+%F %T') gatebox could not screen ${sha:0:7} (exit 142: no answer in ${GATEBOX_TIMEOUT_S} s); gating here"
     return 1
   fi

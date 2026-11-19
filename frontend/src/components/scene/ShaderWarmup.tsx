@@ -3,7 +3,7 @@
  *
  * three.js compiles a material the first time it draws it, then blocks the main
  * thread until the GPU driver has finished. With a cold Metal shader cache (a
- * first visit) that froze the page for 3.4 s in one frame. compileAsync hands
+ * first visit) that froze the page for 3.4 s in one frame. An async compile hands
  * the programs to the driver and polls KHR_parallel_shader_compile, so the page
  * stays responsive while it works; SpaceScene doesn't render until it's done.
  *
@@ -23,6 +23,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import { useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import { createGlowMaterial, makeTracerMaterial } from './point-materials';
+import { compileQuietly } from '@/lib/scene-compile';
 
 /** Don't hold the scene back forever if a driver never reports completion. */
 const MAX_WAIT_MS = 20_000;
@@ -135,7 +136,7 @@ export function ShaderWarmup({ onReady }: { onReady: () => void }) {
       onReadyRef.current();
     };
     // Compile hidden objects too (the stand-ins, the idle field-line slot): show
-    // them for the synchronous part of compileAsync only. Nothing renders meanwhile.
+    // them for the synchronous part of the compile only. Nothing renders meanwhile.
     const hidden: THREE.Object3D[] = [];
     scene.traverse((o) => {
       if (!o.visible) {
@@ -145,7 +146,8 @@ export function ShaderWarmup({ onReady }: { onReady: () => void }) {
     });
     let compiled: Promise<unknown>;
     try {
-      compiled = gl.compileAsync(scene, camera);
+      // Not gl.compileAsync: its poll throws on a material disposed mid-compile (lib/scene-compile.ts).
+      compiled = compileQuietly(gl, scene, camera, () => settled, MAX_WAIT_MS);
     } catch {
       compiled = Promise.resolve();
     } finally {
