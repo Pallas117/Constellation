@@ -703,6 +703,17 @@ printf '%s\n' '✔ telemetry_descriptor.json is the current .proto (9.1ms)' '' '
 out=$(run gates why "$GB1")
 [[ "$out" == *"lint errors: scene/CameraTween.tsx:22"* && "$out" == *"cause: a lint error"* && "$out" != *"telemetry.proto changed"* ]]
 expect "gates why: lint errors are named by file and line, and a passing test is not blamed" $?
+# 18 Nov, PR #309: the device-auth timestamps test failed when two proofs shared a nonce in the same millisecond
+printf '%s\n' '✖ failing tests:' '' "✖ timestamps: only computeProof's epoch-ms format, within the TTL (GAU-98) (4.2ms)" >"$T/home/gatebox-out"
+(cd "$LIVE" && run gates enqueue "$GB1" >/dev/null 2>&1); GAUSS_GATEBOX=gatebox GBRC=say1 run gates run >/dev/null 2>&1
+out=$(run gates why "$GB1")
+[[ "$out" == *"cause: the device-auth timestamps test signs with a shared nonce"* && "$out" == *"PR #341"* && "$out" != *"cause: a failing test"* ]]
+expect "gates why: the device-auth shared-nonce flake is named with its PR" $?
+# 18 Nov, PR #315: Argo Go timing tests failed on a throttled battery run (fixed by PR #340)
+printf '%s\n' '✖ Argo Go tests (exit 1)' >"$T/home/gatebox-out"
+(cd "$LIVE" && run gates enqueue "$GB1" >/dev/null 2>&1); GAUSS_GATEBOX=gatebox GBRC=say1 run gates run >/dev/null 2>&1
+out=$(run gates why "$GB1")
+[[ "$out" == *"cause: an Argo Go test failed inside verify"* && "$out" == *"PR #340"* ]]; expect "gates why: the Argo timing flake names PR #340" $?
 rm -f "$T/home/gatebox-out"
 (cd "$LIVE" && run gates enqueue "$GB1" >/dev/null 2>&1); GAUSS_GATEBOX=gatebox GBRC=say1 run gates run >/dev/null 2>&1
 out=$(run gates why "$GB1")
