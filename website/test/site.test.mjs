@@ -90,9 +90,10 @@ test("landing film on phones: soft-edged hole, slogan on screen, no play button,
   assert.match(css, /\.hero \.film\{pointer-events:none\}/);
   assert.match(css, /\.hero \.film::-webkit-media-controls-start-playback-button\{display:none!important/, "no iOS play button when autoplay is blocked");
   assert.match(css, /@keyframes film-off\{to\{opacity:0;visibility:hidden\}\}/, "faded film is hidden, so phones can pause it");
-  assert.match(css, /\.hero \.poster,\.hero \.film\{animation:pull linear both,film-off linear both;/);
-  assert.match(css, /@media \(max-aspect-ratio:1\/1\)\{\.hero \.poster,\.hero \.film\{animation-range:contain 0% contain 100%,entry 25% entry 55%\}\}/,
-    "portrait: the hero's hole has gone before the descent's art fades in at entry 60%");
+  assert.match(css, /\.hero \.poster,\.hero \.film\{animation:pull linear both,film-off linear both;animation-timeline:--hero,--descent;animation-range:contain 0% contain 100%,entry 35% entry 60%\}/,
+    "every size: the hero's hole has gone before the descent's art fades in");
+  assert.match(css, /\.descent-art\{animation:d-in linear both;animation-timeline:--descent;animation-range:entry 60% entry 100%\}/, "the art waits until entry 60%");
+  assert.doesNotMatch(css, /\.hero \.film\{animation-range:/, "one hand-off timing for all sizes");
 });
 
 test("terms: ethical use after ESA and NASA principles, month-to-month plans, cancel any time, refund if not satisfied; marked as a draft", () => {
@@ -298,6 +299,10 @@ test("landing backdrop: stars, then nebula, then fields, one fixed sky; decorati
     const kf = css.match(new RegExp(`@keyframes ${k}\\{[^\\n]*\\}`))[0];
     assert.doesNotMatch(kf.replace(/transform|opacity/g, ""), /[a-z-]+:/, `${k} animates transform and opacity only`);
   }
+  // One sky across the site: every other page draws the same far stars, fixed and decorative.
+  assert.match(css, /\.c-far,body\.page::before\{background-size:233px 233px,233px 233px,233px 233px,377px 377px,377px 377px,377px 377px;background-image:var\(--far-stars\)\}/);
+  assert.match(css, /body\.page::before\{content:"";position:fixed;inset:-12%;z-index:-1;pointer-events:none;opacity:\.45\}/);
+  for (const route of ["/gauss/", "/constellation/", "/turnstone/", "/education/", "/privacy/"]) assert.match(html[route], /<body class="page[ "]/, `${route} gets the sky`);
   const fields = read("assets/media/fields.svg");
   assert.ok(fields.length < 4096, "fields art stays tiny");
   assert.match(fields, /^<svg xmlns="http:\/\/www\.w3\.org\/2000\/svg" viewBox="0 0 1000 1000"/);
@@ -728,4 +733,26 @@ test("traffic: every indexable page has share cards and is in the sitemap; robot
   assert.equal(ld["@graph"][0].name, "Lightbound Limited");
   assert.deepEqual(ld["@graph"][0].sameAs, ["https://luma.com/constellation"]);
   for (const [route, page] of Object.entries(html)) if (route !== "/") assert.doesNotMatch(page, /<script/, `${route}: no data blocks elsewhere`);
+});
+
+test("wiring: /gauss/ says what a log needs, links a made-up sample that has the columns it names, and the form asks what runs the model", () => {
+  const page = html["/gauss/"];
+  assert.match(page, /<summary>What a log needs<\/summary>/);
+  assert.match(page, /href="\/gauss\/sample-inference-log\.csv" download/);
+  assert.match(text(page), /never guess a time zone/i, "the zone rule is stated");
+  assert.match(text(page), /nothing is dropped silently/i);
+  const csv = read("gauss/sample-inference-log.csv");
+  const [header, ...rows] = csv.trim().split("\n");
+  assert.equal(header, "inference_time,sat,model,label,score,lat,lon,alt_km");
+  assert.equal(rows.length, 7);
+  assert.ok(rows.every((r) => r.split(",").length === header.split(",").length), "every row has every column");
+  assert.ok(rows.every((r) => /DEMO-SAT-\d/.test(r)), "made-up spacecraft only, no real mission names");
+  assert.doesNotMatch(csv, /@/, "no contact details in a download");
+  assert.match(renderApplyForm("gauss"), /name="logSource"/);
+  assert.match(renderApplyForm("gauss"), /name="logFormat"/);
+  assert.doesNotMatch(text(page), /\b(compliant|certified|space-qualified|post-quantum)\b/i);
+});
+
+test("client links: /gauss/, /gauss/evidence/ and /argo/ each link to the pilot brief with a plan", () => {
+  for (const path of ["/gauss/", "/gauss/evidence/", "/argo/"]) assert.match(html[path], /href="\/gauss\/apply\/\?plan=pilot"/, path);
 });
