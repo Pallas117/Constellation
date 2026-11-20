@@ -226,6 +226,7 @@ func (p *seqProber) Probe(context.Context) Snapshot {
 type fakeFx struct {
 	now       time.Time
 	notes     []string
+	msgs      []string
 	opened    []string
 	openErr   error
 	ran       []string
@@ -233,8 +234,10 @@ type fakeFx struct {
 	relayFail bool
 }
 
-func (f *fakeFx) Notify(title, msg string) { f.notes = append(f.notes, title) }
-func (f *fakeFx) Open(u string) error      { f.opened = append(f.opened, u); return f.openErr }
+func (f *fakeFx) Notify(title, msg string) {
+	f.notes, f.msgs = append(f.notes, title), append(f.msgs, msg)
+}
+func (f *fakeFx) Open(u string) error { f.opened = append(f.opened, u); return f.openErr }
 func (f *fakeFx) Run(name string, args ...string) error {
 	f.ran = append(f.ran, name+" "+strings.Join(args, " "))
 	return nil
