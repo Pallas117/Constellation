@@ -99,7 +99,9 @@ test("timestamps: only computeProof's epoch-ms format, within the TTL; a bad TTL
     };
 
     // computeProof's own default timestamp now verifies (Date.parse returned NaN for it).
-    const p = computeProof(secret, "n1");
+    // Its own nonce: the test above already had ("n1", now) accepted for this device, and in the same
+    // millisecond that is the same signature, refused as a replay (failed PR #309's gate on 19 Nov).
+    const p = computeProof(secret, "n-default-timestamp");
     assert.equal(verifyProof(device, p.sig, p.timestamp, p.nonce), true);
 
     // Correctly signed, but not the canonical format: rejected rather than parsed leniently.
