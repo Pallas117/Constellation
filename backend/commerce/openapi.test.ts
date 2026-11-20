@@ -7,7 +7,9 @@ import { TPM_SPECS } from "../lib/tpm.js";
 import { computeCanonicalPoint } from "../physics/mhd-nowcast.js";
 import { accessFor } from "../rbac.js";
 import { EnvironmentHistory } from "../trust/environment.js";
+import { PROFILE_LIBRARY_VERSION, PROFILES } from "../trust/profiles.js";
 import { buildTrustRecord, MAX_OUTPUT_BYTES, TRUST_RECORD_SCHEMA } from "../trust/record.js";
+import { upsetRiskField } from "../trust/upset.js";
 import { PLANS } from "./plans.js";
 import { createDataApiRouter, createOrgRouter, MAX_TRUST_BATCH, type DataProvider } from "./routers.js";
 import { CommerceStore } from "./store.js";
@@ -61,6 +63,11 @@ function resolve(ref: string): unknown {
   return ref.slice(2).split("/").reduce<unknown>((node, key) => (node as Json | undefined)?.[key], spec);
 }
 
+function resolveResponse(response: Json | undefined): Json {
+  assert.ok(response, "the response is documented");
+  return (response.$ref ? resolve(response.$ref) : response) as Json;
+}
+
 const keys = (o: object) => Object.keys(o).sort();
 
 test("openapi: every pilot route is documented, and nothing undocumented is", () => {
@@ -107,6 +114,19 @@ test("openapi: each operation states the access the code enforces, and its error
   }
 });
 
+test("openapi: routes that take a body document 400 and 413, and no route blames the server for a bad body (GAU-231)", () => {
+  for (const { method, path, op } of operations()) {
+    const name = `${method} ${path}`;
+    if (op.requestBody) {
+      assert.match(String(resolveResponse(op.responses["400"]).description), /not valid JSON/, `${name}: 400 covers invalid JSON`);
+      assert.match(String(resolveResponse(op.responses["413"]).description), /over 2 MB/, `${name}: 413 covers an oversized body`);
+    }
+    const serverError = op.responses["500"] ? String(resolveResponse(op.responses["500"]).description) : "";
+    assert.doesNotMatch(serverError, /valid JSON|2 MB/, `${name}: a bad body is not a 500`);
+  }
+  assert.match(spec.info.description, /not valid JSON is answered 400/);
+});
+
 test("openapi: trust-record limits and shape match the code", () => {
   const schemas = spec.components.schemas;
   assert.equal(schemas.TrustRecordBatchRequest.properties.inferences.maxItems, MAX_TRUST_BATCH);
@@ -124,6 +144,12 @@ test("openapi: trust-record limits and shape match the code", () => {
   assert.deepEqual([...props.environment.required].sort(), keys(record.environment));
   assert.deepEqual([...props.orbit.required].sort(), keys(record.orbit));
   assert.deepEqual([...schemas.Field.required].sort(), keys(record.upsetRisk));
+  const quiet = { level: 0, why: "", observedAt: record.inference.time, ageSeconds: 0 };
+  const band = upsetRiskField(PROFILES[0].id, { saaTier: "outside", saaWhy: "", s: quiet, g: quiet, lShell: 1.2 }, null);
+  assert.deepEqual([...schemas.UpsetRisk.required].sort(), keys(band.value!));
+  const profileIds: string = schemas.TrustRecordRequest.properties.processorProfileId.description;
+  assert.ok(profileIds.includes(PROFILE_LIBRARY_VERSION), "the spec names the profile library version");
+  for (const p of PROFILES) assert.ok(profileIds.includes(p.id), `the spec lists profile ${p.id}`);
   assert.deepEqual([...props.verdict.properties.policy.required].sort(), keys(record.verdict.policy));
   assert.match(record.recordId, new RegExp(props.recordId.pattern));
   assert.match(record.hash, new RegExp(props.hash.pattern));

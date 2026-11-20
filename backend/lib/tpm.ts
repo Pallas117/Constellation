@@ -30,6 +30,7 @@ export const TPM_SPECS: TpmSpec[] = [
   { id: "loop_liveness", title: "Time since last completed ingest tick", unit: "s", direction: "max", amber: 10, red: 15, fmea: ["FM-03", "FM-13"] },
   { id: "tick_p95", title: "Ingest tick p95 latency", unit: "ms", direction: "max", amber: 2000, red: 5000, fmea: ["FM-02"] },
   { id: "persist_failures", title: "Failed telemetry writes since start", unit: "count", direction: "max", amber: 1, red: 10, fmea: ["FM-10"] },
+  { id: "rejected_points", title: "Canonical points refused as observations since start", unit: "count", direction: "max", amber: 1, red: 100, fmea: ["FM-05"] },
   { id: "disk_free", title: "Free disk on the data volume", unit: "GB", direction: "min", amber: 10, red: 3, fmea: ["FM-14"] },
   { id: "memory_rss", title: "Backend resident memory", unit: "MB", direction: "max", amber: 1024, red: 2048, fmea: ["FM-15"] },
   { id: "official_sources_down", title: "Official sources unhealthy (NOAA, GOES, Kyoto)", unit: "count", direction: "max", amber: 1, red: 2, fmea: ["FM-01"] },
@@ -110,13 +111,15 @@ export class ForecastSkillTracker {
 export interface TpmInputs {
   pipeline: { dataAgeMs: number | null; lastTickAgeMs: number | null; stages: Array<{ stage: string; p95Ms: number; samples: number }> };
   failedWrites: number;
+  /** Canonical points refused as observations (GAU-244); absent counts as 0. */
+  rejectedPoints?: number;
   diskFreeBytes: number | null;
   rssBytes: number;
   sources: Array<{ source: string; healthy: boolean }>;
   skill: { value: number | null; samples: number; maeModel: number | null; maePersistence: number | null };
 }
 
-const OFFICIAL_SOURCES = ["noaa-swpc", "goes-swpc", "kyoto-dst"];
+const OFFICIAL_SOURCES = ["noaa-swpc", "goes-swpc", "glotec-swpc", "kyoto-dst"];
 export const MIN_TICK_SAMPLES = 20;
 
 export function readTpms(i: TpmInputs): TpmReading[] {
@@ -134,6 +137,7 @@ export function readTpms(i: TpmInputs): TpmReading[] {
       tick && tick.samples < MIN_TICK_SAMPLES ? `${tick.samples} ticks; needs ${MIN_TICK_SAMPLES}` : undefined,
     ),
     evaluate(spec("persist_failures"), i.failedWrites),
+    evaluate(spec("rejected_points"), i.rejectedPoints ?? 0),
     evaluate(spec("disk_free"), i.diskFreeBytes === null ? null : i.diskFreeBytes / 1e9),
     evaluate(spec("memory_rss"), i.rssBytes / 1e6),
     evaluate(spec("official_sources_down"), official.length ? official.filter((s) => !s.healthy).length : null),

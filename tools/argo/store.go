@@ -53,7 +53,11 @@ type State struct {
 	Tailscale     Tailscale      `json:"tailscale"`
 	Gateway       string         `json:"gateway,omitempty"`
 	GatewayMAC    string         `json:"gateway_mac,omitempty"`
-	Net           NetScore       `json:"net"` // privacy, speed and signal at the last check (netscore.go)
+	Net           NetScore       `json:"net"`              // privacy, speed and signal at the last check (netscore.go)
+	Low           LowSignal      `json:"low,omitempty"`    // low-signal verdict with hysteresis (lowsignal.go)
+	Via           string         `json:"via,omitempty"`    // link the last probe used: usb, wifi, ethernet, other (wiredlink.go)
+	Advice        string         `json:"advice,omitempty"` // suggested link switch; Argo never changes settings itself
+	Clock         ClockVerdict   `json:"clock,omitempty"`  // clock cross-check (timeintegrity.go)
 	// IncidentFP is the network the open incident belongs to; Notified says whether
 	// it was announced yet, NotifyDue when it will be if this network's usual
 	// recovery time passes first (loop.go).
@@ -77,6 +81,11 @@ type Net struct {
 	Devices     int                  `json:"devices,omitempty"`
 	SuspectAt   time.Time            `json:"suspect_at,omitempty"`
 	SeenInbound map[string]time.Time `json:"seen_inbound,omitempty"`
+	// BlockedHosts: host:port this network could not reach while others worked (`argo reach`,
+	// reach.go), with when it was last seen; cleared when it answers, capped and expiring.
+	BlockedHosts map[string]time.Time `json:"blocked_hosts,omitempty"`
+	// PrivateDNS: the nearest encrypted resolver measured on this network (privdns.go), a provider id.
+	PrivateDNS string `json:"private_dns,omitempty"`
 }
 
 const (

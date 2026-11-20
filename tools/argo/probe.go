@@ -16,6 +16,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
@@ -60,6 +61,7 @@ func (p SystemProber) Probe(ctx context.Context) Snapshot {
 	if !s.Online {
 		return s
 	}
+	s.Link = measureLink(ctx, s.Gateway) // ~1-2 s: five pings each to the gateway and 1.1.1.1
 
 	// 8 s, not 4: system DNS goes through Tailscale (100.100.100.100), which on a
 	// flapping hotspot can take several seconds while the link settles.
@@ -69,11 +71,21 @@ func (p SystemProber) Probe(ctx context.Context) Snapshot {
 	if err != nil {
 		s.DNS = Result{Err: ErrDNS, Detail: err.Error()}
 		s.DNSDirectOK = directLookup(ctx, "api.anthropic.com")
+		if !s.DNSDirectOK { // DNS or the whole uplink? Only an IP dial can tell (uplink.go)
+			s.IPUp = boolPtr(ipReachable(ctx, tcpDial))
+			if *s.IPUp { // IP gets out: does encrypted DNS? (privdns.go)
+				s.DoHOK = boolPtr(dohReachable(ctx, dohOnce))
+			}
+		}
 	} else {
 		s.DNS = Result{OK: true}
 	}
 	s.Captive = probeCaptive(ctx)
+	if s.Captive.Err == ErrPortal && runtime.GOOS == "darwin" { // can encrypted DNS hide the login page?
+		s.DNSProfile = strings.Contains(run(ctx, "/usr/bin/profiles", "list"), profileID)
+	}
 	s.API = httpProbe(ctx, apiURL)
+	s.Anchors = probeAnchors(ctx)
 	if r, body := httpGet(ctx, traceURL); r.OK {
 		s.PublicIP, s.Loc = parseTrace(body)
 	}

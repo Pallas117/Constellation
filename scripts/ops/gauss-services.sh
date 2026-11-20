@@ -6,7 +6,7 @@
 #   scripts/ops/gauss-services.sh install <checkout-dir>   build + write + load agents
 #   scripts/ops/gauss-services.sh status                   agent state + health checks
 #   scripts/ops/gauss-services.sh check                    pre-demo checklist (exit 1 if anything is off)
-#   scripts/ops/gauss-services.sh resilience               battery, memory, network and phone alerts before closing the lid (exit 1 if not)
+#   scripts/ops/gauss-services.sh resilience               battery, memory, network, phone alerts and phone battery before closing the lid (exit 1 if not)
 #   scripts/ops/gauss-services.sh balance [--dry-run]      shed optional load now when memory, battery or disk run short (the guard runs it every minute)
 #   scripts/ops/gauss-services.sh tailnet on|off           share Gauss on your tailnet only (tailscale serve)
 #   scripts/ops/gauss-services.sh awake setup|on|off       keep running with the lid closed (setup: once, asks for sudo)
@@ -17,7 +17,13 @@
 #   scripts/ops/gauss-services.sh deploy <commit> [fallback-dir] [--emergency <reason>] [--no-fallback]   switch live to <commit>; rolls back by itself if it doesn't come up
 #   scripts/ops/gauss-services.sh gates record <checkout-dir>|list   run the five gates on a clean checkout; deploy needs a passing record
 #   scripts/ops/gauss-services.sh gates enqueue <checkout-dir>|<commit>   hand a gate run to the queue; the session can then be archived
+#   scripts/ops/gauss-services.sh gates queue | priority <pr|sha> front|back | waiting   see/reorder the train, list passes waiting for a person
 #   scripts/ops/gauss-services.sh gates result <checkout-dir>|<commit>|status   the queue's one-line result (exit 0 passed, 1 failed, 3 queued)
+#   scripts/ops/gauss-services.sh gates why <commit>       why that commit's gate failed: what failed by name, the known cause and its fix
+#     When a gate fails: 1. `gates why <commit>` (never start in the raw log). 2. Apply the fix it names, or find
+#     the cause. 3. `npm run -s check:changed` before re-queueing with --pr. 4. If the cause was new, add a row to
+#     GATES_CAUSES with its date, so the same failure is named next time. That list is how failures go down.
+#   scripts/ops/gauss-services.sh gates passed <commit>    exit 0 only if that commit's exact tree has a passing record (for scripts)
 #   scripts/ops/gauss-services.sh events [--since 2h] [--json]     timeline: watchdog, failover, deploys, alerts, boots (events.jsonl)
 #
 # Three layers (GAU-158): dev (any other checkout, foreground, own ports and data,
@@ -137,6 +143,14 @@ GATES_SRC="$GATES_DIR/runner.src"      # sha= blob= from= at=: the commit the ru
 HEAVY="${GAUSS_HEAVY:-$HOME/.local/bin/claude-heavy}"
 GATES_WAIT_MIN="${GAUSS_GATES_WAIT_MIN:-120}" # one claude-heavy wait; the runner asks again when it gives up
 GATES_EXPIRE_H="${GAUSS_GATES_EXPIRE_H:-72}"   # a request still waiting after this is dropped (EXPIRED)
+# After-pass hook (18 Nov): a pass the train can't merge itself (a draft, or a PR touching held paths that
+# Josh approved in ~/.claude/merge-approvals.tsv) waited up to 30 min for the merge job; meanwhile the
+# train merged another PR, main moved, and the pass had to be re-run (9 of 37 PR runs on 17-18 Nov).
+# The runner now runs this executable, if present, right after each pass and before the next request:
+# `<hook> <sha> [<pr>]`, capped at GAUSS_GATES_HOOK_S seconds. It decides nothing here; the merge
+# rules stay in the hook (and each merge there still needs the pass on the exact head, main in it, CLEAN).
+GATES_HOOK="${GAUSS_GATES_HOOK:-$GATES_DIR/hooks/after-pass}"
+GATES_HOOK_S="${GAUSS_GATES_HOOK_S:-300}"
 # Gatebox (GAU-207 sizing, GAU-223): an Oracle Always Free VM on the tailnet runs the Linux-portable
 # gates (npm ci, npm test, quality:full, build) on the exact commit, fetched from public GitHub, through
 # the gate user's forced command (scripts/ops/gatebox/cloud-init.yaml). The ops tests and the VCRM need
@@ -147,6 +161,57 @@ GATEBOX="${GAUSS_GATEBOX:-$(head -1 "$WATCH_DIR/gatebox" 2>/dev/null || true)}"
 GATEBOX_KEY="${GAUSS_GATEBOX_KEY:-$HOME/.ssh/gauss-gate}"
 GATEBOX_HOSTS="$WATCH_DIR/gatebox.known_hosts" # the gatebox's host key, pinned on first contact over the tailnet
 GATEBOX_REPO="Pallas117/Constellation"         # the only repo gauss-gate-run accepts
+# A screen that never ends held the whole train (18 Nov: #319 hung mid test suite on Talos for 25+ min, 20
+# requests behind it). Past this many seconds the ssh is killed (exit 142) and the commit is gated here.
+GATEBOX_TIMEOUT_S="${GAUSS_GATEBOX_TIMEOUT_S:-1200}"
+# Merge-only trust (GAU-239, Josh 2026-11-10: on battery nothing merged for hours although the checks
+# that need this Mac are small). With "merge" (GAUSS_GATEBOX_TRUST, or the second line of
+# $WATCH_DIR/gatebox), a merge-train request (--pr) the gatebox passed on its exact head runs only
+# test:ops here, as a small job that may start on battery and at memory warn, and the train may then
+# merge it under its usual rules. It writes NO deploy record: `deploy` still needs the full gates on
+# this Mac (the VCRM is checked here). Anything else (no --pr, gatebox unreachable, a pass line that
+# does not name the commit) runs the full gates here, as before. Off by default.
+GATEBOX_TRUST="${GAUSS_GATEBOX_TRUST:-$(sed -n 2p "$WATCH_DIR/gatebox" 2>/dev/null || true)}"
+gatebox_trusted() { [ -n "$GATEBOX" ] && [ "$GATEBOX_TRUST" = merge ]; }
+# Several addresses (19 Nov: Talos on a fixed LAN IP dropped off when it changed network, and every gate
+# fell back to this Mac: 85 min on battery, paused by Argo on an 8 W charger, against ~3 min on Talos).
+# The first line may list the same machine's addresses, space separated, e.g. its LAN IP, its .local
+# name and its tailnet name: the first whose ssh port answers within GATEBOX_PROBE_S is used. Every
+# address must show the host key pinned for the FIRST one (HostKeyAlias), so a name added later is
+# checked against the key already trusted, never accepted on its own first contact.
+GATEBOX_PROBE_S="${GAUSS_GATEBOX_PROBE_S:-3}"
+# A gatebox that drops off is waited for, once per outage, before the full gates run here: probed every
+# GATEBOX_POLL_S for up to GATEBOX_WAIT_S. A machine coming back on the Wi-Fi saves a 30-90 min local
+# run; one that stays off costs this wait once, then requests gate here at once until it answers again.
+GATEBOX_WAIT_S="${GAUSS_GATEBOX_WAIT_S:-900}"
+GATEBOX_POLL_S="${GAUSS_GATEBOX_POLL_S:-30}"
+gatebox_probe() { # gatebox_probe <host>: 0 when its ssh port accepts a TCP connection within GATEBOX_PROBE_S
+  if [ -n "${GAUSS_GATEBOX_PROBE:-}" ]; then "$GAUSS_GATEBOX_PROBE" "$1"; return; fi # tests
+  perl -MIO::Socket::INET -e 'exit(IO::Socket::INET->new(PeerAddr => $ARGV[0], PeerPort => 22, Proto => "tcp", Timeout => $ARGV[1]) ? 0 : 1)' "$1" "$GATEBOX_PROBE_S" 2>/dev/null
+}
+gatebox_pick() { # gatebox_pick: print the first configured address that answers; 1 when none does
+  local h
+  for h in $GATEBOX; do gatebox_probe "$h" && { echo "$h"; return 0; }; done
+  return 1
+}
+gatebox_reach() { # gatebox_reach: print an address that answers, waiting for it once per outage (see GATEBOX_WAIT_S)
+  local h down="$GATES_DIR/gatebox.down" since now end
+  if h=$(gatebox_pick); then rm -f "$down"; echo "$h"; return 0; fi
+  now=$(date +%s); since=$(cat "$down" 2>/dev/null || true)
+  if [[ "$since" =~ ^[0-9]+$ ]] && [ $((now - since)) -ge "$GATEBOX_WAIT_S" ]; then
+    echo "$(date '+%F %T') gatebox ($GATEBOX) has not answered since $(date -r "$since" '+%H:%M'); gating here" >&2
+    return 1
+  fi
+  [[ "$since" =~ ^[0-9]+$ ]] || { since=$now; mkdir -p "$GATES_DIR"; echo "$since" >"$down"; }
+  end=$((since + GATEBOX_WAIT_S))
+  echo "$(date '+%F %T') gatebox ($GATEBOX) not answering; waiting up to $(( (end - now + 59) / 60 )) min for it before gating here" >&2
+  while [ "$(date +%s)" -lt "$end" ]; do
+    sleep "$GATEBOX_POLL_S"
+    if h=$(gatebox_pick); then rm -f "$down"; echo "$(date '+%F %T') gatebox answered at $h" >&2; echo "$h"; return 0; fi
+  done
+  echo "$(date '+%F %T') gatebox ($GATEBOX) did not answer in $(( (GATEBOX_WAIT_S + 59) / 60 )) min; gating here" >&2
+  return 1
+}
 # balance: safe, reversible load shedding (GAU-126). GAUSS_BALANCE=0 turns it off.
 BALANCE="${GAUSS_BALANCE:-1}"
 LOCAL_CODER="${GAUSS_LOCAL_CODER:-$HOME/.local/bin/local-coder}"   # optional on-device model server
@@ -310,6 +375,9 @@ alert_event() { # alert_event <key> <every: 30m|1h> <title> <message>
 }
 
 boot_epoch() { sysctl -n kern.boottime 2>/dev/null | sed -nE 's/^[{] sec = ([0-9]+),.*/\1/p'; }
+# Minutes since the Mac last woke (kern.waketime); a huge number when unknown. Peers can't have
+# checked in while the Mac slept, so the watchdog gives them that long again before restarting.
+awake_min() { local w; w=$(sysctl -n kern.waketime 2>/dev/null | sed -nE 's/^[{] sec = ([0-9]+),.*/\1/p'); [ -n "$w" ] || { echo 99999; return; }; echo $(( ($(date +%s) - w) / 60 )); }
 iso_utc() { date -u -r "$1" +%Y-%m-%dT%H:%M:%SZ; }
 
 # Boot breadcrumb. The 2026-10-21 reset left no panic report, an empty unified log and nothing
@@ -413,18 +481,32 @@ if bad:
 # WORK_BATTERY (Argo's batteryWorkPct, claude-heavy's HEAVY_BATTERY_MIN), then waits for the charger.
 PLUG_GATE_PCT="${GAUSS_PLUG_GATE_PCT:-5}"
 WORK_BATTERY="${GAUSS_WORK_BATTERY:-50}"
+# 17 Nov (Josh: "a better system for the power use when we don't have power outlets"): claude-heavy
+# now decides when a gate runs on battery from an eclipse budget (a 30% reserve for the worn battery,
+# plus a gate's measured cost, plus `claude-heavy --unplugged <h>` x the base drain), not a flat 50%.
+# The texts take its numbers (`claude-heavy --need gates` prints "<line %> <% per gate>") so they say
+# what the queue will really do; the GAUSS_* variables above still win when set. Deploys keep
+# WORK_BATTERY: a half-finished deploy is worse than a late one.
+plug_numbers() { # prints "<battery % the queue stops at> <% per gate>"
+  local need=""
+  if [ -z "${GAUSS_WORK_BATTERY:-}${GAUSS_PLUG_GATE_PCT:-}" ] && [ -x "$HEAVY" ]; then
+    need=$(perl -e 'alarm 5; exec @ARGV' "$HEAVY" --need gates 2>/dev/null) || need=""
+  fi
+  [[ "$need" =~ ^[0-9]+\ [0-9]+$ ]] && echo "$need" || echo "$WORK_BATTERY $PLUG_GATE_PCT"
+}
 plug_ahead() { # plug_ahead <pct>: on battery with gate runs queued, say when to plug in
-  local pct=$1 n need
+  local pct=$1 n need line per
   [ -d "$GATES_QUEUE" ] || return 0 # find on a missing folder fails, and pipefail would end the caller
   n=$(find "$GATES_QUEUE" -name '*.req' | wc -l | tr -d ' ') || return 0
   [ "${n:-0}" -gt 0 ] || return 0
-  need=$(( n * PLUG_GATE_PCT ))
-  if [ "$pct" -lt "$WORK_BATTERY" ]; then
+  read -r line per <<<"$(plug_numbers)"
+  need=$(( n * per ))
+  if [ "$pct" -lt "$line" ]; then
     phone -key plug-ahead -every 1h "Gauss: plug in to keep merging" \
-      "$n PR(s) wait to be tested and merged. Under ${WORK_BATTERY}% on battery they wait for the charger (${pct}% now)."
-  elif [ $(( pct - need )) -lt "$WORK_BATTERY" ]; then
+      "$n PR(s) wait to be tested and merged. Under ${line}% on battery they wait for the charger (${pct}% now)."
+  elif [ $(( pct - need )) -lt "$line" ]; then
     phone -key plug-ahead -every 1h "Gauss: plug in soon" \
-      "$n PR(s) queued need about ${need}% of battery; at ${pct}% the queue stops at ${WORK_BATTERY}%. Plug in within the hour to keep it moving."
+      "$n PR(s) queued need about ${need}% of battery; at ${pct}% the queue stops at ${line}%. Plug in within the hour to keep it moving."
   fi
 }
 
@@ -528,6 +610,54 @@ swap_fast() { # swap_fast <swap MB>: swap grew SWAP_FAST_GB+ since a reading <= 
   [ -n "$prev_t" ] && [ $((now - prev_t)) -le 150 ] && [ $(($1 - ${prev_s:-0})) -ge $((SWAP_FAST_GB * 1024)) ]
 }
 
+# Fleet memory watch (GAU-240): the hub classifies each mesh device's memory from what its Argo
+# reports and keeps the result in fleet-memory.json beside the device store (backend/mesh/store.ts).
+# This reads that file each minute, no API session and no tokens, and texts when ANOTHER device is at
+# risk or critical: once per device per 2 h. This Mac has its own memory alerts below. A state older
+# than the file's staleAfterMs says nothing about now and is ignored.
+FLEET_MEMORY="${GAUSS_FLEET_MEMORY:-}" # default: beside the live backend's MESH_STORE_PATH
+fleet_memory_watch() {
+  local f=$FLEET_MEMORY store me name state why
+  if [ -z "$f" ]; then
+    store=$(plutil -extract EnvironmentVariables.MESH_STORE_PATH raw -o - "$AGENTS/uk.lightbound.gauss-backend.plist" 2>/dev/null) || return 0
+    [ -n "$store" ] || return 0
+    f="$(dirname "$store")/fleet-memory.json"
+  fi
+  [ -f "$f" ] || return 0
+  me=$(hostname -s 2>/dev/null | tr '[:upper:]' '[:lower:]' || true)
+  while IFS=$'\t' read -r name state why; do
+    [ -n "$name" ] && [ "$name" != "$me" ] || continue
+    # Same 2 h window as the text (alert_event's stamp): one event and one text per device, not one a minute.
+    [ -n "$(find "$WATCH_DIR/alerts/mesh-mem-$name" -mmin -120 2>/dev/null)" ] && continue
+    event fleet-memory "$name" "memory $state: $why" device="$name" state="$state"
+    if [ "$state" = critical ]; then
+      phone -key "mesh-mem-$name" -every 2h "Gauss: $name is out of memory" \
+        "$name reports: $why. It may freeze or stop programs. Close apps or sessions on it now."
+    else
+      phone -key "mesh-mem-$name" -every 2h "Gauss: $name is short of memory" \
+        "$name reports: $why. It is not recovering by itself yet. Close unused apps or sessions on it when you can."
+    fi
+  done < <(python3 -Ic '
+import datetime, json, re, sys
+try:
+    d = json.load(open(sys.argv[1]))
+    stale = float(d.get("staleAfterMs", 900000)) / 1000
+    now = datetime.datetime.now(datetime.timezone.utc)
+    for e in d.get("devices", []):
+        name, state, at = e.get("name"), e.get("state"), e.get("reportedAt")
+        if state not in ("risk", "critical") or not isinstance(name, str) or not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,62}", name) or not isinstance(at, str):
+            continue
+        age = (now - datetime.datetime.fromisoformat(at.replace("Z", "+00:00"))).total_seconds()
+        if not -120 <= age <= stale:
+            continue
+        why = "; ".join(w for w in e.get("why", []) if isinstance(w, str) and re.fullmatch(r"[A-Za-z0-9 ()/,.:+-]{1,80}", w))[:200]
+        print("%s\t%s\t%s" % (name, state, why or "memory " + state))
+except Exception:
+    pass
+' "$f" 2>/dev/null || true)
+  return 0
+}
+
 memory_alerts() { # memory_alerts <pressure level> <swap used MB>
   local level=$1 swap=$2 avail; avail=$(mem_available)
   if [ "$level" -ge "$MEM_ALERT_LEVEL" ] || [ "$avail" -lt "$AVAIL_MIN" ]; then
@@ -574,15 +704,22 @@ kick() { # kick <label> <reason>: rate-limited launchctl kickstart, logged and a
 
 watch_peers() {
   mkdir -p "$(dirname "$GUARD_HEARTBEAT")"; touch "$GUARD_HEARTBEAT"
-  local age
-  # Argo only rewrites state.json on a full probe (~5 min), so allow 15.
+  local age awake; awake=$(awake_min)
+  # Argo only rewrites state.json on a full probe (~5 min), so allow 15. A stale file right after
+  # the Mac wakes is sleep, not a stall (5 Nov 2026: 4 needless restarts after a 3 h lid-closed sleep).
   if loaded uk.lightbound.argo && [ ! -e "$HOME/.local/state/argo/disabled" ]; then
     age=$(mtime_age_min "$HOME/.local/state/argo/state.json")
-    [ "$age" -gt 15 ] && kick uk.lightbound.argo "no Argo check for ${age} min"
+    if [ "$age" -gt 15 ]; then
+      if [ "$awake" -gt 15 ]; then kick uk.lightbound.argo "no Argo check for ${age} min"
+      else echo "$(date '+%F %T') watchdog: Argo stale ${age} min but the Mac woke ${awake} min ago; waiting"; fi
+    fi
   fi
   if loaded uk.lightbound.mesh-heal; then
     age=$(mtime_age_min "$HOME/.local/share/mesh-heal/state")
-    [ "$age" -gt 10 ] && kick uk.lightbound.mesh-heal "no mesh-heal check for ${age} min"
+    if [ "$age" -gt 10 ]; then
+      if [ "$awake" -gt 10 ]; then kick uk.lightbound.mesh-heal "no mesh-heal check for ${age} min"
+      else echo "$(date '+%F %T') watchdog: mesh-heal stale ${age} min but the Mac woke ${awake} min ago; waiting"; fi
+    fi
   fi
   # A deploy restarts them on purpose and rolls back by itself. A lock left by a
   # deploy that died stops counting after 30 min.
@@ -696,7 +833,7 @@ fallback_prepare() { # fallback_prepare <dir> [sha]: check out, install, build, 
     # The checkout changes under the old record from here: drop it, so a failed install or
     # build leaves "none prepared", never a ready record describing a different checkout.
     rm -f "$FALLBACK_STATE/ready"
-    git -C "$dir" checkout -q --detach "$sha" || return 1
+    carry_checkout "$dir" "$sha" || return 1
   else
     git -C "$live" worktree add -q --detach "$dir" "$sha" || return 1; dir=$(cd "$dir" && pwd)
   fi
@@ -792,6 +929,20 @@ gate_lock_ours() {
   return 1
 }
 
+# The detached runner is started by the awake LaunchAgent, so it inherits the services' environment:
+# live data paths (a test must never write live mesh/commerce data), the live ALLOWED_ORIGINS
+# (server.access.test.ts expects the defaults) and launchd's PATH, whose /usr/bin/python3 has no
+# numpy (5 ml tests). 2026-11-11: gates 8aa759a and 5294132 failed on exactly that, not on code.
+GATES_SCRUB_ENV=(ALLOWED_ORIGINS GAUSS_PUBLIC_URL BETTER_AUTH_URL MESH_STORE_PATH COMMERCE_DB_PATH GAUSS_BEDROCK_DIR NODE_ENV)
+gates_python_dir() { # the directory of the first python3 that can import numpy (GATES_PYTHON first), or nothing
+  local p
+  for p in "${GATES_PYTHON:-}" /Library/Frameworks/Python.framework/Versions/Current/bin/python3 \
+    /opt/homebrew/bin/python3 /usr/local/bin/python3 "$(command -v python3 2>/dev/null)"; do
+    [ -n "$p" ] && [ -x "$p" ] && "$p" -Ic 'import numpy' >/dev/null 2>&1 && { dirname "$p"; return 0; }
+  done
+  return 1
+}
+
 gates_record() { # gates_record <checkout-dir>: run the gates on a clean checkout and record the result by tree
   local dir sha tree g rc
   dir=$(cd "${1:?usage: $0 gates record <checkout-dir>}" && pwd) || return 1
@@ -802,12 +953,18 @@ gates_record() { # gates_record <checkout-dir>: run the gates on a clean checkou
   GATES_TMP=$(mktemp -d); local tmp=$GATES_TMP # global: the EXIT trap runs after this function's locals are gone
   # Release the lock on exit only while holding it: an interrupted wait must not free another agent's lock.
   trap '[ "${GATES_HOLD:-0}" = 1 ] && rmdir "$GATE_LOCK" 2>/dev/null; rm -rf "$GATES_TMP"' EXIT
+  local pydir scrub=() v
+  pydir=$(gates_python_dir) || { pydir=""; echo "warning: no python3 with numpy found; the ml tests will fail" >&2; }
+  for v in "${GATES_SCRUB_ENV[@]}"; do scrub+=(-u "$v"); done
   for g in "${GATES[@]}"; do
     gate_lock
     echo "gate $g ..."
-    rc=0; (cd "$dir" && PATH="$(dirname "$NODE"):$PATH" npm run "$g" >"$tmp/$g.log" 2>&1) || rc=$?
+    local t0=$SECONDS
+    rc=0; (cd "$dir" && env "${scrub[@]}" PATH="$(dirname "$NODE")${pydir:+:$pydir}:$PATH" npm run "$g" >"$tmp/$g.log" 2>&1) || rc=$?
     if [ "$GATES_HOLD" = 1 ]; then rmdir "$GATE_LOCK" 2>/dev/null || true; fi; GATES_HOLD=0
     echo "$rc" >"$tmp/$g.rc"
+    # Per-gate time in the run log (runs/<sha>.log), so the slow gate can be measured, not guessed.
+    echo "gate $g: exit $rc in $((SECONDS - t0)) s"
   done
   [ "$(git -C "$dir" rev-parse HEAD)" = "$sha" ] && [ -z "$(git -C "$dir" status --porcelain)" ] \
     || { echo "$dir changed while the gates ran; not recording." >&2; return 1; }
@@ -830,6 +987,26 @@ r = {"sha": sha, "tree": tree, "by": by, "at": at,
      "build": {"exit": step("Production build"), "via": "verify"},
      "quality": {"exit": rc("quality:full")},
      "verify": {"exit": rc("verify"), "vcrm": last(r"VCRM: (\d+/\d+)", v, str), "fmea": last(r"FMEA: (\d+/\d+)", v, str), "passed_at": last(r"VERIFY PASSED at (\w+)", v, str)}}
+# What failed, by name (18 Nov: a line saying 654/655 and VCRM 83/84 sent a session to the kept log to
+# learn which test; the result line now says it).
+def names(pat, text, n=3):
+    seen = []
+    for m in re.findall(pat, text, re.M):
+        m = m.strip()
+        if m and m not in seen: seen.append(m)
+    return seen[:n] + (["+%d more" % (len(seen) - n)] if len(seen) > n else [])
+def lint_errors(text, n=3): # the linter prints a file path, then "  line:col  error  message  rule"
+    seen, cur = [], ""
+    for line in text.splitlines():
+        if line.startswith("/") and " " not in line.strip()[:1]: cur = "/".join(line.strip().split("/")[-2:])
+        m = re.match(r"^\s+(\d+):\d+\s+error\s+.*?\s{2,}(\S+)\s*$", line)
+        if m and cur and "%s:%s %s" % (cur, m.group(1), m.group(2)) not in seen: seen.append("%s:%s %s" % (cur, m.group(1), m.group(2)))
+    return seen[:n] + (["+%d more" % (len(seen) - n)] if len(seen) > n else [])
+tail = v.split("failing tests:", 1)[1] if "failing tests:" in v else ""
+q = log("quality:full") if rc("quality:full") != 0 else ""
+r["failing"] = {"tests": names(r"^✖ (.+?) \(\d[\d.]*ms\)$", tail),
+                "requirements": names(r"^\s*✗ (REQ-[A-Z]+-\d+)", v),
+                "quality": names(r"^(\S+\(\d+,\d+\): error TS\d+)", q) or lint_errors(q)}
 r["passed"] = all(r[k]["exit"] == 0 for k in ("test_ops", "test", "build", "quality", "verify")) \
     and r["test"]["fail"] == 0 and r["test_ops"]["fail"] == 0 and sha.startswith(r["verify"]["passed_at"] or "-")
 print(json.dumps(r, ensure_ascii=False))
@@ -856,10 +1033,13 @@ import json, sys
 r = json.load(open(sys.argv[1]))
 t, o, v = r.get("test") or {}, r.get("test_ops") or {}, r.get("verify") or {}
 fails = [k for k in ("test_ops", "test", "build", "quality", "verify") if (r.get(k) or {}).get("exit") not in (0, None)]
-print("%s %s (tree %s) by %s at %s: npm test %s/%s, test:ops %s passed, build %s, quality %s, VCRM %s, FMEA %s" % (
+f = r.get("failing") or {}
+what = "; ".join("%s: %s" % (k, ", ".join(f[k])) for k in ("tests", "requirements", "quality") if f.get(k))
+print("%s %s (tree %s) by %s at %s: npm test %s/%s, test:ops %s passed, build %s, quality %s, VCRM %s, FMEA %s%s" % (
     "PASSED" if r.get("passed") else "FAILED (" + ", ".join(fails or ["counts"]) + ")", r["sha"][:7], r["tree"][:7], r.get("by"), r.get("at"),
     t.get("pass"), t.get("tests"), o.get("pass"), "ok" if (r.get("build") or {}).get("exit") == 0 else "failed",
-    "ok" if (r.get("quality") or {}).get("exit") == 0 else "failed", v.get("vcrm"), v.get("fmea")))
+    "ok" if (r.get("quality") or {}).get("exit") == 0 else "failed", v.get("vcrm"), v.get("fmea"),
+    " | failing " + what if what and not r.get("passed") else ""))
 ' "$1"
 }
 
@@ -937,16 +1117,24 @@ gates_branch_tips() { # gates_branch_tips <sha>: the branches, here or on origin
     done | paste -sd, -
 }
 
-gates_enqueue() { # gates_enqueue <checkout-dir>|<commit> [--pr N]: queue a gate run for that commit's tree, start the runner
+gates_enqueue() { # gates_enqueue <checkout-dir>|<commit> [--pr N [--final]]: queue a gate run for that commit's tree, start the runner
   # --pr N puts it on the merge train (train_sync, train_merge): main is merged in before the run
   # and the PR is merged after a pass, when the standing approval's conditions hold.
-  gates_resolve "${1:?usage: $0 gates enqueue <checkout-dir>|<commit> [--pr N]}" || return 1
-  local sha=$G_SHA tree=$G_TREE f pr=""
-  case "${2:-}" in
-    --pr) pr=${3:-}; [[ "$pr" =~ ^[0-9]+$ ]] || { echo "usage: $0 gates enqueue <checkout-dir>|<commit> --pr <number>" >&2; return 2; } ;;
-    "") ;;
-    *) echo "unknown option ${2} (expected --pr N)" >&2; return 2 ;;
-  esac
+  # --final: the PR can merge now (Josh approved it, or its conflict was resolved), so gate it even if
+  # it already passed and was held for a person with nothing of its own changed since (train_waits).
+  gates_resolve "${1:?usage: $0 gates enqueue <checkout-dir>|<commit> [--pr N [--final]]}" || return 1
+  local sha=$G_SHA tree=$G_TREE f pr="" final=""
+  shift
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --pr) pr=${2:-}; [[ "$pr" =~ ^[0-9]+$ ]] || { echo "usage: $0 gates enqueue <checkout-dir>|<commit> --pr <number> [--final]" >&2; return 2; }; shift 2 ;;
+      --final) final=1; shift ;;
+      "") shift ;;
+      *) echo "unknown option $1 (expected --pr N [--final])" >&2; return 2 ;;
+    esac
+  done
+  [ -z "$final" ] || [ -n "$pr" ] || { echo "--final needs --pr N" >&2; return 2; }
+  [ -z "$final" ] || rm -f "$GATES_DIR/held/$pr" # the wait is over: this run is the one before the merge
   if gate_record "$tree" >/dev/null; then
     if [ -z "$pr" ]; then
       gates_result "$sha" "$tree" SKIPPED "already passed: $(gates_summary "$GATES_DIR/$tree.json")"
@@ -968,9 +1156,16 @@ gates_enqueue() { # gates_enqueue <checkout-dir>|<commit> [--pr N]: queue a gate
   mkdir -p "$GATES_QUEUE"
   if f=$(gates_queued "$tree"); then
     echo "Already queued: tree ${tree:0:7} ($(req_get "$f" sha | cut -c1-7), by $(req_get "$f" by))."
+    # 18 Nov: a tree queued for gates only and then enqueued with --pr kept no PR, so its pass never
+    # merged. Put the request on the train (atomic rewrite; the runner only reads *.req).
+    if [ -n "$pr" ] && { [ "$(req_get "$f" pr)" != "$pr" ] || { [ -n "$final" ] && [ -z "$(req_get "$f" final)" ]; }; }; then
+      { grep -v -e '^pr=' -e '^final=' "$f"; echo "pr=$pr"; [ -z "$final" ] || echo "final=1"; } >"$f.tmp" && [ -f "$f" ] && mv -f "$f.tmp" "$f" \
+        && echo "It is on the merge train for PR #$pr now." || rm -f "$f.tmp"
+    fi
   else
     f="$GATES_QUEUE/$(python3 -Ic 'import time; print("%.6f" % time.time())')-$tree.req"
     printf 'sha=%s\ntree=%s\nrepo=%s\nnode=%s\nby=%s\nqueued=%s\npr=%s\n' "$sha" "$tree" "$G_REPO" "$NODE" "$(deployer)" "$(date +%s)" "$pr" >"$f.tmp"
+    [ -z "$final" ] || echo "final=1" >>"$f.tmp"
     mv "$f.tmp" "$f"
     event gates_queued "${sha:0:7}" "gate run queued for ${sha:0:7}" sha="$sha" tree="$tree" by="$(deployer)"
     gates_supersede "$sha" "$f"
@@ -1031,35 +1226,150 @@ gates_start() { # start the one runner, detached from this session (own session 
   echo "Gate runner started (log: $LOGS/gates-runner.log)."
 }
 
-gates_prescreen() { # gates_prescreen <sha> <tree>: 0 when the gatebox failed the commit (result written); else 1: gate it here
-  local sha=$1 tree=$2 log rc=0 last
+gates_prescreen() { # gates_prescreen <sha> <tree>: 0 the gatebox failed the commit (result written); 2 it passed that exact commit; 1 it said nothing: gate it here
+  local sha=$1 tree=$2 log rc=0 last h first="" host
   [ -n "$GATEBOX" ] || return 1
-  [[ "$GATEBOX" =~ ^[A-Za-z0-9][A-Za-z0-9.-]*$ ]] || { echo "gatebox: not a host name: $GATEBOX; gating here"; return 1; }
+  for h in $GATEBOX; do # every address must be a plain host name or IP before any reaches ssh
+    [[ "$h" =~ ^[A-Za-z0-9][A-Za-z0-9.-]*$ ]] || { echo "gatebox: not a host name: $h; gating here"; return 1; }
+    [ -n "$first" ] || first=$h
+  done
   [ -r "$GATEBOX_KEY" ] || { echo "gatebox: no key at $GATEBOX_KEY; gating here"; return 1; }
+  host=$(gatebox_reach) || return 1
   mkdir -p "$GATES_DIR/logs"; log="$GATES_DIR/logs/gatebox-${sha:0:12}.log"
-  echo "$(date '+%F %T') gatebox $GATEBOX: screening ${sha:0:7} ..."
+  echo "$(date '+%F %T') gatebox $host: screening ${sha:0:7} ..."
   # BatchMode: never a prompt. The host key is pinned in its own file on first contact (the tailnet has
   # already authenticated the machine); a changed key is refused, and the run falls back to this Mac.
-  ssh -i "$GATEBOX_KEY" -o IdentitiesOnly=yes -o BatchMode=yes -o ConnectTimeout=15 -o ServerAliveInterval=30 \
-    -o ServerAliveCountMax=4 -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile="$GATEBOX_HOSTS" \
-    "gate@$GATEBOX" "$GATEBOX_REPO $sha" >"$log" 2>&1 </dev/null || rc=$?
+  # macOS has no timeout(1): perl sets the alarm and execs ssh, which SIGALRM then ends (exit 142).
+  perl -e 'alarm shift; exec @ARGV' "$GATEBOX_TIMEOUT_S" ssh -i "$GATEBOX_KEY" -o IdentitiesOnly=yes -o BatchMode=yes -o ConnectTimeout=15 -o ServerAliveInterval=30 \
+    -o ServerAliveCountMax=4 -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile="$GATEBOX_HOSTS" -o HostKeyAlias="$first" \
+    "gate@$host" "$GATEBOX_REPO $sha" >"$log" 2>&1 </dev/null || rc=$?
   last=$(grep -E '^gates rc=' "$log" | tail -1)
   # gauss-gate-run prints "gates rc=N in S s on <sha>" after the gates; without that line (ssh 255, busy 75,
   # sha not on GitHub 65, fetch 69, a killed run) the gatebox said nothing about the commit.
   if [ "$rc" = 0 ] && [[ "$last" == "gates rc=0 "* ]]; then
-    echo "$(date '+%F %T') gatebox passed ${sha:0:7} ($last); full gates here next"; return 1
+    # A pass counts for merging only when the line names this commit (gauss-gate-run prints "... on <sha>").
+    if [[ "$last" == *" on $sha" ]]; then echo "$(date '+%F %T') gatebox passed ${sha:0:7} ($last)"; return 2; fi
+    echo "$(date '+%F %T') gatebox passed ${sha:0:7} ($last), without naming the commit; full gates here next"; return 1
   fi
   if [ "$rc" -ge 1 ] && [ "$rc" -le 63 ] && [[ "$last" == "gates rc=$rc "* ]]; then
-    event gates-gatebox gates "failed on the gatebox" sha="$sha" rc:="$rc" host="$GATEBOX"
-    gates_result "$sha" "$tree" FAILED "on gatebox $GATEBOX (npm ci, test, quality:full, build): $last; log $log"
+    event gates-gatebox gates "failed on the gatebox" sha="$sha" rc:="$rc" host="$host"
+    local what; what=$(gates_log_findings brief "$log") # by name, so the result line says which test (see gates why)
+    gates_result "$sha" "$tree" FAILED "on gatebox $host (npm ci, test, quality:full, build): $last${what:+; $what}; log $log"
     return 0
+  fi
+  if [ "$rc" = 142 ]; then
+    event gates-gatebox gates "gatebox screen timed out" sha="$sha" host="$host" seconds:="$GATEBOX_TIMEOUT_S"
+    echo "$(date '+%F %T') gatebox could not screen ${sha:0:7} (exit 142: no answer in ${GATEBOX_TIMEOUT_S} s); gating here"
+    return 1
   fi
   echo "$(date '+%F %T') gatebox could not screen ${sha:0:7} (exit $rc: $(tail -1 "$log" 2>/dev/null)); gating here"
   return 1
 }
 
+# Diagnosing a failed gate (`gates why <commit>`), 18 Nov: a gatebox failure said only "gates rc=1 ... log <path>",
+# and a session had to grep 1,391 lines to learn that one test failed for a known reason.
+# GATES_CAUSES is the list of causes we have actually met: <pattern (Python regex)> TAB <cause> TAB <fix>.
+# Add a row only after a real failure was fixed, with its date; the first rows that match are shown.
+IFS= read -r -d '' GATES_CAUSES <<'CAUSES' || true # read ends at EOF with status 1: expected
+^✖ timestamps: only computeProof's epoch-ms format	the device-auth timestamps test signs with a shared nonce, and two runs in the same millisecond collide on the default timestamp, so the single-use nonce rejects the second (18 Nov, PR #309; fixed by PR #341)	if the commit has PR #341's change, re-queue (it is a flake); otherwise give each proof in the test its own nonce, never relax the nonce check
+^✖ telemetry_descriptor\.json is the current \.proto	telemetry.proto changed without its descriptor (18 Nov, PR #309)	regenerate it with the one-liner at the top of shared/proto/telemetry.proto, commit, re-queue
+ETIMEDOUT|ECONNRESET|ECONNREFUSED|ENOTFOUND|EAI_AGAIN|ENETUNREACH|network request to	the install could not reach the package registry	nothing is wrong with the commit: re-queue it when the link is up (argo doctor)
+error TS2307: Cannot find module	a package is missing where the check ran (18 Nov: a worktree using an older checkout's modules)	if main's package.json has it, the modules there are stale (reinstall in that checkout); otherwise add the dependency
+^✖ Argo Go tests \(exit	an Argo Go test failed inside verify, which does not name it (18 Nov, PRs #315 and #331: timing tests that waited 5 s for a resume and failed on a throttled battery run; fixed by PR #340)	the test name is in test-results/verification/argo-go-test.json of the gates checkout (Action "fail"); run the Argo short suite in tools/argo to see if it is the commit or the machine
+^\s*✗ (REQ-[A-Z]+-\d+)	a requirement has no passing test (VCRM)	npm run verify names it: fix the failing test, or map a passing test to the requirement in requirements/requirements.json
+error TS\d+	a type error	npm run -s check:changed reproduces it in seconds; fix the type (never silence the rule)
+^\s+\d+:\d+\s+error\s	a lint error	fix the code the linter names (never disable or downgrade the rule)
+^✖ .+ \(\d[\d.]*ms\)$	a failing test	run its file alone: node --import tsx --test <file>; fix the cause, not the assertion
+CAUSES
+gates_log_findings() { # gates_log_findings <mode: brief|full> <log>...: what failed, by name, and the known causes that match
+  python3 -Ic '
+import re, sys
+mode, causes, files = sys.argv[1], sys.argv[2], sys.argv[3:]
+text = ""
+for f in files:
+    try: text += open(f, encoding="utf-8", errors="replace").read() + "\n"
+    except OSError: pass
+def names(pat, t, n=3):
+    seen = []
+    for m in re.findall(pat, t, re.M):
+        m = m.strip()
+        if m and m not in seen: seen.append(m)
+    return seen[:n] + (["+%d more" % (len(seen) - n)] if len(seen) > n else [])
+tail = text.split("failing tests:", 1)[1] if "failing tests:" in text else text
+def lint(t, n=3): # the linter prints a file path, then "  line:col  error  message"; the rule ends the block
+    seen, cur = [], ""
+    for line in t.splitlines():
+        if line.startswith("/") and ":" not in line: cur = "/".join(line.strip().split("/")[-2:])
+        m = re.match(r"^\s+(\d+):\d+\s+error\s", line)
+        if m and cur and "%s:%s" % (cur, m.group(1)) not in seen: seen.append("%s:%s" % (cur, m.group(1)))
+    return seen[:n] + (["+%d more" % (len(seen) - n)] if len(seen) > n else [])
+found = [("failing tests", names(r"^✖ (.+?) \(\d[\d.]*ms\)$", tail)),
+         ("requirements", names(r"^\s*✗ (REQ-[A-Z]+-\d+)", text)),
+         ("type errors", names(r"^(\S+\(\d+,\d+\): error TS\d+)", text)),
+         ("lint errors", lint(text))]
+found = [(k, v) for k, v in found if v]
+if mode == "brief":
+    print("; ".join("%s: %s" % (k, ", ".join(v)) for k, v in found))
+    sys.exit(0)
+for k, v in found: print("  %s: %s" % (k, "; ".join(v)))
+hits = 0
+for row in causes.splitlines():
+    parts = row.split("\t")
+    if len(parts) != 3: continue
+    try: ok = re.search(parts[0], text, re.M)
+    except re.error: ok = None
+    if ok and hits and parts[1] == "a failing test": continue # the general advice, only when nothing specific matched
+    if ok and hits < 3:
+        hits += 1
+        print("  cause: %s\n  fix:   %s" % (parts[1], parts[2]))
+if not hits:
+    print("  cause: none of the known causes match" + ("" if text else " (no log to read)"))
+    print("  after the fix, add a row to GATES_CAUSES in scripts/ops/gauss-services.sh so the next one is named")
+' "$1" "$GATES_CAUSES" "${@:2}" 2>/dev/null || true
+}
+gates_why() { # gates_why <commit>: the last failure of that commit, what failed by name, the known cause and its fix
+  local want=${1:?usage: gates why <commit>} line sha tree detail logs=() f pr
+  line=$(awk -v s="$want" '$4 == "FAILED" && index($2, s) == 1' "$GATES_RESULTS" 2>/dev/null | tail -1)
+  if [ -z "$line" ]; then echo "No failed gate on record for $want (see: gates result $want)."; return 3; fi
+  read -r _ sha tree _ detail <<<"$line"
+  f=$(grep -o "log $GATES_DIR/logs/[^ ;)]*" <<<"$detail" | cut -d' ' -f2- || true); [ -n "$f" ] && [ -f "$f" ] && logs+=("$f")
+  for f in "$GATES_DIR/logs/$tree"/*.log "$GATES_DIR/runs/$sha.install.log"; do [ -f "$f" ] && logs+=("$f"); done
+  pr=$(awk -v s="$sha" '$4 == "MOVED" && index($0, "gating " substr(s, 1, 7)) { for (i = 5; i <= NF; i++) if ($i ~ /^#[0-9]+:?$/) p = $i } END { gsub(/[#:]/, "", p); print p }' "$GATES_RESULTS" 2>/dev/null || true)
+  echo "Why ${sha:0:7} failed${pr:+ (PR #$pr)}:"
+  echo "  result: ${detail%%; log *}"
+  gates_log_findings full ${logs[@]+"${logs[@]}"}
+  for f in ${logs[@]+"${logs[@]}"}; do echo "  log: $f"; done
+  echo "Before re-queueing: npm run -s check:changed (the changed projects and their tests), then gates enqueue <new commit> --pr ${pr:-N}."
+}
+
+gates_after_pass() { # gates_after_pass <sha> [<pr>]: run the after-pass hook (GATES_HOOK) if there is one; never fails the runner
+  [ -x "$GATES_HOOK" ] || return 0
+  local rc=0 out
+  echo "$(date '+%F %T') after-pass hook for ${1:0:7}${2:+ (PR #$2)} ..."
+  out=$(mktemp -t gauss-hook) || return 0
+  # Its own process group, killed whole after GATES_HOOK_S (macOS has no timeout(1)); output to a file, not
+  # a pipe, so a child that outlives it (a hung gh) can't hold the queue. No terminal, no stdin.
+  perl -e '$t = shift; $p = fork; die "fork: $!" unless defined $p;
+    if (!$p) { setpgrp(0, 0); exec @ARGV or exit 127 }
+    $SIG{ALRM} = sub { kill "TERM", -$p; sleep 1; kill "KILL", -$p; exit 142 }; alarm $t;
+    waitpid($p, 0); exit($? & 127 ? 128 + ($? & 127) : $? >> 8)' "$GATES_HOOK_S" "$GATES_HOOK" "$1" ${2:+"$2"} </dev/null >"$out" 2>&1 || rc=$?
+  sed 's/^/  hook: /' "$out"; rm -f "$out"
+  if [ "$rc" = 142 ]; then echo "$(date '+%F %T') after-pass hook stopped after ${GATES_HOOK_S} s"
+  elif [ "$rc" != 0 ]; then echo "$(date '+%F %T') after-pass hook exited $rc"; fi
+  return 0
+}
+
+gates_passed() { # gates_passed <checkout-dir>|<commit>: exit 0 only if that commit's exact tree has a passing record
+  # The contract for scripts such as merge-approved.sh: the record, not the wording of the latest result
+  # line (18 Nov: "SKIPPED already passed" didn't match its pattern and left #172 unmerged; a commit
+  # re-queued after a pass shows QUEUED). Exit 0 passed, 1 no passing record, 2 unknown commit.
+  gates_resolve "${1:?usage: $0 gates passed <checkout-dir>|<commit>}" >/dev/null 2>&1 || { echo "Unknown commit '$1'."; return 2; }
+  if gate_record "$G_TREE" >/dev/null; then gates_summary "$GATES_DIR/$G_TREE.json"; return 0; fi
+  echo "NOT PASSED ${G_SHA:0:7} (tree ${G_TREE:0:7}): no passing gate record"; return 1
+}
+
 gates_run() { # gates_run [--once]: work through the queue, oldest first, then exit; --once: stop after one wait that gave up
-  local once=${1:-} self req sha tree queued rc pid me
+  local once=${1:-} self req sha tree queued rc pid me pr repo line merge_only screened
   self="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
   # Never the folder it was started from: that is a session's checkout, often a temporary worktree removed
   # while the runner lives on (4 Nov: every git call then failed with getcwd errors).
@@ -1087,16 +1397,52 @@ gates_run() { # gates_run [--once]: work through the queue, oldest first, then e
       rm -f "$req"; continue
     fi
     if gate_record "$tree" >/dev/null; then # passed meanwhile (another request, or by hand)
-      gates_result "$sha" "$tree" SKIPPED "already passed: $(gates_summary "$GATES_DIR/$tree.json")"
-      rm -f "$req"; continue
+      pr=$(req_get "$req" pr)
+      if [ -z "$pr" ]; then
+        gates_result "$sha" "$tree" SKIPPED "already passed: $(gates_summary "$GATES_DIR/$tree.json")"
+        rm -f "$req"; gates_after_pass "$sha"; continue
+      fi
+      # A train request whose head already passed still has to land (12 Nov: #265 passed, main moved,
+      # the re-queue was dropped here as SKIPPED and never merged). Merge main in first; if that left
+      # the tree unchanged, merge without a second run, else gate the new head as usual below.
+      train_sync "$req" || { tail -1 "$GATES_RESULTS"; continue; }
+      sha=$(req_get "$req" sha); tree=$(req_get "$req" tree)
+      if gate_record "$tree" >/dev/null; then
+        repo=$(req_get "$req" repo)
+        gates_result "$sha" "$tree" SKIPPED "already passed: going straight to the merge"
+        rm -f "$req"
+        train_merge "$pr" "$sha" "$tree" "$repo" || true
+        tail -1 "$GATES_RESULTS"; gates_after_pass "$sha" "$pr"; continue
+      fi
     fi
-    if gates_prescreen "$sha" "$tree"; then rm -f "$req"; tail -1 "$GATES_RESULTS"; continue; fi
-    echo "$(date '+%F %T') gates ${sha:0:7} ..."
-    rc=0
-    if [ -x "$HEAVY" ]; then
-      "$HEAVY" --wait "$GATES_WAIT_MIN" --name gates --label "gate queue ${sha:0:7}" -- /bin/bash "$self" gates run-one "$req" || rc=$?
+    merge_only=0
+    if gatebox_trusted && [ -n "$(req_get "$req" pr)" ]; then
+      # Merge main in first, so the gatebox screens the head that would land (run-one checks it again).
+      if ! train_sync "$req"; then tail -1 "$GATES_RESULTS"; continue; fi
+      sha=$(req_get "$req" sha); tree=$(req_get "$req" tree); merge_only=1
+    fi
+    screened=0; gates_prescreen "$sha" "$tree" || screened=$?
+    if [ "$screened" = 0 ]; then rm -f "$req"; tail -1 "$GATES_RESULTS"; continue; fi
+    rc=0; pr=$(req_get "$req" pr)
+    if [ "$merge_only" = 1 ] && [ "$screened" = 2 ]; then
+      echo "$(date '+%F %T') ops tests ${sha:0:7} (merge only: the gatebox passed the rest) ..."
+      if [ -x "$HEAVY" ]; then
+        "$HEAVY" --wait "$GATES_WAIT_MIN" --max-level 2 --name gates-ops --label "ops gate ${sha:0:7}" -- /bin/bash "$self" gates run-one "$req" --gatebox-passed "$sha" || rc=$?
+      else
+        /bin/bash "$self" gates run-one "$req" --gatebox-passed "$sha" || rc=$?
+      fi
     else
-      /bin/bash "$self" gates run-one "$req" || rc=$?
+      echo "$(date '+%F %T') gates ${sha:0:7} ..."
+      if [ -x "$HEAVY" ]; then
+        "$HEAVY" --wait "$GATES_WAIT_MIN" --name gates --label "gate queue ${sha:0:7}" -- /bin/bash "$self" gates run-one "$req" || rc=$?
+      else
+        /bin/bash "$self" gates run-one "$req" || rc=$?
+      fi
+    fi
+    if [ "$rc" = 77 ] && [ -f "$req" ]; then # main moved after the gatebox screened the head: screen the new one
+      echo "$(date '+%F %T') ${sha:0:7} moved on after the gatebox screened it; screening the new head."
+      [ "$once" = --once ] && return 0
+      continue
     fi
     if [ "$rc" = 75 ] && [ -f "$req" ]; then # claude-heavy gave up waiting; the request stays first in line
       echo "$(date '+%F %T') ${sha:0:7} still waiting for memory or power; asking again."
@@ -1111,13 +1457,20 @@ gates_run() { # gates_run [--once]: work through the queue, oldest first, then e
     if [ -f "$req" ]; then # run-one died before it could say why
       gates_result "$sha" "$tree" ERROR "gate run exited $rc without a result (log: $LOGS/gates-runner.log)"; rm -f "$req"
     fi
-    tail -1 "$GATES_RESULTS"
+    line=$(tail -1 "$GATES_RESULTS"); echo "$line"
+    # A pass (merged, held, or gates only) runs the hook before the next request can move main. Not after a
+    # REQUEUED line: main already moved past that head, and the train re-gates it next.
+    case $(cut -d' ' -f4 <<<"$line") in
+      PASSED|MERGED|HELD) gates_after_pass "$(cut -d' ' -f2 <<<"$line")" "$pr" ;;
+      SKIPPED) [[ "$line" == *" already passed: "* ]] && gates_after_pass "$(cut -d' ' -f2 <<<"$line")" "$pr" ;;
+    esac
   done
   echo "$(date '+%F %T') gate queue empty."
 }
 
 gates_run_one() { # gates_run_one <request>: check out, install if the lockfile changed, gates_record, write the result
-  local req=$1 sha tree repo node by co lock out rc=0 line status
+  local req=$1 passed=${3:-} sha tree repo node by co lock out rc=0 line status
+  [ "${2:-}" = --gatebox-passed ] || passed=""
   # Withdrawn while claude-heavy waited (a session re-queued a new head): nothing to run.
   [ -f "$req" ] || { echo "Request $(basename "$req") was withdrawn; skipping."; return 0; }
   local pr; pr=$(req_get "$req" pr)
@@ -1132,6 +1485,8 @@ gates_run_one() { # gates_run_one <request>: check out, install if the lockfile 
     fi
   fi
   sha=$(req_get "$req" sha); tree=$(req_get "$req" tree); repo=$(req_get "$req" repo); node=$(req_get "$req" node); by=$(req_get "$req" by)
+  # Merge only: the gatebox vouched for one commit. If main moved since, that is no longer the head.
+  if [ -n "$passed" ] && [ "$sha" != "$passed" ]; then return 77; fi
   [ -n "$node" ] && [ -x "$node" ] && NODE=$node # the Node the session queued with (.nvmrc: Node 26)
   co=${GAUSS_GATES_CHECKOUT:-$(dirname "$repo").worktrees/gates}
   gates_fail() { gates_result "$sha" "$tree" ERROR "$1"; rm -f "$req"; return 1; }
@@ -1144,6 +1499,7 @@ gates_run_one() { # gates_run_one <request>: check out, install if the lockfile 
     git --git-dir="$repo" -c advice.detachedHead=false worktree add -q --detach "$co" "$sha" || { gates_fail "could not add the gate checkout $co at ${sha:0:7}"; return 1; }
     echo "$co" >>"$GATES_DIR/checkouts" # one per repository
   fi
+  if [ -n "$passed" ]; then gates_ops_only "$req" "$co" "$sha" "$tree" "$pr" "$repo"; return; fi
   # One install for consecutive requests with the same package-lock.json.
   [ -f "$co/package-lock.json" ] && lock=$(install_key "$co") || { gates_fail "no package-lock.json at ${sha:0:7}"; return 1; }
   if [ "$(cat "$co/node_modules/.gauss-lock" 2>/dev/null)" != "$lock" ]; then
@@ -1184,6 +1540,26 @@ gates_run_one() { # gates_run_one <request>: check out, install if the lockfile 
   [ -z "$pr" ] || train_merge "$pr" "$sha" "$tree" "$repo" || true # a pass stands whether or not it merged
 }
 
+gates_ops_only() { # gates_ops_only <request> <checkout> <sha> <tree> <pr> <repo>: the part of a gate only this Mac can run
+  # After a gatebox pass on this exact commit (GAU-239). No install: the ops tests are bash and Go.
+  # The result is for merging only; no deploy record ($GATES_DIR/<tree>.json) is written.
+  local req=$1 co=$2 sha=$3 tree=$4 pr=$5 repo=$6 rc=0 hold=0 log counts
+  log="$GATES_DIR/runs/$sha.ops.log"
+  # Under claude-heavy the gate lock is already ours; gate_lock would also wait for normal memory
+  # pressure, which a small job does not need.
+  if ! gate_lock_ours; then gate_lock; hold=$GATES_HOLD; fi
+  (cd "$co" && PATH="$(dirname "$NODE"):$PATH" npm run test:ops >"$log" 2>&1) || rc=$?
+  if [ "$hold" = 1 ]; then rmdir "$GATE_LOCK" 2>/dev/null || true; fi
+  counts=$(grep -Eo 'gauss-services: [0-9]+ passed, [0-9]+ failed' "$log" | tail -1 || true)
+  rm -f "$req"
+  if [ "$rc" != 0 ] || [[ "$counts" != *", 0 failed" ]]; then
+    gates_result "$sha" "$tree" FAILED "test:ops here (exit $rc${counts:+; $counts}) after a gatebox pass; log $log"
+    return 1
+  fi
+  gates_result "$sha" "$tree" PASSED "merge only, no deploy record: gatebox $GATEBOX passed ${sha:0:7} (npm ci, test, quality:full, build); here test:ops ${counts#gauss-services: }"
+  [ -z "$pr" ] || train_merge "$pr" "$sha" "$tree" "$repo" || true
+}
+
 # The merge train (Josh 2026-11-03, "make fixes to merge train always"): overnight, main moved
 # twice (#197, #213) and every queued gate tested a head that could no longer merge; each PR then
 # needed a session awake to merge main in, re-queue, wait and merge. A request queued with --pr
@@ -1199,21 +1575,77 @@ train_pr() { # train_pr <pr>: "state head branch base draft merge-state" on one 
     -q '[.state, .headRefOid, .headRefName, .baseRefName, (.isDraft|tostring), .mergeStateStatus] | join(" ")' 2>/dev/null
 }
 
+# Waiting PRs are not gated again (18 Nov, Josh: "make a better merge train process"). That day #160 was
+# gated 7 times and #175 5 times: each pass was held for a person, main moved, and the same change was
+# gated again (about 7.5 min and 3% of the battery a run) with nothing able to merge it. A pass that is
+# held as a draft or for Josh leaves a note with a fingerprint of the PR's own change; while that is
+# unchanged the train answers at once instead of running. The run that matters is the one right before
+# the merge: `gates enqueue <sha> --pr N --final` (or the draft being marked ready) gates it against
+# main as it is then. A head that conflicts with main is likewise not retried until its branch moves.
+train_change() { # train_change <repo> <sha>: fingerprint of what the PR changes relative to main (stable while only main moves)
+  local base; base=$(git --git-dir="$1" merge-base refs/remotes/origin/main "$2" 2>/dev/null) || return 1
+  git --git-dir="$1" diff "$base" "$2" | git patch-id --stable | cut -d' ' -f1
+}
+train_note() { # train_note <pr> <kind: person|draft|conflict> <sha> <change> <why>
+  mkdir -p "$GATES_DIR/held"
+  printf 'kind=%s\nsha=%s\nchange=%s\nwhy=%s\nat=%s\n' "$2" "$3" "$4" "$5" "$(date +%s)" >"$GATES_DIR/held/$1.tmp" && mv -f "$GATES_DIR/held/$1.tmp" "$GATES_DIR/held/$1"
+}
+train_waits() { # train_waits <request> <head> <draft> <repo>: 0 (result written, request removed) when this PR only waits
+  local req=$1 head=$2 draft=$3 repo=$4 pr note kind was why tree
+  pr=$(req_get "$req" pr); note="$GATES_DIR/held/$pr"; tree=$(req_get "$req" tree)
+  [ -f "$note" ] && [ -z "$(req_get "$req" final)" ] || return 1
+  kind=$(req_get "$note" kind); was=$(req_get "$note" sha); why=$(req_get "$note" why)
+  case "$kind" in
+    conflict) [ "$was" = "$head" ] || return 1
+      gates_result "$head" "$tree" CONFLICT "PR #$pr still can't take main (its branch hasn't moved since ${was:0:7}): not tried again until it does" ;;
+    draft|person)
+      [ "$kind" = draft ] && [ "$draft" != true ] && return 1 # marked ready: it can merge now
+      [ "$(req_get "$note" change)" = "$(train_change "$repo" "$head")" ] || return 1
+      gates_result "$head" "$tree" HELD "PR #$pr passed on ${was:0:7} and nothing of its own has changed: not gated again while it waits ($why). When it can merge: gates enqueue ${head:0:7} --pr $pr --final" ;;
+    *) return 1 ;;
+  esac
+  rm -f "$req"
+}
+
+train_versions() { # train_versions <worktree>: settle a merge whose only conflicts are baseline "version" lines
+  # 18 Nov (Josh: "yes, add it"): every requirements PR bumps requirements.json/fmea.json "version", so
+  # each one conflicted with the next on the train (#284, #286) and needed a person. Take main's version
+  # plus one patch step; anything else in conflict (another line, another file, invalid JSON) still fails.
+  local w=$1 files f
+  files=$(git -C "$w" diff --name-only --diff-filter=U) || return 1
+  [ -n "$files" ] || return 1
+  while IFS= read -r f; do
+    case "$f" in requirements/requirements.json|requirements/fmea.json) ;; *) return 1 ;; esac
+    python3 -I - "$w/$f" <<'PY' || return 1
+import json, re, sys
+p = sys.argv[1]; s = open(p).read()
+hunk = re.compile(r'<<<<<<< [^\n]*\n(  "version": "[^"\n]*",\n)=======\n  "version": "(\d+)\.(\d+)\.(\d+)",\n>>>>>>> [^\n]*\n')
+out = hunk.sub(lambda m: '  "version": "%s.%s.%d",\n' % (m.group(2), m.group(3), int(m.group(4)) + 1), s)
+if out == s or re.search(r'^(<<<<<<<|=======|>>>>>>>)', out, re.M): sys.exit(1)
+json.loads(out); open(p, "w").write(out)
+PY
+    git -C "$w" add -- "$f" || return 1
+  done <<<"$files"
+  git -C "$w" commit -q --no-edit >/dev/null
+}
+
 train_sync() { # train_sync <request>: merge origin/main into a train PR's head before its run; 1 = withdrawn
-  local req=$1 pr sha tree repo info state head branch base _ w new
+  local req=$1 pr sha tree repo info state head branch base draft _ w new
   pr=$(req_get "$req" pr); sha=$(req_get "$req" sha); tree=$(req_get "$req" tree); repo=$(req_get "$req" repo)
   git --git-dir="$repo" fetch -q origin 2>/dev/null || { echo "fetch failed: gating ${sha:0:7} as queued"; return 0; }
   info=$(train_pr "$pr") || { echo "GitHub unreachable: gating ${sha:0:7} as queued"; return 0; }
-  read -r state head branch base _ _ <<<"$info"
-  if [ "$state" != OPEN ]; then gates_result "$sha" "$tree" SKIPPED "PR #$pr is ${state:-gone}"; rm -f "$req"; return 1; fi
+  read -r state head branch base draft _ <<<"$info"
+  if [ "$state" != OPEN ]; then gates_result "$sha" "$tree" SKIPPED "PR #$pr is ${state:-gone}"; rm -f "$req" "$GATES_DIR/held/$pr"; return 1; fi
   if [ "$head" != "$sha" ]; then
     gates_result "$sha" "$tree" SKIPPED "PR #$pr moved on to ${head:0:7}; queue that head"; rm -f "$req"; return 1
   fi
   [ "$base" = main ] || return 0 # stacked: gated as it is; it syncs once its base has merged
+  train_waits "$req" "$head" "$draft" "$repo" && return 1
   git --git-dir="$repo" merge-base --is-ancestor refs/remotes/origin/main "$sha" && return 0
   w=$(mktemp -d -t gauss-train)/w
   git --git-dir="$repo" worktree add -q --detach "$w" "$sha" 2>/dev/null || { echo "could not prepare a merge of main; gating as queued"; return 0; }
-  if git -C "$w" merge -q --no-edit -m "Merge origin/main into $branch (merge train)" refs/remotes/origin/main >/dev/null 2>&1 \
+  if { git -C "$w" merge -q --no-edit -m "Merge origin/main into $branch (merge train)" refs/remotes/origin/main >/dev/null 2>&1 \
+       || train_versions "$w"; } \
      && new=$(git -C "$w" rev-parse HEAD) && git -C "$w" push -q origin "$new:refs/heads/$branch" 2>/dev/null; then
     sed -i '' -e "s/^sha=.*/sha=$new/" -e "s/^tree=.*/tree=$(git -C "$w" rev-parse "$new^{tree}")/" "$req"
     gates_result "$sha" "$tree" MOVED "merged main into PR #$pr: gating ${new:0:7} instead"
@@ -1222,6 +1654,7 @@ train_sync() { # train_sync <request>: merge origin/main into a train PR's head 
     git -C "$w" merge --abort 2>/dev/null || true
     gates_result "$sha" "$tree" CONFLICT "PR #$pr can't take main without a person (conflict, or its branch moved)"
     phone -key "train-$pr" -every 6h "Gauss: PR #$pr needs a hand" "Main has moved and #$pr doesn't merge with it cleanly. A session needs to merge main into it."
+    train_note "$pr" conflict "$sha" "" "conflicts with main"
     rm -f "$req"
   fi
   git --git-dir="$repo" worktree remove --force "$w" 2>/dev/null || true
@@ -1251,10 +1684,18 @@ train_merge() { # train_merge <pr> <sha> <tree> <repo>: merge a PR that just pas
   fi
   if [ -n "$why" ]; then
     gates_result "$sha" "$tree" HELD "passed, not merged: $why"
+    case "$why" in # waits for a person: no more runs for the same change until it can merge (train_waits)
+      draft) train_note "$pr" draft "$sha" "$(train_change "$repo" "$sha")" "draft" ;;
+      touches*) train_note "$pr" person "$sha" "$(train_change "$repo" "$sha")" "Josh merges" ;;
+    esac
+    # 12 Nov: merging one PR moved main under the next one's run, which then sat HELD until a person
+    # re-queued it. Re-queue it at the front instead (train_sync merges main in), at most 3 times a day.
+    [[ "$why" == "main moved during the run"* ]] && train_requeue "$pr" "$sha" "$tree" "$repo"
     return 1
   fi
   if gh pr merge "$pr" --repo "$TRAIN_REPO" --merge --match-head-commit "$sha" >/dev/null 2>&1; then
     gates_result "$sha" "$tree" MERGED "PR #$pr merged by the train after its gate passed on ${sha:0:7}"
+    rm -f "$GATES_DIR/held/$pr"
     # PRs stacked on this one now belong on main (their next queued run merges main in).
     for child in $(gh pr list --repo "$TRAIN_REPO" --base "$branch" --state open --json number -q '.[].number' 2>/dev/null); do
       gh pr edit "$child" --repo "$TRAIN_REPO" --base main >/dev/null 2>&1 && echo "Retargeted PR #$child to main."
@@ -1270,6 +1711,10 @@ gates_show_result() { # gates_show_result <checkout-dir>|<commit>: the latest li
   local arg=${1:?usage: $0 gates result <checkout-dir>|<commit>|status} tree="" line f
   if gates_resolve "$arg" 2>/dev/null; then tree=$G_TREE; else tree=$arg; fi # a session's worktree may be gone: match a prefix
   if [ ${#tree} = 40 ] && f=$(gates_queued "$tree"); then
+    # 18 Nov: a re-queued commit showed only this line, hiding the verdict it already had (17 Nov lesson).
+    # The earlier verdict goes first; the QUEUED line stays last, where scripts read it.
+    line=$(awk -v t="$tree" '(index($2, t) == 1 || index($3, t) == 1) && $4 != "REQUEUED"' "$GATES_RESULTS" 2>/dev/null | tail -1)
+    [ -n "$line" ] && echo "earlier: $line"
     echo "QUEUED ${tree:0:7} since $(date -r "$(req_get "$f" queued)" '+%F %H:%M') by $(req_get "$f" by); runner: $(gates_runner_pid >/dev/null && echo working || echo 'not running (the awake guard restarts it within a minute)')"
     return 3
   fi
@@ -1277,6 +1722,91 @@ gates_show_result() { # gates_show_result <checkout-dir>|<commit>: the latest li
   [ -n "$line" ] || { echo "No gate result or request for $arg."; return 1; }
   echo "$line"
   case $(echo "$line" | cut -d' ' -f4) in PASSED|MERGED|HELD) return 0 ;; SKIPPED) [[ "$line" == *" already passed: "* ]] ;; *) return 1 ;; esac
+}
+
+train_requeue() { # train_requeue <pr> <sha> <tree> <repo>: put a passed head main moved past back at the front
+  local pr=$1 sha=$2 tree=$3 repo=$4 n f
+  n=$(awk -v since="$(date -u -v-24H +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -d '24 hours ago' +%Y-%m-%dT%H:%M:%SZ)" -v k="REQUEUED PR #$pr " \
+    '$1 >= since && index($0, k)' "$GATES_RESULTS" 2>/dev/null | wc -l | tr -d ' ')
+  if [ "${n:-0}" -ge 3 ]; then
+    gates_result "$sha" "$tree" HELD "PR #$pr was re-queued 3 times today as main kept moving: a person decides"
+    return 1
+  fi
+  gates_queued "$tree" >/dev/null && return 0
+  mkdir -p "$GATES_QUEUE"
+  # "1" + time sorts before every request queued the usual way (they start with the 10-digit epoch
+  # 17...), so it runs next; the queued= line keeps the real time for expiry.
+  f="$GATES_QUEUE/1$(python3 -Ic 'import time; print("%.6f" % time.time())')-$tree.req"
+  printf 'sha=%s\ntree=%s\nrepo=%s\nnode=%s\nby=%s\nqueued=%s\npr=%s\n' "$sha" "$tree" "$repo" "$NODE" "merge-train" "$(date +%s)" "$pr" >"$f.tmp" && mv "$f.tmp" "$f"
+  gates_result "$sha" "$tree" REQUEUED "PR #$pr re-queued at the front: main moved during its run"
+}
+
+# Queue tooling (Josh 12 Nov, "make some tooling to improve this process"): see the queue by PR,
+# move a PR to the front or back, and list the passes that wait for a person.
+gates_pr_heads() { # one line per open PR: "<head sha> <number> <draft true|false> <merge state> <title>"
+  gh pr list --repo "$TRAIN_REPO" --state open --limit 100 --json number,headRefOid,isDraft,mergeStateStatus,title \
+    -q '.[] | "\(.headRefOid) \(.number) \(.isDraft) \(.mergeStateStatus) \(.title)"' 2>/dev/null
+}
+
+gates_queue() { # gates queue: the queue in run order, with each request's PR
+  local f i=0 sha pr heads line
+  heads=$(gates_pr_heads || true) # GitHub unreachable: list without PR details
+  [ -n "$(ls "$GATES_QUEUE" 2>/dev/null | grep '\.req$')" ] || { echo "queue: empty"; return 0; }
+  while IFS= read -r f; do
+    i=$((i + 1)); sha=$(req_get "$GATES_QUEUE/$f" sha); pr=$(req_get "$GATES_QUEUE/$f" pr)
+    line=""; [ -n "$pr" ] && line=$(awk -v n="$pr" '$2 == n' <<<"$heads")
+    printf '%2d  %s  %-6s %s\n' "$i" "${sha:0:7}" "${pr:+#$pr}" \
+      "$(if [ -z "$pr" ]; then echo "(gates only: a person merges)"; elif [ -z "$line" ]; then echo "(PR not open)"
+         else read -r _h _n dr ms title <<<"$line"; printf '%s%s %s' "$([ "$dr" = true ] && echo 'draft, ')" "$ms" "$title" | cut -c1-80; fi)"
+  done < <(ls "$GATES_QUEUE" | grep '\.req$' | sort)
+}
+
+gates_priority() { # gates priority <pr number|sha> front|back: move that request in the queue
+  local key=${1:?usage: $0 gates priority <pr|sha> front|back} where=${2:-front} f b n=0 head
+  # front: "0" + a countdown, so the newest front move sorts first (before re-queues at "1<time>" and
+  # plain requests at "<time>"); "1<time>" put a later front move behind an earlier one (17 Nov).
+  case "$where" in front) head=0$(python3 -Ic 'import time; print("%016d" % (10**16 - int(time.time() * 1e6)))') ;; back) head=9$(date +%s) ;; *) echo "usage: $0 gates priority <pr|sha> front|back" >&2; return 2 ;; esac
+  # A PR number matches exactly; a sha matches by prefix only from 7 hex characters. (17 Nov: "99"
+  # matched any sha starting 99, so the unknown-PR test failed about 1 run in 128 and PR #259's
+  # gates with it; "27" would also have moved PR #278.)
+  local pat
+  case "$key" in
+    *[!0-9a-f]*|"") echo "usage: $0 gates priority <pr|sha> front|back" >&2; return 2 ;;
+    *[!0-9]*) [ ${#key} -ge 7 ] || { echo "A sha needs at least 7 characters: $key" >&2; return 2; }; pat="^sha=$key" ;;
+    *) pat="^pr=$key\$"; [ ${#key} -ge 7 ] && pat="$pat|^sha=$key" ;;
+  esac
+  while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    b=$(basename "$f")
+    mv "$f" "$GATES_QUEUE/$head.$(printf '%06d' "$n")-${b#*-}"; n=$((n + 1))
+  done < <(grep -l -E "$pat" "$GATES_QUEUE"/*.req 2>/dev/null)
+  [ $n -gt 0 ] || { echo "Nothing queued for $key." >&2; return 1; }
+  echo "Moved $n request(s) for $key to the $where."
+  gates_queue
+}
+
+gates_waiting() { # gates waiting: open PRs whose head passed its gates and that wait for a person
+  local repo heads sha num draft ms title tree last n=0 contains
+  repo=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || { echo "Run this from a checkout of the repository." >&2; return 1; }
+  git --git-dir="$repo" fetch -q origin 2>/dev/null || true
+  heads=$(gates_pr_heads || true) # GitHub unreachable: list without PR details
+  while read -r sha num draft ms title; do
+    [ -n "$sha" ] || continue
+    tree=$(git --git-dir="$repo" rev-parse "$sha^{tree}" 2>/dev/null) || continue
+    gate_record "$tree" >/dev/null || continue
+    gates_queued "$tree" >/dev/null && continue
+    n=$((n + 1))
+    last=$(awk -v s="$sha" '$2 == s' "$GATES_RESULTS" 2>/dev/null | tail -1 | cut -d' ' -f4-)
+    contains=no; git --git-dir="$repo" merge-base --is-ancestor refs/remotes/origin/main "$sha" 2>/dev/null && contains=yes
+    printf '#%s %s %s%s: %s\n' "$num" "${sha:0:7}" "$([ "$draft" = true ] && echo 'draft, ')" "$ms" "$(echo "$title" | cut -c1-70)"
+    printf '    %s\n' "${last:-passed}"
+    if [ "$draft" = true ]; then echo "    next: mark it ready (gh pr ready $num), then: $0 gates enqueue $sha --pr $num"
+    elif [ "$ms" = DIRTY ]; then echo "    next: it conflicts with main: merge main into it by hand, then enqueue the new head with --pr $num"
+    elif [ "$contains" = no ]; then echo "    next: main moved past it: $0 gates enqueue $sha --pr $num"
+    elif [ "$ms" = CLEAN ]; then echo "    next (your call): gh pr merge $num --repo $TRAIN_REPO --merge --match-head-commit $sha"
+    else echo "    next: GitHub says $ms; fix that first"; fi
+  done <<<"$heads"
+  [ $n -gt 0 ] || echo "Nothing passed and waiting."
 }
 
 gates_status() {
@@ -1288,7 +1818,8 @@ gates_status() {
     echo "queued: $(req_get "$f" sha | cut -c1-7) by $(req_get "$f" by) since $(date -r "$(req_get "$f" queued)" '+%F %H:%M')"
   done
   [ $n -gt 0 ] || echo "queue: empty"
-  if [ -n "$GATEBOX" ]; then echo "gatebox: $GATEBOX screens each request first"; else echo "gatebox: off (all gates run here)"; fi
+  if gatebox_trusted; then echo "gatebox: $GATEBOX screens each request first; a pass lets the train merge after the ops tests here (no deploy record)"
+  elif [ -n "$GATEBOX" ]; then echo "gatebox: $GATEBOX screens each request first"; else echo "gatebox: off (all gates run here)"; fi
   tail -5 "$GATES_RESULTS" 2>/dev/null || true
 }
 
@@ -1367,8 +1898,53 @@ deploy_power_short() { # prints why the power can't carry a deploy, or nothing
   watts=$(pmset -g ac 2>/dev/null | sed -n 's/^ *Wattage = \([0-9]*\)W.*/\1/p')
   [ -z "$watts" ] || [ "$watts" -ge 20 ] || echo "battery ${pct}% on a ${watts} W charger"
 }
+carry_checkout() { # carry_checkout <dir> <to sha>: check out <to>; git never touches runtime data whose tracking changes
+  # GAU-211: data/bedrock/telemetry.jsonl was tracked and is now ignored, and the running backend
+  # appends to it by path (fs.appendFile). Across that commit a plain checkout refuses (changed
+  # file) or deletes it (unchanged), and going back silently replaces live's copy with the committed
+  # one (git overwrites ignored files). Moving it aside loses what is appended meanwhile, so the
+  # file never moves: for each data/ or ml/models/ path that only one side tracks, the index is set
+  # to what <to> has (git then keeps the working file as it is, same inode), and a path leaving the
+  # tree is excluded for this one command (else git refuses over an "untracked" file).
+  # Safety net: a hard link beside the file. If git removes the file all the same, the link goes
+  # back in its place. Nothing here deletes data: in doubt both copies stay and a person decides.
+  local dir=$1 to=$2 p f mode blob excl rc=0 _
+  local -a paths=()
+  while IFS= read -r p; do
+    f="$dir/$p"
+    if [ -e "$f.gauss-keep" ] && [ ! -e "$f" ]; then mv "$f.gauss-keep" "$f" || return 1; fi # an earlier run stopped before putting it back
+    [ -f "$f" ] || continue
+    if [ ! -e "$f.gauss-keep" ]; then ln "$f" "$f.gauss-keep" || return 1
+    elif ! [ "$f" -ef "$f.gauss-keep" ]; then
+      echo "$f.gauss-keep is live data left by an earlier checkout and differs from $p: keep the right one by hand (move it to $p), then retry." >&2; return 1
+    fi
+    paths+=("$p")
+  done < <(git -C "$dir" diff --name-only --no-renames --diff-filter=AD HEAD "$to" -- data ml/models)
+  excl=$(mktemp "${TMPDIR:-/tmp}/gauss-carry.XXXXXX") || return 1
+  for p in ${paths[@]+"${paths[@]}"}; do
+    if read -r mode _ blob _ < <(git -C "$dir" ls-tree "$to" -- "$p") && [ -n "$blob" ]; then
+      git -C "$dir" update-index --add --cacheinfo "$mode,$blob,$p" || rc=1
+    else
+      git -C "$dir" update-index --force-remove -- "$p" || rc=1; printf '/%s\n' "$p" >>"$excl"
+    fi
+  done
+  [ $rc != 0 ] || git -C "$dir" -c core.excludesFile="$excl" checkout -q --detach "$to" || rc=1
+  rm -f "$excl"
+  for p in ${paths[@]+"${paths[@]}"}; do
+    f="$dir/$p"
+    [ $rc = 0 ] || git -C "$dir" reset -q -- "$p" >/dev/null 2>&1 || true # refused: the index describes HEAD again
+    if [ "$f" -ef "$f.gauss-keep" ]; then rm -f "$f.gauss-keep" # untouched: drop the second name, the data stays
+    elif [ ! -e "$f" ] || [ "$(git -C "$dir" hash-object -- "$f")" = "$(git -C "$dir" rev-parse -q --verify "$to:$p")" ]; then
+      mv -f "$f.gauss-keep" "$f" || return 1 # git removed it, or wrote the committed copy (still in git) over it
+      echo "git touched $p during the checkout: live's copy is back in place." >&2
+    else
+      echo "warning: $p was replaced during the checkout (not by git); the earlier data is kept as $f.gauss-keep. Compare the two before the next deploy." >&2
+    fi
+  done
+  return $rc
+}
 switch_live() { # switch_live <dir> <from sha> <to sha>: check out, npm ci if the lockfile or Node changed, reinstall
-  git -C "$1" checkout -q --detach "$3" || return 1
+  carry_checkout "$1" "$3" || return 1
   if [ ! -d "$1/node_modules" ] || ! git -C "$1" diff --quiet "$2" "$3" -- package-lock.json || node_changed "$1"; then
     echo "package-lock.json or Node changed: installing dependencies in $1 ..."
     (cd "$1" && PATH="$(dirname "$NODE"):$PATH" npm ci --no-audit --no-fund >/dev/null) || return 1
@@ -1408,6 +1984,19 @@ deploy() { # deploy <commit> [fallback-dir]
   fi
   # Live's data files (telemetry, models) change in place and carry over; code must not.
   local dirty; dirty=$(git -C "$live" status --porcelain --untracked-files=no | cut -c4- | grep -Ev '^(data|ml/models)/' || true)
+  # Edits under .claude/ or docs/ (agent notes, docs) are saved as patches and restored, not a reason to stop.
+  # Anything else, or a rename or delete, still refuses.
+  if [ -n "$dirty" ] && ! printf '%s\n' "$dirty" | grep -Evq '^(\.claude|docs)/'; then
+    local saved="$LOGS/live-local-changes/$(date +%Y%m%d-%H%M%S)" f n=0
+    mkdir -p "$saved" && while IFS= read -r f; do
+      git -C "$live" diff HEAD -- "$f" >"$saved/$(printf '%s' "$f" | tr '/' '_').patch" \
+        && git -C "$live" checkout -q HEAD -- "$f" || { echo "Couldn't save and restore $f; not deploying." >&2; return 1; }
+      n=$((n + 1))
+    done <<<"$dirty"
+    echo "Live had $n local doc/agent-note change(s); saved as patches in $saved and restored."
+    event deploy-local-doc-changes live "saved and restored $n file(s) under .claude/ or docs/ before deploying" "saved_to=$saved"
+    dirty=""
+  fi
   [ -z "$dirty" ] || { printf 'Live has local code changes; not deploying over them:\n%s\n' "$dirty" >&2; return 1; }
   mkdir -p "$WATCH_DIR" "$LOGS"
   if ! mkdir "$DEPLOY_LOCK" 2>/dev/null; then
@@ -1438,7 +2027,7 @@ deploy() { # deploy <commit> [fallback-dir]
   fi
 
   echo "Deploying ${prev:0:7} -> ${sha:0:7} in $live ..."
-  git -C "$live" checkout -q --detach "$sha" \
+  carry_checkout "$live" "$sha" \
     || { echo "Checkout refused (a local data file conflicts with ${sha:0:7}?): nothing changed." >&2; return 1; }
   if switch_live "$live" "$prev" "$sha" && deploy_ready "$live" "$DEPLOY_WAIT"; then
     echo "$(date '+%F %T') deployed ${sha:0:7} (was ${prev:0:7})" >>"$LOGS/deploy.log"
@@ -1506,6 +2095,7 @@ awake_guard() { # run every minute by the awake agent
   local level swap free; read -r level swap free < <(memory_stats)
   memory_alerts "$level" "$swap"
   memory_sample "$level" "$swap"
+  fleet_memory_watch || true
   disk_alerts "$(disk_free_gb)" "$swap"
   rotate_logs
   balance || true
@@ -1654,6 +2244,49 @@ network_item() {
   item $ok "network: $argo$note"
 }
 
+# The phone's own battery, from its last mesh report (the iOS Shortcut / Android post in tools/argo/README.md).
+# Prints the percentage, charging or not, and the report's age: never the device name or anything else from
+# the store. A phone at or under PHONE_WARN_BATTERY% and not charging fails the check: when it is the hotspot,
+# the uplink dies with it. No report, or one older than PHONE_STALE_MIN, says nothing about now: it is shown
+# as a note and does not fail the check.
+PHONE_WARN_BATTERY="${GAUSS_PHONE_WARN_BATTERY:-20}"
+PHONE_STALE_MIN="${GAUSS_PHONE_STALE_MIN:-60}"
+phone_battery_item() {
+  local store=${GAUSS_MESH_STORE:-} line
+  if [ -z "$store" ]; then
+    store=$(plutil -extract EnvironmentVariables.MESH_STORE_PATH raw -o - "$AGENTS/uk.lightbound.gauss-backend.plist" 2>/dev/null || true)
+  fi
+  line=$(python3 -Ic '
+import json, sys
+from datetime import datetime, timezone
+warn, stale = float(sys.argv[2]), float(sys.argv[3])
+best = None
+try:
+    for d in json.load(open(sys.argv[1])):
+        l = d.get("last") or {}
+        b = l.get("battery") or {}
+        if l.get("platform") not in ("ios", "android") or not isinstance(b.get("level"), (int, float)) or isinstance(b.get("level"), bool):
+            continue
+        age = (datetime.now(timezone.utc) - datetime.fromisoformat(l["receivedAt"].replace("Z", "+00:00"))).total_seconds() / 60
+        if best is None or age < best[0]:
+            best = (age, b["level"], bool(b.get("charging")))
+except Exception:
+    best = None
+if best is None:
+    print("note phone battery: no phone has reported (mesh Shortcut: tools/argo/README.md)")
+else:
+    age, level, charging = best
+    ago = "%.0f min ago" % age if age < 120 else "%.0f h ago" % (age / 60)
+    if age > stale:
+        print("note phone battery: %.0f%% as of %s, too old to judge (run the mesh Shortcut on the phone)" % (level, ago))
+    elif level <= warn and not charging:
+        print("no phone battery %.0f%%, not charging (reported %s): plug it in; if it is the hotspot, the uplink goes with it" % (level, ago))
+    else:
+        print("ok phone battery %.0f%%, %s (reported %s)" % (level, "charging" if charging else "not charging", ago))
+' "${store:-/nonexistent}" "$PHONE_WARN_BATTERY" "$PHONE_STALE_MIN" 2>/dev/null || echo "note phone battery: no phone has reported (mesh Shortcut: tools/argo/README.md)")
+  if [ "${line%% *}" = note ]; then printf '  – %s\n' "${line#* }"; else item "${line%% *}" "${line#* }"; fi
+}
+
 resilience() { # can background work survive the lid closed, the battery, memory and the network?
   local fail=0 ok batt pct level swap free
   batt=$(pmset -g batt); pct=$(grep -Eo -m1 '[0-9]+%' <<<"$batt" | tr -d % || true)
@@ -1687,10 +2320,60 @@ resilience() { # can background work survive the lid closed, the battery, memory
   else
     item ok "phone alerts: iMessage via argo notify"
   fi
+  phone_battery_item
   grep -q claude-phone-hook "$HOME/.claude/settings.json" 2>/dev/null && ok=ok || ok=no
   item $ok "Claude Code prompts forwarded to the phone$([ $ok = no ] && echo " (Notification hook missing)")"
   [ $fail = 0 ] && echo "Resilient: safe to close the lid and go." || echo "Not resilient yet: fix the ✗ items above."
   return $fail
+}
+
+# space-weather data: our latest point's quality tier. When it is ageing/stale, say whether the cause is
+# upstream (NOAA's ACTIVE RTSW spacecraft has no plasma while a standby one is current: 17 Nov 2026,
+# SOLAR1 null from 10:07Z) or our own ingest (NOAA has newer active-spacecraft plasma than our point).
+# Read-only: the backend's own response plus NOAA's public file; never changes what the backend serves.
+RTSW_URL="${GAUSS_RTSW_URL:-https://services.swpc.noaa.gov/json/rtsw/rtsw_wind_1m.json}"
+space_weather_item() {
+  local latest fresh upstream=""
+  latest=$(curl -s -m 5 http://127.0.0.1:3001/api/feed/space-weather/latest || true)
+  if [ "$(printf '%s' "$latest" | python3 -Ic 'import json,sys; print((json.load(sys.stdin).get("quality") or {}).get("tier", 3))' 2>/dev/null || echo 3)" != 0 ]; then
+    upstream=$(curl -s -m 10 --compressed "$RTSW_URL" 2>/dev/null || true)
+  fi
+  fresh=$(printf '%s\n%s' "$latest" "$upstream" | python3 -Ic '
+import json, sys
+from datetime import datetime, timezone
+def ts(t):
+    d = datetime.fromisoformat(str(t).replace("Z", "+00:00"))
+    return d if d.tzinfo else d.replace(tzinfo=timezone.utc)
+try:
+    first, _, rest = sys.stdin.read().partition("\n")
+    point = json.loads(first)
+    q = point.get("quality") or {}
+    tier = q.get("tier", 3)
+    label = {0: "live", 1: "ageing (last measurement 10-15 min old)"}.get(tier, "stale (no measurement in 15 min; just restarted?)")
+    if tier == 0:
+        print("ok space-weather data: " + label); sys.exit()
+    try:
+        rows = json.loads(rest)
+        active = sorted((r for r in rows if r.get("active") and r.get("time_tag")), key=lambda r: ts(r["time_tag"]))
+        plasma = [r for r in active if r.get("proton_speed") is not None]
+        std = [r for r in rows if not r.get("active") and r.get("proton_speed") is not None and r.get("time_tag")]
+        newest = max(ts(r["time_tag"]) for r in rows)
+        ours = ts(point["observedAt"])
+        behind = bool(plasma) and (ts(plasma[-1]["time_tag"]) - ours).total_seconds() > 600
+        gap = active and active[-1].get("proton_speed") is None and std and (datetime.now(timezone.utc) - max(ts(r["time_tag"]) for r in std)).total_seconds() <= 900
+        if gap and not behind:
+            name = active[-1].get("source", "?")
+            since = ts(plasma[-1]["time_tag"]).strftime("%H:%MZ") if plasma else "the start of the file"
+            print("ok space-weather data: upstream gap (NOAA active spacecraft %s has no plasma since %s; standby current)" % (name, since)); sys.exit()
+        if behind:
+            label += "; our ingest is behind NOAA (active data newer than ours)"
+    except Exception:
+        pass
+    print("no space-weather data: " + label)
+except Exception:
+    print("no space-weather data unavailable")
+' 2>/dev/null || echo "no space-weather data unavailable")
+  item "${fresh%% *}" "${fresh#* }"
 }
 
 check() { # pre-demo checklist
@@ -1721,18 +2404,7 @@ check() { # pre-demo checklist
     fi
     item $ok "shared on your tailnet: $PUBLIC_URL (open it on your phone to confirm)"
   fi
-  local fresh
-  fresh=$(curl -s -m 5 http://127.0.0.1:3001/api/feed/space-weather/latest | python3 -Ic '
-import json, sys
-try:
-    q = json.load(sys.stdin).get("quality") or {}
-    tier = q.get("tier", 3)
-    label = {0: "live", 1: "ageing (last measurement 10-15 min old)"}.get(tier, "stale (no measurement in 15 min; just restarted?)")
-    print(("ok" if tier == 0 else "no") + " space-weather data: " + label)
-except Exception:
-    print("no space-weather data unavailable")
-' 2>/dev/null || echo "no space-weather data unavailable")
-  item "${fresh%% *}" "${fresh#* }"
+  space_weather_item
   # || true: with the backend not loaded, launchctl fails and pipefail + set -e would end the checklist here.
   local dir; dir=$(launchctl print "$UID_DOMAIN/uk.lightbound.gauss-backend" 2>/dev/null | awk -F'= ' '/working directory =/ && !d {print $2; d=1}' || true)
   local report; report=$(python3 -Ic '
@@ -1865,10 +2537,15 @@ case "${1:-}" in
   gates)
     case "${2:-}" in
       record) gates_record "${3:-}" ;;
-      enqueue) gates_enqueue "${3:-}" "${4:-}" "${5:-}" ;;
+      enqueue) gates_enqueue "${@:3}" ;;
       run) gates_run "${3:-}" ;;
-      run-one) gates_run_one "${3:?}" ;;
+      run-one) gates_run_one "${3:?}" "${4:-}" "${5:-}" ;;
       result) if [ "${3:-}" = status ]; then gates_status; else gates_show_result "${3:-}"; fi ;;
+      passed) gates_passed "${3:-}" ;;
+      why) gates_why "${3:-}" ;;
+      queue) gates_queue ;;
+      priority) gates_priority "${3:-}" "${4:-front}" ;;
+      waiting) gates_waiting ;;
       *) for f in "$GATES_DIR"/*.json; do [ -f "$f" ] && gates_summary "$f"; done; true ;;
     esac
     ;;

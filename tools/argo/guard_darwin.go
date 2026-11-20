@@ -27,14 +27,23 @@ func sampleHost(ctx context.Context, deep bool) Sample {
 		if b.OnAC {
 			b.AdapterW = parsePmsetAC(run(ctx, "pmset", "-g", "ac"))
 		}
-		applyIoreg(&b, run(ctx, "ioreg", "-rn", "AppleSmartBattery"))
+		applyIoreg(&b, run(ctx, "/usr/sbin/ioreg", "-rn", "AppleSmartBattery"))
 		b.LowPower = lowPowerRe.MatchString(run(ctx, "pmset", "-g"))
 		if deep {
 			applyProfiler(&b, run(ctx, "system_profiler", "SPPowerDataType"))
 		}
 		s.Batt = &b
 	}
+	s.Call = liveCall(ctx)
+	if idle, ok := parseHIDIdle(run(ctx, "ioreg", "-c", "IOHIDSystem", "-r", "-d", "1", "-k", "HIDIdleTime")); ok {
+		s.Active = idle < activeIdle
+	}
 	return s
+}
+
+// liveCall is the app holding a video or audio call open, or "" (foreground.go).
+func liveCall(ctx context.Context) string {
+	return parseCallAssertions(run(ctx, "pmset", "-g", "assertions"))
 }
 
 func memoryUsers(ctx context.Context) []Group {

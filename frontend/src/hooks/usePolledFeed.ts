@@ -18,6 +18,8 @@ export interface PolledFeed<T> {
   status: FeedStatus;
   loading: boolean;
   error: string | null;
+  /** Consecutive failed polls since the last success (0 while healthy). */
+  failures: number;
 }
 
 export interface PolledFeedOptions<T> {
@@ -39,6 +41,12 @@ export interface PolledFeedOptions<T> {
 }
 
 /** Poll a Gauss backend feed with backoff; see lib/api/feed-poller.ts. */
+/**
+ * Which polling run a failure count belongs to: a new route or restartKey starts a new run at zero.
+ * Kept with the count, so the count resets without a setState inside the effect (react-hooks lint).
+ */
+const runKeyOf = (path: string | null | undefined, restartKey: string | undefined) => `${path ?? ""}\u0000${restartKey ?? ""}`;
+
 export function usePolledFeed<T>({
   path,
   intervalMs,
@@ -53,6 +61,7 @@ export function usePolledFeed<T>({
   const [data, setData] = useState<T | null>(null);
   const [status, setStatus] = useState<FeedStatus>("waiting");
   const [error, setError] = useState<string | null>(null);
+  const [failed, setFailed] = useState<{ run: string; n: number }>({ run: "", n: 0 });
   const parseRef = useRef(parse);
   const nextPathRef = useRef(nextPath);
   const reduceRef = useRef(reduce);
@@ -70,6 +79,7 @@ export function usePolledFeed<T>({
     const base = getBackendBaseUrl();
     // A new route or user starts from nothing, so an incremental feed backfills again.
     heldRef.current = null;
+    const run = runKeyOf(path, restartKey);
 
     const poll = async (signal: AbortSignal): Promise<PollOutcome> => {
       const url = `${base}${nextPathRef.current?.(path, heldRef.current) ?? path}`;
@@ -92,7 +102,9 @@ export function usePolledFeed<T>({
       poll,
       policy: { baseMs: intervalMs, maxMs: maxBackoffMs },
       onSchedule: (delay, outcome) => {
-        if (!mounted || outcome.kind === "ok" || delay === null) return;
+        if (!mounted) return;
+        setFailed((prev) => ({ run, n: outcome.kind === "ok" ? 0 : (prev.run === run ? prev.n : 0) + 1 }));
+        if (outcome.kind === "ok" || delay === null) return;
         setStatus("backing-off");
         setError(
           outcome.kind === "rate-limited"
@@ -122,9 +134,11 @@ export function usePolledFeed<T>({
       status: disabledStatus,
       loading: disabledStatus === "waiting",
       error: disabledStatus === "sign-in-required" ? signInMessage : null,
+      failures: 0,
     };
   }
-  return { data, status, loading: status === "waiting", error };
+  const failures = failed.run === runKeyOf(path, restartKey) ? failed.n : 0;
+  return { data, status, loading: status === "waiting", error, failures };
 }
 
 /** Signed-in state for choosing which feeds a page may poll. */

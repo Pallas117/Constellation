@@ -14,8 +14,9 @@ import { MAX_READING_LAG_MS, type EnvironmentHistory } from "./environment.js";
 import { IGRF_LABEL } from "../physics/igrf.js";
 import { kpMaxAgeMs } from "../physics/noaa-scales.js";
 import { freshnessMs } from "../../shared/policy/freshness.js";
-import { SAA_CORE_NT, SAA_EXTENDED_NT, saaContext } from "./saa.js";
+import { SAA_CORE_NT, SAA_EXTENDED_NT, saaContext, type SaaTier } from "./saa.js";
 import { dipoleLShell, distanceKm, EPHEMERIS_TLE_CONFLICT_KM, ephemerisProblem, propagateTle, tleProblem, type Ephemeris } from "./orbit.js";
+import { upsetRiskField, type UpsetRiskValue } from "./upset.js";
 
 export const TRUST_RECORD_SCHEMA = "gauss.trust-record/0.1";
 
@@ -76,8 +77,50 @@ export interface TrustRecordRequest {
   ephemeris?: Ephemeris | null;
   /** Two-line element set, propagated with SGP4 when no ephemeris is given (and cross-checked when both are). */
   tle?: [string, string] | null;
+  /** The exact model file that ran (GAU-245); echoed and hashed, never interpreted. */
+  modelArtifact?: ModelArtifact | null;
   /** Set by the log ingest adapter (GAU-66), never taken from an API body. */
   ingest?: IngestProvenance | null;
+}
+
+export const MODEL_FORMATS = ["onnx", "tensorrt", "other"] as const;
+
+/**
+ * Model identity beyond the free-text `modelId` (GAU-245): the SHA-256 of the exact file that ran
+ * (the ONNX file, or the serialised TensorRT engine/plan) and the runtime that ran it, as the
+ * customer reports them. Gauss echoes these into the record (so they are covered by its hash) and
+ * never checks or interprets them: it cannot see the file.
+ */
+export interface ModelArtifact {
+  format: (typeof MODEL_FORMATS)[number];
+  /** Lowercase hex SHA-256 of the model file or engine. */
+  sha256: string;
+  /** e.g. "TensorRT", "onnxruntime-gpu"; null when not given. */
+  runtime: string | null;
+  /** e.g. "10.3.0" or "JetPack 6.2.1"; null when not given. */
+  runtimeVersion: string | null;
+}
+
+/** Why a model artefact isn't valid, or null. */
+export function modelArtifactProblem(v: unknown): string | null {
+  if (!v || typeof v !== "object" || Array.isArray(v)) return "must be an object with format and sha256";
+  const a = v as Record<string, unknown>;
+  if (!MODEL_FORMATS.includes(a.format as ModelArtifact["format"])) return `format must be one of ${MODEL_FORMATS.join(", ")}`;
+  if (typeof a.sha256 !== "string" || !/^[0-9a-fA-F]{64}$/.test(a.sha256)) return "sha256 must be 64 hex characters";
+  for (const k of ["runtime", "runtimeVersion"] as const) {
+    if (a[k] != null && !id(a[k])) return `${k} must be 1–128 characters`;
+  }
+  const extra = Object.keys(a).filter((k) => !["format", "sha256", "runtime", "runtimeVersion"].includes(k));
+  return extra.length ? `unknown field ${extra.map((k) => `"${k}"`).join(", ")}` : null;
+}
+
+function modelArtifactFrom(v: Record<string, unknown>): ModelArtifact {
+  return {
+    format: v.format as ModelArtifact["format"],
+    sha256: (v.sha256 as string).toLowerCase(),
+    runtime: (v.runtime as string | null | undefined)?.trim() ?? null,
+    runtimeVersion: (v.runtimeVersion as string | null | undefined)?.trim() ?? null,
+  };
 }
 
 /** Where an ingested inference came from: the exact file, row and mapping (GAU-66). */
@@ -116,6 +159,11 @@ export interface TrustRecord {
     spacecraftId: string;
     modelId: string;
     processorProfileId: string | null;
+    /**
+     * Only present when the request gave one, so a record without it hashes exactly as before
+     * the field existed (GAU-245).
+     */
+    modelArtifact?: ModelArtifact;
     output: unknown;
     confidence: number | null;
     /** Present when the inference came from an ingested customer log. */
@@ -140,8 +188,8 @@ export interface TrustRecord {
     fieldStrength: Field<number>;
     lShell: Field<number>;
   };
-  /** Modelled upset-risk band; needs a cited processor profile (PR-02). */
-  upsetRisk: Field<{ band: string; uncertainty: string }>;
+  /** Modelled upset-rate band relative to the quiet orbit average; needs a cited processor profile (PR-02, upset.ts). */
+  upsetRisk: Field<UpsetRiskValue>;
   checks: Array<{ id: SenseCheck["id"]; status: SenseCheck["status"]; reason: string }>;
   verdict: { value: Verdict; reasons: string[]; policy: TrustPolicy };
   limitations: string[];
@@ -178,6 +226,10 @@ export function parseTrustRequest(body: unknown): { request: TrustRecordRequest 
     }
     if (size > MAX_OUTPUT_BYTES) errors.push(`output must be JSON of at most ${MAX_OUTPUT_BYTES} bytes`);
   }
+  if (b.modelArtifact != null) {
+    const problem = modelArtifactProblem(b.modelArtifact);
+    if (problem) errors.push(`modelArtifact: ${problem}`);
+  }
   if (b.ephemeris != null) {
     const problem = ephemerisProblem(b.ephemeris);
     if (problem) errors.push(`ephemeris: ${problem}`);
@@ -193,6 +245,7 @@ export function parseTrustRequest(body: unknown): { request: TrustRecordRequest 
       spacecraftId: (b.spacecraftId as string).trim(),
       modelId: (b.modelId as string).trim(),
       processorProfileId: (b.processorProfileId as string | undefined)?.trim() ?? null,
+      modelArtifact: b.modelArtifact != null ? modelArtifactFrom(b.modelArtifact as Record<string, unknown>) : null,
       output: b.output ?? null,
       confidence: (b.confidence as number | undefined) ?? null,
       ephemeris: (b.ephemeris as Ephemeris | undefined) ?? null,
@@ -356,13 +409,17 @@ function environmentFields(p: CanonicalSpaceWeatherPoint, atMs: number, fetchedA
   return { radiation, geomagnetic, radioBlackout, particleFlux, kp, dst };
 }
 
-function orbitFields(req: TrustRecordRequest): TrustRecord["orbit"] {
+/** The orbit fields, plus the SAA tier the upset-risk band reads (null when not assessed). */
+function orbitFields(req: TrustRecordRequest): { orbit: TrustRecord["orbit"]; saaTier: SaaTier | null } {
   const atMs = Date.parse(req.time);
-  const noPosition = (why: string): TrustRecord["orbit"] => ({
-    position: unknownField("Spacecraft position", why),
-    saa: unknownField("South Atlantic Anomaly", why),
-    fieldStrength: unknownField(IGRF_LABEL, why),
-    lShell: unknownField("L-shell", why),
+  const noPosition = (why: string) => ({
+    orbit: {
+      position: unknownField<Ephemeris>("Spacecraft position", why),
+      saa: unknownField<boolean>("South Atlantic Anomaly", why),
+      fieldStrength: unknownField<number>(IGRF_LABEL, why),
+      lShell: unknownField<number>("L-shell", why),
+    },
+    saaTier: null,
   });
   const fromTle = req.tle ? propagateTle(req.tle, atMs) : null;
   const tleOk = fromTle && !("error" in fromTle) ? fromTle : null;
@@ -449,7 +506,7 @@ function orbitFields(req: TrustRecordRequest): TrustRecord["orbit"] {
           ],
         };
 
-  return {
+  const orbit: TrustRecord["orbit"] = {
     position,
     saa,
     fieldStrength,
@@ -465,6 +522,7 @@ function orbitFields(req: TrustRecordRequest): TrustRecord["orbit"] {
       limitations: ["Centred-dipole approximation: differs most from the full-field L where the field is least dipolar, including the South Atlantic Anomaly."],
     },
   };
+  return { orbit, saaTier: ctx.tier };
 }
 
 // ---------------------------------------------------------------------------------------
@@ -506,13 +564,19 @@ export const RECORD_LIMITATIONS = [
   "No regulatory or compliance claim is made.",
 ];
 
-/** Words a record must never use: it describes the environment, not harm to hardware or odds of error. */
-const BANNED = /\b(doses?|damaged?|failure probability|probability of failure|qualified|qualification|flight[- ]ready|space[- ]qualified|certified|compliant)\b/i;
+/**
+ * Words a record must never use: it describes the environment, not harm to hardware, odds of
+ * error, a device's fitness for a mission, or absorbed radiation.
+ */
+const BANNED =
+  /(?<![\w])(doses?|damag(?:e|ed|es|ing)|failure probability|probability of failure|qualif(?:y|ied|ication)|flight[- ]ready|mission[- ]ready|space[- ]qualified|certif(?:y|ied|ication)|complian(?:t|ce)|rad[- ]hard(?:ened)?|radiation[- ](?:hardened|tolerant)|(?:un)?suitab(?:le|ility)|surviv(?:e|es|ed|al|ing)|[mµμck]?gy|[mµμ]?sv|krad|rad ?\(si\))(?![\w])/i;
 
 /** Matches of `pattern` in every string inside `value` (arrays and objects walked). */
 export function wordingHits(value: unknown, pattern: RegExp = BANNED): string[] {
   const hits: string[] = [];
   const walk = (v: unknown) => {
+    // The record's own disclaimers deny those claims ("No regulatory or compliance claim is made").
+    if (typeof v === "string" && RECORD_LIMITATIONS.includes(v)) return;
     if (typeof v === "string") {
       const m = pattern.exec(v);
       if (m) hits.push(m[0]);
@@ -569,12 +633,23 @@ export function buildTrustRecord(
       dst: unknownField("Dst", why),
     };
   }
-  const orbit = orbitFields(req);
-  const upsetRisk = unknownField<{ band: string; uncertainty: string }>(
-    "Processor radiation profile",
-    req.processorProfileId
-      ? `No cited radiation profile for processor "${req.processorProfileId}" yet (PR-02, GAU-58).`
-      : "No processor profile given; an upset-risk band needs a cited profile (PR-02, GAU-58).",
+  const { orbit, saaTier } = orbitFields(req);
+  const scaleInput = (f: Field<{ level: number; label: string }>) => ({
+    level: f.value?.level ?? null,
+    why: f.limitations[0] ?? "No reading",
+    observedAt: f.observedAt,
+    ageSeconds: f.ageSeconds,
+  });
+  const upsetRisk = upsetRiskField(
+    req.processorProfileId,
+    {
+      saaTier,
+      saaWhy: orbit.saa.limitations[0] ?? "Not assessed",
+      s: scaleInput(env.radiation),
+      g: scaleInput(env.geomagnetic),
+      lShell: orbit.lShell.value,
+    },
+    env.radiation.fetchedAt,
   );
   const verdict = verdictFor(env, orbit, checks, policy, envReason);
 
@@ -586,6 +661,7 @@ export function buildTrustRecord(
       spacecraftId: req.spacecraftId,
       modelId: req.modelId,
       processorProfileId: req.processorProfileId ?? null,
+      ...(req.modelArtifact ? { modelArtifact: req.modelArtifact } : {}),
       output: req.output ?? null,
       confidence: req.confidence ?? null,
       ingest: req.ingest ?? null,
