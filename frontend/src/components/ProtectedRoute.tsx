@@ -54,7 +54,15 @@ export const ProtectedRoute = ({ children, minRole = "user", pattern = true }: {
       );
     }
     if (status.required && !status.set) return <Navigate to="/setup" state={{ from: location }} replace />;
-    if (status.required && !status.verified) return <Navigate to="/pattern" state={{ from: location }} replace />;
+    if (status.device === "mismatch") {
+      return (
+        <div role="alert" className="flex h-dvh w-screen flex-col items-center justify-center gap-2 bg-background px-6 text-center text-sm text-muted-foreground">
+          <p className="text-foreground">This device isn't signed in to Tailscale as you.</p>
+          <p>The operator console only opens on your own devices. Sign in to Tailscale with your account here, or use one of yours.</p>
+        </div>
+      );
+    }
+    if (status.required && (!status.passkeySession || !status.verified)) return <Navigate to="/pattern" state={{ from: location }} replace />;
   }
 
   return <>{children}</>;
