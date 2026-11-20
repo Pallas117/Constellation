@@ -60,6 +60,20 @@ export interface SenseCheck {
   flagged?: number;
 }
 
+export interface IonosphereTecReading {
+  source: "glotec-swpc";
+  observedAt: string;
+  region: { latMin: number; latMax: number; lonMin: number; lonMax: number };
+  cells: number;
+  constrainedCells: number;
+  meanTecu: number;
+  minTecu: number;
+  maxTecu: number;
+  nearestKl: { lat: number; lon: number; tecu: number; qualityFlag: number };
+  rateTecuPerHour: number | null;
+  rateBaselineAt: string | null;
+}
+
 export interface XrayReading {
   /** GOES 0.1–0.8 nm irradiance, W m^-2. */
   value: number;
@@ -139,6 +153,7 @@ export interface CanonicalSpaceWeatherPoint {
   };
   /** GOES long-band X-ray flux; null when missing or older than 15 min. */
   xray?: XrayReading | null;
+  ionosphere?: IonosphereTecReading | null;
   /** Input sense-checks; a flagged input carries its reason. */
   senseChecks?: SenseCheck[];
   /** NOAA alerts from the last 24 h, newest first; null when unreadable. */

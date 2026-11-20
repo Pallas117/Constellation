@@ -1236,6 +1236,106 @@
       ]
     },
     {
+      "id": "REQ-ION-001",
+      "title": "GloTEC regional TEC summary",
+      "statement": "The ingest shall summarise NOAA SWPC GloTEC as the mean, minimum and maximum TEC in TECU over grid cells centred 2-7 N and 100-119 E and the value of the cell nearest Kuala Lumpur, each carrying source \"glotec-swpc\" and the product's own model time.",
+      "rationale": "Malaysia lies under the equatorial ionization anomaly; a regional summary with source and time keeps the value traceable and avoids holding the 5184-cell global grid.",
+      "parent": "GAU-TBC (ionosphere issue not yet created in Linear)",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "GloTEC: the Malaysian box summary matches the recorded cells, with source and model time"
+      ]
+    },
+    {
+      "id": "REQ-ION-002",
+      "title": "GloTEC range validation",
+      "statement": "The ingest shall skip any GloTEC cell whose tec is not a finite number in 0-300 TECU or whose latitude or longitude is off the globe, and shall never read a skipped cell as 0.",
+      "rationale": "A fill or corrupt cell read as 0 TECU would look like a real ionospheric collapse.",
+      "parent": "GAU-TBC (ionosphere issue not yet created in Linear)",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "GloTEC: out-of-range, non-numeric and off-globe cells are skipped, never read as 0"
+      ]
+    },
+    {
+      "id": "REQ-ION-003",
+      "title": "GloTEC malformed or inconsistent file is unknown",
+      "statement": "The ingest shall return no reading for a GloTEC file that is not a FeatureCollection, has a missing or future time tag, has a time tag different from its index entry, exceeds 8 MB, or has no valid cell in the Malaysian box.",
+      "rationale": "Unknown stays unknown; a bad file must not replace the last honest reading.",
+      "parent": "GAU-TBC (ionosphere issue not yet created in Linear)",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "GloTEC: malformed documents, a missing or future time tag, a mismatched tag and an empty box are unknown",
+        "GloTEC fetch: a malformed file or a file whose time tag disagrees with the index is rejected"
+      ]
+    },
+    {
+      "id": "REQ-ION-004",
+      "title": "GloTEC freshness bound",
+      "statement": "The served point shall carry ionosphere = null when the GloTEC model time is more than 60 minutes old or in the future.",
+      "rationale": "GloTEC steps are listed about 26 min after their valid time (observed 18 Nov 2026), so 60 min allows three missed 10-min steps (shared/policy/freshness.json, glotec_tec).",
+      "parent": "GAU-TBC (ionosphere issue not yet created in Linear)",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "GloTEC: a reading older than the freshness bound, or from the future, is unknown (null)",
+        "tick: GloTEC TEC over Malaysia rides on the point while fresh and is unknown (null) past 60 min"
+      ]
+    },
+    {
+      "id": "REQ-ION-005",
+      "title": "GloTEC rate of change",
+      "statement": "The ingest shall report the rate of change of the regional mean TEC in TECU per hour only against a baseline step 20-90 minutes older with the same cell count, and null otherwise.",
+      "rationale": "A rate over a gap or a different cell set is not comparable and would mislead.",
+      "parent": "GAU-TBC (ionosphere issue not yet created in Linear)",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "GloTEC: rate of change is TECU per hour against a 20-90 min older step, else unknown",
+        "GloTEC fetch: newest step, cold-start baseline gives the rate, an unchanged step is not downloaded again"
+      ]
+    },
+    {
+      "id": "REQ-ION-006",
+      "title": "GloTEC observation-constrained cells",
+      "statement": "The ingest shall count separately the cells whose quality_flag is 1-5 and shall count a cell with flag 0 or an out-of-range flag as not observation-constrained.",
+      "rationale": "Where no F-region observation constrains a cell GloTEC relaxes to IRI-2016 climatology, which is not a measurement.",
+      "parent": "GAU-TBC (ionosphere issue not yet created in Linear)",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "GloTEC: quality_flag 0 cells are counted as not observation-constrained"
+      ]
+    },
+    {
+      "id": "REQ-ION-007",
+      "title": "GloTEC fetches SWPC only",
+      "statement": "The ingest shall request GloTEC only from https://services.swpc.noaa.gov, with no query string or credentials, and shall accept only index entries under /products/glotec/geojson_2d_urt/.",
+      "rationale": "A mistyped or injected URL must not send the backend to another host.",
+      "parent": "GAU-TBC (ionosphere issue not yet created in Linear)",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "GloTEC: only SWPC hosts are fetched; a feed on another host is refused before any request",
+        "GloTEC: the index parses from a byte-range tail and from a full array; bad entries are dropped"
+      ]
+    },
+    {
+      "id": "REQ-ION-008",
+      "title": "GloTEC outage reporting",
+      "statement": "When the GloTEC fetch fails the source status shall report healthy = false, keep the last observed time and show its age growing in seconds.",
+      "rationale": "A stale reading must never be reported with the age of the last fetch.",
+      "parent": "GAU-TBC (ionosphere issue not yet created in Linear)",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "GloTEC fetch: an outage returns null, keeps lastSeen, and the status ages instead of staying healthy"
+      ]
+    },
+    {
       "id": "REQ-VER-001",
       "title": "Computed readiness score",
       "statement": "The verification gate shall compute a readiness score from 0 to 100 for each requirement as the sum of six evidence-based parts weighted 15, 30, 20, 15, 10 and 10.",
@@ -1409,6 +1509,69 @@
         "TestWatchRestartsStaleAndMissingButSkipsUnloaded",
         "TestWatchLeavesFreshPeersAlone",
         "TestWatchStopsKickingACrashLoopAndAlerts"
+      ]
+    },
+    {
+      "id": "REQ-WEB-001",
+      "title": "Public release closes the account routes",
+      "statement": "In the public release the website Worker shall answer 404 with Cache-Control no-store to the sign-in and workspace pages (/app/, /app/admin/, /app/checkout), the Argo page, the application endpoint (/api/apply) and the payment webhook (/api/stripe/webhook), whatever the HTTP method.",
+      "rationale": "A public site must not expose account, form or payment routes before they are opened on purpose.",
+      "parent": "GAU-178",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "public release: sign-in, the workspace, Argo, form posts and the webhook answer 404, whatever the method"
+      ]
+    },
+    {
+      "id": "REQ-WEB-002",
+      "title": "Workspace needs a valid Access token",
+      "statement": "The website Worker shall answer 401 to a workspace request unless it carries a Cloudflare Access token with a valid signature, the configured audience and issuer, and an unexpired time.",
+      "rationale": "The workspace holds accounts and billing; a forged, expired or bare-header identity must never count.",
+      "parent": "GAU-228",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "sign-in: only a valid Access JWT for our team and application counts",
+        "workspace: signed out gets 401; pending applicants see their status; members see Constellation"
+      ]
+    },
+    {
+      "id": "REQ-WEB-003",
+      "title": "Pilot brief input is validated and bots store nothing",
+      "statement": "The website Worker shall store no pilot brief from a post that is invalid (HTTP 422), cross-site (403), of an unsupported content type (415), over five an hour from one address (429) or has the honeypot field filled (success redirect shown to the sender).",
+      "rationale": "Public form input is untrusted; abuse must not reach storage and bots must not learn they were dropped.",
+      "parent": "GAU-228",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "apply: bad input comes back with errors and the values escaped; nothing stored",
+        "apply: cross-site posts, bots, odd encodings and floods are turned away"
+      ]
+    },
+    {
+      "id": "REQ-WEB-004",
+      "title": "Payment webhook accepts only a valid signature",
+      "statement": "The website Worker shall reject with HTTP 400, leaving the account's billing status unchanged, a Stripe webhook whose signature uses a wrong secret, is older than 5 minutes or does not match the payload.",
+      "rationale": "Plan unlock and cancellation must follow only events Stripe signed.",
+      "parent": "GAU-228",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "stripe: form encoding and webhook signatures (wrong secret, stale or tampered payloads rejected)",
+        "stripe webhook: verified events unlock, renew, fail and cancel plans; forged ones change nothing"
+      ]
+    },
+    {
+      "id": "REQ-WEB-005",
+      "title": "Pages carry no scripts and load nothing from elsewhere",
+      "statement": "Every website page shall carry a Content-Security-Policy meta tag equal to the Worker's header, contain no script element other than a non-executed JSON-LD block, no inline style or event handler, and load no src, srcset or stylesheet from outside https://lightbound.space.",
+      "rationale": "No client-side code or third-party request means no script-injection or tracking path from the pages.",
+      "parent": "GAU-228",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "security: strict CSP, no scripts, no inline styles or handlers, nothing loaded from elsewhere"
       ]
     },
     {
@@ -1788,6 +1951,166 @@
         "power-save: allowlisted reason, ranged time, off carries nothing, bad drops alone",
         "Gauss knows every guard code, level and admission Argo can send",
         "battery and guard lines read plainly"
+      ]
+    },
+    {
+      "id": "REQ-ARG-040",
+      "title": "Low-signal detection with hysteresis",
+      "statement": "Argo shall enter low-signal mode after 3 consecutive bad probes (failed data probe with every independent anchor unreachable, loss of 15% or more, round trip of 1.5 s or more, a poor speed grade or Wi-Fi signal of -85 dBm or less) and shall leave it only after 10 consecutive good probes and at least 15 minutes in the mode, so that alternating probes never flip it.",
+      "rationale": "On 17 Nov 2026 Josh reported signal problems on the hotspot and asked that Argo keep working on low signal and over a non-internet link, like a spacecraft through drop-outs.",
+      "parent": "GAU-187",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "TestLowSignalHysteresis",
+        "TestLowSignalDoesNotFlap",
+        "TestSampleForAnchorsAndSignal"
+      ]
+    },
+    {
+      "id": "REQ-ARG-041",
+      "title": "Low-signal behaviour never storms a weak link",
+      "statement": "In low-signal mode Argo shall shrink relay chunks from 1 MiB to 64 KiB and then 4 KiB, resume at the first unconfirmed chunk, upload at most 4 bulk chunks per sync, send receipts and alerts before bulk chunks, retry with exponential back-off and jitter, lengthen timeouts, send SMS first for phone alerts while data probes fail, and report at most every 5 minutes without link history.",
+      "rationale": "On 17 Nov 2026 Josh reported signal problems on the hotspot and asked that Argo keep working on low signal and over a non-internet link, like a spacecraft through drop-outs.",
+      "parent": "GAU-187",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "TestLowSignalChunkLadder",
+        "TestRelayLowSignalSmallChunksAndResume",
+        "TestRelayLowSignalCapsBulkPerSync",
+        "TestRelayLowSignalBackoffGrowsWithJitter",
+        "TestJitterBackoff",
+        "TestPendingPriorityReceiptsAlertsThenBulk",
+        "TestPhonePrefersSMSWhenDataProbesFail"
+      ]
+    },
+    {
+      "id": "REQ-ARG-042",
+      "title": "Bearer fragmentation and reassembly",
+      "statement": "A bearer scheduler shall fragment each bundle to the bearer's MTU, refuse bundles above 32 fragments, rebuild the bundle from frames in any order, drop a bundle whose 4-byte id does not match its SHA-256, deliver each bundle id once across bearers, and hold at most 16 partial bundles for 30 minutes.",
+      "rationale": "On 17 Nov 2026 Josh reported signal problems on the hotspot and asked that Argo keep working on low signal and over a non-internet link, like a spacecraft through drop-outs.",
+      "parent": "GAU-187",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "TestFragmentReassembleReorderAndLoss",
+        "TestFragmentLimits",
+        "TestReassemblerDedupAcrossBearersAndCorruption",
+        "TestReassemblerBoundedAndExpires"
+      ]
+    },
+    {
+      "id": "REQ-ARG-043",
+      "title": "Fading-tolerant delivery by parity",
+      "statement": "The bearer layer shall add one XOR parity fragment per group of 2, 4 or 8 data fragments chosen from the measured loss, and shall interleave the groups so that a burst of consecutive lost frames no longer than the group count is recovered without a resend.",
+      "rationale": "On 17 Nov 2026 Josh reported signal problems on the hotspot and asked that Argo keep working on low signal and over a non-internet link, like a spacecraft through drop-outs. Modulation belongs to the modem; Argo does the equivalent at the bundle layer.",
+      "parent": "GAU-187",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "TestFECSurvivesBurstLoss",
+        "TestFECAdaptsToLoss"
+      ]
+    },
+    {
+      "id": "REQ-ARG-044",
+      "title": "Duty-cycle budget",
+      "statement": "Argo shall keep time on air within a sliding one-hour window at no more than 1% for the Meshtastic bearer, computed with the Semtech LoRa airtime formula, shall hold queued bundles that do not fit, and shall hold a failing bearer with jittered exponential back-off.",
+      "rationale": "On 17 Nov 2026 Josh reported signal problems on the hotspot and asked that Argo keep working on low signal and over a non-internet link, like a spacecraft through drop-outs. The strictest regional figure (1%) is the default; the regional rule itself is UNVERIFIED (docs/ARGO_DTN.md).",
+      "parent": "GAU-187",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "TestLoraAirtimeAndDutyBudget",
+        "TestRadioPumpRespectsDutyBudgetAndAlertsFirst",
+        "TestRadioHoldsFailingBearerWithBackoff"
+      ]
+    },
+    {
+      "id": "REQ-ARG-045",
+      "title": "Only protected small bundles leave on a radio",
+      "statement": "Argo shall send on a radio bearer only bundles that carry BPSec protection (a confidentiality block for payloads, at least an integrity block for receipts), shall refuse bulk, oversize and unprotected bundles, shall send alerts and receipts on every available bearer at once and status on the cheapest only, and shall deliver a receipt over the radio while the hub is unreachable.",
+      "rationale": "On 17 Nov 2026 Josh reported signal problems on the hotspot and asked that Argo keep working on low signal and over a non-internet link, like a spacecraft through drop-outs.",
+      "parent": "GAU-187",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "TestRadioRefusesBulkOversizeAndUnprotected",
+        "TestRadioPriorityAndPathDiversity",
+        "TestRelaySendsReceiptOverRadioWhenHubIsDown"
+      ]
+    },
+    {
+      "id": "REQ-ARG-046",
+      "title": "Meshtastic bearer over a local node",
+      "statement": "The Meshtastic bearer shall talk only to a node on the local network through its HTTP API or stream framing with a 233-byte payload ceiling and a 200-byte frame, shall refuse non-local hosts and redirects, and shall ignore every port except PRIVATE_APP.",
+      "rationale": "On 17 Nov 2026 Josh reported signal problems on the hotspot and asked that Argo keep working on low signal and over a non-internet link, like a spacecraft through drop-outs. Behind the flag ARGO_MESHTASTIC_URL; no hardware is bought.",
+      "parent": "GAU-187",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "TestMeshtasticProtobufRoundTrip",
+        "TestMeshtasticSerialFraming",
+        "TestMeshtasticOverLocalHTTP",
+        "TestMeshtasticNodeMustBeLocal"
+      ]
+    },
+    {
+      "id": "REQ-ARG-047",
+      "title": "Time integrity cross-check",
+      "statement": "Argo shall compare the system clock with at least 3 independent HTTPS Date headers over verified TLS and the hub, shall flag a fault named time source disagreement when most sources differ by 2 minutes or more, shall say nothing from fewer than 3 sources, and shall never change the clock.",
+      "rationale": "On 17 Nov 2026 Josh reported signal problems on the hotspot and asked that Argo keep working on low signal and over a non-internet link, like a spacecraft through drop-outs. TLS validity and bundle lifetimes depend on the clock.",
+      "parent": "GAU-187",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "TestJudgeClockNeedsMostSourcesToAgree",
+        "TestClockSampleReadsDateHeaderOverVerifiedTLS"
+      ]
+    },
+    {
+      "id": "REQ-ARG-048",
+      "title": "Prefer the wired phone link",
+      "statement": "Argo shall detect an iPhone USB network service that is up while traffic uses another link, shall suggest the service-order change in status and alerts, shall record which link each probe used, and shall never change network settings itself.",
+      "rationale": "On 17 Nov 2026 Josh reported signal problems on the hotspot and asked that Argo keep working on low signal and over a non-internet link, like a spacecraft through drop-outs. A wired link has no radio contention with the phone's Wi-Fi.",
+      "parent": "GAU-187",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "TestParseHardwarePortsAndKinds",
+        "TestChooseLinkRanksWiredPhoneAboveWiFi",
+        "TestStatusShowsWiredAdvice",
+        "TestAdviceSuffixInAlertText"
+      ]
+    },
+    {
+      "id": "REQ-ARG-049",
+      "title": "Low-signal, clock and link-sample report fields",
+      "statement": "The mesh report shall carry lowSignal, clock and linkSample blocks that Gauss stores only after allowlisting and range checks (loss 0-100%, round trip -1 to 60000 ms, signal -130 to 0 dBm, a 12-hex network hash and a 24-character place label), shall never carry an SSID or a location, and a compact report shall keep the last full link history.",
+      "rationale": "On 17 Nov 2026 Josh reported signal problems on the hotspot and asked that Argo keep working on low signal and over a non-internet link, like a spacecraft through drop-outs. Everything Argo sends is checked on the hub.",
+      "parent": "GAU-187",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "TestLowSignalInStatusAndReport",
+        "TestLinkSampleIsAllowlistedAndPrivate",
+        "low-signal, clock and link-sample blocks are allowlisted and range-checked",
+        "a compact low-signal report keeps the last full link history"
+      ]
+    },
+    {
+      "id": "REQ-ARG-050",
+      "title": "Shared signal map",
+      "statement": "The mesh page shall show one row per network from the latest report of every device within the last 60 minutes, with mean loss, median round trip, best signal and a good, fair or poor quality, worst first.",
+      "rationale": "On 17 Nov 2026 Josh reported signal problems on the hotspot and asked that Argo keep working on low signal and over a non-internet link, like a spacecraft through drop-outs. The team sees where signal is good.",
+      "parent": "GAU-187",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "one row per network, with mean loss, median RTT and the best signal",
+        "stale samples are left out and places group networks without a hash",
+        "quality thresholds: loss, RTT and low-signal mode"
       ]
     }
   ]
