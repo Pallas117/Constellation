@@ -276,6 +276,86 @@ Gates before anything ships:
 Go's standard library has no HTTP/3, so the relay would need a reviewed third-party QUIC stack or a separate
 service. That is a decision for Josh and the reviewer. The site says "It isn't available yet."
 
+## Low signal and IoT bearers
+
+Josh, 17 Nov 2026: "make sure Argo will work on signal low and be able to connect using IoT", "resilient like a deep space satellite". This section says what shipped (REQ-ARG-040 to REQ-ARG-050), what is measured, and what is not checked. Everything is standard library only, with no new cryptography.
+
+### What Argo does and does not do about radio
+
+Argo does not do modulation. Fading, scintillation and multipath are fought by the modem: LoRa's chirp spread spectrum is already built for it, and a phone's cellular or Wi-Fi radio has its own coding. What Argo can do is the equivalent one layer up, on bundles: send less per try, add redundancy across fragments, spread fragments in time, use more than one path, and keep within the radio's duty cycle. Where this section says "fading-tolerant" it means that layer only.
+
+### Low-signal mode (`lowsignal.go`)
+
+Detection uses what Argo already measures: a failed data probe (only when every independent anchor, three TCP dials to 1.1.1.1, 9.9.9.9 and 8.8.8.8 on port 443, also fail, so one dead path never reads as "offline"), loss over the last 12 probes, connect time and its spread, the speed grade and, on Wi-Fi, RSSI. Thresholds: bad is loss of 15% or more, RTT of 1.5 s or more, jitter of 800 ms or more, a "poor" grade or RSSI of -85 dBm or less; good is loss under 5%, RTT under 600 ms and RSSI above -75 dBm. The mode is entered after 3 bad probes in a row and left after 10 good ones in a row and at least 15 minutes. These figures are engineering choices, **UNVERIFIED** against a real log: calibrate them with `argo link` on the hostel hotspot before trusting them.
+
+In the mode:
+
+| Area | Change | Where |
+|---|---|---|
+| Relay chunks | 1 MiB, then 64 KiB, then 4 KiB by loss and RTT. A chunk is its own persisted bundle, so a resend starts at the first unconfirmed chunk. The receiver works out the chunk size from the file size and chunk count (the three sizes give different counts for any file over one chunk). Files over 16 MiB wait for a better link at the 4 KiB level | `relay.go` `chunkFor`, `Send` |
+| Back-off | Exponential with "equal jitter" (half fixed, half random), base multiplied by the timeout scale (3 or 6), ceiling 30 min; the hub client timeout grows by the same scale. No retry storm: the first failure ends the round and at most 4 bulk chunks go per sync | `jitterBackoff`, `retryFor`, `upload` |
+| Order | receipts, then key offers and small non-file bundles (alerts), then bulk chunks in index order | `outItem.priority` |
+| Mesh report | at most every 5 minutes (a class change still goes at once), without the 24 h / 7 d history; Gauss keeps the last full block | `gausspush.go`, `MeshStore.record` |
+| Phone | SMS first while 2 of the last 3 probes failed (an iMessage would wait for data) | `phone.go` `PreferSMS` |
+| Clock check | four times less often | `timeintegrity.go` |
+
+`argo status` shows ` low-signal (64 KiB chunks)`; the mesh report carries `lowSignal: {on, chunkBytes}`.
+
+### Bearers (`bearer.go`)
+
+A bearer has an MTU, a duty cycle and a cost. The scheduler (`BearerRadio`) takes only small, BPSec-protected bundles: receipts, key offers and small status. Bulk is refused by priority, oversize by the 32-fragment cap, and anything without a confidentiality block (or, for receipts, at least an integrity block) is refused by `radioOK`: nothing leaves on a radio in clear. Metadata is the exception to confidentiality: node names in the bundle's primary block and the bundle id stay visible, and a receipt's body is signed, not sealed. Treat the mesh channel as hearing who talks to whom.
+
+- **Frames.** 10-byte header (version and kind, 4-byte id = first bytes of the bundle's SHA-256, index, fragment count, parity groups, total length) plus payload. The receiver checks the id after reassembly, so a corrupted or mixed-up bundle is dropped.
+- **Parity (erasure coding at the bundle layer).** One XOR parity fragment per group of 8, 4 or 2 data fragments, chosen from measured loss (none under 1% loss). Fragment i belongs to group i mod G, so a burst of up to G consecutive lost frames costs each group at most one fragment and is recovered with no resend. Two losses in one group are not recoverable; a longer burst needs a resend by the next sync. The same idea as RFC 5109 (RTP parity FEC); tests use burst patterns.
+- **Duty cycle.** `DutyBudget` is a sliding one-hour window; airtime is computed with the Semtech LoRa formula (AN1200.13), checked by hand against SF7 / 125 kHz / 20 bytes = 56.576 ms. State (queue progress, partial bundles, spend log, holds) is saved to `radio.json` (0600, bounded), because Argo runs as a fresh process every minute.
+- **Path diversity.** Receipts go on every bearer at once; status goes only on the cheapest. The receiver deduplicates by the frame's bundle id, and `accept` deduplicates again by bundle key, so a second copy over Wi-Fi or SMS is harmless. A failing bearer is held with jittered back-off, never hammered.
+- **Cost of protection (measured, `go test`).** A sealed 10-byte file chunk is **1,470 bytes** (the ML-KEM-768 + X25519 HPKE encapsulation is most of it): 10 frames at a 200-byte MTU with 10% parity, 18.7 s on air at LongFast, **52% of the 36 s that 1% of an hour allows**. So at 1% duty a sealed bundle fits about twice an hour. Bundles under a confirmed link key (BIB-HMAC plus BCB-AES-GCM) should be much smaller; that is **UNVERIFIED, not measured yet** and is the first thing to measure with real hardware.
+
+### Meshtastic bearer (`meshtastic.go`, behind `ARGO_MESHTASTIC_URL`)
+
+Off unless the environment variable names a node on this LAN (private, loopback or link-local address, or a `.local` name; anything else is refused). Plain HTTP to a LAN node is Meshtastic's default; TLS verification is never turned off, so an https URL to a self-signed node simply fails. Redirects are not followed.
+
+Facts checked on 18 Nov 2026:
+- HTTP API: `PUT /api/v1/toradio` takes one ToRadio protobuf; `GET /api/v1/fromradio` returns one FromRadio (`all=false`), with no authentication, "access to the HTTP server is enough to establish trust" ([HTTP API](https://meshtastic.org/docs/development/device/http-api/)).
+- Stream framing for serial and TCP: `0x94 0xC3`, 2-byte length, protobuf, at most 512 bytes ([client API](https://meshtastic.org/docs/development/device/client-api/)). The helpers `serialFrame` and `readSerialFrame` exist (with resync); no serial port is opened yet.
+- Field numbers from `meshtastic/protobufs` `mesh.proto`: ToRadio.packet=1; MeshPacket from=1, to=2, channel=3, decoded=4, id=6, hop_limit=9, want_ack=10; Data portnum=1, payload=2; FromRadio.packet=2; `DATA_PAYLOAD_LEN` = 233 ([mesh.proto](https://github.com/meshtastic/protobufs/blob/master/meshtastic/mesh.proto)). `PRIVATE_APP` = 256 is from `portnums.proto` and was **not re-fetched (UNVERIFIED)**.
+- Argo uses a 200-byte frame, below 233, to leave room for encryption overhead (the margin is a guess, **UNVERIFIED**) and sends as a broadcast on PRIVATE_APP with hop limit 3, Meshtastic's default ([LoRa config](https://meshtastic.org/docs/configuration/radio/lora/): hop limit at most 7).
+- Meshtastic's own channel encryption is a second layer. Argo relies on BPSec, not on it.
+
+**Malaysia and AS923 (UNVERIFIED).** Meshtastic lists `MY_919` as 919.0-924.0 MHz, duty cycle 100%, 27 dBm, and says the figure is "the ceiling the firmware applies, not your national limit" ([LoRa config](https://meshtastic.org/docs/configuration/radio/lora/)). A 2017 MCMC class assignment, quoted on The Things Network forum, gives 919-923 MHz at 500 mW EIRP with no duty-cycle condition and 923-924 MHz at 500 mW with under 1% duty cycle, frequency hopping or listen-before-talk ([TTN forum](https://www.thethingsnetwork.org/forum/t/gateway-for-malaysia/416/100), [MeshCore issue](https://github.com/meshcore-dev/MeshCore/issues/980)). I did not read the MCMC document or the LoRa Alliance regional parameters RP002-1.0.4 text. A 2026 item reports new MCMC technical codes (MTSFB TC T022:2026) and I could not confirm whether SRD limits changed ([IB Lenhardt](https://ib-lenhardt.com/news/malaysia-mcmc-issues-new-technical-codes-for-equipment-and-srds)). Because of this, Argo defaults to **1%** (the strictest figure above) whatever the node's region says. Josh or a regulator-literate person must confirm before any field use; this is not a compliance claim.
+
+Licence and terms: Meshtastic firmware and clients are open source (GPL-3.0 for the firmware, **UNVERIFIED**); Argo copies no firmware or client code and uses only the public protocol (protobuf field numbers; `mesh.proto` carries no licence header).
+
+### Two more bearers (documented, not implemented; Josh decides any purchase)
+
+| | Satellite IoT short-burst data | Cellular NB-IoT / LTE-M |
+|---|---|---|
+| Example | Iridium SBD (Edge class); Swarm-type services | an NB-IoT or LTE-M module with a SIM |
+| Message size | Iridium: 340 bytes sent, 270 received (Edge class); older 9601 modems 205 / 135; Swarm M138: 192 bytes ([Ground Control docs](https://docs.groundcontrol.com/iot/rockblock/iridium), [SparkFun Swarm guide](https://learn.sparkfun.com/tutorials/sparkfun-satellite-transceiver-kit---swarm-m138-hookup-guide/all)) | a few hundred bytes to 1 kB per datagram; **UNVERIFIED** |
+| Coverage | global sky view; no ground network | needs an operator that supports it in Malaysia: **not checked (UNVERIFIED)** |
+| Cost | hardware, an airtime plan and per-message fees: **prices UNVERIFIED, not looked up** | module, SIM and data plan: **prices UNVERIFIED** |
+| Fit for Argo | MTU 340 fits 2 to 5 frames per sealed bundle; budget is money per message, not duty cycle | fits like the HTTPS path (UDP or CoAP to the hub) |
+| Caveat | Swarm's SparkFun page says the M138 service ends in December 2024: check whether it is still sold before relying on it | open standards; operator lock-in is the risk |
+
+Adding either is a `Bearer` implementation (`Name`, `MTU`, `Airtime`, `Duty`, `Cost`, `Send`, `Recv`): the scheduler, parity, dedup and duty budget already work for any MTU up to 400 bytes (`maxFramePayload`). For satellite, `Duty` is replaced by a per-day message budget. Open source first: Meshtastic needs about two cheap boards Josh may already own or choose to buy; nothing is bought here.
+
+### Time integrity (`timeintegrity.go`)
+
+TLS validity and BPSec bundle lifetimes depend on the system clock, and a spoofed or drifting clock breaks both quietly. Every 30 minutes Argo asks four unrelated hosts (cloudflare.com, google.com, apple.com, github.com) and the hub for the HTTP `Date` header (RFC 9110 section 6.6.1; one-second resolution) over verified TLS, with no redirects. If most sources differ from this clock by 2 minutes or more it records a fault, "time source disagreement", in `argo status` and the mesh report (`clock`). One odd source is not a fault, fewer than three sources is "cannot tell". Argo never sets the clock (an admin action). It uses `Date` headers, not NTP, so it cannot say which source is right, only that they disagree.
+
+### Location integrity (feasibility only; nothing implemented)
+
+Argo does not use GPS. Multilateration from round trips to several known anchors could sanity-check a claimed region (for example a VPN or a wrong country) because RTT has a floor set by distance and the speed of light in fibre, about 2/3 of c. It cannot locate a device precisely over the internet: queueing, routing detours and the access network dominate, so the error is hundreds of kilometres, and a VPN exit simply moves the apparent origin. It could rule a region out, never in. GPS spoofing is a radio-layer attack Argo cannot see; the clock cross-check above catches a spoofed time source only if the clock follows it.
+
+### Wired phone link and the shared signal map
+
+- `wiredlink.go` reads `networksetup -listallhardwareports` (pinned path, read-only) and the default route. If a service named "iPhone USB" is up while traffic uses another link, `argo status` and the alert text suggest moving it above Wi-Fi in System Settings > Network > Service Order. Argo never changes network settings. `argo status` shows `via:usb|wifi|ethernet|other`, and the report records it.
+- `linksample.go` adds `linkSample` to the report: class, bearer (always `https` today: radio bearers carry bundles, not reports), loss percent, RTT, signal and noise in dBm where the platform gives them without admin, the 12-hex network hash Argo already reports, and a short place label the owner sets with `"place"` in `config.json`. No SSIDs, no other networks and no locations. Band and channel are accepted by the hub but Argo does not read them yet. The mesh page shows a "Signal map" table, one row per network, from the latest sample of each device in the last hour.
+
+### Not verified
+
+Thresholds against a real hostel log; radio airtime and range with real Meshtastic hardware; link-key bundle size; MCMC duty-cycle conditions; the `PRIVATE_APP` value; all prices; NB-IoT availability in Malaysia; whether the Swarm service still runs.
+
 ## Threat model (store and forward)
 
 | Adversary | Can | Cannot |

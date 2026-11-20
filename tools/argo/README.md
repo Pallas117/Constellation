@@ -429,6 +429,14 @@ log: A = MTBF / (MTBF + MTTR), computed as 1 − down/observed. They also carry 
 open. The 7-day figure is the stability score on `/mesh`. Example from this Mac on 2026-10-23:
 `Link stability 83/100 · 24 h: 84.3% up over 24.0 h, 24 drops, typical outage 3 min (p95 63 min)`.
 
+## Low signal, radio bearer, clock and wired link
+
+- **Low-signal mode** turns on after 3 bad probes and off after 10 good ones (and 15 minutes). `argo status` shows ` low-signal (64 KiB chunks)`. The relay then sends smaller chunks, retries with exponential back-off and jitter, sends receipts and alerts before files, reports less often, and texts by SMS first while data probes fail. Design and honest limits: `docs/ARGO_DTN.md`, "Low signal and IoT bearers".
+- **Meshtastic radio bearer** is off unless `ARGO_MESHTASTIC_URL=http://<node on this LAN>` is set in the environment that runs Argo. It carries only BPSec-protected receipts and small status, within 1% time on air, as 200-byte frames with parity. No hardware is bought or required.
+- **Clock check** compares the system clock with four unrelated HTTPS `Date` headers and the hub every 30 minutes; "time source disagreement" shows in `argo status`. Argo never changes the clock.
+- **Wired phone link:** with the iPhone on USB and traffic on Wi-Fi, `argo status` suggests the Service Order change (System Settings > Network). Argo never changes network settings; `via:` shows the link in use.
+- **Signal map:** set `"place": "Hostel roof"` (letters, digits, space, - and _; at most 24) in `~/.config/argo/config.json` to label this device's network on `/mesh`. Never a location, never an SSID.
+
 ## Device security posture and updates
 
 **`argo posture`** checks this device against `docs/DEVICE_SECURITY_BASELINE.md` (a DRAFT until Josh approves it).
