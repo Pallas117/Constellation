@@ -1,5 +1,7 @@
 import { useRef, useState } from "react";
 import { Link } from "react-router-dom";
+import { DeviceStatusCards } from "@/components/mesh/DeviceStatusCards";
+import { HOSTING_LABEL, PLATFORM_LABEL } from "@/lib/mesh-device-status";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -11,15 +13,6 @@ import { batteryLabel, copyText, deviceStage, enrollCommand, guardLine, postureL
 import { bytesLabel, stabilityScore, stabilityTone, windowLine } from "@/lib/link-stability";
 import { summariseLinks, type LinkQuality } from "@/lib/link-map";
 import { ConfirmButton } from "@/components/ui/confirm-button";
-const PLATFORM_LABEL: Record<string, string> = { macos: "macOS", linux: "Linux", windows: "Windows", ios: "iPhone", android: "Android" };
-// Mirrors hostingVerdict in backend/mesh/store.ts.
-const HOSTING_LABEL: Record<string, string> = {
-  agents: "Agents + memory",
-  light: "Light work",
-  no: "No spare capacity",
-  unknown: "Unknown",
-};
-
 // What each Argo class means for the person reading the table.
 const CLASS_HELP: Record<string, string> = {
   OK: "Connected",
@@ -219,6 +212,10 @@ const MeshDashboard = () => {
           </Button>
         </div>
       </section>
+
+      {canEnroll && devices && devices.length > 0 && (
+        <DeviceStatusCards devices={devices} now={now} showOwner={canSeeTeam} feedFailing={Boolean(error)} />
+      )}
 
       <section className="grid gap-6 px-4 pb-10 sm:px-8 xl:grid-cols-[1.4fr_1fr]">
         <Card className="min-w-0">
