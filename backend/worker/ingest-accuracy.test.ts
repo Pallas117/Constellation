@@ -75,7 +75,7 @@ type Tickable = {
 function quietWorker(): Tickable {
   const worker = new IngestionWorker() as unknown as Tickable;
   const now = Date.now();
-  for (const key of ["noaa", "esa", "jaxa", "mms", "lasp", "swpc-products", "ml-forecast"]) worker.lastFetch.set(key, now);
+  for (const key of ["noaa", "esa", "jaxa", "mms", "lasp", "swpc-products", "glotec", "ml-forecast"]) worker.lastFetch.set(key, now);
   return worker;
 }
 
