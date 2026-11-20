@@ -1,0 +1,75 @@
+{
+  "_doc": [
+    "Desired public DNS for Lightbound's zones. Copy to ~/.config/argo/dns.json (0600) and run `argo dns check`.",
+    "No secrets live here: the Cloudflare token is only ever read from the Keychain by the gated `apply`.",
+    "Record fields (exactly one of value, values, stages, present, proxied):",
+    "  value   one record; for TXT the record with the same prefix (v=spf1, v=DMARC1, google-site-verification) must equal it",
+    "  values  the whole record set must match (MX, CAA)",
+    "  stages  accepted values in order, the last is the target; `plan` prints the next one under Later",
+    "  match   \"tags\" compares k=v; lists tag by tag; `require` lists tags that must stay (the existing DMARC rua)",
+    "  present any value is fine (DKIM until the key exists); `prefix` narrows which TXT records count",
+    "  proxied A/AAAA answers must be Cloudflare's edge (not pinned to addresses); a tailnet address is drift",
+    "dnssec true = a DS must exist at the parent (1.1.1.1 answers DS; the chain itself is not validated by Argo).",
+    "http = redirects checked over HTTPS with certificate verification on; a connection error is unverified, not drift."
+  ],
+  "zones": [
+    {
+      "name": "lightbound.space",
+      "note": "Main site: a Cloudflare Worker custom domain (apex and www proxied). Never sends or receives mail. Registrar is Spaceship, so DNSSEC needs the DS published there by hand.",
+      "dnssec": true,
+      "records": [
+        {"name": "@", "type": "A", "proxied": true, "note": "created by the Worker custom domain; orange cloud"},
+        {"name": "@", "type": "AAAA", "proxied": true},
+        {"name": "www", "type": "A", "proxied": true, "note": "www redirects to the apex by a Redirect Rule; any DNS-only A to the tailnet here is drift"},
+        {"name": "www", "type": "AAAA", "proxied": true},
+        {"name": "ops", "type": "A", "value": "100.73.232.74", "note": "operator console on the Mac's tailnet address; DNS-only, never proxied, created by ops-cert.sh"},
+        {"name": "@", "type": "TXT", "value": "v=spf1 -all", "note": "RFC 7208: this domain sends no mail"},
+        {"name": "_dmarc", "type": "TXT", "match": "tags", "value": "v=DMARC1; p=reject; adkim=s; aspf=s", "note": "RFC 7489: reject anything claiming to be from @lightbound.space"},
+        {"name": "@", "type": "MX", "values": ["0 ."], "note": "null MX, RFC 7505: nobody can deliver mail here"},
+        {"name": "@", "type": "CAA", "values": [
+          "0 issue letsencrypt.org", "0 issue pki.goog", "0 issue ssl.com", "0 issue sectigo.com",
+          "0 issuewild letsencrypt.org", "0 issuewild pki.goog", "0 issuewild ssl.com", "0 issuewild sectigo.com",
+          "0 iodef mailto:security@lightbound.uk"
+        ], "note": "RFC 8659: the CAs Cloudflare Universal SSL may use, plus Let's Encrypt for ops (lego DNS-01). security@ mailbox TBC"}
+      ],
+      "http": [
+        {"url": "http://lightbound.space/", "status": 301, "location": "https://lightbound.space/"},
+        {"url": "https://www.lightbound.space/", "status": 301, "location": "https://lightbound.space/"}
+      ]
+    },
+    {
+      "name": "lightbound.uk",
+      "note": "Mail (Google Workspace) and the long-lived name; second Cloudflare account (Cloudflare Registrar, DNSSEC automatic). The web side only redirects to lightbound.space.",
+      "dnssec": true,
+      "records": [
+        {"name": "@", "type": "MX", "values": ["1 smtp.google.com"], "note": "Google Workspace; never enable Cloudflare Email Routing here"},
+        {"name": "@", "type": "TXT", "present": true, "prefix": "google-site-verification=", "note": "Workspace domain verification; keep"},
+        {"name": "@", "type": "TXT", "stages": [
+          "v=spf1 include:_spf.google.com ~all",
+          "v=spf1 include:_spf.google.com -all"
+        ], "note": "RFC 7208. Only one v=spf1 record. ~all now; -all once DMARC reports show every sender passing"},
+        {"name": "google._domainkey", "type": "TXT", "present": true, "note": "RFC 6376. Value TBC: Google Admin > Gmail > Authenticate email > Generate (2048-bit, selector google), then Start authentication after it resolves"},
+        {"name": "_dmarc", "type": "TXT", "match": "tags", "require": ["rua"], "stages": [
+          "v=DMARC1; p=none",
+          "v=DMARC1; p=quarantine; pct=25",
+          "v=DMARC1; p=reject"
+        ], "note": "RFC 7489. The existing rua (Cloudflare DMARC Management) is kept at every stage; move on only after 2-4 weeks of clean reports"},
+        {"name": "_mta-sts", "type": "TXT", "present": true, "prefix": "v=STSv1", "note": "RFC 8461. id changes on every policy edit, so any value counts; the policy file at https://mta-sts.lightbound.uk/.well-known/mta-sts.txt is not checked yet (UNVERIFIED)"},
+        {"name": "_smtp._tls", "type": "TXT", "match": "tags", "value": "v=TLSRPTv1; rua=mailto:security@lightbound.uk", "note": "RFC 8460 TLS reporting. security@ mailbox TBC"},
+        {"name": "@", "type": "A", "proxied": true, "note": "AAAA 100:: proxied in Cloudflare is enough; the edge answers A and AAAA"},
+        {"name": "@", "type": "AAAA", "proxied": true},
+        {"name": "www", "type": "A", "proxied": true},
+        {"name": "www", "type": "AAAA", "proxied": true},
+        {"name": "@", "type": "CAA", "values": [
+          "0 issue letsencrypt.org", "0 issue pki.goog", "0 issue ssl.com", "0 issue sectigo.com",
+          "0 issuewild letsencrypt.org", "0 issuewild pki.goog", "0 issuewild ssl.com", "0 issuewild sectigo.com",
+          "0 iodef mailto:security@lightbound.uk"
+        ]}
+      ],
+      "http": [
+        {"url": "https://lightbound.uk/", "status": 301, "location": "https://lightbound.space/"},
+        {"url": "http://www.lightbound.uk/", "status": 301, "location": "https://lightbound.space/"}
+      ]
+    }
+  ]
+}
