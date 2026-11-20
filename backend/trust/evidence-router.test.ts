@@ -14,6 +14,9 @@ import { createEvidenceRouter, KEYRING_LABEL, MAX_LOG_BYTES, SIGN_ON_HOST } from
 import { clone, csv, mapping, packFromStoredInputs } from "./fixtures/evidence-pack.js";
 import { packFileText, PilotError, REPO_ROOT, runPilot, type PilotResult, type PilotRunner } from "./pilot-run.js";
 
+// Role gating only: the operator pattern gate (428, GAU-235) is covered in backend/pattern and rbac tests.
+process.env.OPERATOR_PATTERN = "off";
+
 const NOT_SIGNED = "the pack is not signed, so nothing shows who made it (integrity only)";
 
 /** The router as the server mounts it: a session (here: the x-test-role header), then API_POLICY. */
