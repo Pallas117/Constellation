@@ -526,7 +526,11 @@
         "a role change needs an admin with a fresh passkey touch",
         "passkey limiter answers 429 with Retry-After past the limit, per client, and resets each window",
         "sessions slide: one unused for 12 hours expires",
-        "the console signs out after 15 idle minutes by default, warning a minute before"
+        "the console signs out after 15 idle minutes by default, warning a minute before",
+        "after sign-out no role-gated route is requested, even while the session atom still holds the user",
+        "a new sign-in is not held back by the old marker, and no user means signed out",
+        "a protected page waits for the first session answer only, so a refetch can't remount a wizard",
+        "the idle warning says tap on touch screens and mouse or key elsewhere"
       ]
     },
     {
@@ -546,7 +550,8 @@
         "a phone draws the pattern for the computer's session through a one-time QR code",
         "a step-up keeps the operator pattern this browser already drew, and a fresh sign-in does not get it",
         "admins clear another operator's forgotten pattern with a fresh touch, never their own",
-        "the frontend pad uses the same pattern rules as the server"
+        "the frontend pad uses the same pattern rules as the server",
+        "submitting a short or repetitive pattern is answered with the rule, never the letters"
       ]
     },
     {

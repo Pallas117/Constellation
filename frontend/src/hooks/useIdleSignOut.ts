@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
 import { toast } from "sonner";
-import { ACTIVITY_STORAGE_KEY, idleLimitMs, idlePhase, latestActivity } from "@/lib/idle";
+import { ACTIVITY_STORAGE_KEY, idleLimitMs, idleStayHint, idlePhase, latestActivity } from "@/lib/idle";
 
 const LIMIT_MS = idleLimitMs(import.meta.env?.VITE_IDLE_SIGNOUT_MINUTES);
 const ACTIVITY_EVENTS = ["pointerdown", "pointermove", "keydown", "wheel", "touchstart"] as const;
@@ -54,7 +54,7 @@ export function useIdleSignOut(enabled: boolean, signOut: () => void) {
         warned = true;
         toast.warning(`Signing you out in ${Math.ceil(remainingMs / 1000)} s`, {
           id: TOAST_ID,
-          description: "No activity for a while. Move the mouse or press a key to stay signed in.",
+          description: idleStayHint(window.matchMedia?.("(pointer: coarse)").matches ?? false),
           duration: remainingMs,
         });
       } else if (phase === "active" && warned) {

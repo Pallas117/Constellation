@@ -20,6 +20,14 @@ export function patternProblem(pattern: readonly number[]): string | null {
   return null;
 }
 
+/** What to tell someone who submits too early: the length and variety rules, never their letters. */
+export function shortPatternNotice(pattern: readonly number[]): string | null {
+  const { minLength, minDistinct } = PATTERN_RULES;
+  return pattern.length < minLength || new Set(pattern).size < minDistinct
+    ? `Draw at least ${minLength} vertices, ${minDistinct} different`
+    : null;
+}
+
 /** The vertex nearest (x, y) within `radius`, or -1. */
 export function vertexAt(points: ReadonlyArray<{ x: number; y: number }>, x: number, y: number, radius: number): number {
   let best = -1;

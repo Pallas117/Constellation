@@ -35,15 +35,15 @@ function afterSetup(location: Location, user: unknown): string {
 function Stage({ step }: { step: Step }) {
   const at = STAGES.findIndex((s) => s.steps.includes(step));
   return (
-    <ol className="flex items-center justify-center gap-2" aria-label="Setup progress">
+    <ol className="flex flex-wrap items-center justify-center gap-x-1 gap-y-2 sm:gap-x-2" aria-label="Setup progress">
       {STAGES.map((s, i) => (
-        <li key={s.id} className="relative flex items-center gap-2">
-          <span className={`relative z-10 px-2.5 py-1 font-mono text-[11px] uppercase tracking-[0.12em] ${i <= at ? "text-foreground" : "text-muted-foreground"}`}>
+        <li key={s.id} className="relative flex items-center gap-1 sm:gap-2">
+          <span className={`relative z-10 px-1.5 py-1 font-mono text-[10px] uppercase tracking-[0.06em] sm:px-2.5 sm:text-[11px] sm:tracking-[0.12em] ${i <= at ? "text-foreground" : "text-muted-foreground"}`}>
             {i < at ? <Check className="mr-1 inline h-3 w-3" aria-hidden="true" /> : null}
             {s.label}
           </span>
           {i === at && <motion.span layoutId="setup-stage" className="absolute inset-0 rounded-full border border-charcoal bg-panel" aria-hidden="true" />}
-          {i < STAGES.length - 1 && <span className="h-px w-4 bg-charcoal" aria-hidden="true" />}
+          {i < STAGES.length - 1 && <span className="hidden h-px w-4 bg-charcoal sm:block" aria-hidden="true" />}
         </li>
       ))}
     </ol>

@@ -3,6 +3,7 @@ import { useConnectivity } from '@/hooks/useConnectivity';
 import { SPACE_OBJECT_CATALOG } from '@/lib/data/spaceObjectCatalog';
 import type { InterpolatedData } from '@/hooks/useSpaceWeather';
 import type { SpaceObjectCatalogEntry, SpaceObjectDetectionAlert } from '@/lib/types/space-object';
+import { useFeedSession } from "@/hooks/usePolledFeed";
 import { apiBase } from "@/lib/api/base-url";
 
 export interface UseSpaceObjectsReturn {
@@ -27,6 +28,8 @@ const fetchRemoteCatalog = async (proxyUrl: string): Promise<SpaceObjectCatalogE
 
 export const useSpaceObjects = (_data: InterpolatedData): UseSpaceObjectsReturn => {
   const { mode } = useConnectivity();
+  // /api/feed/space-objects needs an account: signed out (or still resolving) uses the built-in catalog, no request.
+  const { resolved, signedIn } = useFeedSession();
   const [catalog, setCatalog] = useState<SpaceObjectCatalogEntry[]>([]);
   // No detection source is connected (GAU-89). A Kp/flux heuristic used to invent "untracked GEO
   // objects" here, with longitudes taken from the clock; until a real detector feeds this, the
@@ -40,7 +43,8 @@ export const useSpaceObjects = (_data: InterpolatedData): UseSpaceObjectsReturn 
 
     const loadCatalog = async () => {
       try {
-        if (mode === 'AIRGAP') {
+        if (!resolved) return;
+        if (mode === 'AIRGAP' || !signedIn) {
           setCatalog(SPACE_OBJECT_CATALOG);
           setIsReady(true);
           setError(null);
@@ -67,7 +71,7 @@ export const useSpaceObjects = (_data: InterpolatedData): UseSpaceObjectsReturn 
     return () => {
       active = false;
     };
-  }, [mode]);
+  }, [mode, resolved, signedIn]);
 
   return {
     catalog,
