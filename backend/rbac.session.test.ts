@@ -17,6 +17,8 @@ const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "gauss-rbac-session-"));
 const ORIGIN = "http://localhost:8080"; // trusted by CORS and better-auth's origin check
 process.env.AUTH_DB_PATH = path.join(tmp, "auth.db");
 process.env.AUTH_REQUIRED = "true";
+// These tests cover role gating; the operator pattern gate (428, GAU-235) has its own tests.
+process.env.OPERATOR_PATTERN = "off";
 process.env.ALLOWED_ORIGINS = ORIGIN;
 process.env.BETTER_AUTH_SECRET = "test-only-secret-0123456789abcdef0123456789";
 // POST /api/ai/nowcast/train runs `python3 <TRAINING_SCRIPT_PATH>`: an empty
