@@ -3,6 +3,7 @@
  * regulator reads. The JSON pack is the record; this renders it without adding anything, and the
  * same pack always gives the same PDF bytes.
  */
+import { VERDICT_LABEL, VERDICT_NEXT_STEP, VERDICT_ORDER } from "../../shared/policy/verdict-next-step.js";
 import type { EvidencePack } from "./evidence.js";
 import { A4, PdfPage, textWidth, wrap, writePdf, type FontName } from "./pdf.js";
 
@@ -149,6 +150,13 @@ export function renderEvidencePdf(pack: EvidencePack): Buffer {
   keyValue("Verdicts", `${pack.summary.records} records: ${v.consistent} consistent, ${v["degraded-context"]} degraded context, ${v.unknown} unknown`);
   for (const s of pack.summary.bySpacecraft) {
     keyValue(s.spacecraftId, `${s.verdicts.consistent} consistent, ${s.verdicts["degraded-context"]} degraded context, ${s.verdicts.unknown} unknown`);
+  }
+  // One reviewed next step for each verdict the pack contains (shared/policy/verdict-next-step.ts).
+  const present = VERDICT_ORDER.filter((verdict) => v[verdict] > 0);
+  if (present.length) {
+    y -= 4;
+    paragraph("What to do next", "Helvetica-Bold", 8.5);
+    for (const verdict of present) keyValue(`If ${VERDICT_LABEL[verdict]}`, VERDICT_NEXT_STEP[verdict]);
   }
   if (pack.summary.reasons.length) {
     y -= 4;
