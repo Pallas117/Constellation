@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { extendPattern, patternProblem, PATTERN_RULES, samePattern, vertexAt } from "./pattern";
+import { extendPattern, noticeText, patternProblem, PATTERN_RULES, samePattern, vertexAt } from "./pattern";
 import { project, randomRotation, VERTICES } from "./tesseract";
 
 test("the pattern pad takes 8 to 24 vertices, 6 or more different, no vertex twice in a row", () => {
@@ -25,4 +25,15 @@ test("a touch picks the nearest vertex within reach, whatever the figure's orien
   }
   const points = [{ x: 0, y: 0 }, { x: 10, y: 0 }];
   assert.equal(vertexAt(points, 7, 0, 24), 1, "nearest wins");
+});
+
+test("the pattern page says what the sensor saw since the last sign-in, and nothing when it saw nothing", () => {
+  const at = (ms: number) => `t${ms}`;
+  assert.equal(noticeText({ misses: 0, probes: 0, unusual: 0, lastIp: null, lastAt: null }, at), null);
+  assert.equal(noticeText(undefined, at), null);
+  assert.equal(
+    noticeText({ misses: 2, probes: 1, unusual: 0, lastIp: "100.64.0.9", lastAt: 5 }, at),
+    "Since your last sign-in: 2 wrong drawings; 1 unknown phone code tried, last at t5 from 100.64.0.9. Not you? Tell an admin.",
+  );
+  assert.match(noticeText({ misses: 0, probes: 0, unusual: 1, lastIp: null, lastAt: null }, at) ?? "", /read data unlike the console/);
 });
