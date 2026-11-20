@@ -158,6 +158,12 @@ const FEED_STYLES: Record<FeedMode, { label: string; className: string; dot: str
     dot: "bg-caution",
     hint: "No L1 reading: the scene shows reference geometry and the readouts show —.",
   },
+  replay: {
+    label: "Replay",
+    className: "text-caution",
+    dot: "bg-caution",
+    hint: "A past storm (10–11 May 2024) replayed through the live Gauss pipeline from archived NOAA data. Not live, not a forecast.",
+  },
   simulated: {
     label: "Simulated G4",
     className: "text-sun",

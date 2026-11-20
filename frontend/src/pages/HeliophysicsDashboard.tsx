@@ -1,6 +1,6 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
-import { ChevronDown, Info, Layers, PanelRight, RotateCcw, Video, Zap } from "lucide-react";
+import { ChevronDown, GraduationCap, Info, Layers, PanelRight, RotateCcw, Video, Zap } from "lucide-react";
 import { LayerToggles } from "@/components/ui/LayerToggles";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
@@ -18,6 +18,9 @@ import type { RadiationDataPoint } from "@/lib/types/radiation";
 import mockSolarStormData from "@/data/mock_solar_storm.json";
 import { beltVisuals, liveDrivers, standoffIfReference } from "@/lib/physics/live-drivers";
 import { SIMULATED_STORM_TEXT } from "@/lib/physics/storm-narration";
+import { replayDrivers, type WalkthroughData } from "@/lib/walkthrough/storm-walkthrough";
+import { useStormWalkthrough } from "@/lib/walkthrough/use-storm-walkthrough";
+import { StormWalkthroughPanel } from "@/components/heliophysics/StormWalkthroughPanel";
 import { useNow } from "@/hooks/useNow";
 import { useDocumentTitle } from "@/hooks/useDocumentTitle";
 import { CHECK_LABEL, checkStatus, hudTone, scaleStatus } from "@/lib/readout-status";
@@ -76,6 +79,11 @@ const HeliophysicsDashboard = () => {
   const [viewRequest, setViewRequest] = useState(0);
   const [modelInfo, setModelInfo] = useState<MagnetosphereModelInfo | null>(null);
   const [simulateStorm, setSimulateStorm] = useState(false);
+  // Staff walkthrough (GAU-229): the replay data loads only when it is started.
+  const [walkData, setWalkData] = useState<WalkthroughData | null>(null);
+  const [walkLoading, setWalkLoading] = useState(false);
+  const [walkError, setWalkError] = useState(false);
+  const walk = useStormWalkthrough(walkData);
 
   const solarWind = useSolarWind5s({ backfillMs: LIVE_BACKFILL_MS });
   const mms = useMMSReconnection();
@@ -86,7 +94,12 @@ const HeliophysicsDashboard = () => {
 
   // Fail closed: without a fresh reading the scene shows reference geometry and
   // the readouts show "—", never nominal numbers presented as live.
-  const live = useMemo(() => liveDrivers(latest, now, simulateStorm), [latest, now, simulateStorm]);
+  const live = useMemo(
+    () => (walk ? replayDrivers(walk.sample) : liveDrivers(latest, now, simulateStorm)),
+    [walk, latest, now, simulateStorm],
+  );
+  // The simulated storm and the replay are not the live feed: no live alerts, checks or sources beside them.
+  const notLive = simulateStorm || walk !== null;
   const { drivers, plasma, arriving, densityCheck } = live;
   // The right-hand cluster shows the latest L1 reading: what reaches Earth next.
   const next = simulateStorm && drivers && plasma ? { ...drivers, ...plasma, observedAt: null, etaEarth: null } : live.l1;
@@ -113,15 +126,17 @@ const HeliophysicsDashboard = () => {
       ? fmt(latest.propagation.l1DelaySeconds / 60, 0)
       : "—";
   const etaUtc = next?.etaEarth ? utc(next.etaEarth) : null;
-  const stormTier = !simulateStorm ? latest?.alerts.stormTier : undefined;
+  const stormTier = !notLive ? latest?.alerts.stormTier : undefined;
   // The two NOAA storm streams, kept apart: radiation (S) and geomagnetic (G) (GAU-135).
-  const radiation = !simulateStorm ? latest?.alerts.radiation : undefined;
-  const geomagnetic = !simulateStorm ? latest?.alerts.geomagnetic : undefined;
+  const radiation = !notLive ? latest?.alerts.radiation : undefined;
+  const geomagnetic = !notLive ? latest?.alerts.geomagnetic : undefined;
   // Radio blackouts (R) and the input sense-checks, with NOAA's own alerts as a cross-check (GAU-136).
-  const radioBlackout = !simulateStorm ? latest?.alerts.radioBlackout : undefined;
-  const senseChecks = !simulateStorm ? (latest?.senseChecks ?? []) : [];
-  const noaaAlerts = !simulateStorm ? latest?.noaaAlerts : undefined;
-  const driversLine = simulateStorm
+  const radioBlackout = !notLive ? latest?.alerts.radioBlackout : undefined;
+  const senseChecks = !notLive ? (latest?.senseChecks ?? []) : [];
+  const noaaAlerts = !notLive ? latest?.noaaAlerts : undefined;
+  const driversLine = walk
+    ? "Replayed drivers"
+    : simulateStorm
     ? "Simulated drivers"
     : arriving
       ? `At Earth · L1 ${utc(arriving.observedAt)} UTC · 5-min mean`
@@ -133,7 +148,7 @@ const HeliophysicsDashboard = () => {
       ? `${driversLine} · ${fieldModel.tracedAt != null ? `traced ${utc(fieldModel.tracedAt)} UTC` : "tracing…"}`
       : null;
   // L1 spacecraft disagree on density: show where the magnetopause would be if the other is right.
-  const r0Alt = fieldModel && densityCheck && !simulateStorm ? standoffIfReference(fieldModel.r0, densityCheck) : null;
+  const r0Alt = fieldModel && densityCheck && !notLive ? standoffIfReference(fieldModel.r0, densityCheck) : null;
   const r0Range = r0Alt != null && fieldModel ? [Math.min(r0Alt, fieldModel.r0), Math.max(r0Alt, fieldModel.r0)] : null;
   const densityNote = densityCheck
     ? `${densityCheck.spacecraft} reads ${fmt(densityCheck.density, 2)} cm⁻³ but ${densityCheck.reference} reads ${fmt(
@@ -161,6 +176,25 @@ const HeliophysicsDashboard = () => {
   const toggleStorm = () => {
     const next = !simulateStorm;
     setSimulateStorm(next);
+  };
+
+  const startWalk = async () => {
+    setSimulateStorm(false);
+    setWalkError(false);
+    if (walkData) return;
+    setWalkLoading(true);
+    try {
+      const mod = await import("@/data/walkthrough/may-2024.json");
+      setWalkData(mod.default as unknown as WalkthroughData);
+    } catch {
+      setWalkError(true);
+    } finally {
+      setWalkLoading(false);
+    }
+  };
+  const exitWalk = () => {
+    setWalkData(null);
+    chooseView("overview");
   };
 
   const chooseView = (v: SceneView) => {
@@ -193,12 +227,14 @@ const HeliophysicsDashboard = () => {
           reconnectionStrength={visual.reconnectionStrength}
           mmsVectors={mms.vectors}
           solarWindDrivers={drivers}
-          smoothDrivers={!simulateStorm && !live.propagated}
+          smoothDrivers={!notLive && !live.propagated}
+          walkthrough={walk ? { data: walk.data, orbit: walk.orbit, atMs: walk.ms, showSaa: walk.stop.showSaa } : undefined}
+          cameraGoal={walk ? { position: walk.stop.camera.position, target: walk.stop.camera.target, request: walk.cameraRequest } : undefined}
           onModelUpdate={setModelInfo}
           view={view}
           viewRequest={viewRequest}
           canvasRef={canvasRef}
-          data={simulateStorm ? STORM_RADIATION : undefined}
+          data={simulateStorm && !walk ? STORM_RADIATION : undefined}
           orbitFilter={["LEO", "MEO", "GEO"]}
           hoverable
         />
@@ -208,6 +244,11 @@ const HeliophysicsDashboard = () => {
           className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_center,transparent_55%,hsl(var(--background)/0.8)_100%)]"
         />
         <SceneHoverTip model={modelInfo} live={Boolean(drivers)} r0Range={r0Range} />
+        {walk && (
+          <div className="pointer-events-none absolute left-3 top-[6.5rem] z-10 sm:top-[4.5rem] md:left-4">
+            <StormWalkthroughPanel w={walk} onExit={exitWalk} />
+          </div>
+        )}
 
         {/* Top edge: identity and feed left, controls right */}
         <header className="pointer-events-none absolute inset-x-0 top-0 z-10 flex items-start justify-between gap-3 p-3 md:p-4">
@@ -216,7 +257,7 @@ const HeliophysicsDashboard = () => {
               Gauss Aurora<span className="hidden sm:inline"> · Heliophysics</span>
             </Link>
             <h1 className="text-sm font-semibold leading-tight text-foreground/90 md:text-base">
-              Earth's magnetic shield, live
+              Earth's magnetic shield, {walk ? "replayed" : "live"}
             </h1>
             <FeedStatus mode={live.mode} ageMin={live.ageMin} />
           </div>
@@ -278,10 +319,28 @@ const HeliophysicsDashboard = () => {
             </Popover>
 
             <HudButton
+              label={walk ? "Leave the storm walkthrough" : "Storm walkthrough · replay of 10–11 May 2024"}
+              hint="Staff training: fly through a real replayed storm"
+              aria-pressed={walk !== null}
+              active={walk !== null}
+              disabled={walkLoading}
+              onClick={walk ? exitWalk : startWalk}
+            >
+              <GraduationCap size={14} aria-hidden="true" />
+              <span className="hidden sm:inline">{walk ? "Leave walkthrough" : "Walkthrough"}</span>
+            </HudButton>
+            {walkError && (
+              <span role="status" className="font-mono text-[10px] uppercase tracking-[0.12em] text-caution">
+                Walkthrough data did not load
+              </span>
+            )}
+
+            <HudButton
               label={simulateStorm ? "Back to live" : "Simulate G4 storm"}
               hint={simulateStorm ? "Return to the live L1 drivers" : "Show a severe (G4) storm: Bz −20 nT, 15 nPa, Kp 8"}
               aria-pressed={simulateStorm}
               active={simulateStorm}
+              disabled={walk !== null}
               tone="sun"
               onClick={toggleStorm}
             >
