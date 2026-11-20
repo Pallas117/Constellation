@@ -47,6 +47,7 @@ type Config struct {
 	// WiFiShield "warp": Argo may run warp-cli itself on open or weak Wi-Fi (shield.go). Default "": advice only.
 	WiFiShield string `json:"wifi_shield,omitempty"`
 	QuietHours string `json:"quiet_hours,omitempty"` // no non-urgent texts in these hours; default 23:00-07:00, "off" for none
+	Place      string `json:"place,omitempty"`       // short label for the shared signal map (letters, digits, space, - and _); never a location
 }
 
 func (c Config) peers() []Peer {
@@ -95,9 +96,12 @@ func main() {
 	phone := newPhoneFor(cfg)
 	preempt := make(chan os.Signal, 1)
 	signal.Notify(preempt, syscall.SIGUSR1) // a newer tick saw the network change under this run (tick.go)
-	loop := Loop{Prober: SystemProber{ExitNodes: cfg.ExitNodes, SignalCache: store.path("signal.json")}, Store: store, Fx: realEffects{phone: phone}, AppWatch: true, Preempt: preempt}
+	loop := Loop{Prober: SystemProber{ExitNodes: cfg.ExitNodes, SignalCache: store.path("signal.json")}, Store: store, Fx: realEffects{phone: phone}, AppWatch: true, Preempt: preempt, Link: systemLink}
 	loop.Tailnet = tailnetKicker(cfg)          // read-only `tailscale ping`/`netcheck` after a switch (tailnet.go)
 	loop.ShieldWARP = cfg.WiFiShield == "warp" // opt-in since 2026-11-05 (shield.go)
+	if phone != nil {
+		phone.PreferSMS = func() bool { return store.Load().Low.PreferSMS() }
+	}
 	flush := func() {
 		if phone != nil {
 			phone.Flush() // deliver alerts queued while offline
@@ -138,6 +142,7 @@ func main() {
 		thirdpartyTick(tpFilesIn(configDir()), phone, time.Now()) // texts once per new third-party change; two small file reads
 		phase(20*time.Second, func(c context.Context) { guardTick(c, store, cfg, phone, time.Now()) })
 		phase(30*time.Second, func(c context.Context) { relayTick(c, cfg, store, phone) }) // store-and-forward (relay.go); takes its own lock
+		phase(15*time.Second, func(c context.Context) { clockTick(c, cfg, store, time.Now()) })
 		// Read-only posture checks hourly and the update check daily (posture.go, update.go).
 		phase(25*time.Second, func(c context.Context) { securityTick(c, cfg, store, time.Now()) })
 		var skip bool
@@ -392,7 +397,16 @@ func statusLine(st State, now time.Time) string {
 			ts = "ts:" + st.Tailscale.ExitNode
 		}
 	}
-	line := fmt.Sprintf("%s %s %s %s", icon, st.Class, orUnknown(st.Loc), ts)
+	line := fmt.Sprintf("%s %s %s %s", icon, st.Class, orUnknown(st.Loc), ts) + st.Low.Label()
+	if st.Via != "" {
+		line += " via:" + st.Via
+	}
+	if st.Clock.Fault {
+		line += "\n  " + st.Clock.String()
+	}
+	if st.Advice != "" {
+		line += "\n  " + st.Advice
+	}
 	if age := now.Sub(st.CheckedAt); age > 10*time.Minute {
 		line += fmt.Sprintf(" (stale %s)", age.Round(time.Minute))
 	}
@@ -409,6 +423,9 @@ func doctor(ctx context.Context, p Prober) error {
 	fmt.Printf("network: %s\n", n.Line())
 	for _, a := range n.Advice {
 		fmt.Println("radio →", a)
+	}
+	if lv := systemLink(ctx, false); lv.Advice != "" {
+		fmt.Println("link: " + lv.Advice)
 	}
 	if private, why := readDNSPath(ctx).Private(); private {
 		fmt.Printf("dns: private (%s)\n", why)

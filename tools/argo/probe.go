@@ -84,9 +84,10 @@ type netChecks struct {
 	direct func(ctx context.Context, host string) bool  // 1.1.1.1, bypassing the system resolver
 	get    func(ctx context.Context, u string) (Result, string)
 	// Optional (nil = skipped, as in tests that stall the three above):
-	link func(ctx context.Context, gateway string) *LinkQuality // pings to the gateway and 1.1.1.1 (radio.go)
-	ipUp func(ctx context.Context) bool                         // IP dial when both DNS paths fail (uplink.go)
-	doh  func(ctx context.Context) bool                         // encrypted DNS when IP gets out (privdns.go)
+	link    func(ctx context.Context, gateway string) *LinkQuality // pings to the gateway and 1.1.1.1 (radio.go)
+	ipUp    func(ctx context.Context) bool                         // IP dial when both DNS paths fail (uplink.go)
+	doh     func(ctx context.Context) bool                         // encrypted DNS when IP gets out (privdns.go)
+	anchors func(ctx context.Context) Anchors                      // reachability of fixed anchor hosts (lowsignal.go)
 }
 
 func realNetChecks() netChecks {
@@ -95,11 +96,12 @@ func realNetChecks() netChecks {
 			_, err := net.DefaultResolver.LookupHost(ctx, host)
 			return err
 		},
-		direct: directLookup,
-		get:    httpGet,
-		link:   measureLink,
-		ipUp:   func(ctx context.Context) bool { return ipReachable(ctx, tcpDial) },
-		doh:    func(ctx context.Context) bool { return dohReachable(ctx, dohOnce) },
+		direct:  directLookup,
+		get:     httpGet,
+		link:    measureLink,
+		ipUp:    func(ctx context.Context) bool { return ipReachable(ctx, tcpDial) },
+		doh:     func(ctx context.Context) bool { return dohReachable(ctx, dohOnce) },
+		anchors: probeAnchors,
 	}
 }
 
@@ -140,6 +142,9 @@ func (c netChecks) run(ctx context.Context, s *Snapshot, budget time.Duration) {
 		}
 	})
 	start(func() { s.API, _ = c.get(ctx, apiURL) })
+	if c.anchors != nil {
+		start(func() { s.Anchors = c.anchors(ctx) })
+	}
 	start(func() {
 		if r, body := c.get(ctx, traceURL); r.OK {
 			s.PublicIP, s.Loc = parseTrace(body)

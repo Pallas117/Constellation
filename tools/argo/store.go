@@ -55,6 +55,10 @@ type State struct {
 	GatewayMAC    string         `json:"gateway_mac,omitempty"`
 	Net           NetScore       `json:"net"`              // privacy, speed and signal at the last check (netscore.go)
 	Switch        *SwitchInfo    `json:"switch,omitempty"` // last network change or recovery and the tailnet's answer (tailnet.go)
+	Low           LowSignal      `json:"low,omitempty"`    // low-signal verdict with hysteresis (lowsignal.go)
+	Via           string         `json:"via,omitempty"`    // link the last probe used: usb, wifi, ethernet, other (wiredlink.go)
+	Advice        string         `json:"advice,omitempty"` // suggested link switch; Argo never changes settings itself
+	Clock         ClockVerdict   `json:"clock,omitempty"`  // clock cross-check (timeintegrity.go)
 	// IncidentFP is the network the open incident belongs to; Notified says whether
 	// it was announced yet, NotifyDue when it will be if this network's usual
 	// recovery time passes first (loop.go).
