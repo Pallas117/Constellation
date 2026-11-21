@@ -1917,6 +1917,29 @@
       ]
     },
     {
+      "id": "REQ-SEC-022",
+      "title": "Admin-only funding tracker view",
+      "statement": "The operator app shall show the funding tracker only to admins, read-only, from a CSV export named by FUNDING_TRACKER_CSV that lies outside the repository and is at most 2 MB, answering configured false when the setting is empty, 401 without a session and 403 below admin, with no write route, with dates it cannot read unambiguously reported by row number, and with no cell text, column header or file path in any log line or error message.",
+      "rationale": "Josh's decision of 18 Nov 2026: the private pipeline (investors, applications, bids) stays on the device, and the repository is public, so only code and a synthetic fixture may be in it and the export must never be read from inside it.",
+      "parent": "GAU-120",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "funding view: admins only; no session 401, user, staff and operator 403, and there is no write route",
+        "funding view: the summary of the export, its age from the file's mtime, and no-store",
+        "funding view: without FUNDING_TRACKER_CSV the feature is off and answers configured false",
+        "funding view: a path inside the repository is refused, also through a symlink, and nothing is read",
+        "funding view: an oversized file is refused before it is parsed",
+        "funding view: a file that disappears between reads gives an honest error, not a crash",
+        "funding view: no cell text, header or path reaches a log line or an error message",
+        "funding tracker: unknown columns are counted and never echoed",
+        "funding tracker: dates are ISO, worded or Rolling; slashed dates are refused as ambiguous with their row numbers",
+        "funding tracker: problems carry row numbers and fixed reasons, never cell contents",
+        "funding tracker: links must be http(s) without credentials; they are returned as text",
+        "funding tracker: size, row and cell caps"
+      ]
+    },
+    {
       "id": "REQ-ARG-030",
       "title": "Power-save mode",
       "statement": "When a host's power budget is negative (on battery, on a charger that cannot carry the load, or on plain 5 V USB) Argo shall enter power-save at once and leave it only after the budget has been healthy for 10 minutes; while on it shall report \"power-save\" as a guard reason with the charger advice so heavy work waits, stretch its own probe, guard-sampling and mesh-report timers by a factor of 3 (a broken link still probes and reports at once), and send one warn-level text per 6 hours. A host with no battery or no reading shall never enter it, and `argo power-save on|off|auto|status` shall force, release or show it.",

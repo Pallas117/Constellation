@@ -63,6 +63,7 @@ const ALLOWED: Record<string, string> = {
   "frontend/src/lib/mesh-onboarding.ts:STALE_MS": "mesh device-report staleness, not a measurement (out of scope)",
   "frontend/src/lib/link-map.ts:SAMPLE_MAX_AGE_MS": "age of an Argo link sample in a mesh device report, network telemetry not a space-weather measurement (out of scope)",
   "frontend/src/hooks/useSpaceWeather.ts:STALENESS_RECHECK_MS": "how often the UI re-checks ages, not an age limit",
+  "frontend/src/lib/funding-view.ts:STALE_AFTER_DAYS": "age of the funding-tracker sheet export shown to operators, a business record not a space-weather measurement (out of scope)",
   "website/worker/calls.js:INDEX_MAX_AGE": "age of the cached calls index, not of a measurement (out of scope)",
 };
 
