@@ -10,14 +10,14 @@
  *   6. Argo Go tests (tools/argo, short mode, JSON) feed the VCRM too (FMEA FM-20)
  *   7. VCRM: every requirement verified (no failing, skipped or missing evidence), by exact test
  *      name across all reports
- * Writes test-results/verification/{junit.xml,ops-junit.xml,website-junit.xml,argo-go-test.json,vcrm.json,vcrm.md} and the
- * computed readiness score (readiness.json, readiness.md; report only). Exits non-zero on any failure.
+ * Writes test-results/verification/{junit.xml,ops-junit.xml,ui-junit.xml,website-junit.xml,argo-go-test.json,vcrm.json,vcrm.md}
+ * and the computed readiness score (readiness.json, readiness.md; report only). Exits non-zero on any failure.
  *
  *   npm run verify               full gate
  *   npm run verify -- --no-build skip the build (faster while iterating)
  */
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import {
   buildFmea,
@@ -39,6 +39,10 @@ const root = path.resolve(import.meta.dirname, "../..");
 const outDir = path.join(root, "test-results", "verification");
 const junitPath = path.join(outDir, "junit.xml");
 const opsJunitPath = path.join(outDir, "ops-junit.xml");
+// Written by `npm run test:ui:gate` (a gate of its own, run before verify). Not removed here: a report
+// younger than UI_REPORT_MAX_MS stands in for the run; an older one (a stale local file) is rerun below.
+const uiJunitPath = path.join(outDir, "ui-junit.xml");
+const UI_REPORT_MAX_MS = 2 * 60 * 60 * 1000;
 const vpsJunitPath = path.join(outDir, "vps-junit.xml");
 const websiteJunitPath = path.join(outDir, "website-junit.xml");
 const argoJsonPath = path.join(outDir, "argo-go-test.json");
@@ -112,11 +116,16 @@ console.log("\n▶ Argo Go tests (JSON, short mode)");
 
 results.build = skipBuild ? true : step("Production build", "npm", ["run", "build", "--silent"]);
 
+// UI tests (hermetic Playwright subset; REQ-UI-*): run now only if the gate did not just do it.
+const uiFresh = existsSync(uiJunitPath) && Date.now() - statSync(uiJunitPath).mtimeMs < UI_REPORT_MAX_MS;
+results.uiTests = uiFresh || step("UI tests (Playwright)", "npm", ["run", "test:ui:gate", "--silent"]);
+
 const commit = spawnSync("git", ["rev-parse", "--short", "HEAD"], { cwd: root, encoding: "utf8" }).stdout.trim() || "unknown";
 const readJunit = (p: string): Map<string, TestOutcome> => (existsSync(p) ? parseJunit(readFileSync(p, "utf8")) : new Map());
 const outcomes = mergeOutcomes(
   readJunit(junitPath),
   readJunit(opsJunitPath),
+  readJunit(uiJunitPath),
   readJunit(vpsJunitPath),
   readJunit(websiteJunitPath),
   existsSync(argoJsonPath) ? parseGoTestJson(readFileSync(argoJsonPath, "utf8")) : new Map(),
