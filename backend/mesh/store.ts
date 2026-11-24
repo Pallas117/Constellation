@@ -88,6 +88,9 @@ export interface MeshLinkWindow {
 export interface MeshLink {
   d1: MeshLinkWindow;
   d7: MeshLinkWindow;
+  /** Round trip to this hub over the tailnet right after the device's last network change (tools/argo/tailnet.go); absent when it did not answer. */
+  tailnetMs?: number;
+  tailnetVia?: "direct" | "relay";
 }
 
 const WEEK_SEC = 7 * 24 * 3600;
@@ -118,7 +121,14 @@ export function parseLink(value: unknown): MeshLink | undefined {
   const l = value as Record<string, unknown>;
   const d1 = parseLinkWindow(l.d1);
   const d7 = parseLinkWindow(l.d7);
-  return d1 && d7 ? { d1, d7 } : undefined;
+  if (!d1 || !d7) return undefined;
+  const out: MeshLink = { d1, d7 };
+  const tailnetMs = int(l.tailnetMs, 1, 60_000);
+  if (tailnetMs !== null && (l.tailnetVia === "direct" || l.tailnetVia === "relay")) {
+    out.tailnetMs = tailnetMs;
+    out.tailnetVia = l.tailnetVia;
+  }
+  return out;
 }
 
 /**

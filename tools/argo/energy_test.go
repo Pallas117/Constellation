@@ -358,26 +358,48 @@ func TestEnergyImportOncePerDay(t *testing.T) {
 		"2026-11-18 01:00:00 +0800 Assertions \tSummary- Using AC(Charge: 50)\n"
 	src := &fakeLog{body: body}
 	now := time.Date(2026, 11, 18, 2, 0, 0, 0, time.UTC)
-	if err := energyImport(context.Background(), s, src.open, now, false); err != nil {
+	if err := energyImport(context.Background(), s, src.open, now, false, storeLock(s)); err != nil {
 		t.Fatal(err)
 	}
 	if got := s.loadEnergy(); len(got.Edges) != 3 || !got.PmsetAt.Equal(now) {
 		t.Fatalf("import: %+v", got)
 	}
-	_ = energyImport(context.Background(), s, src.open, now.Add(time.Hour), false)
+	_ = energyImport(context.Background(), s, src.open, now.Add(time.Hour), false, storeLock(s))
 	if src.n != 1 {
 		t.Errorf("imported again within a day: %d reads", src.n)
 	}
 	// A failure is an attempt too (no retry every minute), and forced runs ignore the day.
 	bad := &fakeLog{err: errors.New("no pmset")}
-	if err := energyImport(context.Background(), s, bad.open, now.Add(25*time.Hour), false); err == nil {
+	if err := energyImport(context.Background(), s, bad.open, now.Add(25*time.Hour), false, storeLock(s)); err == nil {
 		t.Error("error not returned")
 	}
 	if got := s.loadEnergy(); !got.PmsetAt.Equal(now.Add(25 * time.Hour)) {
 		t.Errorf("failed attempt not recorded: %v", got.PmsetAt)
 	}
-	if err := energyImport(context.Background(), s, src.open, now.Add(25*time.Hour+time.Minute), true); err != nil || src.n != 2 {
+	if err := energyImport(context.Background(), s, src.open, now.Add(25*time.Hour+time.Minute), true, storeLock(s)); err != nil || src.n != 2 {
 		t.Errorf("forced import: %v, %d reads", err, src.n)
+	}
+}
+
+// The tick holds the (non-re-entrant) store lock for its whole run: the import must merge under it
+// with heldLock, where taking the lock again would fail and lose the day's import.
+func TestEnergyImportUnderTickLock(t *testing.T) {
+	s := Store{Dir: t.TempDir()}
+	unlock, err := s.Lock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer unlock()
+	src := &fakeLog{body: "2026-11-17 22:41:53 +0800 Assertions \tSummary- Using Batt(Charge: 73)\n"}
+	now := time.Date(2026, 11, 18, 2, 0, 0, 0, time.UTC)
+	if err := energyImport(context.Background(), s, src.open, now, false, storeLock(s)); err == nil {
+		t.Fatal("taking the held lock again should fail (that is why the tick passes heldLock)")
+	}
+	if err := energyImport(context.Background(), s, src.open, now, true, heldLock); err != nil {
+		t.Fatal(err)
+	}
+	if got := s.loadEnergy(); len(got.Edges) != 1 || !got.PmsetAt.Equal(now) {
+		t.Errorf("import under the tick's lock: %+v", got)
 	}
 }
 

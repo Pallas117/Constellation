@@ -300,9 +300,17 @@ func pmsetLog(ctx context.Context) (io.ReadCloser, error) {
 	return cmdReader{out, cmd}, nil
 }
 
+// lockFn runs f under the store lock. The store lock is not re-entrant (an O_EXCL file), so a
+// caller that already holds it (the tick holds it throughout) passes heldLock.
+type lockFn func(f func()) error
+
+func heldLock(f func()) error { f(); return nil }
+
+func storeLock(s Store) lockFn { return func(f func()) error { return withLock(s, f) } }
+
 // energyImport merges the OS power log into the edges, at most once per pmsetImportEvery unless
-// forced. A failed read still counts as the day's attempt.
-func energyImport(ctx context.Context, s Store, open powerLogFn, now time.Time, force bool) error {
+// forced. A failed read still counts as the day's attempt. lock guards the read-merge-save.
+func energyImport(ctx context.Context, s Store, open powerLogFn, now time.Time, force bool, lock lockFn) error {
 	if st := s.loadEnergy(); !force && !st.PmsetAt.IsZero() && now.Sub(st.PmsetAt) >= 0 && now.Sub(st.PmsetAt) < pmsetImportEvery {
 		return nil
 	}
@@ -314,7 +322,7 @@ func energyImport(ctx context.Context, s Store, open powerLogFn, now time.Time, 
 			err = cerr
 		}
 	}
-	lerr := withLock(s, func() {
+	lerr := lock(func() {
 		st := s.loadEnergy()
 		st.PmsetAt = now
 		if err == nil {
@@ -905,7 +913,7 @@ func energyCmd(ctx context.Context, args []string, s Store, cur Sample, planFile
 		if open == nil {
 			return errors.New("argo energy import: no power log on this system")
 		}
-		if err := energyImport(ctx, s, open, now, true); err != nil {
+		if err := energyImport(ctx, s, open, now, true, storeLock(s)); err != nil {
 			return err
 		}
 		st := s.loadEnergy()
