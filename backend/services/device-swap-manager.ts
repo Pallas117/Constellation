@@ -147,3 +147,12 @@ export function rebalanceDeviceNetwork(request: SwapRequest = {}): { plan: Retur
   void bedrock.appendTelemetry({ type: "swap-rebalance", request, plan, timestamp: new Date().toISOString() });
   return { plan, message };
 }
+
+/**
+ * One tick of the boot-time rebalance timer (backend/server.ts, every SWAP_BALANCE_INTERVAL_MS, 45 s).
+ * With no device registered there is nothing to rebalance, and a tick would still append two telemetry
+ * lines (~3,840 a day) to the line-capped live file, so it does nothing (GAU-228). null = skipped.
+ */
+export function scheduledRebalance(): ReturnType<typeof rebalanceDeviceNetwork> | null {
+  return listDevices().length > 0 ? rebalanceDeviceNetwork() : null;
+}

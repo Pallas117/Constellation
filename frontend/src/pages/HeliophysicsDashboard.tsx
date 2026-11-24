@@ -17,6 +17,7 @@ import type { LayerVisibility } from "@/components/types";
 import type { RadiationDataPoint } from "@/lib/types/radiation";
 import mockSolarStormData from "@/data/mock_solar_storm.json";
 import { beltVisuals, liveDrivers, standoffIfReference } from "@/lib/physics/live-drivers";
+import { SIMULATED_STORM_TEXT } from "@/lib/physics/storm-narration";
 import { useNow } from "@/hooks/useNow";
 import { useDocumentTitle } from "@/hooks/useDocumentTitle";
 import { CHECK_LABEL, checkStatus, hudTone, scaleStatus } from "@/lib/readout-status";
@@ -32,8 +33,8 @@ const bzTone = (bz: number | undefined): Tone =>
   bz === undefined ? "default" : bz <= -10 ? "risk" : bz < 0 ? "caution" : "default";
 const pdynTone = (p: number | undefined): Tone =>
   p === undefined ? "default" : p >= 8 ? "risk" : p >= 4 ? "caution" : "default";
-const kpTone = (kp: number | undefined): Tone =>
-  kp === undefined ? "default" : kp >= 7 ? "risk" : kp >= 5 ? "caution" : "default";
+const kpTone = (kp: number | null | undefined): Tone =>
+  kp == null ? "default" : kp >= 7 ? "risk" : kp >= 5 ? "caution" : "default";
 const utc = (t: string | number) => new Date(t).toISOString().slice(11, 16);
 /** "18 Oct 17:24" (UTC): alerts span a day, so the time alone is ambiguous. */
 const dayUtc = (t: string) => `${new Date(t).toLocaleDateString("en-GB", { day: "numeric", month: "short", timeZone: "UTC" })} ${utc(t)}`;
@@ -145,7 +146,9 @@ const HeliophysicsDashboard = () => {
       ? "NOAA's running estimate for the current 3-hour interval, updated each minute."
       : live.kp?.kind === "planetary-3h"
         ? "The last completed 3-hour interval: this interval's running estimate is lower so far."
-        : "";
+        : drivers && kpValue === null
+          ? "No Kp reading from any source: unknown, so no auroral oval is drawn."
+          : "";
   const geoLine =
     geoExposed === null
       ? "GEO exposure unknown"
@@ -158,8 +161,6 @@ const HeliophysicsDashboard = () => {
   const toggleStorm = () => {
     const next = !simulateStorm;
     setSimulateStorm(next);
-    // The RAG panel listens for this to narrate the scenario.
-    window.dispatchEvent(new CustomEvent("simulate-g4-storm", { detail: next }));
   };
 
   const chooseView = (v: SceneView) => {
@@ -300,6 +301,12 @@ const HeliophysicsDashboard = () => {
                   <SheetTitle>How far out the shield stands</SheetTitle>
                   <SheetDescription>{geoLine}.</SheetDescription>
                 </SheetHeader>
+                {simulateStorm && (
+                  <section aria-label="Simulated scenario" className="mt-4 rounded-md border border-caution/50 bg-caution/10 p-3">
+                    <p className="brand-label text-caution">Simulated scenario</p>
+                    <p className="mt-1 whitespace-pre-wrap text-sm leading-relaxed text-foreground">{SIMULATED_STORM_TEXT}</p>
+                  </section>
+                )}
                 <dl className="mt-4">
                   <Readout label="Magnetopause standoff" value={fmt(fieldModel?.r0)} unit="RE" tone={geoExposed ? "risk" : "default"} />
                   {r0Range && (
@@ -311,7 +318,7 @@ const HeliophysicsDashboard = () => {
                     />
                   )}
                   <Readout label="Bow shock nose" value={fmt(fieldModel?.bowShock)} unit="RE" />
-                  <Readout label="Aurora equatorward edge" value={fmt(fieldModel?.oval.equatorward, 0)} unit="° MLAT" />
+                  <Readout label="Aurora equatorward edge" value={fmt(fieldModel?.oval?.equatorward, 0)} unit="° MLAT" />
                   <Readout label="Dipole tilt" value={signed(tiltDeg)} unit="°" hint="Toward the Sun, from the UTC clock" />
                   <Readout label="Field lines open to the solar wind" value={openPct} unit="%" />
                 </dl>
@@ -416,10 +423,13 @@ const HeliophysicsDashboard = () => {
                     hint={densityNote ?? undefined}
                   />
                   <Readout label="Measured" value={next?.observedAt ? `${utc(next.observedAt)} UTC` : "—"} hint={latest?.spacecraft} />
-                  <Readout label="Reaches Earth" value={etaUtc ? `≈ ${etaUtc} UTC` : "—"} hint={`~${travelMin} min at this speed`} />
+                  <Readout label="Reaches Earth" value={etaUtc ? `≈ ${etaUtc} UTC` : "—"} hint={travelMin === "—" ? undefined : `~${travelMin} min at this speed`} />
                   <Readout
                     label="MMS reconnection confidence"
                     value={mms.latest?.quality.confidence != null ? String(mms.latest.quality.confidence) : "—"}
+                    // Say why it's empty instead of a bare dash: feed failing, sign-in needed, or no data yet.
+                    hint={mms.error ?? (mms.status === "waiting" ? "Waiting for the MMS feed" : !mms.latest ? "No MMS data yet" : undefined)}
+                    tone={mms.error ? "caution" : "default"}
                   />
                 </dl>
 
@@ -474,7 +484,7 @@ const HeliophysicsDashboard = () => {
               <HudStat
                 className="hidden sm:block"
                 label="Aurora edge"
-                value={fmt(fieldModel?.oval.equatorward, 0)}
+                value={fmt(fieldModel?.oval?.equatorward, 0)}
                 unit="° MLAT"
                 detail="Equatorward edge of the auroral oval, from Kp."
               />

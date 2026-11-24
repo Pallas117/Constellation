@@ -3,32 +3,49 @@
  *
  * GitHub Actions is billing-locked, so this is the gate a commit must pass before merge or deploy:
  *   1. baseline is well-formed (requirements/requirements.json)
- *   2. full test suite, with a JUnit report
- *   3. production build
- *   4. VCRM: every requirement verified (no failing, skipped or missing evidence)
- * Writes test-results/verification/{junit.xml,vcrm.json,vcrm.md}. Exits non-zero on any failure.
+ *   2. website tests (the lightbound.uk site and its worker; GAU-228), with a JUnit report for the matrix
+ *   3. full test suite, with a JUnit report
+ *   4. ops tests (scripts/ops/gauss-services.test.sh), with their own JUnit report (GAU-163)
+ *   5. production build
+ *   6. Argo Go tests (tools/argo, short mode, JSON) feed the VCRM too (FMEA FM-20)
+ *   7. VCRM: every requirement verified (no failing, skipped or missing evidence), by exact test
+ *      name across all reports
+ * Writes test-results/verification/{junit.xml,ops-junit.xml,ui-junit.xml,website-junit.xml,argo-go-test.json,vcrm.json,vcrm.md}
+ * and the computed readiness score (readiness.json, readiness.md; report only). Exits non-zero on any failure.
  *
  *   npm run verify               full gate
  *   npm run verify -- --no-build skip the build (faster while iterating)
  */
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import {
   buildFmea,
   buildMatrix,
   HIGH_RESIDUAL_RISK,
+  mergeOutcomes,
+  parseGoTestJson,
   parseJunit,
   renderFmeaMarkdown,
   renderMarkdown,
   validateBaseline,
   type Baseline,
   type FmeaRow,
+  type TestOutcome,
 } from "./vcrm.ts";
+import { writeReadiness } from "./readiness-io.ts";
 
 const root = path.resolve(import.meta.dirname, "../..");
 const outDir = path.join(root, "test-results", "verification");
 const junitPath = path.join(outDir, "junit.xml");
+const opsJunitPath = path.join(outDir, "ops-junit.xml");
+// Written by `npm run test:ui:gate` (a gate of its own, run before verify). Not removed here: a report
+// younger than UI_REPORT_MAX_MS stands in for the run; an older one (a stale local file) is rerun below.
+const uiJunitPath = path.join(outDir, "ui-junit.xml");
+const UI_REPORT_MAX_MS = 2 * 60 * 60 * 1000;
+const vpsJunitPath = path.join(outDir, "vps-junit.xml");
+const websiteJunitPath = path.join(outDir, "website-junit.xml");
+const argoJsonPath = path.join(outDir, "argo-go-test.json");
 const skipBuild = process.argv.includes("--no-build");
 
 function step(name: string, cmd: string, args: string[], extraEnv: Record<string, string> = {}): boolean {
@@ -40,6 +57,8 @@ function step(name: string, cmd: string, args: string[], extraEnv: Record<string
 }
 
 mkdirSync(outDir, { recursive: true });
+// A report left by an earlier run must never stand in for a run that died before writing one.
+for (const p of [junitPath, opsJunitPath, vpsJunitPath, websiteJunitPath, argoJsonPath]) rmSync(p, { force: true });
 const baseline = JSON.parse(readFileSync(path.join(root, "requirements/requirements.json"), "utf8")) as Baseline;
 const results: Record<string, boolean> = {};
 
@@ -57,6 +76,17 @@ const testEnv = Object.fromEntries(
 );
 if (Object.keys(testEnv).length) console.log(`  using npm test environment: ${Object.entries(testEnv).map(([k, v]) => `${k}=${v}`).join(" ")}`);
 
+// The website's own suite (~4 s): the same two files as `npm run test:website` (package.json), with a
+// JUnit report so its tests count in the VCRM by exact name (REQ-WEB). It must run before the main
+// suite: the gate record (scripts/ops/gauss-services.sh, gates_record) takes the last
+// "tests/pass/fail N" lines of this log as the main suite's counts.
+results.website = step("Website tests", process.execPath, [
+  "--test",
+  "--test-reporter=spec", "--test-reporter-destination=stdout",
+  "--test-reporter=junit", `--test-reporter-destination=${websiteJunitPath}`,
+  "website/test/site.test.mjs", "website/test/worker.test.mjs",
+]);
+
 // Same globs as `npm test`, plus a JUnit report for the matrix.
 results.tests = step("Test suite", process.execPath, [
   "--import", "tsx", "--import", "./backend/test-setup.ts", "--test",
@@ -65,16 +95,46 @@ results.tests = step("Test suite", process.execPath, [
   "backend/**/*.test.ts", "frontend/src/lib/**/*.test.ts",
 ], testEnv);
 
+// Ops behaviour (watchdog, failover, dev isolation; REQ-OPS-004..007, FMEA FM-20..24). Hermetic:
+// launchctl, curl, pmset and friends are stubbed and HOME is a temp dir. macOS only (plutil).
+results.opsTests = step("Ops tests (bash)", "bash", ["scripts/ops/gauss-services.test.sh"], { GAUSS_OPS_JUNIT: opsJunitPath });
+// VPS kit (REQ-OPS-011): dry runs and text checks only, so it is hermetic on any host.
+results.vpsKitTests = step("VPS kit tests (bash)", "bash", ["scripts/ops/vps/vps-kit.test.sh"], { GAUSS_OPS_JUNIT: vpsJunitPath });
+
+// Argo's Go suite (tools/argo, standard library only), short mode as `ARGO_SHORT=1 tools/argo/check.sh`
+// runs it, with JSON output so its tests count in the VCRM by Go test name (FMEA FM-20). A failing
+// test fails this step and shows as "fail" in the matrix. Needs the Go toolchain.
+console.log("\n▶ Argo Go tests (JSON, short mode)");
+{
+  const goRun = spawnSync("go", ["test", "-json", "-short", "-count=1", "./..."], {
+    cwd: path.join(root, "tools/argo"), encoding: "utf8", maxBuffer: 256 * 1024 * 1024,
+  });
+  writeFileSync(argoJsonPath, goRun.stdout ?? "");
+  results.argoTests = goRun.status === 0;
+  console.log(results.argoTests ? "✔ Argo Go tests" : `✖ Argo Go tests (exit ${goRun.status}${goRun.error ? `: ${goRun.error.message}` : ""})`);
+}
+
 results.build = skipBuild ? true : step("Production build", "npm", ["run", "build", "--silent"]);
 
+// UI tests (hermetic Playwright subset; REQ-UI-*): run now only if the gate did not just do it.
+const uiFresh = existsSync(uiJunitPath) && Date.now() - statSync(uiJunitPath).mtimeMs < UI_REPORT_MAX_MS;
+results.uiTests = uiFresh || step("UI tests (Playwright)", "npm", ["run", "test:ui:gate", "--silent"]);
+
 const commit = spawnSync("git", ["rev-parse", "--short", "HEAD"], { cwd: root, encoding: "utf8" }).stdout.trim() || "unknown";
-const outcomes = existsSync(junitPath) ? parseJunit(readFileSync(junitPath, "utf8")) : new Map();
+const readJunit = (p: string): Map<string, TestOutcome> => (existsSync(p) ? parseJunit(readFileSync(p, "utf8")) : new Map());
+const outcomes = mergeOutcomes(
+  readJunit(junitPath),
+  readJunit(opsJunitPath),
+  readJunit(uiJunitPath),
+  readJunit(vpsJunitPath),
+  readJunit(websiteJunitPath),
+  existsSync(argoJsonPath) ? parseGoTestJson(readFileSync(argoJsonPath, "utf8")) : new Map(),
+);
 const rows = buildMatrix(baseline, outcomes, (p) => existsSync(path.join(root, p)));
 const meta = { version: baseline.version, commit, generatedAt: new Date().toISOString() };
 const fmeaPath = path.join(root, "requirements/fmea.json");
-const fmea = existsSync(fmeaPath)
-  ? buildFmea((JSON.parse(readFileSync(fmeaPath, "utf8")) as { rows: FmeaRow[] }).rows, outcomes)
-  : [];
+const fmeaRows = existsSync(fmeaPath) ? (JSON.parse(readFileSync(fmeaPath, "utf8")) as { rows: FmeaRow[] }).rows : [];
+const fmea = buildFmea(fmeaRows, outcomes);
 writeFileSync(path.join(outDir, "vcrm.json"), JSON.stringify({ ...meta, rows, fmea }, null, 2) + "\n");
 writeFileSync(path.join(outDir, "vcrm.md"), renderMarkdown(rows, meta) + (fmea.length ? renderFmeaMarkdown(fmea) : ""));
 const verified = rows.filter((r) => r.status === "verified").length;
@@ -92,6 +152,10 @@ if (fmea.length) {
   // Broken evidence fails the gate; open gaps and high residual risk are reported, not blocking.
   results.fmea = fmea.every((r) => r.status !== "broken");
 }
+
+// Implementation readiness (computed from the evidence above; report only, never fails the gate).
+const readinessLine = writeReadiness({ root, outDir, baseline, outcomes, fmea: fmeaRows, meta });
+if (readinessLine) console.log(`\n▶ ${readinessLine} (test-results/verification/readiness.md)`);
 
 const failed = Object.entries(results).filter(([, ok]) => !ok).map(([k]) => k);
 console.log(failed.length === 0

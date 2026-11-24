@@ -37,11 +37,14 @@ export interface RowResult {
 
 const ENTITIES: Record<string, string> = { "&quot;": '"', "&apos;": "'", "&lt;": "<", "&gt;": ">", "&amp;": "&" };
 const unescapeXml = (s: string) => s.replace(/&(quot|apos|lt|gt|amp);/g, (m) => ENTITIES[m]);
+const rank: Record<TestOutcome, number> = { pass: 0, skipped: 1, fail: 2 };
 
-/** Test outcomes by name from a Node test-runner JUnit report. A name seen more than once keeps its worst outcome. */
+/**
+ * Test outcomes by name from a JUnit report: Node's test runner, or the bash ops tests
+ * (scripts/ops/junit.sh). A name seen more than once keeps its worst outcome.
+ */
 export function parseJunit(xml: string): Map<string, TestOutcome> {
   const out = new Map<string, TestOutcome>();
-  const rank: Record<TestOutcome, number> = { pass: 0, skipped: 1, fail: 2 };
   // Node's reporter leaves ">" unescaped inside attribute values (e.g. "L1 -> Earth"), so read
   // attributes as quoted strings instead of stopping at the first ">".
   const re = /<testcase\b((?:[^>"]|"[^"]*")*?)(\/>|>([\s\S]*?)<\/testcase>)/g;
@@ -53,6 +56,42 @@ export function parseJunit(xml: string): Map<string, TestOutcome> {
     const key = unescapeXml(name);
     const prev = out.get(key);
     if (!prev || rank[outcome] > rank[prev]) out.set(key, outcome);
+  }
+  return out;
+}
+
+/**
+ * Test outcomes by Go test name from `go test -json` output (tools/argo). Lines that are not JSON
+ * (build chatter) are ignored; only per-test pass/fail/skip events count, so package events and
+ * output lines never become outcomes. A name seen twice (a rerun) keeps its worst outcome.
+ */
+export function parseGoTestJson(text: string): Map<string, TestOutcome> {
+  const out = new Map<string, TestOutcome>();
+  const actions: Record<string, TestOutcome> = { pass: "pass", fail: "fail", skip: "skipped" };
+  for (const line of text.split("\n")) {
+    if (!line.startsWith("{")) continue;
+    let ev: { Action?: string; Test?: string };
+    try {
+      ev = JSON.parse(line) as { Action?: string; Test?: string };
+    } catch {
+      continue;
+    }
+    const outcome = ev.Action ? actions[ev.Action] : undefined;
+    if (!ev.Test || !outcome) continue;
+    const prev = out.get(ev.Test);
+    if (!prev || rank[outcome] > rank[prev]) out.set(ev.Test, outcome);
+  }
+  return out;
+}
+
+/** Outcomes from several reports (node's, the bash ops tests'): a name in more than one keeps its worst outcome. */
+export function mergeOutcomes(...reports: Map<string, TestOutcome>[]): Map<string, TestOutcome> {
+  const out = new Map<string, TestOutcome>();
+  for (const report of reports) {
+    for (const [name, outcome] of report) {
+      const prev = out.get(name);
+      if (!prev || rank[outcome] > rank[prev]) out.set(name, outcome);
+    }
   }
   return out;
 }
@@ -194,7 +233,7 @@ export function renderFmeaMarkdown(rows: FmeaResult[]): string {
   const icon = { mitigated: "✅", gap: "⚠️", broken: "❌" } as const;
   const lines = [
     "",
-    "## FMEA (ingest pipeline)",
+    "## FMEA (ingest pipeline and operations)",
     "",
     `${rows.filter((r) => r.status === "mitigated").length}/${rows.length} failure modes mitigated with passing evidence; ` +
       `${rows.filter((r) => r.status === "gap").length} open gaps; ` +

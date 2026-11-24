@@ -1,5 +1,6 @@
 import { vec } from "../physics/coordinates.js";
 import type { DataSource, SourceStatus } from "../types.js";
+import { freshnessMs } from "../../shared/policy/freshness.js";
 
 const SOURCE: DataSource = "esa-hapi";
 const HAPI_BASE = "https://vires.services/hapi";
@@ -122,7 +123,7 @@ export function parseNecRow(row: unknown): { timestamp: string; n: number; e: nu
 }
 
 /** Swarm FAST runs hours behind; a newest sample older than this is not current (GAU-63). */
-export const ESA_MAX_AGE_MS = 24 * 3_600_000;
+export const ESA_MAX_AGE_MS = freshnessMs("esa_swarm_hapi");
 
 export async function fetchEsaReadout(nowMs = Date.now()): Promise<ESAReadout | null> {
   try {

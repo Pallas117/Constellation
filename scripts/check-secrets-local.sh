@@ -48,6 +48,19 @@ fi
 # check (offline, provider error). --fail: exit 183 when it reports any.
 "$TH" filesystem --results=verified,unknown --fail --no-update "${files[@]}"
 rc=$?
+
+# PEM private keys (GAU-67): TruffleHog reports a key only when it can check it somewhere, so also look for a
+# PEM private-key header followed by key material. A header alone (a redaction test string) is not a key.
+# The pattern is written with -{5}, so this line never matches itself.
+pem=()
+while IFS= read -r f; do
+  grep -A1 -E -- 'PRIVATE KEY-{5}' "$f" 2>/dev/null | grep -qE '^[A-Za-z0-9+/=]{40,}$' && pem+=("$f")
+done < <(grep -l -E -- 'PRIVATE KEY-{5}' "${files[@]}" 2>/dev/null)
+if [ ${#pem[@]} -gt 0 ]; then
+  printf '❌ PEM private key in: %s\n' "${pem[@]}" >&2
+  echo "   Remove it, rotate the key, and tell Josh before pushing." >&2
+  exit 1
+fi
 case $rc in
   0) echo "✅ No secrets found in ${#files[@]} file(s) ($version)" ;;
   183) echo "❌ Secrets found (above). Remove them, rotate any real one, and tell Josh before pushing." >&2; exit 1 ;;

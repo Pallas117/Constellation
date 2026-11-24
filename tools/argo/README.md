@@ -1,5 +1,7 @@
 # Argo
 
+**Purpose.** Argo is for resilient remote working from anywhere. It names what is wrong with a network, applies only the least invasive automatic fix and never an administrator action, and carries work as store-and-forward bundles (Bundle Protocol v7, RFC 9171, with BPSec layouts from RFC 9172 and RFC 9173) so that a file sent during an outage is delivered later with a receipt. It is designed for delay- and disruption-tolerant operation: it does not depend on continuous connectivity, it uses only the Go standard library so it stays small and auditable, and its queues, retries and resource use are bounded. These are design properties only; they make no claim about any standard or approval. Its requirements are in `requirements/requirements.json` (REQ-ARG-001 to REQ-ARG-028).
+
 Argo keeps Claude Code (terminal, desktop app, background agents) connected on phone hotspots and public Wi-Fi.
 It runs as **your** LaunchAgent (never root). It works out what is wrong, applies the least invasive fix,
 checks the fix worked, and remembers what worked on each network. It can also report a short status to the
@@ -29,15 +31,52 @@ Optional extras:
   Argo sends an iMessage from this Mac's Messages app to your own handle, so no app or token is needed.
   macOS asks once to let Argo control Messages. Messages carry only the masked title and reason. Alerts
   raised while offline are queued (up to 20) and sent on the next tick with internet. `argo phone off`
-  turns them off. An iMessage to your own number arrives without a banner; for alerts you'll notice, set
-  `"phone_service": "sms"` in `~/.config/argo/config.json` (SMS first via Text Message Forwarding, then
-  iMessage). The background agent needs its own Automation → Messages permission: after every rebuild of the
+  turns them off. An iMessage to your own number arrives without a banner; for alerts you'll notice, run
+  `argo phone sms` (SMS first via Text Message Forwarding, then iMessage). SMS is carried by your mobile
+  carrier unencrypted; `argo phone imessage` goes back to iMessage first, end-to-end encrypted by Apple.
+  Messages accepts an SMS before the iPhone sends it, so Argo reads back that one message's
+  status (error and sent flags only, never text) for up to 20 s and resends a "Not Delivered" SMS over
+  iMessage. This needs Full Disk Access for `~/.local/bin/argo`; `argo phone test` says whether the check is
+  on. Without it, alerts behave as before. The background agent needs its own Automation → Messages permission: after every rebuild of the
   ad-hoc-signed binary, macOS asks again on the first background send, and sends time out after 30 s until
   someone clicks Allow.
 - **Alerts from other tools.** `argo notify [-key K -every 30m] TITLE MESSAGE` sends through the same
+- **Attention policy.** Every text passes one gate, whichever watcher raised it. Urgent alerts (`-level urgent`, or
+  "critical" in the title or key) text at once. Warnings text unless it is quiet hours (default 23:00-07:00; set
+  `"quiet_hours": "23:00-07:00,09:00-12:30"` or `"off"` in config.json), the same topic texted in the last 30 min
+  (2 h for power, memory and disk, which several watchers report), or 4 texts already went out this hour. Recoveries
+  never text by themselves. Whatever is held is never dropped: it arrives as one "Argo digest" when quiet hours end,
+  or 3 h after the first held alert. `argo attention replay` shows what the policy would have done with the texts
+  already sent.
+- **Fallback handle.** `argo phone fallback you@icloud.com` (best an Apple ID email) gets an alert by iMessage
+  whenever sending to the main handle fails, for example while the SIM is expired; `argo phone fallback off`
+  removes it. It catches failures Messages reports at once. An SMS that Messages accepts and the iPhone fails
+  later is only caught by the delivery check (Full Disk Access for `~/.local/bin/argo`).
+- **Charger diagnosis.** Argo reads what the charger negotiated (macOS: `ioreg` AdapterDetails; Linux: `/sys/class/power_supply`)
+  and says why power is short: `no-pd` (5 V or less and at most 15 W: plain USB, no USB-C Power Delivery; use a USB-C to
+  USB-C cable with a fast charger), `pd-low` (Power Delivery, but fewer watts than a heavy job needs) or `ok`. A host that
+  reports no negotiation is unknown, never guessed. The state is in `argo status` (`charger:no-pd 5V/8W`), `argo guard`
+  and the Gauss report (`battery.charger`, shown on /mesh).
+- **Power-save mode** (`powersave.go`). On battery, on a charger that can't carry the load, or on plain 5 V USB, Argo
+  enters power-save at once and leaves after 10 healthy minutes. While on it holds heavy work (guard reason
+  `power-save`, with the charger advice), runs its probes, guard sampling and mesh reports 3x slower (a broken link still
+  probes and reports at once), quits an allowlisted menu-bar app only when it is idle by its own state (Cloudflare WARP's
+  app when `warp-cli status` says Disconnected; the daemon stays) and relaunches it afterwards, and texts once per 6 h.
+  Settings that need admin rights are only suggested, with the exact command, in `argo doctor` and `argo power-save status`
+  (`sudo pmset -b powernap 0`, `sudo pmset -b displaysleep 2`, `sudo pmset -a lowpowermode 1`; Linux: `powerprofilesctl`,
+  `tlp`); Argo never runs them. `argo power-save on|off|auto|status` forces, releases or shows the mode. The state is in
+  the Gauss report (`powerSave`, shown on /mesh for staff and above).
+- **Texts that fail are not silent.** If Messages stops accepting texts (for example after a rebuild, until Allow is
+  clicked), `argo status` says since when and how many are waiting or lost, a desktop banner appears after 10 min,
+  and the first text after recovery says how many alerts were lost.
   channel, mask and offline queue, at most once per interval per key. The gauss-awake battery guard
   uses it (battery low, at the sleep floor, charger can't keep up, no cutoff configured), as do
   mesh-heal and Claude Code `Notification` hooks.
+- **What left this Mac.** `argo egress` lists every text Argo sent in the last 7 days (time, masked
+  recipient, size, the masked text, and who carries it) and how much went to your own network (the Gauss
+  report, relay bundles to the hub; both refused unless the URL is this Mac or the tailnet). The log stays on
+  this Mac (`egress.jsonl`, `0600`, rolls over at 512 KB; daily counters in `egress-own.json`, 14 days).
+  `argo egress off` holds third-party sends: texts wait in the local queue (newest 20) until `argo egress on`.
 - **Claude Code status line.** In `~/.claude/settings.json`:
   `"statusLine": {"type": "command", "command": "argo status"}`.
   It reads the cached state only, so it never probes the network and is instant.
@@ -52,7 +91,7 @@ Optional extras:
 
 ```bash
 launchctl bootout gui/$(id -u)/uk.lightbound.argo
-argo uninstall       # removes the plist, ~/.local/state/argo and ~/.config/argo
+argo uninstall       # removes the plist, ~/.local/state/argo and ~/.config/argo (incl. thirdparty.json)
 rm ~/.local/bin/argo
 ```
 
@@ -64,21 +103,31 @@ Then remove the `statusLine` and `claude()` lines above if you added them, and r
 |---|---|
 | `argo status` | One line, e.g. `● OK MY ts:on` or `▲ REGION HK ts:on` |
 | `argo doctor` | Full probe snapshot (secrets masked), the class, and what to do. Changes nothing. |
+| `argo private-dns [status\|profile] [--provider quad9\|cloudflare\|google] [--out FILE]` | Is DNS private on this device, and which encrypted resolver is nearest from this network (DoH round trip, by address)? `profile` writes a DNS-over-HTTPS profile you approve once (Mac, iPhone; Linux gets systemd-resolved text). Never installs anything. |
+| `argo reach [--json] [host[:port] ...]` | Can this network reach these hosts? Per host: `ok`, `dns`, `blocked` (resolves, no TCP answer), `tls_failed`, `tls_untrusted` or `uplink_down`, with what helps. Defaults: Claude's API, SWPC, NASA GSFC iSWA and CDAWeb (`ARGO_REACH_HOSTS` replaces them). Remembers blocked hosts per network; exit 2 when any host is unreachable. |
 | `argo fix` | Runs the loop once in the foreground |
 | `argo report` | Incident counts by class, how many needed a fix and were fixed, how many resolved on their own, last 10 events |
-| `argo phone <handle>\|test\|off` | Set up, test or turn off iMessage alerts to your iPhone |
-| `argo notify [-key K -every D] TITLE MSG` | Send an alert to your iPhone (masked, queued offline, rate-limited per key) |
+| `argo phone <handle>\|test\|off\|imessage\|sms` | Set up, test or turn off alerts to your iPhone; choose iMessage first (end-to-end encrypted) or SMS first (banner on your own number, carried by your carrier) |
+| `argo egress [off\|on]` | What Argo sent off this Mac and where (log kept on this Mac); `off` holds third-party sends locally until `on` |
+| `argo notify [-key K -every D] [-level urgent\|warn\|info] TITLE MSG` | Send an alert to your iPhone (masked, queued offline, rate-limited per key, then the attention policy) |
+| `argo attention [replay]` | Show the attention policy and what is held for the digest; `replay` runs the sent-texts log through it |
 | `argo watch` | Run the peer watchdog once (also every tick): restarts the gauss-awake guard or mesh-heal when their heartbeat is stale, max 3 restarts/hour each, then alerts. Override the list with `"watch"` in config.json |
 | `argo devices` | Which watched tailnet devices are offline. Every tick, a phone of yours that has been off the tailnet for 30 min or more gets a text (SMS over its own cellular link) with the fix: open Tailscale, turn on Connect On Demand. At most every 6 h per device. Override the list with `"devices": ["hostname", ...]` in config.json |
 | `argo guard` | Resource guard (below): memory, battery, disk and CPU now and over the last 24 h, who uses memory, what to do. `--json` for scripts |
-| `argo guard admit [-mem GB] [-wait 10m]` | Exit 0 if a job needing GB may start now, 75 (with the reason) if not |
-| `argo guard run [-mem GB] [-max GB] [-wait 10m] -- cmd` | Runs `cmd` only when admitted, and stops its whole process group if the host reaches **block** or the job holds more than `-max` GB. Exit 75 when refused or stopped, otherwise `cmd`'s own code |
+| `argo guard admit [-mem GB] [-name JOB] [-wait 10m]` | Exit 0 if a job needing GB may start now, 75 (with the reason) if not. With `-name`, what that job measured replaces `-mem` (below) |
+| `argo guard run [-mem GB] [-max GB] [-name JOB] [-wait 10m] -- cmd` | Runs `cmd` only when admitted, and stops its whole process group if the host reaches **block** or the job holds more than `-max` GB. Measures the job's peak and passes `ARGO_WORKERS` (below). A job that started on AC is paused (SIGSTOP) while the Mac runs on battery and resumed when power returns ("eclipse mode"); paused for 2 h, it is stopped with exit 75 so a queue retries it. Exit 75 when refused or stopped, otherwise `cmd`'s own code |
+| `argo heal [--json]` | Self-healing log: blockers open now with the remedy the library chose for each (`live` = Argo does it, `shadow` = chosen and logged but not run, `person` = needs you), then how long each kind of blocker lasted over 7 days (below) |
+| `argo scale [--json]` | Measured demand this host could not serve over 7 days: per job runs, failures, run and lost (waiting or paused) hours, p90 peak, GB·h, watts, and whether it is `local`, `burst` (a remote runner would return its lost time) or `remote` (needs more RAM than this host has). Sizes the smallest outside runner and lists what is not measured |
 | `argo send [-ttl 72h] DEVICE FILE` | Queue a file for another enrolled device (below): signed, encrypted to that device, kept until it confirms. Works offline |
 | `argo outbox` / `argo inbox` | What you sent and how far it got (queued, at hub, picked up, confirmed); what you received and where it was saved |
 | `argo sync` | Forward and fetch now (every tick does this too) |
 | `argo keys [list\|publish\|trust DEVICE]` | This device's key fingerprint; devices you trust and theirs; accept a device's new key after checking it |
 | `argo mule export\|import DIR` | Carry bundles on a drive to or from a device with no network |
 | `argo link` | Link stability: availability, drops and recovery times over 24 h and 7 days |
+| `argo thirdparty [list\|check\|accept] [-json]` | Third parties (below): every outside service as a node with what it can see, its scopes, where its credential lives and where to revoke it. `check` exits 3 when a node is new, changed, removed, unregistered or can see local-class data |
+| `argo thirdparty seen [TOOL]` | Credits one use of a tool (or a Claude Code hook's JSON on stdin) to its node, or records the service as unregistered. Always exits 0 |
+| `argo posture [--json]` | Read-only device security checks against the draft baseline (below): disk encryption, firewall, automatic updates, system integrity, tailnet key expiry, Argo version, sharing services. Each is `ok`, `warn`, `fail` or `unknown`, with a one-line fix. Changes nothing |
+| `argo update [check\|apply]` | Signed Argo releases (below). `check` (default) says whether a newer signed release exists; `apply` installs it. Nothing updates by itself, and nothing works until a release key is pinned |
 | `argo off` / `argo on` | Pauses or resumes the LaunchAgent ticks |
 | `argo preflight` | Fast local check for dead proxies and stuck Claude daemons (exit 1 if found) |
 | `argo run -- cmd` | Runs `cmd` with dead proxy variables removed |
@@ -87,7 +136,29 @@ Then remove the `statusLine` and `claude()` lines above if you added them, and r
 
 Wi-Fi security is checked on every probe: WIFI_RISK (a warning, like WPAD_RISK) when the network is open, WEP or WPA1, or when this Mac answers sharing services (Remote Login, File Sharing, Screen Sharing, Remote Management, AirPlay Receiver) on its LAN address. Argo only advises; it never changes System Settings.
 
+**Network watch.** Passive only (the ARP table and this Mac's own TCP connections; nothing is scanned). If another device answers with the router's MAC, or the router's MAC changes while its address and the public IP stay the same, Argo texts "possible ARP spoofing" and treats the network as untrusted for an hour, so the Wi-Fi shield turns WARP on even on WPA2. A device on the local network connected to a sharing service (SSH, SMB, AFP, Screen Sharing, Remote Management, AirPlay) is texted once per device, with its IP and MAC; tailnet and loopback connections don't count. The device count per network is kept in state.
+
+**App data watch.** Passive, every 5 minutes: which apps hold outbound connections (`lsof`) and how much each sent (`nettop`); about 0.1 s of CPU per sample. For the first week it only learns each app's usual destination networks (/24 or /48, never URLs or content), ports and 5-minute upload. Then it texts when an app it has never seen sends data out, a known app reaches 8+ networks it never used in one sample, a non-Apple app uses an unusual port, or an app uploads 50 MB+ and 10x its usual in 5 minutes (each app at most once a day). Kept in `leak.json` beside the state.
+
+**Fixes from the phone.** Texts and Slack only send, so incident texts now end with "Fix from Termius: gauss-phone fix" when a step can run remotely. `argo fix --list` shows the current problem's steps, numbered and marked `run`, `needs sudo at the Mac` or `advice`; `argo fix <step>` runs one, then a tick verifies it. Only `open-portal`, `check-magicdns`, `restart-daemon` and `exit-node` (allow-listed nodes) run this way, each with its fixed command and no shell; the phone reaches the Mac over SSH, so no ports, tokens or services are added.
+
+**Networks in range (GAU-234).** `ArgoWiFi.app` (`tools/argo/wifihelper`, build with `bash tools/argo/wifihelper/build.sh`) scans with CoreWLAN; it is an app bundle so macOS asks once for Location Services, which un-redacts network names. It never joins and never reads passwords. `argo networks` lists what is in range and which networks Argo would join: saved ones, plus open ones only if named in `~/.config/argo/public-wifi.txt` (the Wi-Fi shield then turns WARP on), with a signal of at least -80 dBm, best first. When offline, Argo alternates joining the best one (`networksetup -setairportnetwork <dev> <name>`, the name as its own argument) with a Wi-Fi restart. Names stay in memory: never in state, reports or texts.
+
+**Offline alert through the iPhone (GAU-233).** After 5 minutes with no network, Argo texts once per outage: "Mac offline since HH:MM". It sends the SMS first, so Messages hands it to the iPhone over Continuity (Text Message Forwarding) and needs no internet on the Mac, only the phone's cellular. A send Messages refuses is queued as usual; the incident log records `relay` with whether it was accepted. Needs iPhone Settings > Messages > Text Message Forwarding on for this Mac.
+
+**Dead uplink is not DNS (GAU-247).** When the system lookup and the direct 1.1.1.1 lookup both fail, Argo dials 1.1.1.1, 9.9.9.9 and 8.8.8.8 on port 443 by address (2 s, at once). If none answers, nothing gets out at all: the class is PORT_BLOCK "uplink stalled" and the advice is to switch to the iPhone hotspot, not to flush DNS or try an exit node (which rides the same uplink). On 2026-11-18 the dorm Wi-Fi was dead for 9.6 h and the old build called it DNS 22 times; mesh-heal's IP check failed 306 of 307 times over the same hours. "Usual blip, nothing to do yet" is capped at 30 minutes like the quiet window, so one long outage in a network's history can't silence advice for hours.
+
+**One host unreachable (GAU-247).** Some networks reach the internet but not one host: on 2026-11-18 the dorm network resolved `iswa.gsfc.nasa.gov` and `cdaweb.gsfc.nasa.gov` but TCP 443 and 80 timed out (traceroute died at the exchange), while nasa.gov and SWPC worked. That is not a link class (Claude works), so `argo reach` checks named hosts: DNS, TCP to up to 4 addresses at once, and a TLS handshake with certificates verified. If anything fails it dials the IP anchors once, so a dead uplink is reported as `uplink_down` rather than as per-host blocks. Blocked hosts are kept per network in state (`blocked_hosts`, cleared when the host answers, 32 at most, 30 days). Nothing is changed and nothing is sent to the hub.
+
+**Private DNS (GAU-248).** On judith (18 Nov 2026) every lookup outside the tailnet went in plain text to 1.1.1.1 and 8.8.8.8 over whatever Wi-Fi was joined, so each network could read or change it. `argo private-dns` says whether lookups leave encrypted (Argo's profile, or Tailscale answering everything with DoH-capable tailnet resolvers) and measures Quad9, Cloudflare and Google over DNS-over-HTTPS by address from the current network: three queries each, median, nearest first, Quad9 kept when within 15 ms (privacy tie-break). The pick is remembered per network. `argo private-dns profile` writes an unsigned configuration profile (`com.apple.dnsSettings.managed`, DoH) for it, keeping tailnet and local names on the normal resolver; you open it and approve it in System Settings, or AirDrop it to the iPhone, and remove it there to undo. For the whole tailnet, a tailnet admin adds the resolver as a global nameserver with Override local DNS (Tailscale then uses DoH). There is deliberately no central DNS server for the mesh: on a roaming laptop it would take every device's DNS down when it sleeps. When a network's own DNS fails but IP and encrypted DNS work, the DNS advice starts with the profile. `argo doctor` prints a `dns:` line.
+
+**Rejoin when offline.** With no route for 90 s, Argo turns Wi-Fi on if it is off, otherwise power-cycles it (`networksetup -setairportpower <dev> off`, then `on`) so macOS auto-join picks a known network or the hotspot. It follows the loop's backoff and breaker (4 tries, then every 30 minutes), waits 20 s and re-probes, and remembers per network what worked. While offline it records the radio's state (`wifi_device`, `wifi_power`) so an outage leaves evidence. No other command runs by itself.
+
+**Wi-Fi shield (opt-in since 2026-11-05).** By default Argo never runs `warp-cli`. On open, WEP or WPA1 Wi-Fi (or a network with spoofing signs) it says once per network that Cloudflare WARP would also hide non-team traffic from that network, and that Tailscale already encrypts traffic to the team. Reason: the automatic `warp-cli --accept-tos connect` accepted Cloudflare's terms on your behalf and rerouted the Mac's egress by itself (security review finding 6; decision and evidence in `docs/argo/switching-2026-11-05.md`). With `"wifi_shield": "warp"` in `~/.config/argo/config.json` the automation runs as before: Argo switches WARP to its tunnel mode (`warp-cli mode warp`) if it is in another known mode, connects it, re-checks that the internet and Tailscale still work, and texts "tunnel on". Back on a protected network it puts WARP back exactly as it was: the same mode (e.g. proxy) and connected or not. If the tunnel breaks the connection or Tailscale, Argo puts WARP back and leaves it alone on that network; it does the same if you switch WARP off yourself there. A mode it doesn't know is never changed. It runs only `warp-cli mode`, `connect` and `disconnect`. A tunnel an earlier Argo opened is closed again when the setting is off.
+
 Alerts stay quiet on purpose: an unresolved problem texts once when it escalates, then at most every 2 h, and OFFLINE never texts (a Mac with no network cannot send, and queued texts would arrive stale).
+
+**Tick timing (2026-11-05).** One lock per tick. A tick that finds another run (a tick that outlived the minute, `argo fix`, the phone) leaves quietly, counts itself in `skipped.json`, and if the default gateway is not the one the running tick last saved it sends that run SIGUSR1: the probe in flight is dropped and run again, so a network change is classified within one probe budget. The network checks (captive, DNS, API, trace) run together under a 12 s budget with 4 s connect, 5 s TLS and 6 s header limits, and `tailscale status` runs beside them, so a stalled uplink costs one budget per probe instead of 50 s of serial timeouts. After a network change or a recovery Argo asks the tailnet once, read-only (`tailscale ping` of the hub, 3 s; `tailscale netcheck` when silent) and records the answer: `argo status` ends with "switch 1m30s ago (tailnet 87ms relay, 320 ms), this network 93% up over 7 d", or "hub silent: store-and-forward" when files must wait in the outbox. Measurements and the tool inventory: `docs/argo/switching-2026-11-05.md`; `argo report --outages` prints the incident log folded into outages.
 
 
 ```
@@ -188,6 +259,14 @@ rating is the host's level:
 |---|---|---|
 | ok | takes work | |
 | watch | light work only (jobs up to 1 GB, one mesh slot) | memory at warn, on battery, disk under 20 GB, load ≥ 1 per core, charger rated below the machine's draw |
+
+On battery, a job over 1 GB is not held to light work if it fits its **eclipse budget** (`eclipse.go`, the same numbers
+as `claude-heavy`): battery % ≥ 30% reserve + the job's median battery-% drop over its last 5 runs on battery (8% until
+3 runs) + 6% for each hour left on the unplugged plan (`claude-heavy --unplugged 4h` writes the deadline to
+`~/.local/state/gauss-unplugged`). Each guarded run records battery % at its start and end in `jobs.jsonl`
+(`batt0`, `batt1`, `on_batt`); the cost is learned from those, not from `avg_w`/`base_w`, which the battery
+controller smooths over minutes. The 10% floor, low battery, battery-draining and brownout rules still act first.
+`argo guard` on battery lists what each measured job needs.
 | risk | no new work; running work continues | memory at warn for 30 of the last 60 min, swap +1 GB in an hour at warn, swap ≥ 4 GB, battery ≤ 20% (or ≤ 25% with memory at warn, or under an hour to the floor), plugged in but still losing charge, disk under 8 GB, CPU throttled by the OS |
 | block | no work; guarded jobs are stopped | memory pressure critical, battery at the 10% floor on battery power, disk under 3 GB (swap lives on the boot volume) |
 
@@ -211,6 +290,76 @@ The job runs in its own process group (Ctrl-C is passed on). Two bad readings in
 SIGTERM, then SIGKILL after 15 s. `~/.local/state/argo/guard.log` records each run by command name only (never its
 arguments).
 
+**Learned job sizing (GAU-200).** A guess like `-mem 1` is wrong both ways: on 2026-10-24 a 0.3 GB check waited
+10 minutes for 1 GB, while a build can need several. So `guard run` reads the job's process-group RSS 1 s after it
+starts and at every check, and on exit appends `{at, name, peak_gb, secs, outcome}` to
+`~/.local/state/argo/jobs.jsonl` (this device only; the name is `-name` or the command's base name, never its
+arguments). Once a job has 3 successful (exit 0), measured runs, admission uses the p95 of its last 10 peaks × 1.25 instead
+of `-mem`, rounded up to 0.1 GB and never under 0.2 GB. The margin is there because RSS leaves out compressed pages
+and misses spikes between checks. Stopped, interrupted or failed runs don't count: they may have ended before their peak. `argo guard` lists
+what each job has learned. Give gate jobs a stable `-name` (e.g. `gates`, `npm-test`): a label carrying a commit
+hash never repeats, so it never learns.
+
+**Coping at warn (2026-10-31).** This 8 GB Mac sits at the kernel's "warn" about half the time while
+barely paging (24-31 Oct: swap 2.25 GB at warn vs 1.94 GB at normal; no critical sample all week), and a
+full gate run takes 1.5-3 min, yet jobs waited 12 h for "normal". So the guard now also reads what the
+kernel counts as available (`kern.memorystatus_level` × RAM, the "free percentage" `memory_pressure`
+prints) and the swap-out rate (vm_stat `Swapouts` between readings). At warn the host is **coping** when
+it swaps out under 64 MB/min, swap hasn't grown 1 GB in the hour, and available memory beats the 1.5 GB
+reserve: a job then starts if available-after-reserve covers its need (×1.5 for a job whose runs take
+15 min+), instead of the 1 GB light-job cap, and the sustained-warn alert stays quiet. Swapping out
+64 MB/min or more is `mem-paging` (risk) whatever the flag says. Without a paging reading (no earlier
+sample, an old history, a reboot) nothing changes. A running job is still stopped at block.
+`claude-heavy` hands warn to Argo when `argo guard help` mentions coping, and runs `mem-guard trim`
+once before it waits. Replayed on the week's `memory.tsv`: a 1 GB job could start in 95% of samples
+(51% today); 9 of the 349 newly admitted samples were followed within 20 min by +1 GB swap, none by
+critical pressure.
+
+**Workers sized to the host.** The job gets `ARGO_WORKERS` and `ARGO_HEADROOM_GB` (a value the caller already set
+wins). `ARGO_WORKERS` is 1 at watch, otherwise headroom ÷ `guard_worker_gb` (config.json, default 0.5 GB), capped at
+cores − 1. The repo's `npm test` passes it to `--test-concurrency` and Playwright uses it for `workers`. Without it
+both keep their defaults: about 7 test processes and 4 browsers on an 8-core Mac. Node refuses
+`--test-concurrency` in `NODE_OPTIONS`, so the flag lives in the script.
+
+**The owner first** (`foreground.go`). Work on this Mac (video calls, browser work) comes before Gauss's jobs:
+
+| When | Jobs | Network |
+|---|---|---|
+| A call is live (a Chromium `WebRTC has active PeerConnections` assertion, or Zoom, Teams, FaceTime, Webex holding the display awake) | New jobs over 1 GB wait; running ones that big pause (SIGSTOP) until it ends, at most 2 h, then exit 75 so the queue retries | Offline, the Wi-Fi reset waits 5 min instead of 90 s |
+| At the keyboard (input in the last 5 min) | A job must leave 0.5 GB more free | as usual |
+| Away | no extra limit | as usual |
+
+**Brownout** (`brownout.go`). On a charger too weak for the load (the Mac plugged in, the battery still
+falling), a running job is shed (paused) at 35% and restored at 50%, or as soon as a 30 W+ charger is charging
+it. While shed even an 8 W charger refills the battery, so jobs run in bursts the charger can pay for instead
+of draining it to the floor. New jobs don't start at 35% or below on a charger that is behind.
+
+Every guarded job runs at nice 10, so with nothing else running it loses nothing. The finding names the
+app locally (`argo guard`); Gauss gets only the code `owner-busy` ("its owner is using it").
+
+**Power budget (SWaP).** A spacecraft only switches loads on while its power budget has margin, and sheds them in
+eclipse. Argo keeps the same budget for the machine: **source** = the charger's rating × 0.8 (conversion losses, a
+warm charger), **load** = what the whole machine draws (the battery controller's `SystemLoad`), **margin** = source
+− load. The mode is *positive*, *negative* (plugged in, but the battery still covers part of the load: an 8 W phone
+charger under a build) or *eclipse* (on battery). `ARGO_WORKERS` never asks for more watts than the margin holds:
+one worker in negative, otherwise margin ÷ watts per worker, where watts per worker is what the same job added per
+worker over its last runs (median of at least 3 successful runs; 3 W until then; kept in `jobs.jsonl` as
+`workers`, `base_w`, `avg_w`). A desktop or a host with no draw reading gets no power cap. `argo guard` prints the
+budget on the `power` line, and each report to Gauss carries it in the battery block, so the Mesh page shows
+"9.5 W spare" or "charger 2.8 W short" and a device in deficit or under 5 W of margin is offered light work only.
+
+**Self-healing (slice 2: evidence, no new actions).** Every guard tick turns findings at watch or worse
+into blocker episodes in `heal.jsonl` (this device only, newest 1000 kept): code, start, last seen, peak
+level and the remedy the rules order chose. An episode closes after 3 min without the finding. Remedies
+Argo already runs are `live` (eclipse pause, autoscaled admission, the power budget); the rest are `shadow`
+until a replay of this log shows they would have cleared blockers sooner with no wrong actions. Nothing
+is credited yet. Design: `argo-self-healing-design-2026-10-31.md` in claude-outputs.
+
+**Sizing outside compute.** `argo guard run` now records how long each job waited for admission and sat
+paused (`wait_s`, `pause_s` in `jobs.jsonl`). `argo scale` sums that: lost hours are the demand this host
+turned away, and a job's p90 peak sets the RAM a runner needs. It only reports what ran under the guard;
+GPU training and other unmeasured work are listed as MISSING, not estimated. Run it on each mesh host.
+
 ## Store and forward (delay-tolerant delivery)
 
 Files move between enrolled devices the way spacecraft send data home: held, forwarded when a path opens,
@@ -233,8 +382,18 @@ argo inbox                           # on ground-1: 2026-10-23 09:41  judith  ~/
   but use RFC 9171's private block types 192 and 193, because RFC 9172 has no private range for security
   context IDs and HPKE is not a standard BPSec context yet. Go standard library only (`crypto/hpke`,
   `crypto/ed25519`); no new cryptography.
-- **Keys.** `argo enroll` creates `~/.config/argo/node.key` (0600; never leaves the device) and publishes the
-  public half to Gauss. Other devices pin a key the first time they see it; a different key later is reported and
+- **Link keys (faster, smaller).** After the first bundle, each pair of devices switches to a key only the two of
+  them hold, delivered once inside a bundle sealed as above (so it travels under ML-KEM-768 + X25519). Bundles
+  then carry RFC 9173's standard blocks: HMAC-SHA-256 over the primary block and AES-256-GCM over the payload
+  (receipts: HMAC only). On an Apple M1 a 1 MiB chunk takes 0.67 ms to protect instead of 3.6 ms and 0.50 ms to
+  open instead of 2.3 ms, and carries 129 bytes of security instead of 1,302. Keys rotate weekly or every 65,536
+  bundles. Authenticity becomes pairwise: the receiver knows its peer made the bundle, but no third party can
+  check that, so anything a third party may need to check keeps the Ed25519 signature. Details:
+  `docs/ARGO_DTN.md`, "Link keys".
+- **Keys.** Link keys live in `~/.config/argo/links.key` (0600) and are never logged or shown.
+  An enrolled device creates `~/.config/argo/node.key` (0600; never leaves the device) on the first tick
+  its Gauss answers the bundle routes (or on the first relay command) and publishes the public half to Gauss,
+  so devices enrolled before the relay existed join by themselves. Other devices pin a key the first time they see it; a different key later is reported and
   not used until someone runs `argo keys trust DEVICE`. Compare fingerprints (`argo keys`, the Key line on
   `/mesh`) with the other person before relying on a new device.
 - **Paths.** The Gauss hub (`/api/mesh/bundles`, device token, tailnet only) holds ciphertext until the
@@ -258,7 +417,10 @@ argo inbox                           # on ground-1: 2026-10-23 09:41  judith  ~/
   Seeds 7 and 424242 also give 60/60 and 60/60 with no duplicates.
 - **Not yet.**
   - Direct device-to-device transfer (TCPCLv4, [RFC 9174](https://www.rfc-editor.org/rfc/rfc9174)).
-  - The RFC 9173 security contexts that ION and HDTN speak; interoperability with them is untested.
+  - Exchanging bundles with HDTN, dtn7-rs or ION. `bpsec9173.go` implements the RFC 9173 security contexts
+    they speak (BIB-HMAC-SHA2, BCB-AES-GCM, AES key wrap) and reproduces all four RFC 9173 Appendix A examples
+    byte for byte. Argo's link keys use them, but there is no way to load an operator's pre-placed keys yet, and
+    live interoperability with those nodes is untested.
   - Resuming a chunk part-way.
   - Phones.
 
@@ -269,6 +431,84 @@ log: A = MTBF / (MTBF + MTTR), computed as 1 − down/observed. They also carry 
 95th-percentile outage, and the time between drops. Time asleep counts as observed and up unless an incident was
 open. The 7-day figure is the stability score on `/mesh`. Example from this Mac on 2026-10-23:
 `Link stability 83/100 · 24 h: 84.3% up over 24.0 h, 24 drops, typical outage 3 min (p95 63 min)`.
+
+## Low signal, radio bearer, clock and wired link
+
+- **Low-signal mode** turns on after 3 bad probes and off after 10 good ones (and 15 minutes). `argo status` shows ` low-signal (64 KiB chunks)`. The relay then sends smaller chunks, retries with exponential back-off and jitter, sends receipts and alerts before files, reports less often, and texts by SMS first while data probes fail. Design and honest limits: `docs/ARGO_DTN.md`, "Low signal and IoT bearers".
+- **Meshtastic radio bearer** is off unless `ARGO_MESHTASTIC_URL=http://<node on this LAN>` is set in the environment that runs Argo. It carries only BPSec-protected receipts and small status, within 1% time on air, as 200-byte frames with parity. No hardware is bought or required.
+- **Clock check** compares the system clock with four unrelated HTTPS `Date` headers and the hub every 30 minutes; "time source disagreement" shows in `argo status`. Argo never changes the clock.
+- **Wired phone link:** with the iPhone on USB and traffic on Wi-Fi, `argo status` suggests the Service Order change (System Settings > Network). Argo never changes network settings; `via:` shows the link in use.
+- **Signal map:** set `"place": "Hostel roof"` (letters, digits, space, - and _; at most 24) in `~/.config/argo/config.json` to label this device's network on `/mesh`. Never a location, never an SSID.
+
+## Device security posture and updates
+
+**`argo posture`** checks this device against `docs/DEVICE_SECURITY_BASELINE.md` (a DRAFT until Josh approves it).
+It only reads settings: no admin rights, no changes, no Tailscale command that changes anything. A check that cannot
+be read is `unknown`, never `ok`. The output has no serial numbers, addresses, host or user names. The tick re-runs
+it about hourly and the mesh report carries one status per item (nothing else), which `/mesh` shows as a
+"Security:" line under the device name. Linux checks are untested on a real Linux host so far.
+
+```
+$ argo posture
+ok       Disk encryption             FileVault is on
+fail     Firewall                    The macOS firewall is off
+         fix: Turn it on in System Settings > Network > Firewall
+```
+
+**`argo update`** is described in `docs/ARGO_UPDATE.md` (design and threat model). In short: a release manifest
+(JSON) with a detached Ed25519 signature is verified against the release public key compiled into Argo before
+anything in it is trusted; expired manifests, versions that are not newer, other platforms, and downloads whose size
+or SHA-256 differ are refused; fetching is https (or plain http on this machine or the tailnet only), with no
+redirects and no proxies. `apply` downloads next to the binary, runs the new build once, keeps the old one as
+`argo.prev`, replaces the binary with one rename and puts the old one back if the new one fails.
+
+- **No release key is pinned yet**, so today `argo update` prints that and fetches nothing, and `apply` refuses.
+- **Nothing applies by itself.** The tick only checks, at most daily, once a key is pinned.
+- **macOS:** `apply` also needs `--reset-mac-permissions`, because replacing the binary resets Argo's Messages and
+  Full Disk Access grants until Argo has a stable signing identity. Run `argo phone test` afterwards.
+
+## Third parties
+
+Every outside service the setup depends on (claude.ai connectors, GitHub apps, Cloudflare, Stripe, Tailscale,
+CLIs that send code to their vendor) is a node, the way mesh peers are. Argo makes each one visible and revocable
+in one place. It is not a credential store: sign-ins stay in your browser, passkeys and Keychain, and a node only
+says **where** its credential lives.
+
+The registry is your file, `~/.config/argo/thirdparty.json` (0600). It names your accounts, so it stays on this
+Mac and never goes in this repo. One node:
+
+```json
+{"nodes": [{
+  "id": "issue-tracker",
+  "name": "Issue tracker (claude.ai connector)",
+  "kind": "connector",
+  "sees": ["internal"],
+  "scopes": ["issues read/write", "comments"],
+  "credential": "claude.ai, server side (OAuth); nothing on this Mac",
+  "revoke": "claude.ai → Settings → Connectors → Issue tracker → Disconnect",
+  "last_used": "2026-11-03",
+  "match": ["mcp__<connector-id>__"],
+  "notes": "scopes read from the tool list (UNVERIFIED against the vendor's grant)"
+}]}
+```
+
+- `sees` uses the gauss-guard classes: `none`, `public`, `mesh`, `internal`, `local`. A node that can see `local`
+  data is always flagged: local-class files must never leave this Mac.
+- `check` refuses a node that looks like it holds a credential (token prefixes such as `ghp_`, `sk_live_`,
+  `xoxb-`, private keys, JWTs, `user:pass@` URLs, long mixed-case strings) and never prints the value back.
+- The first `check` (or tick) records the registry as the accepted baseline. After that, a new node, a changed
+  `sees`/scope list, a moved credential or revoke place, a removed node, or a service seen in use with no node
+  is flagged until you run `argo thirdparty accept`. A node unused for 90 days gets a revoke reminder (advice
+  only; it does not change the exit code).
+- Every tick compares the two files (no network). A new set of changes sends one text with the **count only**:
+  SMS is not end-to-end encrypted and the list is internal. Review at the Mac with `argo thirdparty check`.
+- Argo's own record (baseline, last use, unregistered sightings) is `~/.config/argo/thirdparty.state.json`.
+
+**Last use and new connectors (optional).** A Claude Code hook credits each MCP tool call to its node by the
+node's `match` prefixes (longest wins), at most one write per node per day, and records an unknown
+`mcp__<server>` as unregistered, which `check` then flags. In `~/.claude/settings.json`:
+`"hooks": {"PostToolUse": [{"matcher": "mcp__.*", "hooks": [{"type": "command", "command": "argo thirdparty seen"}]}]}`.
+The hook only reads the tool name; it never fails or blocks the call.
 
 ## Linux and containers
 
@@ -283,6 +523,13 @@ podman run --rm --network host argo:dev doctor     # one-off diagnosis
 ```
 
 `argo loop` (the image's default) checks every `ARGO_INTERVAL` (default 60s; the full probe still runs at most every ~5 min on a stable network). On Linux, route and gateway come from `/proc`, proxies from the environment, alerts are log lines on stdout (no Messages app, so phone texts are off), and Claude Code stale-daemon checks are skipped. `--network host` is what lets it see the host's real network.
+
+**Linux laptops on battery.** The guard's battery rules are the same code on Linux as on macOS: the 10% floor, the eclipse budget for heavy jobs on battery, and the brownout pause. They read `/sys/class/power_supply`. Two readings are Linux-only:
+
+- *Plugged in but discharging.* When a charger is online and the kernel reports the battery as `Discharging` (with a non-zero `power_now`, or `current_now` x `voltage_now`), the guard raises `charger-weak` at once, without waiting for the history to show a drain: watch (light work), risk at 35% (no new jobs, where running ones are paused), block at the 10% floor. `argo status` and `argo guard` say "plugged in but the battery is still draining (12.3 W): use a stronger charger". A zero rate is not a drain (some firmware says `Discharging` when idle at full).
+- *Charge limit.* Where the battery has `charge_control_end_threshold`, `argo guard` prints it ("charges to 80% (charge limit)") and a battery resting at its limit shows "held at its 80% charge limit" instead of looking like a weak charger. Where the file is absent it says the laptop offers none; Argo never sets it.
+
+Both stay on the device (they are not in the Gauss report). They are tested against hand-written fixture directories (`testdata/power_supply/`), not a real laptop: UNVERIFIED on real hardware. Known limit: with two system batteries (some ThinkPads) Argo reads one of them, not the sum. A systemd unit for `argo loop` on a laptop is in `scripts/ops/talos/`.
 
 ## Tests
 

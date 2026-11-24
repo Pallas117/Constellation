@@ -1,5 +1,6 @@
 import express from "express";
 import { roleSatisfies, type AuthenticatedRequest } from "../auth.js";
+import { sendJsonCompressed } from "../lib/json-response.js";
 import type { EnvironmentHistory } from "../trust/environment.js";
 import { buildTrustRecord, parseTrustRequest, type TrustRecord } from "../trust/record.js";
 import { PLANS, type Plan, type PlanLimits } from "./plans.js";
@@ -69,18 +70,31 @@ export function createDataApiRouter(
       return;
     }
 
-    const usedToday = store.orgUsageOn(resolved.org.id, t.toISOString().slice(0, 10));
+    const day = t.toISOString().slice(0, 10);
+    const usedToday = store.orgUsageOn(resolved.org.id, day);
     if (usedToday >= limits.requestsPerDay) {
       res.status(429).json({ error: `Daily quota of ${limits.requestsPerDay} requests reached for this organisation` });
       return;
     }
+    const pointsLeft = limits.pointsPerDay - store.orgPointsOn(resolved.org.id, day);
+    if (pointsLeft <= 0) {
+      res.status(429).json({ error: `Daily data budget of ${limits.pointsPerDay} points reached for this organisation; it resets at 00:00 UTC` });
+      return;
+    }
     res.setHeader("X-Quota-Limit", String(limits.requestsPerDay));
     res.setHeader("X-Quota-Remaining", String(limits.requestsPerDay - usedToday - 1));
+    res.setHeader("X-Points-Limit", String(limits.pointsPerDay));
+    res.setHeader("X-Points-Remaining", String(pointsLeft));
+    res.locals.pointsLeft = pointsLeft;
 
     req.apiKey = resolved;
-    // Meter only calls that succeeded, by route template (never raw query strings).
+    // Meter only calls that succeeded, by route template (never raw query strings), and the data
+    // points each one returned (handlers set res.locals.points).
     res.on("finish", () => {
-      if (res.statusCode < 400) store.recordUse(resolved.keyId, `${req.method} ${req.baseUrl}${req.route?.path ?? req.path}`, t);
+      if (res.statusCode >= 400) return;
+      store.recordUse(resolved.keyId, `${req.method} ${req.baseUrl}${req.route?.path ?? req.path}`, t);
+      const points = res.locals.points;
+      if (typeof points === "number" && points > 0) store.recordPoints(resolved.keyId, points, t);
     });
     next();
   });
@@ -93,28 +107,35 @@ export function createDataApiRouter(
       res.status(404).json({ error: "No data yet" });
       return;
     }
-    res.json({ data: point, meta: meta(req) });
+    res.locals.points = 1;
+    await sendJsonCompressed(req, res, { data: point, meta: meta(req) });
   });
 
   router.get("/data/space-weather/history", async (req: KeyedRequest, res) => {
     const maxLookback = plans[req.apiKey!.org.plan].maxLookbackMs;
     const lookbackMs = Math.min(parseLookback(req.query.lookback, 60 * 60 * 1000), maxLookback);
-    const limit = Math.max(1, Math.min(Number(req.query.limit ?? 720) || 720, MAX_POINTS));
+    const requested = Math.max(1, Math.min(Number(req.query.limit ?? 720) || 720, MAX_POINTS));
+    // Never return more than what is left of today's data budget (at least 1: the guard above
+    // already refused an organisation with nothing left).
+    const limit = Math.min(requested, res.locals.pointsLeft as number);
     const { source, points } = await data.history(lookbackMs, limit);
-    res.json({ data: points, meta: { ...meta(req), source, lookbackMs, count: points.length } });
+    res.locals.points = points.length;
+    const limitedBy = limit < requested ? { limitedBy: "daily data budget" } : {};
+    await sendJsonCompressed(req, res, { data: points, meta: { ...meta(req), source, lookbackMs, count: points.length, ...limitedBy } });
   });
 
-  router.get("/data/sources/status", (req: KeyedRequest, res) => {
-    res.json({ data: data.sources(), meta: meta(req) });
+  router.get("/data/sources/status", async (req: KeyedRequest, res) => {
+    await sendJsonCompressed(req, res, { data: data.sources(), meta: meta(req) });
   });
 
   /**
    * PR-01 trust records (GAU-57): one inference, or {"inferences": [...]} up to MAX_TRUST_BATCH.
    * Each item is validated on its own; an invalid one is returned with its errors, never
    * guessed. Inference times beyond the plan's lookback are refused here: older windows are a
-   * replay pilot (PR-03), not a live lookup.
+   * replay pilot (PR-03), not a live lookup. Every record returned is logged for invoicing
+   * (GAU-70) before the response goes out; if that log can't be written, nothing is returned.
    */
-  router.post("/data/trust/records", (req: KeyedRequest, res) => {
+  router.post("/data/trust/records", async (req: KeyedRequest, res) => {
     const history = data.environment?.() ?? null;
     if (!history) {
       res.status(503).json({ error: "Trust records are not available on this server" });
@@ -141,12 +162,25 @@ export function createDataApiRouter(
         records.push(buildTrustRecord(parsed.request, history, { nowMs }));
       }
     });
-    if (!batch) {
-      if (rejected.length) res.status(400).json({ error: "Invalid inference", errors: rejected[0].errors });
-      else res.json({ data: records[0], meta: meta(req) });
+    if (!batch && rejected.length) {
+      res.status(400).json({ error: "Invalid inference", errors: rejected[0].errors });
       return;
     }
-    res.json({ data: records, rejected, meta: { ...meta(req), count: records.length } });
+    try {
+      store.recordTrustIssued(
+        req.apiKey!.keyId,
+        records.map((r) => ({ recordId: r.recordId, spacecraftId: r.inference.spacecraftId })),
+        now(),
+      );
+    } catch (err) {
+      console.error("[trust] usage log write failed; no records returned:", err instanceof Error ? err.message : err);
+      res.status(500).json({ error: "Could not record usage; no records were issued. Please retry." });
+      return;
+    }
+    // A batch may overshoot the data budget by at most MAX_TRUST_BATCH - 1 records.
+    res.locals.points = records.length;
+    if (!batch) await sendJsonCompressed(req, res, { data: records[0], meta: meta(req) });
+    else await sendJsonCompressed(req, res, { data: records, rejected, meta: { ...meta(req), count: records.length } });
   });
 
   return router;
@@ -161,12 +195,31 @@ const INTERESTS = new Set(["data-api", "connectivity", "both"]);
  * caps. Leads are stored for admins (`npm run org -- leads`); nothing is sent
  * anywhere automatically.
  */
-export function createPilotRequestHandler(store: CommerceStore, now: () => number = Date.now) {
+export function createPilotRequestHandler(
+  store: CommerceStore,
+  now: () => number = Date.now,
+  /**
+   * Resolves the real client address. Behind the loopback proxy `req.ip` is
+   * always 127.0.0.1, so production passes CyberTiger's extractor (X-Forwarded-For
+   * trusted only from a loopback peer, last hop). Express "trust proxy" stays off.
+   */
+  clientIp: (req: express.Request) => string = (req) => req.ip ?? "unknown",
+) {
   const recent = new Map<string, number[]>();
-  return (req: express.Request, res: express.Response) => {
-    const ip = req.ip ?? "unknown";
+  let lastSweep = 0;
+  const handler = (req: express.Request, res: express.Response) => {
+    const ip = clientIp(req);
     const hourAgo = now() - 60 * 60 * 1000;
+    // Forget addresses with nothing in the last hour (at most once a minute).
+    if (now() - lastSweep >= 60 * 1000) {
+      lastSweep = now();
+      for (const [key, list] of recent) {
+        if (!list.some((t) => t > hourAgo)) recent.delete(key);
+      }
+    }
     const times = (recent.get(ip) ?? []).filter((t) => t > hourAgo);
+    if (times.length) recent.set(ip, times);
+    else recent.delete(ip);
     if (times.length >= 3) {
       res.status(429).json({ error: "Too many requests. Please try again later." });
       return;
@@ -194,6 +247,8 @@ export function createPilotRequestHandler(store: CommerceStore, now: () => numbe
     store.addPilotRequest(lead, ip);
     res.status(201).json({ ok: true });
   };
+  /** Addresses currently rate-tracked (for tests). */
+  return Object.assign(handler, { trackedIps: () => recent.size });
 }
 
 /**

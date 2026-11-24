@@ -1,6 +1,6 @@
 {
   "$comment": "Constellation requirements baseline (GAU-120). NASA SP-2016-6105 Rev 2 §6.2/§5.3. Methods: T test, A analysis, I inspection, D demonstration. T evidence = exact test names; A/I/D evidence = repo paths. Verified by `npm run verify`.",
-  "version": "1.9.0",
+  "version": "1.18.0",
   "requirements": [
     {
       "id": "REQ-ING-001",
@@ -32,8 +32,8 @@
     {
       "id": "REQ-ING-003",
       "title": "Bounded ingest tick",
-      "statement": "The ingest tick shall fetch sources in parallel within per-source time budgets and shall never start a tick while the previous one is running.",
-      "rationale": "Sequential 8-9 s timeouts allowed ~40 s ticks and stacked ticks (GAU-110).",
+      "statement": "The ingest tick shall fetch sources in parallel within per-source time budgets (NOAA, ESA, GOES, SWPC products, Kyoto Dst and JAXA 8 s; MMS and LASP 9 s; ML forecast 5 s), shall abandon a stage past its budget, and shall never start a tick while the previous one is running.",
+      "rationale": "Sequential 8-9 s timeouts allowed ~40 s ticks and stacked ticks (GAU-110). Budgets are STAGE_BUDGET_MS in backend/lib/pipeline-timing.ts; the whole tick budget there is 5 s.",
       "parent": "GAU-110",
       "method": "T",
       "owner": "Josh",
@@ -46,14 +46,15 @@
     {
       "id": "REQ-ING-004",
       "title": "Pipeline health is observable",
-      "statement": "The system shall report per-stage latency and an overall fresh/degraded/stale/stalled verdict derived from data age and loop liveness.",
-      "rationale": "Technical performance measures need a live source (GAU-110).",
+      "statement": "The system shall report per-stage latency and an overall verdict: stalled when the last tick is more than 15 s old (3 tick intervals of 5 s); otherwise stale when the newest measurement is older than 15 minutes or absent; otherwise degraded when it is older than 10 minutes or any stage is over budget; otherwise fresh.",
+      "rationale": "Technical performance measures need a live source (GAU-110). Tiers come from backend/lib/pipeline-timing.ts (snapshot), NOAA_FRESH_MS (10 min) and NOAA_MAX_AGE_MS (15 min, shared/policy/freshness.json l1_solar_wind) in backend/worker/ingest-loop.ts, and TICK_MS (5 s).",
       "parent": "GAU-110",
       "method": "T",
       "owner": "Josh",
       "verifiedBy": [
         "pipeline timer: rolling last/p50/p95/max per stage",
-        "pipeline timer: status follows data age and loop liveness"
+        "pipeline timer: status follows data age and loop liveness",
+        "freshness tier follows measurement age, not fetch cadence (GAU-44)"
       ]
     },
     {
@@ -185,26 +186,104 @@
     },
     {
       "id": "REQ-DI-007",
-      "title": "Inputs are sense-checked",
-      "statement": "The system shall check each L1 magnetic-field sample, whether the L1 plasma speed follows large changes in the field, the GOES proton spectrum and channels, and the GOES X-ray channel for physical consistency, and shall cross-check its own R, S and G levels against NOAA's published scales; a failed check shall be reported with its reason without silently dropping the sample, and a check with no current input shall read unknown, not pass.",
-      "rationale": "Radiation-study build order step 1 (GAU-134): sense-checks stop wrong conclusions before any analysis is built on them.",
+      "title": "L1 magnetic field is sense-checked",
+      "statement": "The system shall check each L1 magnetic-field sample for physical consistency.",
+      "rationale": "Radiation-study build order step 1 (GAU-134): sense-checks stop wrong conclusions before any analysis is built on them. Singular after the 2026-11-17 audit; the other checks are REQ-DI-008 to REQ-DI-014.",
       "parent": "GAU-136",
       "method": "T",
       "owner": "Josh",
       "verifiedBy": [
         "field: Bt below the magnitude of its own components is flagged with a reason",
-        "field: GSE and GSM magnitudes that differ are flagged; a frame change can't alter |B|",
+        "field: GSE and GSM magnitudes that differ are flagged; a frame change can't alter |B|"
+      ]
+    },
+    {
+      "id": "REQ-DI-008",
+      "title": "L1 plasma speed tracks the field",
+      "statement": "The system shall check whether the L1 plasma speed follows large changes in the field.",
+      "rationale": "A stuck speed under a changing field means a bad instrument (GAU-153). Split from REQ-DI-007 (audit 2026-11-17: singular requirements); parent rationale: radiation-study build order step 1 (GAU-134).",
+      "parent": "GAU-136",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
         "plasma: a speed that holds while |B| triples to over 20 nT is flagged as not tracking (GAU-153)",
         "plasma: a field that doubles at a steady speed, or a shock that moves the speed, is not flagged",
-        "plasma: too few samples in the window is unknown, not pass",
-        "replay: the stuck ACE speed in Jan 2026 is flagged and lowers confidence; May and Oct 2024 never flag it (GAU-153)",
+        "replay: the stuck ACE speed in Jan 2026 is flagged and lowers confidence; May and Oct 2024 never flag it (GAU-153)"
+      ]
+    },
+    {
+      "id": "REQ-DI-009",
+      "title": "GOES protons are sense-checked",
+      "statement": "The system shall check the GOES proton spectrum and channels for physical consistency.",
+      "rationale": "A spectrum that rises with energy or a fill or stuck channel is not a measurement. Split from REQ-DI-007 (audit 2026-11-17: singular requirements); parent rationale: radiation-study build order step 1 (GAU-134).",
+      "parent": "GAU-136",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
         "protons: a spectrum that rises with energy is flagged with both channels",
         "channels: a fill as the newest sample is flagged; older fills are reported, not hidden",
-        "channels: a flat-lined channel is flagged as saturated or stuck",
-        "GOES X-rays: NOAA's electron-contamination mark on the newest sample is flagged (GAU-136)",
-        "NOAA scales: agreement passes; a disagreement is flagged with both values and Gauss's basis",
-        "NOAA scales: missing or over an hour old is unknown, never agreement",
+        "channels: a flat-lined channel is flagged as saturated or stuck"
+      ]
+    },
+    {
+      "id": "REQ-DI-010",
+      "title": "GOES X-ray channel is sense-checked",
+      "statement": "The system shall check the GOES X-ray channel for physical consistency, flagging NOAA's electron-contamination mark.",
+      "rationale": "Contaminated X-ray flux must not drive R levels (GAU-136). Split from REQ-DI-007 (audit 2026-11-17: singular requirements); parent rationale: radiation-study build order step 1 (GAU-134).",
+      "parent": "GAU-136",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "GOES X-rays: NOAA's electron-contamination mark on the newest sample is flagged (GAU-136)"
+      ]
+    },
+    {
+      "id": "REQ-DI-011",
+      "title": "R, S and G levels are cross-checked",
+      "statement": "The system shall cross-check its own R, S and G levels against NOAA's published scales and report both values on a disagreement.",
+      "rationale": "An independent reference catches a wrong level. Split from REQ-DI-007 (audit 2026-11-17: singular requirements); parent rationale: radiation-study build order step 1 (GAU-134).",
+      "parent": "GAU-136",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "NOAA scales: agreement passes; a disagreement is flagged with both values and Gauss's basis"
+      ]
+    },
+    {
+      "id": "REQ-DI-012",
+      "title": "A failed check is reported with its reason",
+      "statement": "A failed sense-check shall be reported with its reason and shall not silently drop the sample.",
+      "rationale": "Hiding a failed sample would hide the evidence for the failure. Split from REQ-DI-007 (audit 2026-11-17: singular requirements); parent rationale: radiation-study build order step 1 (GAU-134).",
+      "parent": "GAU-136",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
         "ingest: every point carries its sense-checks; an inconsistent newest field sample lowers confidence (GAU-136)",
+        "channels: a fill as the newest sample is flagged; older fills are reported, not hidden"
+      ]
+    },
+    {
+      "id": "REQ-DI-013",
+      "title": "No input reads unknown",
+      "statement": "A sense-check with no current input shall read unknown, not pass.",
+      "rationale": "Absence of data is not agreement. Split from REQ-DI-007 (audit 2026-11-17: singular requirements); parent rationale: radiation-study build order step 1 (GAU-134).",
+      "parent": "GAU-136",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "plasma: too few samples in the window is unknown, not pass",
+        "NOAA scales: missing or over an hour old is unknown, never agreement"
+      ]
+    },
+    {
+      "id": "REQ-DI-014",
+      "title": "SWPC feeds are HTTPS JSON only",
+      "statement": "The system shall fetch the SWPC feeds only as HTTPS JSON from services.swpc.noaa.gov.",
+      "rationale": "Limits the fetch surface for the cross-check inputs. Split from REQ-DI-007 (audit 2026-11-17: singular requirements); parent rationale: radiation-study build order step 1 (GAU-134).",
+      "parent": "GAU-136",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
         "SWPC feeds: only HTTPS JSON on services.swpc.noaa.gov is fetched"
       ]
     },
@@ -318,6 +397,7 @@
       "owner": "Josh",
       "verifiedBy": [
         "tail read returns the last lines in order without reading the whole file (GAU-117)",
+        "tail read touches only a bounded chunk of a file far larger than the tail (REQ-PER-001)",
         "tail read keeps multi-byte UTF-8 intact across chunk boundaries (GAU-117)",
         "bedrock skips corrupt and torn lines instead of returning nothing (GAU-117)",
         "restart reload fills an empty buffer once, in order, and never duplicates (GAU-117)"
@@ -326,14 +406,15 @@
     {
       "id": "REQ-PER-002",
       "title": "Bounded memory",
-      "statement": "In-memory feeds and windows shall be bounded.",
-      "rationale": "Unbounded growth on an 8 GB host.",
+      "statement": "The canonical feed shall hold at most 20,000 points, the MMS feed at most 5,000 points and the coupling window at most 180 samples, dropping the oldest first.",
+      "rationale": "Unbounded growth on an 8 GB host. Limits are the code constants MAX_POINTS and MAX_MMS_POINTS (backend/state.ts) and maxLen in trimCouplingWindow (backend/worker/ingest-loop.ts).",
       "parent": "GAU-110",
       "method": "T",
       "owner": "Josh",
       "verifiedBy": [
         "caps coupling window length to prevent unbounded memory growth",
-        "canonical feed keeps a fixed-size ring buffer"
+        "canonical feed keeps a fixed-size ring buffer",
+        "mms recon feed keeps a fixed-size ring buffer"
       ]
     },
     {
@@ -351,29 +432,79 @@
     },
     {
       "id": "REQ-SEC-001",
-      "title": "Abuse protection",
-      "statement": "The API shall block malicious signatures, rate-limit clients and auto-block repeated authentication failures.",
-      "rationale": "CyberTiger baseline.",
+      "title": "Malicious signatures are blocked",
+      "statement": "The API shall block malicious request signatures.",
+      "rationale": "CyberTiger baseline. Singular after the 2026-11-17 audit; rate limiting and auth-failure blocking are REQ-SEC-018 and REQ-SEC-019.",
       "parent": "GAU-25",
       "method": "T",
       "owner": "Josh",
       "verifiedBy": [
-        "blocks malicious signature and places IP on blocklist",
-        "rate limits after max requests within configured window",
+        "blocks malicious signature and places IP on blocklist"
+      ]
+    },
+    {
+      "id": "REQ-SEC-019",
+      "title": "Clients are rate-limited",
+      "statement": "The API shall rate-limit clients that exceed the configured maximum requests within the configured window.",
+      "rationale": "CyberTiger baseline. Split from REQ-SEC-001.",
+      "parent": "GAU-25",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "rate limits after max requests within configured window"
+      ]
+    },
+    {
+      "id": "REQ-SEC-018",
+      "title": "Repeated authentication failures are blocked",
+      "statement": "The API shall auto-block an IP address after the configured number of authentication failures.",
+      "rationale": "CyberTiger baseline. Split from REQ-SEC-001.",
+      "parent": "GAU-25",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
         "auth failure threshold auto-blocks IP"
+      ]
+    },
+    {
+      "id": "REQ-SEC-020",
+      "title": "WebSocket pre-handshake authorisation",
+      "statement": "The WebSocket feeds shall check origin, session and role before the handshake, refuse with 401/403 on the raw socket, count failures against the extracted client address, and cap a frame at 4096 bytes.",
+      "rationale": "An unauthenticated socket held open, and a 100 MiB default frame, are cheap resource attacks; behind the local proxy the raw address is always loopback.",
+      "parent": "GAU-25",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "ws upgrades: a guard refusal answers 401/403 before the handshake and no socket opens (REQ-SEC-020)",
+        "ws upgrades: a frame over maxPayload closes the connection with 1009 (REQ-SEC-020)",
+        "feed WebSockets: an oversize frame closes that socket with 1009 and the backend keeps serving (REQ-SEC-020)",
+        "an unauthenticated WebSocket upgrade is refused with 401 before it opens (REQ-SEC-020)"
+      ]
+    },
+    {
+      "id": "REQ-SEC-021",
+      "title": "Blocked CORS origin is not a server error",
+      "statement": "A request from a disallowed origin shall be answered without CORS headers and without a 500 or a logged stack (nowcast error text is fixed in code; no test yet).",
+      "rationale": "Error text can carry internal URLs; a 500 for a hostile origin pollutes logs and monitoring.",
+      "parent": "GAU-25",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "a disallowed CORS origin gets no Access-Control-Allow-Origin and no 500 (REQ-SEC-021)"
       ]
     },
     {
       "id": "REQ-SEC-002",
       "title": "Upstream courtesy",
-      "statement": "Adapters shall respect source cadences and not poll faster than the data updates.",
-      "rationale": "Public APIs (NOAA, CDAWeb) rate-limit abusive clients.",
+      "statement": "Adapters shall poll no faster than these minimum intervals: NOAA, JAXA, LASP and GOES 60 s; ESA 10 s; SWPC products 2 min; MMS and Kyoto Dst 10 min; and after consecutive failures a source shall wait 10 s, doubling to at most 10 min, before its next attempt.",
+      "rationale": "Public APIs (NOAA, CDAWeb) rate-limit abusive clients. Intervals are the cadence constants NOAA_MS, ESA_MS, JAXA_MS, MMS_MS, LASP_MS, GOES_MS, KYOTO_DST_MS and SWPC_PRODUCTS_MS, and BACKOFF_BASE_MS and BACKOFF_MAX_MS, in backend/worker/ingest-loop.ts.",
       "parent": "GAU-44",
       "method": "T",
       "owner": "Josh",
       "verifiedBy": [
         "throttles NOAA fetches to once per 60s while worker ticks every 5s",
-        "allows MMS survey fetch on each 5s cadence boundary"
+        "allows MMS survey fetch on each 5s cadence boundary",
+        "a source that keeps failing backs off (10 s doubling to 10 min) and logs once per run, then recovers"
       ]
     },
     {
@@ -419,9 +550,9 @@
     },
     {
       "id": "REQ-OPS-003",
-      "title": "Controlled deployment",
-      "statement": "Only verified release tags on main shall be deployed to the live checkout; every deploy shall be recorded, health-checked, and rolled back automatically when unhealthy.",
-      "rationale": "NASA SE §6.5 configuration management and §5.5 transition (GAU-123).",
+      "title": "Tag-based deployment (legacy path)",
+      "statement": "The legacy tag-based deploy (scripts/release/deploy.ts) shall deploy only verified release tags on main to a clean checkout, record every deploy, health-check it, and roll back automatically when unhealthy.",
+      "rationale": "NASA SE §6.5 configuration management and §5.5 transition (GAU-123). This is the older path; the live path is gauss-services.sh deploy, governed by REQ-OPS-008 (gated main).",
       "parent": "GAU-123",
       "method": "T",
       "owner": "Josh",
@@ -430,6 +561,99 @@
         "deploy: healthy release is activated and recorded; dry run changes nothing (GAU-123)",
         "deploy: an unhealthy release rolls back automatically (GAU-123)",
         "rollback: returns to the previous healthy release (GAU-123)"
+      ]
+    },
+    {
+      "id": "REQ-OPS-004",
+      "title": "Watchdog restart budget",
+      "statement": "The awake guard shall restart a watched job (Argo, mesh-heal, or a live service after two failed health checks in a row) at most 3 times per job in any rolling hour, and shall then send a phone alert instead of restarting it.",
+      "rationale": "A job that dies on start needs a person: unbounded restarts hide the fault and churn the 8 GB host (GAU-158).",
+      "parent": "GAU-158",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "stale Argo and mesh-heal: both restarted",
+        "backend down once: wait for a second failure",
+        "backend down twice: restarted",
+        "a recovery resets the strike count",
+        "4th restart in an hour: alert instead of kicking",
+        "restarts over an hour old don't count: restarted again, no alert",
+        "no fallback prepared: out of restarts only alerts"
+      ]
+    },
+    {
+      "id": "REQ-OPS-005",
+      "title": "Failover to the prepared fallback",
+      "statement": "When a live service still fails its health check after its 3 restarts in an hour and a valid fallback is prepared, the awake guard shall replace live with the fallback on the same ports (:3001, :8080), URLs, data and .env, and send a phone alert; while the fallback serves, the guard shall restart only the fallback and shall not fail over again; `fallback off` shall restore live with a fresh restart budget.",
+      "rationale": "A cold standby of the last known-good build keeps the operator URLs serving when live can't restart itself; failback stays a person's decision so live and fallback can't flap (GAU-158).",
+      "parent": "GAU-158",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "fallback status: ready although its path has a space",
+        "a corrupt, cut-short or orphaned fallback record reads as none prepared: no half failover, still alerts",
+        "out of restarts and still down: fails over to the fallback and texts the phone",
+        "status shows the fallback is serving",
+        "on fallback: the guard restarts the fallback, never fails over again",
+        "on fallback and out of restarts: alerts only, no restart loop, no flip back to live",
+        "fallback off: live back, fresh restarts for it",
+        "fallback plists: live's ports, URLs, data and .env; prepare never loads them"
+      ]
+    },
+    {
+      "id": "REQ-OPS-006",
+      "title": "Dev layer isolated from live",
+      "statement": "The dev layer shall refuse the live and fallback checkouts and live's ports (:3001, :8080), and shall start its backend and site with their own ports, data directory, public URL and API target set explicitly, so that it cannot bind live's ports, write live's data or send its API calls to live.",
+      "rationale": "R&D runs on the same host as live; a dev server must never take live's ports, data or API (GAU-158).",
+      "parent": "GAU-158",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "dev refuses the live checkout",
+        "dev refuses the fallback checkout",
+        "dev refuses the fallback checkout (path with a space)",
+        "dev refuses live's ports",
+        "dev runs on :5174 and :3101",
+        "dev start: its own ports, data and API target, set explicitly, never live's"
+      ]
+    },
+    {
+      "id": "REQ-OPS-007",
+      "title": "No heavy installs under memory pressure",
+      "statement": "`fallback prepare`, `deploy` and `dev` shall refuse, before installing, building or starting anything, when the kernel memory pressure level is warn or higher.",
+      "rationale": "npm ci was killed under memory pressure on 2026-10-19 (scripts/ops/gauss-services.sh); on the 8 GB host an install or a dev server at warn puts the live services at risk (GAU-158).",
+      "parent": "GAU-158",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "prepare refuses at memory pressure warn",
+        "deploy refuses at memory pressure warn",
+        "dev refuses at memory pressure warn"
+      ]
+    },
+    {
+      "id": "REQ-OPS-011",
+      "title": "Always-on VPS kit is closed by default",
+      "statement": "The VPS kit shall keep the hub backend on 127.0.0.1 (reachable on the tailnet only through tailscale serve), take the Tailscale auth key at run time without printing it or putting it on a command line, enable the firewall (deny incoming except tailscale0) last, run services as a non-login user, verify downloaded Node and Go against published checksums, never weaken TLS, hold no keys in the repository, and leave the Argo relay stopped until a person has confirmed the other device's key fingerprint.",
+      "rationale": "An always-on hub is the first Gauss service outside this Mac; a mistake there is reachable from the internet, and Argo pins a key it sees for the first time (docs/ARGO_DTN.md; scripts/ops/vps/README.md).",
+      "parent": "GAU-223",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "vps bootstrap --dry-run exits 0 without root, network or a prompt",
+        "vps bootstrap never prints the Tailscale auth key",
+        "vps bootstrap passes the auth key to tailscale as a file, not on the command line",
+        "vps hub is exposed on the tailnet only through tailscale serve to 127.0.0.1",
+        "vps hub environment binds the backend to 127.0.0.1",
+        "vps firewall denies incoming except on tailscale0",
+        "vps firewall is enabled last, after the tailnet exposure works",
+        "vps services run as a non-login system user",
+        "vps downloads of Node and Go are checked against published checksums",
+        "vps bootstrap leaves the Argo relay stopped until fingerprints are confirmed",
+        "vps confirm-peer refuses on mismatch and is the only thing that starts the relay",
+        "vps confirm-peer asks for a typed yes before pinning",
+        "vps kit contains no keys or tokens",
+        "vps kit never weakens TLS verification"
       ]
     },
     {
@@ -528,6 +752,1375 @@
         "SAA: along six days of an ISS orbit, NICER's SAA lies inside the extended tier and the core inside NICER's (GAU-141)",
         "SAA: the thresholds and the altitude band are applied as published (GAU-141)",
         "trust record: an inference inside the SAA is degraded context, with |B| and the tier (GAU-141)"
+      ]
+    },
+    {
+      "id": "REQ-TR-004",
+      "title": "Evidence packs",
+      "statement": "For an analysis window the system shall produce an evidence pack holding the trust records, the hashes of the stored inputs, the software and policy versions, every unused log row with its reason, a verdict summary and limitations; the records shall be hash-chained and the pack hashed so that a changed, reordered or missing record is detected; the same stored inputs and code shall give the same pack and PDF byte for byte; and the limitations shall always state that the pack describes the environment, not the spacecraft, with no regulatory claim in Gauss-authored text.",
+      "rationale": "PR-04 Evidence pack export, ICP-1 P0 (GAU-60): customer QA, insurers and regulators need one reproducible, tamper-evident report per window; signing the pack hash follows in GAU-67.",
+      "parent": "GAU-60",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "evidence pack: from a log and a replayed storm, every row accounted for, and the same stored inputs give the same pack and PDF (GAU-60)",
+        "evidence pack: any change is detected: a record, its hash, the chain, the order, a dropped record (GAU-60)",
+        "evidence pack: the wording rules hold even when the hashes are recomputed (GAU-60)",
+        "evidence pack: refuses records outside the window, from another log or policy, or rows not accounted for (GAU-60)",
+        "evidence pack: packs chain, each starting from the previous pack's hash (GAU-60)",
+        "evidence pack PDF: a valid PDF (cross-reference offsets, pages) carrying the pack hash and limitations (GAU-60)"
+      ]
+    },
+    {
+      "id": "REQ-TR-020",
+      "title": "Evidence view in the operator console",
+      "statement": "The operator console shall let an operator or admin, and no lower role, turn an inference log into trust records and an evidence pack identical to the one the trust:ingest command writes, download it as JSON and PDF, and check a pack with the same result lines as the trust:verify command, and shall offer no way to sign a pack.",
+      "rationale": "M1 pilot-ready (GAU-59): a buyer is shown the flow in the app, and it must be the same pack and the same check as the command line, with the signing key never reachable from a browser (GAU-67).",
+      "parent": "GAU-59",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "evidence routes: operators and admins only; no session 401, user and staff 403 (GAU-59)",
+        "evidence routes: there is no signing route, and nothing private in the options",
+        "evidence verify: the same lines `npm run trust:verify` prints (GAU-59)",
+        "evidence pdf: exactly the CLI's rendering; none for a pack that does not verify",
+        "pilot run: the console's pack is the one `trust:ingest --pack` writes, and nothing is left on disk"
+      ]
+    },
+    {
+      "id": "REQ-TR-005",
+      "title": "Trust-record usage metering",
+      "statement": "The system shall log every trust record it returns to a customer, once, with the issuing API key, spacecraft and UTC month, in an append-only log that refuses updates and deletes; shall return no records when that log cannot be written; and shall export per-spacecraft, per-month counts as CSV that adds up to the records returned, with fields safe to open in a spreadsheet.",
+      "rationale": "GAU-70: pilots are invoiced per spacecraft-month and per 1,000 trust records (ICP commercial hooks); per-call metering counts a 100-record batch as one call, so it can't support that, and the invoice must reconcile with what was issued.",
+      "parent": "GAU-70",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "trust metering: every record returned is logged once, by spacecraft and month; rejected items are not (GAU-70)",
+        "trust metering: the log is append-only; the database refuses updates and deletes (GAU-70)",
+        "trust metering: if the usage log can't be written, no records are returned (GAU-70)",
+        "trust metering: the CSV export reconciles with the records issued and is safe to open in a spreadsheet (GAU-70)"
+      ]
+    },
+    {
+      "id": "REQ-TR-006",
+      "title": "Evidence and release signing",
+      "statement": "The system shall sign each evidence pack (its pack hash and chain head) and each release file with an Ed25519 key whose public half is published in a keyring, with the key id and signing time in the signed statement.",
+      "rationale": "PR-04a (GAU-67): REQ-TR-004 gives integrity only; customers, insurers and regulators also need to know Gauss made the pack, and releases need the same. Singular after the 2026-11-17 audit; the checks, key rules, locks and scope are REQ-TR-007 to REQ-TR-016.",
+      "parent": "GAU-67",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "signing: a signed pack verifies against the keyring without changing its pack hash; changing a record, the signature, the key id or the signing time fails (GAU-67)",
+        "signing: release files get a detached signature; a changed byte fails, and pack and release keys and signatures can't stand in for each other (GAU-67)"
+      ]
+    },
+    {
+      "id": "REQ-TR-007",
+      "title": "Offline signature check",
+      "statement": "A customer shall be able to check an evidence pack and its PDF offline with one documented command.",
+      "rationale": "Customers must not need Gauss's servers to trust a pack. Split from REQ-TR-006 (audit 2026-11-17: singular requirements); parent rationale: PR-04a (GAU-67).",
+      "parent": "GAU-67",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "trust CLI: make a key, publish it, sign a pack and PDF, and check both offline with one command; a rewritten pack, a missing signature or a revoked key exits 1, a retired key passes with a note (GAU-67)"
+      ]
+    },
+    {
+      "id": "REQ-TR-008",
+      "title": "Tampering fails the signature check",
+      "statement": "Changing any record, the signature, the key id or the signing time shall fail the signature check.",
+      "rationale": "Any edit to a signed pack must be visible. Split from REQ-TR-006 (audit 2026-11-17: singular requirements); parent rationale: PR-04a (GAU-67).",
+      "parent": "GAU-67",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "signing: a signed pack verifies against the keyring without changing its pack hash; changing a record, the signature, the key id or the signing time fails (GAU-67)",
+        "trust CLI: make a key, publish it, sign a pack and PDF, and check both offline with one command; a rewritten pack, a missing signature or a revoked key exits 1, a retired key passes with a note (GAU-67)"
+      ]
+    },
+    {
+      "id": "REQ-TR-009",
+      "title": "Key retirement and revocation",
+      "statement": "The signature check shall pass a pack signed before its key was retired with a note saying the key is retired, and shall fail a pack signed after retirement or by a revoked key.",
+      "rationale": "Rotation must not invalidate old packs, and a retired or revoked key must not sign new ones. Split from REQ-TR-006 (audit 2026-11-17: singular requirements); parent rationale: PR-04a (GAU-67).",
+      "parent": "GAU-67",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "signing: key rotation: a pack signed before its key was retired verifies and says the key is retired; after retirement, or by a revoked key, it fails (GAU-67)",
+        "trust CLI: make a key, publish it, sign a pack and PDF, and check both offline with one command; a rewritten pack, a missing signature or a revoked key exits 1, a retired key passes with a note (GAU-67)"
+      ]
+    },
+    {
+      "id": "REQ-TR-010",
+      "title": "Private key files are protected",
+      "statement": "The system shall refuse a private key file that is inside the repository or readable by other users.",
+      "rationale": "A private key in the repository or world-readable is a leak. Split from REQ-TR-006 (audit 2026-11-17: singular requirements); parent rationale: PR-04a (GAU-67).",
+      "parent": "GAU-67",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "signing keys: the keyring refuses private key material, a key id that is not its key's fingerprint and bad dates; a key file must be outside the repository and readable only by its owner (GAU-67)"
+      ]
+    },
+    {
+      "id": "REQ-TR-011",
+      "title": "Keyring holds public keys only",
+      "statement": "The keyring shall refuse private key material.",
+      "rationale": "The keyring is published; it must never carry a private half. Split from REQ-TR-006 (audit 2026-11-17: singular requirements); parent rationale: PR-04a (GAU-67).",
+      "parent": "GAU-67",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "signing keys: the keyring refuses private key material, a key id that is not its key's fingerprint and bad dates; a key file must be outside the repository and readable only by its owner (GAU-67)"
+      ]
+    },
+    {
+      "id": "REQ-TR-012",
+      "title": "Secure Enclave key lock",
+      "statement": "A private key file locked to its owner's fingerprint through the Mac's Secure Enclave shall unlock only through that enclave key after Touch ID.",
+      "rationale": "Ties the signing key to the owner's device and presence. Split from REQ-TR-006 (audit 2026-11-17: singular requirements); parent rationale: PR-04a (GAU-67).",
+      "parent": "GAU-67",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "touch id lock: a key locked to its owner's Secure Enclave key unlocks only through that key; another person's enclave, a changed header or a damaged file fails, and the key is never stored in the clear (GAU-67)"
+      ]
+    },
+    {
+      "id": "REQ-UI-001",
+      "title": "Public dashboard fails closed",
+      "statement": "The public dashboard shall render without a session, shall offer the operator portal link, and shall not show operator-console panels.",
+      "rationale": "The public page is the only surface a visitor sees; an operator panel there would leak console state. Tested in a real browser with the API mocked.",
+      "parent": "GAU-63",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "Authentication Flow & Route Splitting › Public Marketing Dashboard loads without authentication"
+      ]
+    },
+    {
+      "id": "REQ-UI-002",
+      "title": "Operator console is role-gated",
+      "statement": "The operator console shall redirect a visitor without a session to the sign-in page, and shall render the console panels for a signed-in session whose role includes the operator console.",
+      "rationale": "Route guards are the UI half of RBAC (the API enforces the rest); the gate must catch a guard that lets a signed-out visitor in or keeps an operator out.",
+      "parent": "GAU-63",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "Authentication Flow & Route Splitting › Redirects unauthenticated users from /operator to /login",
+        "Authentication Flow & Route Splitting › Authenticates successfully and launches the Mission Control HUD"
+      ]
+    },
+    {
+      "id": "REQ-UI-003",
+      "title": "HUD states data age honestly in the browser",
+      "statement": "The operator HUD shall show the pipeline verdict, data age and slowest stage the backend reports, shall show STALE when the backend says the data expired, and shall show NO_TELEMETRY, never FRESH, when the pipeline endpoint fails.",
+      "rationale": "REQ-DI-001 holds in the rendered page, not only in the logic: a HUD that paints FRESH over old or missing data is the failure the console exists to prevent.",
+      "parent": "GAU-63",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "HUD shows the backend pipeline verdict, data age and slowest stage",
+        "HUD shows STALE when the backend says the data expired",
+        "HUD shows NO_TELEMETRY, not a healthy pipeline, when the endpoint fails"
+      ]
+    },
+    {
+      "id": "REQ-UI-004",
+      "title": "A refused device revoke is shown",
+      "statement": "The mesh page shall list the devices the API returns, and when a revoke is refused shall show an error saying so, without the server's detail text, and when it succeeds shall show no error.",
+      "rationale": "A refused revoke that looks like success leaves a device with mesh access while the operator believes it is gone.",
+      "parent": "GAU-149",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "a refused revoke shows an error instead of looking like it worked (GAU-149)",
+        "a successful revoke shows no error (GAU-149)"
+      ]
+    },
+    {
+      "id": "REQ-TR-013",
+      "title": "Geometry pattern key lock",
+      "statement": "A private key file locked under its owner's geometry pattern (8 to 24 vertex picks on the 16 vertices of a tesseract) shall unlock only with that pattern.",
+      "rationale": "Second lock for machines without a Secure Enclave. Split from REQ-TR-006 (audit 2026-11-17: singular requirements); parent rationale: PR-04a (GAU-67).",
+      "parent": "GAU-67",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "key lock: a key locked under a tesseract pattern unlocks only with that pattern; a changed header, a weak pattern and a damaged file are refused, and the key is never stored in the clear (GAU-67)",
+        "trust CLI: lock a key under a pattern and remove the unlocked file, sign with it from the terminal, refuse a wrong pattern, and make a key that is locked from the start (GAU-67)"
+      ]
+    },
+    {
+      "id": "REQ-TR-014",
+      "title": "Changed lock header fails",
+      "statement": "A locked key whose lock header has been changed shall fail to unlock.",
+      "rationale": "The header carries the lock parameters; changing it must not weaken the lock. Split from REQ-TR-006 (audit 2026-11-17: singular requirements); parent rationale: PR-04a (GAU-67).",
+      "parent": "GAU-67",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "key lock: a key locked under a tesseract pattern unlocks only with that pattern; a changed header, a weak pattern and a damaged file are refused, and the key is never stored in the clear (GAU-67)",
+        "touch id lock: a key locked to its owner's Secure Enclave key unlocks only through that key; another person's enclave, a changed header or a damaged file fails, and the key is never stored in the clear (GAU-67)"
+      ]
+    },
+    {
+      "id": "REQ-TR-015",
+      "title": "Pattern page is local and one-time",
+      "statement": "The local pattern page shall answer only its own address and origin, with the nonce it served.",
+      "rationale": "A web page that takes the unlock pattern must not be reachable from other origins. Split from REQ-TR-006 (audit 2026-11-17: singular requirements); parent rationale: PR-04a (GAU-67).",
+      "parent": "GAU-67",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "key lock page: the one-time pattern page answers only its own address and origin, needs the nonce it served, unlocks once and closes after five misses (GAU-67)"
+      ]
+    },
+    {
+      "id": "REQ-TR-016",
+      "title": "Signing scope is authentication only",
+      "statement": "The scope of the trust signing and key-lock functions shall be signing, authentication and their key management only, with no confidentiality encryption of data.",
+      "rationale": "Export control (REG-04) keeps it to signing so Cat 5 Pt 2 stays out of scope. Split from REQ-TR-006 (audit 2026-11-17: singular requirements); parent rationale: PR-04a (GAU-67).",
+      "parent": "GAU-67",
+      "method": "I",
+      "owner": "Josh",
+      "evidence": [
+        "docs/CRYPTO_INVENTORY.md"
+      ]
+    },
+    {
+      "id": "REQ-TR-017",
+      "title": "Custom replay window is bounded and validated",
+      "statement": "The replay archive fetch for a customer's own dates shall accept only a window with an explicit time zone that ends after it starts and not in the future, shall split any period over 31 days into contiguous archives that cover it exactly, and shall accept only an allowlisted slug as the archive id.",
+      "rationale": "GAU-59 (M1): the paid pilot judges a customer's own period. Bounds protect the open upstream (iSWA) and keep one archive replayable on the 8 GB host; the slug allowlist keeps customer input out of file paths.",
+      "parent": "GAU-59",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "custom replay window: bounds are validated (zone required, from before to, not in the future) and the id is an allowlisted slug (GAU-59)",
+        "custom replay window: a period over 31 days is split into contiguous archives that cover it exactly (GAU-59)"
+      ]
+    },
+    {
+      "id": "REQ-TR-018",
+      "title": "Custom replay archive has the named-event format and provenance",
+      "statement": "A replay archive fetched for a customer window shall have the same format as a named-event archive and shall record its source, terms, retrieval time and dataset ids, shall contain no Kyoto Dst, and shall treat the upstream as untrusted by retrying only rate-limit and server errors with back-off, failing on any other error or on an empty answer, and never echoing upstream text in an error.",
+      "rationale": "GAU-59 (M1): the pilot evidence pack records the archive hash, so the archive must say where its data came from and when; Kyoto terms are unchecked and the repository is public.",
+      "parent": "GAU-59",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "custom replay window: the archive has the named-event format and records source, retrieval time and dataset ids (GAU-59)",
+        "custom replay window: 429 and 5xx back off and retry, a 404 or an empty answer fails with a reason, upstream text is not echoed (GAU-59)"
+      ]
+    },
+    {
+      "id": "REQ-TR-019",
+      "title": "Ingest names the archive safely and reports rows outside its window",
+      "statement": "The log ingest shall take its archive by allowlisted slug or by explicit path, never both, and shall list by row every accepted log row whose time lies outside the archive window as not judged, with the reason.",
+      "rationale": "GAU-59 (M1): a customer log rarely matches the archive to the minute; a row with no environment must be named, never silently given an unknown verdict.",
+      "parent": "GAU-59",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "custom archive ingest: --replay takes only a slug, --archive a path outside the repo, never both (GAU-59)",
+        "custom archive ingest: rows outside the archive window are named per row; rows inside are judged against the custom archive (GAU-59)"
+      ]
+    },
+    {
+      "id": "REQ-SEC-010",
+      "title": "Deny-by-default API policy",
+      "statement": "The API shall answer 401 to any request without a session for a path that is not public, whether or not the path is listed, and, for a signed-in session, 404 for a route not listed in its access policy and 403 for a role below the route's role.",
+      "rationale": "Only deliberately exposed routes are reachable; anonymous callers cannot tell listed from unlisted paths (sign-in runs before the policy, backend/server.ts authenticateRequest then enforceApiPolicy), and signed-in callers get distinct missing-route and missing-privilege answers. Corrected 2026-11-17 after a live probe answered 401 to an unlisted path.",
+      "parent": "GAU-185",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "enforcement: unlisted 404, anonymous 401, under-privileged 403, allowed passes",
+        "every declared API route has an access policy (deny by default otherwise)"
+      ]
+    },
+    {
+      "id": "REQ-SEC-011",
+      "title": "New accounts start as user",
+      "statement": "A new account shall get the role user, and the person signing up shall not be able to choose a higher role.",
+      "rationale": "Privilege is granted by an admin, never self-assigned at sign-up.",
+      "parent": "GAU-120",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "users without a stored role are viewers, not admins",
+        "a user cannot satisfy an operator gate",
+        "roles rank user < staff < operator < admin, and legacy 'viewer' means user",
+        "email sign-up cannot choose its own role: a new account is a plain user"
+      ]
+    },
+    {
+      "id": "REQ-SEC-012",
+      "title": "SSO limited to the Workspace domain",
+      "statement": "Single sign-on shall create accounts only for addresses on the configured Workspace domain.",
+      "rationale": "An outside Google account must not be able to create a Gauss account.",
+      "parent": "GAU-120",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "Google SSO only creates accounts on the Workspace domain"
+      ]
+    },
+    {
+      "id": "REQ-SEC-013",
+      "title": "Trusted client address",
+      "statement": "The intrusion daemon shall take a client address from X-Forwarded-For only when the request comes from the local proxy, using only the last hop, and shall never auto-block a direct local request.",
+      "rationale": "A forged header must not let a client pick its own address, nor let an attacker block the operator's own machine.",
+      "parent": "GAU-120",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "X-Forwarded-For is trusted only from the local proxy, and only its last hop",
+        "direct local requests are never auto-blocked; proxied tailnet clients still are"
+      ]
+    },
+    {
+      "id": "REQ-SEC-014",
+      "title": "Device proofs",
+      "statement": "A device proof shall verify only with the configured key, only within its time-to-live, and only once; without a usable key every proof shall fail.",
+      "rationale": "Device identity fails closed and a captured proof cannot be replayed.",
+      "parent": "GAU-97",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "without a usable key, device proofs are disabled and a forged proof never verifies (GAU-97)",
+        "timestamps: only computeProof's epoch-ms format, within the TTL; a bad TTL setting can't disable the check (GAU-98)",
+        "each proof is accepted once, uppercase copies included; a new nonce makes a new proof (GAU-99)",
+        "without DEVICE_AUTH_SECRET, /proof answers 503 and leaves the device's status alone (GAU-97)"
+      ]
+    },
+    {
+      "id": "REQ-SEC-015",
+      "title": "Device ownership and revocation",
+      "statement": "A device shall be listed and changed only by its owner or an admin, and a revoked device shall not be able to report.",
+      "rationale": "One staff member cannot see or alter another's devices, and revocation takes effect at once.",
+      "parent": "GAU-120",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "another user cannot heartbeat, set status or push telemetry",
+        "unauthenticated requests are rejected",
+        "an admin can modify any device",
+        "listing returns only the caller's devices unless admin",
+        "staff see and revoke only their own devices; operators see all; admins revoke any",
+        "revoked devices can no longer report",
+        "team device status is operator-only and never exposes token hashes"
+      ]
+    },
+    {
+      "id": "REQ-SEC-016",
+      "title": "Evidence memory access",
+      "statement": "The evidence-memory (RAG) routes shall require a session and shall not log query text.",
+      "rationale": "Questions operators ask can reveal customer or mission detail.",
+      "parent": "GAU-120",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "RAG endpoints require a session and never log query text",
+        "RAG endpoints are operator-only: a signed-in user gets 403, an operator does not (REQ-SEC-016)"
+      ]
+    },
+    {
+      "id": "REQ-MSH-001",
+      "title": "Mesh report ingress",
+      "statement": "The hub shall refuse a device report with a bad token, a malformed payload or a rate above its limit, and shall keep only known fields from an accepted report.",
+      "rationale": "The hub faces every enrolled device; it must not store attacker-chosen data or be flooded.",
+      "parent": "GAU-240",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "agents report with their device token; bad tokens, bad payloads and floods are refused",
+        "parseReport sanitises fields",
+        "network scores are allowlisted; nothing unmeasured is invented"
+      ]
+    },
+    {
+      "id": "REQ-MSH-002",
+      "title": "Store-and-forward mailbox",
+      "statement": "The hub mailbox shall accept a bundle only from its enrolled source to an enrolled destination within its lifetime, shall drop duplicates, and shall deliver it with a receipt.",
+      "rationale": "Store-and-forward must not become an open relay or replay channel.",
+      "parent": "GAU-120",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "the mailbox enforces source, destination, lifetime and dedup, and keeps tombstones",
+        "two devices exchange a sealed bundle and a receipt through the hub routes"
+      ]
+    },
+    {
+      "id": "REQ-COM-001",
+      "title": "Data API limits",
+      "statement": "Organisation API keys shall be limited per minute per key, per day per organisation and in history depth by plan, and the public pilot form shall accept at most 3 requests per address per hour.",
+      "rationale": "Paid access is metered and the only public write route cannot be flooded.",
+      "parent": "GAU-120",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "data API: per-key minute limit, per-org daily quota, history capped by plan",
+        "data API: the daily data budget caps history, then refuses until the next UTC day",
+        "pilot requests: valid leads stored, bad input rejected, honeypot dropped, 3 per IP per hour"
+      ]
+    },
+    {
+      "id": "REQ-PER-004",
+      "title": "Telemetry retention",
+      "statement": "The live telemetry store shall keep 3 days or 40,000 lines by default, and shall never keep less than the restart reload needs.",
+      "rationale": "Bounded disk and memory on an 8 GB host without losing the history a restart reloads.",
+      "parent": "GAU-157",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "retention defaults: 3 days live (40,000 lines), daily, first run 10 min after start",
+        "retention env: a keep below the reload floor is raised; 0 hours turns it off; junk falls back"
+      ]
+    },
+    {
+      "id": "REQ-OPS-008",
+      "title": "Deploy only gated main",
+      "statement": "The deploy command shall refuse a commit that is not on origin/main or has no passing gate record for its tree, unless an emergency reason is given, and an emergency deploy shall text the phone, be recorded and stay flagged in the health check.",
+      "rationale": "What runs live is exactly what passed the local gate; the only bypass is loud and visible.",
+      "parent": "GAU-206",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "deploy refuses a commit not on origin/main",
+        "deploy refuses a tree with no passing gate record",
+        "--emergency deploys without the checks, texts the phone and is recorded",
+        "--emergency needs a reason",
+        "check: an emergency deploy stays ✗",
+        "gates record: runs the gates (test and build inside verify) and records the counts by tree"
+      ]
+    },
+    {
+      "id": "REQ-SEC-017",
+      "title": "Device trust only by proof",
+      "statement": "The API shall mark a device trusted only after a verified proof, register new devices as unverified, accept only downgrade statuses from a device owner, and reject fingerprint signals beyond 32 flat entries.",
+      "rationale": "Device trust was self-attested (17 Nov security sweep).",
+      "parent": "GAU-25",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "REQ-SEC-017: a newly registered device is unverified, not trusted",
+        "REQ-SEC-017: the owner cannot set a device to trusted through /status",
+        "REQ-SEC-017: /status rejects a status outside the allowed set with 400",
+        "REQ-SEC-017: only a verified proof marks a device trusted",
+        "REQ-SEC-017: oversized or non-flat fingerprintSignals are rejected with 400"
+      ]
+    },
+    {
+      "id": "REQ-OPS-009",
+      "title": "Check names an upstream data gap",
+      "statement": "When the served space-weather point is ageing or stale, `check` shall report an upstream gap as a warning (not a failure) only when NOAA's public RTSW file shows the active spacecraft without plasma while a standby spacecraft is current, and shall keep the failure when NOAA has newer active-spacecraft plasma than the point or cannot be reached; it shall not change what the backend serves.",
+      "rationale": "On 2026-11-17 NOAA's active spacecraft (SOLAR1) reported null plasma while standby spacecraft were current; `check` showed a failure that nothing on this host could fix (scripts/ops/gauss-services.sh).",
+      "parent": "GAU-15",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "check: a stale point with NOAA's active spacecraft out of plasma is an upstream-gap warning, not ✗",
+        "check: a stale point while NOAA has newer active plasma stays ✗ (our ingest is behind)",
+        "check: a live point does not ask NOAA anything",
+        "check: a stale point with NOAA unreachable stays ✗"
+      ]
+    },
+    {
+      "id": "REQ-OPS-010",
+      "title": "Deploy tolerates doc-only live edits",
+      "statement": "`deploy` shall save as patches, restore and log local edits in the live checkout that are all under .claude/ or docs/, then proceed, and shall still refuse when any other tracked path is changed.",
+      "rationale": "On 2026-11-17 an edit to a skill file in the live checkout blocked a deploy whose target commit already contained the text (scripts/ops/gauss-services.sh).",
+      "parent": "GAU-158",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "deploy: local edits under .claude/ and docs/ are saved as patches, restored, and the deploy proceeds",
+        "events: the saved doc-only live changes are logged",
+        "deploy: a code change next to a doc change still refuses, and the doc change is not touched"
+      ]
+    },
+    {
+      "id": "REQ-ION-001",
+      "title": "GloTEC regional TEC summary",
+      "statement": "The ingest shall summarise NOAA SWPC GloTEC as the mean, minimum and maximum TEC in TECU over grid cells centred 2-7 N and 100-119 E and the value of the cell nearest Kuala Lumpur, each carrying source \"glotec-swpc\" and the product's own model time.",
+      "rationale": "Malaysia lies under the equatorial ionization anomaly; a regional summary with source and time keeps the value traceable and avoids holding the 5184-cell global grid.",
+      "parent": "GAU-TBC (ionosphere issue not yet created in Linear)",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "GloTEC: the Malaysian box summary matches the recorded cells, with source and model time"
+      ]
+    },
+    {
+      "id": "REQ-ION-002",
+      "title": "GloTEC range validation",
+      "statement": "The ingest shall skip any GloTEC cell whose tec is not a finite number in 0-300 TECU or whose latitude or longitude is off the globe, and shall never read a skipped cell as 0.",
+      "rationale": "A fill or corrupt cell read as 0 TECU would look like a real ionospheric collapse.",
+      "parent": "GAU-TBC (ionosphere issue not yet created in Linear)",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "GloTEC: out-of-range, non-numeric and off-globe cells are skipped, never read as 0"
+      ]
+    },
+    {
+      "id": "REQ-ION-003",
+      "title": "GloTEC malformed or inconsistent file is unknown",
+      "statement": "The ingest shall return no reading for a GloTEC file that is not a FeatureCollection, has a missing or future time tag, has a time tag different from its index entry, exceeds 8 MB, or has no valid cell in the Malaysian box.",
+      "rationale": "Unknown stays unknown; a bad file must not replace the last honest reading.",
+      "parent": "GAU-TBC (ionosphere issue not yet created in Linear)",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "GloTEC: malformed documents, a missing or future time tag, a mismatched tag and an empty box are unknown",
+        "GloTEC fetch: a malformed file or a file whose time tag disagrees with the index is rejected"
+      ]
+    },
+    {
+      "id": "REQ-ION-004",
+      "title": "GloTEC freshness bound",
+      "statement": "The served point shall carry ionosphere = null when the GloTEC model time is more than 60 minutes old or in the future.",
+      "rationale": "GloTEC steps are listed about 26 min after their valid time (observed 18 Nov 2026), so 60 min allows three missed 10-min steps (shared/policy/freshness.json, glotec_tec).",
+      "parent": "GAU-TBC (ionosphere issue not yet created in Linear)",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "GloTEC: a reading older than the freshness bound, or from the future, is unknown (null)",
+        "tick: GloTEC TEC over Malaysia rides on the point while fresh and is unknown (null) past 60 min"
+      ]
+    },
+    {
+      "id": "REQ-ION-005",
+      "title": "GloTEC rate of change",
+      "statement": "The ingest shall report the rate of change of the regional mean TEC in TECU per hour only against a baseline step 20-90 minutes older with the same cell count, and null otherwise.",
+      "rationale": "A rate over a gap or a different cell set is not comparable and would mislead.",
+      "parent": "GAU-TBC (ionosphere issue not yet created in Linear)",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "GloTEC: rate of change is TECU per hour against a 20-90 min older step, else unknown",
+        "GloTEC fetch: newest step, cold-start baseline gives the rate, an unchanged step is not downloaded again"
+      ]
+    },
+    {
+      "id": "REQ-ION-006",
+      "title": "GloTEC observation-constrained cells",
+      "statement": "The ingest shall count separately the cells whose quality_flag is 1-5 and shall count a cell with flag 0 or an out-of-range flag as not observation-constrained.",
+      "rationale": "Where no F-region observation constrains a cell GloTEC relaxes to IRI-2016 climatology, which is not a measurement.",
+      "parent": "GAU-TBC (ionosphere issue not yet created in Linear)",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "GloTEC: quality_flag 0 cells are counted as not observation-constrained"
+      ]
+    },
+    {
+      "id": "REQ-ION-007",
+      "title": "GloTEC fetches SWPC only",
+      "statement": "The ingest shall request GloTEC only from https://services.swpc.noaa.gov, with no query string or credentials, and shall accept only index entries under /products/glotec/geojson_2d_urt/.",
+      "rationale": "A mistyped or injected URL must not send the backend to another host.",
+      "parent": "GAU-TBC (ionosphere issue not yet created in Linear)",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "GloTEC: only SWPC hosts are fetched; a feed on another host is refused before any request",
+        "GloTEC: the index parses from a byte-range tail and from a full array; bad entries are dropped"
+      ]
+    },
+    {
+      "id": "REQ-ION-008",
+      "title": "GloTEC outage reporting",
+      "statement": "When the GloTEC fetch fails the source status shall report healthy = false, keep the last observed time and show its age growing in seconds.",
+      "rationale": "A stale reading must never be reported with the age of the last fetch.",
+      "parent": "GAU-TBC (ionosphere issue not yet created in Linear)",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "GloTEC fetch: an outage returns null, keeps lastSeen, and the status ages instead of staying healthy"
+      ]
+    },
+    {
+      "id": "REQ-VER-001",
+      "title": "Computed readiness score",
+      "statement": "The verification gate shall compute a readiness score from 0 to 100 for each requirement as the sum of six evidence-based parts weighted 15, 30, 20, 15, 10 and 10.",
+      "rationale": "A score computed from test, FMEA and documentation evidence replaces a self-graded one (GAU-120).",
+      "parent": "GAU-120",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "readiness: a fully evidenced internal requirement scores 100 and shows its reasons",
+        "readiness: verification is 0 when a mapped test is skipped or missing, lower for a single test"
+      ]
+    },
+    {
+      "id": "REQ-DEV-001",
+      "title": "Swap timer idle with no devices",
+      "statement": "The swap timer's tick shall append no telemetry line and change no device when no device is registered.",
+      "rationale": "An idle tick otherwise appends about 3,840 telemetry lines a day to the line-capped live file (backend/services/device-swap-manager.ts scheduledRebalance, GAU-228).",
+      "parent": "GAU-228",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "GAU-228: the swap timer's tick does nothing until a device is registered, then rebalances it"
+      ]
+    },
+    {
+      "id": "REQ-DEV-002",
+      "title": "Swap plan and quality are operator-only",
+      "statement": "The API policy shall require the operator role for GET /api/device/swap/plan and for POST /api/device/:id/quality.",
+      "rationale": "Both change or reveal how work is spread across devices (backend/rbac.ts:68,70); the exact path /device/swap/plan must beat /device/:id.",
+      "parent": "GAU-120",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "role matrix"
+      ]
+    },
+    {
+      "id": "REQ-FEED-001",
+      "title": "Space-object catalogue needs a session",
+      "statement": "The system shall answer GET /api/feed/space-objects with HTTP 401 when the request has no session.",
+      "rationale": "The route is in the user tier of the API policy (backend/server.ts:373, backend/rbac.ts); only the landing feeds are public.",
+      "parent": "GAU-120",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "landing feeds are public; other API routes still require a session"
+      ]
+    },
+    {
+      "id": "REQ-LNK-001",
+      "title": "Link mode drops to AIRGAP after two failed checks",
+      "statement": "The link guardian shall switch to AIRGAP only after 2 consecutive failed link checks, and shall keep the previous mode after a single failed check.",
+      "rationale": "One lost ping used to stop every external fetch for 30 s; the 17% AIRGAP readings on the hotspot were mostly single lost pings (backend/lib/link-mode.ts, AIRGAP_AFTER = 2).",
+      "parent": "GAU-120",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "one lost ping keeps the last mode: fetches don't stop for a blip",
+        "2 lost pings in a row switch to AIRGAP"
+      ]
+    },
+    {
+      "id": "REQ-LNK-002",
+      "title": "Link mode by latency",
+      "statement": "The link guardian shall report SAT when an answered link check takes 150 ms or more and CLOUD when it takes less than 150 ms.",
+      "rationale": "SAT mode throttles the live feeds to save bandwidth (backend/lib/link-mode.ts SAT_LATENCY_MS = 150; backend/server.ts broadcast).",
+      "parent": "GAU-120",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "a ping that answers resets the count and picks CLOUD or SAT by latency"
+      ]
+    },
+    {
+      "id": "REQ-AUTH-001",
+      "title": "Sign-in options carry no secret",
+      "statement": "GET /api/sso-options shall answer a caller with no session with HTTP 200 and a body of the Google and GitHub enabled flags and the allowed domain only, containing no credential.",
+      "rationale": "The login page needs to know which methods to offer before sign-in (backend/server.ts:249).",
+      "parent": "GAU-120",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "sso-options is public and reports Google SSO off without credentials"
+      ]
+    },
+    {
+      "id": "REQ-ADP-001",
+      "title": "JAXA ERG probe is never a healthy feed",
+      "statement": "The JAXA ERG adapter shall report healthy false and no last-seen time for every probe outcome, including a reachable catalogue.",
+      "rationale": "The probe ingests no particle data, so it must not make a source look live (backend/adapters/jaxa-erg.ts, GAU-55, GAU-63).",
+      "parent": "GAU-55",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "JAXA: catalog reachability is not reported as a healthy data feed (GAU-55)",
+        "JAXA: a failure or an unexpected page is never a healthy feed (GAU-63)"
+      ]
+    },
+    {
+      "id": "REQ-GATE-001",
+      "title": "Gate reports missing or skipped tests",
+      "statement": "The verification gate shall mark a requirement unverified when any mapped test is missing or skipped, and failed when any mapped test fails.",
+      "rationale": "Evidence is by exact test name, so a renamed test must not pass silently (scripts/verify/vcrm.ts buildMatrix).",
+      "parent": "GAU-120",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "VCRM: verified only with all evidence passing; missing, failing or skipped tests are reported (GAU-120)"
+      ]
+    },
+    {
+      "id": "REQ-GATE-002",
+      "title": "Baseline validator requires a shall",
+      "statement": "The baseline validator shall report a problem for any requirement whose statement does not contain \"shall\".",
+      "rationale": "A statement without a shall is not a requirement (scripts/verify/vcrm.ts validateBaseline).",
+      "parent": "GAU-120",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "VCRM: baseline rules enforce id, 'shall', method and evidence (GAU-120)"
+      ]
+    },
+    {
+      "id": "REQ-WS-001",
+      "title": "Feed sockets refuse a foreign origin",
+      "statement": "The feed WebSocket servers shall close with code 1008 any connection whose Origin header is not an allowed origin.",
+      "rationale": "A page on another site must not read the live feeds with a visitor's session (backend/server.ts guardSocketConnection, GAU-201).",
+      "parent": "GAU-201",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "feed WebSockets: both paths connect at once and stay open; bad origin and unknown path refused (GAU-201)"
+      ]
+    },
+    {
+      "id": "REQ-ARG-001",
+      "title": "Argo never automates admin actions",
+      "statement": "Argo shall never run an administrator, sudo or Tailscale-changing step on its own: its remediation plan shall hold only allowlisted, non-sudo steps, and exit-node candidates shall come from an allowlist.",
+      "rationale": "A network agent running on a defence-grade host must not escalate privilege or reroute traffic without a person.",
+      "parent": "GAU-187",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "TestPlanNeverAutomatesAdminOrTailscale",
+        "TestRunnableOnlyAllowlistedNoSudoSteps",
+        "TestTailscaleExitCandidatesAreAllowListedOnly"
+      ]
+    },
+    {
+      "id": "REQ-ARG-002",
+      "title": "Argo relay accepts only authentic bundles",
+      "statement": "The Argo relay shall refuse forged or tampered bundles and shall leave bundles from an unknown sender on the hub instead of acting on them.",
+      "rationale": "Store-and-forward is only safe if what is forwarded is proven to come from a known peer, unaltered.",
+      "parent": "GAU-187",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "TestRelayRefusesForgedAndTamperedBundles",
+        "TestRelayUnknownSenderStaysOnHub"
+      ]
+    },
+    {
+      "id": "REQ-ARG-003",
+      "title": "Argo watches the awake guard without looping",
+      "statement": "Argo shall restart a stale or missing awake guard and mesh-heal, shall leave fresh and unloaded peers alone, and shall stop restarting after repeated failures and alert instead.",
+      "rationale": "The two watchers cover each other (FMEA FM-20); a crash loop must page a person, not spin.",
+      "parent": "GAU-187",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "TestWatchRestartsStaleAndMissingButSkipsUnloaded",
+        "TestWatchLeavesFreshPeersAlone",
+        "TestWatchStopsKickingACrashLoopAndAlerts"
+      ]
+    },
+    {
+      "id": "REQ-WEB-001",
+      "title": "Public release closes the account routes",
+      "statement": "In the public release the website Worker shall answer 404 with Cache-Control no-store to the sign-in and workspace pages (/app/, /app/admin/, /app/checkout), the Argo page, the application endpoint (/api/apply) and the payment webhook (/api/stripe/webhook), whatever the HTTP method.",
+      "rationale": "A public site must not expose account, form or payment routes before they are opened on purpose.",
+      "parent": "GAU-178",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "public release: sign-in, the workspace, Argo, form posts and the webhook answer 404, whatever the method"
+      ]
+    },
+    {
+      "id": "REQ-WEB-002",
+      "title": "Workspace needs a valid Access token",
+      "statement": "The website Worker shall answer 401 to a workspace request unless it carries a Cloudflare Access token with a valid signature, the configured audience and issuer, and an unexpired time.",
+      "rationale": "The workspace holds accounts and billing; a forged, expired or bare-header identity must never count.",
+      "parent": "GAU-228",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "sign-in: only a valid Access JWT for our team and application counts",
+        "workspace: signed out gets 401; pending applicants see their status; members see Constellation"
+      ]
+    },
+    {
+      "id": "REQ-WEB-003",
+      "title": "Pilot brief input is validated and bots store nothing",
+      "statement": "The website Worker shall store no pilot brief from a post that is invalid (HTTP 422), cross-site (403), of an unsupported content type (415), over five an hour from one address (429) or has the honeypot field filled (success redirect shown to the sender).",
+      "rationale": "Public form input is untrusted; abuse must not reach storage and bots must not learn they were dropped.",
+      "parent": "GAU-228",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "apply: bad input comes back with errors and the values escaped; nothing stored",
+        "apply: cross-site posts, bots, odd encodings and floods are turned away"
+      ]
+    },
+    {
+      "id": "REQ-WEB-004",
+      "title": "Payment webhook accepts only a valid signature",
+      "statement": "The website Worker shall reject with HTTP 400, leaving the account's billing status unchanged, a Stripe webhook whose signature uses a wrong secret, is older than 5 minutes or does not match the payload.",
+      "rationale": "Plan unlock and cancellation must follow only events Stripe signed.",
+      "parent": "GAU-228",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "stripe: form encoding and webhook signatures (wrong secret, stale or tampered payloads rejected)",
+        "stripe webhook: verified events unlock, renew, fail and cancel plans; forged ones change nothing"
+      ]
+    },
+    {
+      "id": "REQ-WEB-005",
+      "title": "Pages carry no scripts and load nothing from elsewhere",
+      "statement": "Every website page shall carry a Content-Security-Policy meta tag equal to the Worker's header, contain no script element other than a non-executed JSON-LD block, no inline style or event handler, and load no src, srcset or stylesheet from outside https://lightbound.space.",
+      "rationale": "No client-side code or third-party request means no script-injection or tracking path from the pages.",
+      "parent": "GAU-228",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "security: strict CSP, no scripts, no inline styles or handlers, nothing loaded from elsewhere"
+      ]
+    },
+    {
+      "id": "REQ-ARG-004",
+      "title": "Argo names the link problem",
+      "statement": "Argo shall classify each network probe into one of eleven classes (OK, OFFLINE, CAPTIVE, DNS, DEAD_PROXY, STALE_DAEMON, TLS_INTERCEPT, PORT_BLOCK, REGION, WPAD_RISK, WIFI_RISK), choosing the most fundamental failure first.",
+      "rationale": "Remote work from anywhere starts with knowing which of the common failures on an unknown network is the cause (tools/argo/classify.go).",
+      "parent": "GAU-187",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "TestClassifyEveryFailureClass",
+        "TestWiFiRiskIsAWarningWithAdviceOnly"
+      ]
+    },
+    {
+      "id": "REQ-ARG-005",
+      "title": "Argo credits a fix only after recovery",
+      "statement": "Argo shall record a remediation step as the fix for a network only after a later probe shows the link recovered.",
+      "rationale": "A fix that is not credited on evidence is repeated on every network it did not help (docs/ARGO_DTN.md, Honest learning per network).",
+      "parent": "GAU-187",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "TestLoopCaptiveAutoOpensVerifiesAndRemembers",
+        "TestLoopUserFixCreditedOnRecovery"
+      ]
+    },
+    {
+      "id": "REQ-ARG-006",
+      "title": "Argo credits switch-network only on a changed network",
+      "statement": "Argo shall credit the switch-network fix to a network only when the network fingerprint changed before the link recovered.",
+      "rationale": "A blip that cleared by itself must not be remembered as a fix (tools/argo/adaptive_test.go).",
+      "parent": "GAU-187",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "TestSwitchNetworkCreditedOnlyWhenTheNetworkChanged"
+      ]
+    },
+    {
+      "id": "REQ-ARG-007",
+      "title": "Argo tries the remembered fix first",
+      "statement": "Argo shall place the fix remembered for the current network first in its remediation plan.",
+      "rationale": "The step that worked on this network is the cheapest next attempt.",
+      "parent": "GAU-187",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "TestPlanPutsRememberedFixFirst"
+      ]
+    },
+    {
+      "id": "REQ-ARG-008",
+      "title": "Argo remediation attempts back off",
+      "statement": "Argo shall wait between remediation attempts for one incident, starting at 60 s and doubling up to a maximum of 15 min.",
+      "rationale": "Repeated attempts on a failing uplink must not add load or battery drain (tools/argo/store.go backoffBase, backoffMax).",
+      "parent": "GAU-187",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "TestLoopBackoffAndCircuitBreaker"
+      ]
+    },
+    {
+      "id": "REQ-ARG-009",
+      "title": "Argo stops after four failed attempts",
+      "statement": "Argo shall stop automatic remediation of an incident after 4 attempts, open its circuit breaker and alert the owner.",
+      "rationale": "A bounded number of attempts prevents a loop and hands a persistent fault to a person (tools/argo/store.go maxAttempts).",
+      "parent": "GAU-187",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "TestLoopBackoffAndCircuitBreaker",
+        "TestEscalationTextsOnceThenEveryTwoHours"
+      ]
+    },
+    {
+      "id": "REQ-ARG-010",
+      "title": "Argo never weakens TLS",
+      "statement": "Argo shall not include in any remediation plan a step that disables TLS certificate verification.",
+      "rationale": "A hostile network that breaks TLS must be reported (TLS_INTERCEPT), never worked around.",
+      "parent": "GAU-187",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "TestPlanNeverAutomatesAdminOrTailscale"
+      ]
+    },
+    {
+      "id": "REQ-ARG-011",
+      "title": "Argo masks secrets in what it logs and sends",
+      "statement": "Argo shall mask API keys, tokens, passwords and proxy credentials in the text it writes to its incident log and sends in alerts.",
+      "rationale": "Logs and alerts leave the process; a credential in them is a leak (tools/argo/store.go, notify.go).",
+      "parent": "GAU-187",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "TestMaskHidesSecrets",
+        "TestStaleProcCommandNeverIncludesEnv",
+        "TestNotifyMasksTruncatesAndQueuesOffline"
+      ]
+    },
+    {
+      "id": "REQ-ARG-012",
+      "title": "Argo announces a link class once",
+      "statement": "Argo shall send one alert for a link class until the class changes.",
+      "rationale": "Repeated alerts for one fault train people to ignore them.",
+      "parent": "GAU-187",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "TestLoopNotifiesOnlyOnClassChange"
+      ]
+    },
+    {
+      "id": "REQ-ARG-013",
+      "title": "Argo rate-limits alerts per key",
+      "statement": "Argo shall send at most one alert per key within that key's interval.",
+      "rationale": "Alert floods hide the one that matters (tools/argo/notify.go).",
+      "parent": "GAU-187",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "TestNotifyRateLimitsPerKey"
+      ]
+    },
+    {
+      "id": "REQ-ARG-014",
+      "title": "Argo queues a bundle while the hub is unreachable",
+      "statement": "Argo shall write each bundle to disk before send returns and shall upload it when the hub next answers, including after a restart.",
+      "rationale": "Work must not be lost when the link is down; it is delivered later (docs/ARGO_DTN.md, Reliability). Designed for delay- and disruption-tolerant operation (RFC 9171).",
+      "parent": "GAU-193",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "TestRelayWorksOfflineAndExpires",
+        "TestRelayRestartKeepsQueue"
+      ]
+    },
+    {
+      "id": "REQ-ARG-015",
+      "title": "Argo confirms delivery with a signed receipt",
+      "statement": "Argo shall give the sender a signed delivered receipt for each bundle the destination accepted.",
+      "rationale": "With no custody transfer in BPv7 (RFC 9171), delivery is confirmed end to end by the receiver.",
+      "parent": "GAU-193",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "TestRelayDeliversWithSignedReceipt",
+        "TestRelayResendsReceiptForDuplicates"
+      ]
+    },
+    {
+      "id": "REQ-ARG-016",
+      "title": "Argo re-sends bundles the hub lost",
+      "statement": "Argo shall queue a bundle again when the hub reports it unknown and the destination has not confirmed it.",
+      "rationale": "A hub restored from an old backup must not turn a send into silent loss.",
+      "parent": "GAU-193",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "TestRelayReuploadsWhenHubLosesBundles"
+      ]
+    },
+    {
+      "id": "REQ-ARG-017",
+      "title": "Argo gives up only at end of lifetime",
+      "statement": "Argo shall keep a bundle queued until its lifetime ends and shall then alert the owner with the file name.",
+      "rationale": "The sender is told which file failed, not just that something did (docs/ARGO_DTN.md, Reliability point 5).",
+      "parent": "GAU-193",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "TestRelayWorksOfflineAndExpires"
+      ]
+    },
+    {
+      "id": "REQ-ARG-018",
+      "title": "Argo carries bundles with no network",
+      "statement": "Argo shall move a bundle between two devices with no network path between them by exporting it to a removable drive and importing it on the other device.",
+      "rationale": "No dependence on continuous connectivity (docs/ARGO_DTN.md, data mule).",
+      "parent": "GAU-193",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "TestRelayDataMule"
+      ]
+    },
+    {
+      "id": "REQ-ARG-019",
+      "title": "Argo seals bundle payloads",
+      "statement": "Argo shall seal each bundle payload so that its plaintext is absent from the bundle bytes and the payload opens only with the destination's private key.",
+      "rationale": "The hub and the path see ciphertext only (HPKE, RFC 9180).",
+      "parent": "GAU-193",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "TestSealOpenVerify"
+      ]
+    },
+    {
+      "id": "REQ-ARG-020",
+      "title": "Hub returns bundles unchanged to the destination only",
+      "statement": "The hub shall return a stored bundle byte for byte unchanged and only to its destination device.",
+      "rationale": "The hub moves ciphertext and must neither alter it nor show it to a third device.",
+      "parent": "GAU-193",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "the mailbox enforces source, destination, lifetime and dedup, and keeps tombstones",
+        "two devices exchange a sealed bundle and a receipt through the hub routes"
+      ]
+    },
+    {
+      "id": "REQ-ARG-021",
+      "title": "Hub rate-limits device reports",
+      "statement": "The hub shall answer HTTP 429 to a device report that arrives less than 10 s after that device's previous report.",
+      "rationale": "A stolen or faulty device token must not flood the hub (backend/mesh/router.ts MIN_REPORT_INTERVAL_MS).",
+      "parent": "GAU-187",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "agents report with their device token; bad tokens, bad payloads and floods are refused"
+      ]
+    },
+    {
+      "id": "REQ-ARG-022",
+      "title": "Argo guard refuses jobs the memory cannot hold",
+      "statement": "argo guard shall refuse to admit a job whose memory need exceeds the memory free after keeping the operating-system reserve of 1.5 GB.",
+      "rationale": "The 8 GB host runs one heavy job at a time; admission within a memory budget keeps it up (tools/argo/guard.go reserveGB).",
+      "parent": "GAU-187",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "TestAdmit",
+        "TestAdmitUsesAvailableAtNormal"
+      ]
+    },
+    {
+      "id": "REQ-ARG-023",
+      "title": "Argo guard admits no job at risk level",
+      "statement": "argo guard shall refuse every job that needs memory while the host is at risk or critical level.",
+      "rationale": "Pressure already at risk must not be added to.",
+      "parent": "GAU-187",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "TestAdmit"
+      ]
+    },
+    {
+      "id": "REQ-ARG-024",
+      "title": "Argo guard pauses heavy jobs on battery",
+      "statement": "argo guard shall pause a heavy job that started on mains power while the host runs on battery and resume it when mains power returns.",
+      "rationale": "Eclipse budget: on a limited power source, heavy work yields (tools/argo/guard.go maxPause).",
+      "parent": "GAU-187",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "TestEclipsePausesOnBatteryAndResumes"
+      ]
+    },
+    {
+      "id": "REQ-ARG-025",
+      "title": "Argo guard bounds an eclipse pause",
+      "statement": "argo guard shall stop a job paused on battery for longer than the maximum pause (2 h by default) and exit with code 75 so that a queue retries it.",
+      "rationale": "A pause must not hold a job indefinitely.",
+      "parent": "GAU-187",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "TestEclipseStopsAfterMaxPause"
+      ]
+    },
+    {
+      "id": "REQ-ARG-026",
+      "title": "Argo reproduces the BPSec standard test vectors",
+      "statement": "Argo shall reproduce the RFC 9173 Appendix A example vectors A.1 to A.4 for BPSec integrity and confidentiality blocks.",
+      "rationale": "Designed for delay- and disruption-tolerant operation with the BPSec layout (RFC 9172, RFC 9173); the vectors check interoperability at the block level only.",
+      "parent": "GAU-193",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "TestRFC9173A1Integrity",
+        "TestRFC9173A2ConfidentialityKeyWrap",
+        "TestRFC9173A3MultipleSources",
+        "TestRFC9173A4FullScope"
+      ]
+    },
+    {
+      "id": "REQ-ARG-027",
+      "title": "Argo bundles match the hub's reading",
+      "statement": "Argo shall encode bundles as BPv7 primary and canonical blocks with CRCs (RFC 9171) that round-trip and that the hub parses to the same ids, endpoints and times.",
+      "rationale": "Both ends must read one bundle the same way (golden fixtures).",
+      "parent": "GAU-193",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "TestBundleFixtures",
+        "TestBundleRoundTripAndCRC",
+        "the hub parses Argo's bundles to the same ids, endpoints and times as Argo"
+      ]
+    },
+    {
+      "id": "REQ-ARG-028",
+      "title": "Argo uses only the Go standard library",
+      "statement": "The Argo module shall have no third-party dependency: tools/argo/go.mod shall hold no require line.",
+      "rationale": "Small and auditable: nothing outside the Go toolchain to track or trust.",
+      "parent": "GAU-187",
+      "method": "I",
+      "owner": "Josh",
+      "evidence": [
+        "tools/argo/go.mod"
+      ]
+    },
+    {
+      "id": "REQ-ARG-029",
+      "title": "Charger diagnosis",
+      "statement": "When a host reports what its charger negotiated, Argo shall classify the charger as no-pd (5 V or less and at most 15 W), pd-low (Power Delivery but below the measured heavy-job need) or ok, shall say why power is short and what to do in the guard's reason, shall show the state in `argo status` and send it to Gauss as an allowlisted, range-checked field, and shall report a host that gives no negotiation as unknown, never guessed.",
+      "rationale": "On 17 Nov 2026 a Mac sat on a 5 V x 1.5 A = 8 W charger and the guard said only that the charger could not keep up; the cause (no USB-C Power Delivery) and the remedy (a USB-C to USB-C cable with a fast charger) were in the controller's own readout.",
+      "parent": "GAU-195",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "TestParseAdapterDetails",
+        "TestApplyIoregAdapter",
+        "TestLinuxAdapter",
+        "TestClassifyCharger",
+        "TestChargerReasonInGuardAndAlert",
+        "TestChargerStatusAndReport",
+        "Argo's guard block is allowlisted; unknown codes drop alone, bad values drop the block"
+      ]
+    },
+    {
+      "id": "REQ-ARG-030",
+      "title": "Power-save mode",
+      "statement": "When a host's power budget is negative (on battery, on a charger that cannot carry the load, or on plain 5 V USB) Argo shall enter power-save at once and leave it only after the budget has been healthy for 10 minutes; while on it shall report \"power-save\" as a guard reason with the charger advice so heavy work waits, stretch its own probe, guard-sampling and mesh-report timers by a factor of 3 (a broken link still probes and reports at once), and send one warn-level text per 6 hours. A host with no battery or no reading shall never enter it, and `argo power-save on|off|auto|status` shall force, release or show it.",
+      "rationale": "On 17 Nov 2026 a Mac on an 8 W charger drained under load; Josh asked Argo to adjust settings as needed on every device. A spacecraft sheds non-essential loads in eclipse and restores them in sunlight; Argo does the same.",
+      "parent": "GAU-195",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "TestPowerSaveEntersAndLeaves",
+        "TestPowerSaveForced",
+        "TestPowerSaveStretchesTimers",
+        "TestPowerSaveHoldsHeavyWorkWithChargerAdvice",
+        "TestPowerSaveTickActsOnceAndRestores",
+        "TestPowerSaveReportStatusAndCLI"
+      ]
+    },
+    {
+      "id": "REQ-ARG-031",
+      "title": "Power-save acts only without admin rights and reversibly",
+      "statement": "In power-save Argo shall quit only menu-bar apps on a fixed allowlist, only while they are running and idle by their own reported state (Cloudflare WARP's app when warp-cli says Disconnected; the daemon stays), by a normal SIGTERM and never through UI scripting, shall record what it quit and relaunch it when power-save ends (never an app off the allowlist, never one already running), and shall only suggest admin settings (pmset, powerprofilesctl, tlp) with the exact command, never run them. External commands use pinned absolute paths and no shell.",
+      "rationale": "Automatic actions must need no admin rights and be undoable; changing settings through UI scripting needs an Automation permission prompt that blocks an unattended run.",
+      "parent": "GAU-195",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "TestPowerSaveQuitsOnlyIdleAllowlistedApps",
+        "TestPowerSaveRelaunchesWhatItQuit",
+        "TestPowerSaveSuggestsAdminSettingsNeverRuns",
+        "TestPowerSaveTickActsOnceAndRestores"
+      ]
+    },
+    {
+      "id": "REQ-ARG-032",
+      "title": "Power-save on the mesh",
+      "statement": "Argo shall send its power-save state (on or off, and while on since when and why) to Gauss as an allowlisted field; Gauss shall accept only a boolean, one of the reasons battery, charger-short, no-pd or manual, and a time that is not in the future or older than a year, drop a bad block alone, and show staff and above which devices are in power-save and why on /mesh.",
+      "rationale": "The network can place work on devices that have power to spare only if it can see which ones are saving it.",
+      "parent": "GAU-195",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "TestPowerSaveReportStatusAndCLI",
+        "power-save: allowlisted reason, ranged time, off carries nothing, bad drops alone",
+        "Gauss knows every guard code, level and admission Argo can send",
+        "battery and guard lines read plainly"
+      ]
+    },
+    {
+      "id": "REQ-ARG-040",
+      "title": "Low-signal detection with hysteresis",
+      "statement": "Argo shall enter low-signal mode after 3 consecutive bad probes (failed data probe with every independent anchor unreachable, loss of 15% or more, round trip of 1.5 s or more, a poor speed grade or Wi-Fi signal of -85 dBm or less) and shall leave it only after 10 consecutive good probes and at least 15 minutes in the mode, so that alternating probes never flip it.",
+      "rationale": "On 17 Nov 2026 Josh reported signal problems on the hotspot and asked that Argo keep working on low signal and over a non-internet link, like a spacecraft through drop-outs.",
+      "parent": "GAU-187",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "TestLowSignalHysteresis",
+        "TestLowSignalDoesNotFlap",
+        "TestSampleForAnchorsAndSignal"
+      ]
+    },
+    {
+      "id": "REQ-ARG-041",
+      "title": "Low-signal behaviour never storms a weak link",
+      "statement": "In low-signal mode Argo shall shrink relay chunks from 1 MiB to 64 KiB and then 4 KiB, resume at the first unconfirmed chunk, upload at most 4 bulk chunks per sync, send receipts and alerts before bulk chunks, retry with exponential back-off and jitter, lengthen timeouts, send SMS first for phone alerts while data probes fail, and report at most every 5 minutes without link history.",
+      "rationale": "On 17 Nov 2026 Josh reported signal problems on the hotspot and asked that Argo keep working on low signal and over a non-internet link, like a spacecraft through drop-outs.",
+      "parent": "GAU-187",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "TestLowSignalChunkLadder",
+        "TestRelayLowSignalSmallChunksAndResume",
+        "TestRelayLowSignalCapsBulkPerSync",
+        "TestRelayLowSignalBackoffGrowsWithJitter",
+        "TestJitterBackoff",
+        "TestPendingPriorityReceiptsAlertsThenBulk",
+        "TestPhonePrefersSMSWhenDataProbesFail"
+      ]
+    },
+    {
+      "id": "REQ-ARG-042",
+      "title": "Bearer fragmentation and reassembly",
+      "statement": "A bearer scheduler shall fragment each bundle to the bearer's MTU, refuse bundles above 32 fragments, rebuild the bundle from frames in any order, drop a bundle whose 4-byte id does not match its SHA-256, deliver each bundle id once across bearers, and hold at most 16 partial bundles for 30 minutes.",
+      "rationale": "On 17 Nov 2026 Josh reported signal problems on the hotspot and asked that Argo keep working on low signal and over a non-internet link, like a spacecraft through drop-outs.",
+      "parent": "GAU-187",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "TestFragmentReassembleReorderAndLoss",
+        "TestFragmentLimits",
+        "TestReassemblerDedupAcrossBearersAndCorruption",
+        "TestReassemblerBoundedAndExpires"
+      ]
+    },
+    {
+      "id": "REQ-ARG-043",
+      "title": "Fading-tolerant delivery by parity",
+      "statement": "The bearer layer shall add one XOR parity fragment per group of 2, 4 or 8 data fragments chosen from the measured loss, and shall interleave the groups so that a burst of consecutive lost frames no longer than the group count is recovered without a resend.",
+      "rationale": "On 17 Nov 2026 Josh reported signal problems on the hotspot and asked that Argo keep working on low signal and over a non-internet link, like a spacecraft through drop-outs. Modulation belongs to the modem; Argo does the equivalent at the bundle layer.",
+      "parent": "GAU-187",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "TestFECSurvivesBurstLoss",
+        "TestFECAdaptsToLoss"
+      ]
+    },
+    {
+      "id": "REQ-ARG-044",
+      "title": "Duty-cycle budget",
+      "statement": "Argo shall keep time on air within a sliding one-hour window at no more than 1% for the Meshtastic bearer, computed with the Semtech LoRa airtime formula, shall hold queued bundles that do not fit, and shall hold a failing bearer with jittered exponential back-off.",
+      "rationale": "On 17 Nov 2026 Josh reported signal problems on the hotspot and asked that Argo keep working on low signal and over a non-internet link, like a spacecraft through drop-outs. The strictest regional figure (1%) is the default; the regional rule itself is UNVERIFIED (docs/ARGO_DTN.md).",
+      "parent": "GAU-187",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "TestLoraAirtimeAndDutyBudget",
+        "TestRadioPumpRespectsDutyBudgetAndAlertsFirst",
+        "TestRadioHoldsFailingBearerWithBackoff"
+      ]
+    },
+    {
+      "id": "REQ-ARG-045",
+      "title": "Only protected small bundles leave on a radio",
+      "statement": "Argo shall send on a radio bearer only bundles that carry BPSec protection (a confidentiality block for payloads, at least an integrity block for receipts), shall refuse bulk, oversize and unprotected bundles, shall send alerts and receipts on every available bearer at once and status on the cheapest only, and shall deliver a receipt over the radio while the hub is unreachable.",
+      "rationale": "On 17 Nov 2026 Josh reported signal problems on the hotspot and asked that Argo keep working on low signal and over a non-internet link, like a spacecraft through drop-outs.",
+      "parent": "GAU-187",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "TestRadioRefusesBulkOversizeAndUnprotected",
+        "TestRadioPriorityAndPathDiversity",
+        "TestRelaySendsReceiptOverRadioWhenHubIsDown"
+      ]
+    },
+    {
+      "id": "REQ-ARG-046",
+      "title": "Meshtastic bearer over a local node",
+      "statement": "The Meshtastic bearer shall talk only to a node on the local network through its HTTP API or stream framing with a 233-byte payload ceiling and a 200-byte frame, shall refuse non-local hosts and redirects, and shall ignore every port except PRIVATE_APP.",
+      "rationale": "On 17 Nov 2026 Josh reported signal problems on the hotspot and asked that Argo keep working on low signal and over a non-internet link, like a spacecraft through drop-outs. Behind the flag ARGO_MESHTASTIC_URL; no hardware is bought.",
+      "parent": "GAU-187",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "TestMeshtasticProtobufRoundTrip",
+        "TestMeshtasticSerialFraming",
+        "TestMeshtasticOverLocalHTTP",
+        "TestMeshtasticNodeMustBeLocal"
+      ]
+    },
+    {
+      "id": "REQ-ARG-047",
+      "title": "Time integrity cross-check",
+      "statement": "Argo shall compare the system clock with at least 3 independent HTTPS Date headers over verified TLS and the hub, shall flag a fault named time source disagreement when most sources differ by 2 minutes or more, shall say nothing from fewer than 3 sources, and shall never change the clock.",
+      "rationale": "On 17 Nov 2026 Josh reported signal problems on the hotspot and asked that Argo keep working on low signal and over a non-internet link, like a spacecraft through drop-outs. TLS validity and bundle lifetimes depend on the clock.",
+      "parent": "GAU-187",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "TestJudgeClockNeedsMostSourcesToAgree",
+        "TestClockSampleReadsDateHeaderOverVerifiedTLS"
+      ]
+    },
+    {
+      "id": "REQ-ARG-048",
+      "title": "Prefer the wired phone link",
+      "statement": "Argo shall detect an iPhone USB network service that is up while traffic uses another link, shall suggest the service-order change in status and alerts, shall record which link each probe used, and shall never change network settings itself.",
+      "rationale": "On 17 Nov 2026 Josh reported signal problems on the hotspot and asked that Argo keep working on low signal and over a non-internet link, like a spacecraft through drop-outs. A wired link has no radio contention with the phone's Wi-Fi.",
+      "parent": "GAU-187",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "TestParseHardwarePortsAndKinds",
+        "TestChooseLinkRanksWiredPhoneAboveWiFi",
+        "TestStatusShowsWiredAdvice",
+        "TestAdviceSuffixInAlertText"
+      ]
+    },
+    {
+      "id": "REQ-ARG-049",
+      "title": "Low-signal, clock and link-sample report fields",
+      "statement": "The mesh report shall carry lowSignal, clock and linkSample blocks that Gauss stores only after allowlisting and range checks (loss 0-100%, round trip -1 to 60000 ms, signal -130 to 0 dBm, a 12-hex network hash and a 24-character place label), shall never carry an SSID or a location, and a compact report shall keep the last full link history.",
+      "rationale": "On 17 Nov 2026 Josh reported signal problems on the hotspot and asked that Argo keep working on low signal and over a non-internet link, like a spacecraft through drop-outs. Everything Argo sends is checked on the hub.",
+      "parent": "GAU-187",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "TestLowSignalInStatusAndReport",
+        "TestLinkSampleIsAllowlistedAndPrivate",
+        "low-signal, clock and link-sample blocks are allowlisted and range-checked",
+        "a compact low-signal report keeps the last full link history"
+      ]
+    },
+    {
+      "id": "REQ-ARG-050",
+      "title": "Shared signal map",
+      "statement": "The mesh page shall show one row per network from the latest report of every device within the last 60 minutes, with mean loss, median round trip, best signal and a good, fair or poor quality, worst first.",
+      "rationale": "On 17 Nov 2026 Josh reported signal problems on the hotspot and asked that Argo keep working on low signal and over a non-internet link, like a spacecraft through drop-outs. The team sees where signal is good.",
+      "parent": "GAU-187",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "one row per network, with mean loss, median RTT and the best signal",
+        "stale samples are left out and places group networks without a hash",
+        "quality thresholds: loss, RTT and low-signal mode"
       ]
     }
   ]

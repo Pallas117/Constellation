@@ -10,18 +10,18 @@ import {
   authenticateSocket,
   roleSatisfies,
   type AuthContext,
-  type AuthRole,
   type AuthenticatedRequest,
 } from "./auth.js";
 import { CyberTigerDaemon } from "./cybertiger/daemon.js";
 import { inferNowcast, triggerTraining } from "./ml-client/client.js";
 import {
+  canonicalSince,
   getAuroraMap,
   getCanonicalFeed,
   getLatestCanonical,
   getLatestMms,
-  getMmsFeed,
   getSourceStatus,
+  mmsSince,
   seedCanonical,
 } from "./state.js";
 import type {
@@ -30,29 +30,39 @@ import type {
   IngestionTickResult,
   NowcastInferenceRequest,
 } from "./types.js";
+import { bodyErrorResponse } from "./lib/body-errors.js";
 import { withFreshness } from "./lib/freshness.js";
-import { IngestionWorker } from "./worker/ingest-loop.js";
-import { MAX_QUERY_CHARS, memoryQuery, memoryStatus } from "./memory/client.js";
+import { canSend, sweepDeadSockets, trackLiveness, WS_HEARTBEAT_MS } from "./lib/socket-keepalive.js";
+import { IngestionWorker, liveIngestSources } from "./worker/ingest-loop.js";
+import { MAX_QUERY_CHARS, memoryConfigured, memoryQuery, memoryStatus } from "./memory/client.js";
 import { worldStateFromFeed } from "./world/build.js";
-import { createSwapPlan, rebalanceDeviceNetwork } from "./services/device-swap-manager.js";
+import { createSwapPlan, scheduledRebalance } from "./services/device-swap-manager.js";
 import { encodeCanonicalPoint } from "./lib/proto.js";
 import { linkGuardian } from "./lib/connectivity.js";
 import { bedrock } from "./lib/local-db.js";
+import { routeUpgrades, type UpgradeDecision } from "./lib/ws-upgrade.js";
+import { retentionFromEnv, startTelemetryRetention } from "./lib/telemetry-retention.js";
+import { queryLimit } from "./lib/query-limit.js";
+import { auroraMapReply, encodedReply, sendJsonList } from "./lib/json-response.js";
 import { diskFreeBytes, overall, readTpms } from "./lib/tpm.js";
 import { SPACE_OBJECT_CATALOG } from "./lib/space-object-catalog.js";
-import { auth, ssoAllowedDomain, ssoGithubEnabled, ssoGoogleEnabled } from "./better-auth.js";
+import { auth, CLIENT_IP_HEADER, ssoAllowedDomain, ssoGithubEnabled, ssoGoogleEnabled } from "./better-auth.js";
 import { toNodeHandler } from "better-auth/node";
 import { SelfHealerAgent } from "./cybertiger/self-healer.js";
+import { bootSwitches } from "./lib/boot-switches.js";
 import deviceRegistryRouter from "./device-registry.js";
 import { createMeshRouters } from "./mesh/router.js";
 import { enforceApiPolicy, isPublic } from "./rbac.js";
 import { CommerceStore } from "./commerce/store.js";
 import { createDataApiRouter, createOrgRouter, createPilotRequestHandler } from "./commerce/routers.js";
 import { EnvironmentHistory } from "./trust/environment.js";
+import { createEvidenceRouter } from "./trust/evidence-router.js";
 import { getL1Structures } from "./adapters/noaa-swpc.js";
 
 const app = express();
 const cyberTiger = new CyberTigerDaemon();
+// What the backend starts on boot; GAU-228 parks some of it on small hosts (backend/lib/boot-switches.ts).
+const switches = bootSwitches();
 const selfHealer = new SelfHealerAgent({ proxyPort: Number(process.env.PROXY_PORT ?? 3001) });
 
 // Forward self-healer events into CyberTiger event stream for HUD visibility
@@ -115,14 +125,21 @@ app.use(
         callback(null, true);
         return;
       }
-      console.warn(`[CORS] Blocked origin: ${origin}`);
-      callback(new Error("CORS blocked"));
+      // Not an Error: that reaches the error handler (stack in the log, 500). Without CORS headers
+      // the browser blocks the response itself.
+      console.warn(`[CORS] Blocked origin: ${JSON.stringify(String(origin).slice(0, 200))}`);
+      callback(null, false);
     },
     credentials: true,
   }),
 );
 
-// Better-Auth handler
+// Better-Auth handler. It rate-limits by CLIENT_IP_HEADER; set it here from the
+// address CyberTiger trusts so a client can't pick its own bucket.
+app.use("/api/auth", (req, _res, next) => {
+  req.headers[CLIENT_IP_HEADER] = cyberTiger.extractClientIp(req);
+  next();
+});
 app.all("/api/auth/*", toNodeHandler(auth));
 
 function withAsyncMiddleware(
@@ -148,15 +165,9 @@ function parseLookback(value: unknown, fallbackMs: number): number {
   return total > 0 ? total : fallbackMs;
 }
 
-function filterByLookback<T extends { timestamp: string }>(
-  points: T[],
-  lookbackMs: number,
-  limit: number,
-): T[] {
-  const threshold = Date.now() - lookbackMs;
-  const filtered = points.filter((point) => Date.parse(point.timestamp) >= threshold);
-  return filtered.slice(Math.max(0, filtered.length - limit));
-}
+// Lookback queries on the live buffers: a binary search over their measurement times (state.ts).
+const canonicalLookback = (lookbackMs: number, limit: number) => canonicalSince(Date.now() - lookbackMs, limit);
+const mmsLookback = (lookbackMs: number, limit: number) => mmsSince(Date.now() - lookbackMs, limit);
 
 async function fetchCanonicalFromDb(
   lookbackMs: number,
@@ -180,6 +191,7 @@ async function currentTpms() {
   return readTpms({
     pipeline: worker.getPipelineLatency(),
     failedWrites: bedrock.failedWrites,
+    rejectedPoints: bedrock.rejectedPoints,
     diskFreeBytes: await diskFreeBytes(bedrock.dataDir),
     rssBytes: process.memoryUsage().rss,
     sources: getSourceStatus(),
@@ -263,7 +275,7 @@ app.use(
     },
     history: async (lookbackMs, limit) => {
       const fromDb = await fetchCanonicalFromDb(lookbackMs, limit);
-      return fromDb ? { source: "database", points: fromDb } : { source: "memory", points: filterByLookback(getCanonicalFeed(), lookbackMs, limit) };
+      return fromDb ? { source: "database", points: fromDb } : { source: "memory", points: canonicalLookback(lookbackMs, limit) };
     },
     sources: () => getSourceStatus(),
     // Trust records read the in-memory feed (~28 h at 5 s), longer than any plan's lookback.
@@ -285,19 +297,24 @@ app.use("/api", enforceApiPolicy);
 app.use("/api/orgs", createOrgRouter(commerce));
 
 // Public "Request a pilot" form on the landing page.
-app.post("/api/pilot-requests", createPilotRequestHandler(commerce));
+app.post("/api/pilot-requests", createPilotRequestHandler(commerce, Date.now, (req) => cyberTiger.extractClientIp(req)));
 
 // Mesh & Network page: onboarding for everyone signed in, team status for operators.
 app.use("/api/mesh", mesh.ui);
 
-// RAG endpoints: status for any signed-in user, index/query for operators.
+// Evidence view of the operator console: the pilot flow (log -> trust records -> evidence pack ->
+// PDF -> check). Operators only (API_POLICY); nothing is stored and nothing is signed here.
+app.use("/api/trust/evidence", createEvidenceRouter());
+
+// RAG endpoints: operators only (status and query; API_POLICY in rbac.ts).
 // Knowledge memory: the Cosmic Brain sidecar (backend/memory/client.ts, docs/memory-sidecar.md).
 // Nothing here is mocked: when the service is down the reply says so, never a canned count or
 // answer. Indexing is an operator task on the memory host and has no route here.
 app.get("/api/rag/status", async (_req, res) => {
   const status = await memoryStatus();
   if (!status.available) {
-    res.status(503).json({ ok: false, error: status.reason });
+    // configured: false (GAUSS_MEMORY_URL=off) tells the console to hide the panel, not show it offline.
+    res.status(503).json({ ok: false, configured: memoryConfigured(), error: status.reason });
     return;
   }
   res.json({ ok: true, chunkCount: status.chunks, ...status });
@@ -321,16 +338,16 @@ app.post("/api/rag/query", async (req: express.Request, res: express.Response) =
   res.json({ ok: true, answer: result.answer, sources: result.sources });
 });
 
-// Device lifecycle endpoints (requires operator session)
+// Device lifecycle endpoints: any signed-in user, for their own devices (API_POLICY in rbac.ts)
 app.use("/api/device", deviceRegistryRouter);
 
 app.get("/api/feed/space-weather/5s", async (req: AuthenticatedRequest, res) => {
   const lookbackMs = parseLookback(req.query.lookback, 24 * 60 * 60 * 1000);
-  const limit = Math.max(1, Math.min(Number(req.query.limit ?? 17280), 17280));
+  const limit = queryLimit(req.query.limit, 17280, 17280);
   const token = req.auth?.token;
 
   const fromDb = await fetchCanonicalFromDb(lookbackMs, limit, token);
-  const points = fromDb ?? filterByLookback(getCanonicalFeed(), lookbackMs, limit);
+  const points = fromDb ?? canonicalLookback(lookbackMs, limit);
 
   // LEVEL 4 REDUNDANCY: Bedrock Fallback if both DB and Memory are insufficient
   if (points.length === 0) {
@@ -342,11 +359,8 @@ app.get("/api/feed/space-weather/5s", async (req: AuthenticatedRequest, res) => 
     }
   }
 
-  res.json({
-    source: "memory",
-    count: points.length,
-    points,
-  });
+  // The 24 h backfill is ~56 MB: streamed in chunks (same bytes) so it doesn't stall other requests.
+  await sendJsonList(res, { source: "memory", count: points.length }, "points", points);
 });
 
 app.get("/api/feed/space-weather/latest", async (req: AuthenticatedRequest, res) => {
@@ -419,11 +433,11 @@ app.get("/api/feed/space-weather/latest/proto", async (req: AuthenticatedRequest
 
 app.get("/api/feed/mms/reconnection", async (req: AuthenticatedRequest, res) => {
   const lookbackMs = parseLookback(req.query.lookback, 2 * 60 * 60 * 1000);
-  const limit = Math.max(1, Math.min(Number(req.query.limit ?? 1440), 5000));
+  const limit = queryLimit(req.query.limit, 1440, 5000);
   const token = req.auth?.token;
 
   const fromDb = await fetchMmsFromDb(lookbackMs, limit, token);
-  const vectors = fromDb ?? filterByLookback(getMmsFeed(), lookbackMs, limit);
+  const vectors = fromDb ?? mmsLookback(lookbackMs, limit);
 
   // LEVEL 4 REDUNDANCY: Bedrock Fallback for MMS
   if (vectors.length === 0) {
@@ -470,11 +484,15 @@ app.get("/api/feed/aurora/map", async (req: AuthenticatedRequest, res) => {
     return;
   }
 
-  res.json({
-    projection,
-    requestedTimestamp: timestamp,
-    ...map,
-  });
+  // ~5 MB of JSON every 5 s per tab: serialised and compressed once per map, not per poll.
+  // If-None-Match on an unchanged map gets a 304 (Express checks req.fresh).
+  const encoding = req.acceptsEncodings("br") === "br" ? "br" : req.acceptsEncodings("gzip") === "gzip" ? "gzip" : "identity";
+  const reply = encodedReply(auroraMapReply(map, projection, timestamp), encoding);
+  res.setHeader("Vary", "Accept-Encoding");
+  res.setHeader("ETag", reply.etag);
+  res.setHeader("Content-Type", "application/json; charset=utf-8");
+  if (reply.encoding !== "identity") res.setHeader("Content-Encoding", reply.encoding);
+  res.send(reply.body);
 });
 
 app.get("/api/feed/sources/status", (req: AuthenticatedRequest, res) => {
@@ -525,7 +543,7 @@ app.get("/api/swx/structures", (_req: AuthenticatedRequest, res) => {
 });
 
 app.get("/api/security/cybertiger/events", (req: AuthenticatedRequest, res) => {
-  const limit = Math.max(1, Math.min(Number(req.query.limit ?? 200), 2000));
+  const limit = queryLimit(req.query.limit, 200, 2000);
   const events = cyberTiger.getEvents(limit);
   res.json({
     timestamp: new Date().toISOString(),
@@ -595,7 +613,9 @@ app.post("/api/ai/nowcast/infer", async (req: AuthenticatedRequest, res) => {
     });
     res.json(response);
   } catch (error) {
-    res.status(500).json({ error: error instanceof Error ? error.message : "Inference failed" });
+    // The message can carry the upstream ML URL: log the error name only, answer a fixed text.
+    console.error(`[nowcast] inference failed (${error instanceof Error ? error.name : "unknown"})`);
+    res.status(500).json({ error: "Inference failed" });
   }
 });
 
@@ -614,8 +634,43 @@ app.post("/api/ai/nowcast/train", async (_req, res) => {
 
 const server = http.createServer(app);
 
-const wsSpaceWeather = new WebSocketServer({ server, path: "/ws/feed/space-weather" });
-const wsMmsRecon = new WebSocketServer({ server, path: "/ws/feed/mms-reconnection" });
+// Clients never send data frames that matter; ws's default maxPayload is 100 MiB.
+const WS_MAX_PAYLOAD_BYTES = 4096;
+const wsSpaceWeather = new WebSocketServer({ noServer: true, maxPayload: WS_MAX_PAYLOAD_BYTES });
+const wsMmsRecon = new WebSocketServer({ noServer: true, maxPayload: WS_MAX_PAYLOAD_BYTES });
+
+/** Origin + session + role, checked before the handshake. Failures count against the real client address. */
+async function guardUpgrade(req: http.IncomingMessage): Promise<UpgradeDecision<AuthContext>> {
+  const requestOrigin = typeof req.headers.origin === "string" ? req.headers.origin : null;
+  const ip = cyberTiger.extractClientIp(req as unknown as express.Request);
+  const record = (status: 401 | 403) =>
+    cyberTiger.recordResponse({ requestId: `ws-${Date.now()}`, ip, method: "WS", path: (req.url ?? "/ws").split("?")[0], status });
+  if (!isAllowedOrigin(requestOrigin)) {
+    record(403);
+    return { allow: false, status: 403 };
+  }
+  const auth = await authenticateSocket(req);
+  if (!auth) {
+    record(401);
+    return { allow: false, status: 401 };
+  }
+  if (!roleSatisfies(auth.role, "user")) {
+    record(403);
+    return { allow: false, status: 403 };
+  }
+  return { allow: true, context: auth };
+}
+
+routeUpgrades(
+  server,
+  new Map([
+    ["/ws/feed/space-weather", wsSpaceWeather],
+    ["/ws/feed/mms-reconnection", wsMmsRecon],
+  ]),
+  guardUpgrade,
+);
+trackLiveness(wsSpaceWeather);
+trackLiveness(wsMmsRecon);
 
 type AuthedSocket = WebSocket & { auth?: AuthContext };
 
@@ -633,44 +688,18 @@ function broadcast(wss: WebSocketServer, topic: string, payload: unknown): void 
   const body = JSON.stringify({ topic, payload, timestamp: new Date().toISOString() });
   for (const client of wss.clients) {
     const socket = client as AuthedSocket;
-    if (socket.readyState === 1 && socket.auth) {
+    // A backed-up socket skips this tick rather than queueing it (GAU-208).
+    if (socket.auth && canSend(socket)) {
       client.send(body);
     }
   }
 }
 
-async function guardSocketConnection(
-  socket: AuthedSocket,
-  requiredRole: AuthRole,
-  req: http.IncomingMessage,
-): Promise<boolean> {
-  const requestOrigin = typeof req.headers.origin === "string" ? req.headers.origin : null;
-  if (!isAllowedOrigin(requestOrigin)) {
-    socket.close(1008, "CORS blocked");
-    return false;
-  }
-
-  const auth = await authenticateSocket(req);
-  if (!auth || !roleSatisfies(auth.role, requiredRole)) {
-    if (req.socket.remoteAddress) {
-      cyberTiger.recordResponse({
-        requestId: `ws-${Date.now()}`,
-        ip: req.socket.remoteAddress,
-        method: "WS",
-        path: req.url ?? "/ws",
-        status: 403,
-      });
-    }
-    socket.close(1008, "Unauthorized");
-    return false;
-  }
+wsSpaceWeather.on("connection", (socket: AuthedSocket, _req: http.IncomingMessage, auth: AuthContext) => {
   socket.auth = auth;
-  return true;
-}
-
-wsSpaceWeather.on("connection", async (socket: AuthedSocket, req) => {
-  const allowed = await guardSocketConnection(socket, "user", req);
-  if (!allowed) return;
+  // An oversize frame (maxPayload) or a protocol error emits "error" here; with no listener Node
+  // throws and the whole backend dies. ws closes the socket itself (1009 etc.); log nothing from the peer.
+  socket.on("error", () => undefined);
 
   socket.send(
     JSON.stringify({
@@ -685,9 +714,11 @@ wsSpaceWeather.on("connection", async (socket: AuthedSocket, req) => {
   );
 });
 
-wsMmsRecon.on("connection", async (socket: AuthedSocket, req) => {
-  const allowed = await guardSocketConnection(socket, "user", req);
-  if (!allowed) return;
+wsMmsRecon.on("connection", (socket: AuthedSocket, _req: http.IncomingMessage, auth: AuthContext) => {
+  socket.auth = auth;
+  // An oversize frame (maxPayload) or a protocol error emits "error" here; with no listener Node
+  // throws and the whole backend dies. ws closes the socket itself (1009 etc.); log nothing from the peer.
+  socket.on("error", () => undefined);
 
   socket.send(
     JSON.stringify({
@@ -702,14 +733,17 @@ wsMmsRecon.on("connection", async (socket: AuthedSocket, req) => {
   );
 });
 
-const worker = new IngestionWorker((result: IngestionTickResult) => {
-  if (result.canonicalPoint) {
-    broadcast(wsSpaceWeather, "space-weather", result.canonicalPoint);
-  }
-  if (result.mmsVector) {
-    broadcast(wsMmsRecon, "mms-reconnection", result.mmsVector);
-  }
-});
+const worker = new IngestionWorker(
+  (result: IngestionTickResult) => {
+    if (result.canonicalPoint) {
+      broadcast(wsSpaceWeather, "space-weather", result.canonicalPoint);
+    }
+    if (result.mmsVector) {
+      broadcast(wsMmsRecon, "mms-reconnection", result.mmsVector);
+    }
+  },
+  { sources: liveIngestSources(switches) },
+);
 
 selfHealer.register({
   onRequestTraining: async () => {
@@ -725,6 +759,8 @@ selfHealer.register({
 
 const swapIntervalMs = Number(process.env.SWAP_BALANCE_INTERVAL_MS ?? 45_000);
 let swapInterval: NodeJS.Timeout | null = null;
+let heartbeatInterval: NodeJS.Timeout | null = null;
+let stopRetention: (() => void) | null = null;
 let backendStarted = false;
 
 export async function startBackend(options?: { host?: string; port?: number }): Promise<{ app: express.Express; server: http.Server; host: string; port: number }> {
@@ -749,15 +785,24 @@ export async function startBackend(options?: { host?: string; port?: number }): 
 
   return new Promise((resolve, reject) => {
     server.listen(port, host, () => {
-      swapInterval = setInterval(() => {
-        const result = rebalanceDeviceNetwork();
-        if (result.plan.summary.critical > 0) {
-          console.warn("[SwapManager] critical device health detected; rebalance suggested", result.plan.summary);
-        }
-      }, swapIntervalMs);
+      // GAUSS_SWAP_TIMER=0 stops it; on, each tick is skipped while no device is registered.
+      if (switches.swapTimer) {
+        swapInterval = setInterval(() => {
+          const result = scheduledRebalance();
+          if (result && result.plan.summary.critical > 0) {
+            console.warn("[SwapManager] critical device health detected; rebalance suggested", result.plan.summary);
+          }
+        }, swapIntervalMs);
+      }
+      heartbeatInterval = setInterval(() => {
+        sweepDeadSockets(wsSpaceWeather);
+        sweepDeadSockets(wsMmsRecon);
+      }, WS_HEARTBEAT_MS);
 
       selfHealer.start();
       worker.start();
+      // Telemetry retention: 3 days live, every archive kept (Josh 2026-10-29; telemetry-retention.ts).
+      stopRetention = startTelemetryRetention(bedrock, retentionFromEnv());
 
       const address = server.address();
       const actualPort = typeof address === "object" && address?.port ? address.port : port;
@@ -786,6 +831,12 @@ export async function stopBackend(): Promise<void> {
     clearInterval(swapInterval);
     swapInterval = null;
   }
+  if (heartbeatInterval) {
+    clearInterval(heartbeatInterval);
+    heartbeatInterval = null;
+  }
+  stopRetention?.();
+  stopRetention = null;
 
   await new Promise<void>((resolve, reject) => {
     server.close((error) => {
@@ -800,7 +851,17 @@ export async function stopBackend(): Promise<void> {
   backendStarted = false;
 }
 
-app.use((error: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+app.use((error: unknown, req: express.Request, res: express.Response, _next: express.NextFunction) => {
+  // GAU-231: a bad request body is the client's mistake (400/413/415), not a server fault.
+  // express.json() runs before the security headers, so set the one a JSON answer needs here.
+  const bodyError = bodyErrorResponse(error);
+  if (bodyError) {
+    // Never log the error itself: body-parser attaches the raw body to it.
+    console.warn(`[backend] rejected request body: ${bodyError.status} ${bodyError.error} (${req.method} ${req.path})`);
+    res.setHeader("x-content-type-options", "nosniff");
+    res.status(bodyError.status).json({ error: bodyError.error });
+    return;
+  }
   console.error("[backend] unhandled error", error);
   res.status(500).json({ error: "Internal server error" });
 });

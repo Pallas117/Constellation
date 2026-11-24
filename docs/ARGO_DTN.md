@@ -1,6 +1,6 @@
 # Argo delay-tolerant networking (GAU-193)
 
-Status: implemented in `tools/argo` and the Gauss hub (`backend/mesh/bundles.ts`); draft PR for review.
+Status: shipped in PR #153 (main 417eece, 2026-10-24); the hub routes reach live with the next deploy. RFC 9173's contexts came in PR #158; link keys (GAU-199) now use them on the relay between devices that know each other.
 Decisions (Josh, 2026-10-23):
 - Argo stays "Included" for operators and staff, with no price (the 22 Oct decision).
 - The shared internet relay is designed here and shows as "in development" on the site until counsel signs off
@@ -38,6 +38,8 @@ relayed images to the ISS via LCRD in 2024
 | CBOR codec (deterministic encoding, hard limits) | `tools/argo/cbor.go` | [RFC 8949](https://www.rfc-editor.org/rfc/rfc8949) |
 | Bundles, CRC-16/X-25 and CRC-32C, EIDs, status reports | `tools/argo/bundle.go` | [RFC 9171](https://www.rfc-editor.org/rfc/rfc9171) (BPv7) |
 | Integrity and confidentiality blocks | `tools/argo/bpsec.go` | BPSec layout ([RFC 9172](https://www.rfc-editor.org/rfc/rfc9172)), HPKE ([RFC 9180](https://www.rfc-editor.org/rfc/rfc9180)), Ed25519 ([RFC 8032](https://www.rfc-editor.org/rfc/rfc8032)) |
+| Standard BPSec blocks (used by link keys; interop) | `tools/argo/bpsec9173.go`, `aeskw.go` | [RFC 9172](https://www.rfc-editor.org/rfc/rfc9172), [RFC 9173](https://www.rfc-editor.org/rfc/rfc9173), AES key wrap ([RFC 3394](https://www.rfc-editor.org/rfc/rfc3394)) |
+| Link keys: a fast path per pair of devices | `tools/argo/linkkeys.go` | RFC 9173 contexts, HKDF ([RFC 5869](https://www.rfc-editor.org/rfc/rfc5869)) |
 | Store-and-forward agent | `tools/argo/relay.go`, `relay_cmd.go` | |
 | Hub convergence layer | `tools/argo/hub.go` ↔ `backend/mesh/bundles.ts`, `router.ts` | HTTP (no IETF HTTP CL exists; dtn7-rs has a non-standard one) |
 | Link stability | `tools/argo/linkstats.go` | A = MTBF/(MTBF+MTTR) |
@@ -87,6 +89,96 @@ Keys: `~/.config/argo/node.key` (0600) holds the Ed25519 seed and the HPKE priva
 Gauss directory (`POST /api/mesh/keys`; the first key set wins, a different one is a 409). Other devices pin a key
 the first time they see it. The fingerprint is SHA-256 over CBOR `[sign, kem_id, kem]`, the first 10 bytes shown as
 five groups of four hex digits. It is the same code in `argo keys` and on `/mesh`.
+
+### Interoperability (RFC 9173)
+
+`tools/argo/bpsec9173.go` adds the standard BPSec blocks with RFC 9173's default security contexts, for nodes such
+as NASA HDTN, dtn7-rs and ION that use pre-placed symmetric keys (GAU-199). The relay uses it for link keys
+(next section); no command speaks it to non-Argo nodes yet.
+
+- **Supported:**
+  - BIB (type 11) with BIB-HMAC-SHA2 (context 1): HMAC 256/256, 384/384 (default) and 512/512.
+  - BCB (type 12) with BCB-AES-GCM (context 2): A128GCM and A256GCM (default), 8 to 16-byte IVs (12 by default,
+    random), the 128-bit tag as a security result or at the end of the ciphertext.
+  - Integrity and AAD scope flags (primary block, target header, security header); keys pre-placed or carried AES
+    key wrapped ([RFC 3394](https://www.rfc-editor.org/rfc/rfc3394), `aeskw.go`, checked on its §4 vectors).
+  - The Abstract Security Block as a CBOR sequence (RFC 9172 §3.6), unlike Argo's own blocks, which use an array.
+  - RFC 9172's block rules: one service per target, no BIB on a security block or an encrypted block, no BCB on
+    the primary block or another BCB, and BIBs added before BCBs (§3.2, §3.7 to §3.9).
+- **Golden tests:** all four Appendix A examples (A.1 to A.4) verify or decrypt from the published bytes and
+  re-encode to them byte for byte (`bpsec9173_test.go`, hex in `testdata/rfc9173/`).
+- **Choices to know about:**
+  - A primary-block BIB target is wrapped in a byte string, as A.3 publishes it and dtn7-rs computes it.
+    [Errata 9192](https://www.rfc-editor.org/errata/eid9192) (reported 2026-09-28, not verified) reads the text as
+    the bare block; `BarePrimary` selects that form, and the errata's corrected A.3 bytes are a golden test too.
+  - One target per BCB when Argo encrypts: a BCB's targets share one key and IV, and A.4 reuses its IV for two
+    targets ([errata 7002](https://www.rfc-editor.org/errata/eid7002)). Argo still decrypts such BCBs.
+  - HMAC keys from 16 bytes up to the hash size are accepted: §3.5 asks for the full hash size, but every
+    Appendix A example uses a 16-byte key.
+- **UNVERIFIED:** live interoperability with HDTN, dtn7-rs or ION. Only the RFC's own examples have been checked.
+
+### Link keys: RFC 9173 between devices that know each other
+
+Node security (blocks 192/193) costs a fresh ML-KEM-768 + X25519 encapsulation and an Ed25519 signature on every
+bundle: about 1.3 kB and a quarter of a millisecond, even for a 200-byte receipt. Once two devices have exchanged
+one bundle, `tools/argo/linkkeys.go` moves them to RFC 9173's symmetric contexts under a key only they share.
+
+- **Onboarding a link.** The first time a device sends to a peer, it makes a random 32-byte key for that
+  direction and sends it in an offer bundle (`dtn://peer/argo`, payload CBOR
+  `[1, "link-key", id, key, created, [ids of the peer's keys it holds]]`). The offer carries node security:
+  signed with Ed25519 and sealed with HPKE ML-KEM-768 + X25519. The sender keeps using node security until the
+  peer's receipt for the offer comes back, so the peer has stored the key before anything depends on it. The
+  peer offers its own key for the other direction the same way.
+- **Bundles under a link key.** Per context and direction, the key is stretched with HKDF-SHA256
+  (`info = "argo-link-1 bib|bcb FROM>TO"`), so no two uses share a key and a bundle can't be reflected to its
+  sender.
+
+  | Bundle | Blocks |
+  |---|---|
+  | File chunk | BIB (type 11) BIB-HMAC-SHA256 over the primary block, all scope flags; BCB (type 12) BCB-AES-256-GCM over the payload, all AAD scope flags (primary block, payload header, BCB header), random 12-byte IV |
+  | Receipt | BIB-HMAC-SHA256 over the primary block and the payload |
+
+  The BIB over the primary block also picks the key: the receiver tries the sender's keys whose lifetime covers
+  the bundle's creation time, newest first, at about a microsecond each, instead of trial-decrypting a 1 MiB
+  payload. Only this exact layout and these parameters are accepted, and a bundle never mixes link and node
+  blocks.
+- **Rotation.** A sender replaces its key after 7 days or 65,536 bundles, whichever comes first (random 96-bit
+  IVs allow 2^32 per key), and an offer not confirmed in 3 days. In between it falls back to node security. A
+  receiver keeps up to 16 keys per peer and drops each at its next sync after 37 days (7 days of use plus the
+  30-day maximum lifetime), so bundles in flight still open.
+- **Lost keys.** Each offer lists the peer's keys the offering device holds. A device that lost `links.key`
+  (keeping `node.key`) can't open the next link bundle; it refuses it and offers a fresh key with an empty list.
+  The peer drops its key, if it confirmed that key more than the 10-minute clock allowance before the offer was
+  made, and sends what is still in flight again as new bundles with node security (the hub keeps the old IDs as
+  delivered). A receipt that answers a duplicate always carries Ed25519, so a sender that lost its keys still gets
+  one. `argo keys trust` (a re-enrolled device) drops both directions' keys for that device.
+- **Storage.** `~/.config/argo/links.key` (0600), next to `node.key`, written before `relay.json` so nothing refers
+  to a key that isn't on disk. Use counts are in `relay.json`; outbox items record only a key's random id. Keys are
+  never logged or shown.
+
+What changes:
+- **Confidentiality stays post-quantum.** A link key only ever travels inside HPKE with ML-KEM-768 + X25519, and
+  AES-256 and HMAC-SHA-256 keep about 128-bit strength against Grover's search.
+- **Authenticity becomes pairwise.** A valid HMAC or GCM tag proves that one of the two devices made the bundle.
+  That is all the destination needs, but no third party can check it, and either device could have made it (no
+  non-repudiation). Ed25519 stays wherever a third party may have to check the source: offers, receipts that
+  answer a duplicate, and every bundle while no link key is confirmed. The hub never checked signatures; it reads
+  only the primary block.
+- **Cost** (`tools/argo/linkkeys_bench_test.go`, `-bench BundleSecurity -benchtime 300x`, Apple M1 with memory
+  at warn, one run, 2026-11-03; send = protect + encode, receive = parse + check + decrypt):
+
+  | Bundle | Node security: send / receive / bytes added | Link key: send / receive / bytes added |
+  |---|---|---|
+  | 256 B payload | 254 µs / 214 µs / 1,302 B | 6.3 µs / 7.6 µs / 129 B |
+  | 4 KiB | 264 µs / 222 µs / 1,302 B | 9.6 µs / 10.0 µs / 129 B |
+  | 64 KiB | 464 µs / 344 µs / 1,302 B | 51 µs / 45 µs / 129 B |
+  | 1 MiB (a full chunk) | 3.63 ms / 2.29 ms / 1,302 B | 0.67 ms / 0.50 ms / 129 B |
+  | Receipt | 35 µs / 76 µs / 100 B | 4.0 µs / 5.8 µs / 101 B |
+
+  A link bundle hashes its payload once (AES-GCM) instead of twice (Ed25519's SHA-512, then HPKE's AES-GCM), and
+  carries no ML-KEM ciphertext. Receipts get faster but not smaller: two HMAC-SHA-256 tags weigh what one Ed25519
+  signature does. Each pair's first exchange costs one offer and its receipt; in the 5-day simulation
+  (`sim_test.go`) that was 12 more hub uploads (184 against 172) and the same delivery, receipts and latency.
 
 ### Reliability: end to end, because BPv7 has no custody transfer
 
@@ -184,6 +276,86 @@ Gates before anything ships:
 Go's standard library has no HTTP/3, so the relay would need a reviewed third-party QUIC stack or a separate
 service. That is a decision for Josh and the reviewer. The site says "It isn't available yet."
 
+## Low signal and IoT bearers
+
+Josh, 17 Nov 2026: "make sure Argo will work on signal low and be able to connect using IoT", "resilient like a deep space satellite". This section says what shipped (REQ-ARG-040 to REQ-ARG-050), what is measured, and what is not checked. Everything is standard library only, with no new cryptography.
+
+### What Argo does and does not do about radio
+
+Argo does not do modulation. Fading, scintillation and multipath are fought by the modem: LoRa's chirp spread spectrum is already built for it, and a phone's cellular or Wi-Fi radio has its own coding. What Argo can do is the equivalent one layer up, on bundles: send less per try, add redundancy across fragments, spread fragments in time, use more than one path, and keep within the radio's duty cycle. Where this section says "fading-tolerant" it means that layer only.
+
+### Low-signal mode (`lowsignal.go`)
+
+Detection uses what Argo already measures: a failed data probe (only when every independent anchor, three TCP dials to 1.1.1.1, 9.9.9.9 and 8.8.8.8 on port 443, also fail, so one dead path never reads as "offline"), loss over the last 12 probes, connect time and its spread, the speed grade and, on Wi-Fi, RSSI. Thresholds: bad is loss of 15% or more, RTT of 1.5 s or more, jitter of 800 ms or more, a "poor" grade or RSSI of -85 dBm or less; good is loss under 5%, RTT under 600 ms and RSSI above -75 dBm. The mode is entered after 3 bad probes in a row and left after 10 good ones in a row and at least 15 minutes. These figures are engineering choices, **UNVERIFIED** against a real log: calibrate them with `argo link` on the hostel hotspot before trusting them.
+
+In the mode:
+
+| Area | Change | Where |
+|---|---|---|
+| Relay chunks | 1 MiB, then 64 KiB, then 4 KiB by loss and RTT. A chunk is its own persisted bundle, so a resend starts at the first unconfirmed chunk. The receiver works out the chunk size from the file size and chunk count (the three sizes give different counts for any file over one chunk). Files over 16 MiB wait for a better link at the 4 KiB level | `relay.go` `chunkFor`, `Send` |
+| Back-off | Exponential with "equal jitter" (half fixed, half random), base multiplied by the timeout scale (3 or 6), ceiling 30 min; the hub client timeout grows by the same scale. No retry storm: the first failure ends the round and at most 4 bulk chunks go per sync | `jitterBackoff`, `retryFor`, `upload` |
+| Order | receipts, then key offers and small non-file bundles (alerts), then bulk chunks in index order | `outItem.priority` |
+| Mesh report | at most every 5 minutes (a class change still goes at once), without the 24 h / 7 d history; Gauss keeps the last full block | `gausspush.go`, `MeshStore.record` |
+| Phone | SMS first while 2 of the last 3 probes failed (an iMessage would wait for data) | `phone.go` `PreferSMS` |
+| Clock check | four times less often | `timeintegrity.go` |
+
+`argo status` shows ` low-signal (64 KiB chunks)`; the mesh report carries `lowSignal: {on, chunkBytes}`.
+
+### Bearers (`bearer.go`)
+
+A bearer has an MTU, a duty cycle and a cost. The scheduler (`BearerRadio`) takes only small, BPSec-protected bundles: receipts, key offers and small status. Bulk is refused by priority, oversize by the 32-fragment cap, and anything without a confidentiality block (or, for receipts, at least an integrity block) is refused by `radioOK`: nothing leaves on a radio in clear. Metadata is the exception to confidentiality: node names in the bundle's primary block and the bundle id stay visible, and a receipt's body is signed, not sealed. Treat the mesh channel as hearing who talks to whom.
+
+- **Frames.** 10-byte header (version and kind, 4-byte id = first bytes of the bundle's SHA-256, index, fragment count, parity groups, total length) plus payload. The receiver checks the id after reassembly, so a corrupted or mixed-up bundle is dropped.
+- **Parity (erasure coding at the bundle layer).** One XOR parity fragment per group of 8, 4 or 2 data fragments, chosen from measured loss (none under 1% loss). Fragment i belongs to group i mod G, so a burst of up to G consecutive lost frames costs each group at most one fragment and is recovered with no resend. Two losses in one group are not recoverable; a longer burst needs a resend by the next sync. The same idea as RFC 5109 (RTP parity FEC); tests use burst patterns.
+- **Duty cycle.** `DutyBudget` is a sliding one-hour window; airtime is computed with the Semtech LoRa formula (AN1200.13), checked by hand against SF7 / 125 kHz / 20 bytes = 56.576 ms. State (queue progress, partial bundles, spend log, holds) is saved to `radio.json` (0600, bounded), because Argo runs as a fresh process every minute.
+- **Path diversity.** Receipts go on every bearer at once; status goes only on the cheapest. The receiver deduplicates by the frame's bundle id, and `accept` deduplicates again by bundle key, so a second copy over Wi-Fi or SMS is harmless. A failing bearer is held with jittered back-off, never hammered.
+- **Cost of protection (measured, `go test`).** A sealed 10-byte file chunk is **1,470 bytes** (the ML-KEM-768 + X25519 HPKE encapsulation is most of it): 10 frames at a 200-byte MTU with 10% parity, 18.7 s on air at LongFast, **52% of the 36 s that 1% of an hour allows**. So at 1% duty a sealed bundle fits about twice an hour. Bundles under a confirmed link key (BIB-HMAC plus BCB-AES-GCM) should be much smaller; that is **UNVERIFIED, not measured yet** and is the first thing to measure with real hardware.
+
+### Meshtastic bearer (`meshtastic.go`, behind `ARGO_MESHTASTIC_URL`)
+
+Off unless the environment variable names a node on this LAN (private, loopback or link-local address, or a `.local` name; anything else is refused). Plain HTTP to a LAN node is Meshtastic's default; TLS verification is never turned off, so an https URL to a self-signed node simply fails. Redirects are not followed.
+
+Facts checked on 18 Nov 2026:
+- HTTP API: `PUT /api/v1/toradio` takes one ToRadio protobuf; `GET /api/v1/fromradio` returns one FromRadio (`all=false`), with no authentication, "access to the HTTP server is enough to establish trust" ([HTTP API](https://meshtastic.org/docs/development/device/http-api/)).
+- Stream framing for serial and TCP: `0x94 0xC3`, 2-byte length, protobuf, at most 512 bytes ([client API](https://meshtastic.org/docs/development/device/client-api/)). The helpers `serialFrame` and `readSerialFrame` exist (with resync); no serial port is opened yet.
+- Field numbers from `meshtastic/protobufs` `mesh.proto`: ToRadio.packet=1; MeshPacket from=1, to=2, channel=3, decoded=4, id=6, hop_limit=9, want_ack=10; Data portnum=1, payload=2; FromRadio.packet=2; `DATA_PAYLOAD_LEN` = 233 ([mesh.proto](https://github.com/meshtastic/protobufs/blob/master/meshtastic/mesh.proto)). `PRIVATE_APP` = 256 is from `portnums.proto` and was **not re-fetched (UNVERIFIED)**.
+- Argo uses a 200-byte frame, below 233, to leave room for encryption overhead (the margin is a guess, **UNVERIFIED**) and sends as a broadcast on PRIVATE_APP with hop limit 3, Meshtastic's default ([LoRa config](https://meshtastic.org/docs/configuration/radio/lora/): hop limit at most 7).
+- Meshtastic's own channel encryption is a second layer. Argo relies on BPSec, not on it.
+
+**Malaysia and AS923 (UNVERIFIED).** Meshtastic lists `MY_919` as 919.0-924.0 MHz, duty cycle 100%, 27 dBm, and says the figure is "the ceiling the firmware applies, not your national limit" ([LoRa config](https://meshtastic.org/docs/configuration/radio/lora/)). A 2017 MCMC class assignment, quoted on The Things Network forum, gives 919-923 MHz at 500 mW EIRP with no duty-cycle condition and 923-924 MHz at 500 mW with under 1% duty cycle, frequency hopping or listen-before-talk ([TTN forum](https://www.thethingsnetwork.org/forum/t/gateway-for-malaysia/416/100), [MeshCore issue](https://github.com/meshcore-dev/MeshCore/issues/980)). I did not read the MCMC document or the LoRa Alliance regional parameters RP002-1.0.4 text. A 2026 item reports new MCMC technical codes (MTSFB TC T022:2026) and I could not confirm whether SRD limits changed ([IB Lenhardt](https://ib-lenhardt.com/news/malaysia-mcmc-issues-new-technical-codes-for-equipment-and-srds)). Because of this, Argo defaults to **1%** (the strictest figure above) whatever the node's region says. Josh or a regulator-literate person must confirm before any field use; this is not a compliance claim.
+
+Licence and terms: Meshtastic firmware and clients are open source (GPL-3.0 for the firmware, **UNVERIFIED**); Argo copies no firmware or client code and uses only the public protocol (protobuf field numbers; `mesh.proto` carries no licence header).
+
+### Two more bearers (documented, not implemented; Josh decides any purchase)
+
+| | Satellite IoT short-burst data | Cellular NB-IoT / LTE-M |
+|---|---|---|
+| Example | Iridium SBD (Edge class); Swarm-type services | an NB-IoT or LTE-M module with a SIM |
+| Message size | Iridium: 340 bytes sent, 270 received (Edge class); older 9601 modems 205 / 135; Swarm M138: 192 bytes ([Ground Control docs](https://docs.groundcontrol.com/iot/rockblock/iridium), [SparkFun Swarm guide](https://learn.sparkfun.com/tutorials/sparkfun-satellite-transceiver-kit---swarm-m138-hookup-guide/all)) | a few hundred bytes to 1 kB per datagram; **UNVERIFIED** |
+| Coverage | global sky view; no ground network | needs an operator that supports it in Malaysia: **not checked (UNVERIFIED)** |
+| Cost | hardware, an airtime plan and per-message fees: **prices UNVERIFIED, not looked up** | module, SIM and data plan: **prices UNVERIFIED** |
+| Fit for Argo | MTU 340 fits 2 to 5 frames per sealed bundle; budget is money per message, not duty cycle | fits like the HTTPS path (UDP or CoAP to the hub) |
+| Caveat | Swarm's SparkFun page says the M138 service ends in December 2024: check whether it is still sold before relying on it | open standards; operator lock-in is the risk |
+
+Adding either is a `Bearer` implementation (`Name`, `MTU`, `Airtime`, `Duty`, `Cost`, `Send`, `Recv`): the scheduler, parity, dedup and duty budget already work for any MTU up to 400 bytes (`maxFramePayload`). For satellite, `Duty` is replaced by a per-day message budget. Open source first: Meshtastic needs about two cheap boards Josh may already own or choose to buy; nothing is bought here.
+
+### Time integrity (`timeintegrity.go`)
+
+TLS validity and BPSec bundle lifetimes depend on the system clock, and a spoofed or drifting clock breaks both quietly. Every 30 minutes Argo asks four unrelated hosts (cloudflare.com, google.com, apple.com, github.com) and the hub for the HTTP `Date` header (RFC 9110 section 6.6.1; one-second resolution) over verified TLS, with no redirects. If most sources differ from this clock by 2 minutes or more it records a fault, "time source disagreement", in `argo status` and the mesh report (`clock`). One odd source is not a fault, fewer than three sources is "cannot tell". Argo never sets the clock (an admin action). It uses `Date` headers, not NTP, so it cannot say which source is right, only that they disagree.
+
+### Location integrity (feasibility only; nothing implemented)
+
+Argo does not use GPS. Multilateration from round trips to several known anchors could sanity-check a claimed region (for example a VPN or a wrong country) because RTT has a floor set by distance and the speed of light in fibre, about 2/3 of c. It cannot locate a device precisely over the internet: queueing, routing detours and the access network dominate, so the error is hundreds of kilometres, and a VPN exit simply moves the apparent origin. It could rule a region out, never in. GPS spoofing is a radio-layer attack Argo cannot see; the clock cross-check above catches a spoofed time source only if the clock follows it.
+
+### Wired phone link and the shared signal map
+
+- `wiredlink.go` reads `networksetup -listallhardwareports` (pinned path, read-only) and the default route. If a service named "iPhone USB" is up while traffic uses another link, `argo status` and the alert text suggest moving it above Wi-Fi in System Settings > Network > Service Order. Argo never changes network settings. `argo status` shows `via:usb|wifi|ethernet|other`, and the report records it.
+- `linksample.go` adds `linkSample` to the report: class, bearer (always `https` today: radio bearers carry bundles, not reports), loss percent, RTT, signal and noise in dBm where the platform gives them without admin, the 12-hex network hash Argo already reports, and a short place label the owner sets with `"place"` in `config.json`. No SSIDs, no other networks and no locations. Band and channel are accepted by the hub but Argo does not read them yet. The mesh page shows a "Signal map" table, one row per network, from the latest sample of each device in the last hour.
+
+### Not verified
+
+Thresholds against a real hostel log; radio airtime and range with real Meshtastic hardware; link-key bundle size; MCMC duty-cycle conditions; the `PRIVATE_APP` value; all prices; NB-IoT availability in Malaysia; whether the Swarm service still runs.
+
 ## Threat model (store and forward)
 
 | Adversary | Can | Cannot |
@@ -193,11 +365,15 @@ service. That is a decision for Josh and the reviewer. The site says "It isn't a
 | Carrier of a mule drive | Copy, drop or delay bundles | Read or alter them |
 | Holder of a stolen device token | Upload as that device (receivers refuse anything not signed with its key); publish keys for it **only if it never published any** | Replace an already published key (409); read anyone's files |
 | Compromised hub on first contact | Offer a wrong key for a device nobody has pinned yet (trust on first use) | Change a pinned key silently: Argo alerts and keeps the old one. Mitigation: compare fingerprints out of band |
+| Either device of a linked pair | Make bundles that look as if the other device sent them to it (it holds the pair's key) | Show them to anyone else as proof: link bundles carry no signature; use one to or from a third device |
+| Thief of `links.key` | Read and forge one pair's link bundles for the keys' remaining life (up to 37 days for kept receive keys) | Read node-sealed bundles or offers (they need `node.key`) |
 
 Not covered:
 - Traffic analysis.
 - Forward secrecy against a later theft of the receiving device's private key. Each bundle has a fresh HPKE
-  encapsulation, but the recipient key is static; key rotation is a follow-up.
+  encapsulation, but the recipient key is static; whoever records the traffic and later steals `node.key` can open
+  the link key offers too, and with them the link bundles. Node key rotation is a follow-up; link keys rotate
+  weekly but travel under the node key.
 - Denial of service by an enrolled device (bounded by quotas and rate limits).
 
 ## Wording rules
@@ -210,9 +386,9 @@ Not covered:
 
 ## Next
 
-1. **Interoperability.** TCPCLv4 ([RFC 9174](https://www.rfc-editor.org/rfc/rfc9174)) for direct device links, and
-   the RFC 9173 contexts for interop with HDTN and dtn7-rs (Apache-2.0). Use the RFC 9173 Appendix A vectors as
-   golden tests. Copy no code from dtn7-go (GPL), µD3TN (AGPL) or Reticulum (restrictive licence).
+1. **Interoperability.** TCPCLv4 ([RFC 9174](https://www.rfc-editor.org/rfc/rfc9174)) for direct device links.
+   The RFC 9173 contexts carry Argo's link keys (see above); next is a key store for keys placed by an operator
+   and a live test against HDTN and dtn7-rs (Apache-2.0). Copy no code from dtn7-go (GPL), µD3TN (AGPL) or Reticulum (restrictive licence).
 2. **Transfer improvements.** Partial-chunk resume; recipient key rotation; Contact Graph Routing once passes are
    scheduled (CCSDS SABR 734.3-B-1).
 3. **Phones.** Phones as bundle endpoints (an iOS/Android client).

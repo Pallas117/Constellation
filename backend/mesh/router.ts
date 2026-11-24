@@ -79,7 +79,10 @@ export function createMeshRouters(
       res.status(400).json({ ok: false, error: "Invalid report" });
       return;
     }
-    store.record(device, report);
+    const worse = store.record(device, report);
+    // Fleet memory watch (GAU-240): one line when a device turns at risk or critical. Names and
+    // allowlisted reasons only.
+    if (worse) console.warn(`[mesh] memory ${worse.state} on ${device.name}: ${worse.why.join("; ")}`);
     res.json({ ok: true });
   });
 
@@ -208,6 +211,7 @@ export function createMeshRouters(
     }
     store.revoke(name);
     bundles.purge(name);
+    uploads.delete(name); // its upload-rate window goes too (GAU-208)
     res.status(204).end();
   });
 

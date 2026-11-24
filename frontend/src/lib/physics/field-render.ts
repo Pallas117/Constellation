@@ -37,7 +37,8 @@ export interface FieldScalars {
   alpha: number;
   bowShock: number;
   tilt: number;
-  oval: { equatorward: number; poleward: number };
+  /** Null when Kp is unknown (GAU-230). */
+  oval: { equatorward: number; poleward: number } | null;
 }
 
 export interface TracedModel extends FieldScalars {
@@ -49,7 +50,7 @@ export interface TracedModel extends FieldScalars {
 
 export function fieldScalars(d: SolarWindDrivers, epochMs: number): FieldScalars {
   const { r0, alpha } = shueMagnetopause(d.bz, d.pdyn);
-  return { r0, alpha, bowShock: bowShockStandoff(r0), tilt: dipoleTiltRad(epochMs), oval: auroralOvalBounds(d.kp) };
+  return { r0, alpha, bowShock: bowShockStandoff(r0), tilt: dipoleTiltRad(epochMs), oval: d.kp === null ? null : auroralOvalBounds(d.kp) };
 }
 
 const srgbToLinear = (c: number) => (c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4);

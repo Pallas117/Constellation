@@ -5,6 +5,7 @@ export type DataSource =
   | "mms-cdaweb"
   | "mms-lasp"
   | "goes-swpc"
+  | "glotec-swpc"
   | "kyoto-dst"
   | "model-nowcast"
   | "synthetic-nowcast";
@@ -54,7 +55,8 @@ export interface DeviceRecord {
   fingerprintSignals?: Record<string, string | number>;
   registeredAt: string;
   lastSeen: string;
-  status: "trusted" | "untrusted" | "needs_reauth";
+  /** "trusted" is set only by a verified /proof; new devices are "unverified". */
+  status: "unverified" | "trusted" | "untrusted" | "needs_reauth" | "revoked";
   telemetry?: DeviceTelemetry;
   swap?: {
     tier: "L1" | "L2" | "L3";
@@ -139,7 +141,8 @@ export interface CanonicalSpaceWeatherPoint {
     dynamicPressure: number;
   };
   indices: {
-    kp: number;
+    /** Planetary Kp (0–9), or null when no source has given a Kp reading: unknown is never a default (GAU-63/GAU-230). */
+    kp: number | null;
     dst: number;
     /** "measured", or the model that derived dst (no source here measures Dst). GAU-63/GAU-84. */
     dstMethod: string;
@@ -174,6 +177,8 @@ export interface CanonicalSpaceWeatherPoint {
   };
   /** Measured GOES long-band X-ray flux; null when missing or older than 15 min. GAU-136. */
   xray?: XrayReading | null;
+  /** GloTEC regional TEC over Malaysia; null when missing or older than the glotec_tec bound. */
+  ionosphere?: IonosphereTecReading | null;
   /** Input sense-checks for this point; a flagged input carries its reason. GAU-136. */
   senseChecks?: SenseCheck[];
   /** NOAA's own alerts, watches and warnings from the last 24 h, newest first; null when unreadable. GAU-136. */
@@ -277,6 +282,30 @@ export interface SenseCheck {
   flagged?: number;
 }
 
+/**
+ * Total electron content over Malaysia from NOAA SWPC GloTEC (a data-assimilation model, not a
+ * direct measurement everywhere). TECU = 10^16 electrons m^-2. Not a scintillation index.
+ */
+export interface IonosphereTecReading {
+  source: "glotec-swpc";
+  /** Model valid time (UTC): the product's own time_tag, not the fetch time. */
+  observedAt: string;
+  /** Cell-centre box the summary covers, degrees (geographic latitude, east longitude). */
+  region: { latMin: number; latMax: number; lonMin: number; lonMax: number };
+  /** Grid cells inside the region that passed range checks. */
+  cells: number;
+  /** Of those, cells GloTEC marks with at least one F-region observation (quality_flag >= 1). */
+  constrainedCells: number;
+  meanTecu: number;
+  minTecu: number;
+  maxTecu: number;
+  /** Cell nearest Kuala Lumpur (3.14 N, 101.69 E). */
+  nearestKl: { lat: number; lon: number; tecu: number; qualityFlag: number };
+  /** Change of the regional mean per hour; null until a baseline 20-90 min older is available. */
+  rateTecuPerHour: number | null;
+  rateBaselineAt: string | null;
+}
+
 export interface XrayReading {
   /** GOES 0.1–0.8 nm (1–8 Å) irradiance, W m^-2. */
   value: number;
@@ -326,8 +355,10 @@ export interface NowcastInferenceResponse {
   horizonMinutes: number;
   predictions: Array<{
     timestamp: string;
-    geomagneticPerturbation: number;
-    auroraIntensity: number;
+    /** null when an input it needs is unknown (e.g. no Kp reading), never computed from a default (GAU-230). */
+    geomagneticPerturbation: number | null;
+    /** 0–1; null when an input it needs is unknown (e.g. no Kp reading). */
+    auroraIntensity: number | null;
     /** null when the method has no calibrated confidence. */
     confidence: number | null;
   }>;

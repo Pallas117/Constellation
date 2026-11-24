@@ -1,14 +1,10 @@
 import { betterAuth } from "better-auth";
 import Database from "better-sqlite3";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { authDbPath } from "./auth-db.js";
 import { isSsoCallback, ssoEmailAllowed as policyAllows, ssoPolicyFromEnv, ssoSignUpAllowed } from "./sso-policy.js";
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
-// Initialize a local SQLite db for better-auth
-const sqlite = new Database(path.join(__dirname, "../.auth.db"));
+// Initialize a local SQLite db for better-auth (.auth.db; tests use a throwaway file)
+const sqlite = new Database(authDbPath());
 
 // Same origin list CORS uses; without it better-auth rejects every sign-in
 // from the frontend with "Invalid origin".
@@ -37,9 +33,32 @@ export function ssoEmailAllowed(email: string | null | undefined): boolean {
     return policyAllows(email, ssoPolicy);
 }
 
+// The client address better-auth rate-limits by. server.ts sets this header on
+// every /api/auth request from CyberTiger's extractClientIp (which only trusts
+// X-Forwarded-For from a loopback proxy) and overwrites any value a client sent.
+export const CLIENT_IP_HEADER = "x-gauss-client-ip";
+
 export const auth = betterAuth({
     database: sqlite,
     trustedOrigins,
+    // better-auth only rate-limits by default when NODE_ENV=production, and the
+    // LaunchAgents don't set it; the auth routes are also mounted before
+    // CyberTiger. So always on, with tight limits on credential endpoints.
+    rateLimit: {
+        enabled: true,
+        storage: "memory",
+        window: 60,
+        max: 100,
+        customRules: {
+            "/sign-in/email": { window: 60, max: 5 },
+            "/sign-up/email": { window: 60, max: 5 },
+            "/request-password-reset": { window: 300, max: 3 },
+            "/reset-password": { window: 300, max: 5 },
+        },
+    },
+    advanced: {
+        ipAddress: { ipAddressHeaders: [CLIENT_IP_HEADER] },
+    },
     emailAndPassword: {  
         enabled: true
     },

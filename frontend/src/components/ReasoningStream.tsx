@@ -8,13 +8,17 @@ import { GaussRagPanel } from './GaussRagPanel';
 import { useAnomalyForecast } from '@/hooks/useAnomalyForecast';
 import { StatusBadge, type BadgeTone } from '@/components/brand/StatusBadge';
 
+// Every state is the loaded banner's height (3 lines): the column is anchored at the bottom of the
+// scene, so a banner that grew on arrival pushed the assistant above it up the screen.
+const BANNER = 'hud-panel min-h-[5rem] px-3 py-2';
+
 function ForecastBanner() {
   const { forecast, loading, error } = useAnomalyForecast();
 
   if (loading && !forecast) {
     // 250 ms rule: show that the model is working rather than an empty slot.
     return (
-      <div className="hud-panel flex items-center gap-2 px-3 py-2 font-mono text-xs text-muted-foreground">
+      <div data-testid="forecast-banner" className={`${BANNER} flex items-center gap-2 font-mono text-xs text-muted-foreground`}>
         <span aria-hidden="true" className="h-1.5 w-1.5 animate-pulse rounded-full bg-muted-foreground" />
         Storm forecast: computing…
       </div>
@@ -25,7 +29,7 @@ function ForecastBanner() {
   if (!forecast || !('anomalyProbability' in forecast)) {
     const reason = forecast && 'reason' in forecast ? forecast.reason : error ?? 'No forecast';
     return (
-      <div className="hud-panel flex items-center gap-2 px-3 py-2 font-mono text-xs text-muted-foreground" title={reason}>
+      <div data-testid="forecast-banner" className={`${BANNER} flex items-center gap-2 font-mono text-xs text-muted-foreground`} title={reason}>
         <StatusBadge tone="neutral">Unavailable</StatusBadge>
         <span className="truncate">{reason}</span>
       </div>
@@ -39,7 +43,7 @@ function ForecastBanner() {
   const word = p >= 0.5 ? 'Storm likely' : p >= 0.2 ? 'Elevated' : 'Quiet';
 
   return (
-    <div className="hud-panel px-3 py-2" title={forecast.warningMessage}>
+    <div data-testid="forecast-banner" className={BANNER} title={forecast.warningMessage}>
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="font-mono text-xs tabular-nums text-foreground">
           {forecast.horizonHours} h forecast · P(G1+) {(p * 100).toFixed(1)}% · Kp max ≈ {forecast.predictedKpMax.toFixed(1)}

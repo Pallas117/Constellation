@@ -7,9 +7,10 @@ import {
   PARTICLE_MAX_AGE_MS,
   type GoesParticleReadout,
 } from "../adapters/goes-particles.js";
+import { fetchGlotec, freshIonosphere, getGlotecStatus } from "../adapters/glotec.js";
 import { fetchSwpcProducts, type SwpcProducts } from "../adapters/swpc-products.js";
 import { checkFieldMagnitude, checkPlasmaTracking, compareScales, expireCheck, fieldSampleProblem } from "../lib/sense-checks.js";
-import { geomagneticStorm, radiationStorm, radioBlackout } from "../physics/noaa-scales.js";
+import { currentKpReading, geomagneticStorm, radiationStorm, radioBlackout } from "../physics/noaa-scales.js";
 import { getJaxaStatus, probeJaxaCatalog } from "../adapters/jaxa-erg.js";
 import { fetchKyotoDst, freshDst, getKyotoDstStatus, type DstReading } from "../adapters/kyoto-dst.js";
 import { fetchMmsCdawebSamples, getMmsCdawebStatus } from "../adapters/mms-cdaweb.js";
@@ -17,7 +18,7 @@ import { fetchMmsBurstWindows, getMmsLaspStatus } from "../adapters/mms-lasp.js"
 import { fetchNoaaReadout, getNoaaStatus, type KpReading, type NOAAReadout } from "../adapters/noaa-swpc.js";
 import { arrivingNow, type L1Sample } from "../adapters/rtsw-series.js";
 import { gseToGsm, magnitude } from "../physics/coordinates.js";
-import { buildAuroraGrid } from "../physics/healpix.js";
+import { auroraGridKey, buildAuroraGrid } from "../physics/healpix.js";
 import { computeCanonicalPoint, type MhdInput } from "../physics/mhd-nowcast.js";
 import {
   computeMMSReconnectionVector,
@@ -35,10 +36,12 @@ import { linkGuardian } from "../lib/connectivity.js";
 import { PipelineTimer, STAGE_BUDGET_MS } from "../lib/pipeline-timing.js";
 import { ForecastSkillTracker } from "../lib/tpm.js";
 import { bedrock } from "../lib/local-db.js";
+import { freshnessMs } from "../../shared/policy/freshness.js";
 import { inferAnomalyForecast } from "../ml-client/client.js";
 import type {
   CanonicalSpaceWeatherPoint,
   DerivedField,
+  IonosphereTecReading,
   IngestionTickResult,
   MMSReconVectorPoint,
   SenseCheck,
@@ -49,19 +52,26 @@ import type {
 } from "../types.js";
 
 export const TICK_MS = 5000;
+export const BACKOFF_BASE_MS = 10_000;
+export const BACKOFF_MAX_MS = 10 * 60 * 1000;
+/** Wait before the next attempt after `runs` consecutive failures: 10 s, 20 s, 40 s ... capped at 10 min. */
+export function backoffMs(runs: number): number {
+  return Math.min(BACKOFF_MAX_MS, BACKOFF_BASE_MS * 2 ** Math.max(0, runs - 1));
+}
 const NOAA_MS = 60000;
 const ESA_MS = 10000;
 const JAXA_MS = 60000;
 const MMS_MS = 10 * 60 * 1000; // archival L2 product; polling faster gains nothing
 const LASP_MS = 60000;
 const GOES_MS = 60000; // GOES publishes every 5 min; a 60 s poll keeps worst-case lag under 6 min
+const GLOTEC_MS = 5 * 60 * 1000; // GloTEC steps every 10 min; the index tail is tiny, the 2.4 MB file is fetched only for a new step
 const KYOTO_DST_MS = 10 * 60 * 1000; // hourly product
 const SWPC_PRODUCTS_MS = 2 * 60 * 1000; // NOAA scales and alerts: a cross-check, updated every few minutes
 
 // Freshness is judged by the age of the measurement itself, not by whether a fetch ran
 // this tick. Beyond NOAA_MAX_AGE_MS a readout is discarded rather than carried forward.
 export const NOAA_FRESH_MS = 10 * 60 * 1000;
-export const NOAA_MAX_AGE_MS = 15 * 60 * 1000; // GAU-15: carried values expire at 15 min
+export const NOAA_MAX_AGE_MS = freshnessMs("l1_solar_wind"); // GAU-15: carried values expire with the L1 bound
 
 /** 0 live, 1 buffered (measured but ageing), 3 stale (no measurement within the cap). */
 export function freshnessTier(dataTimestamp: string | null, nowMs: number): ResilienceTier {
@@ -100,7 +110,17 @@ export function forecastWindow(
 }
 
 /** The sources a worker can fetch. */
-export type IngestSource = "noaa" | "kyoto-dst" | "goes" | "swpc-products" | "esa" | "jaxa" | "mms" | "lasp";
+export const INGEST_SOURCES = ["noaa", "kyoto-dst", "goes", "glotec", "swpc-products", "esa", "jaxa", "mms", "lasp"] as const;
+export type IngestSource = (typeof INGEST_SOURCES)[number];
+
+/**
+ * The live worker's sources (GAU-228): every source unless GAUSS_MMS=0 or GAUSS_LASP=0 (backend/lib/
+ * boot-switches.ts) leaves MMS CDAWeb (10 min) or LASP (60 s) polling out. undefined = all, the default.
+ */
+export function liveIngestSources(switches: { mms: boolean; lasp: boolean }): IngestSource[] | undefined {
+  if (switches.mms && switches.lasp) return undefined;
+  return INGEST_SOURCES.filter((s) => (s !== "mms" || switches.mms) && (s !== "lasp" || switches.lasp));
+}
 
 /**
  * How a worker runs. The defaults are the live service. A historical replay (GAU-138) runs the
@@ -123,10 +143,16 @@ export interface IngestionOptions {
 
 export class IngestionWorker {
   private timer: NodeJS.Timeout | null = null;
+  /** The pending start-up retry, so stop() can cancel it (GAU-208). */
+  private retryTimer: NodeJS.Timeout | null = null;
   private running = false;
   private previousDst: number | null = null;
   private couplingWindow: number[] = [];
+  private auroraGridCache: { key: string; result: ReturnType<typeof buildAuroraGrid> } | null = null;
   private lastFetch = new Map<string, number>();
+  /** Consecutive failures per source, and when its next attempt is allowed (GAU-232 follow-up). */
+  private failures = new Map<string, number>();
+  private backoffUntil = new Map<string, number>();
 
   private noaa: NOAAReadout | null = null;
   /**
@@ -142,6 +168,7 @@ export class IngestionWorker {
   private kpReading: KpReading | null = null;
   private esa: ESAReadout | null = null;
   private goes: GoesParticleReadout | null = null;
+  private glotec: IonosphereTecReading | null = null;
   private swpcProducts: SwpcProducts | null = null;
   private kyotoDst: DstReading | null = null;
   private latestCanonical: CanonicalSpaceWeatherPoint | null = null;
@@ -151,6 +178,7 @@ export class IngestionWorker {
   private lastMeasurementAt: string | null = null;
   private ticking = false;
   private loggedCloudDisabled = false;
+  private loggedAirgap = false; // once per AIRGAP spell, not every tick (57k lines in backend.log, 4 Nov 2026)
   /** Live skill of served forecasts vs persistence (TPM forecast_skill, FMEA FM-09). GAU-122. */
   readonly forecastSkill = new ForecastSkillTracker();
   readonly timing = new PipelineTimer();
@@ -170,6 +198,8 @@ export class IngestionWorker {
   }
 
   private async tickWithRetry(attempt = 0): Promise<void> {
+    // A retry chain from before a restart must not tick alongside the new one (GAU-208).
+    if (!this.running) return;
     try {
       await this.tick();
     } catch (error) {
@@ -177,15 +207,16 @@ export class IngestionWorker {
       const baseDelay = 2000;
       const delay = baseDelay * Math.pow(2, attempt);
 
-      if (attempt < maxAttempts) {
+      if (attempt < maxAttempts && this.running) {
         console.error(
           `[IngestionWorker] Initial tick failed (attempt ${attempt + 1}/${maxAttempts}), retrying in ${delay}ms`,
           error,
         );
-        setTimeout(() => {
+        this.retryTimer = setTimeout(() => {
+          this.retryTimer = null;
           void this.tickWithRetry(attempt + 1);
         }, delay);
-      } else {
+      } else if (this.running) {
         console.error(
           `[IngestionWorker] Initial tick failed after ${maxAttempts} attempts, pipeline offline`,
           error,
@@ -216,6 +247,10 @@ export class IngestionWorker {
       clearInterval(this.timer);
       this.timer = null;
     }
+    if (this.retryTimer) {
+      clearTimeout(this.retryTimer);
+      this.retryTimer = null;
+    }
   }
 
   getLatestCanonical(): CanonicalSpaceWeatherPoint | null {
@@ -235,18 +270,45 @@ export class IngestionWorker {
     return this.timing.snapshot(TICK_MS, this.lastMeasurementAt, NOAA_FRESH_MS, NOAA_MAX_AGE_MS);
   }
 
-  /** Fetch one source within its latency budget; a failure or timeout keeps the previous value. */
+  /**
+   * Fetch one source within its latency budget; a failure or timeout keeps the previous value.
+   * A source that keeps failing (a hotspot with no route, an upstream outage) backs off: the
+   * wait doubles from 10 s to 10 min, and the log gets one line per failure run, not a stack
+   * trace every cadence (the live backend wrote ~2k ESA timeouts with traces in a few hours).
+   */
   private async timedFetch<T>(stage: string, fn: () => Promise<T>): Promise<T | null> {
     try {
-      return await this.timing.time(stage, fn, STAGE_BUDGET_MS[stage]);
+      const value = await this.timing.time(stage, fn, STAGE_BUDGET_MS[stage]);
+      const runs = this.failures.get(stage) ?? 0;
+      if (runs > 0) {
+        this.failures.delete(stage);
+        this.backoffUntil.delete(stage);
+        console.warn(`[IngestionWorker] ${stage} fetch recovered after ${runs} failure(s).`);
+      }
+      return value;
     } catch (error) {
-      console.warn(`[IngestionWorker] ${stage} fetch failed; keeping previous value.`, error);
+      const runs = (this.failures.get(stage) ?? 0) + 1;
+      this.failures.set(stage, runs);
+      const waitMs = backoffMs(runs);
+      this.backoffUntil.set(stage, this.now() + waitMs);
+      if (runs === 1 || runs % 10 === 0) {
+        const reason = error instanceof Error ? error.message : String(error);
+        console.warn(
+          `[IngestionWorker] ${stage} fetch failed (${runs} in a row; next try in ${Math.round(waitMs / 1000)} s); keeping previous value: ${reason}`,
+        );
+      }
       return null;
     }
   }
 
+  /** Consecutive failures per source (tests and /health). */
+  getFailureRuns(): Record<string, number> {
+    return Object.fromEntries(this.failures);
+  }
+
   private shouldFetch(key: string, cadenceMs: number): boolean {
     const now = this.now();
+    if (now < (this.backoffUntil.get(key) ?? 0)) return false;
     const last = this.lastFetch.get(key) ?? 0;
     if (now - last >= cadenceMs) {
       this.lastFetch.set(key, now);
@@ -269,7 +331,8 @@ export class IngestionWorker {
         magneticFieldGse: noaa.magneticFieldGse,
         velocityGsm: noaa.velocityGsm ?? null,
         magneticFieldGsm: noaa.magneticFieldGsm ?? null,
-        kp: noaa.kp,
+        // Only a Kp within its freshness bound; an old one is unknown (GAU-232).
+        kp: currentKpReading(noaa.kpReading, Date.parse(timestamp))?.value ?? null,
         // Measured Kyoto Dst while it is under 2 h old; otherwise the nowcast's labelled model
         // estimate (O'Brien & McPherron) takes over. GAU-116.
         dst: freshDst(this.kyotoDst, Date.parse(timestamp)),
@@ -290,7 +353,9 @@ export class IngestionWorker {
       magneticFieldGse: b,
       velocityGsm: v,
       magneticFieldGsm: b,
-      kp: this.kpReading?.value ?? prev?.indices.kp ?? 2,
+      // No current Kp from any source is unknown (null), not a quiet-time 2 (GAU-230), and not
+      // the last point's Kp of whatever age (GAU-232).
+      kp: currentKpReading(this.kpReading, Date.parse(timestamp))?.value ?? null,
       dst: freshDst(this.kyotoDst, Date.parse(timestamp)),
     };
   }
@@ -363,7 +428,8 @@ export class IngestionWorker {
     try {
       // Local Buffer is always the priority (Air-Gap ready)
       await this.timing.time("persist", async () => {
-        await bedrock.appendTelemetryStrict({ type: "canonical", data: point, timestamp: point.timestamp });
+        // Typed by what it is: canonical, canonical-stale (no measurement) or canonical-rejected. GAU-244.
+        await bedrock.appendCanonicalStrict(point);
         if (mmsVector) {
           await bedrock.appendTelemetryStrict({ type: "mms", data: mmsVector, timestamp: mmsVector.timestamp });
         }
@@ -381,6 +447,19 @@ export class IngestionWorker {
     }
   }
 
+  /**
+   * The aurora grid is 49,152 points (~4 MB) built from four inputs that change about once a
+   * minute; rebuilding it every tick was the backend's largest steady garbage source. Reuse the
+   * last grid while its inputs are unchanged (same values in, same grid out).
+   */
+  private auroraGridFor(point: CanonicalSpaceWeatherPoint): ReturnType<typeof buildAuroraGrid> {
+    const key = auroraGridKey(point);
+    if (this.auroraGridCache?.key !== key) {
+      this.auroraGridCache = { key, result: buildAuroraGrid(point, 64) };
+    }
+    return this.auroraGridCache.result;
+  }
+
   private trimCouplingWindow(): void {
     const maxLen = 180;
     if (this.couplingWindow.length > maxLen) {
@@ -393,19 +472,16 @@ export class IngestionWorker {
     if (officialOnly) {
       console.log('[IngestionWorker] OFFICIAL_SOURCES_ONLY=true — preferring official data adapters (NOAA/MMS)');
     }
+    // MMS switched off (GAUSS_MMS=0 / GAUSS_LASP=0) is left out, never reported as a source that failed.
+    const mms = [
+      ...(this.wants("mms") ? [getMmsCdawebStatus()] : []),
+      ...(this.wants("lasp") ? [getMmsLaspStatus()] : []),
+    ];
     if (officialOnly) {
-      return [getNoaaStatus(), getGoesStatus(), getKyotoDstStatus(), getMmsCdawebStatus(), getMmsLaspStatus()];
+      return [getNoaaStatus(), getGoesStatus(), ...(this.wants("glotec") ? [getGlotecStatus()] : []), getKyotoDstStatus(), ...mms];
     }
 
-    return [
-      getNoaaStatus(),
-      getGoesStatus(),
-      getKyotoDstStatus(),
-      getEsaStatus(),
-      getJaxaStatus(),
-      getMmsCdawebStatus(),
-      getMmsLaspStatus(),
-    ];
+    return [getNoaaStatus(), getGoesStatus(), ...(this.wants("glotec") ? [getGlotecStatus()] : []), getKyotoDstStatus(), getEsaStatus(), getJaxaStatus(), ...mms];
   }
 
   private async isAuroraRpcSignatureError(error: unknown): Promise<boolean> {
@@ -476,6 +552,13 @@ export class IngestionWorker {
           }),
         );
       }
+      if (this.wants("glotec") && this.shouldFetch("glotec", GLOTEC_MS)) {
+        fetches.push(
+          this.timedFetch("glotec", () => fetchGlotec(nowMs)).then((result) => {
+            if (result) this.glotec = result;
+          }),
+        );
+      }
       if (this.wants("swpc-products") && this.shouldFetch("swpc-products", SWPC_PRODUCTS_MS)) {
         fetches.push(
           this.timedFetch("swpc-products", () => fetchSwpcProducts(nowMs)).then((result) => {
@@ -510,9 +593,11 @@ export class IngestionWorker {
         fetches.push(this.timedFetch("lasp", fetchMmsBurstWindows));
       }
       await Promise.all(fetches);
-    } else {
+    } else if (!this.loggedAirgap) {
+      this.loggedAirgap = true;
       console.log("[IngestionWorker] AIRGAP mode active. Bypassing external API fetches.");
     }
+    if (link.mode !== "AIRGAP") this.loggedAirgap = false;
     if (this.noaa?.timestamp) this.lastMeasurementAt = this.noaa.timestamp;
 
     if (this.options.forecast !== false && this.shouldFetch("ml-forecast", 300000)) {
@@ -524,7 +609,7 @@ export class IngestionWorker {
         );
         // Score every served forecast later against observed Kp; persistence = Kp measured now.
         const f = this.latestForecast;
-        const kpNow = this.noaa?.kp;
+        const kpNow = currentKpReading(this.noaa?.kpReading, Date.parse(nowIso))?.value;
         if (f?.available && typeof kpNow === "number" && freshnessTier(this.noaa?.timestamp ?? null, Date.parse(nowIso)) <= 1) {
           this.forecastSkill.record(Date.parse(nowIso), f.horizonHours, f.predictedKpMax, kpNow);
         }
@@ -540,9 +625,10 @@ export class IngestionWorker {
       // Past the cap the readout is unknown, not "last known"; inputs fall back to the
       // previous canonical state and the point is flagged stale.
       this.noaa = null;
-    } else if (typeof this.noaa?.kp === "number") {
+    } else {
       // Resolve due forecasts only against a current measured Kp.
-      this.forecastSkill.resolve(Date.parse(nowIso), this.noaa.kp);
+      const kpNow = currentKpReading(this.noaa?.kpReading, Date.parse(nowIso));
+      if (kpNow) this.forecastSkill.resolve(Date.parse(nowIso), kpNow.value);
     }
     const mhdInput = this.blendInputs(nowIso);
     // The solar wind reaching Earth now, from the L1 history one travel time back.
@@ -559,9 +645,10 @@ export class IngestionWorker {
     );
     point.spacecraft = this.noaa?.spacecraft ?? this.latestCanonical?.spacecraft;
     point.arriving = arriving;
-    if (this.kpReading) {
-      point.indices.kpKind = this.kpReading.kind;
-      point.indices.kpObservedAt = this.kpReading.observedAt;
+    const kpShown = currentKpReading(this.kpReading, Date.parse(nowIso));
+    if (kpShown) {
+      point.indices.kpKind = kpShown.kind;
+      point.indices.kpObservedAt = kpShown.observedAt;
     }
     if (point.indices.dstMethod === "measured" && this.kyotoDst) point.indices.dstObservedAt = this.kyotoDst.timestamp;
     point.derived = this.derivedFields();
@@ -595,6 +682,8 @@ export class IngestionWorker {
     // Radio blackouts (R) from GOES X-rays, and the input sense-checks (GAU-136).
     point.xray = freshXray(this.goes?.xray ?? null, nowMs);
     point.alerts.radioBlackout = radioBlackout(point.xray);
+    // GloTEC TEC over Malaysia: only within its freshness bound; older is unknown (null).
+    point.ionosphere = freshIonosphere(this.glotec, nowMs);
     point.senseChecks = this.senseChecks(point, nowMs);
     point.noaaAlerts = this.swpcProducts?.alerts ?? null;
 
@@ -602,15 +691,13 @@ export class IngestionWorker {
     this.couplingWindow.push(point.coupling.newell);
     this.trimCouplingWindow();
 
+    // No grid without Kp (buildAuroraGrid returns null): the served map keeps its own older timestamp.
     const auroraMap =
       this.options.auroraGrid === false
         ? null
-        : await this.timing.time("aurora-grid", () => buildAuroraGrid(point, 64)).then(({ grid, harmonics }) => ({
-            timestamp: point.timestamp,
-            nside: 64,
-            grid,
-            harmonics,
-          }));
+        : await this.timing.time("aurora-grid", () => this.auroraGridFor(point)).then((built) =>
+            built ? { timestamp: point.timestamp, nside: 64, grid: built.grid, harmonics: built.harmonics } : null,
+          );
 
     if (mmsVector) this.latestMms = mmsVector;
     this.latestCanonical = point;

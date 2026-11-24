@@ -1,19 +1,36 @@
 /**
  * Ingest a customer inference log and build its trust records (PR-03a, GAU-66):
- *   npm run trust:ingest -- <log.csv|.json|.jsonl> <mapping.json> --replay <event> [--out records.jsonl] [--report report.json]
+ *   npm run trust:ingest -- <log.csv|.json|.jsonl> <mapping.json> (--replay <event or custom slug> | --archive <path.json.gz>) [--out records.jsonl] [--report report.json]
+ *     [--pack pack.json [--pdf pack.pdf] [--from <ISO> --to <ISO>] [--previous-pack previous.json] [--sign-key <key file> [--keyring <file>] [--pattern-tty]]]
  *
  * The report lists every rejected row with its reasons; nothing is dropped silently. Records
  * carry each row's provenance (file SHA-256, row number, mapping id and version). The
- * environment comes from a cached storm replayed through the live pipeline (`--replay`), so a
- * past window is judged by what Gauss would have known at the time.
+ * environment comes from a cached archive (a named storm, or a customer window made by
+ * `replay:fetch -- --window`; `--archive` takes one outside the repository) replayed through the live pipeline (`--replay`), so a
+ * past window is judged by what Gauss would have known at the time. Rows outside the archive's
+ * window are listed per row (they have no environment to be judged against).
+ *
+ * `--pack` also writes the evidence pack for the analysis window (PR-04, GAU-60; default: the
+ * replayed event's window) and `--pdf` its PDF. Accepted rows outside the window are listed in
+ * the pack as not used, with the reason. `--previous-pack` chains it to the last pack, after
+ * checking that one (and its signature, if it has one). `--sign-key` signs the pack with a Gauss
+ * key (GAU-67, see `trust:sign`; a locked key asks for its pattern, `--pattern-tty` in the terminal). Check a pack with `npm run trust:verify -- pack.json`.
  */
+import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { readFileSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadArchive, replayArchive } from "../../backend/replay/replay.js";
 import { EnvironmentHistory } from "../../backend/trust/environment.js";
+import { buildEvidencePack, verifyEvidencePack, type EvidencePack } from "../../backend/trust/evidence.js";
+import { renderEvidencePdf } from "../../backend/trust/evidence-pdf.js";
+import { archivePathFor, outsideWindow } from "../../backend/trust/archive-window.js";
 import { ingestLog, type LogMapping } from "../../backend/trust/ingest.js";
-import { buildTrustRecord } from "../../backend/trust/record.js";
+import { buildTrustRecord, DEFAULT_POLICY, TRUST_RECORD_SCHEMA } from "../../backend/trust/record.js";
+import { openSigningKey } from "../../backend/trust/key-lock.js";
+import { patternPrompt } from "../../backend/trust/pattern-page.js";
+import { loadKeyring, PUBLISHED_KEYRING_PATH, signPack, verifyPackSignature } from "../../backend/trust/signing.js";
 import type { CanonicalSpaceWeatherPoint } from "../../backend/types.js";
 
 const args = process.argv.slice(2);
@@ -21,26 +38,42 @@ const opt = (name: string) => {
   const i = args.indexOf(name);
   return i >= 0 ? args[i + 1] : undefined;
 };
-const [logPath, mappingPath] = args.filter((a, i) => !a.startsWith("--") && !args[i - 1]?.startsWith("--"));
+const BOOLEAN_FLAGS = new Set(["--pattern-tty"]);
+const [logPath, mappingPath] = args.filter((a, i) => !a.startsWith("--") && !(args[i - 1]?.startsWith("--") && !BOOLEAN_FLAGS.has(args[i - 1])));
 const eventId = opt("--replay");
-if (!logPath || !mappingPath || !eventId) {
-  console.error("usage: npm run trust:ingest -- <log> <mapping.json> --replay <event id> [--out records.jsonl] [--report report.json]");
+const archiveArg = opt("--archive");
+if (!logPath || !mappingPath || (!eventId && !archiveArg)) {
+  console.error("usage: npm run trust:ingest -- <log> <mapping.json> (--replay <event id> | --archive <path.json.gz>) [--out records.jsonl] [--report report.json]");
   process.exit(2);
 }
 
 const mapping = JSON.parse(readFileSync(mappingPath, "utf8")) as LogMapping;
 const report = ingestLog(readFileSync(logPath), mapping);
 
-const archive = loadArchive(join(dirname(fileURLToPath(import.meta.url)), "../../backend/replay/events", `${eventId}.json.gz`));
+const root = join(dirname(fileURLToPath(import.meta.url)), "../..");
+let archivePath: string;
+try {
+  archivePath = archivePathFor(root, eventId, archiveArg);
+} catch (error) {
+  console.error(error instanceof Error ? error.message : "bad archive option");
+  process.exit(2);
+}
+const archive = loadArchive(archivePath);
 const points: CanonicalSpaceWeatherPoint[] = [];
 await replayArchive(archive, { points });
-const history = new EnvironmentHistory(points, `replay ${eventId}`);
+const history = new EnvironmentHistory(points, `replay ${archive.id}`);
 const nowMs = Date.parse(archive.end);
-const records = report.accepted.map((a) => buildTrustRecord(a.request, history, { nowMs }));
+const records = report.accepted.map((a) => buildTrustRecord(a.request, history, { nowMs, policy: DEFAULT_POLICY }));
 
 const verdicts: Record<string, number> = {};
 for (const r of records) verdicts[r.verdict.value] = (verdicts[r.verdict.value] ?? 0) + 1;
-const summary = { file: report.file, mapping: report.mapping, accepted: report.accepted.length, rejected: report.rejected, verdicts };
+const outsideArchive = outsideWindow(
+  report.accepted.map((a) => ({ row: a.request.ingest.row, time: a.request.time })),
+  archive.start,
+  archive.end,
+  "archive window",
+);
+const summary = { file: report.file, mapping: report.mapping, accepted: report.accepted.length, rejected: report.rejected, outsideArchiveWindow: outsideArchive, verdicts };
 
 const outPath = opt("--out");
 const lines = records.map((r) => JSON.stringify(r)).join("\n") + "\n";
@@ -53,3 +86,81 @@ console.error(
     `verdicts ${Object.entries(verdicts).map(([k, v]) => `${k} ${v}`).join(", ") || "none"}`,
 );
 for (const r of report.rejected) console.error(`  row ${r.row}: ${r.errors.join("; ")}`);
+for (const r of outsideArchive) console.error(`  row ${r.row}: ${r.errors.join("; ")}; no environment, not judged`);
+
+const packPath = opt("--pack");
+if (packPath) {
+  const window = { from: opt("--from") ?? archive.start, to: opt("--to") ?? archive.end };
+  const [fromMs, toMs] = [Date.parse(window.from), Date.parse(window.to)];
+  const inWindow = (t: string) => Date.parse(t) >= fromMs && Date.parse(t) <= toMs;
+  const outside = report.accepted.filter((a) => !inWindow(a.request.time));
+  const outsideSet = new Set(outside.map((a) => a.request.ingest.row));
+  const archiveOnly = outsideArchive.filter((r) => !outsideSet.has(r.row)); // inside the analysis window but beyond the archive
+  const previous = opt("--previous-pack");
+  let previousPackHash: string | null = null;
+  if (previous) {
+    const prior = JSON.parse(readFileSync(previous, "utf8")) as EvidencePack;
+    const problems = verifyEvidencePack(prior);
+    if (prior.signature) problems.push(...verifyPackSignature(prior, loadKeyring(opt("--keyring") ?? PUBLISHED_KEYRING_PATH)).problems);
+    if (problems.length) {
+      console.error(`${previous} does not verify, so it can't start a chain: ${problems.join("; ")}`);
+      process.exit(1);
+    }
+    previousPackHash = prior.packHash;
+  }
+  const git = (...a: string[]) => execFileSync("git", ["-C", root, ...a], { encoding: "utf8" }).trim();
+  let commit = "unknown";
+  try {
+    // "+modified" means the CODE differs from the commit. The live checkout rewrites tracked runtime
+    // data in place (the bedrock telemetry log, the ML model registry and promoted model files), so
+    // those paths are excluded: they are data, not software, and would otherwise mark every pack.
+    const codeChanges = git("status", "--porcelain", "--untracked-files=no", "--", ".", ":(exclude)data/", ":(exclude)ml/models/");
+    commit = git("rev-parse", "HEAD") + (codeChanges ? "+modified" : "");
+  } catch {
+    // not a git checkout: the pack says so
+  }
+  const sha = (b: Buffer) => createHash("sha256").update(b).digest("hex");
+  const built = buildEvidencePack(
+    records.filter((r) => inWindow(r.inference.time) && !outsideArchive.some((o) => o.row === r.inference.ingest?.row)),
+    {
+      window,
+      generatedAtMs: nowMs,
+      inputs: {
+        log: {
+          fileSha256: report.file.sha256,
+          bytes: report.file.bytes,
+          rows: report.file.rows,
+          mappingId: report.mapping.id,
+          mappingVersion: report.mapping.version,
+          rejected: [
+            ...report.rejected,
+            ...archiveOnly,
+            ...outside.map((a) => ({ row: a.request.ingest.row, errors: [`outside the analysis window ${window.from} to ${window.to}`] })),
+          ].sort((a, b) => a.row - b.row),
+        },
+        environment: { source: history.label, archiveSha256: sha(readFileSync(archivePath)) },
+        policy: DEFAULT_POLICY,
+        software: {
+          name: "Gauss",
+          commit,
+          requirementsVersion: (JSON.parse(readFileSync(join(root, "requirements/requirements.json"), "utf8")) as { version: string }).version,
+          trustRecordSchema: TRUST_RECORD_SCHEMA,
+        },
+        previousPackHash,
+      },
+    },
+  );
+  const signKey = opt("--sign-key");
+  const pack = signKey
+    ? signPack(
+        built,
+        await openSigningKey(signKey, root, patternPrompt("unlock", basename(signKey), { terminal: args.includes("--pattern-tty") })),
+        loadKeyring(opt("--keyring") ?? PUBLISHED_KEYRING_PATH),
+      )
+    : built;
+  writeFileSync(packPath, JSON.stringify(pack, null, 2) + "\n");
+  const pdfPath = opt("--pdf");
+  if (pdfPath) writeFileSync(pdfPath, renderEvidencePdf(pack));
+  const signed = pack.signature ? `, signed by key ${pack.signature.keyId}` : ", not signed";
+  console.error(`evidence pack ${pack.packId}: ${pack.records.length} records, pack hash ${pack.packHash}${signed}${pdfPath ? `; PDF ${pdfPath}` : ""}`);
+}

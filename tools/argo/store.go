@@ -13,7 +13,9 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -29,23 +31,34 @@ func (s Store) path(name string) string { return filepath.Join(s.Dir, name) }
 // State is the loop's memory between ticks. Breaker and backoff numbers
 // mirror mesh-heal: 4 attempts, 60s·2^(n-1) capped at 15 min, 30 min open.
 type State struct {
-	Class        Class     `json:"class"`
-	Reason       string    `json:"reason"`
-	Fingerprint  string    `json:"fingerprint"`
-	Loc          string    `json:"loc,omitempty"`
-	CheckedAt    time.Time `json:"checked_at"`
-	IncidentAt   time.Time `json:"incident_at,omitempty"`
-	Attempts     int       `json:"attempts"`
-	LastFixAt    time.Time `json:"last_fix_at,omitempty"`
-	LastFix      string    `json:"last_fix,omitempty"`
-	BreakerUntil time.Time `json:"breaker_until,omitempty"`
+	ShieldOn           bool      `json:"shield_on,omitempty"`            // Argo turned WARP on for untrusted Wi-Fi (shield.go)
+	PublicIP           string    `json:"public_ip,omitempty"`            // last tick's public IP, for the network watch
+	ShieldPrevMode     string    `json:"shield_prev_mode,omitempty"`     // WARP mode to put back ("" = Argo left the mode alone)
+	ShieldWasConnected bool      `json:"shield_was_connected,omitempty"` // WARP was already connected: leave it connected
+	Class              Class     `json:"class"`
+	Reason             string    `json:"reason"`
+	Fingerprint        string    `json:"fingerprint"`
+	Loc                string    `json:"loc,omitempty"`
+	CheckedAt          time.Time `json:"checked_at"`
+	IncidentAt         time.Time `json:"incident_at,omitempty"`
+	OfflineTold        bool      `json:"offline_told,omitempty"` // this outage was texted through the iPhone relay (GAU-233)
+	WiFiSteps          int       `json:"wifi_steps,omitempty"`   // Wi-Fi join/restart steps tried in this outage (GAU-234)
+	Attempts           int       `json:"attempts"`
+	LastFixAt          time.Time `json:"last_fix_at,omitempty"`
+	LastFix            string    `json:"last_fix,omitempty"`
+	BreakerUntil       time.Time `json:"breaker_until,omitempty"`
 	// LastSummaryAt is when the weekly iMessage summary was last sent.
 	LastSummaryAt time.Time      `json:"last_summary_at,omitempty"`
 	Networks      map[string]Net `json:"networks,omitempty"` // fingerprint → what worked there
 	Tailscale     Tailscale      `json:"tailscale"`
 	Gateway       string         `json:"gateway,omitempty"`
 	GatewayMAC    string         `json:"gateway_mac,omitempty"`
-	Net           NetScore       `json:"net"` // privacy, speed and signal at the last check (netscore.go)
+	Net           NetScore       `json:"net"`              // privacy, speed and signal at the last check (netscore.go)
+	Switch        *SwitchInfo    `json:"switch,omitempty"` // last network change or recovery and the tailnet's answer (tailnet.go)
+	Low           LowSignal      `json:"low,omitempty"`    // low-signal verdict with hysteresis (lowsignal.go)
+	Via           string         `json:"via,omitempty"`    // link the last probe used: usb, wifi, ethernet, other (wiredlink.go)
+	Advice        string         `json:"advice,omitempty"` // suggested link switch; Argo never changes settings itself
+	Clock         ClockVerdict   `json:"clock,omitempty"`  // clock cross-check (timeintegrity.go)
 	// IncidentFP is the network the open incident belongs to; Notified says whether
 	// it was announced yet, NotifyDue when it will be if this network's usual
 	// recovery time passes first (loop.go).
@@ -61,6 +74,19 @@ type Net struct {
 	FirstSeen time.Time        `json:"first_seen"`
 	Fixes     map[Class]string `json:"fixes,omitempty"`
 	Recover   map[Class][]int  `json:"recover,omitempty"`
+	// Wi-Fi shield: leave WARP off on this network (it broke things, or you turned it off), and
+	// the "WARP is in proxy mode" advice was already sent here.
+	NoShield      bool `json:"no_shield,omitempty"`
+	ShieldAdvised bool `json:"shield_advised,omitempty"`
+	// Network watch (neighbours.go): devices seen, the last spoofing sign, inbound connections told.
+	Devices     int                  `json:"devices,omitempty"`
+	SuspectAt   time.Time            `json:"suspect_at,omitempty"`
+	SeenInbound map[string]time.Time `json:"seen_inbound,omitempty"`
+	// BlockedHosts: host:port this network could not reach while others worked (`argo reach`,
+	// reach.go), with when it was last seen; cleared when it answers, capped and expiring.
+	BlockedHosts map[string]time.Time `json:"blocked_hosts,omitempty"`
+	// PrivateDNS: the nearest encrypted resolver measured on this network (privdns.go), a provider id.
+	PrivateDNS string `json:"private_dns,omitempty"`
 }
 
 const (
@@ -151,7 +177,11 @@ func (s Store) Append(in Incident) error {
 		return err
 	}
 	in.Detail = Mask(in.Detail)
-	f, err := os.OpenFile(s.path("incidents.jsonl"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+	p := s.path("incidents.jsonl")
+	if fi, err := os.Stat(p); err == nil && fi.Size() >= incidentsMaxBytes {
+		_ = os.Rename(p, p+".1") // replaces the older half: history stays bounded at ~2x the cap
+	}
+	f, err := os.OpenFile(p, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 	if err != nil {
 		return err
 	}
@@ -161,24 +191,67 @@ func (s Store) Append(in Incident) error {
 	return err
 }
 
+// incidentsMaxBytes caps incidents.jsonl; it was never rotated and every report
+// parses it. At the cap it moves to incidents.jsonl.1 (one old file kept).
+const incidentsMaxBytes = 2 << 20
+
+// Incidents returns the rotated file's events, then the current file's, oldest first.
 func (s Store) Incidents() []Incident {
-	f, err := os.Open(s.path("incidents.jsonl"))
-	if err != nil {
-		return nil
-	}
-	defer f.Close()
 	var out []Incident
-	sc := bufio.NewScanner(f)
-	for sc.Scan() {
-		var in Incident
-		if json.Unmarshal(sc.Bytes(), &in) == nil {
-			out = append(out, in)
+	for _, p := range []string{s.path("incidents.jsonl.1"), s.path("incidents.jsonl")} {
+		f, err := os.Open(p)
+		if err != nil {
+			continue
 		}
+		sc := bufio.NewScanner(f)
+		for sc.Scan() {
+			var in Incident
+			if json.Unmarshal(sc.Bytes(), &in) == nil {
+				out = append(out, in)
+			}
+		}
+		f.Close()
 	}
 	return out
 }
 
-// Lock is an O_EXCL lock file; a lock older than 10 minutes is from a killed run.
+// lockHolderDead is true when the lock file names a process that no longer
+// exists. A run killed by launchd or the awake guard (`kickstart -k`) never
+// removes its lock; without this check every run for the next 10 minutes
+// failed with "another argo run is in progress", the heartbeat went stale and
+// the guard kicked Argo again (awake.log 2026-10-27 11:51-11:54).
+func lockHolderDead(p string) bool {
+	pid, _ := parseLock(p)
+	if pid <= 0 {
+		return false
+	}
+	return errors.Is(syscall.Kill(pid, 0), syscall.ESRCH)
+}
+
+// lockPreempt is the second line of the lock file: the holder handles SIGUSR1 as "the network
+// changed under you; drop the probe and look again" (tick.go, loop.go). A holder without it (an
+// older binary) must never be signalled: an unhandled SIGUSR1 kills the process.
+const lockPreempt = "preempt"
+
+// parseLock reads a lock file: the holder's pid, and whether it accepts preemption.
+func parseLock(p string) (pid int, preemptable bool) {
+	b, err := os.ReadFile(p)
+	if err != nil {
+		return 0, false
+	}
+	lines := strings.Split(strings.TrimSpace(string(b)), "\n")
+	pid, err = strconv.Atoi(strings.TrimSpace(lines[0]))
+	if err != nil || pid <= 0 {
+		return 0, false
+	}
+	return pid, len(lines) > 1 && strings.TrimSpace(lines[1]) == lockPreempt
+}
+
+// lockHolder is who holds the lock now (0 when nobody).
+func (s Store) lockHolder() (pid int, preemptable bool) { return parseLock(s.path("lock")) }
+
+// Lock is an O_EXCL lock file; a lock from a dead process, or older than 10
+// minutes, is from a killed run.
 func (s Store) Lock() (func(), error) {
 	if err := os.MkdirAll(s.Dir, 0o700); err != nil {
 		return nil, err
@@ -187,11 +260,11 @@ func (s Store) Lock() (func(), error) {
 	for i := 0; i < 2; i++ {
 		f, err := os.OpenFile(p, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 		if err == nil {
-			fmt.Fprintf(f, "%d\n", os.Getpid())
+			fmt.Fprintf(f, "%d\n%s\n", os.Getpid(), lockPreempt)
 			f.Close()
 			return func() { os.Remove(p) }, nil
 		}
-		if fi, serr := os.Stat(p); serr == nil && time.Since(fi.ModTime()) > 10*time.Minute {
+		if fi, serr := os.Stat(p); serr == nil && (time.Since(fi.ModTime()) > 10*time.Minute || lockHolderDead(p)) {
 			os.Remove(p)
 			continue
 		}
@@ -208,6 +281,18 @@ func (s Store) Disabled() bool {
 // Fingerprint identifies a network by gateway MAC plus the public IP prefix
 // (first three IPv4 octets or IPv6 hextets), hashed so the raw IP and MAC are
 // never stored or reported.
+// netFingerprint is the network key Argo learns under. The iPhone hotspot has no
+// gateway MAC and a carrier IP whose /24 changes on every reconnect, which made
+// 30 "networks" out of one phone and kept recovery learning from ever reaching
+// its sample minimum. It is keyed by the country it exits in instead, so a MY
+// SIM and an HK eSIM (which Anthropic does not serve) stay apart.
+func netFingerprint(s Snapshot) string {
+	if isIPhoneHotspot(s.Gateway) && s.Loc != "" {
+		return Fingerprint("iphone-hotspot:"+s.Loc, "") // the country goes in the key, not through ipPrefix
+	}
+	return Fingerprint(s.GatewayMAC, s.PublicIP)
+}
+
 func Fingerprint(gatewayMAC, publicIP string) string {
 	if gatewayMAC == "" && publicIP == "" {
 		return ""
