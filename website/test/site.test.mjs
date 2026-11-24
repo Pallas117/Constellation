@@ -365,7 +365,9 @@ test("budgets: first view under 200 KB before the film; film under 300 KB; whole
   const first = firstView.reduce((n, f) => n + size(f), 0);
   assert.ok(first < 200 * 1024, `first view is ${first} bytes`);
   assert.ok(size("assets/media/blackhole-720p.mp4") < 300 * 1024, "film too big");
-  const total = walk(pub).reduce((n, f) => n + statSync(f).size, 0);
+  // Share cards (assets/media/share/) are fetched by social sites, never by a visitor's browser: they have their own cap below.
+  const shareDir = join(pub, "assets", "media", "share");
+  const total = walk(pub).filter((f) => !f.startsWith(shareDir)).reduce((n, f) => n + statSync(f).size, 0);
   assert.ok(total < 1024 * 1024, `site is ${total} bytes`);
 });
 
@@ -736,19 +738,35 @@ test("storm story: the page is in the sitemap with its own share card, and state
   assert.match(page, /<a class="btn" href="\/gauss\/apply\/">Get your fleet&rsquo;s storm post-mortem<\/a>/);
   assert.match(page, /<!--follow-cta-->[\s\S]*<!--\/follow-cta-->/);
   // Its own card: 1200x630 with the headline, small enough for the site's weight budget.
-  assert.match(page, /<meta property="og:image" content="https:\/\/lightbound\.space\/assets\/media\/storms-share\.jpg">/);
+  assert.match(page, /<meta property="og:image" content="https:\/\/lightbound\.space\/assets\/media\/share\/storms\.jpg">/);
   assert.match(page, /<meta name="twitter:title" content="The night the sky went red">/);
   assert.match(page, /<meta name="twitter:description" content="[^"]+">/);
-  const jpg = readFileSync(join(pub, "assets", "media", "storms-share.jpg"));
-  assert.ok(jpg.length < 200 * 1024, `share card is ${jpg.length} bytes`);
-  let at = 2, dims = null;
-  while (at < jpg.length && !dims) {
-    const marker = jpg[at + 1], len = jpg.readUInt16BE(at + 2);
-    if (marker === 0xc0 || marker === 0xc2) dims = [jpg.readUInt16BE(at + 7), jpg.readUInt16BE(at + 5)];
-    at += 2 + len;
+  assert.match(read("../tools/share_cards.py"), /blackhole-poster\.jpg/, "built from the site's own media");
+});
+
+test("share cards: every public page names a card in assets/media/share/, 1200x630, sharp, under 250 KB each", () => {
+  const dims = (jpg) => {
+    let at = 2;
+    while (at < jpg.length) {
+      const marker = jpg[at + 1], len = jpg.readUInt16BE(at + 2);
+      if (marker === 0xc0 || marker === 0xc2) return [jpg.readUInt16BE(at + 7), jpg.readUInt16BE(at + 5)];
+      at += 2 + len;
+    }
+    return null;
+  };
+  const used = new Set();
+  for (const [route, page] of Object.entries(html)) {
+    const m = page.match(/<meta property="og:image" content="https:\/\/lightbound\.space\/assets\/media\/share\/([a-z]+)\.jpg">/);
+    if (!m) continue;
+    used.add(m[1]);
   }
-  assert.deepEqual(dims, [1200, 630]);
-  assert.match(read("../tools/make_share_card.py"), /blackhole-poster\.jpg/, "built from the site's own media");
+  assert.ok(used.size >= 6, `expected 6 distinct cards, found ${[...used]}`);
+  for (const id of used) {
+    const jpg = readFileSync(join(pub, "assets", "media", "share", `${id}.jpg`));
+    assert.ok(jpg.length < 250 * 1024, `${id} card is ${jpg.length} bytes`);
+    assert.ok(jpg.length > 30 * 1024, `${id} card looks over-compressed (${jpg.length} bytes)`);
+    assert.deepEqual(dims(jpg), [1200, 630], id);
+  }
 });
 
 test("follow strip: one list drives every public page; an empty or off-host entry renders no link", () => {
