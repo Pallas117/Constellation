@@ -72,6 +72,24 @@ export function passkeyConfigFrom(env: Record<string, string | undefined>, trust
   return { rpID, origins: [...new Set(origins)], rejected };
 }
 
+/**
+ * Startup warnings for the passkey set-up (threat model TM-03). A wrong or default RP ID fails closed (passkeys just
+ * don't work at the other host names, so nobody can satisfy a passkey check there), so the backend says so loudly
+ * instead of refusing to start, which would take live down.
+ */
+export function passkeyWarnings(config: PasskeyConfig): string[] {
+  const notes: string[] = [];
+  if (config.origins.length === 0) {
+    notes.push(
+      `[backend] passkeys can't be used anywhere: no secure origin matches RP ID ${config.rpID}. Operator routes that need a passkey stay closed until PASSKEY_RP_ID and PASSKEY_ORIGINS name the host people use.`,
+    );
+  }
+  if (config.rejected.length > 0) {
+    notes.push(`[backend] passkeys won't work at ${config.rejected.join(", ")} (RP ID ${config.rpID}; WebAuthn needs https or localhost on that host name).`);
+  }
+  return notes;
+}
+
 /** The credential ID a passkey sign-in verified: the plugin looks the passkey up by `response.id`. */
 export function passkeyCredentialFrom(body: unknown): string | null {
   const response = (body as { response?: unknown } | null | undefined)?.response;

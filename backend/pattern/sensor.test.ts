@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { AuthenticatedRequest } from "../auth.js";
-import { argoAlarm, createSensor, watchAccess } from "./sensor.js";
+import { alarmStatus, argoAlarm, createSensor, watchAccess } from "./sensor.js";
 
 function harness(start = 1_800_000_000_000) {
   let t = start;
@@ -91,4 +91,16 @@ test("pattern alarms go through Argo only when it is installed and not turned of
   assert.equal(argoAlarm({ PATTERN_ALERTS: "off" }), null);
   assert.equal(argoAlarm({ PATTERN_ALERTS: "log" }), null);
   assert.equal(argoAlarm({ ARGO_BIN: "/nonexistent/argo" }), null);
+});
+
+test("alarm health says when duress alarms reach no phone, and why (TM-10)", () => {
+  assert.deepEqual(alarmStatus({ PATTERN_ALERTS: "off" }), { ok: false, bin: null, detail: "PATTERN_ALERTS=off" });
+  assert.equal(alarmStatus({ PATTERN_ALERTS: "log" }).ok, false);
+  const missing = alarmStatus({ ARGO_BIN: "/nonexistent/argo-for-test" });
+  assert.equal(missing.ok, false);
+  assert.match(missing.detail, /no Argo binary at \/nonexistent\/argo-for-test/);
+  assert.equal(argoAlarm({ ARGO_BIN: "/nonexistent/argo-for-test" }), null, "argoAlarm agrees");
+  const present = alarmStatus({ ARGO_BIN: process.execPath }); // any file that exists
+  assert.equal(present.ok, true);
+  assert.equal(present.bin, process.execPath);
 });
