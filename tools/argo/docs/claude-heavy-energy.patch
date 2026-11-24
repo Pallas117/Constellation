@@ -1,6 +1,6 @@
 --- a/claude-heavy
 +++ b/claude-heavy
-@@ -89,14 +89,23 @@
+@@ -89,14 +89,24 @@
      END { @c = @c[-5 .. -1] if @c > 5; if (@c < 3) { print "$d 0\n"; exit } @s = sort { $a <=> $b } @c; $m = $s[int(@s / 2)]; printf "%d %d\n", ($m > 0 ? $m : 1), scalar @c }' \
      "$1" "$DEFAULT_COST" "$LOG" 2>/dev/null || echo "$DEFAULT_COST 0"
  }
@@ -16,7 +16,8 @@
    read -r c n <<<"$(job_cost "$name")"; h=$(unplugged_h)
 -  need=$(( RESERVE_PCT + c + h * BASE_DRAIN ))
 +  # Energy autopilot (Argo, 24 Nov): Argo answers with the manual plan when there is one, else its outlet
-+  # forecast on battery, and the base drain it measured (6 until 3 h of evidence). HEAVY_BASE_DRAIN pins the drain.
++  # forecast on battery, capped at 2 h (Josh, 24 Nov), and the base drain it measured (6 until 3 h of evidence).
++  # A manual --unplugged plan keeps its own hours (up to 24). HEAVY_BASE_DRAIN pins the drain.
 +  if [ -z "${HEAVY_BASE_DRAIN:-}" ] && read -r eh ed es <<<"$(argo_energy)" && [ -n "${es:-}" ]; then
 +    h=$eh drain=$ed; [ "$es" = predicted ] && src="to an outlet (Argo forecast)"
 +  fi
@@ -27,7 +28,7 @@
    if [ "$name" != gates ] && q=$(queued_gates) && [ "${q:-0}" -gt 0 ]; then
      read -r g _ <<<"$(job_cost gates)"; need=$(( need + q * g )); need_why="$need_why + $q queued gate(s) x ${g}% first"
    fi
-@@ -193,6 +202,8 @@
+@@ -193,6 +203,8 @@
    name=gates; budget; h=$(unplugged_h)
    echo "eclipse budget: a gate starts on battery at ${need}%+ (${need_why}); $(queued_gates) gate(s) queued$([ "$h" -gt 0 ] && echo "; unplugged plan: $h h left" || echo "; no unplugged plan (--unplugged <hours>)")"
    name=""

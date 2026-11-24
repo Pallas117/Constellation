@@ -31,12 +31,15 @@ import (
 //     spans. Given how long the Mac has been on battery now (e), each past span longer than e gives
 //     one point: what was left of it after e. The forecast is the P80 of those points (nearest
 //     rank), taken over the spans whose hour of day at e is within +-2 h of now when there are at
-//     least 4 of them, else over all of them (3+), capped at 12 h. Fewer than 3 spans: no forecast,
-//     and the budget is what it was. On battery longer than all but 2 past spans: the 12 h cap
-//     (conservative: the most in reserve). A manual `claude-heavy --unplugged` plan always wins.
-//   - Every forecast is logged once per battery span (energy.jsonl, "predict") with its outcome
-//     when AC returns ("outcome"), so `argo energy` shows MAE (of the P50) and coverage (share of
-//     spans that ended within the P80): the forecast is credited only with that evidence.
+//     least 4 of them, else over all of them (3+). Fewer than 3 spans: no forecast, and the budget
+//     is what it was. The plan the budget uses is that P80 capped at 2 h (Josh, 24 Nov: "Use a 2h
+//     plan instead of the 12h cap"): on judith unplugged spans are heavy-tailed (P80 12.6 h, mostly
+//     asleep), and 12 h x the awake drain held every gate until AC. On battery longer than all but
+//     2 past spans the plan is the 2 h cap too. A manual `claude-heavy --unplugged` plan always wins
+//     (claude-heavy keeps its own 24 h limit).
+//   - Every forecast is logged once per battery span (energy.jsonl, "predict": the uncapped P50 and
+//     P80 and the applied plan) with its outcome when AC returns ("outcome"), so `argo energy` shows
+//     MAE (of the P50), coverage of the P80 and of the 2 h plan: credited only with that evidence.
 //   - Base drain: the duration-weighted median %/h over closed battery stretches with no guarded
 //     job running (jobs.jsonl) and no sleep gap, each at least 30 min, kept 14 days. It replaces
 //     the 6 %/h default once there are 3 h of such stretches, rounded up and clamped to 2-20 %/h.
@@ -47,7 +50,7 @@ import (
 // and MAE, is that worth building.
 const (
 	outletQuantile   = 0.8
-	outletCapH       = 12.0
+	outletCapH       = 2.0                 // the predicted plan never exceeds this (Josh, 24 Nov); the P80 itself is logged uncapped
 	outletMinSpans   = 3                   // closed battery spans before any forecast
 	outletCondSpans  = 4                   // spans in the hour-of-day window before it is used
 	outletHourWindow = 2                   // +- hours of day
@@ -84,10 +87,11 @@ type DrainStretch struct {
 
 // OutletPrediction is the forecast made for the current battery span, kept until AC returns.
 type OutletPrediction struct {
-	ID   int64     `json:"id"` // the span's start, Unix seconds
-	At   time.Time `json:"at"`
-	P50H float64   `json:"p50"`
-	P80H float64   `json:"p80"`
+	ID    int64     `json:"id"` // the span's start, Unix seconds
+	At    time.Time `json:"at"`
+	P50H  float64   `json:"p50"`            // uncapped
+	P80H  float64   `json:"p80"`            // uncapped
+	PlanH float64   `json:"plan,omitempty"` // what the budget used: the P80 capped at outletCapH
 }
 
 // EnergyState is energy.json (0600): the evidence the autopilot learns from.
@@ -106,8 +110,9 @@ type EnergyLog struct {
 	Kind    string    `json:"kind"` // predict | outcome
 	ID      int64     `json:"id"`
 	At      time.Time `json:"at"`
-	P50H    float64   `json:"p50,omitempty"`
-	P80H    float64   `json:"p80,omitempty"`
+	P50H    float64   `json:"p50,omitempty"`  // uncapped, scored by MAE
+	P80H    float64   `json:"p80,omitempty"`  // uncapped, scored by coverage; 0 = no points (beyond)
+	PlanH   float64   `json:"plan,omitempty"` // the applied plan (P80 capped at outletCapH)
 	Spans   int       `json:"spans,omitempty"`
 	Basis   string    `json:"basis,omitempty"` // hour | all | beyond
 	ActualH float64   `json:"actual,omitempty"`
@@ -175,8 +180,9 @@ func batterySpans(edges []PowerEdge) (closed []battSpan, open time.Time) {
 // OutletForecast is how long until the next AC, from history.
 type OutletForecast struct {
 	OK       bool    `json:"ok"`
-	P50H     float64 `json:"p50,omitempty"`
-	P80H     float64 `json:"p80,omitempty"`
+	P50H     float64 `json:"p50,omitempty"`     // uncapped
+	P80H     float64 `json:"p80,omitempty"`     // uncapped; 0 when beyond with no points left
+	PlanH    float64 `json:"plan,omitempty"`    // the plan: P80 capped at outletCapH (the cap when beyond)
 	Spans    int     `json:"spans,omitempty"`   // points the quantile was taken over (one per span)
 	History  int     `json:"history"`           // closed battery spans known
 	Basis    string  `json:"basis,omitempty"`   // hour | all | beyond
@@ -233,13 +239,15 @@ func forecastOutlet(edges []PowerEdge, now time.Time, loc *time.Location) Outlet
 		pts, f.Basis = cond, "hour"
 	case len(all) >= outletMinSpans:
 		f.Basis = "all"
-	default: // on battery longer than nearly every span seen: keep the most in reserve
-		f.OK, f.Basis, f.P50H, f.P80H, f.Spans = true, "beyond", outletCapH, outletCapH, len(all)
+	default: // on battery longer than nearly every span seen: the plan is the cap
+		f.OK, f.Basis, f.Spans, f.PlanH = true, "beyond", len(all), outletCapH
+		f.P50H, f.P80H = quantile(all, 0.5), quantile(all, outletQuantile) // 0 with no points: unscored
 		return f
 	}
 	f.OK, f.Spans = true, len(pts)
-	f.P50H = math.Min(quantile(pts, 0.5), outletCapH)
-	f.P80H = math.Min(quantile(pts, outletQuantile), outletCapH)
+	f.P50H = quantile(pts, 0.5)
+	f.P80H = quantile(pts, outletQuantile)
+	f.PlanH = math.Min(f.P80H, outletCapH)
 	return f
 }
 
@@ -498,8 +506,8 @@ func energyStep(st EnergyState, cur Sample, hist []Sample, runs []JobRun, now ti
 	}
 	if st.Open == nil {
 		if f := forecastOutlet(st.Edges, now, loc); f.OK {
-			st.Open = &OutletPrediction{ID: open.Unix(), At: now, P50H: round2(f.P50H), P80H: round2(f.P80H)}
-			logs = append(logs, EnergyLog{Kind: "predict", ID: st.Open.ID, At: now, P50H: st.Open.P50H, P80H: st.Open.P80H, Spans: f.Spans, Basis: f.Basis})
+			st.Open = &OutletPrediction{ID: open.Unix(), At: now, P50H: round2(f.P50H), P80H: round2(f.P80H), PlanH: round2(f.PlanH)}
+			logs = append(logs, EnergyLog{Kind: "predict", ID: st.Open.ID, At: now, P50H: st.Open.P50H, P80H: st.Open.P80H, PlanH: st.Open.PlanH, Spans: f.Spans, Basis: f.Basis})
 		}
 	}
 	return st, logs
@@ -532,7 +540,8 @@ func manualPlan(until time.Time) EnergyPlan {
 	return p
 }
 
-// planFor: a manual plan that has not passed always wins; else, on battery, the forecast's P80.
+// planFor: a manual plan that has not passed always wins; else, on battery, the forecast's P80
+// capped at outletCapH (2 h).
 func planFor(manual time.Time, st EnergyState, runs []JobRun, cur Sample, now time.Time, loc *time.Location) EnergyPlan {
 	d := measuredDrain(st.Stretches, runs, now)
 	p := EnergyPlan{DrainH: d.PctH, Drain: d, Forecast: forecastOutlet(st.Edges, now, loc)}
@@ -540,7 +549,7 @@ func planFor(manual time.Time, st EnergyState, runs []JobRun, cur Sample, now ti
 	case manual.After(now):
 		p.Until, p.Src = manual, "manual"
 	case !onAC(cur) && p.Forecast.OK:
-		p.Until, p.Src = now.Add(time.Duration(p.Forecast.P80H*float64(time.Hour))), "predicted"
+		p.Until, p.Src = now.Add(time.Duration(p.Forecast.PlanH*float64(time.Hour))), "predicted"
 	}
 	return p
 }
@@ -727,18 +736,23 @@ func (s Store) appendEnergyLog(add []EnergyLog) error {
 
 // ---- accuracy and display ----
 
-// OutletAccuracy scores closed forecasts: MAE of the P50 and the share that ended within the P80.
+// OutletAccuracy scores closed forecasts on the uncapped numbers: MAE of the P50 and the share that
+// ended within the P80 (a "beyond" forecast with no points has no P80 and is not scored). PlanN and
+// PlanCoverage: of the forecasts that logged a plan, the share that ended within it (the plan is
+// capped short on purpose, so this is expected to be low; it says how often the cap undershot).
 type OutletAccuracy struct {
-	N        int
-	MAEH     float64
-	Coverage float64
+	N            int
+	MAEH         float64
+	Coverage     float64
+	PlanN        int
+	PlanCoverage float64
 }
 
 func outletAccuracy(logs []EnergyLog) OutletAccuracy {
 	pred := map[int64]EnergyLog{}
 	var a OutletAccuracy
 	var errSum float64
-	covered := 0
+	covered, planCovered := 0, 0
 	for _, l := range logs {
 		switch l.Kind {
 		case "predict":
@@ -749,6 +763,15 @@ func outletAccuracy(logs []EnergyLog) OutletAccuracy {
 				continue
 			}
 			delete(pred, l.ID)
+			if p.PlanH > 0 {
+				a.PlanN++
+				if l.ActualH <= p.PlanH {
+					planCovered++
+				}
+			}
+			if p.P80H <= 0 {
+				continue
+			}
 			a.N++
 			errSum += math.Abs(l.ActualH - p.P50H)
 			if l.ActualH <= p.P80H {
@@ -759,6 +782,9 @@ func outletAccuracy(logs []EnergyLog) OutletAccuracy {
 	if a.N > 0 {
 		a.MAEH = errSum / float64(a.N)
 		a.Coverage = float64(covered) / float64(a.N)
+	}
+	if a.PlanN > 0 {
+		a.PlanCoverage = float64(planCovered) / float64(a.PlanN)
 	}
 	return a
 }
@@ -779,16 +805,17 @@ func energyStatusText(p EnergyPlan, st EnergyState, logs []EnergyLog, ph PhoneBa
 	case !f.OK:
 		fmt.Fprintf(&b, "outlet forecast: none yet (%d battery spans known, needs %d)\n", f.History, outletMinSpans)
 	case f.Basis == "beyond":
-		fmt.Fprintf(&b, "outlet forecast: %.0f h cap: on battery %.1f h, longer than all but %d of %d battery spans seen\n", outletCapH, f.ElapsedH, f.Spans, f.History)
+		fmt.Fprintf(&b, "outlet forecast: on battery %.1f h, longer than all but %d of %d battery spans seen: plan %.0f h (the cap)\n", f.ElapsedH, f.Spans, f.History, outletCapH)
 	default:
 		basis := map[string]string{"hour": fmt.Sprintf("this time of day +-%d h", outletHourWindow), "all": "all hours"}[f.Basis]
-		fmt.Fprintf(&b, "outlet forecast: P80 %.1f h, P50 %.1f h (%d of %d battery spans, %s; on battery %.1f h)\n", f.P80H, f.P50H, f.Spans, f.History, basis, f.ElapsedH)
+		fmt.Fprintf(&b, "outlet forecast: P80 %.1f h, P50 %.1f h (%d of %d battery spans, %s; on battery %.1f h): plan %.1f h (capped at %.0f h)\n",
+			f.P80H, f.P50H, f.Spans, f.History, basis, f.ElapsedH, f.PlanH, outletCapH)
 	}
 	switch p.Src {
 	case "manual":
 		fmt.Fprintf(&b, "plan in use: manual (claude-heavy --unplugged): %d h left\n", planHours(p.Until, now))
 	case "predicted":
-		fmt.Fprintf(&b, "plan in use: predicted: %d h to an outlet\n", planHours(p.Until, now))
+		fmt.Fprintf(&b, "plan in use: predicted: %d h to an outlet (forecast capped at %.0f h)\n", planHours(p.Until, now), outletCapH)
 	default:
 		b.WriteString("plan in use: none (on AC, or no forecast and no manual plan)\n")
 	}
@@ -803,6 +830,9 @@ func energyStatusText(p EnergyPlan, st EnergyState, logs []EnergyLog, ph PhoneBa
 		b.WriteString("forecast accuracy: no scored spans yet\n")
 	} else {
 		fmt.Fprintf(&b, "forecast accuracy: %d scored: MAE %.1f h (P50), %.0f%% ended within the P80\n", a.N, a.MAEH, a.Coverage*100)
+	}
+	if a.PlanN > 0 {
+		fmt.Fprintf(&b, "  %.0f%% of %d spans ended within the plan applied (capped at %.0f h)\n", a.PlanCoverage*100, a.PlanN, outletCapH)
 	}
 	if a.N < mlMinOutcomes {
 		fmt.Fprintf(&b, "  (a learned model is worth trying only after %d scored spans that it beats)\n", mlMinOutcomes)

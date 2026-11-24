@@ -274,14 +274,18 @@ first. `argo guard` on battery lists what each measured job needs.
 - *Outlet forecast.* Argo records every AC/battery change it sees and, on macOS, reads `pmset -g log` ("Using AC" /
   "Using Batt") once a day (about 6 s of CPU for 8 days of log). With no manual plan, on battery, the hours to the next
   outlet are the P80 (nearest rank) of what was left of each past battery span after as long as this one has lasted,
-  over spans whose hour of day was within ±2 h of now (when there are 4+), else over all of them (3+); capped at 12 h.
-  Under 3 spans: no forecast, the budget is as before. Longer on battery than all but 2 spans seen: the 12 h cap. AC or
-  battery under 5 min is a loose cable, not an outlet. A manual `claude-heavy --unplugged` plan always wins.
-- *Scored, not trusted.* Each battery span's forecast and its outcome go to `energy.jsonl`; `argo energy` shows MAE
-  (of the P50) and how many spans ended within the P80. Replayed walk-forward on judith's log (17-24 Nov, 14 spans,
-  `ARGO_REPLAY_PMSET=<dump> go test -run TestReplayPowerLog -v .`): 11 scored, 73% within the P80, MAE 9.7 h, as
-  spans run from minutes to 55 h (median 3.2 h). A learned model is worth trying only after 100 scored spans, and only
-  if it beats this on held-out coverage and MAE.
+  over spans whose hour of day was within ±2 h of now (when there are 4+), else over all of them (3+). The plan the
+  budget uses is that P80 **capped at 2 h** (Josh, 24 Nov: "Use a 2h plan instead of the 12h cap": judith's spans are
+  heavy-tailed, mostly asleep, and a 12 h cap held every gate until AC). Under 3 spans: no forecast, the budget is as
+  before. Longer on battery than all but 2 spans seen: the 2 h cap. AC or battery under 5 min is a loose cable, not an
+  outlet. A manual `claude-heavy --unplugged` plan always wins, with its own hours (claude-heavy allows up to 24 h).
+- *Scored, not trusted.* Each battery span's forecast (the uncapped P50 and P80, and the plan applied) and its outcome
+  go to `energy.jsonl`; `argo energy` shows MAE (of the P50), how many spans ended within the P80 and within the 2 h
+  plan. Replayed walk-forward on judith's log (17-24 Nov, 14 spans, `ARGO_REPLAY_PMSET=<dump> go test -run
+  TestReplayPowerLog -v .`): 11 scored, 73% within the P80, MAE 9.7 h, as spans run from minutes to 55 h (median
+  3.2 h); 36% ended within the 2 h plan. With the measured drain and gates' measured cost (2%/run) a gate starts on
+  battery at 40% (30 + 2 + 2 h x 4 %/h). A learned model is worth trying only after 100 scored spans, and only if it
+  beats this on held-out coverage and MAE.
 - *Measured base drain.* The duration-weighted median %/h over closed battery stretches (30 min+) with no guarded job
   and no sleep gap, kept 14 days, replaces 6%/h once there are 3 h of them; rounded up, clamped to 2-20 %/h. On judith
   (20-24 Nov guard history, `TestReplayDrain`): 3.6 %/h over 7.8 h, so 4 %/h.

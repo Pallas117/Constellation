@@ -95,8 +95,11 @@ func TestForecastOutlet(t *testing.T) {
 	e = append(e, PowerEdge{At: enT0.Add(6*24*time.Hour + 20*time.Hour), AC: false})
 	now := enT0.Add(6*24*time.Hour + 20*time.Hour)
 	f := forecastOutlet(e, now, time.UTC)
-	if !f.OK || f.Basis != "hour" || f.Spans != 5 || !near(f.P80H, 5) || !near(f.P50H, 4) {
-		t.Fatalf("evening forecast %+v", f)
+	if !f.OK || f.Basis != "hour" || f.Spans != 5 || !near(f.P80H, 5) || !near(f.P50H, 4) || f.PlanH != outletCapH {
+		t.Fatalf("evening forecast %+v (P80 uncapped, the plan capped at 2 h)", f)
+	}
+	if outletCapH != 2 {
+		t.Fatalf("Josh, 24 Nov: the predicted plan is capped at 2 h, got %v", outletCapH)
 	}
 	// Two hours in, only spans longer than 2 h count, at what was left after their own 2 h (1,2,3,4).
 	f = forecastOutlet(e, now.Add(2*time.Hour), time.UTC)
@@ -108,14 +111,19 @@ func TestForecastOutlet(t *testing.T) {
 	if !f.OK || f.Basis != "all" || f.Spans != 8 || !near(f.P80H, 5) {
 		t.Fatalf("morning forecast %+v", f)
 	}
-	// Seven hours in: longer than every span seen, so the cap (conservative: keep the most in reserve).
+	// Seven hours in: longer than every span seen: the plan is the cap, with no P80 to score.
 	f = forecastOutlet(e, now.Add(7*time.Hour), time.UTC)
-	if !f.OK || f.Basis != "beyond" || f.P80H != outletCapH {
+	if !f.OK || f.Basis != "beyond" || f.PlanH != outletCapH || f.P80H != 0 {
 		t.Fatalf("beyond history %+v", f)
 	}
-	// A 20 h span is capped at 12 h.
+	// A short forecast is not raised to the cap.
+	short := edgesFor([2]float64{0, 1}, [2]float64{30, 1}, [2]float64{60, 1.5})
+	if f = forecastOutlet(short, enT0.Add(100*time.Hour), time.UTC); !near(f.P80H, 1.5) || !near(f.PlanH, 1.5) {
+		t.Errorf("short: %+v", f)
+	}
+	// 20 h spans: the P80 stays 20 h (logged for scoring), the plan is capped at 2 h.
 	long := edgesFor([2]float64{0, 20}, [2]float64{30, 20}, [2]float64{60, 20})
-	if f = forecastOutlet(long, enT0.Add(100*time.Hour), time.UTC); f.P80H != outletCapH || f.P50H != outletCapH {
+	if f = forecastOutlet(long, enT0.Add(100*time.Hour), time.UTC); f.P80H != 20 || f.P50H != 20 || f.PlanH != outletCapH {
 		t.Errorf("cap: %+v", f)
 	}
 }
@@ -220,7 +228,8 @@ func TestEnergyStepPredictsAndScores(t *testing.T) {
 	}
 	// Unplugged: one prediction, logged once.
 	st, logs = energyStep(st, enSample(72*60+1, 90, false), nil, nil, at.Add(time.Minute), time.UTC)
-	if st.Open == nil || len(logs) != 1 || logs[0].Kind != "predict" || !near(logs[0].P80H, 4) || logs[0].Basis != "all" {
+	// The log keeps the uncapped P80 (4 h) for scoring beside the 2 h plan the budget used.
+	if st.Open == nil || len(logs) != 1 || logs[0].Kind != "predict" || !near(logs[0].P80H, 4) || !near(logs[0].PlanH, 2) || logs[0].Basis != "all" {
 		t.Fatalf("unplugged: open %+v logs %+v", st.Open, logs)
 	}
 	if st, logs = energyStep(st, enSample(72*60+2, 89, false), nil, nil, at.Add(2*time.Minute), time.UTC); len(logs) != 0 {
@@ -244,15 +253,17 @@ func TestEnergyStepPredictsAndScores(t *testing.T) {
 
 func TestOutletAccuracy(t *testing.T) {
 	logs := []EnergyLog{
-		{Kind: "predict", ID: 1, P50H: 2, P80H: 4},
+		{Kind: "predict", ID: 1, P50H: 2, P80H: 4, PlanH: 2},
 		{Kind: "outcome", ID: 1, ActualH: 3},
-		{Kind: "predict", ID: 2, P50H: 1, P80H: 2},
+		{Kind: "predict", ID: 2, P50H: 1, P80H: 2, PlanH: 2},
 		{Kind: "outcome", ID: 2, ActualH: 5},
+		{Kind: "predict", ID: 4, PlanH: 2, Basis: "beyond"}, // no P80: plan scored, forecast not
+		{Kind: "outcome", ID: 4, ActualH: 1},
 		{Kind: "predict", ID: 3, P50H: 1, P80H: 2}, // still open
 		{Kind: "outcome", ID: 9, ActualH: 1},       // no prediction: ignored
 	}
 	a := outletAccuracy(logs)
-	if a.N != 2 || !near(a.MAEH, 2.5) || !near(a.Coverage, 0.5) {
+	if a.N != 2 || !near(a.MAEH, 2.5) || !near(a.Coverage, 0.5) || a.PlanN != 3 || !near(a.PlanCoverage, 1.0/3) {
 		t.Fatalf("accuracy %+v", a)
 	}
 	if a = outletAccuracy(nil); a.N != 0 {
@@ -265,7 +276,7 @@ func TestEnergyPlanManualWins(t *testing.T) {
 	now := enT0.Add(72 * time.Hour)
 	batt := enSample(72*60, 70, false)
 	p := planFor(time.Time{}, st, nil, batt, now, time.UTC)
-	if p.Src != "predicted" || !p.Until.Equal(now.Add(4*time.Hour)) || p.DrainH != eclipseBaseDrainH {
+	if p.Src != "predicted" || !p.Until.Equal(now.Add(2*time.Hour)) || p.DrainH != eclipseBaseDrainH || !near(p.Forecast.P80H, 4) {
 		t.Fatalf("predicted plan %+v", p)
 	}
 	manual := now.Add(10 * time.Hour)
@@ -276,14 +287,18 @@ func TestEnergyPlanManualWins(t *testing.T) {
 	if p = planFor(time.Time{}, st, nil, enSample(72*60, 70, true), now, time.UTC); p.Src != "" || !p.Until.IsZero() || !p.Forecast.OK {
 		t.Fatalf("on AC: %+v", p)
 	}
-	// The budget: 30 reserve + 8 default cost + 4 h x 6 %/h = 62.
+	// The budget: 30 reserve + 8 default cost + 2 h (P80 4 h, capped) x 6 %/h = 50.
 	e := eclipseWith(batt, nil, "gates", planFor(time.Time{}, st, nil, batt, now, time.UTC))
-	if e.Need != 62 || !strings.Contains(e.why(), "4 h to an outlet (predicted)") {
+	if e.Need != 50 || !strings.Contains(e.why(), "2 h to an outlet (predicted)") {
 		t.Errorf("predicted budget %d: %s", e.Need, e.why())
 	}
 	// The old wrapper still reads as before for a manual plan.
 	if e := eclipseFor(batt, nil, "gates", now.Add(2*time.Hour)); e.Need != 50 || !strings.Contains(e.why(), "2 h unplugged x 6%/h") {
 		t.Errorf("manual budget %d: %s", e.Need, e.why())
+	}
+	// The 2 h cap is for the forecast only: a manual 10 h plan keeps all 10 h (30 + 8 + 60).
+	if e := eclipseWith(batt, nil, "gates", planFor(manual, st, nil, batt, now, time.UTC)); e.Need != 98 || e.PlanH != 10 {
+		t.Errorf("manual 10 h budget %d (%d h): %s", e.Need, e.PlanH, e.why())
 	}
 }
 
@@ -488,14 +503,15 @@ func TestEnergyStatusText(t *testing.T) {
 	st := EnergyState{Edges: edgesFor([2]float64{0, 2}, [2]float64{24, 3}, [2]float64{48, 4})}
 	now := enT0.Add(72 * time.Hour)
 	p := planFor(time.Time{}, st, nil, enSample(72*60, 70, false), now, time.UTC)
-	out := energyStatusText(p, st, []EnergyLog{{Kind: "predict", ID: 1, P50H: 2, P80H: 4}, {Kind: "outcome", ID: 1, ActualH: 3}}, PhoneBattery{}, false, now)
-	for _, want := range []string{"outlet forecast", "P80 4.0 h", "3 battery spans", "6 %/h (default", "1 scored", "phone battery: unknown"} {
+	out := energyStatusText(p, st, []EnergyLog{{Kind: "predict", ID: 1, P50H: 2, P80H: 4, PlanH: 2}, {Kind: "outcome", ID: 1, ActualH: 3}}, PhoneBattery{}, false, now)
+	for _, want := range []string{"outlet forecast", "P80 4.0 h", "plan 2.0 h (capped at 2 h)", "3 battery spans", "2 h to an outlet (forecast capped at 2 h)",
+		"6 %/h (default", "1 scored", "0% of 1 spans ended within the plan", "phone battery: unknown"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("status lacks %q:\n%s", want, out)
 		}
 	}
 	line := energyPlanLine(p, now)
-	if line != "4 6 predicted" {
+	if line != "2 6 predicted" {
 		t.Errorf("plan line %q", line)
 	}
 	if l := energyPlanLine(EnergyPlan{DrainH: 6}, now); l != "0 6 none" {
@@ -537,7 +553,7 @@ func TestReplayPowerLog(t *testing.T) {
 			continue
 		}
 		byBasis[fc.Basis]++
-		logs = append(logs, EnergyLog{Kind: "predict", ID: int64(i), P50H: fc.P50H, P80H: fc.P80H, Basis: fc.Basis},
+		logs = append(logs, EnergyLog{Kind: "predict", ID: int64(i), P50H: fc.P50H, P80H: fc.P80H, PlanH: fc.PlanH, Basis: fc.Basis},
 			EnergyLog{Kind: "outcome", ID: int64(i), ActualH: sp.end.Sub(sp.start).Hours()})
 	}
 	var lens []float64
@@ -547,7 +563,8 @@ func TestReplayPowerLog(t *testing.T) {
 	a := outletAccuracy(logs)
 	t.Logf("edges %d, battery spans %d (median %.2f h, P80 %.2f h, max %.2f h), %s to %s",
 		len(edges), len(spans), quantile(lens, 0.5), quantile(lens, 0.8), quantile(lens, 1), edges[0].At.Format(time.DateOnly), last.Format(time.DateOnly))
-	t.Logf("walk-forward: %d forecasts scored (%v): MAE %.2f h (P50), %.0f%% ended within the P80", a.N, byBasis, a.MAEH, a.Coverage*100)
+	t.Logf("walk-forward: %d forecasts scored (%v): MAE %.2f h (P50), %.0f%% ended within the P80; %.0f%% of %d within the %.0f h plan",
+		a.N, byBasis, a.MAEH, a.Coverage*100, a.PlanCoverage*100, a.PlanN, outletCapH)
 	if at, err := time.Parse(time.RFC3339, os.Getenv("ARGO_REPLAY_AT")); err == nil {
 		fc := forecastOutlet(edges, at, time.Local)
 		t.Logf("at %s: %+v", at.Format(time.RFC3339), fc)
@@ -568,6 +585,8 @@ func TestReplayDrain(t *testing.T) {
 	}
 	st := drainStretches(hist, runs)
 	d := measuredDrain(st, runs, hist[len(hist)-1].At)
+	cost, n := batteryCost(runs, "gates")
+	t.Logf("gates battery cost %d%%/run (%d runs measured): with a 2 h plan a gate needs %d%%", cost, n, eclipseReservePct+cost+2*d.PctH)
 	t.Logf("guard samples %d (%s to %s), jobs %d: %d quiet stretches, %.1f h: %+v",
 		len(hist), hist[0].At.Format(time.DateTime), hist[len(hist)-1].At.Format(time.DateTime), len(runs), len(st), d.Hours, d)
 }
