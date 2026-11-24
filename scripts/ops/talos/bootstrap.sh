@@ -3,6 +3,7 @@
 # inbound SSH, no tokens and no auth keys. Run it as your normal user, NOT as root.
 #
 #   bash bootstrap.sh --tailnet-login NAME [--commit SHA] [--dir DIR] [--install-service] [--dry-run]
+#   bash bootstrap.sh [--tailnet-login NAME ...] --profile ops [--apply-profile] [--no-bluetooth] [--dry-run]
 #
 #   --tailnet-login NAME  the Tailscale login (you@example.com) or tailnet name this machine must be
 #                         on. Anything else is refused, with the commands to fix it.
@@ -11,6 +12,12 @@
 #   --dir DIR             where the public repo lives (default ~/src/Constellation)
 #   --install-service     also install and start the systemd unit that runs `argo loop`. This is the
 #                         only part that uses sudo; every sudo command is printed before it runs.
+#   --profile ops         shape the machine for gate and dev work (ops-profile.sh: services, power,
+#                         self-restart, sshd keys only, journald, zram, tool check). Without
+#                         --tailnet-login only the profile runs (first boot, no network needed).
+#                         It reports what it would change and changes nothing unless also
+#   --apply-profile       is given: then it uses sudo, printing every command first.
+#   --no-bluetooth        with --profile ops: also disable bluetooth.
 #   --dry-run             print every action, change nothing (works on any OS)
 #
 # What it does, in order. Every step is safe to re-run; after a dropped connection run the same
@@ -21,9 +28,11 @@
 #   3. the public repo over https at a commit it verifies (on origin/main, HEAD equals it)
 #   4. builds tools/argo into ~/.local/bin/argo if Go is installed (else says what is missing)
 #   5. only with --install-service: the systemd unit (systemd/gauss-argo.service)
+#   then, only with --profile ops: ops-profile.sh from the same checkout
 #
 # Exit: 0 done · 1 refused or bad usage · 3 Tailscale missing or logged out · 4 wrong tailnet ·
-#       5 repo could not be fetched or verified · 6 build or service step failed
+#       5 repo could not be fetched or verified · 6 build or service step failed ·
+#       7 a profile step failed (the others still ran)
 # UNTESTED ON A REAL LINUX HOST (18 Nov 2026): only run against stubs (talos-kit.test.sh).
 set -euo pipefail
 
@@ -31,7 +40,7 @@ set -euo pipefail
 main() {
   local REPO_URL="https://github.com/Pallas117/Constellation.git" # fixed: no --repo option
   local UNIT=gauss-argo.service
-  local LOGIN="" COMMIT="" DIR="$HOME/src/Constellation" INSTALL=0 DRY=0
+  local LOGIN="" COMMIT="" DIR="$HOME/src/Constellation" INSTALL=0 DRY=0 PROFILE="" PAPPLY=0 NOBT=0
   # Test hooks (talos-kit.test.sh): a fake / for the files that are read, and the unit directory.
   local ROOT="${TALOS_KIT_SYSROOT:-}" UNIT_DIR="${TALOS_KIT_UNIT_DIR:-/etc/systemd/system}"
   local TRIES="${TALOS_KIT_FETCH_TRIES:-5}" WAIT="${TALOS_KIT_FETCH_WAIT:-15}"
@@ -40,7 +49,7 @@ main() {
   say() { printf '==> %s\n' "$*"; }
   note() { printf '    %s\n' "$*"; }
   die() { local rc="$1"; shift; printf 'talos bootstrap: %s\n' "$*" >&2; exit "$rc"; }
-  usage() { sed -n '2,25p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
+  usage() { sed -n '2,35p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
   # run: the one place a changing command executes. A dry run only prints it.
   run() { if [ "$DRY" = 1 ]; then printf '    + %s\n' "$*"; else "$@"; fi; }
   # sudo_run: always printed first, so nothing happens as root that was not shown.
@@ -53,18 +62,37 @@ main() {
       --commit) [ $# -ge 2 ] || die 1 "--commit needs a value"; COMMIT="$2"; shift ;;
       --dir) [ $# -ge 2 ] || die 1 "--dir needs a value"; DIR="$2"; shift ;;
       --install-service) INSTALL=1 ;;
+      --profile) [ $# -ge 2 ] || die 1 "--profile needs a value"; PROFILE="$2"; shift ;;
+      --apply-profile) PAPPLY=1 ;;
+      --no-bluetooth) NOBT=1 ;;
       --dry-run) DRY=1 ;;
       -h|--help) usage; exit 0 ;;
       *) die 1 "unknown option: $1 (try --help)" ;;
     esac
     shift
   done
-  [ -n "$LOGIN" ] || die 1 "--tailnet-login is required: the Tailscale login or tailnet this machine must be on"
-  [[ "$LOGIN" =~ ^[A-Za-z0-9@._+-]{3,128}$ ]] || die 1 "--tailnet-login has odd characters"
+  [ -z "$PROFILE" ] || [ "$PROFILE" = ops ] || die 1 "unknown profile: $PROFILE (the only one is ops)"
+  [ -n "$PROFILE" ] || [ "$PAPPLY$NOBT" = 00 ] || die 1 "--apply-profile and --no-bluetooth go with --profile ops"
+  [ -n "$LOGIN" ] || [ -n "$PROFILE" ] || die 1 "--tailnet-login is required: the Tailscale login or tailnet this machine must be on"
+  [ -z "$LOGIN" ] || [[ "$LOGIN" =~ ^[A-Za-z0-9@._+-]{3,128}$ ]] || die 1 "--tailnet-login has odd characters"
   [ -z "$COMMIT" ] || [[ "$COMMIT" =~ ^[0-9a-f]{40}$ ]] || die 1 "--commit must be a full 40-character sha"
   case "$DIR" in /*) ;; *) die 1 "--dir must be an absolute path" ;; esac
   [[ "$DIR" =~ ^[A-Za-z0-9/._-]+$ ]] || die 1 "--dir has odd characters (spaces are not supported)"
-  [ "$(id -u)" != 0 ] || die 1 "do not run this as root: run it as your normal user. It asks for sudo itself, only for --install-service, and prints each command first."
+  [ "$(id -u)" != 0 ] || die 1 "do not run this as root: run it as your normal user. It asks for sudo itself, only for --install-service and --apply-profile, and prints each command first."
+  # ops_profile: the profile script next to this one (after step 3, from the verified commit).
+  ops_profile() {
+    local kit; kit=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+    set --
+    if [ "$PAPPLY" = 1 ]; then set -- "$@" --apply; fi
+    if [ "$NOBT" = 1 ]; then set -- "$@" --no-bluetooth; fi
+    if [ "$DRY" = 1 ]; then set -- "$@" --dry-run; fi
+    [ -f "$kit/ops-profile.sh" ] || die 1 "no $kit/ops-profile.sh in this checkout"
+    bash "$kit/ops-profile.sh" "$@"
+  }
+  if [ -z "$LOGIN" ]; then # profile only: no facts, no Tailscale, no repo, no build
+    local prc=0; ops_profile || prc=$?
+    exit "$prc"
+  fi
   local ME; ME=$(id -un)
   if [ "$DRY" = 1 ]; then
     say "DRY RUN: nothing below is changed."
@@ -291,6 +319,10 @@ for v in (d.get("BackendState"), (d.get("CurrentTailnet") or {}).get("Name"), u.
       fi
       note "check it: systemctl status $UNIT ; journalctl -u $UNIT -n 20"
     fi
+  fi
+  if [ -n "$PROFILE" ]; then
+    local prc=0; ops_profile || prc=$?
+    [ "$prc" = 0 ] || exit "$prc"
   fi
   say "done${ts_rc:+ (dry run; Tailscale needs attention, see step 2)}"
 }

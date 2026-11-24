@@ -1,7 +1,8 @@
 #!/bin/bash
 # Tests for the Talos kit (scripts/ops/talos). bootstrap.sh runs for real against a fake machine:
 # HOME is a temp dir, /proc, /sys and /etc come from a fake root, and tailscale, sudo, systemctl,
-# go, uname, nproc and id are stubs on a PATH that holds nothing else but basic tools. git is the
+# go, uname, nproc and id (and, for --profile ops, ss, sshd, apt-get, dpkg-query, powerprofilesctl,
+# udevadm, aa-status, pgrep, pkill and node) are stubs on a PATH that holds nothing else but basic tools. git is the
 # real git, pointed at a local copy of "GitHub" (insteadOf), with a wrapper that can drop fetches.
 # Nothing here uses sudo, a network, Tailscale or the real ~/.local/bin/argo.
 #   bash scripts/ops/talos/talos-kit.test.sh
@@ -23,7 +24,7 @@ has() { grep -q -- "$1" "$2"; }
 # --- the fake machine ---
 mkdir -p "$T/bin" "$T/sys" "$T/home" "$T/units" "$T/root/etc" "$T/root/proc" "$T/root/sys/class"
 REALGIT=$(command -v git); BASH_BIN=$(command -v bash)
-for t in sed awk grep tr df mkdir chmod mv rm cmp ls basename python3 sleep env cat cp; do
+for t in sed awk grep tr df mkdir chmod mv rm cmp ls basename dirname python3 sleep env cat cp tee date head bash; do
   p=$(command -v "$t") && ln -s "$p" "$T/sys/$t"
 done
 stub() { printf '#!/bin/bash\n%s\n' "$2" >"$T/bin/$1"; chmod +x "$T/bin/$1"; }
@@ -41,10 +42,24 @@ stub go 'case "$1" in
          while [ $# -gt 0 ]; do [ "$1" = -o ] && out="$2"; shift; done
          printf "#!/bin/sh\necho fake argo %s\n" "$(cat "$LOGS/build-id" 2>/dev/null)" >"$out"; chmod +x "$out" ;;
 esac'
+# systemctl: unit state is files in $LOGS/svc (system) or $LOGS/usvc (--user): NAME.present,
+# NAME.enabled, NAME.active. Starting zramswap adds a zram line to the fake /proc/swaps.
 stub systemctl 'echo "$*" >>"$LOGS/systemctl"
-case "$1" in is-enabled|is-active) [ -e "$LOGS/unit-on" ] ;; enable) : >"$LOGS/unit-on" ;; esac'
+S="$LOGS/svc"; if [ "$1" = --user ]; then S="$LOGS/usvc"; shift; fi
+verb="$1"; shift; now=0; u=""
+for a in "$@"; do case "$a" in --now) now=1 ;; --quiet) ;; *) u="$a" ;; esac; done
+up() { : >"$S/$u.active"; [ "$u" != zramswap.service ] || echo "/dev/zram0 partition 3900000 0 100" >>"$TALOS_KIT_SYSROOT/proc/swaps"; }
+case "$verb" in
+  cat) [ -e "$S/$u.present" ] ;;
+  is-enabled) if [ -e "$S/$u.enabled" ]; then echo enabled; else echo disabled; exit 1; fi ;;
+  is-active) [ -e "$S/$u.active" ] ;;
+  enable) mkdir -p "$S"; : >"$S/$u.present"; : >"$S/$u.enabled"; [ "$now" = 0 ] || up ;;
+  disable) rm -f "$S/$u.enabled"; [ "$now" = 0 ] || rm -f "$S/$u.active" ;;
+  start|restart) up ;;
+esac'
+# sudo: logs, then runs the command as this user (install is a plain copy: no root here).
 stub sudo 'echo "$*" >>"$LOGS/sudo"
-case "$1" in install) for a in "$@"; do src="${dst:-}"; dst="$a"; done; cp "$src" "$dst" ;; systemctl) "$@" ;; *) exit 1 ;; esac'
+case "$1" in install) for a in "$@"; do src="${dst:-}"; dst="$a"; done; mkdir -p "$(dirname "$dst")"; cp "$src" "$dst" ;; *) exec "$@" ;; esac'
 # git: the real one, with GitHub rewritten to the local origin; DROP holds how many fetches still fail.
 stub git 'echo "$*" >>"$LOGS/git"
 case " $* " in *" fetch "*) n=$(cat "$LOGS/drop" 2>/dev/null || echo 0); if [ "$n" -gt 0 ]; then echo $((n - 1)) >"$LOGS/drop"; echo "fatal: unable to access (stub: link dropped)" >&2; exit 128; fi ;; esac
@@ -66,10 +81,11 @@ echo two >"$T/seed/two.txt"; gq -C "$T/seed" add -A && gq -C "$T/seed" commit -q
 gq -C "$T/seed" checkout -qb side; echo x >"$T/seed/side.txt"; gq -C "$T/seed" add -A && gq -C "$T/seed" commit -qm side; SIDE=$(gq -C "$T/seed" rev-parse HEAD)
 gq -C "$T/seed" checkout -q main; gq clone -q --bare "$T/seed" "$ORIGIN"
 
-HOME_DIR="$T/home"; REPO="$T/home/src/Constellation"; ARGO="$T/home/.local/bin/argo"
+SYSROOT="$T/root"; HOME_DIR="$T/home"; REPO="$T/home/src/Constellation"; ARGO="$T/home/.local/bin/argo"
 bs() { # run bootstrap.sh on the fake machine; output in $out, exit code in $rc
   out=$(env -i HOME="$HOME_DIR" PATH="$T/bin:$T/sys" LOGS="$LOGS" ORIGIN="$ORIGIN" REALGIT="$REALGIT" \
-    TALOS_KIT_SYSROOT="$T/root" TALOS_KIT_UNIT_DIR="$T/units" TALOS_KIT_FETCH_TRIES=3 TALOS_KIT_FETCH_WAIT=0 \
+    TALOS_KIT_SYSROOT="$SYSROOT" TALOS_KIT_UNIT_DIR="$T/units" TALOS_KIT_FETCH_TRIES=3 TALOS_KIT_FETCH_WAIT=0 \
+    SSHD_FAIL="${SSHD_FAIL:-}" NODE_V="${NODE_V:-}" \
     FAKE_UID="${FAKE_UID:-}" TS_STATE="${TS_STATE:-}" TS_TAILNET="${TS_TAILNET:-}" TS_LOGIN="${TS_LOGIN:-}" TS_SSH="${TS_SSH:-}" GO_FAIL="${GO_FAIL:-}" \
     "$BASH_BIN" "$B" "$@" 2>&1); rc=$?
 }
@@ -166,9 +182,106 @@ has '^ReadWritePaths=@HOME@/.local/state/argo @HOME@/.config/argo$' "$U"; expect
 R="$D/README.md"
 has 'tailscale ping' "$R" && has 'tailscale ssh' "$R" && has 'known_hosts' "$R" && has 'forced command' "$R" && has 'UNVERIFIED' "$R" && has '\.auth\.db' "$R" && has 'charge_control_end_threshold' "$R"; expect "talos README covers verification from the Mac, the --ssh caveat, what is unverified and what must not be copied" $?
 
+# --- --profile ops (ops-profile.sh) on its own fake machine ---
+P="$D/ops-profile.sh"
+stub ss 'echo "State  Recv-Q Send-Q Local Address:Port Peer Address:Port Process"
+[ ! -e "$LOGS/svc/postgresql.service.active" ] || echo "LISTEN 0 244 127.0.0.1:5432 0.0.0.0:*"
+[ ! -e "$LOGS/svc/cups.service.active" ] || echo "LISTEN 0 128 127.0.0.1:631 0.0.0.0:*"
+[ ! -e "$LOGS/kdeconnectd" ] || echo "LISTEN 0 50 *:1716 *:* users:((\"kdeconnectd\",pid=900,fd=12))"'
+stub sshd 'echo "$*" >>"$LOGS/sshd"; f="$TALOS_KIT_SYSROOT/etc/ssh/sshd_config.d/05-gauss-ops.conf"
+case "$1" in
+  -t) [ -z "${SSHD_FAIL:-}" ] || ! grep -q "Gauss ops profile" "$f" 2>/dev/null ;;
+  -T) if grep -q "Gauss ops profile" "$f" 2>/dev/null; then printf "passwordauthentication no\nkbdinteractiveauthentication no\npermitrootlogin no\n"; else printf "passwordauthentication yes\n"; fi ;;
+esac'
+stub apt-get 'echo "$*" >>"$LOGS/apt"; mkdir -p "$LOGS/pkg"; for a in "$@"; do case "$a" in -*|install) ;; *) : >"$LOGS/pkg/$a" ;; esac; done'
+stub dpkg-query 'for a in "$@"; do p="$a"; done; [ -e "$LOGS/pkg/$p" ] && printf "install ok installed"'
+stub powerprofilesctl 'case "$1" in get) cat "$LOGS/ppd" 2>/dev/null || echo balanced ;; set) echo "$2" >"$LOGS/ppd" ;; esac'
+stub udevadm 'echo "$*" >>"$LOGS/udevadm"'
+stub aa-status 'printf "52 profiles are loaded.\n41 profiles are in enforce mode.\n11 profiles are in complain mode.\n0 processes are unconfined\n"'
+stub pgrep '[ -e "$LOGS/kdeconnectd" ]'
+stub pkill 'echo "$*" >>"$LOGS/pkill"; rm -f "$LOGS/kdeconnectd"'
+stub node 'echo "${NODE_V:-v26.1.0}"'
+SYSROOT="$T/proot"; LOGS="$T/plogs"; HOME_DIR="$T/phome"; R0="$SYSROOT"
+mk_machine() { # mk_machine <power fixture>: a Kali laptop with the services the profile trims
+  rm -rf "$R0" "$LOGS" "$HOME_DIR"
+  mkdir -p "$R0/etc/ssh/sshd_config.d" "$R0/etc/ufw" "$R0/etc/default" "$R0/etc/xdg/autostart" "$R0/proc" "$R0/dev" \
+    "$R0/sys/class" "$R0/sys/module/apparmor/parameters" "$LOGS/svc" "$HOME_DIR/.ssh"
+  cp "$T/root/etc/os-release" "$R0/etc/"; cp "$T/root/proc/meminfo" "$R0/proc/"
+  printf 'Filename\tType\tSize\tUsed\tPriority\n' >"$R0/proc/swaps"
+  printf 'Include /etc/ssh/sshd_config.d/*.conf\nPort 22\n' >"$R0/etc/ssh/sshd_config"
+  printf 'ENABLED=yes\n' >"$R0/etc/ufw/ufw.conf"; printf 'DEFAULT_INPUT_POLICY="DROP"\n' >"$R0/etc/default/ufw"
+  echo Y >"$R0/sys/module/apparmor/parameters/enabled"; : >"$R0/dev/watchdog0"
+  printf '[Desktop Entry]\nExec=kdeconnectd\n' >"$R0/etc/xdg/autostart/org.kde.kdeconnect.daemon.desktop"
+  cp -R "$FIX/$1" "$R0/sys/class/power_supply"
+  for u in postgresql.service cups.service cups.socket avahi-daemon.service avahi-daemon.socket bluetooth.service \
+    tailscaled.service gauss-argo.service ssh.service; do : >"$LOGS/svc/$u.present"; : >"$LOGS/svc/$u.enabled"; : >"$LOGS/svc/$u.active"; done
+  : >"$LOGS/kdeconnectd"
+  echo 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExampleOnlyNotARealKey test@mac' >"$HOME_DIR/.ssh/authorized_keys"
+}
+ptree() { (cd "$T" && find proot phome plogs -type f ! -name systemctl ! -name sshd | sort && find proot phome -type f -exec cat {} + ; cat plogs/sudo plogs/apt plogs/pkill 2>/dev/null); }
+only_reads() { ! grep -vE '^(--user )?(cat|is-enabled|is-active) ' "$LOGS/systemctl"; }
+sudo_n() { wc -l <"$LOGS/sudo" 2>/dev/null | tr -d ' ' || echo 0; }
+
+mk_machine on-battery
+bs --apply-profile; r1=$rc; bs --profile dev; [ "$r1$rc" = 11 ]; expect "talos --apply-profile needs --profile ops, and ops is the only profile" $?
+before=$(ptree); bs --profile ops --dry-run
+[ "$rc" = 0 ] && [ "$(printf '%s\n' "$out" | grep -c '^==> ops [1-6]/6 ')" = 6 ]; expect "talos --profile ops --dry-run exits 0 and lists all six profile steps" $?
+[ "$(ptree)" = "$before" ] && only_reads; expect "talos --profile ops --dry-run changes nothing: no files, sudo, apt, pkill, and systemctl only reads" $?
+[[ "$out" == *"would run: sudo systemctl disable --now postgresql.service"* && "$out" == *"would write /etc/ssh/sshd_config.d/05-gauss-ops.conf"* && "$out" == *"| PermitRootLogin no"* && "$out" == *"127.0.0.1:5432"* ]]; expect "talos --profile ops --dry-run prints the sudo commands, the files it would write and the listening ports" $?
+[[ "$out" == *"bluetooth.service: kept (add --no-bluetooth"* && "$out" != *"disable --now bluetooth"* ]]; expect "talos --profile ops keeps bluetooth unless --no-bluetooth" $?
+bs --profile ops
+[ "$rc" = 0 ] && [ ! -e "$LOGS/sudo" ] && [ ! -e "$LOGS/apt" ] && [ ! -e "$LOGS/pkill" ] && only_reads && [ ! -e "$R0/etc/ssh/sshd_config.d/05-gauss-ops.conf" ] && [ ! -e "$HOME_DIR/.config/autostart" ]; expect "talos --profile ops without --apply-profile runs no sudo, apt, pkill or systemctl change" $?
+has 'report only, nothing changed' "$HOME_DIR/.local/state/talos-kit/profile.txt" && [[ "$out" == *"REPORT ONLY"* ]]; expect "talos --profile ops without the flag saves a report that says nothing changed" $?
+
+bs --profile ops --apply-profile; S1=$out
+[ "$rc" = 0 ]; expect "talos --profile ops --apply-profile exits 0 on a fresh Kali laptop" $?
+ok=0; for u in postgresql.service cups.socket cups.service avahi-daemon.socket avahi-daemon.service; do grep -qx "systemctl disable --now $u" "$LOGS/sudo" || ok=1; done
+! grep -q bluetooth "$LOGS/sudo" || ok=1; expect "talos ops profile disables and stops postgresql, cups and avahi (sockets too), not bluetooth" $ok
+[[ "${S1%%listening TCP ports after:*}" == *"127.0.0.1:5432"* && "${S1#*listening TCP ports after:}" != *"5432"* && "${S1#*listening TCP ports after:}" != *"kdeconnectd"* ]]; expect "talos ops profile prints the listening ports before and after" $?
+has '^Hidden=true$' "$HOME_DIR/.config/autostart/org.kde.kdeconnect.daemon.desktop" && has "-x kdeconnectd" "$LOGS/pkill"; expect "talos ops profile turns KDE Connect off for the user without sudo" $?
+has 'RUN+=".*powerprofilesctl set power-saver"' "$R0/etc/udev/rules.d/60-gauss-power-profile.rules" && [ "$(cat "$LOGS/ppd")" = power-saver ] && has '^udevadm control --reload$' "$LOGS/sudo"; expect "talos ops profile sets power-saver on battery through power-profiles-daemon" $?
+[ "$(cat "$R0/sys/class/power_supply/BAT0/charge_control_end_threshold")" = 80 ] && has '^w /sys/class/power_supply/BAT0/charge_control_end_threshold - - - - 80$' "$R0/etc/tmpfiles.d/50-gauss-charge-limit.conf"; expect "talos ops profile sets the 80% charge limit now and at every boot" $?
+f="$R0/etc/systemd/logind.conf.d/50-gauss-lid.conf"; has '^HandleLidSwitch=suspend$' "$f" && has '^HandleLidSwitchExternalPower=ignore$' "$f"; expect "talos ops profile: lid suspends on battery, ignored on external power" $?
+has '^RuntimeWatchdogSec=30s$' "$R0/etc/systemd/system.conf.d/50-gauss-watchdog.conf" && has '^systemctl daemon-reexec$' "$LOGS/sudo"; expect "talos ops profile turns on the systemd hardware watchdog (30 s)" $?
+ok=0; for u in tailscaled gauss-argo; do f="$R0/etc/systemd/system/$u.service.d/50-gauss-restart.conf"; { has '^Restart=always$' "$f" && has '^StartLimitIntervalSec=0$' "$f"; } || ok=1; done
+has '^systemctl daemon-reload$' "$LOGS/sudo" || ok=1; expect "talos ops profile makes tailscaled and gauss-argo restart after any exit" $ok
+f="$R0/etc/ssh/sshd_config.d/05-gauss-ops.conf"
+has '^PasswordAuthentication no$' "$f" && has '^KbdInteractiveAuthentication no$' "$f" && has '^PermitRootLogin no$' "$f" && [ "$(grep -c '^-t$' "$LOGS/sshd")" = 2 ] && has '^systemctl reload ssh.service$' "$LOGS/sudo"; expect "talos ops profile writes the sshd keys-only drop-in, checks sshd -t before and after, then reloads" $?
+[[ "$S1" == *"ufw: enabled=yes, default incoming=DROP"* && "$S1" == *"41 profiles are in enforce mode"* ]] && ! grep -q '^ufw' "$LOGS/sudo"; expect "talos ops profile only reports ufw and AppArmor" $?
+[[ "$S1" == *"no separate security archive"* ]] && ! grep -q unattended "$LOGS/apt"; expect "talos ops profile does not install unattended-upgrades on Kali and says why" $?
+has '^SystemMaxUse=200M$' "$R0/etc/systemd/journald.conf.d/50-gauss.conf" && has '^systemctl restart systemd-journald.service$' "$LOGS/sudo"; expect "talos ops profile caps journald at 200M" $?
+has 'zram-tools' "$LOGS/apt" && has '^PERCENT=50$' "$R0/etc/default/zramswap" && [ -e "$LOGS/svc/zramswap.service.enabled" ]; expect "talos ops profile installs zram-tools and turns on zram swap at 50% of RAM" $?
+[[ "$S1" == *"Node v26.1.0: OK"* && "$S1" == *"Go: go1.26.10"* ]]; expect "talos ops profile reports Node 26 and Go" $?
+ok=0; while read -r line; do [[ "$S1" == *"sudo: $line"* ]] || ok=1; done <"$LOGS/sudo"; expect "talos ops profile prints every sudo command it runs" $ok
+p="$HOME_DIR/.local/state/talos-kit/profile.txt"; has ', applied$' "$p" && has 'wrote /etc/ssh/sshd_config.d/05-gauss-ops.conf' "$p" && has 'postgresql.service *disabled' "$p"; expect "talos ops profile saves what it applied to profile.txt" $?
+
+n=$(sudo_n); a=$(wc -l <"$LOGS/apt"); bs --profile ops --apply-profile
+[ "$rc" = 0 ] && ! tail -n +"$((n + 1))" "$LOGS/sudo" | grep -v aa-status | grep -q . && [ "$(wc -l <"$LOGS/apt")" = "$a" ] && [[ "$out" == *"05-gauss-ops.conf: already in place"* && "$out" == *"zram swap: already active"* ]]; expect "talos ops profile re-run is idempotent: no further changes (only the read-only aa-status)" $?
+
+mk_machine on-battery; SSHD_FAIL=1 bs --profile ops --apply-profile
+[ "$rc" = 7 ] && [ ! -e "$R0/etc/ssh/sshd_config.d/05-gauss-ops.conf" ] && ! grep -q 'reload ssh' "$LOGS/sudo" && [[ "$out" == *"rolled back"* ]] && [ -e "$R0/etc/systemd/journald.conf.d/50-gauss.conf" ]; expect "talos ops profile rolls the sshd drop-in back when sshd -t fails, reloads nothing, finishes the rest, exits 7" $?
+mk_machine on-battery; printf '# older\nPasswordAuthentication no\n' >"$R0/etc/ssh/sshd_config.d/05-gauss-ops.conf"; SSHD_FAIL=1 bs --profile ops --apply-profile
+[ "$rc" = 7 ] && [ "$(cat "$R0/etc/ssh/sshd_config.d/05-gauss-ops.conf")" = "$(printf '# older\nPasswordAuthentication no')" ]; expect "talos ops profile restores the previous sshd drop-in when sshd -t fails" $?
+mk_machine on-battery; rm "$HOME_DIR/.ssh/authorized_keys"; bs --profile ops --apply-profile
+[ "$rc" = 0 ] && [ ! -e "$R0/etc/ssh/sshd_config.d/05-gauss-ops.conf" ] && [ ! -e "$LOGS/sshd" ] && [[ "$out" == *"would lock you out"* ]]; expect "talos ops profile never turns off passwords while SSH runs with no key and no Tailscale SSH" $?
+
+mk_machine weak-charger; printf 'ID=debian\n' >"$R0/etc/os-release"; bs --profile ops --apply-profile --no-bluetooth
+[ "$rc" = 0 ] && [[ "$out" == *"BAT0: charge limit not offered"* ]] && ! grep -q '^tee ' "$LOGS/sudo" && [ ! -e "$R0/etc/tmpfiles.d/50-gauss-charge-limit.conf" ]; expect "talos ops profile sets no charge limit where the hardware has none" $?
+! grep -q 'powerprofilesctl set' "$LOGS/sudo"; expect "talos ops profile leaves the power profile alone on external power" $?
+has '^systemctl disable --now bluetooth.service$' "$LOGS/sudo"; expect "talos ops profile --no-bluetooth disables bluetooth" $?
+has 'unattended-upgrades' "$LOGS/apt" && has 'Unattended-Upgrade "1"' "$R0/etc/apt/apt.conf.d/20auto-upgrades"; expect "talos ops profile turns on security updates on Debian" $?
+mk_machine on-battery; printf 'DEFAULT_INPUT_POLICY="ACCEPT"\n' >"$R0/etc/default/ufw"; stub tlp 'echo "$*" >>"$LOGS/tlp"'; NODE_V=v22.3.0 bs --profile ops --apply-profile; rm "$T/bin/tlp"
+[ "$rc" = 0 ] && [[ "$out" == *"both installed"* ]] && [ ! -e "$R0/etc/udev/rules.d/60-gauss-power-profile.rules" ] && [ ! -e "$R0/etc/tlp.d" ] && [ ! -e "$LOGS/tlp" ]; expect "talos ops profile touches neither TLP nor power-profiles-daemon when both are installed" $?
+[[ "$out" == *"WARNING: the firewall does not deny incoming"* ]]; expect "talos ops profile warns when ufw does not deny incoming by default" $?
+[[ "$out" == *"Node v22.3.0: the repo needs Node 26"* && "$out" == *"SHASUMS256"* && "$out" == *"sha256sum -c"* ]]; expect "talos ops profile prints the checked nodejs.org install for a wrong Node" $?
+mk_machine on-battery; bs "${OK[@]}" --profile ops --dry-run
+[ "$rc" = 0 ] && [ "$(printf '%s\n' "$out" | grep -c '^==> [1-5]/5 ')" = 5 ] && [ "$(printf '%s\n' "$out" | grep -c '^==> ops [1-6]/6 ')" = 6 ]; expect "talos bootstrap --tailnet-login ... --profile ops runs the five steps, then the profile" $?
+! { grep -Ev '^ *(#|note )' "$P" | grep -E '(curl|wget)[^|]*\| *(ba)?sh|ufw +(allow|deny|reject|limit|default|enable|disable|delete|reset)|systemctl[^|]* mask '; } >/dev/null; expect "talos ops profile never pipes a download to a shell, changes ufw rules or masks a unit" $?
+I="$D/image/README.md"; has 'UNTESTED' "$I" && has 'live-build-config' "$I" && has '--profile ops' "$I"; expect "talos image README exists, names live-build-config and the profile hook, and is marked UNTESTED" $?
+
 # --- static checks ---
-if command -v shellcheck >/dev/null; then shellcheck -S warning "$B" "$0"; expect "talos scripts are shellcheck-clean" $?
-else bash -n "$B" && bash -n "$0"; expect "talos scripts parse (shellcheck not installed here, UNVERIFIED lint)" $?; fi
+if command -v shellcheck >/dev/null; then shellcheck -S warning "$B" "$P" "$0"; expect "talos scripts are shellcheck-clean" $?
+else bash -n "$B" && bash -n "$P" && bash -n "$0"; expect "talos scripts parse (shellcheck not installed here, UNVERIFIED lint)" $?; fi
 
 [ -z "$JUNIT" ] || junit_write talos-kit "$JUNIT"
 echo "talos-kit: $pass passed, $failed failed"

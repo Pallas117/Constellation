@@ -61,9 +61,38 @@ key for your own user, check plain `ssh` works, then run `sudo tailscale set --s
 after 10 s, for as long as it takes (`Restart=on-failure`, no start limit). It has no capabilities and no new
 privileges; the system and home are read-only apart from `~/.local/state/argo` and `~/.config/argo`; it has a
 512 MB memory cap. `systemctl status gauss-argo`, `journalctl -u gauss-argo -n 50`. A hang (as opposed to a crash)
-is not detected: Argo does not feed a systemd watchdog yet.
+is not detected: Argo does not feed a systemd watchdog yet. The ops profile (below) adds a drop-in that makes
+it `Restart=always` (also after a clean exit; `systemctl stop` still stops it).
 
-## Lid, suspend and the charge limit (your commands, not the bootstrap's)
+## The ops profile (`--profile ops`)
+
+Shapes Talos for gate and dev work on battery and a hotspot. Code: `ops-profile.sh`, run through the bootstrap.
+
+```bash
+bash ~/src/Constellation/scripts/ops/talos/bootstrap.sh --profile ops --dry-run        # print everything, change nothing
+bash ~/src/Constellation/scripts/ops/talos/bootstrap.sh --profile ops                  # report: reads the machine, no sudo
+bash ~/src/Constellation/scripts/ops/talos/bootstrap.sh --profile ops --apply-profile  # make the changes (sudo, each printed)
+```
+
+Without `--tailnet-login` only the profile runs (no network needed); with it, the five steps run first. Add
+`--no-bluetooth` to stop bluetooth too. Every step checks first, so a re-run changes nothing that is in place.
+The report is saved to `~/.local/state/talos-kit/profile.txt`. Exit 7 means a step failed; the others still ran.
+
+| Step | What it does |
+|---|---|
+| 1 services | `disable --now` postgresql, cups (socket, path, browsed), avahi-daemon (socket too), bluetooth only with `--no-bluetooth`. KDE Connect off for your user (a `~/.config/autostart` entry with `Hidden=true`, no sudo). `ss -ltnp` before and after. Undo: `sudo systemctl enable --now <unit>`. |
+| 2 power | power-saver on battery through TLP (`/etc/tlp.d/50-gauss-ops.conf`) or power-profiles-daemon (a udev rule), whichever is installed. It installs neither, and touches neither when both are installed. Charge limit 80% only where `charge_control_end_threshold` exists, set now and at every boot (`/etc/tmpfiles.d`). Lid: suspend on battery, ignore on external power (applies after a reboot). |
+| 3 self-restart | `RuntimeWatchdogSec=30s` (`/etc/systemd/system.conf.d/`): a hung machine reboots. `Restart=always` drop-ins for tailscaled and gauss-argo (when installed). |
+| 4 hardening | `/etc/ssh/sshd_config.d/05-gauss-ops.conf`: no passwords, no keyboard-interactive, no root login. Named 05- because sshd keeps the first value it reads, so it wins over harden.sh's `10-gauss.conf`. `sshd -t` runs before (an already broken config is left alone) and after; if it fails, the old file comes back and nothing is reloaded. Skipped while SSH runs with no key in `~/.ssh/authorized_keys` and Tailscale SSH off (it would lock you out). ufw and AppArmor are only reported (the firewall rules are harden.sh `--node`'s, in the private ops kit). journald capped at 200M. zram swap (zram-tools, zstd, 50% of RAM) unless zram is already on. |
+| 5 tools | Node 26 and Go reported; when missing or wrong, the checked nodejs.org and go.dev installs are printed, never run. |
+
+**Security updates on Kali: not installed, on purpose.** Kali is rolling and has no separate security archive, so
+`unattended-upgrades` (security origins only) would install nothing, and unattended full upgrades of a rolling
+distribution can break the machine; harden.sh skips it for the same reason. The profile says so and prints
+`sudo apt update && sudo apt full-upgrade` for you to run on a network you trust. On Debian it installs and turns
+on `unattended-upgrades`. For a custom USB image, see `image/README.md` (UNTESTED).
+
+## Lid, suspend and the charge limit (by hand, if you do not use the ops profile)
 
 - **Lid.** By default systemd suspends on lid close, also on mains. To keep working with the lid shut while
   plugged in, and still suspend on battery (which protects it):
@@ -96,8 +125,7 @@ key, and anything `gauss-guard` marks SENSITIVE. Talos gets the public repo from
 bash scripts/ops/talos/talos-kit.test.sh
 ```
 
-It is not yet part of `npm run test:ops`: PR #307 edits that same line, so wiring it in is left for whichever of
-the two merges second (add `&& bash scripts/ops/talos/talos-kit.test.sh`).
+It is part of the `test:ops` package script.
 
 ## UNVERIFIED
 
@@ -107,4 +135,8 @@ the two merges second (add `&& bash scripts/ops/talos/talos-kit.test.sh`).
 - The unit's hardening against a real `argo loop` (a too-strict option shows as "read-only file system" or
   "permission denied" in the journal).
 - Argo's Linux battery readings on real hardware, and laptops with two batteries.
+- The ops profile on real hardware: unit names on Kali (`ssh.service`, `zramswap.service`), whether Xfce's power
+  manager overrides the lid setting, the power-profiles-daemon udev rule (and USB-C chargers, which report type
+  `USB`, not `Mains`), whether the charge limit holds, whether Talos has a hardware watchdog and how it behaves
+  across suspend, and `sshd -T` output on the installed OpenSSH.
 - shellcheck was not installed where the tests ran.
