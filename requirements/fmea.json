@@ -461,13 +461,18 @@
       "item": "Sign-in database (.auth.db)",
       "failureMode": "Lost or corrupted",
       "effect": "All accounts, password hashes, sessions and roles gone: nobody can sign in until it is restored or rebuilt; roles reset to user",
-      "detection": "Sign-in fails on a missing or unreadable file; no check watches the file",
-      "mitigation": "docs/INSTALL.md section 8 gives a nightly consistent sqlite3 .backup and warns that git clean -x deletes it; npm run auth:migrate recreates the tables and auth:set-role restores an operator or admin",
+      "detection": "Sign-in fails on a missing or unreadable file; scripts/ops/auth-backup.sh fails (and its caller alerts) when the live file can't be copied or a copy fails integrity_check or lacks the sign-in tables; its restore test warns when the newest copy is over 36 h old",
+      "mitigation": "scripts/ops/auth-backup.sh: nightly consistent copy (SQLite online backup) checked before it counts, newest 14 kept, private (0700/0600), counts-only manifest; verify is the restore test on a temporary copy; restore refuses a bad copy and keeps the old file aside. docs/AUTH_RECOVERY.md is the break-glass runbook; auth:set-role restores an operator or admin",
       "severity": 4,
       "likelihood": 3,
-      "residualLikelihood": 3,
-      "verifiedBy": [],
-      "gap": "Backup is a documented manual step: no scheduled backup, no restore test, no health check that reads .auth.db, and no test covers it. A rebuilt database has no accounts, so every person must sign up again and roles be re-set by hand. Found by the requirements audit 2026-11-17."
+      "residualLikelihood": 2,
+      "verifiedBy": [
+        "auth backup: a checked, private copy with a counts-only manifest",
+        "auth backup: restore test on a temporary copy warns when admins have fewer than two passkeys",
+        "auth backup: a corrupt or wrong file never counts and a missing database fails",
+        "auth backup: restore keeps the old database aside and refuses a bad file"
+      ],
+      "gap": "The nightly run is scheduled outside the repo (the local watcher calls backup then verify); copies stay on the same disk, so losing the machine loses them: an encrypted off-device copy is a person's decision. Accounts made after the last copy are lost on restore."
     }
   ]
 }

@@ -168,7 +168,7 @@ not metered.
 | Mesh store | `MESH_STORE_PATH`, `MESH_BUNDLE_PATH` | Argo devices (hashed tokens) and bundles, if used |
 | Configuration | `.env` | Secrets: keep them in your secret manager, not in the data backup |
 
-Back up nightly and before every upgrade:
+Back up nightly and before every upgrade. `scripts/ops/auth-backup.sh backup` does the sign-in database for you (a checked, private copy; 14 kept), and `scripts/ops/auth-backup.sh verify` is the restore test. Recovery steps: [AUTH_RECOVERY.md](AUTH_RECOVERY.md).
 
 ```sh
 sqlite3 .auth.db ".backup '<backup dir>/auth.db'"                # consistent copy while running
