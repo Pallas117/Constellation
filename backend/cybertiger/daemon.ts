@@ -11,6 +11,7 @@ export type CyberTigerEventType =
   | "request.blocked_ip"
   | "auth.failure"
   | "auth.failure_threshold"
+  | "auth.session_ended"
   | "http.error"
   | "ip.blocked"
   | "ip.unblocked";
@@ -66,6 +67,8 @@ export interface CyberTigerRecordResponseInput {
   role?: AuthRole;
   userId?: string;
   latencyMs?: number;
+  /** This server ended the caller's session (idle sign-out): a 401/403 for it is not an attack and is not counted. */
+  sessionEnded?: boolean;
 }
 
 export interface CyberTigerConfig {
@@ -299,6 +302,19 @@ export class CyberTigerDaemon {
     }
 
     const path = safePath(input.path);
+    if ((input.status === 401 || input.status === 403) && input.sessionEnded) {
+      this.addEvent({
+        type: "auth.session_ended",
+        severity: "low",
+        ip: input.ip,
+        method: input.method,
+        path,
+        requestId: input.requestId,
+        status: input.status,
+        message: "Request with a session this server signed out (idle); not counted as an auth failure",
+      });
+      return;
+    }
     if (input.status === 401 || input.status === 403) {
       this.counters.authFailures += 1;
       const breach = input.local ? false : this.registerAuthFailure(input.ip);
