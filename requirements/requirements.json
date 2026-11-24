@@ -937,6 +937,58 @@
       ]
     },
     {
+      "id": "REQ-UI-001",
+      "title": "Public dashboard fails closed",
+      "statement": "The public dashboard shall render without a session, shall offer the operator portal link, and shall not show operator-console panels.",
+      "rationale": "The public page is the only surface a visitor sees; an operator panel there would leak console state. Tested in a real browser with the API mocked.",
+      "parent": "GAU-63",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "Authentication Flow & Route Splitting › Public Marketing Dashboard loads without authentication"
+      ]
+    },
+    {
+      "id": "REQ-UI-002",
+      "title": "Operator console is role-gated",
+      "statement": "The operator console shall redirect a visitor without a session to the sign-in page, and shall render the console panels for a signed-in session whose role includes the operator console.",
+      "rationale": "Route guards are the UI half of RBAC (the API enforces the rest); the gate must catch a guard that lets a signed-out visitor in or keeps an operator out.",
+      "parent": "GAU-63",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "Authentication Flow & Route Splitting › Redirects unauthenticated users from /operator to /login",
+        "Authentication Flow & Route Splitting › Authenticates successfully and launches the Mission Control HUD"
+      ]
+    },
+    {
+      "id": "REQ-UI-003",
+      "title": "HUD states data age honestly in the browser",
+      "statement": "The operator HUD shall show the pipeline verdict, data age and slowest stage the backend reports, shall show STALE when the backend says the data expired, and shall show NO_TELEMETRY, never FRESH, when the pipeline endpoint fails.",
+      "rationale": "REQ-DI-001 holds in the rendered page, not only in the logic: a HUD that paints FRESH over old or missing data is the failure the console exists to prevent.",
+      "parent": "GAU-63",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "HUD shows the backend pipeline verdict, data age and slowest stage",
+        "HUD shows STALE when the backend says the data expired",
+        "HUD shows NO_TELEMETRY, not a healthy pipeline, when the endpoint fails"
+      ]
+    },
+    {
+      "id": "REQ-UI-004",
+      "title": "A refused device revoke is shown",
+      "statement": "The mesh page shall list the devices the API returns, and when a revoke is refused shall show an error saying so, without the server's detail text, and when it succeeds shall show no error.",
+      "rationale": "A refused revoke that looks like success leaves a device with mesh access while the operator believes it is gone.",
+      "parent": "GAU-149",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "a refused revoke shows an error instead of looking like it worked (GAU-149)",
+        "a successful revoke shows no error (GAU-149)"
+      ]
+    },
+    {
       "id": "REQ-TR-013",
       "title": "Geometry pattern key lock",
       "statement": "A private key file locked under its owner's geometry pattern (8 to 24 vertex picks on the 16 vertices of a tesseract) shall unlock only with that pattern.",
