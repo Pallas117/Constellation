@@ -1253,9 +1253,12 @@ gates_prescreen() { # gates_prescreen <sha> <tree>: 0 the gatebox failed the com
   echo "$(date '+%F %T') gatebox $host: screening ${sha:0:7} ..."
   # BatchMode: never a prompt. The host key is pinned in its own file on first contact (the tailnet has
   # already authenticated the machine); a changed key is refused, and the run falls back to this Mac.
+  # UserKnownHostsFile takes a space-separated LIST, and the pin lives under "Application Support": the
+  # path must be quoted inside the option or ssh reads ~/Library/Application and accepts any new key
+  # (24 Nov 2026: a stray ~/Library/Application had held the pin since 18 Nov).
   # macOS has no timeout(1): perl sets the alarm and execs ssh, which SIGALRM then ends (exit 142).
   perl -e 'alarm shift; exec @ARGV' "$GATEBOX_TIMEOUT_S" ssh -i "$GATEBOX_KEY" -o IdentitiesOnly=yes -o BatchMode=yes -o ConnectTimeout=15 -o ServerAliveInterval=30 \
-    -o ServerAliveCountMax=4 -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile="$GATEBOX_HOSTS" -o HostKeyAlias="$first" \
+    -o ServerAliveCountMax=4 -o StrictHostKeyChecking=accept-new -o "UserKnownHostsFile=\"$GATEBOX_HOSTS\"" -o HostKeyAlias="$first" \
     "gate@$host" "$GATEBOX_REPO $sha" >"$log" 2>&1 </dev/null || rc=$?
   last=$(grep -E '^gates rc=' "$log" | tail -1)
   # gauss-gate-run prints "gates rc=N in S s on <sha>" after the gates; without that line (ssh 255, busy 75,

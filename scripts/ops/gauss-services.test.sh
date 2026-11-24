@@ -701,6 +701,8 @@ out=$(GAUSS_GATEBOX=gatebox GBRC=say1 run gates run 2>&1)
 [ "$(tail -1 "$GR" | cut -d' ' -f2,4-7)" = "$GB1 FAILED on gatebox gatebox" ] && [ -z "$(ls "$GQ")" ] && ! grep -q '^heavy ' "$T/actions" \
   && grep -q "^ssh .*-o BatchMode=yes .*gate@gatebox Pallas117/Constellation $GB1\$" "$T/actions" && [ ! -f "$WD/gates/$(tree_of "$GB1").json" ]
 expect "gates run: a commit the gatebox fails is FAILED without a local run, and no deploy record is written" $?
+grep -q "UserKnownHostsFile=\"[^\"]*gatebox.known_hosts\"" "$T/actions"
+expect "gates run: the pinned known_hosts path is quoted inside the ssh option (its folder name has a space)" $?
 # gates why: a gatebox failure is named in the result line, and diagnosed with the known cause and its fix
 printf '%s\n' 'ok 1' '✖ failing tests:' '' '✖ telemetry_descriptor.json is the current .proto (56.69ms)' >"$T/home/gatebox-out"
 (cd "$LIVE" && run gates enqueue "$GB1" >/dev/null 2>&1); GAUSS_GATEBOX=gatebox GBRC=say1 run gates run >/dev/null 2>&1
