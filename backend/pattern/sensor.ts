@@ -39,11 +39,21 @@ const PROBE_WINDOW_MS = 10 * 60_000;
 const PROBES_TO_ALARM = 3;
 const KEEP_PER_USER = 50;
 
-export function argoAlarm(env: NodeJS.ProcessEnv = process.env): Alarm | null {
+/**
+ * Whether duress and lock alarms can reach a phone, and if not, why (threat model TM-10). The backend says so loudly at
+ * start-up and in the CyberTiger log; it is never shown to the signed-in user, who under duress may be the coercer.
+ */
+export function alarmStatus(env: NodeJS.ProcessEnv = process.env): { ok: boolean; bin: string | null; detail: string } {
   const mode = (env.PATTERN_ALERTS ?? "argo").trim().toLowerCase();
-  if (mode === "off" || mode === "log") return null;
+  if (mode === "off" || mode === "log") return { ok: false, bin: null, detail: `PATTERN_ALERTS=${mode}` };
   const bin = env.ARGO_BIN?.trim() || path.join(homedir(), ".local/bin/argo");
-  if (!existsSync(bin)) return null;
+  if (!existsSync(bin)) return { ok: false, bin: null, detail: `no Argo binary at ${bin}` };
+  return { ok: true, bin, detail: `argo notify (${bin})` };
+}
+
+export function argoAlarm(env: NodeJS.ProcessEnv = process.env): Alarm | null {
+  const { bin } = alarmStatus(env);
+  if (!bin) return null;
   return (title, message, key) => {
     execFile(bin, ["notify", "-key", key, "-every", "15m", title, message], { timeout: 10_000 }, (err) => {
       if (err) console.warn(`[pattern-sensor] alarm not sent: ${err.message}`);
