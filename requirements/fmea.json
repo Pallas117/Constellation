@@ -391,18 +391,19 @@
       "failureMode": "Bypass, or AUTH_REQUIRED mis-set to false",
       "effect": "The dev bypass grants admin to every caller: all data, operator console and device management open",
       "detection": "backend/scripts/security-compliance-check.ts and check-env.ts flag AUTH_REQUIRED=false; role gates and deny-by-default routes (API_POLICY) are tested",
-      "mitigation": "authRequired() (backend/auth.ts) ignores AUTH_REQUIRED when NODE_ENV=production and defaults to true; API_POLICY denies unlisted routes (404), anonymous (401) and under-privileged (403); users without a stored role are plain users",
+      "mitigation": "authRequired() (backend/auth.ts) fails closed: AUTH_REQUIRED=false is honoured only when NODE_ENV is explicitly development or test (unset, as the LaunchAgents run live, or production keeps sign-in required) and it defaults to true; API_POLICY denies unlisted routes (404), anonymous (401) and under-privileged (403); users without a stored role are plain users",
       "severity": 5,
       "likelihood": 2,
-      "residualLikelihood": 2,
+      "residualLikelihood": 1,
       "verifiedBy": [
         "enforcement: unlisted 404, anonymous 401, under-privileged 403, allowed passes",
         "every declared API route has an access policy (deny by default otherwise)",
         "users without a stored role are viewers, not admins",
         "a user cannot satisfy an operator gate",
-        "email sign-up cannot choose its own role: a new account is a plain user"
+        "email sign-up cannot choose its own role: a new account is a plain user",
+      "the admin-for-everyone dev bypass fails closed: honoured only when NODE_ENV is development or test (FM-25)"
       ],
-      "gap": "No test pins that AUTH_REQUIRED=false is ignored when NODE_ENV=production (authRequired() in backend/auth.ts is not exported or tested), and a host that runs without NODE_ENV=production and sets AUTH_REQUIRED=false is open as admin; the compliance check only reports it when run. Found by the requirements audit 2026-11-17."
+      "gap": "A developer machine run with NODE_ENV=development and AUTH_REQUIRED=false is still open as admin to anyone who can reach it (scripts/tailscale/dev-mobile.sh refuses that on the tailnet; a plain npm run dev:proxy does not). Closed for live 2026-11-24: the bypass now needs an explicit development or test NODE_ENV, pinned by a test."
     },
     {
       "id": "FM-26",
