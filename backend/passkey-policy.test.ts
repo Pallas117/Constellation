@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   STEP_UP_MAX_AGE_MS,
   passkeyConfigFrom,
+  passkeyWarnings,
   passkeyCredentialFrom,
   passkeyOriginAllowed,
   stepUpFresh,
@@ -68,4 +69,16 @@ test("step-up is fresh only for a passkey touch within 5 minutes", () => {
   assert.equal(toMillis("not a date"), null);
   assert.equal(toMillis(new Date(Number.NaN)), null);
   assert.equal(toMillis(null), null);
+});
+
+test("passkey start-up warnings name every host where passkeys won't work, and say when none can (TM-03)", () => {
+  const none = passkeyWarnings(passkeyConfigFrom({ PASSKEY_RP_ID: "gauss.example.ts.net" }, ["http://gauss.example.ts.net"]));
+  assert.equal(none.length, 2);
+  assert.match(none[0], /can't be used anywhere/);
+  assert.match(none[1], /http:\/\/gauss\.example\.ts\.net/);
+  const ok = passkeyWarnings(passkeyConfigFrom({}, ["http://localhost:8080"]));
+  assert.deepEqual(ok, [], "localhost on its own: nothing to warn about");
+  const some = passkeyWarnings(passkeyConfigFrom({}, ["http://localhost:8080", "http://127.0.0.1:8080"]));
+  assert.equal(some.length, 1);
+  assert.match(some[0], /127\.0\.0\.1:8080/);
 });

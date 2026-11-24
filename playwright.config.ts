@@ -27,6 +27,8 @@ const workers = Number(process.env.ARGO_WORKERS) || undefined;
 
 export default defineConfig({
   testDir: "./tests/e2e",
+  // The gate (`npm run test:ui:gate`) keeps traces, videos and screenshots outside the repo.
+  ...(process.env.PW_OUTPUT_DIR ? { outputDir: process.env.PW_OUTPUT_DIR } : {}),
   fullyParallel: false,
   workers,
   timeout: 45_000,

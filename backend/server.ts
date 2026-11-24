@@ -62,6 +62,7 @@ import {
   ssoGoogleEnabled,
 } from "./better-auth.js";
 import { createAdminUsersRouter } from "./admin/users.js";
+import { passkeyWarnings } from "./passkey-policy.js";
 import { createPatternRouter } from "./pattern/router.js";
 import { argoAlarm, createSensor, watchAccess } from "./pattern/sensor.js";
 import { createPadRequests, createPatternStore, patternPepper } from "./pattern/store.js";
@@ -875,6 +876,7 @@ export async function startBackend(options?: { host?: string; port?: number }): 
       ? `[backend] passkeys: RP ID ${passkeyConfig.rpID} for ${passkeyConfig.origins.join(", ")}`
       : `[backend] passkeys off: no secure origin matches RP ID ${passkeyConfig.rpID}`,
   );
+  for (const note of passkeyWarnings(passkeyConfig)) console.warn(note);
   console.log(
     operatorPatternRequired()
       ? `[backend] operator pattern required${patternPadOrigin ? `; phones draw at ${patternPadOrigin}/pad` : "; drawing on phones is off (PATTERN_PAD_ORIGIN)"}`
