@@ -6,7 +6,7 @@
 #   scripts/ops/gauss-services.sh install <checkout-dir>   build + write + load agents
 #   scripts/ops/gauss-services.sh status                   agent state + health checks
 #   scripts/ops/gauss-services.sh check                    pre-demo checklist (exit 1 if anything is off)
-#   scripts/ops/gauss-services.sh resilience               battery, memory, network and phone alerts before closing the lid (exit 1 if not)
+#   scripts/ops/gauss-services.sh resilience               battery, memory, network, phone alerts and phone battery before closing the lid (exit 1 if not)
 #   scripts/ops/gauss-services.sh balance [--dry-run]      shed optional load now when memory, battery or disk run short (the guard runs it every minute)
 #   scripts/ops/gauss-services.sh tailnet on|off           share Gauss on your tailnet only (tailscale serve)
 #   scripts/ops/gauss-services.sh awake setup|on|off       keep running with the lid closed (setup: once, asks for sudo)
@@ -19,6 +19,10 @@
 #   scripts/ops/gauss-services.sh gates enqueue <checkout-dir>|<commit>   hand a gate run to the queue; the session can then be archived
 #   scripts/ops/gauss-services.sh gates queue | priority <pr|sha> front|back | waiting   see/reorder the train, list passes waiting for a person
 #   scripts/ops/gauss-services.sh gates result <checkout-dir>|<commit>|status   the queue's one-line result (exit 0 passed, 1 failed, 3 queued)
+#   scripts/ops/gauss-services.sh gates why <commit>       why that commit's gate failed: what failed by name, the known cause and its fix
+#     When a gate fails: 1. `gates why <commit>` (never start in the raw log). 2. Apply the fix it names, or find
+#     the cause. 3. `npm run -s check:changed` before re-queueing with --pr. 4. If the cause was new, add a row to
+#     GATES_CAUSES with its date, so the same failure is named next time. That list is how failures go down.
 #   scripts/ops/gauss-services.sh gates passed <commit>    exit 0 only if that commit's exact tree has a passing record (for scripts)
 #   scripts/ops/gauss-services.sh events [--since 2h] [--json]     timeline: watchdog, failover, deploys, alerts, boots (events.jsonl)
 #
@@ -127,7 +131,9 @@ GATE_LOCK="${GAUSS_GATE_LOCK:-$HOME/.local/state/gauss-gate.lock}" # shared with
 # `verify` already runs the full test suite, the ops tests and the production build
 # (scripts/verify/verify.ts), so `test` and `build` are not run again as gates of
 # their own; their record fields come from verify's log. Halves a gate run.
-GATES=(test:ops quality:full verify)
+# test:ui:gate (hermetic Playwright subset, own port 8094, never :8080) runs before verify so verify
+# merges its JUnit report (test-results/verification/ui-junit.xml) into the VCRM; ~2-4 min extra.
+GATES=(test:ops quality:full test:ui:gate verify)
 # Gate queue (2026-10-29): sessions held a `claude-heavy --wait 720 ... gates record` each for hours
 # (~1 GB of idle sessions on an 8 GB Mac), each with its own npm ci. Now a session enqueues and
 # can be archived; one detached runner works through the requests one at a time under claude-heavy
@@ -169,6 +175,45 @@ GATEBOX_TIMEOUT_S="${GAUSS_GATEBOX_TIMEOUT_S:-1200}"
 # does not name the commit) runs the full gates here, as before. Off by default.
 GATEBOX_TRUST="${GAUSS_GATEBOX_TRUST:-$(sed -n 2p "$WATCH_DIR/gatebox" 2>/dev/null || true)}"
 gatebox_trusted() { [ -n "$GATEBOX" ] && [ "$GATEBOX_TRUST" = merge ]; }
+# Several addresses (19 Nov: Talos on a fixed LAN IP dropped off when it changed network, and every gate
+# fell back to this Mac: 85 min on battery, paused by Argo on an 8 W charger, against ~3 min on Talos).
+# The first line may list the same machine's addresses, space separated, e.g. its LAN IP, its .local
+# name and its tailnet name: the first whose ssh port answers within GATEBOX_PROBE_S is used. Every
+# address must show the host key pinned for the FIRST one (HostKeyAlias), so a name added later is
+# checked against the key already trusted, never accepted on its own first contact.
+GATEBOX_PROBE_S="${GAUSS_GATEBOX_PROBE_S:-3}"
+# A gatebox that drops off is waited for, once per outage, before the full gates run here: probed every
+# GATEBOX_POLL_S for up to GATEBOX_WAIT_S. A machine coming back on the Wi-Fi saves a 30-90 min local
+# run; one that stays off costs this wait once, then requests gate here at once until it answers again.
+GATEBOX_WAIT_S="${GAUSS_GATEBOX_WAIT_S:-900}"
+GATEBOX_POLL_S="${GAUSS_GATEBOX_POLL_S:-30}"
+gatebox_probe() { # gatebox_probe <host>: 0 when its ssh port accepts a TCP connection within GATEBOX_PROBE_S
+  if [ -n "${GAUSS_GATEBOX_PROBE:-}" ]; then "$GAUSS_GATEBOX_PROBE" "$1"; return; fi # tests
+  perl -MIO::Socket::INET -e 'exit(IO::Socket::INET->new(PeerAddr => $ARGV[0], PeerPort => 22, Proto => "tcp", Timeout => $ARGV[1]) ? 0 : 1)' "$1" "$GATEBOX_PROBE_S" 2>/dev/null
+}
+gatebox_pick() { # gatebox_pick: print the first configured address that answers; 1 when none does
+  local h
+  for h in $GATEBOX; do gatebox_probe "$h" && { echo "$h"; return 0; }; done
+  return 1
+}
+gatebox_reach() { # gatebox_reach: print an address that answers, waiting for it once per outage (see GATEBOX_WAIT_S)
+  local h down="$GATES_DIR/gatebox.down" since now end
+  if h=$(gatebox_pick); then rm -f "$down"; echo "$h"; return 0; fi
+  now=$(date +%s); since=$(cat "$down" 2>/dev/null || true)
+  if [[ "$since" =~ ^[0-9]+$ ]] && [ $((now - since)) -ge "$GATEBOX_WAIT_S" ]; then
+    echo "$(date '+%F %T') gatebox ($GATEBOX) has not answered since $(date -r "$since" '+%H:%M'); gating here" >&2
+    return 1
+  fi
+  [[ "$since" =~ ^[0-9]+$ ]] || { since=$now; mkdir -p "$GATES_DIR"; echo "$since" >"$down"; }
+  end=$((since + GATEBOX_WAIT_S))
+  echo "$(date '+%F %T') gatebox ($GATEBOX) not answering; waiting up to $(( (end - now + 59) / 60 )) min for it before gating here" >&2
+  while [ "$(date +%s)" -lt "$end" ]; do
+    sleep "$GATEBOX_POLL_S"
+    if h=$(gatebox_pick); then rm -f "$down"; echo "$(date '+%F %T') gatebox answered at $h" >&2; echo "$h"; return 0; fi
+  done
+  echo "$(date '+%F %T') gatebox ($GATEBOX) did not answer in $(( (GATEBOX_WAIT_S + 59) / 60 )) min; gating here" >&2
+  return 1
+}
 # balance: safe, reversible load shedding (GAU-126). GAUSS_BALANCE=0 turns it off.
 BALANCE="${GAUSS_BALANCE:-1}"
 LOCAL_CODER="${GAUSS_LOCAL_CODER:-$HOME/.local/bin/local-coder}"   # optional on-device model server
@@ -900,6 +945,16 @@ gates_python_dir() { # the directory of the first python3 that can import numpy 
   return 1
 }
 
+# Chromium for the UI gate lives in Playwright's shared cache, so installing it once serves every
+# checkout and touches none of them. GAUSS_PW_CHROMIUM overrides the executable path (tests).
+gates_browser() { # gates_browser <checkout-dir>: install Chromium once if the pinned build is missing
+  local exe
+  exe=${GAUSS_PW_CHROMIUM:-$(cd "$1" && "$NODE" -e 'console.log(require("@playwright/test").chromium.executablePath())' 2>/dev/null || true)}
+  [ -n "$exe" ] && [ -x "$exe" ] && return 0
+  echo "Chromium for the UI gate is missing: installing it once (playwright install chromium)"
+  (cd "$1" && npm exec -- playwright install chromium)
+}
+
 gates_record() { # gates_record <checkout-dir>: run the gates on a clean checkout and record the result by tree
   local dir sha tree g rc
   dir=$(cd "${1:?usage: $0 gates record <checkout-dir>}" && pwd) || return 1
@@ -917,7 +972,8 @@ gates_record() { # gates_record <checkout-dir>: run the gates on a clean checkou
     gate_lock
     echo "gate $g ..."
     local t0=$SECONDS
-    rc=0; (cd "$dir" && env "${scrub[@]}" PATH="$(dirname "$NODE")${pydir:+:$pydir}:$PATH" npm run "$g" >"$tmp/$g.log" 2>&1) || rc=$?
+    rc=0; [ "$g" = test:ui:gate ] && { (PATH="$(dirname "$NODE"):$PATH"; gates_browser "$dir") >"$tmp/$g.log" 2>&1 || rc=$?; }
+    [ $rc = 0 ] && { (cd "$dir" && env "${scrub[@]}" PATH="$(dirname "$NODE")${pydir:+:$pydir}:$PATH" npm run "$g" >>"$tmp/$g.log" 2>&1) || rc=$?; }
     if [ "$GATES_HOLD" = 1 ]; then rmdir "$GATE_LOCK" 2>/dev/null || true; fi; GATES_HOLD=0
     echo "$rc" >"$tmp/$g.rc"
     # Per-gate time in the run log (runs/<sha>.log), so the slow gate can be measured, not guessed.
@@ -943,6 +999,7 @@ r = {"sha": sha, "tree": tree, "by": by, "at": at,
      "test": {"exit": step("Test suite"), "tests": last(r"^\S* ?tests (\d+)$", v), "pass": last(r"^\S* ?pass (\d+)$", v), "fail": last(r"^\S* ?fail (\d+)$", v), "via": "verify"},
      "build": {"exit": step("Production build"), "via": "verify"},
      "quality": {"exit": rc("quality:full")},
+     "ui": {"exit": rc("test:ui:gate")},
      "verify": {"exit": rc("verify"), "vcrm": last(r"VCRM: (\d+/\d+)", v, str), "fmea": last(r"FMEA: (\d+/\d+)", v, str), "passed_at": last(r"VERIFY PASSED at (\w+)", v, str)}}
 # What failed, by name (18 Nov: a line saying 654/655 and VCRM 83/84 sent a session to the kept log to
 # learn which test; the result line now says it).
@@ -964,7 +1021,7 @@ q = log("quality:full") if rc("quality:full") != 0 else ""
 r["failing"] = {"tests": names(r"^✖ (.+?) \(\d[\d.]*ms\)$", tail),
                 "requirements": names(r"^\s*✗ (REQ-[A-Z]+-\d+)", v),
                 "quality": names(r"^(\S+\(\d+,\d+\): error TS\d+)", q) or lint_errors(q)}
-r["passed"] = all(r[k]["exit"] == 0 for k in ("test_ops", "test", "build", "quality", "verify")) \
+r["passed"] = all(r[k]["exit"] == 0 for k in ("test_ops", "test", "build", "quality", "ui", "verify")) \
     and r["test"]["fail"] == 0 and r["test_ops"]["fail"] == 0 and sha.startswith(r["verify"]["passed_at"] or "-")
 print(json.dumps(r, ensure_ascii=False))
 ' "$tmp" "$sha" "$tree" "$(deployer)" "$(date -u +%Y-%m-%dT%H:%M:%SZ)") || return 1
@@ -989,7 +1046,7 @@ gates_summary() { # gates_summary <record file>: one line
 import json, sys
 r = json.load(open(sys.argv[1]))
 t, o, v = r.get("test") or {}, r.get("test_ops") or {}, r.get("verify") or {}
-fails = [k for k in ("test_ops", "test", "build", "quality", "verify") if (r.get(k) or {}).get("exit") not in (0, None)]
+fails = [k for k in ("test_ops", "test", "build", "quality", "ui", "verify") if (r.get(k) or {}).get("exit") not in (0, None)]
 f = r.get("failing") or {}
 what = "; ".join("%s: %s" % (k, ", ".join(f[k])) for k in ("tests", "requirements", "quality") if f.get(k))
 print("%s %s (tree %s) by %s at %s: npm test %s/%s, test:ops %s passed, build %s, quality %s, VCRM %s, FMEA %s%s" % (
@@ -1184,18 +1241,22 @@ gates_start() { # start the one runner, detached from this session (own session 
 }
 
 gates_prescreen() { # gates_prescreen <sha> <tree>: 0 the gatebox failed the commit (result written); 2 it passed that exact commit; 1 it said nothing: gate it here
-  local sha=$1 tree=$2 log rc=0 last
+  local sha=$1 tree=$2 log rc=0 last h first="" host
   [ -n "$GATEBOX" ] || return 1
-  [[ "$GATEBOX" =~ ^[A-Za-z0-9][A-Za-z0-9.-]*$ ]] || { echo "gatebox: not a host name: $GATEBOX; gating here"; return 1; }
+  for h in $GATEBOX; do # every address must be a plain host name or IP before any reaches ssh
+    [[ "$h" =~ ^[A-Za-z0-9][A-Za-z0-9.-]*$ ]] || { echo "gatebox: not a host name: $h; gating here"; return 1; }
+    [ -n "$first" ] || first=$h
+  done
   [ -r "$GATEBOX_KEY" ] || { echo "gatebox: no key at $GATEBOX_KEY; gating here"; return 1; }
+  host=$(gatebox_reach) || return 1
   mkdir -p "$GATES_DIR/logs"; log="$GATES_DIR/logs/gatebox-${sha:0:12}.log"
-  echo "$(date '+%F %T') gatebox $GATEBOX: screening ${sha:0:7} ..."
+  echo "$(date '+%F %T') gatebox $host: screening ${sha:0:7} ..."
   # BatchMode: never a prompt. The host key is pinned in its own file on first contact (the tailnet has
   # already authenticated the machine); a changed key is refused, and the run falls back to this Mac.
   # macOS has no timeout(1): perl sets the alarm and execs ssh, which SIGALRM then ends (exit 142).
   perl -e 'alarm shift; exec @ARGV' "$GATEBOX_TIMEOUT_S" ssh -i "$GATEBOX_KEY" -o IdentitiesOnly=yes -o BatchMode=yes -o ConnectTimeout=15 -o ServerAliveInterval=30 \
-    -o ServerAliveCountMax=4 -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile="$GATEBOX_HOSTS" \
-    "gate@$GATEBOX" "$GATEBOX_REPO $sha" >"$log" 2>&1 </dev/null || rc=$?
+    -o ServerAliveCountMax=4 -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile="$GATEBOX_HOSTS" -o HostKeyAlias="$first" \
+    "gate@$host" "$GATEBOX_REPO $sha" >"$log" 2>&1 </dev/null || rc=$?
   last=$(grep -E '^gates rc=' "$log" | tail -1)
   # gauss-gate-run prints "gates rc=N in S s on <sha>" after the gates; without that line (ssh 255, busy 75,
   # sha not on GitHub 65, fetch 69, a killed run) the gatebox said nothing about the commit.
@@ -1205,17 +1266,94 @@ gates_prescreen() { # gates_prescreen <sha> <tree>: 0 the gatebox failed the com
     echo "$(date '+%F %T') gatebox passed ${sha:0:7} ($last), without naming the commit; full gates here next"; return 1
   fi
   if [ "$rc" -ge 1 ] && [ "$rc" -le 63 ] && [[ "$last" == "gates rc=$rc "* ]]; then
-    event gates-gatebox gates "failed on the gatebox" sha="$sha" rc:="$rc" host="$GATEBOX"
-    gates_result "$sha" "$tree" FAILED "on gatebox $GATEBOX (npm ci, test, quality:full, build): $last; log $log"
+    event gates-gatebox gates "failed on the gatebox" sha="$sha" rc:="$rc" host="$host"
+    local what; what=$(gates_log_findings brief "$log") # by name, so the result line says which test (see gates why)
+    gates_result "$sha" "$tree" FAILED "on gatebox $host (npm ci, test, quality:full, build): $last${what:+; $what}; log $log"
     return 0
   fi
   if [ "$rc" = 142 ]; then
-    event gates-gatebox gates "gatebox screen timed out" sha="$sha" host="$GATEBOX" seconds:="$GATEBOX_TIMEOUT_S"
+    event gates-gatebox gates "gatebox screen timed out" sha="$sha" host="$host" seconds:="$GATEBOX_TIMEOUT_S"
     echo "$(date '+%F %T') gatebox could not screen ${sha:0:7} (exit 142: no answer in ${GATEBOX_TIMEOUT_S} s); gating here"
     return 1
   fi
   echo "$(date '+%F %T') gatebox could not screen ${sha:0:7} (exit $rc: $(tail -1 "$log" 2>/dev/null)); gating here"
   return 1
+}
+
+# Diagnosing a failed gate (`gates why <commit>`), 18 Nov: a gatebox failure said only "gates rc=1 ... log <path>",
+# and a session had to grep 1,391 lines to learn that one test failed for a known reason.
+# GATES_CAUSES is the list of causes we have actually met: <pattern (Python regex)> TAB <cause> TAB <fix>.
+# Add a row only after a real failure was fixed, with its date; the first rows that match are shown.
+IFS= read -r -d '' GATES_CAUSES <<'CAUSES' || true # read ends at EOF with status 1: expected
+^✖ timestamps: only computeProof's epoch-ms format	the device-auth timestamps test signs with a shared nonce, and two runs in the same millisecond collide on the default timestamp, so the single-use nonce rejects the second (18 Nov, PR #309; fixed by PR #341)	if the commit has PR #341's change, re-queue (it is a flake); otherwise give each proof in the test its own nonce, never relax the nonce check
+^✖ telemetry_descriptor\.json is the current \.proto	telemetry.proto changed without its descriptor (18 Nov, PR #309)	regenerate it with the one-liner at the top of shared/proto/telemetry.proto, commit, re-queue
+ETIMEDOUT|ECONNRESET|ECONNREFUSED|ENOTFOUND|EAI_AGAIN|ENETUNREACH|network request to	the install could not reach the package registry	nothing is wrong with the commit: re-queue it when the link is up (argo doctor)
+error TS2307: Cannot find module	a package is missing where the check ran (18 Nov: a worktree using an older checkout's modules)	if main's package.json has it, the modules there are stale (reinstall in that checkout); otherwise add the dependency
+^✖ Argo Go tests \(exit	an Argo Go test failed inside verify, which does not name it (18 Nov, PRs #315 and #331: timing tests that waited 5 s for a resume and failed on a throttled battery run; fixed by PR #340)	the test name is in test-results/verification/argo-go-test.json of the gates checkout (Action "fail"); run the Argo short suite in tools/argo to see if it is the commit or the machine
+^\s*✗ (REQ-[A-Z]+-\d+)	a requirement has no passing test (VCRM)	npm run verify names it: fix the failing test, or map a passing test to the requirement in requirements/requirements.json
+error TS\d+	a type error	npm run -s check:changed reproduces it in seconds; fix the type (never silence the rule)
+^\s+\d+:\d+\s+error\s	a lint error	fix the code the linter names (never disable or downgrade the rule)
+^✖ .+ \(\d[\d.]*ms\)$	a failing test	run its file alone: node --import tsx --test <file>; fix the cause, not the assertion
+CAUSES
+gates_log_findings() { # gates_log_findings <mode: brief|full> <log>...: what failed, by name, and the known causes that match
+  python3 -Ic '
+import re, sys
+mode, causes, files = sys.argv[1], sys.argv[2], sys.argv[3:]
+text = ""
+for f in files:
+    try: text += open(f, encoding="utf-8", errors="replace").read() + "\n"
+    except OSError: pass
+def names(pat, t, n=3):
+    seen = []
+    for m in re.findall(pat, t, re.M):
+        m = m.strip()
+        if m and m not in seen: seen.append(m)
+    return seen[:n] + (["+%d more" % (len(seen) - n)] if len(seen) > n else [])
+tail = text.split("failing tests:", 1)[1] if "failing tests:" in text else text
+def lint(t, n=3): # the linter prints a file path, then "  line:col  error  message"; the rule ends the block
+    seen, cur = [], ""
+    for line in t.splitlines():
+        if line.startswith("/") and ":" not in line: cur = "/".join(line.strip().split("/")[-2:])
+        m = re.match(r"^\s+(\d+):\d+\s+error\s", line)
+        if m and cur and "%s:%s" % (cur, m.group(1)) not in seen: seen.append("%s:%s" % (cur, m.group(1)))
+    return seen[:n] + (["+%d more" % (len(seen) - n)] if len(seen) > n else [])
+found = [("failing tests", names(r"^✖ (.+?) \(\d[\d.]*ms\)$", tail)),
+         ("requirements", names(r"^\s*✗ (REQ-[A-Z]+-\d+)", text)),
+         ("type errors", names(r"^(\S+\(\d+,\d+\): error TS\d+)", text)),
+         ("lint errors", lint(text))]
+found = [(k, v) for k, v in found if v]
+if mode == "brief":
+    print("; ".join("%s: %s" % (k, ", ".join(v)) for k, v in found))
+    sys.exit(0)
+for k, v in found: print("  %s: %s" % (k, "; ".join(v)))
+hits = 0
+for row in causes.splitlines():
+    parts = row.split("\t")
+    if len(parts) != 3: continue
+    try: ok = re.search(parts[0], text, re.M)
+    except re.error: ok = None
+    if ok and hits and parts[1] == "a failing test": continue # the general advice, only when nothing specific matched
+    if ok and hits < 3:
+        hits += 1
+        print("  cause: %s\n  fix:   %s" % (parts[1], parts[2]))
+if not hits:
+    print("  cause: none of the known causes match" + ("" if text else " (no log to read)"))
+    print("  after the fix, add a row to GATES_CAUSES in scripts/ops/gauss-services.sh so the next one is named")
+' "$1" "$GATES_CAUSES" "${@:2}" 2>/dev/null || true
+}
+gates_why() { # gates_why <commit>: the last failure of that commit, what failed by name, the known cause and its fix
+  local want=${1:?usage: gates why <commit>} line sha tree detail logs=() f pr
+  line=$(awk -v s="$want" '$4 == "FAILED" && index($2, s) == 1' "$GATES_RESULTS" 2>/dev/null | tail -1)
+  if [ -z "$line" ]; then echo "No failed gate on record for $want (see: gates result $want)."; return 3; fi
+  read -r _ sha tree _ detail <<<"$line"
+  f=$(grep -o "log $GATES_DIR/logs/[^ ;)]*" <<<"$detail" | cut -d' ' -f2- || true); [ -n "$f" ] && [ -f "$f" ] && logs+=("$f")
+  for f in "$GATES_DIR/logs/$tree"/*.log "$GATES_DIR/runs/$sha.install.log"; do [ -f "$f" ] && logs+=("$f"); done
+  pr=$(awk -v s="$sha" '$4 == "MOVED" && index($0, "gating " substr(s, 1, 7)) { for (i = 5; i <= NF; i++) if ($i ~ /^#[0-9]+:?$/) p = $i } END { gsub(/[#:]/, "", p); print p }' "$GATES_RESULTS" 2>/dev/null || true)
+  echo "Why ${sha:0:7} failed${pr:+ (PR #$pr)}:"
+  echo "  result: ${detail%%; log *}"
+  gates_log_findings full ${logs[@]+"${logs[@]}"}
+  for f in ${logs[@]+"${logs[@]}"}; do echo "  log: $f"; done
+  echo "Before re-queueing: npm run -s check:changed (the changed projects and their tests), then gates enqueue <new commit> --pr ${pr:-N}."
 }
 
 gates_after_pass() { # gates_after_pass <sha> [<pr>]: run the after-pass hook (GATES_HOOK) if there is one; never fails the runner
@@ -2120,6 +2258,49 @@ network_item() {
   item $ok "network: $argo$note"
 }
 
+# The phone's own battery, from its last mesh report (the iOS Shortcut / Android post in tools/argo/README.md).
+# Prints the percentage, charging or not, and the report's age: never the device name or anything else from
+# the store. A phone at or under PHONE_WARN_BATTERY% and not charging fails the check: when it is the hotspot,
+# the uplink dies with it. No report, or one older than PHONE_STALE_MIN, says nothing about now: it is shown
+# as a note and does not fail the check.
+PHONE_WARN_BATTERY="${GAUSS_PHONE_WARN_BATTERY:-20}"
+PHONE_STALE_MIN="${GAUSS_PHONE_STALE_MIN:-60}"
+phone_battery_item() {
+  local store=${GAUSS_MESH_STORE:-} line
+  if [ -z "$store" ]; then
+    store=$(plutil -extract EnvironmentVariables.MESH_STORE_PATH raw -o - "$AGENTS/uk.lightbound.gauss-backend.plist" 2>/dev/null || true)
+  fi
+  line=$(python3 -Ic '
+import json, sys
+from datetime import datetime, timezone
+warn, stale = float(sys.argv[2]), float(sys.argv[3])
+best = None
+try:
+    for d in json.load(open(sys.argv[1])):
+        l = d.get("last") or {}
+        b = l.get("battery") or {}
+        if l.get("platform") not in ("ios", "android") or not isinstance(b.get("level"), (int, float)) or isinstance(b.get("level"), bool):
+            continue
+        age = (datetime.now(timezone.utc) - datetime.fromisoformat(l["receivedAt"].replace("Z", "+00:00"))).total_seconds() / 60
+        if best is None or age < best[0]:
+            best = (age, b["level"], bool(b.get("charging")))
+except Exception:
+    best = None
+if best is None:
+    print("note phone battery: no phone has reported (mesh Shortcut: tools/argo/README.md)")
+else:
+    age, level, charging = best
+    ago = "%.0f min ago" % age if age < 120 else "%.0f h ago" % (age / 60)
+    if age > stale:
+        print("note phone battery: %.0f%% as of %s, too old to judge (run the mesh Shortcut on the phone)" % (level, ago))
+    elif level <= warn and not charging:
+        print("no phone battery %.0f%%, not charging (reported %s): plug it in; if it is the hotspot, the uplink goes with it" % (level, ago))
+    else:
+        print("ok phone battery %.0f%%, %s (reported %s)" % (level, "charging" if charging else "not charging", ago))
+' "${store:-/nonexistent}" "$PHONE_WARN_BATTERY" "$PHONE_STALE_MIN" 2>/dev/null || echo "note phone battery: no phone has reported (mesh Shortcut: tools/argo/README.md)")
+  if [ "${line%% *}" = note ]; then printf '  – %s\n' "${line#* }"; else item "${line%% *}" "${line#* }"; fi
+}
+
 resilience() { # can background work survive the lid closed, the battery, memory and the network?
   local fail=0 ok batt pct level swap free
   batt=$(pmset -g batt); pct=$(grep -Eo -m1 '[0-9]+%' <<<"$batt" | tr -d % || true)
@@ -2153,6 +2334,7 @@ resilience() { # can background work survive the lid closed, the battery, memory
   else
     item ok "phone alerts: iMessage via argo notify"
   fi
+  phone_battery_item
   grep -q claude-phone-hook "$HOME/.claude/settings.json" 2>/dev/null && ok=ok || ok=no
   item $ok "Claude Code prompts forwarded to the phone$([ $ok = no ] && echo " (Notification hook missing)")"
   [ $fail = 0 ] && echo "Resilient: safe to close the lid and go." || echo "Not resilient yet: fix the ✗ items above."
@@ -2374,6 +2556,7 @@ case "${1:-}" in
       run-one) gates_run_one "${3:?}" "${4:-}" "${5:-}" ;;
       result) if [ "${3:-}" = status ]; then gates_status; else gates_show_result "${3:-}"; fi ;;
       passed) gates_passed "${3:-}" ;;
+      why) gates_why "${3:-}" ;;
       queue) gates_queue ;;
       priority) gates_priority "${3:-}" "${4:-front}" ;;
       waiting) gates_waiting ;;
