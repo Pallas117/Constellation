@@ -84,4 +84,27 @@ test("devices can only be modified and listed by their owner or an admin", async
     const adminIds = await ids("carol", "admin");
     assert.ok(adminIds.includes(aliceDevice.id) && adminIds.includes(bobDevice.id));
   });
+
+  await t.test("another user cannot read a device or send it proofs, and gets the same 404 as for a missing id", async () => {
+    const read = await call(`/${aliceDevice.id}`, "bob");
+    const missing = await call("/no-such-device", "bob");
+    assert.equal(read.status, 404);
+    assert.deepEqual(await read.json(), await missing.json(), "someone else's device looks like a missing one");
+    const proof = await call(`/${aliceDevice.id}/proof`, "bob", { body: { sig: "0".repeat(64), timestamp: Date.now().toString() } });
+    assert.equal(proof.status, 404, "bob cannot mark alice's device untrusted with bad proofs");
+    const mine = ((await (await call(`/${aliceDevice.id}`, "alice")).json()) as DeviceBody).device;
+    assert.notEqual(mine.status, "untrusted");
+    // A staff or operator role is not ownership: only admin reaches other users' devices.
+    assert.equal((await call(`/${aliceDevice.id}`, "dave", { role: "operator" })).status, 404);
+  });
+
+  await t.test("registration bounds the client's fingerprint hash and name (memory per account)", async () => {
+    const huge = "f".repeat(300);
+    assert.equal((await call("/register", "erin", { body: { fingerprintHash: huge } })).status, 400);
+    assert.equal((await call("/register", "erin", { body: { fingerprintHash: "fp-erin", name: "n".repeat(500) } })).status, 400);
+    assert.equal((await call("/register", "erin", { body: { fingerprintHash: "fp-erin", name: { first: "x" } } })).status, 400);
+    const ok = await call("/register", "erin", { body: { fingerprintHash: "a".repeat(64), name: "Erin's laptop" } });
+    assert.equal(ok.status, 201);
+    assert.equal(((await ok.json()) as DeviceBody).device.name, "Erin's laptop");
+  });
 });

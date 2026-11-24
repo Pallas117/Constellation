@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { isIP } from "node:net";
 import type { Request } from "express";
 import type { AuthRole } from "../auth.js";
 
@@ -145,6 +146,45 @@ const SIGNATURE_PATTERNS: Array<{ name: string; pattern: RegExp; severity: Cyber
   { name: "xss-marker", pattern: /(<script|%3cscript|javascript:)/i, severity: "high" },
   { name: "cmd-injection", pattern: /(;|\|\||&&)\s*(cat|bash|sh|curl|wget)\b/i, severity: "critical" },
 ];
+
+/**
+ * Longest block, in seconds (30 days). Beyond about 8.64e12 s the expiry is not a valid date:
+ * `toISOString()` then throws inside blockIp and getStatus, and the status route stays a 500
+ * until the entry is removed.
+ */
+export const MAX_BLOCK_SECONDS = 30 * 24 * 60 * 60;
+const MAX_BLOCK_REASON_CHARS = 200;
+/** Longest textual IPv6 address with an embedded IPv4 part is 45 characters. */
+const MAX_IP_CHARS = 45;
+
+export type AdminBlockInput = { ok: true; ip: string; reason: string; seconds?: number } | { ok: false; error: string };
+
+/**
+ * The admin block request body: `{ ip, reason?, seconds? }`. `ip` must be an IPv4/IPv6 address
+ * (lowercased, as extractClientIp stores them, so the block matches); anything else is refused
+ * instead of thrown on (a non-string `ip` used to be a TypeError and a 500).
+ */
+export function parseAdminBlock(body: unknown): AdminBlockInput {
+  const input = (body && typeof body === "object" && !Array.isArray(body) ? body : {}) as Record<string, unknown>;
+  const ip = typeof input.ip === "string" ? input.ip.trim().toLowerCase() : "";
+  if (!ip) return { ok: false, error: "Missing ip" };
+  if (ip.length > MAX_IP_CHARS || isIP(ip) === 0) return { ok: false, error: "ip must be an IPv4 or IPv6 address" };
+  if (input.reason !== undefined && typeof input.reason !== "string") return { ok: false, error: "reason must be text" };
+  const reason = (input.reason ?? "").trim().slice(0, MAX_BLOCK_REASON_CHARS) || "manual-admin-action";
+  if (input.seconds === undefined || input.seconds === null) return { ok: true, ip, reason };
+  const seconds = Number(input.seconds);
+  if (!Number.isFinite(seconds) || seconds <= 0) return { ok: false, error: "seconds must be a positive number" };
+  return { ok: true, ip, reason, seconds: Math.min(Math.ceil(seconds), MAX_BLOCK_SECONDS) };
+}
+
+/** The admin unblock request body: `{ ip }`. Any short text is accepted, so odd entries can still be removed. */
+export function parseAdminUnblock(body: unknown): { ok: true; ip: string } | { ok: false; error: string } {
+  const input = (body && typeof body === "object" && !Array.isArray(body) ? body : {}) as Record<string, unknown>;
+  const ip = typeof input.ip === "string" ? input.ip.trim().toLowerCase() : "";
+  if (!ip) return { ok: false, error: "Missing ip" };
+  if (ip.length > MAX_IP_CHARS) return { ok: false, error: "ip is too long" };
+  return { ok: true, ip };
+}
 
 /** Expired rate/auth-failure windows are swept at most this often. */
 const WINDOW_SWEEP_INTERVAL_MS = 10_000;
@@ -361,7 +401,8 @@ export class CyberTigerDaemon {
     seconds?: number,
     metadata?: { requestId?: string; method?: string; path?: string; actorUserId?: string; actorRole?: AuthRole },
   ): void {
-    const durationSec = seconds && seconds > 0 ? seconds : this.config.autoBlockSeconds;
+    const requested = seconds && seconds > 0 ? seconds : this.config.autoBlockSeconds;
+    const durationSec = Math.min(requested, MAX_BLOCK_SECONDS);
     const untilMs = Date.now() + durationSec * 1000;
     this.blocklist.set(ip, { untilMs, reason });
     this.addEvent({

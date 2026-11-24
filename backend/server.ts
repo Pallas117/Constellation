@@ -12,8 +12,8 @@ import {
   type AuthContext,
   type AuthenticatedRequest,
 } from "./auth.js";
-import { CyberTigerDaemon } from "./cybertiger/daemon.js";
-import { inferNowcast, triggerTraining } from "./ml-client/client.js";
+import { CyberTigerDaemon, parseAdminBlock, parseAdminUnblock } from "./cybertiger/daemon.js";
+import { inferNowcast, parseNowcastRequest, triggerTraining } from "./ml-client/client.js";
 import {
   canonicalSince,
   getAuroraMap,
@@ -28,9 +28,9 @@ import type {
   CanonicalSpaceWeatherPoint,
   MMSReconVectorPoint,
   IngestionTickResult,
-  NowcastInferenceRequest,
 } from "./types.js";
 import { bodyErrorResponse } from "./lib/body-errors.js";
+import { asyncRoute } from "./lib/async-route.js";
 import { withFreshness } from "./lib/freshness.js";
 import { canSend, sweepDeadSockets, trackLiveness, WS_HEARTBEAT_MS } from "./lib/socket-keepalive.js";
 import { IngestionWorker, liveIngestSources } from "./worker/ingest-loop.js";
@@ -82,14 +82,22 @@ type CyberTigerRequest = AuthenticatedRequest & {
 };
 
 app.disable("x-powered-by");
-app.use(express.json({ limit: "2mb" }));
-app.use((_req, res, next) => {
+app.use((req, res, next) => {
   res.setHeader("x-content-type-options", "nosniff");
   res.setHeader("x-frame-options", "DENY");
   res.setHeader("referrer-policy", "no-referrer");
   res.setHeader("permissions-policy", "geolocation=(), microphone=(), camera=()");
+  // This server answers JSON, protobuf and PDF downloads, never a page: if a browser ever renders
+  // one as a document, it may load nothing and be framed by nobody. better-auth's own pages
+  // (/api/auth/*) keep its defaults.
+  if (!req.path.startsWith("/api/auth/")) {
+    res.setHeader("content-security-policy", "default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'");
+  }
   next();
 });
+
+// After the security headers, so a rejected body (400/413/415) carries them too.
+app.use(express.json({ limit: "2mb" }));
 
 const allowedOrigins = (process.env.ALLOWED_ORIGINS ?? "http://localhost:8080,http://localhost:5173,http://127.0.0.1:5173,http://127.0.0.1:8080")
   .split(",")
@@ -199,7 +207,7 @@ async function currentTpms() {
   });
 }
 
-app.get("/health", async (_req, res) => {
+app.get("/health", asyncRoute(async (_req, res) => {
   // Public: overall TPM status and the ids of red measures only, no values. GAU-122.
   const tpms = await currentTpms();
   res.json({
@@ -207,7 +215,7 @@ app.get("/health", async (_req, res) => {
     timestamp: new Date().toISOString(),
     tpm: { status: overall(tpms), red: tpms.filter((t) => t.status === "red").map((t) => t.id) },
   });
-});
+}));
 
 app.use("/api", (req: express.Request, res: express.Response, next: express.NextFunction) => {
   const start = Date.now();
@@ -310,7 +318,7 @@ app.use("/api/trust/evidence", createEvidenceRouter());
 // Knowledge memory: the Cosmic Brain sidecar (backend/memory/client.ts, docs/memory-sidecar.md).
 // Nothing here is mocked: when the service is down the reply says so, never a canned count or
 // answer. Indexing is an operator task on the memory host and has no route here.
-app.get("/api/rag/status", async (_req, res) => {
+app.get("/api/rag/status", asyncRoute(async (_req, res) => {
   const status = await memoryStatus();
   if (!status.available) {
     // configured: false (GAUSS_MEMORY_URL=off) tells the console to hide the panel, not show it offline.
@@ -318,9 +326,9 @@ app.get("/api/rag/status", async (_req, res) => {
     return;
   }
   res.json({ ok: true, chunkCount: status.chunks, ...status });
-});
+}));
 
-app.post("/api/rag/query", async (req: express.Request, res: express.Response) => {
+app.post("/api/rag/query", asyncRoute(async (req: express.Request, res: express.Response) => {
   const { query, topK } = (req.body ?? {}) as { query?: unknown; topK?: unknown };
   if (typeof query !== "string" || !query.trim()) {
     res.status(400).json({ ok: false, error: "Missing query" });
@@ -336,12 +344,12 @@ app.post("/api/rag/query", async (req: express.Request, res: express.Response) =
     return;
   }
   res.json({ ok: true, answer: result.answer, sources: result.sources });
-});
+}));
 
 // Device lifecycle endpoints: any signed-in user, for their own devices (API_POLICY in rbac.ts)
 app.use("/api/device", deviceRegistryRouter);
 
-app.get("/api/feed/space-weather/5s", async (req: AuthenticatedRequest, res) => {
+app.get("/api/feed/space-weather/5s", asyncRoute(async (req: AuthenticatedRequest, res) => {
   const lookbackMs = parseLookback(req.query.lookback, 24 * 60 * 60 * 1000);
   const limit = queryLimit(req.query.limit, 17280, 17280);
   const token = req.auth?.token;
@@ -361,9 +369,9 @@ app.get("/api/feed/space-weather/5s", async (req: AuthenticatedRequest, res) => 
 
   // The 24 h backfill is ~56 MB: streamed in chunks (same bytes) so it doesn't stall other requests.
   await sendJsonList(res, { source: "memory", count: points.length }, "points", points);
-});
+}));
 
-app.get("/api/feed/space-weather/latest", async (req: AuthenticatedRequest, res) => {
+app.get("/api/feed/space-weather/latest", asyncRoute(async (req: AuthenticatedRequest, res) => {
   const fromDb = await fetchCanonicalFromDb(5 * 60 * 1000, 1, req.auth?.token);
   let point = fromDb && fromDb.length > 0 ? fromDb[fromDb.length - 1] : getLatestCanonical();
 
@@ -379,7 +387,7 @@ app.get("/api/feed/space-weather/latest", async (req: AuthenticatedRequest, res)
     return;
   }
   res.json(withFreshness(point));
-});
+}));
 
 app.get("/api/feed/space-objects", (_req, res) => {
   res.json({
@@ -390,7 +398,7 @@ app.get("/api/feed/space-objects", (_req, res) => {
 });
 
 // 72-hour anomaly forecast: a trained model's output, or an explicit "unavailable"
-app.get("/api/forecast/anomaly", async (_req, res) => {
+app.get("/api/forecast/anomaly", asyncRoute(async (_req, res) => {
   // Serve the ingest loop's forecast (computed from its last 6 h of measured points every 5 min)
   // instead of calling the model with no data on every request. GAU-115.
   const forecast = worker.getLatestForecast();
@@ -405,9 +413,9 @@ app.get("/api/forecast/anomaly", async (_req, res) => {
     horizonHours: 3,
     reason: "No forecast computed yet; the ingest loop runs one every 5 min.",
   });
-});
+}));
 
-app.get("/api/feed/space-weather/latest/proto", async (req: AuthenticatedRequest, res) => {
+app.get("/api/feed/space-weather/latest/proto", asyncRoute(async (req: AuthenticatedRequest, res) => {
   const fromDb = await fetchCanonicalFromDb(5 * 60 * 1000, 1, req.auth?.token);
   let point = fromDb && fromDb.length > 0 ? fromDb[fromDb.length - 1] : getLatestCanonical();
   
@@ -429,9 +437,9 @@ app.get("/api/feed/space-weather/latest/proto", async (req: AuthenticatedRequest
   } catch (err) {
     res.status(500).end();
   }
-});
+}));
 
-app.get("/api/feed/mms/reconnection", async (req: AuthenticatedRequest, res) => {
+app.get("/api/feed/mms/reconnection", asyncRoute(async (req: AuthenticatedRequest, res) => {
   const lookbackMs = parseLookback(req.query.lookback, 2 * 60 * 60 * 1000);
   const limit = queryLimit(req.query.limit, 1440, 5000);
   const token = req.auth?.token;
@@ -454,9 +462,9 @@ app.get("/api/feed/mms/reconnection", async (req: AuthenticatedRequest, res) => 
     count: vectors.length,
     vectors,
   });
-});
+}));
 
-app.get("/api/feed/mms/reconnection/latest", async (req: AuthenticatedRequest, res) => {
+app.get("/api/feed/mms/reconnection/latest", asyncRoute(async (req: AuthenticatedRequest, res) => {
   const fromDb = await fetchMmsFromDb(30 * 60 * 1000, 1, req.auth?.token);
   let vector = fromDb && fromDb.length > 0 ? fromDb[fromDb.length - 1] : getLatestMms();
 
@@ -472,11 +480,25 @@ app.get("/api/feed/mms/reconnection/latest", async (req: AuthenticatedRequest, r
     return;
   }
   res.json(vector);
-});
+}));
 
-app.get("/api/feed/aurora/map", async (req: AuthenticatedRequest, res) => {
-  const timestamp = typeof req.query.ts === "string" ? req.query.ts : null;
-  const projection = typeof req.query.projection === "string" ? req.query.projection : "gsm";
+/** Frame labels a client may ask the aurora map for (GSM is what the UI requests). */
+const AURORA_MAP_FRAMES: ReadonlySet<string> = new Set(["gsm", "gse", "geo", "sm", "mag"]);
+
+app.get("/api/feed/aurora/map", asyncRoute(async (req: AuthenticatedRequest, res) => {
+  // Both are echoed into the reply, and each new pair costs a fresh compression of the ~5 MB map:
+  // only a frame name and a real timestamp are accepted, never free text.
+  const projection = req.query.projection === undefined ? "gsm" : req.query.projection;
+  if (typeof projection !== "string" || !AURORA_MAP_FRAMES.has(projection)) {
+    res.status(400).json({ error: `projection must be one of: ${[...AURORA_MAP_FRAMES].join(", ")}` });
+    return;
+  }
+  const rawTs = req.query.ts;
+  if (rawTs !== undefined && (typeof rawTs !== "string" || rawTs.length > 40 || !Number.isFinite(Date.parse(rawTs)))) {
+    res.status(400).json({ error: "ts must be an ISO 8601 timestamp" });
+    return;
+  }
+  const timestamp = typeof rawTs === "string" ? new Date(rawTs).toISOString() : null;
 
   const map = getAuroraMap();
   if (!map) {
@@ -493,7 +515,7 @@ app.get("/api/feed/aurora/map", async (req: AuthenticatedRequest, res) => {
   res.setHeader("Content-Type", "application/json; charset=utf-8");
   if (reply.encoding !== "identity") res.setHeader("Content-Encoding", reply.encoding);
   res.send(reply.body);
-});
+}));
 
 app.get("/api/feed/sources/status", (req: AuthenticatedRequest, res) => {
   res.json({
@@ -530,10 +552,10 @@ app.get("/api/world/state", (_req: AuthenticatedRequest, res) => {
 });
 
 // Technical performance measures with thresholds and margins (NASA SE §6.7). GAU-122.
-app.get("/api/system/tpm", async (_req: AuthenticatedRequest, res) => {
+app.get("/api/system/tpm", asyncRoute(async (_req: AuthenticatedRequest, res) => {
   const tpms = await currentTpms();
   res.json({ generatedAt: new Date().toISOString(), status: overall(tpms), measures: tpms });
-});
+}));
 
 // L1 structure candidates over the last 24 h (GAU-139), for the operator console (GAU-154). Before
 // the first RTSW fetch there is nothing yet: 200 with null, never an error the UI would retry on.
@@ -552,85 +574,64 @@ app.get("/api/security/cybertiger/events", (req: AuthenticatedRequest, res) => {
   });
 });
 
+// Admin block list controls. The body is validated (backend/cybertiger/daemon.ts): a real IP
+// address, a short reason, and a duration of at most MAX_BLOCK_SECONDS.
 app.post("/api/security/cybertiger/block", (req: AuthenticatedRequest, res) => {
-  const input = req.body as { ip?: string; reason?: string; seconds?: number };
-  const ip = (input.ip ?? "").trim();
-  if (!ip) {
-    res.status(400).json({ error: "Missing ip" });
+  const input = parseAdminBlock(req.body);
+  if (!input.ok) {
+    res.status(400).json({ error: input.error });
     return;
   }
-  const reason = (input.reason ?? "manual-admin-action").trim();
-  const seconds = Number(input.seconds);
-  cyberTiger.blockIp(
-    ip,
-    reason.length > 0 ? reason : "manual-admin-action",
-    Number.isFinite(seconds) && seconds > 0 ? seconds : undefined,
-    {
-      actorRole: req.auth?.role,
-      actorUserId: req.auth?.userId,
-    },
-  );
-  res.json({ ok: true, ip, reason, seconds: Number.isFinite(seconds) && seconds > 0 ? seconds : null });
-});
-
-app.post("/api/security/cybertiger/unblock", (req: AuthenticatedRequest, res) => {
-  const input = req.body as { ip?: string };
-  const ip = (input.ip ?? "").trim();
-  if (!ip) {
-    res.status(400).json({ error: "Missing ip" });
-    return;
-  }
-  const removed = cyberTiger.unblockIp(ip, {
+  cyberTiger.blockIp(input.ip, input.reason, input.seconds, {
     actorRole: req.auth?.role,
     actorUserId: req.auth?.userId,
   });
-  res.json({ ok: removed, ip });
+  res.json({ ok: true, ip: input.ip, reason: input.reason, seconds: input.seconds ?? null });
 });
 
-app.post("/api/ai/nowcast/infer", async (req: AuthenticatedRequest, res) => {
-  try {
-    const body = req.body as Partial<NowcastInferenceRequest>;
-    const sequence = Array.isArray(body.sequence) ? body.sequence : [];
-    const horizonMinutes = Math.max(5, Math.min(Number(body.horizonMinutes ?? 60), 180));
+app.post("/api/security/cybertiger/unblock", (req: AuthenticatedRequest, res) => {
+  const input = parseAdminUnblock(req.body);
+  if (!input.ok) {
+    res.status(400).json({ error: input.error });
+    return;
+  }
+  const removed = cyberTiger.unblockIp(input.ip, {
+    actorRole: req.auth?.role,
+    actorUserId: req.auth?.userId,
+  });
+  res.json({ ok: removed, ip: input.ip });
+});
 
-    if (sequence.length === 0) {
-      const current = getLatestCanonical();
-      if (!current) {
-        res.status(400).json({ error: "No sequence provided and no live feed available" });
-        return;
-      }
-      const fallbackResponse = await inferNowcast({
-        horizonMinutes,
-        sequence: [current],
-      });
-      res.json(fallbackResponse);
+app.post("/api/ai/nowcast/infer", asyncRoute(async (req: AuthenticatedRequest, res) => {
+  const parsed = parseNowcastRequest(req.body);
+  if (!parsed.ok) {
+    res.status(400).json({ error: parsed.error });
+    return;
+  }
+  const { horizonMinutes } = parsed;
+  let sequence = parsed.sequence;
+  if (sequence.length === 0) {
+    const current = getLatestCanonical();
+    if (!current) {
+      res.status(400).json({ error: "No sequence provided and no live feed available" });
       return;
     }
-
-    const response = await inferNowcast({
-      horizonMinutes,
-      sequence,
-    });
-    res.json(response);
+    sequence = [current];
+  }
+  try {
+    res.json(await inferNowcast({ horizonMinutes, sequence }));
   } catch (error) {
     // The message can carry the upstream ML URL: log the error name only, answer a fixed text.
     console.error(`[nowcast] inference failed (${error instanceof Error ? error.name : "unknown"})`);
     res.status(500).json({ error: "Inference failed" });
   }
-});
+}));
 
-app.post("/api/ai/nowcast/train", async (_req, res) => {
-  try {
-    const result = await triggerTraining();
-    if (!result.started) {
-      res.status(500).json(result);
-      return;
-    }
-    res.json(result);
-  } catch (error) {
-    res.status(500).json({ error: error instanceof Error ? error.message : "Training trigger failed" });
-  }
-});
+app.post("/api/ai/nowcast/train", asyncRoute(async (_req, res) => {
+  // triggerTraining answers fixed text and logs only the error code; never echo an error message here.
+  const result = await triggerTraining();
+  res.status(result.started ? 200 : 503).json(result);
+}));
 
 const server = http.createServer(app);
 
@@ -853,7 +854,8 @@ export async function stopBackend(): Promise<void> {
 
 app.use((error: unknown, req: express.Request, res: express.Response, _next: express.NextFunction) => {
   // GAU-231: a bad request body is the client's mistake (400/413/415), not a server fault.
-  // express.json() runs before the security headers, so set the one a JSON answer needs here.
+  // The security headers are already set (their middleware runs before express.json()); nosniff
+  // is repeated here so this answer never depends on that order.
   const bodyError = bodyErrorResponse(error);
   if (bodyError) {
     // Never log the error itself: body-parser attaches the raw body to it.
@@ -862,7 +864,15 @@ app.use((error: unknown, req: express.Request, res: express.Response, _next: exp
     res.status(bodyError.status).json({ error: bodyError.error });
     return;
   }
-  console.error("[backend] unhandled error", error);
+  // The error's name and where it was thrown, not its message: messages can carry upstream URLs,
+  // tokens or request data.
+  const frames = error instanceof Error ? (error.stack ?? "").split("\n").slice(1, 6).join("\n") : "";
+  console.error(`[backend] unhandled error (${error instanceof Error ? error.name : typeof error}) on ${req.method} ${req.path}\n${frames}`);
+  if (res.headersSent) {
+    // The answer already started: it can't become a 500, so cut it off rather than leave it hanging.
+    res.destroy();
+    return;
+  }
   res.status(500).json({ error: "Internal server error" });
 });
 
