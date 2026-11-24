@@ -2,14 +2,14 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { AuthenticatedRequest, AuthRole } from "../auth.js";
 import { createSensor } from "./sensor.js";
-import { loginMapFrom, TAILNET_IDENTITY, tailnetIdentity } from "./tailnet.js";
+import { loginMapFrom, TAILNET_IDENTITY, tailnetIdentity, tailnetIdentityEnabled } from "./tailnet.js";
 
-function setup(options: { map?: Map<string, string[]>; enabled?: boolean } = {}) {
+function setup(options: { map?: Map<string, string[]>; enabled?: boolean; noTailscale?: boolean } = {}) {
   const alarms: string[] = [];
   const sensor = createSensor({ alarm: (title) => void alarms.push(title), log: () => undefined });
   const owners: Record<string, string> = { "100.73.1.1": "josh@lightbound.uk", "100.73.2.2": "intruder@example.com" };
   const identity = tailnetIdentity({
-    lookup: { whois: async (ip) => owners[ip] ?? null, self: async () => "josh@lightbound.uk" },
+    lookup: options.noTailscale ? null : { whois: async (ip) => owners[ip] ?? null, self: async () => "josh@lightbound.uk" },
     sensor,
     ipOf: (req) => (req as unknown as { testIp: string }).testIp,
     loginMap: options.map ?? new Map(),
@@ -48,4 +48,19 @@ test("TAILNET_LOGIN_MAP links an account to a different Tailscale login; TAILNET
   assert.equal((await mapped.call("POST", "/rag/query", "100.73.1.1", "operator", "ops@lightbound.uk")).status, 428);
   const off = setup({ enabled: false });
   assert.equal((await off.call("POST", "/rag/query", "100.73.2.2")).status, 200);
+});
+
+test("without a tailscale binary the check fails closed: operator requests refused (428, no alarm) unless it is turned off (TM-11)", async () => {
+  const closed = setup({ noTailscale: true });
+  for (const ip of ["127.0.0.1", "100.73.1.1"]) {
+    const r = await closed.call("POST", "/rag/query", ip);
+    assert.equal(r.status, 428, `${ip}: refused`);
+    assert.equal((r.body as { code: string }).code, TAILNET_IDENTITY);
+    assert.match((r.body as { error: string }).error, /can't confirm your device with Tailscale/);
+  }
+  assert.deepEqual(closed.alarms, [], "a set-up problem, not an intruder: no alarm");
+  assert.equal((await closed.call("GET", "/feed/aurora/map", "100.73.1.1")).status, 200, "viewer routes unaffected");
+  assert.equal((await setup({ noTailscale: true, enabled: false }).call("POST", "/rag/query", "100.73.2.2")).status, 200, "TAILNET_IDENTITY=off");
+  assert.equal(tailnetIdentityEnabled({}), true);
+  assert.equal(tailnetIdentityEnabled({ TAILNET_IDENTITY: " OFF " }), false);
 });

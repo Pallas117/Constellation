@@ -11,7 +11,8 @@
  *   is this Mac's own owner (`tailscale status`).
  * - The account's email must equal the Tailscale login, unless TAILNET_LOGIN_MAP says otherwise:
  *   "jzwnathan@lightbound.uk=someone@gmail.com,ops@lightbound.uk=…".
- * - TAILNET_IDENTITY=off turns it off; without a tailscale binary it is off.
+ * - TAILNET_IDENTITY=off turns it off. Without a tailscale binary it fails closed: operator and admin
+ *   requests are refused (428) until Tailscale is installed or the check is turned off (threat model TM-11).
  * Lookups are cached for a minute per address (five for this Mac's owner).
  */
 import { execFile } from "node:child_process";
@@ -22,6 +23,10 @@ import { policyFor } from "../rbac.js";
 import type { Sensor } from "./sensor.js";
 
 export const TAILNET_IDENTITY = "TAILNET_IDENTITY";
+
+/** On unless TAILNET_IDENTITY=off. */
+export const tailnetIdentityEnabled = (env: NodeJS.ProcessEnv = process.env): boolean =>
+  (env.TAILNET_IDENTITY ?? "").trim().toLowerCase() !== "off";
 
 export interface TailnetLookup {
   /** The Tailscale login that owns the device at this tailnet address, or null. */
@@ -89,14 +94,16 @@ export function tailnetIdentity(options: {
   loginMap?: Map<string, string[]>;
   enabled?: () => boolean;
 }) {
-  const enabled = options.enabled ?? (() => (process.env.TAILNET_IDENTITY ?? "").trim().toLowerCase() !== "off");
+  const enabled = options.enabled ?? (() => tailnetIdentityEnabled());
   const map = options.loginMap ?? loginMapFrom();
 
   /** null when the device's owner is the account's owner (or the check is off), else what to say. */
-  const check = async (req: AuthenticatedRequest): Promise<{ ip: string; login: string | null } | null> => {
+  const check = async (req: AuthenticatedRequest): Promise<{ ip: string; login: string | null; unavailable?: true } | null> => {
     const auth = req.auth;
-    if (!options.lookup || !enabled() || !auth || auth.token === "dev-bypass") return null;
+    if (!enabled() || !auth || auth.token === "dev-bypass") return null;
     const ip = options.ipOf(req);
+    // Fail closed: the check is on but this server can't ask Tailscale, so nobody's device can be confirmed.
+    if (!options.lookup) return { ip, login: null, unavailable: true };
     const login = isLoopback(ip) ? await options.lookup.self() : isTailnet(ip) ? await options.lookup.whois(ip) : null;
     const email = auth.email?.toLowerCase() ?? "";
     const expected = map.get(email) ?? [email];
@@ -112,6 +119,14 @@ export function tailnetIdentity(options: {
     const mismatch = await check(req);
     if (!mismatch) {
       next();
+      return;
+    }
+    if (mismatch.unavailable) {
+      // A server set-up problem, not an intruder: no alarm, and 428 (never 401/403) so CyberTiger can't block anyone.
+      res.status(428).json({
+        error: "Operator access is closed: this server can't confirm your device with Tailscale. Install Tailscale on the server, or set TAILNET_IDENTITY=off.",
+        code: TAILNET_IDENTITY,
+      });
       return;
     }
     options.sensor.record("identity-mismatch", {

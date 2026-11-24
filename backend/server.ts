@@ -66,7 +66,7 @@ import { createAdminUsersRouter } from "./admin/users.js";
 import { passkeyWarnings } from "./passkey-policy.js";
 import { createPatternRouter } from "./pattern/router.js";
 import { alarmStatus, argoAlarm, createSensor, watchAccess } from "./pattern/sensor.js";
-import { tailnetIdentity, tailscaleLookup } from "./pattern/tailnet.js";
+import { tailnetIdentity, tailnetIdentityEnabled, tailscaleLookup } from "./pattern/tailnet.js";
 import { createPadRequests, createPatternStore, patternPepper } from "./pattern/store.js";
 import { windowLimit } from "./rate-limit.js";
 import { toNodeHandler } from "better-auth/node";
@@ -181,7 +181,8 @@ const patternStore = createPatternStore(authDb, { pepper: patternPepperKey });
 const patternAlarm = alarmStatus();
 const patternSensor = createSensor({ alarm: argoAlarm(), log: (e) => cyberTiger.recordSensorEvent(e) });
 // Operator sessions only count from the account owner's own device on the tailnet (backend/pattern/tailnet.ts).
-const deviceIdentity = tailnetIdentity({ lookup: tailscaleLookup(), sensor: patternSensor, ipOf: (req) => cyberTiger.extractClientIp(req) });
+const tailnetLookup = tailscaleLookup();
+const deviceIdentity = tailnetIdentity({ lookup: tailnetLookup, sensor: patternSensor, ipOf: (req) => cyberTiger.extractClientIp(req) });
 // Where phones open the pattern pad, e.g. the tailnet share's https origin; unset: draw on the computer only.
 const patternPadOrigin = process.env.PATTERN_PAD_ORIGIN?.trim().replace(/\/+$/, "") || null;
 
@@ -888,6 +889,9 @@ export async function startBackend(options?: { host?: string; port?: number }): 
       : `[backend] passkeys off: no secure origin matches RP ID ${passkeyConfig.rpID}`,
   );
   for (const note of passkeyWarnings(passkeyConfig)) console.warn(note);
+  if (!tailnetLookup && tailnetIdentityEnabled()) {
+    console.error("[backend] WARNING: no tailscale binary, so the tailnet identity check refuses every operator and admin request (TM-11). Install Tailscale or set TAILNET_IDENTITY=off.");
+  }
   if (!patternAlarm.ok) {
     // Duress and lock events still reach the CyberTiger log; only the phone alarm is missing (threat model TM-10).
     const note = `duress and lock alarms reach no phone: ${patternAlarm.detail}. Events still go to the CyberTiger log.`;
