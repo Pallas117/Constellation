@@ -78,8 +78,9 @@ footer.wrap{padding-bottom:max(48px,calc(24px + env(safe-area-inset-bottom,0px))
    foot of the screen, left-aligned with the header mark. The hole's edge is a mask, not a halo. */
 /* No section padding: the stage starts at the top of the screen, so the slogan's 96px foot is on screen at load. */
 .hero{position:relative;border-bottom:1px solid var(--char);isolation:isolate;padding-block:0}
-.hero-stage{position:relative;min-height:max(560px,100svh);display:grid;align-items:end;overflow:hidden;isolation:isolate;--hole:50% 44%}
-.hero .poster,.hero .film{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;z-index:-2;transform-origin:var(--hole)}
+.hero-stage{position:relative;min-height:max(560px,100svh);display:grid;align-items:end;overflow:hidden;isolation:isolate;--hole:50% 44%;--dive:50% 39.4%}
+/* --dive: the darkest point of the shadow in the film (measured on the poster: 13.5% of the frame height from any light), which the camera falls toward. */
+.hero .poster,.hero .film{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;z-index:-2;transform-origin:var(--dive,var(--hole))}
 /* The film is decoration: taps go through it, and iOS (Low Power Mode blocks autoplay) shows no play button over it;
    the poster frame shows instead. */
 .hero .film{pointer-events:none}
@@ -123,7 +124,7 @@ footer.wrap{padding-bottom:max(48px,calc(24px + env(safe-area-inset-bottom,0px))
     .hero-copy{animation:recede linear both;animation-timeline:--hero;animation-range:contain 20% contain 70%}
   }
 }
-@keyframes pull{from{transform:scale(.18);opacity:.7}to{transform:none;opacity:1}}
+@keyframes pull{from{transform:scale(.18) rotate(-9deg);opacity:.7}to{transform:none;opacity:1}}
 @keyframes rush{from{transform:scale(.55)}to{transform:scale(1.9);opacity:.15}}
 @keyframes recede{to{transform:scale(.9);opacity:0}}
 
@@ -539,20 +540,32 @@ footer p{margin:0 0 8px;max-width:72ch}
       .descent-steps{padding-top:24px;background:linear-gradient(180deg,rgb(5 5 5 / 0),rgb(5 5 5 / .86) 24px)}}
     .d-bh{display:inline;transform-origin:0 0;animation:d-shrink linear both;animation-timeline:--descent;animation-range:contain 0% contain 30%}
     .d-bh image{animation:d-out linear both;animation-timeline:--descent;animation-range:contain 2% contain 20%}
-    /* One black hole on screen at a time: the hero's film fades as the descent rises, then the descent's own
-       black hole fades in as the stage pins. Without timeline-scope the hero keeps its film; the art still waits. */
+    /* Without timeline-scope the hero keeps its film and the descent shows its own black hole; the art waits. */
     .descent-art{animation:d-in linear both;animation-timeline:--descent;animation-range:entry 60% entry 100%}
     @supports (timeline-scope:--descent){
       main{timeline-scope:--descent}
       .hero{border-image:none;border-bottom-color:transparent}
-      /* The descent rises over the pinned hero while the hole is still growing. Its ring rises from below the hero's
-         hole, not onto it, so a cross-fade showed two black holes at once (at every size). The hero's hole now fades
-         out over entry 35-60% and hands over exactly as the descent's art starts to fade in (60%): one black hole on
-         screen at a time, no gap between them, and the deep-space backdrop (.cosmos) behind both. */
       .descent{margin-top:-80svh}
-      /* Faded out, the film is also hidden, so phones treat it as not visible and stop playing it (iOS pauses muted
-         autoplay video it can't see) while the descent covers it; it plays again on the way back up. */
-      .hero .poster,.hero .film{animation:pull linear both,film-off linear both;animation-timeline:--hero,--descent;animation-range:contain 0% contain 100%,entry 35% entry 60%}
+      /* One continuous fall, not a fade and a second black hole (Josh, 19 Nov 2026: "sucked into the black hole or
+         orbiting around it ... close to real"). As the descent rises over the pinned hero:
+         1. Plunge (descent entry 20-76%): the camera keeps falling toward --dive, the darkest point of the shadow, and
+            keeps turning (a spiral infall). The photon ring and the bright disk sweep out past the screen's edges
+            until the shadow alone fills the screen: the hole's own darkness, not a fade. Faster as it falls (a
+            free-fall feel). Individual scale/rotate compose with the approach's transform.
+         2. Through (entry 76-92%): the dark opens onto the deep-space sky (.cosmos) as the film, its overlay and
+            the stars go; the film is then hidden (so phones pause it) until you scroll back up.
+         3. Out (descent): the photon ring arrives from the screen's edges and contracts, then shrinks into
+            Earth's aurora (d-emerge). The descent's own black-hole picture stays hidden: one black hole, start to end. */
+      .hero .poster,.hero .film{animation:pull linear both,plunge linear both,film-off linear both;animation-timeline:--hero,--descent,--descent;
+        animation-range:contain 0% contain 100%,entry 20% entry 76%,entry 76% entry 92%;will-change:transform,scale,rotate,opacity}
+      /* Fade each layer, never the stage itself: an opacity on the stage made the browser redraw the 10x film into one
+         large offscreen surface every frame (300-900 ms frames where the dark opens). */
+      .hero-stage::after{animation:film-off linear both;animation-timeline:--descent;animation-range:entry 76% entry 92%}
+      /* The stars stream outward faster as you fall (they rush past from the edge of the view), composing with rush. */
+      .hero-stage::before{animation:rush linear both,stream linear both,film-off linear both;animation-timeline:--hero,--descent,--descent;animation-range:contain 0% contain 100%,entry 20% entry 76%,entry 76% entry 92%}
+      .descent-art{animation-range:entry 80% entry 94%}
+      .d-bh image{display:none}
+      .d-bh{animation-name:d-emerge;animation-range:entry 82% contain 30%}
     }
     .d-earth{animation:d-in linear both;animation-timeline:--descent;animation-range:contain 14% contain 26%}
     .d-halo{animation:d-in linear both;animation-timeline:--descent;animation-range:contain 24% contain 30%}
@@ -565,6 +578,13 @@ footer p{margin:0 0 8px;max-width:72ch}
 }
 /* The ring ends exactly on the north-pole halo (numbers printed by tools/make_descent.py). */
 @keyframes d-shrink{0%{transform:none;opacity:1}85%{opacity:1}100%{transform:translate(0px,-37px) scale(.1014,.0304);opacity:0}}
+/* Out of the dark: the ring comes in from the screen's edges (3.2x), settles at the black hole's size, then
+   shrinks into the aurora on the same path as d-shrink. */
+@keyframes d-emerge{0%{transform:scale(3.2);opacity:0}10%{opacity:1}45%{transform:none}88%{opacity:1}100%{transform:translate(0px,-37px) scale(.1014,.0304);opacity:0}}
+/* The stars stream outward as you fall. */
+@keyframes stream{40%{scale:1.3}100%{scale:3.4}}
+/* The fall: slow at first, then faster (each step multiplies the zoom), turning as it goes. */
+@keyframes plunge{0%{scale:1;rotate:0deg}40%{scale:1.7;rotate:3deg}70%{scale:3.6;rotate:7deg}100%{scale:10;rotate:12deg}}
 @keyframes d-out{to{opacity:0}}
 @keyframes film-off{to{opacity:0;visibility:hidden}}
 @keyframes d-in{from{opacity:0}}
@@ -573,24 +593,97 @@ footer p{margin:0 0 8px;max-width:72ch}
 @keyframes d-step-first{0%,70%{opacity:1;visibility:visible}100%{opacity:0;visibility:hidden}}
 @keyframes d-step-last{from{opacity:0;visibility:hidden;transform:translateY(10px)}to{opacity:1;visibility:visible;transform:none}}
 
-/* Live-view gate (landing): after the descent, a pre-rendered frame of the Gauss live view (tools/capture_live_view.py)
-   fills the screen behind a smoked-glass sign-in card. An image, not the app: it shows at once, and nothing live is
-   sent before sign-in. The frame settles in as you scroll; with reduced motion it is simply there. */
-.live-gate{position:relative;min-height:100svh;display:grid;place-items:center;padding:96px clamp(16px,4vw,40px);overflow:hidden;isolation:isolate}
-.live-frame,.live-frame img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;z-index:-2}
-.live-gate::before{content:"";position:absolute;inset:0;z-index:-1;background:linear-gradient(180deg,var(--black) 0,rgba(5,5,5,.12) 24%,rgba(5,5,5,.12) 76%,var(--black) 100%)}
-.live-card{max-width:440px;width:100%;padding:clamp(24px,3vw,32px);border:1px solid rgba(243,240,232,.16);border-radius:10px;background-color:rgba(5,5,5,.8);
-  background-image:linear-gradient(180deg,rgba(243,240,232,.06),rgba(243,240,232,0) 60%);-webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px)}
+/* Live-view gate (landing): after the descent you scroll into Gauss itself. A pre-rendered frame of the Gauss live
+   view fills the screen (an image, not the app: it shows at once, and nothing live is sent before sign-in). Josh,
+   18 Nov 2026: "as you scroll ... see parts of before you login". The stage holds three things, in reading order:
+   what the live view shows before sign-in (the names of its readings; a still has no numbers), what is past the
+   sign-in (veiled panels, named and empty: never blurred or invented data), and the one door.
+   Without scroll-driven animations, with reduced motion, or on a very short screen: all three, still and readable. */
+.live-gate{padding:0}
+.gate-stage{position:relative;min-height:100svh;display:grid;grid-template-columns:minmax(0,1fr);gap:16px;justify-items:center;align-content:center;
+  padding:max(96px,62svh) max(clamp(16px,4vw,40px),env(safe-area-inset-right)) 96px max(clamp(16px,4vw,40px),env(safe-area-inset-left));overflow:hidden;isolation:isolate}
+/* The frame fills the first screen of the stage. Stacked (narrow, no pinning), the plates start below the globe and run on over black. */
+.live-frame,.gate-stage::before{position:absolute;inset:0 0 auto;height:100svh}
+.live-frame{z-index:-2}
+.live-frame img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+.gate-stage::before{content:"";z-index:-1;background:linear-gradient(180deg,var(--black) 0,rgba(5,5,5,.12) 24%,rgba(5,5,5,.12) 76%,var(--black) 100%)}
+.gate-veils{display:none}
+.live-card,.gate-open,.gate-held li{border:1px solid rgba(243,240,232,.16);border-radius:10px;background-color:rgba(5,5,5,.8);
+  background-image:linear-gradient(180deg,rgba(243,240,232,.06),rgba(243,240,232,0) 60%)}
+.live-card{max-width:440px;width:100%;padding:clamp(24px,3vw,32px);-webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px)}
 .live-card h2{margin:.3em 0 .4em}
 .live-card p{color:rgba(243,240,232,.86)}
+.live-card .hush{color:var(--muted);font-size:15px}
 .live-card .src{margin:16px 0 0;color:var(--muted);font-size:13px;line-height:1.5}
+/* Before sign-in: the plate sits where the live view keeps its readouts, and names them. */
+.gate-open{max-width:440px;width:100%;padding:18px 20px}
+.gate-open p{margin:0}
+.gate-open p:not(.label):not(.src){margin-top:10px;color:rgba(243,240,232,.86);font-size:15px;line-height:1.45}
+.gate-reads{list-style:none;margin:14px 0 0;padding:12px 0 0;display:flex;flex-wrap:wrap;gap:10px 18px;position:relative;font:700 11px/1 var(--mono);letter-spacing:.12em;text-transform:uppercase;color:var(--warm)}
+.gate-reads::before,.gate-held li::before{content:"";position:absolute;left:0;right:0;top:0;height:1px;background:linear-gradient(90deg,rgba(243,240,232,0),rgba(243,240,232,.28) 18%,rgba(243,240,232,.28) 82%,rgba(243,240,232,0))} /* a hairline that fades at the ends */
+.gate-open .src{margin-top:12px;font-size:13px;line-height:1.5}
+/* Past the sign-in: three veils. Each carries its name and nothing else; the hatching says there is something behind it. */
+.gate-held{max-width:440px;width:100%}
+.gate-held > .label{display:inline-block;margin:0 0 8px;padding:7px 9px;border-radius:4px;background:rgba(5,5,5,.8);color:var(--warm)}
+.gate-held ul{list-style:none;margin:0;padding:0;display:grid;gap:8px}
+.gate-held li{position:relative;display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:52px;padding:0 16px;overflow:hidden;
+  background-image:linear-gradient(180deg,rgba(243,240,232,.06),rgba(243,240,232,0) 60%),repeating-linear-gradient(135deg,rgba(243,240,232,.05) 0 1px,rgba(243,240,232,0) 1px 9px)}
+.gate-held li .label{color:var(--warm)}
+.gate-held .held{font:700 11px/1 var(--mono);letter-spacing:.12em;text-transform:uppercase;color:var(--muted);white-space:nowrap}
+/* Wide screens: one composition, laid out like the live view: readings bottom left, panels on the right, the door in the middle. */
+@media (min-width:1100px) and (min-height:700px){
+  .gate-stage{padding-block:96px}
+  .gate-open,.gate-held,.live-card{grid-area:1/1}
+  .gate-open{place-self:end start;max-width:400px}
+  .gate-held{place-self:center end;max-width:300px}
+  .gate-held li{min-height:84px;align-items:flex-end;padding:0 16px 14px}
+  .live-card{place-self:center}
+}
+/* Scrolling in. The stage pins for 260svh of scroll. Two pairs of dark planes close over the frame with a slit
+   between them, so the first you see of Gauss is a sliver; the front pair parts, then the back pair (two rates:
+   depth), and the frame settles. Then the readings plate, then the veiled panels, then the door, which stays.
+   Planes and plates move by transform and opacity only. Narrow screens show one of the three at a time. */
 @supports (animation-timeline:view()){
-  @media (prefers-reduced-motion:no-preference){
-    .live-frame img{animation:live-settle linear both;animation-timeline:view();animation-range:entry 0% cover 50%}
-    .live-card{animation:d-in linear both;animation-timeline:view();animation-range:entry 40% cover 45%}
+  @media (prefers-reduced-motion:no-preference) and (min-height:660px){
+    .live-gate{height:360svh;view-timeline:--gate block}
+    .gate-stage{position:sticky;top:0;height:100svh;min-height:0;padding-block:88px 28px}
+    .live-frame img{animation:live-settle linear both;animation-timeline:--gate;animation-range:entry 0% contain 30%}
+    .gate-veils{display:block;position:absolute;inset:0;z-index:-1;pointer-events:none;--slit:clamp(14px,2.6vw,36px)}
+    .gv{position:absolute;top:0;bottom:0;width:50.5%;background:linear-gradient(180deg,var(--panel),var(--black) 42%);will-change:transform;
+      animation:linear both;animation-timeline:--gate;animation-range:entry 80% contain 20%}
+    .gv.l{left:-.5%;transform:translateX(calc(-1*var(--slit)));animation-name:gv-l}
+    .gv.r{right:-.5%;transform:translateX(var(--slit));animation-name:gv-r}
+    .gv.back{background:rgb(5 5 5 / .66);animation-range:contain 8% contain 34%}
+    .gv.back.l{transform:translateX(calc(-4*var(--slit)))}
+    .gv.back.r{transform:translateX(calc(4*var(--slit)))}
+    .gv::after{content:"";position:absolute;top:0;bottom:0;width:1px;background:linear-gradient(180deg,rgba(243,240,232,0),rgba(243,240,232,.3) 22%,rgba(243,240,232,.3) 78%,rgba(243,240,232,0))}
+    .gv.l::after{right:0}
+    .gv.r::after{left:0}
+    .gate-open{animation:g-in linear both;animation-timeline:--gate;animation-range:contain 22% contain 32%}
+    .gate-held > .label{animation:g-in linear both;animation-timeline:--gate;animation-range:contain 44% contain 50%}
+    .gate-held li{animation:g-in linear both;animation-timeline:--gate;animation-range:contain 46% contain 54%}
+    .gate-held li:nth-child(2){animation-range:contain 50% contain 58%}
+    .gate-held li:nth-child(3){animation-range:contain 54% contain 62%}
+    /* The door is a link: it is never hidden from the keyboard, only faded, and a focused door shows at once. */
+    .live-card{animation:g-door linear both;animation-timeline:--gate;animation-range:contain 74% contain 88%}
+    .live-card:focus-within{opacity:1!important;transform:none!important;pointer-events:auto!important}
+    @media not ((min-width:1100px) and (min-height:700px)){
+      .gate-open,.gate-held,.live-card{grid-area:1/1}
+      .gate-open,.gate-held{align-self:end}
+      .live-card{align-self:center}
+      .gate-open{animation-name:g-step;animation-range:contain 22% contain 46%}
+      .gate-held{animation:g-out linear both;animation-timeline:--gate;animation-range:contain 68% contain 74%}
+      @media (max-height:759px){.live-card .rad-field{display:none}} /* small phones: the door must fit the pinned screen whole */
+    }
   }
 }
 @keyframes live-settle{from{opacity:0;transform:scale(1.08)}to{opacity:1;transform:none}}
+@keyframes gv-l{to{transform:translateX(-101%)}}
+@keyframes gv-r{to{transform:translateX(101%)}}
+@keyframes g-in{from{opacity:0;transform:translateY(12px)}}
+@keyframes g-out{to{opacity:0;transform:translateY(-10px)}}
+@keyframes g-step{0%{opacity:0;transform:translateY(12px)}30%,80%{opacity:1;transform:none}100%{opacity:0;transform:translateY(-10px)}}
+@keyframes g-door{from{opacity:0;transform:translateY(12px);pointer-events:none}to{opacity:1;transform:none;pointer-events:auto}}
 
 /* Starfield (landing): two planes of faint stars behind the descent and the doors. They scroll with the page while the
    descent's stage stays put, and the far plane drifts at a different rate, so the scene reads as deep space. */

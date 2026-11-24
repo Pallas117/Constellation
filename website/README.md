@@ -333,12 +333,24 @@ animations, and anyone with reduced motion, get the final frame beside all five 
 calls it a sketch, not a model. Belt facts follow NASA Earth Observatory ("Probing the Electric Space
 Around Earth", image 78985).
 
+**Scrolling into Gauss** (landing, after the descent, `#enter`): the screen pins and a captured frame of
+the Gauss live view opens between two pairs of dark planes (a sliver first, then the whole scene). Then
+three things arrive in order: a plate naming what the live view reads before sign-in (magnetopause,
+solar wind, IMF Bz, Kp; names only, because a still has no numbers), three veiled panels for what is
+past the sign-in (Field model, Operator console, Mesh: a name and "Members only", never blurred or
+invented data), and the one door, "Sign in with Argo". Scroll-driven CSS (`view-timeline: --gate`),
+no script, no new downloads (the frame was already on the page). Without scroll-driven animations, with
+reduced motion, or on a screen under 660 px tall, all three are simply there. Copy rules, enforced by
+a test: nothing about how sign-in works, no security or cryptography claims, no readings from a still.
+The panel names must match routes that really need an account in the app (`frontend/src/Cybertiger.tsx`).
+
 ## Change things
 
 | To change | Edit |
 |---|---|
 | Hero line, door text | `public/index.html` |
 | The landing's descent (black hole → aurora → Van Allen belts) | geometry: `tools/make_descent.py` (dipole field lines, then rewrites the SVG in `public/index.html`); timing: "Descent" in `public/assets/site.css` |
+| The landing's scroll into Gauss (frame, readings plate, veiled panels, door) | copy: the `#enter` section in `public/index.html`; timing: "Live-view gate" in `public/assets/site.css` |
 | Gauss copy (keep the claim rules; the tests enforce them) | `public/gauss/index.html` |
 | Constellation copy, intel rules, join route | `public/constellation/index.html` |
 | Colours, type, layout | `public/assets/site.css` (Brand Room tokens; the tests reject off-palette colours) |

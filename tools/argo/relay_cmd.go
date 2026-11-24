@@ -47,10 +47,19 @@ func relayFor(cfg Config, store Store, phone *Phone) (*Relay, bool, error) {
 			}
 			realEffects{phone: phone}.Notify(title, msg)
 		}}
+	r.Low = store.Load().Low
 	if cfg.GaussURL != "" {
 		if hub, err := newHTTPHub(cfg); err == nil {
+			hub.c.Timeout *= time.Duration(r.Low.TimeoutScale()) // a weak link gets longer, not more, tries
 			r.Hub = hub
 		}
+	}
+	// The radio bearer is behind a flag: ARGO_MESHTASTIC_URL names a Meshtastic node on this LAN.
+	if m, err := meshtasticFor(os.Getenv("ARGO_MESHTASTIC_URL")); err != nil {
+		fmt.Fprintln(os.Stderr, "argo: radio bearer off:", err)
+	} else if m != nil {
+		low := r.Low
+		r.Radio = &BearerRadio{Bearers: []Bearer{m}, Loss: func() float64 { return recentLoss(low) }}
 	}
 	return r, created, nil
 }
