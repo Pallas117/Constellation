@@ -47,9 +47,15 @@ footer.wrap{padding-bottom:max(48px,calc(24px + env(safe-area-inset-bottom,0px))
   border-bottom:1px solid var(--char);view-transition-name:site-header}
 .bar{display:flex;align-items:center;justify-content:space-between;gap:16px;padding-block:12px}
 .top.over{position:absolute;inset:0 0 auto 0;background:transparent;border-bottom-color:transparent;-webkit-backdrop-filter:none;backdrop-filter:none}
+/* Smooth on every device: the scroll fades in a ground layer under the bar (opacity, compositor work), and the bar's
+   blur switches on in one step once that ground is in (one repaint, not one per frame). It used to interpolate the
+   bar's background and blur radius, which repainted and re-blurred the bar on every frame of the scroll. */
 @supports (animation-timeline:scroll()){
-  .top.over{position:fixed;animation:solidify linear both;animation-timeline:scroll(root);animation-range:0 40vh}
-  @keyframes solidify{to{background:rgba(5,5,5,.88);border-bottom-color:var(--char);-webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px)}}
+  .top.over{position:fixed;animation:frost step-end both;animation-timeline:scroll(root);animation-range:0 40vh}
+  .top.over::before{content:"";position:absolute;inset:0 0 -1px;z-index:-1;pointer-events:none;background:rgba(5,5,5,.88);border-bottom:1px solid var(--char);
+    opacity:0;animation:solidify linear both;animation-timeline:scroll(root);animation-range:0 40vh}
+  @keyframes solidify{to{opacity:1}}
+  @keyframes frost{to{-webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px)}}
 }
 .brand{display:block;padding:4px 0}
 .brand img{height:40px;width:auto}
@@ -612,7 +618,7 @@ footer p{margin:0 0 8px;max-width:72ch}
 
 /* Starfield (landing): two planes of faint stars behind the descent and the doors. They scroll with the page while the
    descent's stage stays put, and the far plane drifts at a different rate, so the scene reads as deep space. */
-.starfield{position:relative;isolation:isolate}
+.starfield{position:relative;isolation:isolate;overflow:clip}
 .starfield::before,.starfield::after{content:"";position:absolute;inset:0;z-index:-1;pointer-events:none}
 .starfield::before{opacity:.5;background-size:380px 380px;background-image:radial-gradient(1px 1px at 12% 18%,rgba(243,240,232,.85),transparent 70%),
   radial-gradient(1px 1px at 68% 42%,rgba(243,240,232,.7),transparent 70%),radial-gradient(1.4px 1.4px at 38% 76%,rgba(243,240,232,.8),transparent 70%),
@@ -622,10 +628,10 @@ footer p{margin:0 0 8px;max-width:72ch}
   radial-gradient(1px 1px at 78% 64%,rgba(243,240,232,.8),transparent 70%),radial-gradient(1px 1px at 8% 84%,rgba(243,240,232,.7),transparent 70%)}
 @supports (animation-timeline:scroll()){
   @media (prefers-reduced-motion:no-preference){
-    .starfield::after{animation:far-drift linear both;animation-timeline:scroll(root)}
+    .starfield::after{top:-520px;animation:far-drift linear both;animation-timeline:scroll(root)}
   }
 }
-@keyframes far-drift{to{background-position:0 520px}}
+@keyframes far-drift{to{transform:translateY(520px)}}
 
 /* Landing: one quiet row of the three marks after the door. No readouts or copy here: those live on each
    project's own page, and the header and footer already carry the names. */
@@ -695,6 +701,9 @@ footer p{margin:0 0 8px;max-width:72ch}
   -webkit-mask:linear-gradient(#fff 0 0) content-box,linear-gradient(#fff 0 0);-webkit-mask-composite:xor;mask:linear-gradient(#fff 0 0) content-box exclude,linear-gradient(#fff 0 0)}
 .live-card:hover::before,.live-card:focus-within::before{opacity:1}
 .live-card:hover,.live-card:focus-within{--smoke:rgb(10 8 16 / .62);-webkit-backdrop-filter:blur(16px) saturate(160%);backdrop-filter:blur(16px) saturate(160%)}
+/* Phones and tablets: the frame behind the card moves as you scroll, so a blur there is recomputed every frame. A
+   deeper smoke reads the same and costs nothing. */
+@media (pointer:coarse){.live-card,.live-card:hover,.live-card:focus-within{background-color:rgba(5,5,5,.9);-webkit-backdrop-filter:none;backdrop-filter:none}}
 
 /* Hover and focus: the disk lights up. On touch screens a tap leaves :hover stuck until the next tap, so the turning
    disk and the radiating rings (endless animations) run only where a pointer can hover; a tap gets the press below. */

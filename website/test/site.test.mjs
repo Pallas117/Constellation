@@ -246,6 +246,27 @@ test("landing: Space tech, on Earth: what Argo does today, honest, no door into 
   assert.match(css, /@media \(prefers-reduced-motion:no-preference\)\{\n    \.earth-list li\{animation:rise/, "reduced motion: it is simply there");
 });
 
+test("scroll effects stay smooth on weak devices: the scroll drives opacity and transforms only, never a repaint or a live blur", () => {
+  const css = read("assets/site.css");
+  // Every keyframes block that a scroll timeline drives on the landing animates compositor-friendly properties only.
+  for (const k of ["solidify", "far-drift", "pull", "rush", "recede", "plunge", "stream", "c-far", "c-nebula", "c-fields", "d-in", "d-out", "live-settle"]) {
+    const kf = css.match(new RegExp(`@keyframes ${k}\\{[^\\n]*\\}`))?.[0];
+    assert.ok(kf, `@keyframes ${k} exists`);
+    assert.doesNotMatch(kf.replace(/\b(transform|opacity|scale|rotate|translate|visibility)\b/g, ""), /[a-z-]+:/, `${k} animates compositor properties only`);
+  }
+  // The header fades a ground layer in; it never animates its own background or blur.
+  assert.match(css, /\.top\.over::before\{[^}]*opacity:0;animation:solidify linear both;animation-timeline:scroll\(root\)/);
+  assert.match(css, /@keyframes solidify\{to\{opacity:1\}\}/);
+  assert.match(css, /\.top\.over\{position:fixed;animation:frost step-end both;/, "the blur switches on once, it is never interpolated");
+  // Section stars drift by transform, inside a clip, so they never spill into the section above.
+  assert.match(css, /\.starfield\{position:relative;isolation:isolate;overflow:clip\}/);
+  assert.match(css, /@keyframes far-drift\{to\{transform:translateY\(520px\)\}\}/);
+  // Touch screens: no live blur over the moving frame behind the sign-in card, even after a tap (sticky hover).
+  const touch = css.match(/@media \(pointer:coarse\)\{\.live-card,\.live-card:hover,\.live-card:focus-within\{[^}]*\}\}/)?.[0] ?? "";
+  assert.match(touch, /backdrop-filter:none/);
+  assert.ok(css.indexOf(touch) > css.indexOf(".live-card:hover,.live-card:focus-within{--smoke"), "comes after the hover blur, so it wins");
+});
+
 test("landing backdrop: stars, then nebula, then fields, one fixed sky; decorative, compositor-only, calm with reduced motion", () => {
   const home = html["/"];
   assert.equal(home.match(/class="cosmos"/g).length, 1);
