@@ -405,6 +405,238 @@
                 }
               }
             },
+            "IonosphereTec": {
+              "oneofs": {
+                "_source": {
+                  "oneof": [
+                    "source"
+                  ]
+                },
+                "_observedAt": {
+                  "oneof": [
+                    "observedAt"
+                  ]
+                },
+                "_cells": {
+                  "oneof": [
+                    "cells"
+                  ]
+                },
+                "_constrainedCells": {
+                  "oneof": [
+                    "constrainedCells"
+                  ]
+                },
+                "_meanTecu": {
+                  "oneof": [
+                    "meanTecu"
+                  ]
+                },
+                "_minTecu": {
+                  "oneof": [
+                    "minTecu"
+                  ]
+                },
+                "_maxTecu": {
+                  "oneof": [
+                    "maxTecu"
+                  ]
+                },
+                "_rateTecuPerHour": {
+                  "oneof": [
+                    "rateTecuPerHour"
+                  ]
+                },
+                "_rateBaselineAt": {
+                  "oneof": [
+                    "rateBaselineAt"
+                  ]
+                }
+              },
+              "fields": {
+                "source": {
+                  "type": "string",
+                  "id": 1,
+                  "options": {
+                    "proto3_optional": true
+                  }
+                },
+                "observedAt": {
+                  "type": "string",
+                  "id": 2,
+                  "options": {
+                    "proto3_optional": true
+                  }
+                },
+                "region": {
+                  "type": "Region",
+                  "id": 3
+                },
+                "cells": {
+                  "type": "int32",
+                  "id": 4,
+                  "options": {
+                    "proto3_optional": true
+                  }
+                },
+                "constrainedCells": {
+                  "type": "int32",
+                  "id": 5,
+                  "options": {
+                    "proto3_optional": true
+                  }
+                },
+                "meanTecu": {
+                  "type": "double",
+                  "id": 6,
+                  "options": {
+                    "proto3_optional": true
+                  }
+                },
+                "minTecu": {
+                  "type": "double",
+                  "id": 7,
+                  "options": {
+                    "proto3_optional": true
+                  }
+                },
+                "maxTecu": {
+                  "type": "double",
+                  "id": 8,
+                  "options": {
+                    "proto3_optional": true
+                  }
+                },
+                "nearestKl": {
+                  "type": "Cell",
+                  "id": 9
+                },
+                "rateTecuPerHour": {
+                  "type": "double",
+                  "id": 10,
+                  "options": {
+                    "proto3_optional": true
+                  }
+                },
+                "rateBaselineAt": {
+                  "type": "string",
+                  "id": 11,
+                  "options": {
+                    "proto3_optional": true
+                  }
+                }
+              },
+              "nested": {
+                "Region": {
+                  "oneofs": {
+                    "_latMin": {
+                      "oneof": [
+                        "latMin"
+                      ]
+                    },
+                    "_latMax": {
+                      "oneof": [
+                        "latMax"
+                      ]
+                    },
+                    "_lonMin": {
+                      "oneof": [
+                        "lonMin"
+                      ]
+                    },
+                    "_lonMax": {
+                      "oneof": [
+                        "lonMax"
+                      ]
+                    }
+                  },
+                  "fields": {
+                    "latMin": {
+                      "type": "double",
+                      "id": 1,
+                      "options": {
+                        "proto3_optional": true
+                      }
+                    },
+                    "latMax": {
+                      "type": "double",
+                      "id": 2,
+                      "options": {
+                        "proto3_optional": true
+                      }
+                    },
+                    "lonMin": {
+                      "type": "double",
+                      "id": 3,
+                      "options": {
+                        "proto3_optional": true
+                      }
+                    },
+                    "lonMax": {
+                      "type": "double",
+                      "id": 4,
+                      "options": {
+                        "proto3_optional": true
+                      }
+                    }
+                  }
+                },
+                "Cell": {
+                  "oneofs": {
+                    "_lat": {
+                      "oneof": [
+                        "lat"
+                      ]
+                    },
+                    "_lon": {
+                      "oneof": [
+                        "lon"
+                      ]
+                    },
+                    "_tecu": {
+                      "oneof": [
+                        "tecu"
+                      ]
+                    },
+                    "_qualityFlag": {
+                      "oneof": [
+                        "qualityFlag"
+                      ]
+                    }
+                  },
+                  "fields": {
+                    "lat": {
+                      "type": "double",
+                      "id": 1,
+                      "options": {
+                        "proto3_optional": true
+                      }
+                    },
+                    "lon": {
+                      "type": "double",
+                      "id": 2,
+                      "options": {
+                        "proto3_optional": true
+                      }
+                    },
+                    "tecu": {
+                      "type": "double",
+                      "id": 3,
+                      "options": {
+                        "proto3_optional": true
+                      }
+                    },
+                    "qualityFlag": {
+                      "type": "int32",
+                      "id": 4,
+                      "options": {
+                        "proto3_optional": true
+                      }
+                    }
+                  }
+                }
+              }
+            },
             "XrayReading": {
               "oneofs": {
                 "_value": {
@@ -923,6 +1155,10 @@
                   "options": {
                     "proto3_optional": true
                   }
+                },
+                "ionosphere": {
+                  "type": "IonosphereTec",
+                  "id": 24
                 }
               },
               "nested": {

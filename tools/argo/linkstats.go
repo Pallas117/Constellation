@@ -119,6 +119,10 @@ func linkStats(in []Incident, since, now time.Time, window time.Duration) LinkSt
 type LinkReport struct {
 	Day  LinkStats `json:"d1"`
 	Week LinkStats `json:"d7"`
+	// The tailnet's answer after the last switch (tailnet.go): round trip to the hub in ms or -1,
+	// and "direct" or "relay". Range-checked by the hub (backend/mesh/store.ts parseLink).
+	TailnetMs  int    `json:"tailnetMs"`
+	TailnetVia string `json:"tailnetVia,omitempty"`
 }
 
 func linkReport(in []Incident, st State, now time.Time) LinkReport {
@@ -133,7 +137,11 @@ func linkReport(in []Incident, st State, now time.Time) LinkReport {
 			since = e.Time
 		}
 	}
-	return LinkReport{Day: linkStats(in, since, now, 24*time.Hour), Week: linkStats(in, since, now, 7*24*time.Hour)}
+	r := LinkReport{Day: linkStats(in, since, now, 24*time.Hour), Week: linkStats(in, since, now, 7*24*time.Hour), TailnetMs: -1}
+	if st.Switch != nil && st.Switch.Tailnet.Answered() {
+		r.TailnetMs, r.TailnetVia = st.Switch.Tailnet.Ms, st.Switch.Tailnet.Via
+	}
+	return r
 }
 
 func humanSecs(s int64) string {

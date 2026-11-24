@@ -69,6 +69,7 @@ func TestSpoofingTurnsTheShieldOnEvenOnWPA2(t *testing.T) {
 	verified := spoof
 	verified.Warp = warpOn
 	l, fx := newLoop(t, spoof, verified)
+	l.ShieldWARP = true
 	st := l.Tick(context.Background())
 	notes := strings.Join(fx.notes, ";")
 	if !strings.Contains(notes, "ARP spoofing") || !st.ShieldOn || strings.Join(fx.ran, ";") != "warp-cli --accept-tos connect" {
