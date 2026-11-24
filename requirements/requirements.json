@@ -463,7 +463,21 @@
       "method": "T",
       "owner": "Josh",
       "verifiedBy": [
-        "auth failure threshold auto-blocks IP"
+        "auth failure threshold auto-blocks IP",
+        "CyberTiger counts failed sign-in requests and then blocks that address on /api/auth and /api alike"
+      ]
+    },
+    {
+      "id": "REQ-SEC-022",
+      "title": "Password guessing pauses the account",
+      "statement": "The API shall answer HTTP 429 to a password sign-in for an email that has had 5 refused password sign-ins within 15 minutes, for a pause of 1 minute that doubles with each further pause to at most 15 minutes, with the same answer whether or not an account with that email exists.",
+      "rationale": "Threat model TM-01 (2026-11-24): the per-IP limit alone lets guesses spread over many addresses through. Passkey and SSO sign-in are not paused, so a pause can't lock the owner out of every way in.",
+      "parent": "GAU-25",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "backoff: five failures pause the email, each further pause doubles up to the cap, success clears it",
+        "password guessing spread over many addresses pauses that account, and a real account looks the same as an unknown one"
       ]
     },
     {

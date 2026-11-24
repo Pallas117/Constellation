@@ -136,6 +136,7 @@ app.use(
 
 // Better-Auth handler. It rate-limits by CLIENT_IP_HEADER; set it here from the
 // address CyberTiger trusts so a client can't pick its own bucket.
+app.use("/api/auth", cyberTigerGuard);
 app.use("/api/auth", (req, _res, next) => {
   req.headers[CLIENT_IP_HEADER] = cyberTiger.extractClientIp(req);
   next();
@@ -209,7 +210,12 @@ app.get("/health", async (_req, res) => {
   });
 });
 
-app.use("/api", (req: express.Request, res: express.Response, next: express.NextFunction) => {
+/**
+ * CyberTiger in front of every /api request, sign-in included: blocked IPs, attack signatures and the rate limit
+ * are refused, and every 401/403 counts toward the auto-block (threat model TM-01: failed sign-ins used to skip it,
+ * because /api/auth is mounted first). A function declaration, so the /api/auth mount above can use it.
+ */
+function cyberTigerGuard(req: express.Request, res: express.Response, next: express.NextFunction): void {
   const start = Date.now();
   const decision = cyberTiger.inspectRequest(req);
   const tracked = req as CyberTigerRequest;
@@ -251,7 +257,9 @@ app.use("/api", (req: express.Request, res: express.Response, next: express.Next
   }
 
   next();
-});
+}
+
+app.use("/api", cyberTigerGuard);
 // Tells the login page which sign-in methods to offer (public, no secrets).
 app.get("/api/sso-options", (_req, res) => {
   const any = ssoGoogleEnabled || ssoGithubEnabled;
