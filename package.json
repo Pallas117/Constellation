@@ -79,6 +79,7 @@
     "site:dev": "node website/dev.mjs",
     "site:dev:offline": "node website/dev.mjs --offline",
     "site:forms": "node website/tools/sync_forms.mjs",
+    "site:social": "node website/tools/sync_social.mjs",
     "audit:website": "node website/tools/audit.mjs",
     "smoke:website": "node website/tools/smoke.mjs"
   },

@@ -17,7 +17,7 @@ const check = (ok, what, detail = "") => {
 };
 const get = (path, init = {}) => fetch(base + path, { redirect: "manual", signal: AbortSignal.timeout(15_000), ...init });
 
-const PAGES = ["/", "/gauss/", "/gauss/evidence/", "/constellation/", "/constellation/time/", "/turnstone/", "/education/", "/privacy/", "/terms/"];
+const PAGES = ["/", "/gauss/", "/gauss/evidence/", "/gauss/storms/", "/constellation/", "/constellation/time/", "/turnstone/", "/education/", "/privacy/", "/terms/"];
 const EMAIL_ROUTES = ["/gauss/apply/", "/constellation/apply/", "/education/apply/", "/constellation/workshops/"];
 
 for (const path of [...PAGES, ...EMAIL_ROUTES]) {

@@ -801,3 +801,43 @@ body.page::before{content:"";position:fixed;inset:-12%;z-index:-1;pointer-events
 @keyframes c-far{to{transform:translateY(-7%)}}
 @keyframes c-nebula{from{opacity:0;transform:scale(1.18) translateY(5%)}to{opacity:1;transform:none}}
 @keyframes c-fields{from{opacity:0;transform:translateY(8%) scale(.96)}to{opacity:1;transform:none}}
+
+/* Follow strip (footer of every public page) and share links: written into the pages from worker/social.js by
+   tools/sync_social.mjs. Plain links, no script. The address to copy selects whole on one tap. */
+.follow{margin-top:20px;padding-top:12px;border-top:1px solid var(--char);align-items:center}
+.share{display:flex;flex-wrap:wrap;align-items:center;gap:8px 20px;margin-top:40px;padding-top:16px;border-top:1px solid var(--char);font-size:15px}
+.share a{display:inline-block;padding:10px 0}
+.copy{display:inline-flex;flex-wrap:wrap;align-items:center;gap:8px 12px;min-width:0}
+.copy-url{font:700 12px/1.4 var(--mono);color:var(--muted);border:1px solid var(--char);border-radius:4px;padding:8px 10px;overflow-wrap:anywhere;-webkit-user-select:all;user-select:all}
+
+/* Storm story (/gauss/storms/): one observed night as a scroll. The rail on the left fills as you read and each
+   hour rises in (scroll-driven, transform and opacity only); behind it a low red sky gathers in two flat layers,
+   gradients, not glows. Without scroll timelines, or with reduced motion: a plain list on a faint red horizon. */
+.storm-sky{position:fixed;inset:0;z-index:-1;pointer-events:none;overflow:hidden}
+.storm-sky i{position:absolute;inset:auto 0 0;transform-origin:50% 100%}
+.s-low{height:46%;opacity:.5;background:linear-gradient(180deg,rgb(212 103 59 / 0),rgb(212 103 59 / .2))}
+.s-high{height:82%;opacity:0;background:linear-gradient(180deg,rgb(231 177 74 / 0) 20%,rgb(212 103 59 / .1))}
+.storm{position:relative;list-style:none;margin:32px 0 0;padding:0 0 0 clamp(20px,5vw,48px);display:grid;gap:clamp(48px,9vw,88px);border-left:1px solid var(--char)}
+.storm::before{content:"";position:absolute;left:-1px;top:0;bottom:0;width:1px;background:linear-gradient(180deg,var(--warm),var(--amber) 40%,var(--danger));transform-origin:50% 0}
+.storm li{display:grid;gap:8px;max-width:56ch}
+.storm p{margin:0;color:var(--muted);font-size:17px}
+.storm .label{font-size:11px}
+.storm .big{font-size:clamp(56px,16vw,120px);font-weight:600;line-height:.95;letter-spacing:-.02em;color:var(--warm)}
+.storm .big.lvl-1{color:var(--amber)}.storm .big.lvl-3{color:var(--danger)}
+.storm b{color:var(--warm);font-weight:600}
+.two+.tw{margin-top:28px}
+.two+.tw .table{min-width:640px} /* scrolls inside its box on phones instead of breaking words */
+@supports (animation-timeline:view()){
+  @media (prefers-reduced-motion:no-preference){
+    .storm-sky i{will-change:transform,opacity}
+    .storm{view-timeline:--storm block}
+    .storm::before{animation:s-rail linear both;animation-timeline:--storm;animation-range:cover 10% cover 80%}
+    .storm li{animation:s-in linear both;animation-timeline:view();animation-range:entry 0% entry 80%}
+    .s-low{animation:s-low linear both;animation-timeline:scroll(root);animation-range:0% 50%}
+    .s-high{animation:s-high linear both;animation-timeline:scroll(root);animation-range:18% 62%}
+  }
+}
+@keyframes s-rail{from{transform:scaleY(0)}}
+@keyframes s-in{from{opacity:0;transform:translateY(24px)}}
+@keyframes s-low{from{opacity:.2;transform:scaleY(.6)}to{opacity:1;transform:none}}
+@keyframes s-high{from{opacity:0;transform:translateY(12%)}to{opacity:1;transform:none}}

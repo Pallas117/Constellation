@@ -18,7 +18,7 @@ mkdirSync(OUT, { recursive: true });
 
 // [name, path, signed in as, expected status] — the dev seeds in dev.mjs give each workspace state an account.
 const PAGES = [
-  ["home", "/"], ["gauss", "/gauss/"], ["evidence", "/gauss/evidence/"], ["gauss-apply", "/gauss/apply/"],
+  ["home", "/"], ["gauss", "/gauss/"], ["evidence", "/gauss/evidence/"], ["storms", "/gauss/storms/"], ["gauss-apply", "/gauss/apply/"],
   ["constellation", "/constellation/"], ["const-apply", "/constellation/apply/"], ["workshops", "/constellation/workshops/"],
   ["planner", "/constellation/time/?z=Europe/London&z=Asia/Kuala_Lumpur&z=America/New_York&date=2026-10-23&at=9"],
   ["turnstone", "/turnstone/"], ["argo", "/argo/"], ["education", "/education/"], ["education-apply", "/education/apply/"],
