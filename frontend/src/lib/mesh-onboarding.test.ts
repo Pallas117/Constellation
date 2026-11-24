@@ -50,6 +50,7 @@ test("battery and guard lines read plainly", () => {
   assert.equal(batteryLabel({ level: 90, charging: true, lowPower: false }), "90% charging", "phones say only whether they charge");
   assert.equal(guardLine({ admission: "limited", slots: 1, headroomGB: 2.4 }), "Argo guard: light work only · 1 agent slot · 2.4 GB free");
   assert.equal(powerSaveLine({ on: true, since: "2026-11-17T12:00:00Z", reason: "no-pd" }), "Power-save: no USB-C Power Delivery · heavy work waits");
+  assert.equal(powerSaveLine({ on: true, since: "2026-11-24T12:00:00Z", reason: "hotspot-low" }), "Power-save: hotspot phone battery low · heavy work and data syncs wait");
   assert.equal(powerSaveLine({ on: false }), "");
   assert.equal(powerSaveLine(undefined), "");
   assert.equal(guardLine({ admission: "closed", slots: 0, headroomGB: 0 }), "Argo guard: closed to new work · 0 agent slots · 0 GB free");

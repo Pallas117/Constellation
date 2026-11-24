@@ -124,6 +124,9 @@ func main() {
 		_ = withLock(store, func() { watchPeers(cfg.peers(), store, realWatchFx(phone, store), time.Now()) })
 		thirdpartyTick(tpFilesIn(configDir()), phone, time.Now()) // texts once per new third-party change; two small file reads
 		_ = withLock(store, func() { phase(20*time.Second, func(c context.Context) { guardTick(c, store, cfg, phone, time.Now()) }) })
+		if runtime.GOOS == "darwin" { // macOS's power log, once a day, for the outlet forecast (energy.go); takes the lock itself
+			phase(20*time.Second, func(c context.Context) { _ = energyImport(c, store, pmsetLog, time.Now(), false) })
+		}
 		phase(30*time.Second, func(c context.Context) { relayTick(c, cfg, store, phone) }) // store-and-forward (relay.go); takes its own lock
 		phase(15*time.Second, func(c context.Context) { clockTick(c, cfg, store, time.Now()) })
 		// Read-only posture checks hourly and the update check daily (posture.go, update.go).
@@ -152,7 +155,15 @@ func main() {
 		err = doctor(ctx, loop.Prober)
 		if err == nil {
 			doctorPowerSave(ctx, store, os.Stdout)
+			bi, ok := readBuildInfo()
+			fmt.Print(doctorBuild(bi, ok, store.loadEnergy()))
 		}
+	case "energy": // outlet forecast, measured drain, hotspot phone battery (energy.go)
+		var open powerLogFn
+		if runtime.GOOS == "darwin" {
+			open = pmsetLog
+		}
+		err = energyCmd(ctx, os.Args[2:], store, sampleHost(ctx, false), unpluggedPath(), open, time.Now(), os.Stdout)
 	case "power-save": // force or inspect power-save mode (powersave.go)
 		sample := sampleHost(ctx, false)
 		err = powerSaveCmd(ctx, os.Args[2:], store, realAppFx(), sample.Batt, runtime.GOOS, time.Now(), os.Stdout)

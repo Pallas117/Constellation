@@ -84,12 +84,13 @@ export interface GuardReading {
 export interface PowerSaveReading {
   on: boolean;
   since?: string;
-  reason?: "battery" | "charger-short" | "no-pd" | "manual";
+  reason?: "battery" | "charger-short" | "no-pd" | "manual" | "hotspot-low";
 }
 
 /** One line for a device in power-save, or "" when it is not. */
 export function powerSaveLine(p: PowerSaveReading | undefined): string {
   if (!p?.on) return "";
+  if (p.reason === "hotspot-low") return "Power-save: hotspot phone battery low · heavy work and data syncs wait";
   const why = { battery: "on battery", "charger-short": "charger can't keep up", "no-pd": "no USB-C Power Delivery", manual: "switched on by hand" }[p.reason ?? "manual"];
   return `Power-save: ${why} · heavy work waits`;
 }

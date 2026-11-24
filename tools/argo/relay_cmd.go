@@ -103,6 +103,9 @@ func relayTick(ctx context.Context, cfg Config, store Store, phone *Phone) {
 	if cfg.GaussURL == "" || store.Load().Class == Offline {
 		return
 	}
+	if dataDeferred(store.loadPowerSave()) { // the hotspot phone is low (energy.go): bundles wait, as in any drop-out
+		return
+	}
 	c, cancel := context.WithTimeout(ctx, 40*time.Second)
 	defer cancel()
 	if !relayReady(c, cfg, keyPath(), func(cfg Config) (Hub, error) { return newHTTPHub(cfg) }) {
