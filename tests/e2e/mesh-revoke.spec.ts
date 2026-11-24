@@ -55,7 +55,7 @@ test("a refused revoke shows an error instead of looking like it worked (GAU-149
   const deletes = await mockMesh(page, 403);
   await page.goto("/mesh");
 
-  await expect(page.getByText("laptop-a")).toBeVisible(); // the mocked device is listed
+  await expect(page.getByText("laptop-a").first()).toBeVisible(); // the mocked device is listed (card and table both name it)
   // Revoke is a two-step button: the first click arms it, the second acts.
   await page.getByRole("button", { name: "Revoke" }).click();
   await page.getByRole("button", { name: "Revoke device?" }).click();
