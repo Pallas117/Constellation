@@ -90,9 +90,21 @@ test("landing film on phones: soft-edged hole, slogan on screen, no play button,
   assert.match(css, /\.hero \.film\{pointer-events:none\}/);
   assert.match(css, /\.hero \.film::-webkit-media-controls-start-playback-button\{display:none!important/, "no iOS play button when autoplay is blocked");
   assert.match(css, /@keyframes film-off\{to\{opacity:0;visibility:hidden\}\}/, "faded film is hidden, so phones can pause it");
-  assert.match(css, /\.hero \.poster,\.hero \.film\{animation:pull linear both,film-off linear both;animation-timeline:--hero,--descent;animation-range:contain 0% contain 100%,entry 35% entry 60%\}/,
-    "every size: the hero's hole has gone before the descent's art fades in");
-  assert.match(css, /\.descent-art\{animation:d-in linear both;animation-timeline:--descent;animation-range:entry 60% entry 100%\}/, "the art waits until entry 60%");
+  // One continuous fall (Josh, 19 Nov 2026): approach while rolling level, plunge into the shadow, out into the sky, the
+  // ring contracts into the aurora. No fade to a second black hole.
+  assert.match(css, /--dive:50% 39\.4%/, "the camera falls toward the shadow's darkest point");
+  assert.match(css, /transform-origin:var\(--dive,var\(--hole\)\)/);
+  assert.match(css, /@keyframes pull\{from\{transform:scale\(\.18\) rotate\(-9deg\);/, "the approach rolls level: orbiting in");
+  assert.match(css, /\.hero \.poster,\.hero \.film\{animation:pull linear both,plunge linear both,film-off linear both;animation-timeline:--hero,--descent,--descent;\s*animation-range:contain 0% contain 100%,entry 20% entry 76%,entry 76% entry 92%;/);
+  assert.match(css, /@keyframes plunge\{0%\{scale:1;rotate:0deg\}[^\n]*100%\{scale:10;rotate:12deg\}\}/, "deep enough that the shadow covers the screen (10x about --dive)");
+  assert.match(css, /\.d-bh image\{display:none\}/, "no second black-hole picture");
+  assert.match(css, /\.d-bh\{animation-name:d-emerge;animation-range:entry 82% contain 30%\}/);
+  assert.match(css, /@keyframes d-emerge\{0%\{transform:scale\(3\.2\);opacity:0\}[^\n]*100%\{transform:translate\(0px,-37px\) scale\(\.1014,\.0304\);opacity:0\}\}/, "ends on the aurora halo, like d-shrink");
+  // Fade layers, never the stage: an opacity on the stage cost 300-900 ms frames.
+  assert.doesNotMatch(css, /\.hero-stage\{animation/, "the stage itself is never faded");
+  assert.match(css, /\.hero-stage::after\{animation:film-off linear both;animation-timeline:--descent;animation-range:entry 76% entry 92%\}/);
+  assert.match(css, /\.descent-art\{animation:d-in linear both;animation-timeline:--descent;animation-range:entry 60% entry 100%\}/, "without timeline-scope the art waits until entry 60%");
+  assert.match(css, /\.descent-art\{animation-range:entry 80% entry 94%\}/, "with it, the art arrives as the dark opens");
   assert.doesNotMatch(css, /\.hero \.film\{animation-range:/, "one hand-off timing for all sizes");
 });
 

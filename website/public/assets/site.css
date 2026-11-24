@@ -78,8 +78,9 @@ footer.wrap{padding-bottom:max(48px,calc(24px + env(safe-area-inset-bottom,0px))
    foot of the screen, left-aligned with the header mark. The hole's edge is a mask, not a halo. */
 /* No section padding: the stage starts at the top of the screen, so the slogan's 96px foot is on screen at load. */
 .hero{position:relative;border-bottom:1px solid var(--char);isolation:isolate;padding-block:0}
-.hero-stage{position:relative;min-height:max(560px,100svh);display:grid;align-items:end;overflow:hidden;isolation:isolate;--hole:50% 44%}
-.hero .poster,.hero .film{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;z-index:-2;transform-origin:var(--hole)}
+.hero-stage{position:relative;min-height:max(560px,100svh);display:grid;align-items:end;overflow:hidden;isolation:isolate;--hole:50% 44%;--dive:50% 39.4%}
+/* --dive: the darkest point of the shadow in the film (measured on the poster: 13.5% of the frame height from any light), which the camera falls toward. */
+.hero .poster,.hero .film{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;z-index:-2;transform-origin:var(--dive,var(--hole))}
 /* The film is decoration: taps go through it, and iOS (Low Power Mode blocks autoplay) shows no play button over it;
    the poster frame shows instead. */
 .hero .film{pointer-events:none}
@@ -123,7 +124,7 @@ footer.wrap{padding-bottom:max(48px,calc(24px + env(safe-area-inset-bottom,0px))
     .hero-copy{animation:recede linear both;animation-timeline:--hero;animation-range:contain 20% contain 70%}
   }
 }
-@keyframes pull{from{transform:scale(.18);opacity:.7}to{transform:none;opacity:1}}
+@keyframes pull{from{transform:scale(.18) rotate(-9deg);opacity:.7}to{transform:none;opacity:1}}
 @keyframes rush{from{transform:scale(.55)}to{transform:scale(1.9);opacity:.15}}
 @keyframes recede{to{transform:scale(.9);opacity:0}}
 
@@ -537,20 +538,32 @@ footer p{margin:0 0 8px;max-width:72ch}
       .descent-steps{padding-top:24px;background:linear-gradient(180deg,rgb(5 5 5 / 0),rgb(5 5 5 / .86) 24px)}}
     .d-bh{display:inline;transform-origin:0 0;animation:d-shrink linear both;animation-timeline:--descent;animation-range:contain 0% contain 30%}
     .d-bh image{animation:d-out linear both;animation-timeline:--descent;animation-range:contain 2% contain 20%}
-    /* One black hole on screen at a time: the hero's film fades as the descent rises, then the descent's own
-       black hole fades in as the stage pins. Without timeline-scope the hero keeps its film; the art still waits. */
+    /* Without timeline-scope the hero keeps its film and the descent shows its own black hole; the art waits. */
     .descent-art{animation:d-in linear both;animation-timeline:--descent;animation-range:entry 60% entry 100%}
     @supports (timeline-scope:--descent){
       main{timeline-scope:--descent}
       .hero{border-image:none;border-bottom-color:transparent}
-      /* The descent rises over the pinned hero while the hole is still growing. Its ring rises from below the hero's
-         hole, not onto it, so a cross-fade showed two black holes at once (at every size). The hero's hole now fades
-         out over entry 35-60% and hands over exactly as the descent's art starts to fade in (60%): one black hole on
-         screen at a time, no gap between them, and the deep-space backdrop (.cosmos) behind both. */
       .descent{margin-top:-80svh}
-      /* Faded out, the film is also hidden, so phones treat it as not visible and stop playing it (iOS pauses muted
-         autoplay video it can't see) while the descent covers it; it plays again on the way back up. */
-      .hero .poster,.hero .film{animation:pull linear both,film-off linear both;animation-timeline:--hero,--descent;animation-range:contain 0% contain 100%,entry 35% entry 60%}
+      /* One continuous fall, not a fade and a second black hole (Josh, 19 Nov 2026: "sucked into the black hole or
+         orbiting around it ... close to real"). As the descent rises over the pinned hero:
+         1. Plunge (descent entry 20-76%): the camera keeps falling toward --dive, the darkest point of the shadow, and
+            keeps turning (a spiral infall). The photon ring and the bright disk sweep out past the screen's edges
+            until the shadow alone fills the screen: the hole's own darkness, not a fade. Faster as it falls (a
+            free-fall feel). Individual scale/rotate compose with the approach's transform.
+         2. Through (entry 76-92%): the dark opens onto the deep-space sky (.cosmos) as the film, its overlay and
+            the stars go; the film is then hidden (so phones pause it) until you scroll back up.
+         3. Out (descent): the photon ring arrives from the screen's edges and contracts, then shrinks into
+            Earth's aurora (d-emerge). The descent's own black-hole picture stays hidden: one black hole, start to end. */
+      .hero .poster,.hero .film{animation:pull linear both,plunge linear both,film-off linear both;animation-timeline:--hero,--descent,--descent;
+        animation-range:contain 0% contain 100%,entry 20% entry 76%,entry 76% entry 92%;will-change:transform,scale,rotate,opacity}
+      /* Fade each layer, never the stage itself: an opacity on the stage made the browser redraw the 10x film into one
+         large offscreen surface every frame (300-900 ms frames where the dark opens). */
+      .hero-stage::after{animation:film-off linear both;animation-timeline:--descent;animation-range:entry 76% entry 92%}
+      /* The stars stream outward faster as you fall (they rush past from the edge of the view), composing with rush. */
+      .hero-stage::before{animation:rush linear both,stream linear both,film-off linear both;animation-timeline:--hero,--descent,--descent;animation-range:contain 0% contain 100%,entry 20% entry 76%,entry 76% entry 92%}
+      .descent-art{animation-range:entry 80% entry 94%}
+      .d-bh image{display:none}
+      .d-bh{animation-name:d-emerge;animation-range:entry 82% contain 30%}
     }
     .d-earth{animation:d-in linear both;animation-timeline:--descent;animation-range:contain 14% contain 26%}
     .d-halo{animation:d-in linear both;animation-timeline:--descent;animation-range:contain 24% contain 30%}
@@ -563,6 +576,13 @@ footer p{margin:0 0 8px;max-width:72ch}
 }
 /* The ring ends exactly on the north-pole halo (numbers printed by tools/make_descent.py). */
 @keyframes d-shrink{0%{transform:none;opacity:1}85%{opacity:1}100%{transform:translate(0px,-37px) scale(.1014,.0304);opacity:0}}
+/* Out of the dark: the ring comes in from the screen's edges (3.2x), settles at the black hole's size, then
+   shrinks into the aurora on the same path as d-shrink. */
+@keyframes d-emerge{0%{transform:scale(3.2);opacity:0}10%{opacity:1}45%{transform:none}88%{opacity:1}100%{transform:translate(0px,-37px) scale(.1014,.0304);opacity:0}}
+/* The stars stream outward as you fall. */
+@keyframes stream{40%{scale:1.3}100%{scale:3.4}}
+/* The fall: slow at first, then faster (each step multiplies the zoom), turning as it goes. */
+@keyframes plunge{0%{scale:1;rotate:0deg}40%{scale:1.7;rotate:3deg}70%{scale:3.6;rotate:7deg}100%{scale:10;rotate:12deg}}
 @keyframes d-out{to{opacity:0}}
 @keyframes film-off{to{opacity:0;visibility:hidden}}
 @keyframes d-in{from{opacity:0}}
