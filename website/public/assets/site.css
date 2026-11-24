@@ -790,6 +790,42 @@ a,button{-webkit-tap-highlight-color:transparent}
   }
 }
 @keyframes rise{from{opacity:0;transform:translateY(18px)}}
+/* Show, don't tell: each habit draws itself as it scrolls into view (driven by the scroll, so it costs nothing at rest).
+   1. A link fails; the packet is lost on it, the fault is named and traffic moves to the other path.
+   2. The far link is patchy: the packet is held at the middle node, sent on when the path opens, and a receipt comes back.
+   3. A packet that fails the check is stopped at the gate; the good one passes.
+   Without scroll timelines, or with reduced motion, each shows its last frame. Ember marks faults; no lime here. */
+.habit-fig{display:block;width:min(100%,240px);height:auto;margin:0 0 14px;overflow:visible}
+.hf-link,.hf-gate{fill:none;stroke:rgb(243 240 232 / .3);stroke-width:1.2;stroke-linejoin:round}
+.hf-gap{stroke-dasharray:3 5}
+.hf-node{fill:var(--panel);stroke:var(--muted);stroke-width:1.2}
+.hf-pkt{fill:var(--warm)}
+.hf-bad{fill:none;stroke:rgb(var(--ember));stroke-width:1.4}
+.hf-fault,.hf-block{fill:none;stroke:rgb(var(--ember));stroke-width:1.6;stroke-linecap:round}
+.hf-hold{fill:none;stroke:var(--warm);stroke-opacity:.45;stroke-width:1}
+.hf-ok{fill:none;stroke:var(--warm);stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
+.hf-a{opacity:.3}.hf-p1,.hf-hold,.hf-stop{opacity:0}
+.hf-p2{transform:translateX(128px)}.hf-carry,.hf-pass{transform:translateX(192px)}.hf-stop{transform:translateX(100px)}
+@supports (animation-timeline:view()){
+  @media (prefers-reduced-motion:no-preference){
+    .habit-fig *{animation:linear both;animation-timeline:--habit;animation-range:entry 30% cover 62%}
+    .earth-list li{view-timeline:--habit block}
+    .hf-a{animation-name:hf-a}.hf-fault{animation-name:hf-fault}.hf-p1{animation-name:hf-p1}.hf-p2{animation-name:hf-p2}
+    .hf-carry{animation-name:hf-carry}.hf-gap{animation-name:hf-gap}.hf-hold{animation-name:hf-hold}.hf-ok{animation-name:hf-ok}
+    .hf-pass{animation-name:hf-pass}.hf-stop{animation-name:hf-stop}.hf-block{animation-name:hf-block}
+  }
+}
+@keyframes hf-a{0%,40%{opacity:1}50%,100%{opacity:.3}}
+@keyframes hf-fault{0%,40%{opacity:0}50%,100%{opacity:1}}
+@keyframes hf-p1{0%{opacity:1;transform:none}40%{opacity:1;transform:translateX(56px)}50%,100%{opacity:0;transform:translateX(56px)}}
+@keyframes hf-p2{0%,52%{opacity:0;transform:none}58%{opacity:1;transform:none}100%{opacity:1;transform:translateX(128px)}}
+@keyframes hf-carry{0%{transform:none}25%,58%{transform:translateX(96px)}85%,100%{transform:translateX(192px)}}
+@keyframes hf-gap{0%,52%{opacity:.25}60%,100%{opacity:1}}
+@keyframes hf-hold{0%,24%{opacity:0}30%,54%{opacity:1}60%,100%{opacity:0}}
+@keyframes hf-ok{0%,86%{opacity:0}94%,100%{opacity:1}}
+@keyframes hf-pass{0%{transform:none}100%{transform:translateX(192px)}}
+@keyframes hf-stop{0%{opacity:1;transform:none}50%{opacity:1;transform:translateX(100px)}70%,100%{opacity:0;transform:translateX(100px)}}
+@keyframes hf-block{0%,46%{opacity:0}54%,100%{opacity:1}}
 
 /* Deep space behind the whole landing (Josh, 18 Nov 2026: "stars in the back, then nebula, then fields; more smooth and
    integrated"). One fixed backdrop of three planes behind every section, so the page reads as one sky instead of

@@ -233,6 +233,11 @@ test("landing: Space tech, on Earth: what Argo does today, honest, no door into 
   assert.match(sec, /<p class="label">02_ON_EARTH<\/p>/);
   assert.match(sec, /<h2 id="argo-h">Space tech, on Earth\.<\/h2>/);
   assert.equal(sec.match(/<li>/g).length, 3, "three habits, no more");
+  // Show, don't tell: each habit draws itself (decorative SVG, scroll-driven CSS, no script, no lime).
+  const figs = sec.match(/<svg class="habit-fig" viewBox="0 0 240 72" aria-hidden="true" focusable="false">[\s\S]*?<\/svg>/g) ?? [];
+  assert.equal(figs.length, 3, "one drawing per habit");
+  for (const f of figs) assert.doesNotMatch(f, /<script|<animate|<text|href=|lime/i, "shapes only, animated from site.css");
+  assert.match(read("assets/site.css"), /@media \(prefers-reduced-motion:no-preference\)\{\n    \.habit-fig \*\{animation:linear both;animation-timeline:--habit;/, "reduced motion: the last frame, still");
   // Each line is something /argo/ already states as working today.
   for (const want of [/one broken network from another/, /smallest fix/, /signed receipt/, /Bundle Protocol \(RFC&nbsp;9171\)/, /Certificate checks are never turned off/,
     /Mac today, Linux in a container\. Included with Gauss for operators and staff; never sold\./])
@@ -249,7 +254,7 @@ test("landing: Space tech, on Earth: what Argo does today, honest, no door into 
 test("scroll effects stay smooth on weak devices: the scroll drives opacity and transforms only, never a repaint or a live blur", () => {
   const css = read("assets/site.css");
   // Every keyframes block that a scroll timeline drives on the landing animates compositor-friendly properties only.
-  for (const k of ["solidify", "far-drift", "pull", "rush", "recede", "plunge", "stream", "c-far", "c-nebula", "c-fields", "d-in", "d-out", "live-settle"]) {
+  for (const k of ["solidify", "far-drift", "pull", "rush", "recede", "plunge", "stream", "c-far", "c-nebula", "c-fields", "d-in", "d-out", "live-settle", "hf-a", "hf-fault", "hf-p1", "hf-p2", "hf-carry", "hf-gap", "hf-hold", "hf-ok", "hf-pass", "hf-stop", "hf-block"]) {
     const kf = css.match(new RegExp(`@keyframes ${k}\\{[^\\n]*\\}`))?.[0];
     assert.ok(kf, `@keyframes ${k} exists`);
     assert.doesNotMatch(kf.replace(/\b(transform|opacity|scale|rotate|translate|visibility)\b/g, ""), /[a-z-]+:/, `${k} animates compositor properties only`);
