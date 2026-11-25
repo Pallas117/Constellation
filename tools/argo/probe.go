@@ -436,18 +436,20 @@ func run(ctx context.Context, name string, args ...string) string {
 	return string(out)
 }
 
-// toolPath resolves a system tool to its fixed path (sysTools, per OS) when
-// that file exists, so a PATH entry put first by a shell hook or a package
-// can't stand in for osascript, open, launchctl or the probing tools. Other
-// names, and absolute paths, pass through to the normal PATH lookup.
-func toolPath(name string) string {
+// toolPath resolves a system tool to its fixed path (sysTools, per OS), so a
+// PATH entry put first by a shell hook or a package can't stand in for
+// osascript, open, launchctl or the probing tools. A pinned tool whose file is
+// missing keeps its pinned path, so exec fails loudly instead of falling back
+// to PATH (fail closed). Unpinned names (all of them on Linux, where sysTools
+// is empty) and absolute paths pass through to the normal PATH lookup.
+func toolPath(name string) string { return pinnedPath(sysTools, name) }
+
+func pinnedPath(tools map[string]string, name string) string {
 	if filepath.IsAbs(name) {
 		return name
 	}
-	if p, ok := sysTools[name]; ok {
-		if fi, err := os.Stat(p); err == nil && !fi.IsDir() {
-			return p
-		}
+	if p, ok := tools[name]; ok {
+		return p
 	}
 	return name
 }

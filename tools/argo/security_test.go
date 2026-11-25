@@ -92,6 +92,18 @@ func TestToolPathPinsSystemTools(t *testing.T) {
 	}
 }
 
+// A pinned tool whose file is missing is not looked up on PATH: the pinned
+// path is kept so exec fails, instead of running whatever PATH puts first.
+func TestToolPathFailsClosedWhenPinnedFileMissing(t *testing.T) {
+	tools := map[string]string{"osascript": "/nonexistent/argo-test/osascript"}
+	if got := pinnedPath(tools, "osascript"); got != "/nonexistent/argo-test/osascript" {
+		t.Errorf("missing pinned tool resolved to %q, want the pinned path", got)
+	}
+	if got := pinnedPath(tools, "ping"); got != "ping" {
+		t.Errorf("unpinned tool resolved to %q", got)
+	}
+}
+
 // A received file name is cut to 128 bytes without splitting a UTF-8 sequence.
 func TestSafeNameKeepsValidUTF8(t *testing.T) {
 	in := strings.Repeat("é", 70) + ".txt" // 144 bytes

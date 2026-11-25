@@ -133,8 +133,6 @@ func (realEffects) Run(name string, args ...string) error {
 		if name = warpCLI(); name == "" {
 			return errors.New("warp-cli not found")
 		}
-	case "tailscale": // launchd and an SSH session from the phone have a minimal PATH
-		name = tailscaleCLI()
 	default:
 		name = toolPath(name)
 	}
