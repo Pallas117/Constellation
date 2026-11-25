@@ -8,7 +8,8 @@ import { deleteAccount, getAccount, getApplication, latestApplication, listAccou
 import { readCapped, readCappedBytes } from "./body.js";
 import { EVIDENCE_ERRORS, EVIDENCE_MAX_BYTES, addEvidence, deleteAllEvidence, deleteEvidence, downloadResponse, evidenceAdmin, evidenceCard, getEvidence, listEvidence } from "./evidence.js";
 import { clientLink, sameOrigin } from "./forms.js";
-import { feedState, readFeed } from "./feeds.js";
+import { configured, feedState, readFeed } from "./feeds.js";
+import { BRIEF_FEEDS, assembleBrief, renderBrief } from "./brief.js";
 import { chip, esc, renderEventIcs, renderGaussDoor, supportLink } from "./render.js";
 import { deleteCall, getCall, listCalls, renderCalls, renderCallsAdmin, rsvp, saveCall } from "./calls.js";
 import { isZone, zonedToUtc } from "./timezones.js";
@@ -151,6 +152,7 @@ function memberCard(supportUrl = "") {
   // Wears Constellation's own navy and gold (Brand Book), so membership never reads as part of Gauss.
   return `<article class="tile brand-constellation"><div class="tile-head"><h2 class="label">Constellation</h2><img src="/assets/marks/constellation-icon-colour-dark-v2.svg" alt="" width="32" height="32"></div><p class="big">Member</p><p class="t">Free, by invitation.</p>` +
     `<p class="m">Community channels are shared with members directly. Launch calendar: <a href="/api/launches.ics">subscribe</a>.</p>` +
+    `<p class="m"><a href="/app/brief/">This week's Constellation Brief</a></p>` +
     (supportLink(supportUrl) ? `<p class="m"><a href="${esc(supportUrl)}" rel="noopener">Support Constellation</a> (optional)</p>` : "") +
     `<p class="m"><a href="/constellation/">Constellation</a></p></article>`;
 }
@@ -542,6 +544,16 @@ export async function handleApp(request, env, url, { respond, fillPage, fetchImp
     // Only the signed-in account's own files: the key is built from who they are, so another account's id is simply not found.
     const file = await getEvidence(env, id.email, evidenceFile[1]);
     return file ? downloadResponse(file, APP_HEADERS) : fail(404, "Not found");
+  }
+  // The weekly Constellation Brief: members and admins only. Read-only: seven cached feeds and the member's own
+  // account (for their time zone, taken from the signed-in email); nothing is written, listed or fetched upstream.
+  if (url.pathname === "/app/brief") return back("/app/brief/");
+  if (url.pathname === "/app/brief/") {
+    const account = await getAccount(env, id.email);
+    if (!admin && account?.community !== "member") return back("/app/");
+    const records = await Promise.all(BRIEF_FEEDS.map((n) => readFeed(env, n)));
+    const brief = assembleBrief(Object.fromEntries(BRIEF_FEEDS.map((n, i) => [n, records[i]])), { isConfigured: (n) => configured(env, n) });
+    return fillPage("/app/", { workspace: () => renderBrief(brief, { tz: isZone(account?.tz) ? account.tz : "UTC" }) }, 200, APP_HEADERS);
   }
   if (url.pathname === "/app/edu/") {
     const account = await getAccount(env, id.email);
