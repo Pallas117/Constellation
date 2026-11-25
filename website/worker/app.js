@@ -165,6 +165,22 @@ export function staffCard(opsUrl) {
     `<p class="m">For the Lightbound team. It signs you in with the same email.</p><p class="m"><a href="${esc(opsUrl)}" rel="noopener">Open operations and training</a></p></article>`;
 }
 
+/**
+ * GAUSS_APP_URL, the Gauss console a paid account opens from its workspace. Only an https address (or a loopback http
+ * one, for the local preview beside `scripts/ops/gauss-services.sh dev`) counts; anything else hides the button, so a
+ * mistyped or hostile value can never become a javascript: or off-scheme link. The console has its own sign-in.
+ */
+export function consoleLink(url) {
+  const v = String(url ?? "").trim();
+  if (!/^[^\s"<>]+$/.test(v)) return "";
+  try {
+    const u = new URL(v);
+    if (u.username || u.password || u.search || u.hash) return ""; // nothing about a person or a secret rides in the link
+    if (u.protocol === "https:") return u.href;
+    return u.protocol === "http:" && ["127.0.0.1", "localhost", "[::1]"].includes(u.hostname) ? u.href : "";
+  } catch { return ""; }
+}
+
 export function renderWorkspace({ email, account, admin, weather, consoleUrl, supportUrl = "", argo = "", edu = "", staff = "", evidence = "", applications = [], notice = "" }) {
   const tier = tierById(account?.tier);
   const who = esc(account?.name || email);
@@ -193,8 +209,9 @@ export function renderWorkspace({ email, account, admin, weather, consoleUrl, su
   const open = unlocked(billingStatus(account));
   const next = TIERS[TIERS.indexOf(tier) + 1];
   const list = (ids) => ids.map((f) => `<li>${esc(FEATURES[f])}</li>`).join("");
-  const consoleBtn = !open ? "" : consoleUrl
-    ? `<a class="btn" href="${esc(consoleUrl)}">Open the Gauss console</a>`
+  const appUrl = consoleLink(consoleUrl);
+  const consoleBtn = !open ? "" : appUrl
+    ? `<a class="btn" href="${esc(appUrl)}">Open the Gauss console</a> <span class="m">Sign in there with ${esc(email)}.</span>`
     : `<span class="m">Your Gauss console link is coming by email.</span>`; // a line, not a dead button
   return (
     `<div class="section-head"><div><p class="k">00_WORKSPACE</p><h1 id="hero-h">Welcome, ${who}.</h1></div><span class="chip tier">${esc(tier.name)}</span></div>${bannerHtml}` +
