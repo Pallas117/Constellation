@@ -26,7 +26,7 @@ const PAGES = [
   ["privacy", "/privacy/"], ["terms", "/terms/"], ["404", "/nope", null, 404],
   ["app-due", "/app/", "pilot@example.test"], ["app-operator", "/app/", "fleet@example.test"], ["app-member", "/app/", "member@example.test"], ["app-brief", "/app/brief/", "member@example.test"],
   ["app-staff", "/app/", "staff@example.test"], ["app-none", "/app/", "visitor@example.test"], ["app-edu", "/app/?edu=start", "audit@example.ac.uk"],
-  ["admin", "/app/admin/", "jzwnathan@lightbound.uk"],
+  ["admin", "/app/admin/", "admin@example.test"],
 ];
 // The public release (worker/release.js) has no sign-in to emulate, and its closed pages are checked as 404s.
 const PUBLIC = process.env.RELEASE === "public";

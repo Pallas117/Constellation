@@ -32,7 +32,7 @@
     <a href="/gauss/" aria-current="page">Gauss</a>
     <a href="/constellation/">Constellation</a>
     <a href="/turnstone/" class="opt">Turnstone</a>
-    <a href="mailto:jzwnathan@lightbound.uk" class="signin">Contact</a>
+    <a href="mailto:hello@lightbound.uk" class="signin">Contact</a>
   </nav>
   </div>
 </header>
@@ -66,12 +66,12 @@
       <figcaption>Synthetic, illustrative. Amber: proton level (NOAA S-scale), which drives bit errors. Dashed: geomagnetic level (G-scale), which drives link and GNSS disturbances. Shaded: storm window.</figcaption>
     </figure>
     <ol class="replay">
-      <li><span class="t">T&minus;24 min</span><span class="env">G0 · S0 · quiet</span><span class="st nominal">Nominal</span><span class="st nominal">Run</span><span class="why">Inputs fresh, provenance complete.</span></li>
-      <li><span class="t">T&minus;12 min</span><span class="env">G1 · S0 · field turning</span><span class="st nominal">Nominal</span><span class="st nominal">Run</span><span class="why">Watch: geomagnetic activity rising; no proton event yet.</span></li>
-      <li><span class="t">Storm onset</span><span class="env">G2 · S2 · protons rising</span><span class="st degraded">Degraded</span><span class="st degraded">Degrade</span><span class="why">Proton flux up: bit errors climbing; outputs flagged, confidence lowered.</span></li>
-      <li><span class="t">Peak</span><span class="env">G3 · S2 · storm</span><span class="st blocked">Blocked</span><span class="st abstain">Abstain</span><span class="why">Packet integrity failed in the proton event; no trusted input, so no output.</span></li>
-      <li><span class="t">T+10 min</span><span class="env">G2 · S1 · easing</span><span class="st unknown">Unknown</span><span class="st fallback">Fallback</span><span class="why">Geomagnetic link gap: records stay unknown, never "nominal". Deterministic fallback used.</span></li>
-      <li><span class="t">T+30 min</span><span class="env">G0 · S0 · recovered</span><span class="st nominal">Nominal</span><span class="st nominal">Run</span><span class="why">Quality gate passed; every flagged record is in the report.</span></li>
+      <li><span class="t">T&minus;6 h</span><span class="env">G0 · S0 · quiet</span><span class="st nominal">Nominal</span><span class="st nominal">Run</span><span class="why">Inputs fresh, provenance complete.</span></li>
+      <li><span class="t">T&minus;2 h</span><span class="env">G1 · S0 · field turning</span><span class="st nominal">Nominal</span><span class="st nominal">Run</span><span class="why">Watch: geomagnetic activity rising; no proton event yet.</span></li>
+      <li><span class="t">Onset</span><span class="env">G2 · S2 · protons rising</span><span class="st degraded">Degraded</span><span class="st degraded">Degrade</span><span class="why">Proton flux up: bit errors climbing; outputs flagged, confidence lowered.</span></li>
+      <li><span class="t">Onset +4 h</span><span class="env">G3 · S2 · storm</span><span class="st blocked">Blocked</span><span class="st abstain">Abstain</span><span class="why">Packet integrity failed in the proton event; no trusted input, so no output.</span></li>
+      <li><span class="t">Onset +10 h</span><span class="env">G2 · S1 · easing</span><span class="st unknown">Unknown</span><span class="st fallback">Fallback</span><span class="why">Geomagnetic link gap: records stay unknown, never "nominal". Deterministic fallback used.</span></li>
+      <li><span class="t">Onset +30 h</span><span class="env">G0 · S0 · recovered</span><span class="st nominal">Nominal</span><span class="st nominal">Run</span><span class="why">Quality gate passed; every flagged record is in the report.</span></li>
     </ol>
     <p class="replay-key">Each step reads top to bottom: <span>space environment</span> (G = geomagnetic, S = solar radiation), then the <span>telemetry record state</span>, the <span>onboard-AI output policy</span>, and what the evidence records. Bit errors follow S; link gaps follow G.</p>
     <p class="note">Illustrative data, not a mission record. In a pilot, the replay runs on your own inference logs and telemetry exports, against the public space-weather record. Gauss is observe-only and advisory: decisions stay with your operators.</p>
@@ -174,7 +174,7 @@
       <li><strong>Mac and Linux</strong> Runs on macOS laptops, and on Linux ground hosts as a small non-root container.</li>
     </ul>
     <p class="note">Running today on Lightbound's own laptops. Offered to pilot teams, scoped per team.</p>
-    <p class="actions"><a class="btn" href="mailto:jzwnathan@lightbound.uk?subject=Assured%20Connectivity%20pilot">Ask about a connectivity pilot</a></p>
+    <p class="actions"><a class="btn" href="mailto:hello@lightbound.uk?subject=Assured%20Connectivity%20pilot">Ask about a connectivity pilot</a></p>
   </div>
 </section>
 
@@ -197,7 +197,7 @@
     <p class="k">08_CONTACT</p>
     <h2 id="contact-h">Talk to us</h2>
     <p class="lead">Tell us about your mission and the logs you have. We'll reply with whether a replay pilot fits and what it would cover.<!--full--> Approved teams sign in to their Gauss workspace.<!--/full--></p>
-    <p class="actions"><a class="btn" href="/gauss/apply/">Send a pilot brief</a> <a class="btn ghost" href="mailto:jzwnathan@lightbound.uk?subject=Gauss">Email Josh, the founder</a><!--full--> <a class="btn ghost" href="/app/">Sign in</a><!--/full--></p>
+    <p class="actions"><a class="btn" href="/gauss/apply/">Send a pilot brief</a> <a class="btn ghost" href="mailto:hello@lightbound.uk?subject=Gauss">Email Josh, the founder</a><!--full--> <a class="btn ghost" href="/app/">Sign in</a><!--/full--></p>
   </div>
 </section>
 
@@ -233,7 +233,7 @@
       <p>Lightbound Limited · registered in England and Wales, company no. 14573199 · 30A Commercial Street, Harrogate, HG1 1AX</p>
       <p>Space-weather data: NOAA Space Weather Prediction Center and NASA HAPI services. Gauss is advisory software and does not command spacecraft.</p>
     </div>
-    <nav aria-label="Footer"><a href="/gauss/">Gauss</a><a href="/constellation/">Constellation</a><a href="/turnstone/">Turnstone</a><a href="mailto:jzwnathan@lightbound.uk">Contact</a><a href="/privacy/">Privacy</a><a href="/terms/">Terms</a></nav>
+    <nav aria-label="Footer"><a href="/gauss/">Gauss</a><a href="/constellation/">Constellation</a><a href="/turnstone/">Turnstone</a><a href="mailto:hello@lightbound.uk">Contact</a><a href="/privacy/">Privacy</a><a href="/terms/">Terms</a></nav>
   </div>
 </footer>
 </body>

@@ -125,7 +125,7 @@ test("terms: ethical use after ESA and NASA principles, month-to-month plans, ca
 
 test("every page with a footer menu has the same one, Privacy included", () => {
   const foot = (p) => [...(p.match(/<nav aria-label="Footer">([\s\S]*?)<\/nav>/)?.[1] ?? "").matchAll(/href="([^"]+)"/g)].map((m) => m[1]);
-  const want = ["/gauss/", "/constellation/", "/turnstone/", "mailto:jzwnathan@lightbound.uk", "/privacy/", "/terms/"]; // three projects only (Josh, 2026-10-22)
+  const want = ["/gauss/", "/constellation/", "/turnstone/", "mailto:hello@lightbound.uk", "/privacy/", "/terms/"]; // three projects only (Josh, 2026-10-22)
   for (const [route, page] of Object.entries(html)) if (page.includes('aria-label="Footer"')) assert.deepEqual(foot(page), want, route);
 });
 
@@ -135,7 +135,7 @@ test("every page has one h1, the same main navigation and the same footer links"
     assert.equal((page.match(/<h1[\s>]/g) || []).length, 1, `${route}: exactly one h1`);
     // Public pages end with Contact in the public release (no sign-in) and Sign in once accounts open; /argo/ opens only
     // with accounts, so it keeps Sign in.
-    const last = route.startsWith("/app/") ? "/cdn-cgi/access/logout" : route === "/argo/" || RELEASE === "full" ? "/app/" : "mailto:jzwnathan@lightbound.uk";
+    const last = route.startsWith("/app/") ? "/cdn-cgi/access/logout" : route === "/argo/" || RELEASE === "full" ? "/app/" : "mailto:hello@lightbound.uk";
     assert.deepEqual(nav(page), ["/gauss/", "/constellation/", "/turnstone/", last], `${route}: main nav ends with Contact, or sign in/out`);
     assert.match(page, /<html lang="en-GB">/);
     assert.match(page, /<a class="skip" href="#main">/);
@@ -287,6 +287,11 @@ test("landing: Space tech, on Earth: what Argo does today, honest, no door into 
   assert.match(sec, /<p class="label">02_ON_EARTH<\/p>/);
   assert.match(sec, /<h2 id="argo-h">Space tech, on Earth\.<\/h2>/);
   assert.equal(sec.match(/<li>/g).length, 3, "three habits, no more");
+  // Show, don't tell: each habit draws itself (decorative SVG, scroll-driven CSS, no script, no lime).
+  const figs = sec.match(/<svg class="habit-fig" viewBox="0 0 240 72" aria-hidden="true" focusable="false">[\s\S]*?<\/svg>/g) ?? [];
+  assert.equal(figs.length, 3, "one drawing per habit");
+  for (const f of figs) assert.doesNotMatch(f, /<script|<animate|<text|href=|lime/i, "shapes only, animated from site.css");
+  assert.match(read("assets/site.css"), /@media \(prefers-reduced-motion:no-preference\)\{\n    \.habit-fig \*\{animation:linear both;animation-timeline:--habit;/, "reduced motion: the last frame, still");
   // Each line is something /argo/ already states as working today.
   for (const want of [/one broken network from another/, /smallest fix/, /signed receipt/, /Bundle Protocol \(RFC&nbsp;9171\)/, /Certificate checks are never turned off/,
     /Mac today, Linux in a container\. Included with Gauss for operators and staff; never sold\./])
@@ -298,6 +303,27 @@ test("landing: Space tech, on Earth: what Argo does today, honest, no door into 
   const css = read("assets/site.css");
   assert.match(css, /\.earth-list li\{animation:rise linear both;animation-timeline:view\(\)/);
   assert.match(css, /@media \(prefers-reduced-motion:no-preference\)\{\n    \.earth-list li\{animation:rise/, "reduced motion: it is simply there");
+});
+
+test("scroll effects stay smooth on weak devices: the scroll drives opacity and transforms only, never a repaint or a live blur", () => {
+  const css = read("assets/site.css");
+  // Every keyframes block that a scroll timeline drives on the landing animates compositor-friendly properties only.
+  for (const k of ["solidify", "far-drift", "pull", "rush", "recede", "plunge", "stream", "c-far", "c-nebula", "c-fields", "d-in", "d-out", "live-settle", "hf-a", "hf-fault", "hf-p1", "hf-p2", "hf-carry", "hf-gap", "hf-hold", "hf-ok", "hf-pass", "hf-stop", "hf-block"]) {
+    const kf = css.match(new RegExp(`@keyframes ${k}\\{[^\\n]*\\}`))?.[0];
+    assert.ok(kf, `@keyframes ${k} exists`);
+    assert.doesNotMatch(kf.replace(/\b(transform|opacity|scale|rotate|translate|visibility)\b/g, ""), /[a-z-]+:/, `${k} animates compositor properties only`);
+  }
+  // The header fades a ground layer in; it never animates its own background or blur.
+  assert.match(css, /\.top\.over::before\{[^}]*opacity:0;animation:solidify linear both;animation-timeline:scroll\(root\)/);
+  assert.match(css, /@keyframes solidify\{to\{opacity:1\}\}/);
+  assert.match(css, /\.top\.over\{position:fixed;animation:frost step-end both;/, "the blur switches on once, it is never interpolated");
+  // Section stars drift by transform, inside a clip, so they never spill into the section above.
+  assert.match(css, /\.starfield\{position:relative;isolation:isolate;overflow:clip\}/);
+  assert.match(css, /@keyframes far-drift\{to\{transform:translateY\(520px\)\}\}/);
+  // Touch screens: no live blur over the moving frame behind the sign-in card, even after a tap (sticky hover).
+  const touch = css.match(/@media \(pointer:coarse\)\{\.live-card,\.live-card:hover,\.live-card:focus-within\{[^}]*\}\}/)?.[0] ?? "";
+  assert.match(touch, /backdrop-filter:none/);
+  assert.ok(css.indexOf(touch) > css.indexOf(".live-card:hover,.live-card:focus-within{--smoke"), "comes after the hover blur, so it wins");
 });
 
 test("landing backdrop: stars, then nebula, then fields, one fixed sky; decorative, compositor-only, calm with reduced motion", () => {
@@ -725,7 +751,7 @@ test("Assured Connectivity: on the Gauss page, what Argo does today, a pilot rou
   const t = text(sec);
   for (const want of [/Assured Connectivity/, /Argo/, /Self-healing/, /Wi-Fi security/, /Advice only/, /Mac and Linux/, /Running today on Lightbound's own laptops/])
     assert.match(t, want);
-  assert.match(sec, /href="mailto:jzwnathan@lightbound\.uk\?subject=Assured%20Connectivity%20pilot"/);
+  assert.match(sec, /href="mailto:hello@lightbound\.uk\?subject=Assured%20Connectivity%20pilot"/);
   assert.doesNotMatch(t, /£|\$|per month|a year|Stripe|card|invoice/i, "no price or payment wording");
   // The numbered sections (id'd <section>s); the hero and the doors to other pages carry their own labels.
   const order = [...gauss.matchAll(/<section id="[^"]+"[^>]*>\s*<div class="wrap">\s*(?:<div class="section-head"><div>)?<p class="k">(\d\d)_/g)].map((m) => Number(m[1]));

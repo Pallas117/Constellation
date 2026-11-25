@@ -6,7 +6,7 @@
 // - "full": everything. It also needs the DATA namespace bound, so a half-configured deploy stays public.
 export const isFull = (env) => env?.RELEASE === "full" && !!env?.DATA;
 
-export const CONTACT = "jzwnathan@lightbound.uk";
+export const CONTACT = "hello@lightbound.uk";
 
 // The header pill: Contact in the public release, Sign in once accounts open. tools/release.mjs switches the static
 // pages and wrangler.jsonc together; the Worker also puts Contact back on the pages it serves whenever accounts aren't
