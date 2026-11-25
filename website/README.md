@@ -445,7 +445,7 @@ lightbound.space launches as the reduced public release Josh approved on 21 Oct 
 
 - **Open:** every public page, the live feeds, the time planner, the launch calendar and `/api/health`.
 - **Email instead of forms:** the four apply pages list their questions and open a pre-filled email to
-  jzwnathan@lightbound.uk. Nothing is stored. The header's pill is **Contact**.
+  hello@lightbound.uk. Nothing is stored. The header's pill is **Contact**.
 - **Closed by the Worker (404):** `/app/*`, `/argo/`, `POST /api/apply` and `/api/stripe/webhook`. The Gauss page
   offers pilots, and shows the later plans, with their prices, as in development. Gauss for Education stays
   "opening soon", and there's no Support link. The members-only feeds aren't fetched.
@@ -504,7 +504,7 @@ Settings > Domains & Routes.
 **Still open before go-live (GAU-178):**
 - Privacy and terms are drafts written for the full site. In the public release the site itself collects
   nothing (email goes straight to Google Workspace), but they still need a lawyer's read.
-- lightbound.space has no SPF and no DKIM (GAU-177), so replies from jzwnathan@lightbound.uk may land in spam. Add
+- lightbound.space has no SPF and no DKIM (GAU-177), so replies from hello@lightbound.uk may land in spam. Add
   them before sharing the link widely.
 
 After launch, every change is `npm run test:website`, then the deploy and smoke check above.
@@ -514,7 +514,7 @@ After launch, every change is `npm run test:website`, then the deploy and smoke 
 All of it is still in the code, and the tests run it with `RELEASE: "full"`. To open it:
 1. In `wrangler.jsonc`, set `RELEASE` to `"full"`.
    - Add the DATA namespace: `npx wrangler@4 kv namespace create DATA`, then a `{ "binding": "DATA", "id": … }` entry.
-   - Add these vars: `ACCESS_TEAM_DOMAIN`, `ACCESS_AUD`, `ADMIN_EMAILS` (`jzwnathan@lightbound.uk`),
+   - Add these vars: `ACCESS_TEAM_DOMAIN`, `ACCESS_AUD`, `ADMIN_EMAILS` (`<your admin email>`),
      `GAUSS_APP_URL`, `OPS_URL`, `SUPPORT_URL`, `USER_CAP` (`"50"`).
 2. Set up Stripe and sign-in as below, plus the secrets in "Members' opportunities and the staff link".
 3. Put **Sign in** back in the page headers. The public release shows Contact there; Worker-run pages bring

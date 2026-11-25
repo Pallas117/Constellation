@@ -86,7 +86,7 @@ export const SECURITY_TXT_EXPIRES = "2027-05-05T00:00:00.000Z"; // review twice 
 const securityTxt = () =>
   respond(
     [
-      "Contact: mailto:jzwnathan@lightbound.uk",
+      "Contact: mailto:hello@lightbound.uk",
       `Expires: ${SECURITY_TXT_EXPIRES}`,
       "Preferred-Languages: en",
       `Canonical: https://${CANONICAL_HOST}/.well-known/security.txt`,

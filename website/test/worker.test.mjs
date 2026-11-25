@@ -314,7 +314,7 @@ test("public release: each form's page asks by email instead, and carries the pa
     const page = await (await call(path)).text();
     assert.doesNotMatch(page, /<form|action="\/api\/apply"/, `${path}: no form`);
     assert.match(page, /<p class="k">BY_EMAIL<\/p>/, path);
-    assert.match(page, /href="mailto:jzwnathan@lightbound\.uk\?subject=[^"]+&amp;body=/, `${path}: a mailto with the questions`);
+    assert.match(page, /href="mailto:hello@lightbound\.uk\?subject=[^"]+&amp;body=/, `${path}: a mailto with the questions`);
   }
   const fleet = await (await call("/gauss/apply/?plan=fleet_integration&sent=1")).text();
   assert.match(fleet, /<li>Package: Fleet Integration · \$80k–\$160k a year<\/li>/);
@@ -1338,7 +1338,7 @@ test("canonical origin: plain HTTP and www on the custom domain redirect to http
   assert.equal(s.status, 200);
   assert.equal(s.headers.get("content-type"), "text/plain; charset=utf-8");
   const body = await s.text();
-  assert.match(body, /^Contact: mailto:jzwnathan@lightbound\.uk$/m);
+  assert.match(body, /^Contact: mailto:hello@lightbound\.uk$/m);
   assert.match(body, /^Canonical: https:\/\/lightbound\.space\/\.well-known\/security\.txt$/m);
   assert.ok(Date.parse(SECURITY_TXT_EXPIRES) > Date.now() + 90 * 86_400_000, "security.txt expiry is at least 90 days away");
 });
@@ -1357,7 +1357,7 @@ test("workspace: the pilot's steps show the current step with dates, and how to 
   page = await (await send(env, await as(access, "ops@example.test", "/app/"))).text();
   assert.match(page, /Now: Logs received/);
   assert.match(page, /Paid <span class="muted">· 5 Nov 2026<\/span>/);
-  assert.match(page, /href="mailto:jzwnathan@lightbound\.uk\?subject=Gauss%20pilot%3A%20inference%20logs"/);
+  assert.match(page, /href="mailto:hello@lightbound\.uk\?subject=Gauss%20pilot%3A%20inference%20logs"/);
   assert.match(page, /CSV, JSON or JSONL/);
   assert.match(page, /href="\/gauss\/evidence\/"/);
   assert.match(page, /There is no upload form yet/);

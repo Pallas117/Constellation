@@ -120,7 +120,7 @@ test("terms: ethical use after ESA and NASA principles, month-to-month plans, ca
 
 test("every page with a footer menu has the same one, Privacy included", () => {
   const foot = (p) => [...(p.match(/<nav aria-label="Footer">([\s\S]*?)<\/nav>/)?.[1] ?? "").matchAll(/href="([^"]+)"/g)].map((m) => m[1]);
-  const want = ["/gauss/", "/constellation/", "/turnstone/", "mailto:jzwnathan@lightbound.uk", "/privacy/", "/terms/"]; // three projects only (Josh, 2026-10-22)
+  const want = ["/gauss/", "/constellation/", "/turnstone/", "mailto:hello@lightbound.uk", "/privacy/", "/terms/"]; // three projects only (Josh, 2026-10-22)
   for (const [route, page] of Object.entries(html)) if (page.includes('aria-label="Footer"')) assert.deepEqual(foot(page), want, route);
 });
 
@@ -129,7 +129,7 @@ test("every page has one h1, the same main navigation and the same footer links"
   for (const [route, page] of Object.entries(html)) {
     assert.equal((page.match(/<h1[\s>]/g) || []).length, 1, `${route}: exactly one h1`);
     // Public pages end with Contact (the public release has no sign-in); /argo/ opens only with accounts, so it keeps Sign in.
-    const last = route.startsWith("/app/") ? "/cdn-cgi/access/logout" : route === "/argo/" ? "/app/" : "mailto:jzwnathan@lightbound.uk";
+    const last = route.startsWith("/app/") ? "/cdn-cgi/access/logout" : route === "/argo/" ? "/app/" : "mailto:hello@lightbound.uk";
     assert.deepEqual(nav(page), ["/gauss/", "/constellation/", "/turnstone/", last], `${route}: main nav ends with Contact, or sign in/out`);
     assert.match(page, /<html lang="en-GB">/);
     assert.match(page, /<a class="skip" href="#main">/);
@@ -745,7 +745,7 @@ test("Assured Connectivity: on the Gauss page, what Argo does today, a pilot rou
   const t = text(sec);
   for (const want of [/Assured Connectivity/, /Argo/, /Self-healing/, /Wi-Fi security/, /Advice only/, /Mac and Linux/, /Running today on Lightbound's own laptops/])
     assert.match(t, want);
-  assert.match(sec, /href="mailto:jzwnathan@lightbound\.uk\?subject=Assured%20Connectivity%20pilot"/);
+  assert.match(sec, /href="mailto:hello@lightbound\.uk\?subject=Assured%20Connectivity%20pilot"/);
   assert.doesNotMatch(t, /£|\$|per month|a year|Stripe|card|invoice/i, "no price or payment wording");
   // The numbered sections (id'd <section>s); the hero and the doors to other pages carry their own labels.
   const order = [...gauss.matchAll(/<section id="[^"]+"[^>]*>\s*<div class="wrap">\s*(?:<div class="section-head"><div>)?<p class="k">(\d\d)_/g)].map((m) => Number(m[1]));

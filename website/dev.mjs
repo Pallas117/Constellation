@@ -115,7 +115,7 @@ const env = {
   STRIPE_SECRET_KEY: "dev-local-placeholder",
   STRIPE_WEBHOOK_SECRET: "dev-local-webhook-placeholder",
   RELEASE: process.env.RELEASE ?? "full", // the preview opens everything; production is "public" (RELEASE=public npm run site:dev)
-  ADMIN_EMAILS: process.env.ADMIN_EMAILS ?? "jzwnathan@lightbound.uk", // a secret-free var once accounts open; not in the public config
+  ADMIN_EMAILS: process.env.ADMIN_EMAILS ?? "admin@example.test", // a secret-free var once accounts open; not in the public config
   SOURCE_SHA: process.env.SOURCE_SHA ?? "", // production sets it at deploy (wrangler deploy --var SOURCE_SHA:...)
   SUPPORT_URL: process.env.SUPPORT_URL ?? "", // e.g. SUPPORT_URL=https://buy.stripe.com/test_... npm run site:dev
   EDU_SALES: process.env.EDU_SALES ?? "open", // the preview opens Gauss for Education; production defaults to "off"

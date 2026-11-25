@@ -4,6 +4,7 @@
 // Paying happens on Stripe's own pages (checkout, or an invoice where an admin allows it); this side starts it and reads the result.
 // Staff (STAFF_EMAILS) also get a link to the staff operations and training site (OPS_URL), which has its own Access application.
 import { accessIdentity, isAdmin, isStaff } from "./auth.js";
+import { CONTACT } from "./release.js";
 import { deleteAccount, getAccount, getApplication, latestApplication, listAccounts, listApplications, putAccount, setApplicationStatus } from "./data.js";
 import { readCapped, readCappedBytes } from "./body.js";
 import { EVIDENCE_ERRORS, EVIDENCE_MAX_BYTES, addEvidence, deleteAllEvidence, deleteEvidence, downloadResponse, evidenceAdmin, evidenceCard, getEvidence, listEvidence } from "./evidence.js";
@@ -48,12 +49,12 @@ export function offlinePilot(account, brief) {
   const here = done.indexOf(false);
   return OFFLINE_STEPS.map((label, i) => ({ label, done: done[i], current: i === (here === -1 ? done.length - 1 : here), at: done[i] ? dates[i] ?? null : null }));
 }
-const LOGS_MAIL = `mailto:jzwnathan@lightbound.uk?subject=${encodeURIComponent("Gauss pilot: inference logs")}`;
+const LOGS_MAIL = `mailto:${CONTACT}?subject=${encodeURIComponent("Gauss pilot: inference logs")}`;
 function pilotCard(account, brief) {
   const steps = offlinePilot(account, brief);
   const li = (s) => `<li class="${s.done && !s.current ? "done" : s.current ? "here" : ""}"${s.current ? ' aria-current="step"' : ""}>${esc(s.label)}${s.at ? ` <span class="muted">· ${esc(day(s.at))}</span>` : ""}</li>`;
   const now = steps.find((s) => s.current);
-  const sendLogs = account.logsAt ? "" : `<p class="m">Send your logs by email to <a href="${LOGS_MAIL}">jzwnathan@lightbound.uk</a> from the address you signed in with. ` +
+  const sendLogs = account.logsAt ? "" : `<p class="m">Send your logs by email to <a href="${LOGS_MAIL}">${CONTACT}</a> from the address you signed in with. ` +
     `Inference logs as CSV, JSON or JSONL (one record per line) work; remove personal data and credentials first. There is no upload form yet. ` +
     `See what you get back in the <a href="/gauss/evidence/">sample evidence report</a>.</p>`;
   return `<article class="tile"><h2 class="label">Pilot</h2><p class="t">Now: ${esc(now.label)}</p><ol class="track">${steps.map(li).join("")}</ol>${sendLogs}` +
@@ -92,7 +93,7 @@ export function argoCard(account, { staff = false, now = Date.now() } = {}) {
   if (!staff && !isOperator(account, now)) return "";
   const a = account?.argo ?? {};
   const state = a.sentAt ? "Setup sent" : a.requestedAt ? "Setup requested" : "Ready to set up";
-  const body = a.sentAt ? `<p class="m">We emailed your install link and setup steps on ${esc(day(a.sentAt))}. Need them again? <a href="mailto:jzwnathan@lightbound.uk?subject=Gauss%20Argo%20setup">Email us</a>.</p>`
+  const body = a.sentAt ? `<p class="m">We emailed your install link and setup steps on ${esc(day(a.sentAt))}. Need them again? <a href="mailto:${CONTACT}?subject=Gauss%20Argo%20setup">Email us</a>.</p>`
     : a.requestedAt ? `<p class="m">Requested on ${esc(day(a.requestedAt))}. We'll email your install link and setup steps.</p>`
     : `<p class="m">Finds and fixes Wi-Fi sign-in pages, DNS, proxy and blocked-port faults on your Mac or Linux machines, and tells you what it changed. It also carries files between your devices through drop-outs, encrypted end to end.</p>` +
       `<div class="pay">${postButton("/app/argo/setup", "Request setup")}</div>`;
@@ -205,7 +206,7 @@ export function renderWorkspace({ email, account, admin, weather, consoleUrl, su
     (member ? memberCard(supportUrl) : "") + evidence + argo + edu + staff + `</div>` +
     `<div class="two plan-lists"><div><h2 class="label">${open ? "Included" : "What you get"}: ${esc(tier.name)}</h2><ul class="ticks">${list(tier.features)}</ul></div>` +
     (next ? `<div><h2 class="label">Next: ${esc(next.name)}</h2><ul class="locked">${list(next.features.filter((f) => !tier.features.includes(f)))}</ul><p class="m">${esc(next.entry)} Planning range: ${esc(priceLabel(next))}.</p></div>` : "") +
-    `</div><p class="actions"><a class="btn ghost" href="mailto:jzwnathan@lightbound.uk?subject=${encodeURIComponent(`Gauss ${tier.name}`)}">Email Josh, the founder</a></p>` +
+    `</div><p class="actions"><a class="btn ghost" href="mailto:${CONTACT}?subject=${encodeURIComponent(`Gauss ${tier.name}`)}">Email Josh, the founder</a></p>` +
     `<p class="note">Gauss is advisory: it shows evidence and never commands a spacecraft.</p>${adminLink}`
   );
 }
@@ -325,7 +326,7 @@ export async function handleApp(request, env, url, { respond, fillPage, fetchImp
   const admin = isAdmin(env, id.email);
   const back = (to) => new Response(null, { status: 303, headers: { location: to, ...APP_HEADERS } });
   const fail = (status, text) => respond(`${text}\n`, status, "text/plain; charset=utf-8", APP_HEADERS);
-  const billingDown = () => respond(`<!doctype html><meta charset="utf-8"><title>Billing unavailable · Lightbound</title><link rel="stylesheet" href="/assets/site.css"><main class="vault wrap"><div><p class="k">503_BILLING</p><h1>Billing is unavailable right now.</h1><p class="muted">Nothing was charged. Please try again shortly, or email jzwnathan@lightbound.uk.</p><p class="actions"><a class="btn" href="/app/">Back to your workspace</a></p></div></main>`,
+  const billingDown = () => respond(`<!doctype html><meta charset="utf-8"><title>Billing unavailable · Lightbound</title><link rel="stylesheet" href="/assets/site.css"><main class="vault wrap"><div><p class="k">503_BILLING</p><h1>Billing is unavailable right now.</h1><p class="muted">Nothing was charged. Please try again shortly, or email ${CONTACT}.</p><p class="actions"><a class="btn" href="/app/">Back to your workspace</a></p></div></main>`,
     503, "text/html; charset=utf-8", APP_HEADERS);
 
   if (request.method === "POST") {
