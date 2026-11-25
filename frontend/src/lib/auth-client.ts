@@ -1,6 +1,7 @@
 import { passkeyClient } from "@better-auth/passkey/client";
 import { createAuthClient } from "better-auth/react";
 import { apiOrigin } from "@/lib/api/base-url";
+import { markSessionEnded } from "@/lib/session-gate";
 import { passkeyErrorMessage, type PasskeyAction } from "@/lib/passkey-support";
 
 export const authClient = createAuthClient({
@@ -9,7 +10,16 @@ export const authClient = createAuthClient({
   plugins: [passkeyClient()],
 });
 
-export const { signIn, signOut, useSession } = authClient;
+export const { signIn, useSession } = authClient;
+
+/**
+ * Sign out. Polls stop first (lib/session-gate.ts): the session atom only catches up after the
+ * request, and a poll in that gap would earn a 401 that CyberTiger counts against this IP.
+ */
+export function signOut(current?: Parameters<typeof markSessionEnded>[0]) {
+  if (current) markSessionEnded(current);
+  return authClient.signOut();
+}
 
 /** The credential a passkey session was opened with (backend/better-auth.ts sets it; the client's types don't declare it). */
 export function passkeyCredentialOf(session: unknown): string | null {

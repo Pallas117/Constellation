@@ -2,6 +2,9 @@ import { useEffect, useState } from 'react';
 import { Database, Search } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { apiBase } from "@/lib/api/base-url";
+import { useFeedSession } from "@/hooks/usePolledFeed";
+import { useSession } from "@/lib/auth-client";
+import { hasRole, roleOf } from "@/lib/roles";
 
 type RagStatus = {
   ok: boolean;
@@ -58,7 +61,13 @@ export function GaussRagPanel() {
     });
   };
 
+  const { data: sessionData } = useSession();
+  const { resolved, signedIn } = useFeedSession();
+  const operator = resolved && signedIn && hasRole(roleOf(sessionData?.user), "operator");
+
   useEffect(() => {
+    // /api/rag/status is an operator route: no session or role means no request (CyberTiger counts 401/403s).
+    if (!operator) return;
     // Indexing is an operator task on the memory host, not something this page can trigger.
     void (async () => {
       try {
@@ -68,7 +77,7 @@ export function GaussRagPanel() {
         setStatus({ ok: false, error: 'Knowledge base not reachable' });
       }
     })();
-  }, []);
+  }, [operator]);
 
   async function handleAsk() {
     if (!question.trim()) return;
