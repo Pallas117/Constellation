@@ -494,6 +494,36 @@
       ]
     },
     {
+      "id": "REQ-SEC-022",
+      "title": "Admin block controls validate their input",
+      "statement": "The CyberTiger block and unblock routes shall accept only an IPv4/IPv6 address (block) or text of at most 45 characters (unblock), a reason of at most 200 characters, and a duration of at most 30 days, and shall answer anything else with 400.",
+      "rationale": "A non-string address was a TypeError and a 500; a duration past the largest valid date made every later status read a 500 until the entry was removed.",
+      "parent": "GAU-25",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "admin block input: a real IP, short reason and bounded duration; bad input is a 400, never a throw (REQ-SEC-022)",
+        "a block longer than any valid date is capped, so status and events keep working (REQ-SEC-022)",
+        "admin block controls: a non-string or non-IP address is a 400 (was a TypeError 500); a huge duration no longer breaks status (REQ-SEC-022)"
+      ]
+    },
+    {
+      "id": "REQ-SEC-023",
+      "title": "API access policy holds end to end",
+      "statement": "Over HTTP, every API_POLICY route shall answer 401 without a session and 403 to the role below its level; path variants (case, trailing or double slashes, encoded slashes, traversal) shall never reach a route the policy did not admit; every answer shall carry nosniff, X-Frame-Options DENY and a default-src 'none' CSP; malformed input shall be a 400 without stack, path or echo; and sign-in shall refuse a callback URL on another origin.",
+      "rationale": "The unit role matrix checks the table; this checks the mounted app, where Express routing (case-insensitive, slash-folding) and the policy could disagree.",
+      "parent": "GAU-25",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "every API_POLICY route: no session is 401, the role just below is 403, public routes never ask for a session (REQ-SEC-023)",
+        "path tricks never reach a route the policy did not admit for that role (REQ-SEC-023)",
+        "security headers are on every kind of answer: ok, 400, 401, 403, 404, 413 and CyberTiger refusals (REQ-SEC-023)",
+        "malformed input is a 400 with a fixed reason, never a 500 or an echo (REQ-SEC-023)",
+        "sign-in refuses a callback URL on another site (no open redirect) (REQ-SEC-023)"
+      ]
+    },
+    {
       "id": "REQ-SEC-002",
       "title": "Upstream courtesy",
       "statement": "Adapters shall poll no faster than these minimum intervals: NOAA, JAXA, LASP and GOES 60 s; ESA 10 s; SWPC products 2 min; MMS and Kyoto Dst 10 min; and after consecutive failures a source shall wait 10 s, doubling to at most 10 min, before its next attempt.",

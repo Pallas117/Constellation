@@ -117,7 +117,7 @@ export class BedrockDB {
     return run;
   }
 
-  /** Lines skipped by the last read because they were not valid JSON (e.g. a torn final write). */
+  /** Lines skipped by the last read: not valid JSON (e.g. a torn final write) or not a JSON object. */
   public lastSkippedLines = 0;
 
   /**
@@ -130,11 +130,20 @@ export class BedrockDB {
     const records: BedrockRecord[] = [];
     let skipped = 0;
     for (const line of lines) {
+      let parsed: unknown;
       try {
-        records.push(JSON.parse(line));
+        parsed = JSON.parse(line);
       } catch {
         skipped += 1; // one bad line must not hide the rest
+        continue;
       }
+      // Valid JSON that is not a record ("null", a number, a list) is skipped too: the feed routes
+      // read `record.type`, and a null there was a TypeError in a request handler.
+      if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+        skipped += 1;
+        continue;
+      }
+      records.push(parsed as BedrockRecord);
     }
     this.lastSkippedLines = skipped;
     return records;

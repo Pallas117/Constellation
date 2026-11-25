@@ -34,6 +34,41 @@ export async function inferNowcast(
   return { ...body, method: body.method === "model" ? "model" : "heuristic" } as NowcastInferenceResponse;
 }
 
+const finiteOr = (value: unknown, fallback: number): number =>
+  typeof value === "number" && Number.isFinite(value) ? value : fallback;
+
+/** Points per inference request: 24 h at the 5 s feed cadence. */
+export const MAX_NOWCAST_SEQUENCE = 17_280;
+/** Nowcast horizon bounds, in minutes. */
+export const NOWCAST_HORIZON_MIN = 5;
+export const NOWCAST_HORIZON_MAX = 180;
+
+/**
+ * The body of POST /api/ai/nowcast/infer: `{ sequence?, horizonMinutes? }`. The sequence is a list
+ * of plain objects (canonical points; missing fields fall back in the heuristic, the inference
+ * server checks its own input). A non-numeric horizon used to become NaN and an empty prediction.
+ */
+export function parseNowcastRequest(
+  body: unknown,
+): { ok: true; sequence: NowcastInferenceRequest["sequence"]; horizonMinutes: number } | { ok: false; error: string } {
+  const input = (body && typeof body === "object" && !Array.isArray(body) ? body : {}) as Record<string, unknown>;
+  const sequence = input.sequence ?? [];
+  if (!Array.isArray(sequence) || sequence.length > MAX_NOWCAST_SEQUENCE) {
+    return { ok: false, error: `sequence must be a list of up to ${MAX_NOWCAST_SEQUENCE} points` };
+  }
+  if (!sequence.every((p) => p !== null && typeof p === "object" && !Array.isArray(p))) {
+    return { ok: false, error: "each sequence point must be an object" };
+  }
+  const rawHorizon = input.horizonMinutes ?? 60;
+  const horizon = typeof rawHorizon === "number" || typeof rawHorizon === "string" ? Number(rawHorizon) : Number.NaN;
+  if (!Number.isFinite(horizon)) return { ok: false, error: "horizonMinutes must be a number" };
+  return {
+    ok: true,
+    sequence: sequence as NowcastInferenceRequest["sequence"],
+    horizonMinutes: Math.max(NOWCAST_HORIZON_MIN, Math.min(horizon, NOWCAST_HORIZON_MAX)),
+  };
+}
+
 /**
  * Fixed-formula nowcast used when no inference server is configured. Deterministic: the same
  * input always gives the same output. It has no learned parameters, so it reports no confidence.
@@ -48,10 +83,11 @@ export function heuristicNowcast(
   // The sequence can come from a request body: read Kp defensively and accept only a finite 0–9 value.
   const kpRead: unknown = last?.indices?.kp;
   const kpBase = typeof kpRead === "number" && Number.isFinite(kpRead) && kpRead >= 0 && kpRead <= 9 ? kpRead : null;
-  const bz = last?.magneticField.z ?? 0;
-  const speed = last?.solarWind.speed ?? 400;
-  const density = last?.solarWind.density ?? 5;
-  const coupling = last?.coupling.newell ?? 0;
+  // Every field may be missing or the wrong type in a posted point: a TypeError here was a 500.
+  const bz = finiteOr(last?.magneticField?.z, 0); // nT, GSM
+  const speed = finiteOr(last?.solarWind?.speed, 400); // km/s
+  const density = finiteOr(last?.solarWind?.density, 5); // cm^-3
+  const coupling = finiteOr(last?.coupling?.newell, 0);
 
   const steps = Math.max(1, Math.min(24, Math.floor(request.horizonMinutes / 5)));
   const driver = Math.max(0, -bz) * 0.45 + (speed - 350) * 0.004 + density * 0.05 + coupling / 8000;
@@ -153,19 +189,29 @@ export async function inferAnomalyForecast(
   };
 }
 
-export async function triggerTraining(): Promise<{ started: boolean; pid?: number; message: string }> {
+/**
+ * Starts the training script in the background. Resolves once the process has either started or
+ * failed to start: `spawn` reports a missing interpreter or script asynchronously, and resolving
+ * "started" straight away used to answer "Training started" even when nothing ran. The message is
+ * fixed text: an error's message names local paths, so only its code goes to the log.
+ */
+export async function triggerTraining(
+  options: { command?: string; script?: string } = {},
+): Promise<{ started: boolean; pid?: number; message: string }> {
   return new Promise((resolve) => {
-    const script = process.env.TRAINING_SCRIPT_PATH ?? "ml/train/train_kp.py";
-    const child = spawn("python3", [script], {
+    const script = options.script ?? process.env.TRAINING_SCRIPT_PATH ?? "ml/train/train_kp.py";
+    const child = spawn(options.command ?? "python3", [script], {
       stdio: "ignore",
       detached: true,
     });
 
-    child.on("error", (error) => {
-      resolve({ started: false, message: `Failed to start training: ${error.message}` });
+    child.once("error", (error: NodeJS.ErrnoException) => {
+      console.error(`[training] could not start (${error.code ?? error.name})`);
+      resolve({ started: false, message: "Training could not be started" });
     });
-
-    child.unref();
-    resolve({ started: true, pid: child.pid, message: "Training started" });
+    child.once("spawn", () => {
+      child.unref();
+      resolve({ started: true, pid: child.pid, message: "Training started" });
+    });
   });
 }

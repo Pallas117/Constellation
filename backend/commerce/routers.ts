@@ -1,4 +1,5 @@
 import express from "express";
+import { asyncRoute } from "../lib/async-route.js";
 import { roleSatisfies, type AuthenticatedRequest } from "../auth.js";
 import { sendJsonCompressed } from "../lib/json-response.js";
 import type { EnvironmentHistory } from "../trust/environment.js";
@@ -101,7 +102,7 @@ export function createDataApiRouter(
 
   const meta = (req: KeyedRequest) => ({ org: req.apiKey!.org.name, plan: req.apiKey!.org.plan, generatedAt: now().toISOString() });
 
-  router.get("/data/space-weather/latest", async (req: KeyedRequest, res) => {
+  router.get("/data/space-weather/latest", asyncRoute(async (req: KeyedRequest, res) => {
     const point = await data.latest();
     if (!point) {
       res.status(404).json({ error: "No data yet" });
@@ -109,9 +110,9 @@ export function createDataApiRouter(
     }
     res.locals.points = 1;
     await sendJsonCompressed(req, res, { data: point, meta: meta(req) });
-  });
+  }));
 
-  router.get("/data/space-weather/history", async (req: KeyedRequest, res) => {
+  router.get("/data/space-weather/history", asyncRoute(async (req: KeyedRequest, res) => {
     const maxLookback = plans[req.apiKey!.org.plan].maxLookbackMs;
     const lookbackMs = Math.min(parseLookback(req.query.lookback, 60 * 60 * 1000), maxLookback);
     const requested = Math.max(1, Math.min(Number(req.query.limit ?? 720) || 720, MAX_POINTS));
@@ -122,11 +123,11 @@ export function createDataApiRouter(
     res.locals.points = points.length;
     const limitedBy = limit < requested ? { limitedBy: "daily data budget" } : {};
     await sendJsonCompressed(req, res, { data: points, meta: { ...meta(req), source, lookbackMs, count: points.length, ...limitedBy } });
-  });
+  }));
 
-  router.get("/data/sources/status", async (req: KeyedRequest, res) => {
+  router.get("/data/sources/status", asyncRoute(async (req: KeyedRequest, res) => {
     await sendJsonCompressed(req, res, { data: data.sources(), meta: meta(req) });
-  });
+  }));
 
   /**
    * PR-01 trust records (GAU-57): one inference, or {"inferences": [...]} up to MAX_TRUST_BATCH.
@@ -135,7 +136,7 @@ export function createDataApiRouter(
    * replay pilot (PR-03), not a live lookup. Every record returned is logged for invoicing
    * (GAU-70) before the response goes out; if that log can't be written, nothing is returned.
    */
-  router.post("/data/trust/records", async (req: KeyedRequest, res) => {
+  router.post("/data/trust/records", asyncRoute(async (req: KeyedRequest, res) => {
     const history = data.environment?.() ?? null;
     if (!history) {
       res.status(503).json({ error: "Trust records are not available on this server" });
@@ -181,7 +182,7 @@ export function createDataApiRouter(
     res.locals.points = records.length;
     if (!batch) await sendJsonCompressed(req, res, { data: records[0], meta: meta(req) });
     else await sendJsonCompressed(req, res, { data: records, rejected, meta: { ...meta(req), count: records.length } });
-  });
+  }));
 
   return router;
 }

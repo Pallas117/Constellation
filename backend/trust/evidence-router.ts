@@ -12,6 +12,7 @@
  * here. A pack is signed by the key holder at the host with `npm run trust:sign`.
  */
 import express, { type Request, type Response } from "express";
+import { asyncRoute } from "../lib/async-route.js";
 import type { EvidencePack } from "./evidence.js";
 import { renderEvidencePdf } from "./evidence-pdf.js";
 import { mappingProblems, type LogMapping } from "./ingest.js";
@@ -48,7 +49,7 @@ export function createEvidenceRouter(deps: { run?: PilotRunner; keyring?: () => 
     });
   });
 
-  router.post("/analyse", async (req: Request, res: Response) => {
+  router.post("/analyse", asyncRoute(async (req: Request, res: Response) => {
     const body: unknown = req.body;
     if (!isObject(body) || typeof body.log !== "string" || typeof body.eventId !== "string") {
       res.status(400).json({ error: "Send { log, eventId, mappingId | mapping }" });
@@ -86,7 +87,7 @@ export function createEvidenceRouter(deps: { run?: PilotRunner; keyring?: () => 
     } finally {
       busy = false;
     }
-  });
+  }));
 
   /** The pack in the body, with every problem found; a pack that throws while being checked is reported, not a 500. */
   const packIn = (req: Request, allowUnsigned: boolean) => {

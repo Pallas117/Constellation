@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test, { mock } from "node:test";
 import type { Request } from "express";
-import { CyberTigerDaemon, MAX_TRACKED_IPS } from "./daemon.js";
+import { CyberTigerDaemon, MAX_BLOCK_SECONDS, MAX_TRACKED_IPS, parseAdminBlock, parseAdminUnblock } from "./daemon.js";
 
 function mockRequest(input: {
   method?: string;
@@ -170,4 +170,70 @@ test("rate windows are capped at MAX_TRACKED_IPS, dropping the oldest first (GAU
   const newest = mockRequest({ ip: ipFor(MAX_TRACKED_IPS) });
   for (let i = 0; i < 999; i += 1) daemon.inspectRequest(newest);
   assert.equal(daemon.inspectRequest(newest).allowed, false, "newest window kept its count");
+});
+
+test("a remote client rotating X-Forwarded-For is still counted, and blocked, under its own address", () => {
+  const daemon = new CyberTigerDaemon({ authFailureWindowMs: 60_000, authFailureThreshold: 3, autoBlockSeconds: 120, rateLimitMax: 1000 });
+  for (let i = 0; i < 3; i += 1) {
+    const d = daemon.inspectRequest(mockRequest({ ip: "203.0.113.9", forwarded: `10.0.0.${i}` }));
+    assert.equal(d.ip, "203.0.113.9", "the spoofed header is ignored from a non-loopback peer");
+    assert.equal(d.local, false);
+    daemon.recordResponse({ requestId: d.requestId, ip: d.ip, local: d.local, method: "GET", path: "/api/rag/status", status: 401 });
+  }
+  assert.equal(daemon.inspectRequest(mockRequest({ ip: "203.0.113.9", forwarded: "10.9.9.9" })).allowed, false);
+  // Nobody else was blocked on its say-so.
+  assert.equal(daemon.getStatus().activeBlocks.map((b) => b.ip).join(","), "203.0.113.9");
+  assert.equal(daemon.inspectRequest(mockRequest({ ip: "203.0.113.10" })).allowed, true);
+});
+
+test("encoded path-traversal and script probes are refused (400) whichever way they are encoded", () => {
+  const daemon = new CyberTigerDaemon({ rateLimitMax: 1000 });
+  for (const url of [
+    "/api/../etc/passwd",
+    "/api/%2e%2e/%2e%2e/etc/passwd",
+    "/api/..%2f..%2fetc/passwd",
+    "/api/%2E%2E%2Fsecrets",
+    "/api/%252e%252e%252fsecrets", // double-encoded: decoded once it is %2e%2e%2f
+    "/api/feed?q=%3Cscript%3E",
+  ]) {
+    const d = daemon.inspectRequest(mockRequest({ ip: "198.51.100.1", url }));
+    assert.equal(d.allowed, false, url);
+    assert.equal(d.status, 400, url);
+    daemon.unblockIp("198.51.100.1");
+  }
+  // A malformed escape must not throw or let the request through unchecked.
+  const bad = daemon.inspectRequest(mockRequest({ ip: "198.51.100.2", url: "/api/%E0%A4%A/../x" }));
+  assert.equal(bad.allowed, false);
+});
+
+test("admin block input: a real IP, short reason and bounded duration; bad input is a 400, never a throw (REQ-SEC-022)", () => {
+  assert.deepEqual(parseAdminBlock({ ip: " 203.0.113.9 " }), { ok: true, ip: "203.0.113.9", reason: "manual-admin-action" });
+  assert.deepEqual(parseAdminBlock({ ip: "2001:DB8::1", reason: "probe", seconds: 60 }), { ok: true, ip: "2001:db8::1", reason: "probe", seconds: 60 });
+  for (const body of [undefined, null, [], "1.2.3.4", {}, { ip: 1234 }, { ip: "" }, { ip: "not-an-ip" }, { ip: "1.2.3.4; drop" }, { ip: "1".repeat(100) }]) {
+    const parsed = parseAdminBlock(body);
+    assert.equal(parsed.ok, false, JSON.stringify(body));
+  }
+  assert.equal(parseAdminBlock({ ip: "1.2.3.4", reason: 42 }).ok, false);
+  for (const seconds of [0, -5, "soon", Number.NaN]) assert.equal(parseAdminBlock({ ip: "1.2.3.4", seconds }).ok, false, String(seconds));
+  const long = parseAdminBlock({ ip: "1.2.3.4", reason: "x".repeat(10_000), seconds: 1e300 });
+  assert.ok(long.ok);
+  assert.equal(long.reason.length, 200, "reason is capped");
+  assert.equal(long.seconds, MAX_BLOCK_SECONDS, "duration is capped");
+
+  assert.deepEqual(parseAdminUnblock({ ip: " UNKNOWN " }), { ok: true, ip: "unknown" }, "odd entries can still be removed");
+  assert.equal(parseAdminUnblock({ ip: 7 }).ok, false);
+  assert.equal(parseAdminUnblock({}).ok, false);
+});
+
+test("a block longer than any valid date is capped, so status and events keep working (REQ-SEC-022)", () => {
+  const daemon = new CyberTigerDaemon({ rateLimitMax: 1000 });
+  // Before the cap: the expiry was past the largest valid Date, toISOString threw in blockIp
+  // (after the entry was stored) and then in every getStatus call.
+  assert.doesNotThrow(() => daemon.blockIp("203.0.113.50", "manual", 1e13));
+  const status = daemon.getStatus();
+  const block = status.activeBlocks.find((b) => b.ip === "203.0.113.50");
+  assert.ok(block);
+  const days = (Date.parse(block.until) - Date.now()) / 86_400_000;
+  assert.ok(days > 29.9 && days <= 30.0001, `capped at 30 days, got ${days}`);
+  assert.equal(daemon.inspectRequest(mockRequest({ ip: "203.0.113.50" })).allowed, false);
 });

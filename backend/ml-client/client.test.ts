@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
 import test from "node:test";
-import { heuristicNowcast, inferAnomalyForecast, inferNowcast } from "./client.js";
+import { heuristicNowcast, inferAnomalyForecast, inferNowcast, MAX_NOWCAST_SEQUENCE, parseNowcastRequest, triggerTraining } from "./client.js";
 import type { CanonicalSpaceWeatherPoint } from "../types.js";
 
 const point = {
@@ -197,4 +197,55 @@ test("nightly incremental count and skip-if-unchanged (python)", { skip: !hasPyt
 test("OMNI matrix cache and zero-copy windows match the old results exactly (python)", { skip: !hasPython && "python3 not found" }, () => {
   const result = spawnSync("python3", ["-I", "ml/tests/test_omni_matrix.py"], { encoding: "utf8" });
   assert.equal(result.status, 0, result.stderr);
+});
+
+test("nowcast request body: bad horizon or sequence is a 400 reason, never NaN or a 500", () => {
+  assert.deepEqual(parseNowcastRequest({}), { ok: true, sequence: [], horizonMinutes: 60 });
+  assert.deepEqual(parseNowcastRequest(undefined), { ok: true, sequence: [], horizonMinutes: 60 });
+  const ok = parseNowcastRequest({ sequence: [point], horizonMinutes: "30" });
+  assert.ok(ok.ok);
+  assert.equal(ok.horizonMinutes, 30);
+  assert.equal((parseNowcastRequest({ horizonMinutes: 1e9 }) as { horizonMinutes: number }).horizonMinutes, 180, "clamped to 180 min");
+  assert.equal((parseNowcastRequest({ horizonMinutes: -4 }) as { horizonMinutes: number }).horizonMinutes, 5, "clamped to 5 min");
+  for (const body of [
+    { horizonMinutes: "soon" },
+    { horizonMinutes: { valueOf: 1 } },
+    { horizonMinutes: [60] },
+    { sequence: "x" },
+    { sequence: [1, 2] },
+    { sequence: [null] },
+    { sequence: [[point]] },
+    { sequence: Array.from({ length: MAX_NOWCAST_SEQUENCE + 1 }, () => ({})) },
+  ]) {
+    assert.equal(parseNowcastRequest(body).ok, false, JSON.stringify(body).slice(0, 60));
+  }
+});
+
+test("heuristic nowcast: a posted point with missing or non-numeric fields degrades, it does not throw", () => {
+  for (const last of [{}, { magneticField: null, solarWind: "fast", coupling: 3 }, { magneticField: { z: "-9" }, indices: { kp: 3 } }]) {
+    const out = heuristicNowcast({ horizonMinutes: 30, sequence: [last as unknown as CanonicalSpaceWeatherPoint] }, 0);
+    assert.equal(out.predictions.length, 6);
+    for (const p of out.predictions) {
+      assert.ok(p.geomagneticPerturbation === null || Number.isFinite(p.geomagneticPerturbation), JSON.stringify(p));
+    }
+  }
+});
+
+test("training trigger: a missing interpreter is reported as not started, with no path or error text", async () => {
+  const errors: string[] = [];
+  const realError = console.error;
+  console.error = (...args: unknown[]) => void errors.push(args.map(String).join(" "));
+  let result;
+  try {
+    result = await triggerTraining({ command: "/nonexistent/gauss-python-for-test", script: "/secret/path/train.py" });
+  } finally {
+    console.error = realError;
+  }
+  assert.deepEqual(result, { started: false, message: "Training could not be started" });
+  assert.ok(!errors.join("\n").includes("/nonexistent/"), "the log names the error code, not the path");
+  assert.ok(!errors.join("\n").includes("/secret/"));
+
+  const started = await triggerTraining({ command: process.execPath, script: "-e" });
+  assert.equal(started.started, true);
+  assert.equal(typeof started.pid, "number");
 });

@@ -81,6 +81,20 @@ test("bedrock skips corrupt and torn lines instead of returning nothing (GAU-117
   assert.deepEqual(since.map((p: { h: number }) => p.h), [20, 2, 1], "last 24 h, canonical only, oldest first");
 });
 
+test("bedrock skips valid JSON that is not a record (null, numbers, lists), so readers never see a null record", async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "bedrock-null-"));
+  const ok = JSON.stringify({ type: "canonical", timestamp: "", data: { timestamp: "2026-10-12T10:00:00Z" } });
+  await fs.writeFile(path.join(dir, "telemetry.jsonl"), ["null", ok, "42", '"text"', "[1,2]", "true", ok].join("\n"), "utf8");
+  process.env.GAUSS_BEDROCK_DIR = dir;
+  const { BedrockDB } = await import(`./local-db.js?null=${encodeURIComponent(dir)}`);
+  const db = new BedrockDB();
+  const recent: Array<{ type: string }> = await db.getRecent(100);
+  assert.equal(recent.length, 2);
+  // What the feed routes in server.ts do with the result: this threw on a null record.
+  assert.equal(recent.filter((l) => l.type === "canonical").length, 2);
+  assert.equal(db.lastSkippedLines, 5);
+});
+
 test("FMEA: best-effort appends never reject (no unhandled rejection); strict appends do; both count (GAU-121)", async () => {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "bedrock-fail-"));
   await fs.mkdir(path.join(dir, "telemetry.jsonl")); // EISDIR on every append

@@ -18,6 +18,9 @@ const router = express.Router();
 const MAX_SIGNAL_ENTRIES = 32;
 const MAX_SIGNAL_KEY_CHARS = 64;
 const MAX_SIGNAL_STRING_CHARS = 256;
+/** The browser sends a SHA-256 hex digest (64 characters); 256 leaves room for other hashes. */
+const MAX_FINGERPRINT_HASH_CHARS = 256;
+const MAX_DEVICE_NAME_CHARS = 120;
 
 /** Statuses an owner may set by hand: downgrades only. "trusted" comes only from a verified proof. */
 const OWNER_SETTABLE_STATUSES: ReadonlySet<unknown> = new Set(["unverified", "untrusted", "revoked"]);
@@ -86,6 +89,16 @@ router.post("/register", (req: AuthenticatedRequest, res) => {
     res.status(400).json({ ok: false, error: "Missing fingerprintHash" });
     return;
   }
+  // Same bound as /:id/status. Unbounded, any new account could park 2 MB strings in up to
+  // MAX_DEVICES_PER_USER records held in memory.
+  if (fingerprintHash.length > MAX_FINGERPRINT_HASH_CHARS) {
+    res.status(400).json({ ok: false, error: "Invalid fingerprintHash" });
+    return;
+  }
+  if (name !== undefined && name !== null && (typeof name !== "string" || name.length > MAX_DEVICE_NAME_CHARS)) {
+    res.status(400).json({ ok: false, error: `name must be text of up to ${MAX_DEVICE_NAME_CHARS} characters` });
+    return;
+  }
 
   const signals = parseFingerprintSignals(fingerprintSignals);
   if (!signals.ok) {
@@ -114,7 +127,7 @@ router.post("/:id/status", (req: DeviceRequest, res) => {
     res.status(400).json({ ok: false, error: "status must be one of: unverified, untrusted, revoked (trusted is set only by a verified proof)" });
     return;
   }
-  if (fingerprintHash !== undefined && (typeof fingerprintHash !== "string" || fingerprintHash.length === 0 || fingerprintHash.length > 256)) {
+  if (fingerprintHash !== undefined && (typeof fingerprintHash !== "string" || fingerprintHash.length === 0 || fingerprintHash.length > MAX_FINGERPRINT_HASH_CHARS)) {
     res.status(400).json({ ok: false, error: "Invalid fingerprintHash" });
     return;
   }
