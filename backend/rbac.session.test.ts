@@ -19,6 +19,10 @@ process.env.AUTH_DB_PATH = path.join(tmp, "auth.db");
 process.env.AUTH_REQUIRED = "true";
 // These tests cover role gating; the operator pattern gate (428, GAU-235) has its own tests.
 process.env.OPERATOR_PATTERN = "off";
+// The tailnet identity check asks this host's own Tailscale who the caller is
+// (428 TAILNET_IDENTITY without it): off here so the result doesn't depend on
+// the machine running the tests. Its own tests: pattern/tailnet.test.ts.
+process.env.TAILNET_IDENTITY = "off";
 process.env.ALLOWED_ORIGINS = ORIGIN;
 process.env.BETTER_AUTH_SECRET = "test-only-secret-0123456789abcdef0123456789";
 // POST /api/ai/nowcast/train runs `python3 <TRAINING_SCRIPT_PATH>`: an empty
@@ -29,7 +33,7 @@ fs.writeFileSync(process.env.TRAINING_SCRIPT_PATH, "");
 // Both read the environment above when first imported.
 const { auth } = await import("./better-auth.js");
 const { startBackend, stopBackend } = await import("./server.js");
-const { STEP_UP_REQUIRED } = await import("./rbac.js");
+const { PASSKEY_REQUIRED, STEP_UP_REQUIRED } = await import("./rbac.js");
 const { STEP_UP_MAX_AGE_MS } = await import("./passkey-policy.js");
 
 const ROLES: AuthRole[] = ["user", "staff", "operator", "admin"];
@@ -63,6 +67,11 @@ function setRole(email: string, role: AuthRole) {
 function setPasskeyTouch(userId: string, atMs: number) {
   const changes = db.prepare("UPDATE session SET passkeyAt = ? WHERE userId = ?").run(new Date(atMs).toISOString(), userId).changes;
   assert.ok(changes >= 1, "no session to stamp");
+}
+
+/** Back to a password-only session. */
+function clearPasskeyTouch(userId: string) {
+  db.prepare("UPDATE session SET passkeyAt = NULL WHERE userId = ?").run(userId);
 }
 
 before(async () => {
@@ -115,23 +124,35 @@ test("real sessions: an operator route refuses user and staff and admits operato
   for (const role of ["user", "staff"] as const) {
     assert.equal((await call("POST", OPERATOR_ROUTE, sessions[role].cookie, {})).status, 403, role);
   }
-  // 400 "Missing query": past the policy, rejected by the handler itself.
   for (const role of ["operator", "admin"] as const) {
+    // One login for operators: a password session has the role but can't open the console.
+    const passwordOnly = await call("POST", OPERATOR_ROUTE, sessions[role].cookie, {});
+    assert.equal(passwordOnly.status, 428, role);
+    assert.equal(((await passwordOnly.json()) as { code: string }).code, PASSKEY_REQUIRED, role);
+    // A passkey session opens it, even with a touch too old for step-up.
+    // 400 "Missing query": past the policy, rejected by the handler itself.
+    setPasskeyTouch(sessions[role].userId, Date.now() - STEP_UP_MAX_AGE_MS - 60_000);
     assert.equal((await call("POST", OPERATOR_ROUTE, sessions[role].cookie, {})).status, 400, role);
   }
+  // A passkey session never lifts a lower role over the role check.
+  setPasskeyTouch(sessions.staff.userId, Date.now());
+  assert.equal((await call("POST", OPERATOR_ROUTE, sessions.staff.cookie, {})).status, 403, "staff with a fresh touch");
 });
 
 test("real sessions: an admin route refuses operator and below and admits admin", async () => {
   for (const role of ["user", "staff", "operator"] as const) {
     assert.equal((await call("POST", ADMIN_ROUTE, sessions[role].cookie)).status, 403, role);
   }
-  // The route is also stepUp (GAU-235): the right role on a password-only
-  // session is not enough, and neither is a touch older than the window.
+  // The route is also stepUp (GAU-235): the right role is not enough on a
+  // password-only session, nor on a passkey session touched before the window.
+  clearPasskeyTouch(sessions.admin.userId);
   const passwordOnly = await call("POST", ADMIN_ROUTE, sessions.admin.cookie);
   assert.equal(passwordOnly.status, 428);
-  assert.equal(((await passwordOnly.json()) as { code: string }).code, STEP_UP_REQUIRED);
+  assert.equal(((await passwordOnly.json()) as { code: string }).code, PASSKEY_REQUIRED);
   setPasskeyTouch(sessions.admin.userId, Date.now() - STEP_UP_MAX_AGE_MS - 60_000);
-  assert.equal((await call("POST", ADMIN_ROUTE, sessions.admin.cookie)).status, 428, "stale touch");
+  const stale = await call("POST", ADMIN_ROUTE, sessions.admin.cookie);
+  assert.equal(stale.status, 428, "stale touch");
+  assert.equal(((await stale.json()) as { code: string }).code, STEP_UP_REQUIRED);
 
   setPasskeyTouch(sessions.admin.userId, Date.now());
   const response = await call("POST", ADMIN_ROUTE, sessions.admin.cookie);

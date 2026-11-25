@@ -4,7 +4,7 @@ import test from "node:test";
 import { betterAuth } from "better-auth";
 import { getMigrations } from "better-auth/db/migration";
 import Database from "better-sqlite3";
-import { auth } from "./better-auth.js";
+import { auth, patternDeviceMemory } from "./better-auth.js";
 import { toMillis } from "./passkey-policy.js";
 
 // The production passkey setup (plugin options, session fields, hooks) on a
@@ -294,6 +294,30 @@ test("a step-up keeps the operator pattern (and any duress mark) this browser al
   const evil = await new Browser(handler).call("/sign-up/email", { email: "x@example.com", password: "a-long-test-password", name: "X", patternSetAt: new Date() });
   assert.equal(evil.status === 200 ? toMillis((db.prepare("SELECT patternSetAt FROM user WHERE email = ?").get("x@example.com") as { patternSetAt: unknown }).patternSetAt) : null, null);
   assert.ok(userId);
+});
+
+test("coming back with the same passkey within the day starts with the pattern already drawn; another passkey does not", async () => {
+  const { db, handler, browser, userId } = await setup();
+  const device = new SoftAuthenticator();
+  assert.equal((await register(browser, device)).result.status, 200);
+  assert.equal((await passkeySignIn(browser, device)).result.status, 200);
+  const first = db.prepare("SELECT passkeyCredentialId, patternAt FROM session WHERE token = ?").get(tokenOf(browser.sessionToken)) as { passkeyCredentialId: string; patternAt: unknown };
+  assert.equal(toMillis(first.patternAt), null, "nothing drawn yet");
+  // The operator draws the pattern in that session (the router remembers it for this passkey).
+  patternDeviceMemory.remember(userId, first.passkeyCredentialId);
+  try {
+    const back = new Browser(handler);
+    assert.equal((await passkeySignIn(back, device)).result.status, 200);
+    const again = db.prepare("SELECT patternAt FROM session WHERE token = ?").get(tokenOf(back.sessionToken)) as { patternAt: unknown };
+    assert.ok(toMillis(again.patternAt), "one touch back in");
+    patternDeviceMemory.forget(userId);
+    const forgotten = new Browser(handler);
+    assert.equal((await passkeySignIn(forgotten, device)).result.status, 200);
+    const cold = db.prepare("SELECT patternAt FROM session WHERE token = ?").get(tokenOf(forgotten.sessionToken)) as { patternAt: unknown };
+    assert.equal(toMillis(cold.patternAt), null, "after duress (forget), the pattern is needed again");
+  } finally {
+    patternDeviceMemory.forget(userId);
+  }
 });
 
 test("sessions slide: one unused for 12 hours expires", async () => {

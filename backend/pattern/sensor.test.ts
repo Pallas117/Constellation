@@ -51,7 +51,7 @@ test("an operator session that reads like bulk collection must draw the pattern 
   const cleared: string[] = [];
   const watch = watchAccess({
     sensor: h.sensor,
-    clearDrawing: async (token) => void cleared.push(token),
+    clearDrawing: async (auth) => void cleared.push(auth.token),
     ipOf: () => "100.64.0.9",
     ratePerMinute: 20,
     breadthPer5Min: 5,
