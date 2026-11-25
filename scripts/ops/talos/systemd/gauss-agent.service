@@ -1,0 +1,57 @@
+# Runs queued handover tasks for the unprivileged gauss-agent user (agents-profile.sh installs this
+# as /etc/systemd/system/gauss-agent.service). It is installed but NOT enabled, and it is skipped
+# while /etc/gauss-agent/anthropic.key does not exist: OFF until Josh creates that root-only file:
+#   sudo install -d -m 0700 /etc/gauss-agent
+#   sudo install -m 0600 -o root -g root /dev/stdin /etc/gauss-agent/anthropic.key   (paste the key, Ctrl-D)
+# systemd reads it as root (LoadCredential) and hands the service a private copy; the agent user can
+# not read the file itself and the key is never in an environment file, argv, the journal or the repo.
+# Set the daily cap in a drop-in (sudo systemctl edit gauss-agent): Environment=GAUSS_AGENT_CREDIT_CAP_USD=5
+# The cap is 0 (nothing runs) until then.
+# UNTESTED ON A REAL LINUX HOST (25 Nov 2026).
+[Unit]
+Description=Gauss agent (queued handover tasks, unprivileged)
+Wants=network-online.target
+After=network-online.target
+ConditionPathExists=/etc/gauss-agent/anthropic.key
+
+[Service]
+Type=simple
+User=gauss-agent
+Group=gauss-agent
+Environment=GAUSS_AGENT_DIR=/var/lib/gauss-agent
+Environment=GAUSS_AGENT_CREDIT_CAP_USD=0
+Environment=HOME=/var/lib/gauss-agent
+LoadCredential=anthropic-key:/etc/gauss-agent/anthropic.key
+ExecStart=/usr/local/lib/gauss/agent-runner.sh
+Restart=on-failure
+RestartSec=30
+# Hardening
+NoNewPrivileges=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/gauss-agent
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+SystemCallArchitectures=native
+UMask=0077
+MemoryMax=1G
+TasksMax=256
+# Journal: a runaway agent cannot flood the log (global cap is the ops profile's journald 200M).
+LogRateLimitIntervalSec=30s
+LogRateLimitBurst=200
+
+[Install]
+WantedBy=multi-user.target
