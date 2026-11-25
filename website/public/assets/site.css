@@ -418,13 +418,15 @@ footer p{margin:0 0 8px;max-width:72ch}
 .planner thead a{display:block;color:inherit;text-decoration:none;padding:7px 0;min-width:28px}
 .planner td.work{background:rgba(176,144,111,.28);color:var(--warm)}
 .planner td.edge{background:rgba(243,240,232,.06);color:var(--muted)}
-.planner td.quiet{color:var(--muted)}
+.planner td.quiet{color:var(--muted);text-decoration:underline dotted;text-underline-offset:3px}
 .planner .best{outline:1px solid var(--accent)}
 .planner .picked{outline:2px solid var(--warm)}
 .slot{margin-top:24px;border:1px solid var(--char);border-radius:10px;background:var(--panel);padding:20px}
 .slot h2{margin:8px 0 12px;font-size:22px}
 .slot-list{list-style:none;margin:0;padding:0;display:grid;gap:6px;grid-template-columns:repeat(auto-fill,minmax(220px,1fr))}
-.slot-list li{display:grid;gap:2px}
+.slot-list li{display:grid;gap:2px;align-content:start}
+.slot-list span{color:var(--accent);font-size:14px}
+.slot .slot-list+.m{margin:12px 0 0}
 .slot-list b{font-weight:600}
 .calls{margin-top:40px}
 .call-list{list-style:none;margin:0;padding:0;display:grid;gap:12px}
@@ -597,24 +599,97 @@ footer p{margin:0 0 8px;max-width:72ch}
 @keyframes d-step-first{0%,70%{opacity:1;visibility:visible}100%{opacity:0;visibility:hidden}}
 @keyframes d-step-last{from{opacity:0;visibility:hidden;transform:translateY(10px)}to{opacity:1;visibility:visible;transform:none}}
 
-/* Live-view gate (landing): after the descent, a pre-rendered frame of the Gauss live view (tools/capture_live_view.py)
-   fills the screen behind a smoked-glass sign-in card. An image, not the app: it shows at once, and nothing live is
-   sent before sign-in. The frame settles in as you scroll; with reduced motion it is simply there. */
-.live-gate{position:relative;min-height:100svh;display:grid;place-items:center;padding:96px clamp(16px,4vw,40px);overflow:hidden;isolation:isolate}
-.live-frame,.live-frame img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;z-index:-2}
-.live-gate::before{content:"";position:absolute;inset:0;z-index:-1;background:linear-gradient(180deg,var(--black) 0,rgba(5,5,5,.12) 24%,rgba(5,5,5,.12) 76%,var(--black) 100%)}
-.live-card{max-width:440px;width:100%;padding:clamp(24px,3vw,32px);border:1px solid rgba(243,240,232,.16);border-radius:10px;background-color:rgba(5,5,5,.8);
-  background-image:linear-gradient(180deg,rgba(243,240,232,.06),rgba(243,240,232,0) 60%);-webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px)}
+/* Live-view gate (landing): after the descent you scroll into Gauss itself. A pre-rendered frame of the Gauss live
+   view fills the screen (an image, not the app: it shows at once, and nothing live is sent before sign-in). Josh,
+   18 Nov 2026: "as you scroll ... see parts of before you login". The stage holds three things, in reading order:
+   what the live view shows before sign-in (the names of its readings; a still has no numbers), what is past the
+   sign-in (veiled panels, named and empty: never blurred or invented data), and the one door.
+   Without scroll-driven animations, with reduced motion, or on a very short screen: all three, still and readable. */
+.live-gate{padding:0}
+.gate-stage{position:relative;min-height:100svh;display:grid;grid-template-columns:minmax(0,1fr);gap:16px;justify-items:center;align-content:center;
+  padding:max(96px,62svh) max(clamp(16px,4vw,40px),env(safe-area-inset-right)) 96px max(clamp(16px,4vw,40px),env(safe-area-inset-left));overflow:hidden;isolation:isolate}
+/* The frame fills the first screen of the stage. Stacked (narrow, no pinning), the plates start below the globe and run on over black. */
+.live-frame,.gate-stage::before{position:absolute;inset:0 0 auto;height:100svh}
+.live-frame{z-index:-2}
+.live-frame img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+.gate-stage::before{content:"";z-index:-1;background:linear-gradient(180deg,var(--black) 0,rgba(5,5,5,.12) 24%,rgba(5,5,5,.12) 76%,var(--black) 100%)}
+.gate-veils{display:none}
+.live-card,.gate-open,.gate-held li{border:1px solid rgba(243,240,232,.16);border-radius:10px;background-color:rgba(5,5,5,.8);
+  background-image:linear-gradient(180deg,rgba(243,240,232,.06),rgba(243,240,232,0) 60%)}
+.live-card{max-width:440px;width:100%;padding:clamp(24px,3vw,32px);-webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px)}
 .live-card h2{margin:.3em 0 .4em}
 .live-card p{color:rgba(243,240,232,.86)}
+.live-card .hush{color:var(--muted);font-size:15px}
 .live-card .src{margin:16px 0 0;color:var(--muted);font-size:13px;line-height:1.5}
+/* Before sign-in: the plate sits where the live view keeps its readouts, and names them. */
+.gate-open{max-width:440px;width:100%;padding:18px 20px}
+.gate-open p{margin:0}
+.gate-open p:not(.label):not(.src){margin-top:10px;color:rgba(243,240,232,.86);font-size:15px;line-height:1.45}
+.gate-reads{list-style:none;margin:14px 0 0;padding:12px 0 0;display:flex;flex-wrap:wrap;gap:10px 18px;position:relative;font:700 11px/1 var(--mono);letter-spacing:.12em;text-transform:uppercase;color:var(--warm)}
+.gate-reads::before,.gate-held li::before{content:"";position:absolute;left:0;right:0;top:0;height:1px;background:linear-gradient(90deg,rgba(243,240,232,0),rgba(243,240,232,.28) 18%,rgba(243,240,232,.28) 82%,rgba(243,240,232,0))} /* a hairline that fades at the ends */
+.gate-open .src{margin-top:12px;font-size:13px;line-height:1.5}
+/* Past the sign-in: three veils. Each carries its name and nothing else; the hatching says there is something behind it. */
+.gate-held{max-width:440px;width:100%}
+.gate-held > .label{display:inline-block;margin:0 0 8px;padding:7px 9px;border-radius:4px;background:rgba(5,5,5,.8);color:var(--warm)}
+.gate-held ul{list-style:none;margin:0;padding:0;display:grid;gap:8px}
+.gate-held li{position:relative;display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:52px;padding:0 16px;overflow:hidden;
+  background-image:linear-gradient(180deg,rgba(243,240,232,.06),rgba(243,240,232,0) 60%),repeating-linear-gradient(135deg,rgba(243,240,232,.05) 0 1px,rgba(243,240,232,0) 1px 9px)}
+.gate-held li .label{color:var(--warm)}
+.gate-held .held{font:700 11px/1 var(--mono);letter-spacing:.12em;text-transform:uppercase;color:var(--muted);white-space:nowrap}
+/* Wide screens: one composition, laid out like the live view: readings bottom left, panels on the right, the door in the middle. */
+@media (min-width:1100px) and (min-height:700px){
+  .gate-stage{padding-block:96px}
+  .gate-open,.gate-held,.live-card{grid-area:1/1}
+  .gate-open{place-self:end start;max-width:400px}
+  .gate-held{place-self:center end;max-width:300px}
+  .gate-held li{min-height:84px;align-items:flex-end;padding:0 16px 14px}
+  .live-card{place-self:center}
+}
+/* Scrolling in. The stage pins for 260svh of scroll. Two pairs of dark planes close over the frame with a slit
+   between them, so the first you see of Gauss is a sliver; the front pair parts, then the back pair (two rates:
+   depth), and the frame settles. Then the readings plate, then the veiled panels, then the door, which stays.
+   Planes and plates move by transform and opacity only. Narrow screens show one of the three at a time. */
 @supports (animation-timeline:view()){
-  @media (prefers-reduced-motion:no-preference){
-    .live-frame img{animation:live-settle linear both;animation-timeline:view();animation-range:entry 0% cover 50%}
-    .live-card{animation:d-in linear both;animation-timeline:view();animation-range:entry 40% cover 45%}
+  @media (prefers-reduced-motion:no-preference) and (min-height:660px){
+    .live-gate{height:360svh;view-timeline:--gate block}
+    .gate-stage{position:sticky;top:0;height:100svh;min-height:0;padding-block:88px 28px}
+    .live-frame img{animation:live-settle linear both;animation-timeline:--gate;animation-range:entry 0% contain 30%}
+    .gate-veils{display:block;position:absolute;inset:0;z-index:-1;pointer-events:none;--slit:clamp(14px,2.6vw,36px)}
+    .gv{position:absolute;top:0;bottom:0;width:50.5%;background:linear-gradient(180deg,var(--panel),var(--black) 42%);will-change:transform;
+      animation:linear both;animation-timeline:--gate;animation-range:entry 80% contain 20%}
+    .gv.l{left:-.5%;transform:translateX(calc(-1*var(--slit)));animation-name:gv-l}
+    .gv.r{right:-.5%;transform:translateX(var(--slit));animation-name:gv-r}
+    .gv.back{background:rgb(5 5 5 / .66);animation-range:contain 8% contain 34%}
+    .gv.back.l{transform:translateX(calc(-4*var(--slit)))}
+    .gv.back.r{transform:translateX(calc(4*var(--slit)))}
+    .gv::after{content:"";position:absolute;top:0;bottom:0;width:1px;background:linear-gradient(180deg,rgba(243,240,232,0),rgba(243,240,232,.3) 22%,rgba(243,240,232,.3) 78%,rgba(243,240,232,0))}
+    .gv.l::after{right:0}
+    .gv.r::after{left:0}
+    .gate-open{animation:g-in linear both;animation-timeline:--gate;animation-range:contain 22% contain 32%}
+    .gate-held > .label{animation:g-in linear both;animation-timeline:--gate;animation-range:contain 44% contain 50%}
+    .gate-held li{animation:g-in linear both;animation-timeline:--gate;animation-range:contain 46% contain 54%}
+    .gate-held li:nth-child(2){animation-range:contain 50% contain 58%}
+    .gate-held li:nth-child(3){animation-range:contain 54% contain 62%}
+    /* The door is a link: it is never hidden from the keyboard, only faded, and a focused door shows at once. */
+    .live-card{animation:g-door linear both;animation-timeline:--gate;animation-range:contain 74% contain 88%}
+    .live-card:focus-within{opacity:1!important;transform:none!important;pointer-events:auto!important}
+    @media not ((min-width:1100px) and (min-height:700px)){
+      .gate-open,.gate-held,.live-card{grid-area:1/1}
+      .gate-open,.gate-held{align-self:end}
+      .live-card{align-self:center}
+      .gate-open{animation-name:g-step;animation-range:contain 22% contain 46%}
+      .gate-held{animation:g-out linear both;animation-timeline:--gate;animation-range:contain 68% contain 74%}
+      @media (max-height:759px){.live-card .rad-field{display:none}} /* small phones: the door must fit the pinned screen whole */
+    }
   }
 }
 @keyframes live-settle{from{opacity:0;transform:scale(1.08)}to{opacity:1;transform:none}}
+@keyframes gv-l{to{transform:translateX(-101%)}}
+@keyframes gv-r{to{transform:translateX(101%)}}
+@keyframes g-in{from{opacity:0;transform:translateY(12px)}}
+@keyframes g-out{to{opacity:0;transform:translateY(-10px)}}
+@keyframes g-step{0%{opacity:0;transform:translateY(12px)}30%,80%{opacity:1;transform:none}100%{opacity:0;transform:translateY(-10px)}}
+@keyframes g-door{from{opacity:0;transform:translateY(12px);pointer-events:none}to{opacity:1;transform:none;pointer-events:auto}}
 
 /* Starfield (landing): two planes of faint stars behind the descent and the doors. They scroll with the page while the
    descent's stage stays put, and the far plane drifts at a different rate, so the scene reads as deep space. */
@@ -661,6 +736,8 @@ footer p{margin:0 0 8px;max-width:72ch}
 .event a{font-weight:600;font-size:18px;text-decoration-color:var(--accent2)}
 .events.past .event{opacity:.72}
 .events-h{margin:36px 0 0}
+.tz-pick{margin-top:20px}
+.tz-pick label{font-weight:600;font-size:14px}
 @media (max-width:560px){.event{grid-template-columns:1fr;gap:6px}}
 
 /* Primary link buttons point onward; the arrow eases forward on hover (form buttons and outlines stay plain). */

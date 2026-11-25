@@ -2,6 +2,7 @@
 // the pages stay script-free. Times are always UTC, and every view says how old its data is.
 import { LAUNCH_CREDIT, LUMA, feedState, launchesSource } from "./feeds.js";
 import { FEATURES, priceLabel, TIERS } from "./tiers.js";
+import { isZone, offsetLabel, wallClock, zoneLabel, zonePicker } from "./timezones.js";
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 const MINUS = "\u2212";
@@ -123,17 +124,28 @@ export function renderLaunches(rec, now = Date.now()) {
 const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const eventDay = (iso) => { const d = new Date(iso); return `${DAYS[d.getUTCDay()]} ${d.getUTCDate()} ${MONTHS[d.getUTCMonth()]} ${d.getUTCFullYear()}`; };
 const eventTime = (iso) => `${new Date(iso).toISOString().slice(11, 16)}${NB}UTC`;
-export function renderEvents(rec, now = Date.now()) {
+// With a zone picked (?tz=, see timezones.js) each event leads with that zone's own date and time, the zone and its
+// offset named, and keeps UTC beside it: the feed's times are UTC, so that is the one reference everybody shares.
+// With none, times stay UTC and say so. The day is the day in the zone, which can differ from the UTC day.
+export function renderEvents(rec, now = Date.now(), tz = "UTC") {
+  const local = tz !== "UTC" && isZone(tz);
   const list = Array.isArray(rec?.data) ? rec.data.filter((e) => /^https:\/\/luma\.com\//.test(e.url ?? "")) : [];
   const next = list.filter((e) => Date.parse(e.end) > now).slice(0, 6);
   const past = list.filter((e) => Date.parse(e.end) <= now).slice(-3).reverse();
-  const item = (e) => `<li class="event"><time datetime="${esc(e.start)}"><b>${esc(eventDay(e.start))}</b><span>${esc(eventTime(e.start))}</span></time>` +
+  const when = (e) => {
+    if (!local) return `<b>${esc(eventDay(e.start))}</b><span>${esc(eventTime(e.start))}</span>`;
+    const t = Date.parse(e.start), w = wallClock(t, tz), u = new Date(t);
+    return `<b>${esc(`${DAYS[w.weekday]} ${w.day} ${MONTHS[w.month]} ${w.year}`)}</b><span>${esc(`${pad(w.hour)}:${pad(w.minute)} in ${zoneLabel(tz)} (${offsetLabel(t, tz)})`)}</span>` +
+      `<span>${esc(`${DAYS[u.getUTCDay()]} ${dayMon(u)}, ${eventTime(e.start)}`)}</span>`;
+  };
+  const item = (e) => `<li class="event"><time datetime="${esc(e.start)}">${when(e)}</time>` +
     `<a href="${esc(e.url)}" rel="noopener">${esc(e.title)}</a></li>`;
-  return (next.length ? `<ol class="events">${next.map(item).join("")}</ol>`
+  return (next.length || past.length ? zonePicker(local ? tz : "UTC", now) : "") +
+    (next.length ? `<ol class="events">${next.map(item).join("")}</ol>`
       : `<p class="muted">No events are scheduled right now. Follow the calendar on Luma to hear about the next one first.</p>`) +
     `<p class="actions"><a class="btn" href="${LUMA.page}" rel="noopener">Follow Constellation on Luma</a></p>` +
     (past.length ? `<h3 class="label events-h">Recently</h3><ol class="events past">${past.map(item).join("")}</ol>` : "") +
-    (rec?.fetchedAt ? `<p class="src">Source: the Constellation calendar on Luma · updated ${esc(at(rec.fetchedAt))} · times UTC; venues and local times are on each event page.</p>` : "");
+    (rec?.fetchedAt ? `<p class="src">Source: the Constellation calendar on Luma · updated ${esc(at(rec.fetchedAt))} · ${local ? `times in ${esc(zoneLabel(tz))}, daylight saving included, and UTC; venues are on each event page` : "times UTC; venues and local times are on each event page"}.</p>` : "");
 }
 
 /** Constellation page: space weather in detail. */

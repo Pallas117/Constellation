@@ -18,7 +18,7 @@ import { applyEvent, createPortal, formEncode, signPayload, verifySignature } fr
 import { TIERS, billingStatus, isAcademicEmail } from "../worker/tiers.js";
 import { APP_CSP } from "../worker/headers.js";
 import { eduCard } from "../worker/app.js";
-import { formatIn, renderPlanner, tzOffset, zonedToUtc } from "../worker/timezones.js";
+import { formatIn, isUnsocial, offsetLabel, pickedZone, renderPlanner, tzOffset, wallClock, zonedToUtc, zonePicker } from "../worker/timezones.js";
 import { listCalls, rsvp, saveCall } from "../worker/calls.js";
 import { PROGRAMMES_URL, newsJson, programmesCsv, ukriXml, uksaAtom } from "./fixtures/opportunities.mjs";
 import { collect, interestsFor, rank, tagsOf } from "../worker/opportunities.js";
@@ -996,6 +996,93 @@ test("planner: finds the hours that suit everyone, and a picked hour shows in ev
   assert.match(html, /href="\/api\/call\.ics\?start=2026-10-23T09%3A00%3A00\.000Z"/);
   const none = renderPlanner({ zones: ["Pacific/Auckland", "Europe/London", "America/Los_Angeles"], date: "2026-10-23", at: null });
   assert.match(none, /No hour suits everyone\. Best: 2 of 3 zones/);
+});
+
+test("time zones: offsets are named, half-hour zones and zones behind UTC included, and follow the clock changes", () => {
+  const at = (iso) => Date.parse(iso);
+  assert.equal(offsetLabel(at("2026-11-22T12:00:00Z"), "Asia/Kuala_Lumpur"), "UTC+8", "ahead of UTC");
+  assert.equal(offsetLabel(at("2026-11-22T12:00:00Z"), "America/New_York"), "UTC−5", "behind UTC");
+  assert.equal(offsetLabel(at("2026-11-22T12:00:00Z"), "Asia/Kolkata"), "UTC+5:30", "half-hour zone");
+  assert.equal(offsetLabel(at("2026-11-22T12:00:00Z"), "UTC"), "UTC+0");
+  // The week Europe's clocks go back (Sunday 25 October 2026, 01:00 UTC): the same UTC hour is an hour earlier locally.
+  assert.equal(offsetLabel(at("2026-10-24T09:00:00Z"), "Europe/London"), "UTC+1");
+  assert.equal(offsetLabel(at("2026-10-25T00:59:00Z"), "Europe/London"), "UTC+1", "last minute of summer time");
+  assert.equal(offsetLabel(at("2026-10-25T01:00:00Z"), "Europe/London"), "UTC+0", "first minute of winter time");
+  assert.equal(wallClock(at("2026-10-24T09:00:00Z"), "Europe/London").hour, 10);
+  assert.equal(wallClock(at("2026-10-31T09:00:00Z"), "Europe/London").hour, 9);
+  // The US changes a week later (1 November 2026), so that week New York is 4, then 5, hours behind.
+  assert.equal(offsetLabel(at("2026-10-31T09:00:00Z"), "America/New_York"), "UTC−4");
+  assert.equal(offsetLabel(at("2026-11-01T09:00:00Z"), "America/New_York"), "UTC−5");
+  // The date rolls over midnight in both directions; minutes survive in a half-hour zone.
+  assert.deepEqual(wallClock(at("2026-11-21T19:00:00Z"), "Asia/Kolkata"), { year: 2026, month: 10, day: 22, weekday: 0, hour: 0, minute: 30 });
+  assert.deepEqual(wallClock(at("2026-12-31T20:00:00Z"), "Asia/Kuala_Lumpur"), { year: 2027, month: 0, day: 1, weekday: 5, hour: 4, minute: 0 }, "into the next year");
+  assert.deepEqual(wallClock(at("2026-11-22T02:00:00Z"), "America/Los_Angeles"), { year: 2026, month: 10, day: 21, weekday: 6, hour: 18, minute: 0 }, "back a day");
+  assert.deepEqual([6, 7, 21, 22, 23, 0].map(isUnsocial), [true, false, false, true, true, true], "before 07:00 and from 22:00");
+  const zone = (q) => pickedZone(new URL(`https://lightbound.space/constellation/${q}`));
+  assert.equal(zone("?tz=Asia/Kolkata"), "Asia/Kolkata");
+  for (const q of ["", "?tz=", "?tz=Mars/Olympus", "?tz=%3Cscript%3E", "?tz=constructor"]) assert.equal(zone(q), "UTC", q);
+});
+
+test("events: with no zone picked every time says UTC; with one, the zone's own date and time lead and UTC stays beside it", () => {
+  const ev = [
+    { title: "Evening call", start: "2026-11-21T19:00:00.000Z", end: "2026-11-21T20:00:00.000Z", url: "https://luma.com/evening01" },
+    { title: "Half past", start: "2026-11-28T12:30:00.000Z", end: "2026-11-28T13:30:00.000Z", url: "https://luma.com/halfpast2" },
+  ];
+  const now = Date.parse("2026-11-18T00:00:00Z");
+  const rec = { data: ev, fetchedAt: new Date(now).toISOString() };
+  // The fallback (no zone picked, an unknown zone, or the offline page): UTC, named on every time. Never a bare time.
+  for (const html of [renderEvents(rec, now), renderEvents(rec, now, "UTC"), renderEvents(rec, now, "Mars/Olympus")]) {
+    const times = [...html.matchAll(/<time datetime="[^"]+">([\s\S]*?)<\/time>/g)].map((m) => m[1]);
+    assert.equal(times.length, 2);
+    for (const t of times) assert.match(t, /^<b>[A-Z][a-z]{2} \d{1,2} [A-Z][a-z]{2} \d{4}<\/b><span>\d{2}:\d{2} UTC<\/span>$/);
+    assert.match(html, /times UTC; venues and local times are on each event page\./);
+    assert.match(html, /<option value="UTC" selected>UTC<\/option>/);
+  }
+  const kl = renderEvents(rec, now, "Asia/Kuala_Lumpur");
+  assert.match(kl, /<time datetime="2026-11-21T19:00:00.000Z"><b>Sun 22 Nov 2026<\/b><span>03:00 in Kuala Lumpur \(UTC\+8\)<\/span><span>Sat 21 Nov, 19:00 UTC<\/span><\/time>/, "the day is the day in the zone");
+  assert.match(kl, /times in Kuala Lumpur, daylight saving included, and UTC; venues are on each event page\./);
+  assert.match(kl, /<option value="Asia\/Kuala_Lumpur" selected>Kuala Lumpur \(UTC\+8\)<\/option>/);
+  const india = renderEvents(rec, now, "Asia/Kolkata");
+  assert.match(india, /<b>Sun 22 Nov 2026<\/b><span>00:30 in India \(UTC\+5:30\)<\/span><span>Sat 21 Nov, 19:00 UTC<\/span>/);
+  assert.match(india, /<b>Sat 28 Nov 2026<\/b><span>18:00 in India \(UTC\+5:30\)<\/span><span>Sat 28 Nov, 12:30 UTC<\/span>/);
+  assert.match(renderEvents(rec, now, "America/Los_Angeles"), /<b>Sat 21 Nov 2026<\/b><span>11:00 in Los Angeles \(UTC−8\)<\/span>/);
+  // Either side of a clock change the same UTC hour lands on a different local hour, and the offset shown follows it.
+  const dst = { data: [{ ...ev[0], start: "2026-10-24T09:00:00.000Z", end: "2026-10-24T10:00:00.000Z" }, { ...ev[1], start: "2026-10-31T09:00:00.000Z", end: "2026-10-31T10:00:00.000Z" }] };
+  const london = renderEvents(dst, Date.parse("2026-10-20T00:00:00Z"), "Europe/London");
+  assert.match(london, /<b>Sat 24 Oct 2026<\/b><span>10:00 in London \(UTC\+1\)<\/span>/);
+  assert.match(london, /<b>Sat 31 Oct 2026<\/b><span>09:00 in London \(UTC\+0\)<\/span>/);
+  // The picker is a plain form to our own page: no script, one labelled control, every option an allowlisted zone.
+  const picker = zonePicker("UTC", now);
+  assert.match(picker, /^<form class="inline tz-pick" method="get" action="\/constellation\/#events"><label for="ev-tz">Show times in<\/label><select id="ev-tz" name="tz">/);
+  assert.match(picker, /<option value="Asia\/Kolkata">India \(UTC\+5:30\)<\/option>/);
+  assert.doesNotMatch(kl + picker, /<script|onchange|javascript:/i);
+  assert.doesNotMatch(renderEvents({ data: [] }, now, "Asia/Kolkata"), /<form/, "no picker with nothing to show");
+});
+
+test("events route: ?tz= is allowlisted, works in both releases, and the page stays script-free", async () => {
+  const { env: full } = await appEnv();
+  const start = new Date(Date.now() + 3 * 86_400_000).toISOString().slice(0, 11) + "19:00:00.000Z";
+  await full.LIVE.put(FEEDS.events.key, JSON.stringify({ fetchedAt: new Date().toISOString(), data: [{ title: "Evening call", start, end: start.replace("T19", "T20"), url: "https://luma.com/evening01" }] }));
+  for (const RELEASE of ["public", "full"]) {
+    const get = async (q) => (await send({ ...full, RELEASE }, new Request(`https://lightbound.space/constellation/${q}`))).text();
+    const plain = await get("");
+    assert.match(plain, /<span>19:00 UTC<\/span><\/time><a href="https:\/\/luma\.com\/evening01"/, RELEASE);
+    const india = await get("?tz=Asia/Kolkata");
+    assert.match(india, /<span>00:30 in India \(UTC\+5:30\)<\/span><span>[A-Z][a-z]{2} \d{1,2} [A-Z][a-z]{2}, 19:00 UTC<\/span>/, RELEASE);
+    const odd = await get("?tz=%22%3E%3Cscript%3Ealert(1)%3C/script%3E");
+    assert.match(odd, /<span>19:00 UTC<\/span>/, "an unknown zone falls back to UTC");
+    for (const page of [plain, india, odd]) assert.doesNotMatch(page, /<script|alert\(1\)/);
+  }
+});
+
+test("planner: a picked hour names each zone's offset and says, in words, where it is an unsocial hour", () => {
+  const html = renderPlanner({ zones: ["Europe/London", "Asia/Kolkata", "Pacific/Auckland"], date: "2026-11-21", at: 9 });
+  assert.match(html, /<li><b>London<\/b> [A-Za-z]{3} 21 Nov, 09:00 \(UTC\+0\)<\/li>/);
+  assert.match(html, /<li><b>India<\/b> [A-Za-z]{3} 21 Nov, 14:30 \(UTC\+5:30\)<\/li>/);
+  assert.match(html, /<li><b>Auckland<\/b> [A-Za-z]{3} 21 Nov, 22:00 \(UTC\+13\) <span>Unsocial hour<\/span><\/li>/);
+  assert.match(html, /<p class="m">Unsocial hour \(22:00–07:00 local\) for 1 of 3: Auckland\.<\/p>/);
+  assert.match(html, /Dim with a dotted underline: unsocial hours, 22:00–07:00\./);
+  assert.doesNotMatch(renderPlanner({ zones: ["Europe/London", "Asia/Kolkata"], date: "2026-11-21", at: 9 }), /unsocial hour[<\s]/i, "no note when nobody is up late");
 });
 
 test("planner routes: the page reads its query safely; the calendar endpoint takes only a start time", async () => {
