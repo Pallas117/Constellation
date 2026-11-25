@@ -66,7 +66,7 @@ run() { # run <args...>: gauss-services.sh with the stubs; alerts land in $LOG
     GAUSS_SUDOERS="$T/sudoers" MLX="${MLX:-0}" MLXPORT="${MLXPORT:-8089}" ACTIONS="$T/actions" GAUSS_BALANCE="${GAUSS_BALANCE:-1}" \
     LOADED="${LOADED:-}" HEALTH="${HEALTH:-200}" HEALTH_FILE="${HEALTH_FILE:-}" GAUSS_DEPLOY_WAIT=0 DISKGB="${DISKGB:-50}" \
     GATEORDER="${GATEORDER:-}" GAUSS_PW_CHROMIUM="${GAUSS_PW_CHROMIUM:-}" GATEFAIL="${GATEFAIL:-}" MOVEMAIN="${MOVEMAIN:-}" GAUSS_BY=test-user BOOT="${BOOT:-1000}" GAUSS_DIAG_DIRS="$T/diag" GAUSS_EVENTS_MAX_KB="${GAUSS_EVENTS_MAX_KB:-5120}" \
-    WAKE="${WAKE:-1000}" GAUSS_GATEBOX_TRUST="${GAUSS_GATEBOX_TRUST:-}" GAUSS_DEV_DRY="${GAUSS_DEV_DRY:-0}" GAUSS_GATES_START=0 GATEHANG="${GATEHANG:-}" GAUSS_GATES_STEP_S="${GAUSS_GATES_STEP_S:-}" HEAVYGIVEUP="${HEAVYGIVEUP:-}" NPMNET="${NPMNET:-}" GAUSS_GATEBOX="${GAUSS_GATEBOX:-}" GAUSS_GATEBOX_PROBE="${GAUSS_GATEBOX_PROBE:-true}" GAUSS_GATEBOX_WAIT_S="${GAUSS_GATEBOX_WAIT_S:-0}" GAUSS_GATEBOX_POLL_S="${GAUSS_GATEBOX_POLL_S:-1}" GAUSS_MESH_STORE="${GAUSS_MESH_STORE:-}" GAUSS_GATEBOX_TIMEOUT_S="${GAUSS_GATEBOX_TIMEOUT_S:-}" GAUSS_FLEET_MEMORY="${GAUSS_FLEET_MEMORY:-}" GAUSS_GATEBOX_KEY="$T/gatebox-key" GBRC="${GBRC:-}" GAUSS_GATES_EXPIRE_H="${GAUSS_GATES_EXPIRE_H:-72}" GAUSS_GATES_HOOK_S="${GAUSS_GATES_HOOK_S:-300}" GAUSS_DEV_API_PORT="${GAUSS_DEV_API_PORT:-3101}" \
+    WAKE="${WAKE:-1000}" GAUSS_GATEBOX_TRUST="${GAUSS_GATEBOX_TRUST:-}" GAUSS_DEV_DRY="${GAUSS_DEV_DRY:-0}" GAUSS_GATES_START="${GATES_START_T:-0}" GATEHANG="${GATEHANG:-}" GAUSS_GATES_STEP_S="${GAUSS_GATES_STEP_S:-}" HEAVYGIVEUP="${HEAVYGIVEUP:-}" NPMNET="${NPMNET:-}" GAUSS_GATEBOX="${GAUSS_GATEBOX:-}" GAUSS_GATEBOX_PROBE="${GAUSS_GATEBOX_PROBE:-true}" GAUSS_GATEBOX_WAIT_S="${GAUSS_GATEBOX_WAIT_S:-0}" GAUSS_GATEBOX_POLL_S="${GAUSS_GATEBOX_POLL_S:-1}" GAUSS_MESH_STORE="${GAUSS_MESH_STORE:-}" GAUSS_GATEBOX_TIMEOUT_S="${GAUSS_GATEBOX_TIMEOUT_S:-}" GAUSS_FLEET_MEMORY="${GAUSS_FLEET_MEMORY:-}" GAUSS_GATEBOX_KEY="$T/gatebox-key" GBRC="${GBRC:-}" GAUSS_GATES_EXPIRE_H="${GAUSS_GATES_EXPIRE_H:-72}" GAUSS_GATES_HOOK_S="${GAUSS_GATES_HOOK_S:-300}" GAUSS_DEV_API_PORT="${GAUSS_DEV_API_PORT:-3101}" \
     SRC="${SRC:-AC Power}" BATT="${BATT:-80%; charging; present: true}" SD="${SD:-0}" FCC="${FCC:-}" ACW="${ACW:-}" \
     LEAKY="${LEAKY:-}" LEAKFP="${LEAKFP:-12 MB}" AVAIL="${AVAIL:-50}" GAUSS_SWAP_LAST="${SWAPLAST:-/dev/null}" \
     GATEENV="${GATEENV:-}" GATES_PYTHON="${GATES_PYTHON:-}" ${GATELEAK:+ALLOWED_ORIGINS=https://live.example MESH_STORE_PATH=/live/data/mesh/devices.json COMMERCE_DB_PATH=/live/data/commerce/commerce.db GAUSS_BEDROCK_DIR=/live/data/bedrock NODE_ENV=production} \
@@ -1161,6 +1161,52 @@ expect "gates priority: a short sha prefix moves nothing" $?
 out=$(run gates priority "${P8:0:7}" front 2>&1); first=$(ls "$GQ" | sort | sed -n 1p); grep -qx "pr=31" "$GQ/$first"
 expect "gates priority: a 7-character sha moves its request" $?
 out=$(run gates priority 'pr=.*' front 2>&1); [ $? = 2 ]; expect "gates priority: a key that is not a PR or sha is a usage error" $?
+rm -f "$GQ"/*.req
+# 25 Nov: the runner died twice with "sed: ...req: No such file or directory" right after a gatebox pass:
+# `gates priority` (or an enqueue) had renamed the request it still held by path. It finds it again by
+# tree/sha, and a request that is really gone is dropped with one line while the runner keeps running.
+cp "$T/bin/ssh" "$T/bin/ssh.orig"
+stub ssh 'echo "ssh $*" >>"$ACTIONS"; a=${@: -1}; Q="$HOME/Library/Application Support/Gauss/gates/queue"
+for f in "$Q"/*.req; do [ -f "$f" ] && mv "$f" "$Q/0.100000-${f##*-}"; done; echo "gates rc=0 in 90 s on ${a##* }"; exit 0'
+RR=$(tc "$M3" rr.txt rr); mo "$RR" rr-br 61
+out=$(GBRC=x gbt run gates run 2>&1); rc=$?
+[ $rc = 0 ] && [[ "$out" != *"No such file"* ]] && grep -q "^[^ ]* $RR [^ ]* PASSED merge only" "$GR" && grep -qx "gh merge 61 $RR" "$T/actions" && [ -z "$(ls "$GQ")" ]
+expect "gates run: a request renamed while the gatebox screened it is found again and run (the runner does not die)" $?
+RW=$(tc "$M3" rw.txt rw); mo "$RW" rw-br 62
+stub ssh 'echo "ssh $*" >>"$ACTIONS"; a=${@: -1}; rm -f "$HOME/Library/Application Support/Gauss/gates/queue"/*.req; echo "gates rc=0 in 90 s on ${a##* }"; exit 0'
+out=$(GBRC=x gbt run gates run 2>&1); rc=$?
+[ $rc = 0 ] && [[ "$out" == *"withdrawn or replaced while the gatebox screened it"* ]] && [[ "$out" != *"No such file"* ]] && [[ "$out" == *"gate queue empty"* ]] && ! grep -q " $RW " "$GR"
+expect "gates run: a request that vanished while the gatebox screened it is dropped with one line, and the runner keeps going" $?
+cp "$T/bin/ssh.orig" "$T/bin/ssh"; rm -f "$GQ"/*.req
+# 25 Nov: the detached runner inherited the caller's stdout, so `gates enqueue ... | sed -n 1p` never returned
+# (3 timeouts of 120 s). A copy of the script whose runner just sleeps stands in for the real one.
+mkdir -p "$T/stubrun"
+{ sed -n 1p "$SCRIPT"; echo '[ "${1:-} ${2:-}" = "gates run" ] && { sleep 8; exit 0; }'; sed 1d "$SCRIPT"; } >"$T/stubrun/gauss-services.sh"
+RD=$(tc "$M3" rd.txt rd); rm -f "$T/enq.done" "$T/enq.out"
+( cd "$LIVE" && GATES_START_T=1 SCRIPT="$T/stubrun/gauss-services.sh" run gates enqueue "$RD" 2>&1 | sed -n 1p >"$T/enq.out"; : >"$T/enq.done" ) &
+for _ in $(seq 1 40); do [ -f "$T/enq.done" ] && break; sleep 0.25; done
+[ -f "$T/enq.done" ] && [[ "$(cat "$T/enq.out")" == "Queued "* ]]
+expect "gates enqueue: returns at once through a pipe while the detached runner it starts keeps running" $?
+rm -f "$GQ"/*.req
+# Stale and finished requests waste runs: a newer head of a PR drops the older ones; the runner drops a
+# request whose PR is MERGED or CLOSED before any gate; when GitHub can't say, it is gated as usual.
+A1=$(tc "$M3" d1.txt a); A2=$(tc "$M3" d2.txt b)
+(cd "$LIVE" && run gates enqueue "$A1" --pr 63 >/dev/null 2>&1); out=$(cd "$LIVE" && run gates enqueue "$A2" --pr 63 2>&1)
+[[ "$out" == *"Dropped the older request for PR #63 (${A1:0:7})"* ]] && [ "$(ls "$GQ" | wc -l | tr -d ' ')" = 1 ] && grep -qx "sha=$A2" "$GQ"/*.req \
+  && grep -q "^[^ ]* $A1 [^ ]* SKIPPED superseded by ${A2:0:7} for PR #63" "$GR"
+expect "gates enqueue --pr: older queued requests for the same PR are dropped, the newest kept" $?
+rm -f "$GQ"/*.req
+B1=$(tc "$M3" m1.txt a); B2=$(tc "$M3" m2.txt b); g push -q origin "$B1:refs/heads/mrg-br" "$B2:refs/heads/cls-br" && g fetch -q origin
+echo "MERGED mrg-br main false CLEAN" >"$GHD/pr64"; echo "CLOSED cls-br main false CLEAN" >"$GHD/pr65"
+(cd "$LIVE" && run gates enqueue "$B1" --pr 64 >/dev/null 2>&1; run gates enqueue "$B2" --pr 65 >/dev/null 2>&1)
+out=$(run gates run 2>&1)
+! grep -q "^heavy" "$T/actions" && grep -q "^[^ ]* $B1 [^ ]* SKIPPED PR #64 is MERGED: not run" "$GR" && grep -q "^[^ ]* $B2 [^ ]* SKIPPED PR #65 is CLOSED: not run" "$GR" \
+  && [ -z "$(ls "$GQ")" ] && [ ! -f "$WD/gates/$(tree_of "$B1").json" ]
+expect "gates run: a request whose PR is MERGED or CLOSED is dropped with one line and gets no run" $?
+C1=$(tc "$M3" u1.txt a); rm -f "$GHD/pr67"
+(cd "$LIVE" && run gates enqueue "$C1" --pr 67 >/dev/null 2>&1); out=$(run gates run 2>&1)
+grep -q "^heavy" "$T/actions" && grep -q "^[^ ]* $C1 [^ ]* PASSED" "$GR"
+expect "gates run: when gh can't say, the request is gated as usual" $?
 rm -f "$GQ"/*.req
 # 18 Nov: requirements PRs each bump the baseline "version" and conflicted with each other (#284, #286).
 # A conflict on that line alone is settled as main's version plus one patch step and gated; any other

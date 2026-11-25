@@ -1103,7 +1103,18 @@ print(json.dumps(r, ensure_ascii=False))
 ' "$GATES_DIR/$1.json" "$1"
 }
 
-req_get() { sed -n "/^$2=/{s///p;q;}" "$1"; } # req_get <request file> <key>: the first value (sed quits itself, no SIGPIPE)
+# A request file can be renamed or replaced under a running runner (`gates priority` renames it, `gates
+# enqueue --pr` rewrites it, train_requeue/supersede replace it). 25 Nov, twice: "sed: ...req: No such file
+# or directory" ended the runner right after a gatebox pass. A vanished file reads as empty, and the runner
+# and run-one find the request again by tree/sha (req_refind) before touching it after anything slow.
+req_get() { [ -f "$1" ] || return 0; sed -n "/^$2=/{s///p;q;}" "$1"; } # req_get <request file> <key>: the first value (sed quits itself, no SIGPIPE)
+req_refind() { # req_refind <request> <tree> [<sha>]: that request's path now (same file, or renamed/rewritten), or fail when withdrawn
+  local f
+  if [ -f "$1" ]; then echo "$1"; return 0; fi
+  f=$(gates_queued "$2") && { echo "$f"; return 0; }
+  [ -n "${3:-}" ] && f=$(grep -l -x "sha=$3" "$GATES_QUEUE"/*.req 2>/dev/null | sed -n 1p) && [ -n "$f" ] && { echo "$f"; return 0; }
+  return 1
+}
 
 gates_result() { # gates_result <sha> <tree> <STATUS> <detail>: the one line a session or the ledger reads later
   mkdir -p "$GATES_DIR"
@@ -1211,6 +1222,7 @@ gates_enqueue() { # gates_enqueue <checkout-dir>|<commit> [--pr N [--final]]: qu
       { grep -v -e '^pr=' -e '^final=' "$f"; echo "pr=$pr"; [ -z "$final" ] || echo "final=1"; } >"$f.tmp" && [ -f "$f" ] && mv -f "$f.tmp" "$f" \
         && echo "It is on the merge train for PR #$pr now." || rm -f "$f.tmp"
     fi
+    [ -z "$pr" ] || gates_drop_pr_dupes "$pr" "$f" "$sha"
   else
     f="$GATES_QUEUE/$(python3 -Ic 'import time; print("%.6f" % time.time())')-$tree.req"
     printf 'sha=%s\ntree=%s\nrepo=%s\nnode=%s\nby=%s\nqueued=%s\npr=%s\n' "$sha" "$tree" "$G_REPO" "$NODE" "$(deployer)" "$(date +%s)" "$pr" >"$f.tmp"
@@ -1218,6 +1230,7 @@ gates_enqueue() { # gates_enqueue <checkout-dir>|<commit> [--pr N [--final]]: qu
     mv "$f.tmp" "$f"
     event gates_queued "${sha:0:7}" "gate run queued for ${sha:0:7}" sha="$sha" tree="$tree" by="$(deployer)"
     gates_supersede "$sha" "$f"
+    [ -z "$pr" ] || gates_drop_pr_dupes "$pr" "$f" "$sha"
     echo "Queued ${sha:0:7} (tree ${tree:0:7}); $(ls "$GATES_QUEUE" | grep -c '\.req$') in the queue."
   fi
   echo "Result later (any session, or the ledger): $0 gates result ${sha:0:7}   (or: tail -1 \"$GATES_RESULTS\")"
@@ -1264,14 +1277,27 @@ gates_refresh_runner() {
   fi
 }
 
+gates_drop_pr_dupes() { # gates_drop_pr_dupes <pr> <keep-request> <new-sha>: older queued requests for the same PR are stale heads
+  local r old
+  for r in "$GATES_QUEUE"/*.req; do
+    [ -f "$r" ] && [ "$r" != "$2" ] && [ "$(req_get "$r" pr)" = "$1" ] || continue
+    old=$(req_get "$r" sha)
+    gates_result "$old" "$(req_get "$r" tree)" SKIPPED "superseded by ${3:0:7} for PR #$1: only the newest head of a PR is gated"
+    rm -f "$r" && echo "Dropped the older request for PR #$1 (${old:0:7})."
+  done
+}
+
 gates_start() { # start the one runner, detached from this session (own session id, no terminal), if none runs
   local p
   mkdir -p "$GATES_DIR" "$LOGS"
   gates_refresh_runner || return 1
   if p=$(gates_runner_pid); then echo "The gate runner is working (pid $p)."; return 0; fi
   [ "${GAUSS_GATES_START:-1}" = 1 ] || return 0 # tests
-  (cd "$GATES_DIR" && nohup perl -MPOSIX -e 'POSIX::setsid(); exec @ARGV' /bin/bash "$GATES_DIR/runner.sh" gates run \
-    </dev/null >>"$LOGS/gates-runner.log" 2>&1 &)
+  # The redirections cover the whole background group, not just its last command: `(cd d && cmd >log &)` left
+  # the group's own stdout (the caller's pipe) open for as long as the runner lived, so `gates enqueue | sed`
+  # never returned (25 Nov: 3 timeouts of 120 s).
+  ( { cd "$GATES_DIR" && nohup perl -MPOSIX -e 'POSIX::setsid(); exec @ARGV' /bin/bash "$GATES_DIR/runner.sh" gates run; } \
+    </dev/null >>"$LOGS/gates-runner.log" 2>&1 & )
   echo "Gate runner started (log: $LOGS/gates-runner.log)."
 }
 
@@ -1492,6 +1518,7 @@ gates_run() { # gates_run [--once]: work through the queue, oldest first, then e
   echo $$ >"$GATES_RUNNER/pid"
   trap 'rm -rf "$GATES_RUNNER"' EXIT
   while req=$(ls "$GATES_QUEUE"/*.req 2>/dev/null | sort | awk 'NR==1') && [ -n "$req" ]; do
+    [ -f "$req" ] || continue # renamed or withdrawn between the listing and now: look again
     if [ "$(shasum "$self" | cut -d' ' -f1)" != "$me" ]; then
       echo "$(date '+%F %T') runner code changed: re-running the new copy"
       exec /bin/bash "$self" gates run $once
@@ -1507,6 +1534,12 @@ gates_run() { # gates_run [--once]: work through the queue, oldest first, then e
     if [ $(( $(date +%s) - ${queued:-0} )) -ge $(( GATES_EXPIRE_H * 3600 )) ]; then
       gates_result "$sha" "$tree" EXPIRED "waited over ${GATES_EXPIRE_H} h for memory or power; enqueue it again"
       rm -f "$req"; continue
+    fi
+    # A PR already merged or closed (a newer head merged, or it was dropped) gets no run. If gh fails, gate it anyway.
+    pr=$(req_get "$req" pr)
+    if [ -n "$pr" ] && st=$(train_pr_state "$pr") && { [ "$st" = MERGED ] || [ "$st" = CLOSED ]; }; then
+      gates_result "$sha" "$tree" SKIPPED "PR #$pr is $st: not run"; echo "$(date '+%F %T') dropped ${sha:0:7}: PR #$pr is $st"
+      rm -f "$req" "$GATES_DIR/held/$pr"; continue
     fi
     if gate_record "$tree" >/dev/null; then # passed meanwhile (another request, or by hand)
       pr=$(req_get "$req" pr)
@@ -1534,6 +1567,8 @@ gates_run() { # gates_run [--once]: work through the queue, oldest first, then e
       sha=$(req_get "$req" sha); tree=$(req_get "$req" tree); merge_only=1
     fi
     screened=0; gates_prescreen "$sha" "$tree" || screened=$?
+    # The gatebox takes minutes: the request may have been renamed (gates priority) or rewritten (enqueue) meanwhile.
+    req=$(req_refind "$req" "$tree" "$sha") || { echo "$(date '+%F %T') request for ${sha:0:7} was withdrawn or replaced while the gatebox screened it; moving on"; continue; }
     if [ "$screened" = 0 ]; then rm -f "$req"; tail -1 "$GATES_RESULTS"; continue; fi
     rc=0; pr=$(req_get "$req" pr)
     if [ "$merge_only" = 1 ] && [ "$screened" = 2 ]; then
@@ -1551,6 +1586,9 @@ gates_run() { # gates_run [--once]: work through the queue, oldest first, then e
         /bin/bash "$self" gates run-one "$req" || rc=$?
       fi
     fi
+    # Only the "stays queued" exits look for a renamed request: after a pass run-one removes it, and a request
+    # with the same tree may be the train's own re-queue (train_requeue), which must not be taken for it.
+    case "$rc" in 75|76|77) req=$(req_refind "$req" "$tree" "$sha") || req="" ;; esac
     if [ "$rc" = 77 ] && [ -f "$req" ]; then # main moved after the gatebox screened the head: screen the new one
       echo "$(date '+%F %T') ${sha:0:7} moved on after the gatebox screened it; screening the new head."
       [ "$once" = --once ] && return 0
@@ -1601,7 +1639,9 @@ gates_run_one() { # gates_run_one <request>: check out, install if the lockfile 
   if [ -n "$passed" ] && [ "$sha" != "$passed" ]; then return 77; fi
   [ -n "$node" ] && [ -x "$node" ] && NODE=$node # the Node the session queued with (.nvmrc: Node 26)
   co=${GAUSS_GATES_CHECKOUT:-$(dirname "$repo").worktrees/gates}
-  gates_fail() { gates_result "$sha" "$tree" ERROR "$1"; rm -f "$req"; return 1; }
+  gates_fail() { gates_result "$sha" "$tree" ERROR "$1"; req_done; return 1; }
+  # Drop this request wherever it is now: it may have been renamed or rewritten while the gate ran.
+  req_done() { local r; r=$(req_refind "$req" "$tree" "$sha") && rm -f "$r"; return 0; }
   mkdir -p "$GATES_DIR/runs"
   if [ -e "$co" ]; then
     # Only ever reset a checkout the queue made: never someone's working checkout.
@@ -1655,7 +1695,7 @@ gates_run_one() { # gates_run_one <request>: check out, install if the lockfile 
   if [ -n "$line" ]; then status=${line%% *}; line=${line#* }
   else status=ERROR; line="$(printf '%s\n' "$out" | tail -1) (log: $GATES_DIR/runs/$sha.log)"; fi
   gates_result "$sha" "$tree" "$status" "$line"
-  rm -f "$req"
+  req_done
   [ "$status" = PASSED ] || return 1
   [ -z "$pr" ] || train_merge "$pr" "$sha" "$tree" "$repo" || true # a pass stands whether or not it merged
 }
@@ -1671,7 +1711,7 @@ gates_ops_only() { # gates_ops_only <request> <checkout> <sha> <tree> <pr> <repo
   (cd "$co" && PATH="$(dirname "$NODE"):$PATH" limited "$(gates_step_s test:ops)" npm run test:ops >"$log" 2>&1) || rc=$?
   if [ "$hold" = 1 ]; then rmdir "$GATE_LOCK" 2>/dev/null || true; fi
   counts=$(grep -Eo 'gauss-services: [0-9]+ passed, [0-9]+ failed' "$log" | tail -1 || true)
-  rm -f "$req"
+  req=$(req_refind "$req" "$tree" "$sha") && rm -f "$req" || true
   if [ "$rc" = 142 ]; then
     gates_timeout_line test:ops >>"$log"
     gates_result "$sha" "$tree" FAILED "test:ops here: timeout after $(gates_step_s test:ops) s, after a gatebox pass; log $log"
@@ -1695,6 +1735,12 @@ gates_ops_only() { # gates_ops_only <request> <checkout> <sha> <tree> <pr> <repo
 # Only fast-forward pushes of a merge commit to the PR's own branch; never a force push.
 TRAIN_REPO="${GAUSS_TRAIN_REPO:-Pallas117/Constellation}"
 TRAIN_HOLD="${GAUSS_TRAIN_HOLD:-auth|rbac|crypto|tls|secret|cybertiger|passkey|bpsec|signing|trust/|\.env|keys?\.}"
+
+train_pr_state() { # train_pr_state <pr>: OPEN, MERGED or CLOSED, or fail when GitHub can't say
+  local out st _
+  out=$(gh pr view "$1" --repo "$TRAIN_REPO" --json state -q .state 2>/dev/null) || return 1
+  read -r st _ <<<"$out"; [ -n "$st" ] && echo "$st"
+}
 
 train_pr() { # train_pr <pr>: "state head branch base draft merge-state" on one line, or fail
   gh pr view "$1" --repo "$TRAIN_REPO" --json state,headRefOid,headRefName,baseRefName,isDraft,mergeStateStatus \
@@ -1773,7 +1819,8 @@ train_sync() { # train_sync <request>: merge origin/main into a train PR's head 
   if { git -C "$w" merge -q --no-edit -m "Merge origin/main into $branch (merge train)" refs/remotes/origin/main >/dev/null 2>&1 \
        || train_versions "$w"; } \
      && new=$(git -C "$w" rev-parse HEAD) && git -C "$w" push -q origin "$new:refs/heads/$branch" 2>/dev/null; then
-    sed -i '' -e "s/^sha=.*/sha=$new/" -e "s/^tree=.*/tree=$(git -C "$w" rev-parse "$new^{tree}")/" "$req"
+    req=$(req_refind "$req" "$tree" "$sha") || req=""
+    [ -z "$req" ] || sed -i '' -e "s/^sha=.*/sha=$new/" -e "s/^tree=.*/tree=$(git -C "$w" rev-parse "$new^{tree}")/" "$req"
     gates_result "$sha" "$tree" MOVED "merged main into PR #$pr: gating ${new:0:7} instead"
     echo "Merged main into PR #$pr: ${sha:0:7} -> ${new:0:7}"
   else
