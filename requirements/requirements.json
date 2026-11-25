@@ -1184,6 +1184,35 @@
       ]
     },
     {
+      "id": "REQ-PER-005",
+      "title": "Telemetry line integrity and dead letter",
+      "statement": "Every telemetry line shall be written with a checksum and verified on read; a line that does not parse or verify shall be kept with its reason in a dead-letter file and counted, shall not crash the reader and shall not hide the valid lines.",
+      "rationale": "A torn write or flipped byte on the durable buffer must be visible and recoverable, not silently dropped (Zone C).",
+      "parent": "GAU-157",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "checksum: a written line verifies, a changed one does not, an old unchecked line passes (Zone C)",
+        "dead letter: a bad row lands in the dead-letter file with its reason and valid rows still append (Zone C)",
+        "dead letter: a very long bad line is cut, not stored whole (Zone C)"
+      ]
+    },
+    {
+      "id": "REQ-PER-006",
+      "title": "Telemetry size cap and rotation",
+      "statement": "The live telemetry file shall rotate at a configurable size cap and keep a configurable number of files (default 256 MiB and 4, floor 1 MiB and 2), so the telemetry store cannot fill the disk.",
+      "rationale": "Retention by lines is scheduled daily and can stall; a byte cap bounds disk use on the 8 GB host regardless (Zone C).",
+      "parent": "GAU-157",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "size cap: the live file rotates at the cap, keeps N files, and reads span the rotation (Zone C)",
+        "size cap: right after a rotation a read still returns recent history from the rotated file (Zone C)",
+        "size cap env: floor, ceiling and junk fall back to safe values (Zone C)",
+        "rotateFiles shifts names up and removes the oldest (Zone C)"
+      ]
+    },
+    {
       "id": "REQ-OPS-008",
       "title": "Deploy only gated main",
       "statement": "The deploy command shall refuse a commit that is not on origin/main or has no passing gate record for its tree, unless an emergency reason is given, and an emergency deploy shall text the phone, be recorded and stay flagged in the health check.",

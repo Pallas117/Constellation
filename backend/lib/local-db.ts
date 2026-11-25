@@ -17,6 +17,67 @@ const DATA_DIR = process.env.GAUSS_BEDROCK_DIR
   : path.resolve(__dirname, "../../data/bedrock");
 const TELEMETRY_FILE = path.join(DATA_DIR, "telemetry.jsonl");
 const ARCHIVE_DIR = path.join(DATA_DIR, "archive");
+const DEADLETTER_FILE = path.join(DATA_DIR, "telemetry.deadletter.jsonl");
+
+/**
+ * Size cap for the live file and how many files rotation keeps (live + rotated), so a runaway
+ * writer or a stalled retention job cannot fill the disk. Zone C.
+ *   GAUSS_TELEMETRY_MAX_BYTES   cap on telemetry.jsonl, bytes (default 256 MiB, floor 1 MiB)
+ *   GAUSS_TELEMETRY_KEEP_FILES  files kept: live + telemetry.jsonl.1 ... (default 4, 2..20)
+ * Worst case on disk by default: 4 x 256 MiB = 1 GiB, plus the dead-letter file (capped below).
+ */
+export const DEFAULT_MAX_BYTES = 256 * 1024 * 1024;
+export const MIN_MAX_BYTES = 1024 * 1024;
+export const DEFAULT_KEEP_FILES = 4;
+export const MIN_KEEP_FILES = 2; // 1 would make rotation delete the only copy
+export const MAX_KEEP_FILES = 20;
+/** Dead-letter file cap (bytes); past it the file is replaced by a fresh one (the older kept once as .1). */
+export const DEADLETTER_MAX_BYTES = 8 * 1024 * 1024;
+/** Longest raw line stored in a dead-letter entry (chars); longer lines are cut, never stored whole. */
+const DEADLETTER_LINE_CHARS = 2048;
+/** Bound on remembered dead-lettered line hashes (so a re-read of the same bad line is logged once). */
+const DEADLETTER_SEEN_MAX = 2000;
+
+export function storeLimitsFromEnv(env: NodeJS.ProcessEnv = process.env): { maxBytes: number; keepFiles: number } {
+  const bytes = Number(env.GAUSS_TELEMETRY_MAX_BYTES ?? DEFAULT_MAX_BYTES);
+  const files = Number(env.GAUSS_TELEMETRY_KEEP_FILES ?? DEFAULT_KEEP_FILES);
+  return {
+    maxBytes: Number.isFinite(bytes) ? Math.max(MIN_MAX_BYTES, Math.floor(bytes)) : DEFAULT_MAX_BYTES,
+    keepFiles: Number.isFinite(files) ? Math.min(MAX_KEEP_FILES, Math.max(MIN_KEEP_FILES, Math.floor(files))) : DEFAULT_KEEP_FILES,
+  };
+}
+
+/** Field added to every written line: first 16 hex of sha256 over the record's JSON without it. */
+export const CHECKSUM_FIELD = "_sha";
+
+function checksumOf(json: string): string {
+  return crypto.createHash("sha256").update(json).digest("hex").slice(0, 16);
+}
+
+/** Serialises a record with its checksum. The record's own `_sha` key, if any, is replaced. */
+export function encodeLine(data: BedrockRecord): string {
+  const { [CHECKSUM_FIELD]: _ignored, ...rest } = data;
+  return JSON.stringify({ ...rest, [CHECKSUM_FIELD]: checksumOf(JSON.stringify(rest)) });
+}
+
+export type DecodedLine =
+  | { ok: true; record: BedrockRecord; checked: boolean }
+  | { ok: false; reason: "invalid_json" | "not_an_object" | "checksum_mismatch" };
+
+/** Parses one line and verifies its checksum. Lines from before the checksum existed pass as unchecked. */
+export function decodeLine(line: string): DecodedLine {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(line);
+  } catch {
+    return { ok: false, reason: "invalid_json" };
+  }
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return { ok: false, reason: "not_an_object" };
+  const { [CHECKSUM_FIELD]: sum, ...rest } = parsed as Record<string, unknown>;
+  if (sum === undefined) return { ok: true, record: rest as BedrockRecord, checked: false };
+  if (typeof sum !== "string" || sum !== checksumOf(JSON.stringify(rest))) return { ok: false, reason: "checksum_mismatch" };
+  return { ok: true, record: rest as BedrockRecord, checked: true };
+}
 
 /** Lines archiveOld leaves in the live file by default: readers ask for up to 20,000 (server.ts). */
 export const DEFAULT_KEEP_LINES = 30_000;
@@ -34,6 +95,17 @@ export class BedrockDB {
   readonly dataDir = DATA_DIR;
 
   private initialized = false;
+
+  /** Size cap and rotation depth; set from the environment, adjustable by tests. */
+  public maxBytes = storeLimitsFromEnv().maxBytes;
+  public keepFiles = storeLimitsFromEnv().keepFiles;
+
+  /** Counters since start, reported by stats() and the dead_letter_lines TPM. */
+  public deadLettered = 0;
+  public deadLetterWriteFailures = 0;
+  public rotations = 0;
+  public uncheckedLines = 0;
+  private deadLetterSeen = new Set<string>();
 
   private async ensureDir() {
     if (this.initialized) return;
@@ -62,12 +134,13 @@ export class BedrockDB {
    * persist-stage error instead of reporting the write as ok). GAU-121.
    */
   public async appendTelemetryStrict(data: BedrockRecord) {
-    const line = JSON.stringify(data) + "\n";
+    const line = encodeLine(data) + "\n";
     try {
       // Joins the lock queue synchronously, so lines land in call order and an append waits while
       // archiveOld swaps the file instead of being lost.
       await this.locked(async () => {
         await this.ensureDir();
+        await this.rotateIfNeeded(Buffer.byteLength(line));
         await fs.appendFile(TELEMETRY_FILE, line, "utf8");
       });
     } catch (err) {
@@ -109,6 +182,68 @@ export class BedrockDB {
     return "canonical-rejected";
   }
 
+  /**
+   * Rotates telemetry.jsonl -> .1 -> .2 ... when the next line would pass maxBytes; the file past
+   * keepFiles is removed. Runs inside the append lock. Disk use stays under keepFiles x maxBytes.
+   */
+  private async rotateIfNeeded(incomingBytes: number): Promise<void> {
+    let size: number;
+    try {
+      size = (await fs.stat(TELEMETRY_FILE)).size;
+    } catch {
+      return; // no file yet
+    }
+    if (size === 0 || size + incomingBytes <= this.maxBytes) return;
+    await rotateFiles(TELEMETRY_FILE, this.keepFiles);
+    this.rotations += 1;
+    console.warn(`[Bedrock] telemetry.jsonl passed ${this.maxBytes} bytes; rotated (${this.rotations} since start, ${this.keepFiles} files kept)`);
+  }
+
+  /** Counters for status and health reporting. */
+  public stats() {
+    return {
+      failedWrites: this.failedWrites,
+      deadLettered: this.deadLettered,
+      deadLetterWriteFailures: this.deadLetterWriteFailures,
+      skippedLastRead: this.lastSkippedLines,
+      uncheckedLines: this.uncheckedLines,
+      rotations: this.rotations,
+      maxBytes: this.maxBytes,
+      keepFiles: this.keepFiles,
+    };
+  }
+
+  /** Records a line that did not parse or verify, with the reason; once per distinct line. Never throws. */
+  private async deadLetter(line: string, reason: string): Promise<void> {
+    const key = crypto.createHash("sha256").update(reason).update("\0").update(line).digest("hex");
+    if (this.deadLetterSeen.has(key)) return;
+    if (this.deadLetterSeen.size >= DEADLETTER_SEEN_MAX) this.deadLetterSeen.clear();
+    this.deadLetterSeen.add(key);
+    this.deadLettered += 1;
+    const entry = JSON.stringify({
+      at: new Date().toISOString(),
+      reason,
+      source: path.basename(TELEMETRY_FILE),
+      line_sha256: key,
+      line_chars: line.length,
+      line: line.slice(0, DEADLETTER_LINE_CHARS),
+    }) + "\n";
+    try {
+      await this.locked(async () => {
+        await this.ensureDir();
+        try {
+          if ((await fs.stat(DEADLETTER_FILE)).size + entry.length > DEADLETTER_MAX_BYTES) await rotateFiles(DEADLETTER_FILE, 2);
+        } catch {
+          // no dead-letter file yet
+        }
+        await fs.appendFile(DEADLETTER_FILE, entry, { encoding: "utf8", mode: 0o600 });
+      });
+    } catch (err) {
+      this.deadLetterWriteFailures += 1;
+      console.error("[Bedrock] Dead-letter write failed", err);
+    }
+  }
+
   /** Serialises appends and archiving (every writer to telemetry.jsonl is in this process). */
   private chain: Promise<unknown> = Promise.resolve();
   private locked<T>(fn: () => Promise<T>): Promise<T> {
@@ -126,14 +261,22 @@ export class BedrockDB {
    */
   public async getRecent(limit: number = 200): Promise<BedrockRecord[]> {
     await this.ensureDir();
-    const lines = await readTailLines(TELEMETRY_FILE, Math.max(0, Math.floor(limit)));
+    const want = Math.max(0, Math.floor(limit));
+    let lines = await readTailLines(TELEMETRY_FILE, want);
+    // After a rotation the live file may be short: fill from the newest rotated file.
+    if (lines.length < want && this.keepFiles > 1) {
+      lines = [...(await readTailLines(`${TELEMETRY_FILE}.1`, want - lines.length)), ...lines];
+    }
     const records: BedrockRecord[] = [];
     let skipped = 0;
     for (const line of lines) {
-      try {
-        records.push(JSON.parse(line));
-      } catch {
-        skipped += 1; // one bad line must not hide the rest
+      const d = decodeLine(line);
+      if (d.ok) {
+        records.push(d.record);
+        if (!d.checked) this.uncheckedLines += 1;
+      } else {
+        skipped += 1; // one bad line must not hide the rest; it goes to the dead-letter file
+        await this.deadLetter(line, d.reason);
       }
     }
     this.lastSkippedLines = skipped;
@@ -309,6 +452,24 @@ export async function archiveTelemetry(file: string, archiveDir: string, keepLin
     await fs.rm(partTail, { force: true });
     throw err;
   }
+}
+
+/** file -> file.1 -> ... -> file.(keep-1); whatever was at file.(keep-1) is removed. keep >= 1. */
+export async function rotateFiles(file: string, keep: number): Promise<void> {
+  const last = Math.max(1, keep) - 1;
+  if (last === 0) {
+    await fs.rm(file, { force: true });
+    return;
+  }
+  await fs.rm(`${file}.${last}`, { force: true });
+  for (let i = last - 1; i >= 1; i -= 1) {
+    try {
+      await fs.rename(`${file}.${i}`, `${file}.${i + 1}`);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+    }
+  }
+  await fs.rename(file, `${file}.1`);
 }
 
 const TAIL_CHUNK_BYTES = 64 * 1024;

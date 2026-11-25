@@ -953,7 +953,7 @@
               },
               "red": {
                 "type": "array",
-                "items": { "enum": ["data_age", "loop_liveness", "tick_p95", "persist_failures", "rejected_points", "disk_free", "memory_rss", "official_sources_down", "forecast_skill"] },
+                "items": { "enum": ["data_age", "loop_liveness", "tick_p95", "persist_failures", "rejected_points", "dead_letter_lines", "disk_free", "memory_rss", "official_sources_down", "forecast_skill"] },
                 "description": "Ids of measures at red"
               }
             }

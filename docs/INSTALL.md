@@ -222,7 +222,7 @@ since is lost).
 - **TPM amber or red:** `data_age` or `official_sources_down` = upstream unreachable (firewall,
   provider outage); `disk_free` = free space or move old archives elsewhere; `persist_failures` =
   disk or permissions on `GAUSS_BEDROCK_DIR`; `rejected_points` = a feed delivered impossible values,
-  fills or points with no measurement time (each is kept as `canonical-rejected` with its reasons); `loop_liveness` or `tick_p95` = CPU starved;
+  fills or points with no measurement time (each is kept as `canonical-rejected` with its reasons); `dead_letter_lines` = telemetry lines failed their checksum or did not parse (each is kept with its reason in `telemetry.deadletter.jsonl`; look for disk faults); `loop_liveness` or `tick_p95` = CPU starved;
   `memory_rss` = restart and report it.
 - **400 "invalid JSON" or 413 on a POST:** the body was not valid JSON, or was over 2 MB (send
   fewer items per request). These are answered before the key is checked.
