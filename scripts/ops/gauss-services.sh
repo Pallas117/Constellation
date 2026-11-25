@@ -1764,6 +1764,56 @@ train_sync() { # train_sync <request>: merge origin/main into a train PR's head 
   [ -f "$req" ]
 }
 
+# Website redeploy after a website-only merge (25 Nov: the live site was 10 website commits behind main, because
+# deploying was a manual step). OFF unless the switch file says "on" (default: no file = off; Josh switches it on).
+# Only for a train merge whose files are all under website/, that leaves website/wrangler.jsonc alone (so RELEASE,
+# routes and bindings are exactly as deployed) and whose RELEASE is "public". It runs the documented deploy from
+# a clean checkout of the merged head, then the smoke check against the live site; if the smoke check fails it
+# rolls back to the previous deployment and texts Josh. It never sets RELEASE, and it doesn't touch Access, DNS,
+# Stripe or secrets: wrangler uses the login already on this Mac, read by wrangler itself. Wrangler's output goes
+# to a private temp file and is never printed or logged; only the exit status is.
+WEBSITE_REDEPLOY_SWITCH="${GAUSS_WEBSITE_REDEPLOY:-$HOME/gauss/policy/website-redeploy}"
+WEBSITE_URL="${GAUSS_WEBSITE_URL:-https://lightbound.space}"
+website_redeploy() { # website_redeploy <pr> <sha> <repo> <files merged>: never fails the runner
+  local pr=$1 sha=$2 repo=$3 files=$4 other w out rc=0 s=0 wr
+  [ "$(cat "$WEBSITE_REDEPLOY_SWITCH" 2>/dev/null)" = on ] || return 0
+  other=$(printf '%s\n' "$files" | { grep -Ev -- '^website/' || true; } | sed -n 1,3p | tr '\n' ' ')
+  if [ -z "$files" ] || [ -n "$other" ] || printf '%s\n' "$files" | grep -qx 'website/wrangler.jsonc'; then
+    echo "Website redeploy: PR #$pr is not website-only with the same wrangler.jsonc: not deployed."; return 0
+  fi
+  if ! git --git-dir="$repo" show "$sha:website/wrangler.jsonc" 2>/dev/null | grep -Eq '"RELEASE"[[:space:]]*:[[:space:]]*"public"'; then
+    echo "Website redeploy: RELEASE is not \"public\" at ${sha:0:7}: not deployed."; return 0
+  fi
+  wr=(${GAUSS_WRANGLER:-npx wrangler@4})
+  w=$(mktemp -d -t gauss-site)/w
+  git --git-dir="$repo" worktree add -q --detach "$w" "$sha" 2>/dev/null || { echo "Website redeploy: could not prepare ${sha:0:7}."; return 0; }
+  out=$(mktemp -t gauss-site-out) || out=/dev/null
+  echo "Website redeploy: PR #$pr, deploying ${sha:0:7} ..."
+  (cd "$w/website" && limited "${GAUSS_WEBSITE_DEPLOY_S:-600}" "${wr[@]}" deploy --var "SOURCE_SHA:$sha") >"$out" 2>&1 || rc=$?
+  if [ "$rc" != 0 ]; then
+    echo "Website redeploy: deploy exited $rc (output not shown); the live site is as it was."
+    phone -key "website-deploy" -every 1h "Website: deploy failed" "PR #$pr is merged but the website deploy failed (exit $rc). The live site is unchanged. Deploy by hand."
+  else
+    (cd "$w" && limited "${GAUSS_WEBSITE_SMOKE_S:-300}" ${GAUSS_WEBSITE_SMOKE:-node website/tools/smoke.mjs} "$WEBSITE_URL" "$sha") >"$out" 2>&1 || s=$?
+    if [ "$s" = 0 ]; then
+      echo "Website redeploy: ${sha:0:7} is live and the smoke check passed."
+      phone -key "website-deploy" -every 1m "Website: redeployed" "PR #$pr is live on lightbound.space and the smoke check passed."
+    else
+      grep '^FAIL' "$out" | sed -n 1,5p | sed 's/^/  smoke: /'
+      echo "Website redeploy: smoke check failed (exit $s); rolling back to the previous deployment."
+      rc=0; (cd "$w/website" && limited "${GAUSS_WEBSITE_DEPLOY_S:-600}" "${wr[@]}" rollback -y --message "Smoke check failed after PR #$pr") >"$out" 2>&1 || rc=$?
+      if [ "$rc" = 0 ]; then
+        phone -key "website-deploy" -every 1h "Website: rolled back" "PR #$pr was deployed but the smoke check failed, so the site is back on the previous version. Look at the runner log."
+      else
+        phone -key "website-deploy" -every 1h "Website: ROLLBACK FAILED" "PR #$pr was deployed, the smoke check failed and the automatic rollback failed (exit $rc). Roll back by hand now: wrangler rollback."
+      fi
+    fi
+  fi
+  [ "$out" = /dev/null ] || rm -f "$out"
+  git --git-dir="$repo" worktree remove --force "$w" 2>/dev/null || true
+  return 0
+}
+
 train_merge() { # train_merge <pr> <sha> <tree> <repo>: merge a PR that just passed, if every rule holds
   local pr=$1 sha=$2 tree=$3 repo=$4 info state head branch base draft merge i files held child why
   git --git-dir="$repo" fetch -q origin 2>/dev/null || true
@@ -1804,6 +1854,7 @@ train_merge() { # train_merge <pr> <sha> <tree> <repo>: merge a PR that just pas
       gh pr edit "$child" --repo "$TRAIN_REPO" --base main >/dev/null 2>&1 && echo "Retargeted PR #$child to main."
     done
     phone -key "train-merged" -every 1m "Gauss: merged #$pr" "PR #$pr passed its checks and is merged into main."
+    website_redeploy "$pr" "$sha" "$repo" "$files" || true
     return 0
   fi
   gates_result "$sha" "$tree" HELD "passed, but gh pr merge refused it"

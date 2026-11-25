@@ -66,7 +66,7 @@ run() { # run <args...>: gauss-services.sh with the stubs; alerts land in $LOG
     GAUSS_SUDOERS="$T/sudoers" MLX="${MLX:-0}" MLXPORT="${MLXPORT:-8089}" ACTIONS="$T/actions" GAUSS_BALANCE="${GAUSS_BALANCE:-1}" \
     LOADED="${LOADED:-}" HEALTH="${HEALTH:-200}" HEALTH_FILE="${HEALTH_FILE:-}" GAUSS_DEPLOY_WAIT=0 DISKGB="${DISKGB:-50}" \
     GATEORDER="${GATEORDER:-}" GAUSS_PW_CHROMIUM="${GAUSS_PW_CHROMIUM:-}" GATEFAIL="${GATEFAIL:-}" MOVEMAIN="${MOVEMAIN:-}" GAUSS_BY=test-user BOOT="${BOOT:-1000}" GAUSS_DIAG_DIRS="$T/diag" GAUSS_EVENTS_MAX_KB="${GAUSS_EVENTS_MAX_KB:-5120}" \
-    WAKE="${WAKE:-1000}" GAUSS_GATEBOX_TRUST="${GAUSS_GATEBOX_TRUST:-}" GAUSS_DEV_DRY="${GAUSS_DEV_DRY:-0}" GAUSS_GATES_START=0 GATEHANG="${GATEHANG:-}" GAUSS_GATES_STEP_S="${GAUSS_GATES_STEP_S:-}" HEAVYGIVEUP="${HEAVYGIVEUP:-}" NPMNET="${NPMNET:-}" GAUSS_GATEBOX="${GAUSS_GATEBOX:-}" GAUSS_GATEBOX_PROBE="${GAUSS_GATEBOX_PROBE:-true}" GAUSS_GATEBOX_WAIT_S="${GAUSS_GATEBOX_WAIT_S:-0}" GAUSS_GATEBOX_POLL_S="${GAUSS_GATEBOX_POLL_S:-1}" GAUSS_MESH_STORE="${GAUSS_MESH_STORE:-}" GAUSS_GATEBOX_TIMEOUT_S="${GAUSS_GATEBOX_TIMEOUT_S:-}" GAUSS_FLEET_MEMORY="${GAUSS_FLEET_MEMORY:-}" GAUSS_GATEBOX_KEY="$T/gatebox-key" GBRC="${GBRC:-}" GAUSS_GATES_EXPIRE_H="${GAUSS_GATES_EXPIRE_H:-72}" GAUSS_GATES_HOOK_S="${GAUSS_GATES_HOOK_S:-300}" GAUSS_DEV_API_PORT="${GAUSS_DEV_API_PORT:-3101}" \
+    WAKE="${WAKE:-1000}" GAUSS_GATEBOX_TRUST="${GAUSS_GATEBOX_TRUST:-}" GAUSS_DEV_DRY="${GAUSS_DEV_DRY:-0}" GAUSS_GATES_START=0 GATEHANG="${GATEHANG:-}" GAUSS_GATES_STEP_S="${GAUSS_GATES_STEP_S:-}" HEAVYGIVEUP="${HEAVYGIVEUP:-}" NPMNET="${NPMNET:-}" GAUSS_GATEBOX="${GAUSS_GATEBOX:-}" GAUSS_GATEBOX_PROBE="${GAUSS_GATEBOX_PROBE:-true}" GAUSS_GATEBOX_WAIT_S="${GAUSS_GATEBOX_WAIT_S:-0}" GAUSS_GATEBOX_POLL_S="${GAUSS_GATEBOX_POLL_S:-1}" GAUSS_MESH_STORE="${GAUSS_MESH_STORE:-}" GAUSS_GATEBOX_TIMEOUT_S="${GAUSS_GATEBOX_TIMEOUT_S:-}" GAUSS_FLEET_MEMORY="${GAUSS_FLEET_MEMORY:-}" GAUSS_GATEBOX_KEY="$T/gatebox-key" GBRC="${GBRC:-}" GAUSS_GATES_EXPIRE_H="${GAUSS_GATES_EXPIRE_H:-72}" GAUSS_GATES_HOOK_S="${GAUSS_GATES_HOOK_S:-300}" GAUSS_DEV_API_PORT="${GAUSS_DEV_API_PORT:-3101}" GAUSS_WRANGLER="${GAUSS_WRANGLER:-}" GAUSS_WEBSITE_SMOKE="${GAUSS_WEBSITE_SMOKE:-}" WRFAIL="${WRFAIL:-}" RBFAIL="${RBFAIL:-}" SMOKEFAIL="${SMOKEFAIL:-}" \
     SRC="${SRC:-AC Power}" BATT="${BATT:-80%; charging; present: true}" SD="${SD:-0}" FCC="${FCC:-}" ACW="${ACW:-}" \
     LEAKY="${LEAKY:-}" LEAKFP="${LEAKFP:-12 MB}" AVAIL="${AVAIL:-50}" GAUSS_SWAP_LAST="${SWAPLAST:-/dev/null}" \
     GATEENV="${GATEENV:-}" GATES_PYTHON="${GATES_PYTHON:-}" ${GATELEAK:+ALLOWED_ORIGINS=https://live.example MESH_STORE_PATH=/live/data/mesh/devices.json COMMERCE_DB_PATH=/live/data/commerce/commerce.db GAUSS_BEDROCK_DIR=/live/data/bedrock NODE_ENV=production} \
@@ -1130,6 +1130,49 @@ K2=$(tc "$M4" k53.txt resolved); g push -q -f origin "$K2:refs/heads/k53" && g f
 (cd "$LIVE" && run gates enqueue "$K2" --pr 53 >/dev/null 2>&1); run gates run >/dev/null 2>&1
 grep -qx "gh merge 53 $K2" "$T/actions"; expect "train: once the conflicting branch moves, it is gated and merged" $?
 rm -f "$GQ"/*.req; git --git-dir="$ORIGIN" update-ref refs/heads/main "$M3"; g fetch -q origin # main back where the tests below expect it
+# Website redeploy after a train merge (25 Nov): off by default; only for a website-only merge that leaves
+# wrangler.jsonc alone and is RELEASE "public"; the smoke check is the gate and a failure rolls back.
+cat >"$T/bin/wr" <<'WRSTUB'
+#!/bin/bash
+echo "wrangler $*" >>"$ACTIONS"; [ "$1" = deploy ] && exit ${WRFAIL:-0}; exit ${RBFAIL:-0}
+WRSTUB
+cat >"$T/bin/smoke" <<'SMSTUB'
+#!/bin/bash
+echo "smoke $*" >>"$ACTIONS"; [ "${SMOKEFAIL:-0}" = 0 ] || echo "FAIL / 200 with security headers"; exit ${SMOKEFAIL:-0}
+SMSTUB
+chmod +x "$T/bin/wr" "$T/bin/smoke"
+export GAUSS_WRANGLER="$T/bin/wr" GAUSS_WEBSITE_SMOKE="$T/bin/smoke"
+WSW="$T/home/gauss/policy/website-redeploy"; mkdir -p "$(dirname "$WSW")"
+WM=$(tc "$M3" website/wrangler.jsonc '{ "vars": { "RELEASE": "public" } }'); git --git-dir="$ORIGIN" update-ref refs/heads/main "$WM"; g fetch -q origin
+wsite() { local n=$1; shift; WS=$(tc "$WM" "$@"); g push -q origin "$WS:refs/heads/ws$n" && g fetch -q origin
+  echo "OPEN ws$n main false CLEAN" >"$GHD/pr$n"; (cd "$LIVE" && run gates enqueue "$WS" --pr "$n" >/dev/null 2>&1); run gates run >/dev/null 2>&1; }
+rm -f "$WSW"; wsite 80 website/public/a.html one
+grep -qx "gh merge 80 $WS" "$T/actions" && ! grep -q "^wrangler\|^smoke" "$T/actions"; expect "website redeploy: off by default (no switch file): a website-only merge deploys nothing" $?
+echo off >"$WSW"; wsite 81 website/public/b.html two
+grep -qx "gh merge 81 $WS" "$T/actions" && ! grep -q "^wrangler\|^smoke" "$T/actions"; expect "website redeploy: a switch that isn't 'on' deploys nothing" $?
+echo on >"$WSW"; wsite 82 website/public/c.html three
+grep -qx "gh merge 82 $WS" "$T/actions" && grep -qx "wrangler deploy --var SOURCE_SHA:$WS" "$T/actions" && grep -qx "smoke https://lightbound.space $WS" "$T/actions" \
+  && ! grep -q "^wrangler rollback" "$T/actions" && grep -q "redeployed" "$T/log" && [ -z "$(g worktree list | grep gauss-site)" ]
+expect "website redeploy: a website-only merge deploys that commit, runs the smoke check on the live site, texts, and cleans up" $?
+SMOKEFAIL=1 wsite 83 website/public/d.html four
+grep -qx "gh merge 83 $WS" "$T/actions" && grep -q "^wrangler rollback -y --message" "$T/actions" && grep -q "rolled back" "$T/log" && [ -z "$(g worktree list | grep gauss-site)" ]
+expect "website redeploy: a failed smoke check rolls back to the previous deployment and texts" $?
+SMOKEFAIL=1 RBFAIL=1 wsite 84 website/public/e.html five
+grep -q "ROLLBACK FAILED" "$T/log"; expect "website redeploy: a rollback that fails is texted loudly" $?
+WRFAIL=1 wsite 85 website/public/f.html six
+grep -qx "gh merge 85 $WS" "$T/actions" && ! grep -q "^smoke\|^wrangler rollback" "$T/actions" && grep -q "deploy failed" "$T/log"
+expect "website redeploy: a failed deploy is texted; no smoke check, no rollback (the site is unchanged)" $?
+wsite 86 website/public/g.html seven website/worker/index.js x
+grep -qx "gh merge 86 $WS" "$T/actions" && ! grep -q "^wrangler\|^smoke" "$T/actions"; expect "website redeploy: a merge that also touches a file outside website/ deploys nothing" $?
+wsite 87 website/wrangler.jsonc '{ "vars": { "RELEASE": "public" }, "x": 1 }'
+grep -qx "gh merge 87 $WS" "$T/actions" && ! grep -q "^wrangler\|^smoke" "$T/actions"; expect "website redeploy: a merge that changes wrangler.jsonc (release, routes, bindings) deploys nothing" $?
+wsite 88 website/worker/auth.js y
+grep -q "^[^ ]* $WS [^ ]* HELD passed, not merged: touches" "$GR" && ! grep -q "^wrangler\|^smoke" "$T/actions"; expect "website redeploy: a PR held for Josh is not merged, so nothing is deployed" $?
+WF=$(tc "$M3" website/wrangler.jsonc '{ "vars": { "RELEASE": "full" } }'); git --git-dir="$ORIGIN" update-ref refs/heads/main "$WF"; g fetch -q origin; WM=$WF
+wsite 89 website/public/h.html eight
+grep -qx "gh merge 89 $WS" "$T/actions" && ! grep -q "^wrangler\|^smoke" "$T/actions"; expect "website redeploy: RELEASE other than public is never deployed" $?
+rm -f "$WSW" "$GQ"/*.req; unset GAUSS_WRANGLER GAUSS_WEBSITE_SMOKE
+git --git-dir="$ORIGIN" update-ref refs/heads/main "$M3"; g fetch -q origin # main back where the tests below expect it
 # Queue tooling: reorder by PR, list the queue by PR, list passes that wait for a person.
 P8=$(tc "$M3" f8.txt f8); P9=$(tc "$M3" f9.txt f9); g push -q origin "$P8:refs/heads/q8" "$P9:refs/heads/q9" && g fetch -q origin
 (cd "$LIVE" && run gates enqueue "$P8" --pr 31 >/dev/null 2>&1; run gates enqueue "$P9" --pr 32 >/dev/null 2>&1)
