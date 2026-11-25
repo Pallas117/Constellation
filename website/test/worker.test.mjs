@@ -17,7 +17,7 @@ import { getAccount, getApplication, listApplications, putAccount, saveApplicati
 import { applyEvent, createPortal, formEncode, signPayload, verifySignature } from "../worker/stripe.js";
 import { TIERS, billingStatus, isAcademicEmail } from "../worker/tiers.js";
 import { APP_CSP } from "../worker/headers.js";
-import { eduCard } from "../worker/app.js";
+import { consoleLink, eduCard } from "../worker/app.js";
 import { formatIn, isUnsocial, offsetLabel, pickedZone, renderPlanner, tzOffset, wallClock, zonedToUtc, zonePicker } from "../worker/timezones.js";
 import { listCalls, rsvp, saveCall } from "../worker/calls.js";
 import { PROGRAMMES_URL, newsJson, programmesCsv, ukriXml, uksaAtom } from "./fixtures/opportunities.mjs";
@@ -563,6 +563,27 @@ test("workspace: an approved quote shows Pay; checkout goes to Stripe with the q
   const down = await withFetch(stripeMock(true), async () => send(env, await formPost(access, "ops@example.test", "/app/checkout")));
   assert.equal(down.status, 503);
   assert.match(await down.text(), /Nothing was charged/);
+});
+
+test("workspace: a paid account opens the Gauss console (GAUSS_APP_URL), https only, hidden until paid", async () => {
+  const { env, access } = await appEnv();
+  await putAccount(env, { email: "paid@example.test", tier: "pilot", quote: 2_000_000, billing: { status: "paid" } }, "test");
+  await putAccount(env, { email: "due@example.test", tier: "pilot", quote: 2_000_000, billing: { status: "due" } }, "test");
+  const page = async (e, who = "paid@example.test") => (await send(e, await as(access, who, "/app/"))).text();
+  const app = { ...env, GAUSS_APP_URL: "https://gauss.example.test/" };
+  assert.match(await page(app), /<a class="btn" href="https:\/\/gauss\.example\.test\/">Open the Gauss console<\/a> <span class="m">Sign in there with paid@example\.test\.<\/span>/);
+  assert.doesNotMatch(await page(app, "due@example.test"), /Open the Gauss console/, "locked until paid");
+  assert.match(await page(env), /Your Gauss console link is coming by email\./, "unset: a line, not a dead button");
+  const refused = ["javascript:alert(1)", "http://gauss.example.test/", "https://gauss.example.test/?ref=workspace", "https://gauss.example.test/#x",
+    "https://u:p@gauss.example.test/", "//gauss.example.test/", 'https://gauss.example.test/" onmouseover="x'];
+  for (const bad of refused) {
+    const html = await page({ ...env, GAUSS_APP_URL: bad });
+    assert.doesNotMatch(html, /Open the Gauss console/, `refused: ${bad}`);
+    assert.match(html, /Your Gauss console link is coming by email\./);
+  }
+  assert.equal(consoleLink("http://127.0.0.1:5174/"), "http://127.0.0.1:5174/", "the local preview beside the dev console");
+  assert.equal(consoleLink("https://gauss.example.test"), "https://gauss.example.test/");
+  assert.equal(consoleLink(undefined), "");
 });
 
 test("checkout: Fleet Integration is a yearly subscription; no quote or already paid means no checkout", async () => {
