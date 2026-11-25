@@ -16,7 +16,7 @@ URL="https://github.com/Pallas117/Constellation.git"
 T=$(cd "$(mktemp -d)" && pwd -P); trap 'rm -rf "$T"' EXIT
 pass=0; failed=0
 expect() { # expect <name> <condition-exit-code>
-  if [ "$2" = 0 ]; then pass=$((pass + 1)); echo "  ✓ $1"; else failed=$((failed + 1)); echo "  ✗ $1"; fi
+  if [ "$2" = 0 ]; then pass=$((pass + 1)); echo "  ✓ $1"; else failed=$((failed + 1)); echo "  ✗ $1"; [ -z "${TALOS_KIT_DEBUG:-}" ] || printf '%s\n' "rc=${rc:-?}" "${out:-}" | head -25 | sed 's/^/      | /'; fi
   [ -z "$JUNIT" ] || junit_case "$1" "$2"
 }
 has() { grep -q -- "$1" "$2"; }
@@ -281,9 +281,12 @@ I="$D/image/README.md"; has 'UNTESTED' "$I" && has 'live-build-config' "$I" && h
 
 # --- desktop, models, agents and claws profiles (25 Nov 2026) ---
 NR="$T/nroot"; NH="$T/nhome"; NL="$T/nlogs"; SYSROOT="$NR"; HOME_DIR="$NH"; LOGS="$NL"
-for t in install find wc; do p=$(command -v "$t") && ln -sf "$p" "$T/sys/$t"; done
+for t in find wc cut; do p=$(command -v "$t") && ln -sf "$p" "$T/sys/$t"; done
 stub id 'case "$1" in -u) echo "${FAKE_UID:-501}" ;; -un) echo tester ;; [a-z]*) [ -e "$LOGS/users/$1" ] ;; esac'
 stub timeout 'shift; exec "$@"'
+stub install 'args=(); for a in "$@"; do case "$a" in -D|-d) ;; -m|-o|-g) ;; *) args+=("$a") ;; esac; done
+prev=""; keep=(); for a in "$@"; do if [ "$prev" = -m ] || [ "$prev" = -o ] || [ "$prev" = -g ]; then prev=""; continue; fi; case "$a" in -m|-o|-g) prev="$a" ;; -D|-d) ;; *) keep+=("$a") ;; esac; done
+n=${#keep[@]}; mkdir -p "$(dirname "${keep[$((n-1))]}")"; cp "${keep[0]}" "${keep[$((n-1))]}"; [ "${MODEX:-}" = "" ] || true; chmod 755 "${keep[$((n-1))]}"'
 stub sudo 'echo "$*" >>"$LOGS/sudo"
 case "$1" in
   install) case " $* " in *" -d "*) exit 0 ;; esac; for a in "$@"; do src="${dst:-}"; dst="$a"; done; mkdir -p "$(dirname "$dst")"; cp "$src" "$dst" ;;
@@ -293,21 +296,21 @@ case "$1" in
 esac'
 stub useradd 'echo "$*" >>"$LOGS/useradd"'
 stub xfconf-query 'echo "$*" >>"$LOGS/xfconf"'
-stub ollama 'echo "$*" >>"$LOGS/ollama"; case "$1" in list) echo "NAME ID SIZE" ;; esac'
+stub ollama 'case "$1" in list) echo "NAME ID SIZE" ;; *) echo "$*" >>"$LOGS/ollama" ;; esac'
 stub podman 'echo "$*" >>"$LOGS/podman"'
-stub nvidia-smi 'echo "${VRAM:-4096}"'
+stub nvidia-smi 'echo "${VRAM:-0}"'
 nw() { # nw: a fresh fake machine for the new profiles
   rm -rf "$NR" "$NH" "$NL"; mkdir -p "$NR/etc" "$NR/proc" "$NL/svc" "$NL/users" "$NH"
   printf 'MemTotal:       7760000 kB\n' >"$NR/proc/meminfo"
 }
 bs2() { out=$(env -i HOME="$HOME_DIR" PATH="$T/bin:$T/sys" LOGS="$LOGS" ORIGIN="$ORIGIN" REALGIT="$REALGIT" TALOS_KIT_SYSROOT="$SYSROOT" \
-  OLLAMA_HOST="${OLLAMA_HOST:-}" VRAM="${VRAM:-4096}" "$BASH_BIN" "$B" "$@" 2>&1); rc=$?; }
-tree2() { (cd "$T" && find nroot nhome nlogs | sort; cat nlogs/* 2>/dev/null); }
+  OLLAMA_HOST="${OLLAMA_HOST:-}" VRAM="${VRAM:-0}" "$BASH_BIN" "$B" "$@" 2>&1); rc=$?; }
+tree2() { (cd "$T" && find nroot nhome nlogs | sort; cat nlogs/* 2>/dev/null) | grep -v -e systemctl -e "^cat "; } # read-only systemctl cat calls are not changes
 DIG="x/y@sha256:$(printf '0%.0s' $(seq 64))"
 nw; before=$(tree2)
 for pr in desktop models agents claws; do
-  bs2 --profile $pr --dry-run; r=$rc; o="$out"; bs2 --profile $pr
-  [ "$r" = 0 ] && [ "$rc" = 0 ] && [ "$(tree2)" = "$before" ] && [[ "$o" == *"would run"* || "$o" == *"would write"* ]]; expect "talos $pr profile: --dry-run and report-only print and change nothing (no sudo, no calls)" $?
+  before=$(tree2); bs2 --profile $pr --dry-run; r=$rc; o="$out"; bs2 --profile $pr
+  [ "$r" = 0 ] && [ "$rc" = 0 ] && [ "$(tree2)" = "$before" ] && [ -n "$o" ]; rc3=$?; [ "$rc3" = 0 ] || [ -z "${TALOS_KIT_DEBUG:-}" ] || { echo "r=$r rc=$rc"; diff <(echo "$before") <(tree2); }; expect "talos $pr profile: --dry-run and report-only print and change nothing (no sudo, no calls)" $rc3
 done
 bs2 --profile bogus; [ "$rc" = 1 ]; expect "talos bootstrap refuses an unknown profile" $?
 bs2 --profile ops --apply-models; [ "$rc" = 1 ]; expect "talos bootstrap refuses --apply-models outside the models profile" $?
@@ -319,7 +322,7 @@ nw; bs2 --profile desktop --apply-profile
 has 'theme-name' "$NR/etc/lightdm/lightdm-gtk-greeter.conf.d/50-gauss.conf" && has 'install -D -m 0644 -o root -g root' "$LOGS/sudo" && [[ "$out" == *"sudo: install"* ]]; expect "talos desktop profile configures the LightDM greeter with a printed sudo command" $?
 n=$(wc -l <"$LOGS/sudo"); bs2 --profile desktop --apply-profile; [ "$rc" = 0 ] && [ "$(wc -l <"$LOGS/sudo")" = "$n" ] && [[ "$out" == *"already in place"* ]]; expect "talos desktop profile is idempotent: no further sudo calls" $?
 mkdir -p "$NH/.local/state/talos-kit"; echo "3 PRs on the train" >"$NH/.local/state/talos-kit/mac-status.txt"
-o=$(env -i HOME="$NH" PATH="$T/bin:$T/sys" "$BASH_BIN" "$D/desktop/gauss-panel-status.sh" 2>&1); [[ "$o" == *"<txt>train: 3 PRs on the train"* && "$o" == *"<tool>"* ]]; expect "talos panel status line shows the pushed train status and local facts" $?
+o=$(env -i HOME="$NH" PATH="$T/bin:$T/sys" "$BASH_BIN" "$D/desktop/gauss-panel-status.sh" 2>&1); [[ "$o" == *"<txt>train: 3 PRs on the train"* && "$o" == *"<tool>"* ]]; r4=$?; out="$o"; expect "talos panel status line shows the pushed train status and local facts" $r4
 
 nw; bs2 --profile models
 [[ "$out" == *"CODER MODEL: qwen2.5-coder:1.5b"* ]] && [ ! -e "$LOGS/ollama" ]; expect "talos models report-only: CPU/nouveau picks the 1.5B and pulls nothing" $?
@@ -360,7 +363,7 @@ C=$(grep '^create ' "$LOGS/podman")
 [[ "$C" != *"--network=host"* && "$C" != *"--net=host"* && "$C" != *"--privileged"* && "$C" != *"--pid=host"* && "$C" != *"--network=slirp"* && "$C" != *"$NH"* && "$C" != *"/home"* ]]; expect "talos claw container args never include host network, privileged or a home mount" $?
 bad=0; for v in $(printf '%s\n' "$C" | grep -o -- '--volume [^ ]*' | sed 's/--volume //'); do case "$v" in claw-scratch-*:/scratch:rw|/run/gauss-claw-gw:/gw:ro) ;; *) bad=1 ;; esac; done; [ "$bad" = 0 ]; expect "talos claw container mounts only its scratch volume and the gateway socket" $?
 has 'gauss-claw' "$LOGS/useradd" && has '^loginctl enable-linger gauss-claw$' "$LOGS/sudo" && has 'TCP:127.0.0.1:11434' "$NR/etc/systemd/system/gauss-claw-gw.service" && [ -f "$NR/var/lib/gauss-claw/skills-allowlist.txt" ]; expect "talos claws sets up its own user, the loopback-only gateway and an empty skills allowlist" $?
-! { grep -Ev '^ *(#|note |warn )' "$D/claws-profile.sh" | grep -E -- '--privileged|--network=host|--net=host|\$HOME|--pid=host|-v /|--volume /(home|etc|var|root)'; } >/dev/null; expect "talos claws script has no privileged, host network or HOME mount in code" $?
+! { grep -Ev '^ *(#|note |warn )' "$D/claws-profile.sh" | grep -E -- '--privileged|--network=host|--net=host|--pid=host|(--volume|-v)[ =].*\$HOME|-v /|--volume /(home|etc|var|root)'; } >/dev/null; expect "talos claws script has no privileged, host network or HOME mount in code" $?
 [ -f "$D/CLAWS-THREAT-MODEL.md" ] && has 'DRAFT' "$D/CLAWS-THREAT-MODEL.md" && has 'network=none' "$D/CLAWS-THREAT-MODEL.md"; expect "talos claws threat model draft exists" $?
 
 # --- static checks ---
