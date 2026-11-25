@@ -20,10 +20,13 @@ import {
   parseBattery,
   parseCharger,
   parsePower,
+  parseClock,
   parsePowerSave,
   parseGuard,
   parsePosture,
   parseHost,
+  parseLinkSample,
+  parseLowSignal,
   parseNet,
   parseReport,
   type MeshGuard,
@@ -188,6 +191,26 @@ test("network scores are allowlisted; nothing unmeasured is invented", () => {
     assert.equal(parseNet(bad), undefined, JSON.stringify(bad));
   }
   assert.equal(parseReport(okReport)!.net, undefined, "older Argo: no block");
+});
+
+test("net.radio: Argo's radio profile is allowlisted field by field (GAU-188)", () => {
+  const net = { privacy: 70, privacyWhy: [], rttMs: 29, speed: "excellent", signal: "excellent", rssi: -35, noise: -98 };
+  // The 2026-10-23 hotspot: crowded 2.4 GHz ch10, Wi-Fi hop clean, loss upstream.
+  const radio = {
+    band: "2.4", channel: 10, widthMHz: 20, phy: "ax", mcs: 9, txMbps: 114, coChannel: 1, overlapping: 3,
+    gwLossPct: 0, gwJitterMs: 1, netLossPct: 40, netJitterMs: 400, netRttMs: 967, path: "upstream",
+  };
+  assert.deepEqual(parseNet({ ...net, radio })!.radio, radio);
+  assert.deepEqual(parseNet({ ...net, radio: { netLossPct: 0, path: "ok" } })!.radio, { netLossPct: 0, path: "ok" }, "wired: link quality only");
+  assert.equal(parseNet({ ...net, radio: { ssid: "HomeNet", bssid: "aa:bb" } })!.radio, undefined, "names are never kept");
+  for (const bad of [
+    { band: "3.6" }, { channel: 0 }, { widthMHz: 30 }, { phy: "802.11ax" }, { mcs: 16 }, { netLossPct: 101 },
+    { path: "somewhere" }, { overlapping: -1 }, { channel: 10.5 },
+  ]) {
+    const parsed = parseNet({ ...net, radio: { ...radio, ...bad } });
+    assert.ok(parsed, `a bad radio field must not drop the report: ${JSON.stringify(bad)}`);
+    assert.equal(parsed.radio, undefined, JSON.stringify(bad));
+  }
 });
 
 test("platform is allowlisted and phones never host", () => {
@@ -551,4 +574,46 @@ test("fleet memory: the device list, the worsening signal and the watcher's file
   assert.deepEqual(Object.keys(written.devices[0]).sort(), ["name", "reportedAt", "state", "why"], "states and reasons only: no token hash, no network details");
   assert.equal(fs.statSync(file).mode & 0o777, 0o600);
   assert.equal(fs.readFileSync(file, "utf8").includes("tokenHash"), false);
+});
+
+test("low-signal, clock and link-sample blocks are allowlisted and range-checked", () => {
+  assert.deepEqual(parseLowSignal({ on: true, chunkBytes: 65536, extra: 1 }), { on: true, chunkBytes: 65536 });
+  for (const bad of [{ on: "yes", chunkBytes: 4096 }, { on: true, chunkBytes: 1000 }, { on: true }, null, 5]) {
+    assert.equal(parseLowSignal(bad), undefined, JSON.stringify(bad));
+  }
+  assert.deepEqual(parseClock({ fault: true, skewSecs: -600, sources: 4, ntp: "x" }), { fault: true, skewSecs: -600, sources: 4 });
+  for (const bad of [{ fault: 1, skewSecs: 0, sources: 3 }, { fault: false, skewSecs: 8 * 24 * 3600, sources: 3 }, { fault: false, skewSecs: 1.5, sources: 3 }, { fault: false, skewSecs: 0, sources: 9 }]) {
+    assert.equal(parseClock(bad), undefined, JSON.stringify(bad));
+  }
+
+  const sample = { class: "usb", bearer: "https", network: "0123456789ab", place: "Hostel roof", signalDbm: -62, noiseDbm: -92, lossPct: 3, rttMs: 140, low: false, band: "5", channel: 36 };
+  assert.deepEqual(parseLinkSample({ ...sample, ssid: "HomeNet", lat: 3.1, gps: "x" }), sample, "SSID and location fields are never stored");
+  const minimal = parseLinkSample({ class: "other", bearer: "meshtastic", lossPct: 0, rttMs: -1, low: true });
+  assert.deepEqual(minimal, { class: "other", bearer: "meshtastic", lossPct: 0, rttMs: -1, low: true });
+  // Optional fields drop alone; a bad required field drops the block.
+  const lenient = parseLinkSample({ ...sample, network: "HomeNet-5G", place: "<script>", band: "60", channel: 999, signalDbm: 5 });
+  assert.deepEqual(lenient, { class: "usb", bearer: "https", lossPct: 3, rttMs: 140, low: false });
+  for (const bad of [{ ...sample, class: "vpn" }, { ...sample, bearer: "pigeon" }, { ...sample, lossPct: 101 }, { ...sample, lossPct: 2.5 }, { ...sample, rttMs: 70_000 }, { ...sample, low: "no" }, null, "x"]) {
+    assert.equal(parseLinkSample(bad), undefined, JSON.stringify(bad));
+  }
+
+  const report = parseReport({ ...okReport, lowSignal: { on: true, chunkBytes: 4096 }, clock: { fault: false, skewSecs: 1, sources: 4 }, linkSample: sample })!;
+  assert.deepEqual(report.lowSignal, { on: true, chunkBytes: 4096 });
+  assert.deepEqual(report.clock, { fault: false, skewSecs: 1, sources: 4 });
+  assert.equal(report.linkSample!.network, "0123456789ab");
+  const old = parseReport(okReport)!;
+  assert.equal(old.lowSignal, undefined, "older Argo: no blocks");
+  assert.equal(old.clock, undefined);
+  assert.equal(old.linkSample, undefined);
+});
+
+test("a compact low-signal report keeps the last full link history", () => {
+  const store = new MeshStore(null);
+  const { token } = store.enroll("devbox", "josh@example.com") as unknown as { token: string };
+  const dev = store.byToken(token)!;
+  const link = { d1: { observedSec: 100, availability: 0.9, outages: 1, downSec: 10, mttrP50Sec: 10, mttrP95Sec: 10, mtbfSec: 90 }, d7: { observedSec: 700, availability: 0.95, outages: 2, downSec: 30, mttrP50Sec: 15, mttrP95Sec: 20, mtbfSec: 300 } };
+  store.record(dev, parseReport({ ...okReport, link })!);
+  store.record(dev, parseReport({ ...okReport, lowSignal: { on: true, chunkBytes: 65536 } })!);
+  assert.deepEqual(dev.last!.link, parseReport({ ...okReport, link })!.link, "history survives a compact report");
+  assert.equal(dev.last!.lowSignal!.on, true);
 });

@@ -7,6 +7,7 @@ import {
   PARTICLE_MAX_AGE_MS,
   type GoesParticleReadout,
 } from "../adapters/goes-particles.js";
+import { fetchGlotec, freshIonosphere, getGlotecStatus } from "../adapters/glotec.js";
 import { fetchSwpcProducts, type SwpcProducts } from "../adapters/swpc-products.js";
 import { checkFieldMagnitude, checkPlasmaTracking, compareScales, expireCheck, fieldSampleProblem } from "../lib/sense-checks.js";
 import { currentKpReading, geomagneticStorm, radiationStorm, radioBlackout } from "../physics/noaa-scales.js";
@@ -40,6 +41,7 @@ import { inferAnomalyForecast } from "../ml-client/client.js";
 import type {
   CanonicalSpaceWeatherPoint,
   DerivedField,
+  IonosphereTecReading,
   IngestionTickResult,
   MMSReconVectorPoint,
   SenseCheck,
@@ -62,6 +64,7 @@ const JAXA_MS = 60000;
 const MMS_MS = 10 * 60 * 1000; // archival L2 product; polling faster gains nothing
 const LASP_MS = 60000;
 const GOES_MS = 60000; // GOES publishes every 5 min; a 60 s poll keeps worst-case lag under 6 min
+const GLOTEC_MS = 5 * 60 * 1000; // GloTEC steps every 10 min; the index tail is tiny, the 2.4 MB file is fetched only for a new step
 const KYOTO_DST_MS = 10 * 60 * 1000; // hourly product
 const SWPC_PRODUCTS_MS = 2 * 60 * 1000; // NOAA scales and alerts: a cross-check, updated every few minutes
 
@@ -107,7 +110,7 @@ export function forecastWindow(
 }
 
 /** The sources a worker can fetch. */
-export const INGEST_SOURCES = ["noaa", "kyoto-dst", "goes", "swpc-products", "esa", "jaxa", "mms", "lasp"] as const;
+export const INGEST_SOURCES = ["noaa", "kyoto-dst", "goes", "glotec", "swpc-products", "esa", "jaxa", "mms", "lasp"] as const;
 export type IngestSource = (typeof INGEST_SOURCES)[number];
 
 /**
@@ -165,6 +168,7 @@ export class IngestionWorker {
   private kpReading: KpReading | null = null;
   private esa: ESAReadout | null = null;
   private goes: GoesParticleReadout | null = null;
+  private glotec: IonosphereTecReading | null = null;
   private swpcProducts: SwpcProducts | null = null;
   private kyotoDst: DstReading | null = null;
   private latestCanonical: CanonicalSpaceWeatherPoint | null = null;
@@ -474,10 +478,10 @@ export class IngestionWorker {
       ...(this.wants("lasp") ? [getMmsLaspStatus()] : []),
     ];
     if (officialOnly) {
-      return [getNoaaStatus(), getGoesStatus(), getKyotoDstStatus(), ...mms];
+      return [getNoaaStatus(), getGoesStatus(), ...(this.wants("glotec") ? [getGlotecStatus()] : []), getKyotoDstStatus(), ...mms];
     }
 
-    return [getNoaaStatus(), getGoesStatus(), getKyotoDstStatus(), getEsaStatus(), getJaxaStatus(), ...mms];
+    return [getNoaaStatus(), getGoesStatus(), ...(this.wants("glotec") ? [getGlotecStatus()] : []), getKyotoDstStatus(), getEsaStatus(), getJaxaStatus(), ...mms];
   }
 
   private async isAuroraRpcSignatureError(error: unknown): Promise<boolean> {
@@ -545,6 +549,13 @@ export class IngestionWorker {
         fetches.push(
           this.timedFetch("goes", () => fetchGoesParticles(nowMs)).then((result) => {
             if (result) this.goes = result;
+          }),
+        );
+      }
+      if (this.wants("glotec") && this.shouldFetch("glotec", GLOTEC_MS)) {
+        fetches.push(
+          this.timedFetch("glotec", () => fetchGlotec(nowMs)).then((result) => {
+            if (result) this.glotec = result;
           }),
         );
       }
@@ -671,6 +682,8 @@ export class IngestionWorker {
     // Radio blackouts (R) from GOES X-rays, and the input sense-checks (GAU-136).
     point.xray = freshXray(this.goes?.xray ?? null, nowMs);
     point.alerts.radioBlackout = radioBlackout(point.xray);
+    // GloTEC TEC over Malaysia: only within its freshness bound; older is unknown (null).
+    point.ionosphere = freshIonosphere(this.glotec, nowMs);
     point.senseChecks = this.senseChecks(point, nowMs);
     point.noaaAlerts = this.swpcProducts?.alerts ?? null;
 

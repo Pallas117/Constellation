@@ -36,6 +36,9 @@ export interface MeshReport {
   net?: MeshNet;
   link?: MeshLink;
   guard?: MeshGuard;
+  lowSignal?: MeshLowSignal;
+  clock?: MeshClock;
+  linkSample?: MeshLinkSample;
   powerSave?: MeshPowerSave;
   posture?: MeshPosture;
 }
@@ -84,6 +87,9 @@ export interface MeshLinkWindow {
 export interface MeshLink {
   d1: MeshLinkWindow;
   d7: MeshLinkWindow;
+  /** Round trip to this hub over the tailnet right after the device's last network change (tools/argo/tailnet.go); absent when it did not answer. */
+  tailnetMs?: number;
+  tailnetVia?: "direct" | "relay";
 }
 
 const WEEK_SEC = 7 * 24 * 3600;
@@ -114,7 +120,14 @@ export function parseLink(value: unknown): MeshLink | undefined {
   const l = value as Record<string, unknown>;
   const d1 = parseLinkWindow(l.d1);
   const d7 = parseLinkWindow(l.d7);
-  return d1 && d7 ? { d1, d7 } : undefined;
+  if (!d1 || !d7) return undefined;
+  const out: MeshLink = { d1, d7 };
+  const tailnetMs = int(l.tailnetMs, 1, 60_000);
+  if (tailnetMs !== null && (l.tailnetVia === "direct" || l.tailnetVia === "relay")) {
+    out.tailnetMs = tailnetMs;
+    out.tailnetVia = l.tailnetVia;
+  }
+  return out;
 }
 
 /**
@@ -132,6 +145,65 @@ export interface MeshNet {
   signal: NetGrade | "n/a";
   rssi?: number;
   noise?: number;
+  radio?: MeshRadio;
+}
+
+/**
+ * Argo's radio profile and link quality (GAU-188): counts and grades only, never a
+ * network name. "path" says where loss comes from: the Wi-Fi hop ("local") or past it.
+ */
+export const RADIO_BANDS = ["2.4", "5", "6"] as const;
+export const LINK_PATHS = ["ok", "local", "upstream", "not measured"] as const;
+export interface MeshRadio {
+  band?: (typeof RADIO_BANDS)[number];
+  channel?: number;
+  widthMHz?: number;
+  phy?: string;
+  mcs?: number;
+  txMbps?: number;
+  coChannel?: number;
+  overlapping?: number;
+  gwLossPct?: number;
+  gwJitterMs?: number;
+  netLossPct?: number;
+  netJitterMs?: number;
+  netRttMs?: number;
+  path?: (typeof LINK_PATHS)[number];
+}
+
+/** Argo's low-signal mode (tools/argo/lowsignal.go): on, and the relay chunk size it currently uses. */
+export const LOW_CHUNK_BYTES = [4096, 65536, 1048576] as const;
+export interface MeshLowSignal {
+  on: boolean;
+  chunkBytes: (typeof LOW_CHUNK_BYTES)[number];
+}
+
+/** Clock cross-check (tools/argo/timeintegrity.go): a fault is "time source disagreement". Argo never sets the clock. */
+export interface MeshClock {
+  fault: boolean;
+  skewSecs: number; // median skew of the sources; the sign says which way
+  sources: number;
+}
+
+/**
+ * One link measurement for the shared signal map (tools/argo/linksample.go). No SSIDs, no GPS: the
+ * network is the same 12-hex hash as `network`; `place` is a short label the owner chose.
+ */
+export const LINK_CLASSES = ["usb", "wifi", "ethernet", "other"] as const;
+export const LINK_BEARERS = ["https", "meshtastic", "sms", "satellite", "cellular"] as const;
+export const LINK_BANDS = ["2.4", "5", "6"] as const;
+export interface MeshLinkSample {
+  class: (typeof LINK_CLASSES)[number];
+  bearer: (typeof LINK_BEARERS)[number];
+  network?: string;
+  place?: string;
+  band?: (typeof LINK_BANDS)[number];
+  channel?: number;
+  signalDbm?: number;
+  noiseDbm?: number;
+  lossPct: number; // 0-100
+  rttMs: number; // -1 not measured
+  low: boolean;
 }
 
 /** Reported by Argo (macOS, Linux) or by a phone Shortcut/automation (iOS, Android). */
@@ -370,6 +442,54 @@ const text = (value: unknown, max = MAX_TEXT) => (typeof value === "string" ? va
 const num = (value: unknown, max: number) =>
   typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= max ? Math.round(value * 10) / 10 : null;
 
+/** Low-signal block: a wrong type or an unknown chunk size drops it. */
+export function parseLowSignal(value: unknown): MeshLowSignal | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const l = value as Record<string, unknown>;
+  const chunk = LOW_CHUNK_BYTES.find((c) => c === l.chunkBytes);
+  return typeof l.on === "boolean" && chunk !== undefined ? { on: l.on, chunkBytes: chunk } : undefined;
+}
+
+/** Clock block: the skew is limited to a week, sources to 8; anything else drops the block. */
+export function parseClock(value: unknown): MeshClock | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const c = value as Record<string, unknown>;
+  const skewSecs = int(c.skewSecs ?? 0, -WEEK_SEC, WEEK_SEC);
+  const sources = int(c.sources ?? 0, 0, 8);
+  return typeof c.fault === "boolean" && skewSecs !== null && sources !== null ? { fault: c.fault, skewSecs, sources } : undefined;
+}
+
+const PLACE_RE = /^[A-Za-z0-9 _-]{1,24}$/;
+
+/** Link sample: required fields are range-checked and enum-checked, optional ones drop alone; a bad required field drops the block. */
+export function parseLinkSample(value: unknown): MeshLinkSample | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const s = value as Record<string, unknown>;
+  const cls = LINK_CLASSES.find((c) => c === s.class);
+  const bearer = LINK_BEARERS.find((b) => b === s.bearer);
+  const lossPct = int(s.lossPct, 0, 100);
+  const rttMs = int(s.rttMs, -1, 60_000);
+  if (!cls || !bearer || lossPct === null || rttMs === null || typeof s.low !== "boolean") return undefined;
+  const network = typeof s.network === "string" && /^[0-9a-f]{12}$/.test(s.network) ? s.network : undefined;
+  const place = typeof s.place === "string" && PLACE_RE.test(s.place) ? s.place.trim() : undefined;
+  const band = LINK_BANDS.find((b) => b === s.band);
+  const channel = int(s.channel, 1, 233);
+  const sig = int(s.signalDbm, -130, 0);
+  const noise = int(s.noiseDbm, -130, 0);
+  return {
+    class: cls,
+    bearer,
+    lossPct,
+    rttMs,
+    low: s.low,
+    ...(network ? { network } : {}),
+    ...(place ? { place } : {}),
+    ...(band ? { band } : {}),
+    ...(channel !== null ? { channel } : {}),
+    ...(sig !== null && noise !== null ? { signalDbm: sig, noiseDbm: noise } : {}),
+  };
+}
+
 /** Argo's power block; a bad mode or number drops it (the battery block itself stays). */
 export function parsePower(value: unknown): MeshPower | undefined {
   if (!value || typeof value !== "object") return undefined;
@@ -489,7 +609,47 @@ export function parseNet(value: unknown): MeshNet | undefined {
   const rssi = int(n.rssi, -120, 0);
   const noise = int(n.noise, -120, 0);
   const measured = signal !== "n/a" && signal !== "not measured" && rssi !== null && noise !== null;
-  return { privacy, privacyWhy, rttMs, speed, signal, ...(measured ? { rssi, noise } : {}) };
+  const radio = parseRadio(n.radio);
+  return { privacy, privacyWhy, rttMs, speed, signal, ...(measured ? { rssi, noise } : {}), ...(radio ? { radio } : {}) };
+}
+
+const WIDTHS: ReadonlySet<number> = new Set([20, 40, 80, 160, 320]);
+
+/**
+ * The optional radio block: every field allowlisted or range-checked. A bad field drops
+ * the whole block (never the report), so a confused probe can't half-describe a link.
+ */
+export function parseRadio(value: unknown): MeshRadio | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const r = value as Record<string, unknown>;
+  const out: MeshRadio = {};
+  const nums: [keyof MeshRadio, number, number][] = [
+    ["channel", 1, 233], ["mcs", 0, 15], ["txMbps", 1, 10_000], ["coChannel", 0, 500], ["overlapping", 0, 500],
+    ["gwLossPct", 0, 100], ["gwJitterMs", 0, 60_000], ["netLossPct", 0, 100], ["netJitterMs", 0, 60_000], ["netRttMs", 0, 60_000],
+  ];
+  for (const [key, min, max] of nums) {
+    if (r[key] === undefined) continue;
+    const v = int(r[key], min, max);
+    if (v === null) return undefined;
+    (out as Record<string, number>)[key] = v;
+  }
+  if (r.widthMHz !== undefined) {
+    if (typeof r.widthMHz !== "number" || !WIDTHS.has(r.widthMHz)) return undefined;
+    out.widthMHz = r.widthMHz;
+  }
+  if (r.band !== undefined) {
+    if (!RADIO_BANDS.includes(r.band as MeshRadio["band"] & string)) return undefined;
+    out.band = r.band as MeshRadio["band"];
+  }
+  if (r.phy !== undefined) {
+    if (typeof r.phy !== "string" || !/^[a-z]{1,3}$/.test(r.phy)) return undefined;
+    out.phy = r.phy;
+  }
+  if (r.path !== undefined) {
+    if (!LINK_PATHS.includes(r.path as MeshRadio["path"] & string)) return undefined;
+    out.path = r.path as MeshRadio["path"];
+  }
+  return Object.keys(out).length ? out : undefined;
 }
 
 /** Allowlisted, range-checked host capacity; anything outside the ranges drops the whole block. */
@@ -532,6 +692,9 @@ export function parseReport(body: unknown, now = new Date()): MeshReport | null 
     ...(parseNet(b.net) ? { net: parseNet(b.net) } : {}),
     ...(parseLink(b.link) ? { link: parseLink(b.link) } : {}),
     ...(parseGuard(b.guard) ? { guard: parseGuard(b.guard) } : {}),
+    ...(parseLowSignal(b.lowSignal) ? { lowSignal: parseLowSignal(b.lowSignal) } : {}),
+    ...(parseClock(b.clock) ? { clock: parseClock(b.clock) } : {}),
+    ...(parseLinkSample(b.linkSample) ? { linkSample: parseLinkSample(b.linkSample) } : {}),
     ...(parsePowerSave(b.powerSave) ? { powerSave: parsePowerSave(b.powerSave) } : {}),
     ...(parsePosture(b.posture, now) ? { posture: parsePosture(b.posture, now) } : {}),
   };
@@ -595,6 +758,8 @@ export class MeshStore {
    */
   record(device: MeshDevice, report: MeshReport, now = new Date()): { state: MemoryState; why: string[] } | undefined {
     const before = assessMemory(device.last, now).state;
+    // In low-signal mode Argo leaves the 24 h / 7 d history out; keep the last full block instead of blanking it.
+    if (!report.link && device.last?.link) report.link = device.last.link;
     // Argo sends posture about hourly: carry the last one forward until it is too old to stand for the device.
     const prev = device.last?.posture;
     if (!report.posture && prev && Date.parse(report.receivedAt) - Date.parse(prev.at) <= POSTURE_MAX_AGE_MS) report.posture = prev;

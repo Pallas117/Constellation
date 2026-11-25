@@ -65,8 +65,8 @@ run() { # run <args...>: gauss-services.sh with the stubs; alerts land in $LOG
   env -i PATH="$T/bin:/usr/bin:/bin" HOME="$T/home" ARGO="$T/bin/argo" LOG="$T/log" KICKS="$T/kicks" GAUSS_PUBLIC_URL=http://127.0.0.1:8080 \
     GAUSS_SUDOERS="$T/sudoers" MLX="${MLX:-0}" MLXPORT="${MLXPORT:-8089}" ACTIONS="$T/actions" GAUSS_BALANCE="${GAUSS_BALANCE:-1}" \
     LOADED="${LOADED:-}" HEALTH="${HEALTH:-200}" HEALTH_FILE="${HEALTH_FILE:-}" GAUSS_DEPLOY_WAIT=0 DISKGB="${DISKGB:-50}" \
-    GATEFAIL="${GATEFAIL:-}" MOVEMAIN="${MOVEMAIN:-}" GAUSS_BY=test-user BOOT="${BOOT:-1000}" GAUSS_DIAG_DIRS="$T/diag" GAUSS_EVENTS_MAX_KB="${GAUSS_EVENTS_MAX_KB:-5120}" \
-    WAKE="${WAKE:-1000}" GAUSS_GATEBOX_TRUST="${GAUSS_GATEBOX_TRUST:-}" GAUSS_DEV_DRY="${GAUSS_DEV_DRY:-0}" GAUSS_GATES_START=0 HEAVYGIVEUP="${HEAVYGIVEUP:-}" NPMNET="${NPMNET:-}" GAUSS_GATEBOX="${GAUSS_GATEBOX:-}" GAUSS_GATEBOX_TIMEOUT_S="${GAUSS_GATEBOX_TIMEOUT_S:-}" GAUSS_FLEET_MEMORY="${GAUSS_FLEET_MEMORY:-}" GAUSS_GATEBOX_KEY="$T/gatebox-key" GBRC="${GBRC:-}" GAUSS_GATES_EXPIRE_H="${GAUSS_GATES_EXPIRE_H:-72}" GAUSS_GATES_HOOK_S="${GAUSS_GATES_HOOK_S:-300}" GAUSS_DEV_API_PORT="${GAUSS_DEV_API_PORT:-3101}" \
+    GATEORDER="${GATEORDER:-}" GAUSS_PW_CHROMIUM="${GAUSS_PW_CHROMIUM:-}" GATEFAIL="${GATEFAIL:-}" MOVEMAIN="${MOVEMAIN:-}" GAUSS_BY=test-user BOOT="${BOOT:-1000}" GAUSS_DIAG_DIRS="$T/diag" GAUSS_EVENTS_MAX_KB="${GAUSS_EVENTS_MAX_KB:-5120}" \
+    WAKE="${WAKE:-1000}" GAUSS_GATEBOX_TRUST="${GAUSS_GATEBOX_TRUST:-}" GAUSS_DEV_DRY="${GAUSS_DEV_DRY:-0}" GAUSS_GATES_START=0 HEAVYGIVEUP="${HEAVYGIVEUP:-}" NPMNET="${NPMNET:-}" GAUSS_GATEBOX="${GAUSS_GATEBOX:-}" GAUSS_GATEBOX_PROBE="${GAUSS_GATEBOX_PROBE:-true}" GAUSS_GATEBOX_WAIT_S="${GAUSS_GATEBOX_WAIT_S:-0}" GAUSS_GATEBOX_POLL_S="${GAUSS_GATEBOX_POLL_S:-1}" GAUSS_MESH_STORE="${GAUSS_MESH_STORE:-}" GAUSS_GATEBOX_TIMEOUT_S="${GAUSS_GATEBOX_TIMEOUT_S:-}" GAUSS_FLEET_MEMORY="${GAUSS_FLEET_MEMORY:-}" GAUSS_GATEBOX_KEY="$T/gatebox-key" GBRC="${GBRC:-}" GAUSS_GATES_EXPIRE_H="${GAUSS_GATES_EXPIRE_H:-72}" GAUSS_GATES_HOOK_S="${GAUSS_GATES_HOOK_S:-300}" GAUSS_DEV_API_PORT="${GAUSS_DEV_API_PORT:-3101}" \
     SRC="${SRC:-AC Power}" BATT="${BATT:-80%; charging; present: true}" SD="${SD:-0}" FCC="${FCC:-}" ACW="${ACW:-}" \
     LEAKY="${LEAKY:-}" LEAKFP="${LEAKFP:-12 MB}" AVAIL="${AVAIL:-50}" GAUSS_SWAP_LAST="${SWAPLAST:-/dev/null}" \
     GATEENV="${GATEENV:-}" GATES_PYTHON="${GATES_PYTHON:-}" ${GATELEAK:+ALLOWED_ORIGINS=https://live.example MESH_STORE_PATH=/live/data/mesh/devices.json COMMERCE_DB_PATH=/live/data/commerce/commerce.db GAUSS_BEDROCK_DIR=/live/data/bedrock NODE_ENV=production} \
@@ -353,7 +353,9 @@ stub node 'if [[ " $* " == *" build "* ]]; then mkdir -p frontend/dist && touch 
 stub npm 'if [ "$1" = run ]; then
   [ "$2" = verify ] && [ -n "$MOVEMAIN" ] && [ -f "$MOVEMAIN" ] && { sh "$MOVEMAIN"; rm -f "$MOVEMAIN"; } # main moves mid-run
   [ -n "$GATEENV" ] && { env | grep -E "^(ALLOWED_ORIGINS|MESH_STORE_PATH|COMMERCE_DB_PATH|GAUSS_BEDROCK_DIR|NODE_ENV)=" ; echo "PATH=$PATH"; } >>"$GATEENV"
+  [ -n "$GATEORDER" ] && echo "$2" >>"$GATEORDER" # the order the gates ran in
   case "$2" in
+    test:ui:gate) echo "  4 passed" ;;
     test:ops) echo "gauss-services: 99 passed, 0 failed"; echo "ok  	argo	1.0s" ;;
     test|build) echo "$2 is not a gate: verify runs it" >&2; exit 9 ;;
     verify) echo "▶ Test suite"
@@ -599,6 +601,20 @@ out=$(run gates record "$GW" 2>&1); rc=$?
   && python3 -Ic 'import json,sys; r=json.load(open(sys.argv[1])); sys.exit(0 if r["passed"] and r["sha"]==sys.argv[2] and r["by"]=="test-user" and r["test_ops"]["go_ok"]==1 else 1)' "$rec" "$D"
 expect "gates record: runs the gates (test and build inside verify) and records the counts by tree" $?
 [ ! -d "$T/home/.local/state/gauss-gate.lock" ]; expect "gates record releases the shared gate lock" $?
+# UI gate (hermetic Playwright subset): runs after quality:full and before verify (verify merges its JUnit
+# report), installs Chromium once when the pinned build is missing, and a UI failure fails the record.
+GATEORDER="$T/gate-order"; rm -f "$GATEORDER"; export GATEORDER
+mkdir -p "$T/pw"; printf '#!/bin/sh\n' >"$T/pw/chromium"; chmod +x "$T/pw/chromium"
+out=$(GAUSS_PW_CHROMIUM="$T/pw/chromium" run gates record "$GW" 2>&1)
+[ "$(tr '\n' ' ' <"$GATEORDER")" = "test:ops quality:full test:ui:gate verify " ] && ! grep -q '^npm exec' "$T/actions" && python3 -Ic 'import json,sys; r=json.load(open(sys.argv[1])); sys.exit(0 if r["passed"] and r["ui"]["exit"]==0 else 1)' "$rec"
+expect "gates record: the UI gate runs after quality:full and before verify, and is in the record; an installed Chromium is not reinstalled" $?
+out=$(GAUSS_PW_CHROMIUM="$T/pw/missing" run gates record "$GW" 2>&1)
+grep -qx "npm exec -- playwright install chromium" "$T/actions" && [ "$(grep -c '^npm exec' "$T/actions")" = 1 ]
+expect "gates record: a missing Chromium is installed once, in the checkout, before the UI gate" $?
+out=$(GAUSS_PW_CHROMIUM="$T/pw/chromium" GATEFAIL=test:ui:gate run gates record "$GW" 2>&1); rc=$?
+[ $rc != 0 ] && [[ "$out" == *"FAILED (ui) ${D:0:7}"* ]]
+expect "gates record: a failing UI gate is recorded as FAILED (ui)" $?
+unset GATEORDER; GAUSS_PW_CHROMIUM="$T/pw/chromium" run gates record "$GW" >/dev/null 2>&1 # back to a passing record
 out=$(run gates); [[ "$out" == *"PASSED ${D:0:7}"* ]]; expect "gates lists the records" $?
 out=$(GATEFAIL=test run gates record "$GW" 2>&1); rc=$?
 [ $rc != 0 ] && [[ "$out" == *"FAILED (test, verify) ${D:0:7}"* ]] && ! python3 -Ic 'import json,sys; sys.exit(0 if json.load(open(sys.argv[1]))["passed"] else 1)' "$rec"
@@ -677,7 +693,7 @@ rm -f "$(grep -l "sha=$N" "$GQ"/*.req)"
 # Gatebox (GAU-223): the Oracle VM screens each request first over the tailnet. GBRC is the stub's
 # exit code; "say" adds the "gates rc=N in S s on <sha>" line gauss-gate-run prints after the gates ran
 # ("anon" leaves the commit out of it, as an older gauss-gate-run would).
-stub ssh 'echo "ssh $*" >>"$ACTIONS"; a=${@: -1}; case "$GBRC" in hang) sleep 5; exit 0 ;; say*) r=${GBRC#say}; echo "gates rc=$r in 90 s on ${a##* }"; exit "$r" ;; anon*) r=${GBRC#anon}; echo "gates rc=$r in 90 s"; exit "$r" ;; *) echo "ssh: connect to host gatebox port 22: Operation timed out" >&2; exit "${GBRC:-255}" ;; esac'
+stub ssh 'echo "ssh $*" >>"$ACTIONS"; a=${@: -1}; case "$GBRC" in hang) sleep 5; exit 0 ;; say*) r=${GBRC#say}; [ -f "$HOME/gatebox-out" ] && cat "$HOME/gatebox-out"; echo "gates rc=$r in 90 s on ${a##* }"; exit "$r" ;; anon*) r=${GBRC#anon}; echo "gates rc=$r in 90 s"; exit "$r" ;; *) echo "ssh: connect to host gatebox port 22: Operation timed out" >&2; exit "${GBRC:-255}" ;; esac'
 : >"$T/gatebox-key"
 g checkout -q --detach "$E"; echo gb1 >"$LIVE/backend/server.ts"; g commit -qam gb1; GB1=$(g rev-parse HEAD); g checkout -q --detach "$E"
 (cd "$LIVE" && run gates enqueue "$GB1" >/dev/null 2>&1)
@@ -685,6 +701,41 @@ out=$(GAUSS_GATEBOX=gatebox GBRC=say1 run gates run 2>&1)
 [ "$(tail -1 "$GR" | cut -d' ' -f2,4-7)" = "$GB1 FAILED on gatebox gatebox" ] && [ -z "$(ls "$GQ")" ] && ! grep -q '^heavy ' "$T/actions" \
   && grep -q "^ssh .*-o BatchMode=yes .*gate@gatebox Pallas117/Constellation $GB1\$" "$T/actions" && [ ! -f "$WD/gates/$(tree_of "$GB1").json" ]
 expect "gates run: a commit the gatebox fails is FAILED without a local run, and no deploy record is written" $?
+# gates why: a gatebox failure is named in the result line, and diagnosed with the known cause and its fix
+printf '%s\n' 'ok 1' '✖ failing tests:' '' '✖ telemetry_descriptor.json is the current .proto (56.69ms)' >"$T/home/gatebox-out"
+(cd "$LIVE" && run gates enqueue "$GB1" >/dev/null 2>&1); GAUSS_GATEBOX=gatebox GBRC=say1 run gates run >/dev/null 2>&1
+[[ "$(tail -1 "$GR")" == *"; failing tests: telemetry_descriptor.json is the current .proto; log "* ]]; expect "gates run: a gatebox failure names the failing test in its result line" $?
+out=$(run gates why "${GB1:0:9}"); rc=$?
+[ $rc = 0 ] && [[ "$out" == "Why ${GB1:0:7} failed"* && "$out" == *"cause: telemetry.proto changed without its descriptor"* && "$out" == *"fix:   regenerate it"* \
+  && "$out" != *"cause: a failing test"* && "$out" == *"Before re-queueing: npm run -s check:changed"* ]]
+expect "gates why: a known failure gets its cause and fix, without the general advice" $?
+printf '%s\n' '✖ failing tests:' '' '✖ something nobody has met (3ms)' >"$T/home/gatebox-out"
+(cd "$LIVE" && run gates enqueue "$GB1" >/dev/null 2>&1); GAUSS_GATEBOX=gatebox GBRC=say1 run gates run >/dev/null 2>&1
+out=$(run gates why "$GB1")
+[[ "$out" == *"failing tests: something nobody has met"* && "$out" == *"cause: a failing test"* ]]; expect "gates why: an unknown failing test is named, with the general advice" $?
+# 18 Nov, PR #321: a PASSING descriptor test in the log was blamed; and the lint errors were not named
+printf '%s\n' '✔ telemetry_descriptor.json is the current .proto (9.1ms)' '' '/home/gate/work.x/frontend/src/components/scene/CameraTween.tsx' '  22:3  error  Error: Cannot access refs during render' '' '✖ 1 problem (1 error, 0 warnings)' >"$T/home/gatebox-out"
+(cd "$LIVE" && run gates enqueue "$GB1" >/dev/null 2>&1); GAUSS_GATEBOX=gatebox GBRC=say1 run gates run >/dev/null 2>&1
+out=$(run gates why "$GB1")
+[[ "$out" == *"lint errors: scene/CameraTween.tsx:22"* && "$out" == *"cause: a lint error"* && "$out" != *"telemetry.proto changed"* ]]
+expect "gates why: lint errors are named by file and line, and a passing test is not blamed" $?
+# 18 Nov, PR #309: the device-auth timestamps test failed when two proofs shared a nonce in the same millisecond
+printf '%s\n' '✖ failing tests:' '' "✖ timestamps: only computeProof's epoch-ms format, within the TTL (GAU-98) (4.2ms)" >"$T/home/gatebox-out"
+(cd "$LIVE" && run gates enqueue "$GB1" >/dev/null 2>&1); GAUSS_GATEBOX=gatebox GBRC=say1 run gates run >/dev/null 2>&1
+out=$(run gates why "$GB1")
+[[ "$out" == *"cause: the device-auth timestamps test signs with a shared nonce"* && "$out" == *"PR #341"* && "$out" != *"cause: a failing test"* ]]
+expect "gates why: the device-auth shared-nonce flake is named with its PR" $?
+# 18 Nov, PR #315: Argo Go timing tests failed on a throttled battery run (fixed by PR #340)
+printf '%s\n' '✖ Argo Go tests (exit 1)' >"$T/home/gatebox-out"
+(cd "$LIVE" && run gates enqueue "$GB1" >/dev/null 2>&1); GAUSS_GATEBOX=gatebox GBRC=say1 run gates run >/dev/null 2>&1
+out=$(run gates why "$GB1")
+[[ "$out" == *"cause: an Argo Go test failed inside verify"* && "$out" == *"PR #340"* ]]; expect "gates why: the Argo timing flake names PR #340" $?
+rm -f "$T/home/gatebox-out"
+(cd "$LIVE" && run gates enqueue "$GB1" >/dev/null 2>&1); GAUSS_GATEBOX=gatebox GBRC=say1 run gates run >/dev/null 2>&1
+out=$(run gates why "$GB1")
+[[ "$out" == *"cause: none of the known causes match"* && "$out" == *"add a row to GATES_CAUSES"* ]]; expect "gates why: no match says so and asks for a new row" $?
+out=$(run gates why 0000000); rc=$?
+[ $rc = 3 ] && [[ "$out" == "No failed gate on record for 0000000"* ]]; expect "gates why: a commit with no failure exits 3" $?
 (cd "$LIVE" && run gates enqueue "$GB1" >/dev/null 2>&1)
 out=$(GAUSS_GATEBOX=gatebox GBRC=say0 run gates run 2>&1)
 [[ "$out" == *"gatebox passed ${GB1:0:7}"* ]] && grep -q '^heavy --wait' "$T/actions" && [ "$(tail -1 "$GR" | cut -d' ' -f2,4)" = "$GB1 PASSED" ]
@@ -712,6 +763,40 @@ out=$(GAUSS_GATEBOX='-oProxyCommand=x' GBRC=say1 run gates run 2>&1)
 expect "gates run: a gatebox setting that is not a host name is never passed to ssh" $?
 out=$(GAUSS_GATEBOX=gatebox run gates result status 2>&1); [[ "$out" == *"gatebox: gatebox screens each request first"* ]]
 expect "gates result status: names the gatebox when one is set" $?
+# Several gatebox addresses (19 Nov: Talos dropped off its fixed LAN IP and every gate fell back to this Mac).
+newgb() { g checkout -q --detach "$E"; echo "$1" >"$LIVE/backend/server.ts"; g commit -qam "$1"; g rev-parse HEAD; g checkout -q --detach "$E"; }
+stub gbprobe 'echo "probe $1" >>"$ACTIONS"; [ "$1" = talos.local ]'
+GB6=$(newgb gb6); (cd "$LIVE" && run gates enqueue "$GB6" >/dev/null 2>&1)
+out=$(GAUSS_GATEBOX="192.0.2.9 talos.local" GAUSS_GATEBOX_PROBE="$T/bin/gbprobe" GBRC=say1 run gates run 2>&1)
+grep -q '^probe 192.0.2.9$' "$T/actions" && grep -q "^ssh .*-o HostKeyAlias=192.0.2.9 gate@talos.local Pallas117/Constellation $GB6\$" "$T/actions" \
+  && [ "$(tail -1 "$GR" | cut -d' ' -f2,4-7)" = "$GB6 FAILED on gatebox talos.local" ]
+expect "gates run: the first gatebox address that answers is used, and its key is checked against the first address's" $?
+GB7=$(newgb gb7); (cd "$LIVE" && run gates enqueue "$GB7" >/dev/null 2>&1)
+out=$(GAUSS_GATEBOX='talos.local -oProxyCommand=x' GBRC=say1 run gates run 2>&1)
+[[ "$out" == *"gatebox: not a host name: -oProxyCommand=x"* ]] && ! grep -q '^ssh ' "$T/actions" && [ "$(tail -1 "$GR" | cut -d' ' -f2,4)" = "$GB7 PASSED" ]
+expect "gates run: one gatebox address that is not a host name keeps the whole list away from ssh" $?
+# A gatebox that comes back within the wait is used instead of the local gates.
+stub gbslow 'n=$(cat "$HOME/probes" 2>/dev/null || echo 0); echo $((n + 1)) >"$HOME/probes"; [ "$n" -ge 2 ]'
+rm -f "$T/home/probes" "$WD/gates/gatebox.down"
+GB8=$(newgb gb8); (cd "$LIVE" && run gates enqueue "$GB8" >/dev/null 2>&1)
+out=$(GAUSS_GATEBOX=gatebox GAUSS_GATEBOX_PROBE="$T/bin/gbslow" GAUSS_GATEBOX_WAIT_S=30 GAUSS_GATEBOX_POLL_S=1 GBRC=say1 run gates run 2>&1)
+[[ "$out" == *"gatebox (gatebox) not answering; waiting up to 1 min"* ]] && [[ "$out" == *"gatebox answered at gatebox"* ]] \
+  && grep -q "gate@gatebox Pallas117/Constellation $GB8\$" "$T/actions" && [ ! -f "$WD/gates/gatebox.down" ] \
+  && [ "$(tail -1 "$GR" | cut -d' ' -f2,4)" = "$GB8 FAILED" ]
+expect "gates run: a gatebox that answers again within the wait screens the commit (no local run)" $?
+# One that stays off is waited for once; the next request gates here at once.
+stub gbdown 'exit 1'
+rm -f "$WD/gates/gatebox.down"
+GB9=$(newgb gb9); (cd "$LIVE" && run gates enqueue "$GB9" >/dev/null 2>&1)
+out=$(GAUSS_GATEBOX=gatebox GAUSS_GATEBOX_PROBE="$T/bin/gbdown" GAUSS_GATEBOX_WAIT_S=2 GAUSS_GATEBOX_POLL_S=1 run gates run 2>&1)
+[[ "$out" == *"did not answer in 1 min; gating here"* ]] && ! grep -q '^ssh ' "$T/actions" && [ -f "$WD/gates/gatebox.down" ] \
+  && [ "$(tail -1 "$GR" | cut -d' ' -f2,4)" = "$GB9 PASSED" ]
+expect "gates run: a gatebox that stays off is waited for once, then the gates run here" $?
+GB10=$(newgb gb10); (cd "$LIVE" && run gates enqueue "$GB10" >/dev/null 2>&1)
+out=$(GAUSS_GATEBOX=gatebox GAUSS_GATEBOX_PROBE="$T/bin/gbdown" GAUSS_GATEBOX_WAIT_S=2 GAUSS_GATEBOX_POLL_S=1 run gates run 2>&1)
+[[ "$out" == *"gatebox (gatebox) has not answered since"* ]] && [[ "$out" != *"waiting up to"* ]] && [ "$(tail -1 "$GR" | cut -d' ' -f2,4)" = "$GB10 PASSED" ]
+expect "gates run: during the same outage the next request does not wait again" $?
+rm -f "$WD/gates/gatebox.down"
 g checkout -q --detach "$E"; echo h1 >"$LIVE/backend/server.ts"; g commit -qam h1; H1=$(g rev-parse HEAD)
 echo h2 >"$LIVE/backend/server.ts"; g commit -qam h2; H2=$(g rev-parse HEAD); g checkout -q --detach "$E"
 (cd "$LIVE" && run gates enqueue "$H1" >/dev/null 2>&1); out=$(cd "$LIVE" && run gates enqueue "$H2" 2>&1)
@@ -1139,6 +1224,33 @@ expect "resilience fails on an old argo, low memory and a weak charger" $?
 [ -z "$(alerts)" ]; expect "resilience only reports; it sends no alerts" $?
 out=$(SRC="AC Power" BATT="7%; charging; 2:00 remaining present: true" run resilience | plain)
 [[ "$out" == *"✗ battery 7% on AC, charging but too low to unplug yet"* ]]; expect "resilience: low battery still fails while charging" $?
+
+# phone battery line: percentage, charging and age only; the device name never appears
+[[ "$out" == *"– phone battery: no phone has reported"* ]]; expect "resilience: no phone report is a note" $?
+phone_store() { # phone_store <level> <charging true|false> <minutes ago> [platform]
+  python3 -Ic 'import json,sys
+from datetime import datetime,timedelta,timezone
+at=(datetime.now(timezone.utc)-timedelta(minutes=float(sys.argv[3]))).isoformat().replace("+00:00","Z")
+old=(datetime.now(timezone.utc)-timedelta(minutes=1)).isoformat().replace("+00:00","Z")
+json.dump([{"name":"secret-phone","last":{"platform":sys.argv[4],"receivedAt":at,"battery":{"level":float(sys.argv[1]),"charging":sys.argv[2]=="true","lowPower":False}}},
+ {"name":"a-mac","last":{"platform":"macos","receivedAt":old,"battery":{"level":3,"charging":False,"lowPower":False}}},{"name":"never-reported"}],open(sys.argv[5],"w"))' "$1" "$2" "$3" "${4:-ios}" "$T/devices.json"
+}
+phone_store 15 false 4
+out=$(GAUSS_MESH_STORE="$T/devices.json" run resilience | plain); rc=$?
+[ $rc = 1 ] && [[ "$out" == *"✗ phone battery 15%, not charging (reported 4 min ago): plug it in"* ]]; expect "resilience: a phone at 15% and not charging fails" $?
+[[ "$out" != *secret-phone* ]]; expect "resilience: the phone's name is not printed" $?
+phone_store 15 true 4 android
+out=$(GAUSS_MESH_STORE="$T/devices.json" run resilience | plain); rc=$?
+[[ "$out" != *"✗ phone battery"* && "$out" == *"✓ phone battery 15%, charging (reported 4 min ago)"* ]]; expect "resilience: a low phone that is charging passes" $?
+phone_store 62 false 4
+out=$(GAUSS_MESH_STORE="$T/devices.json" run resilience | plain)
+[[ "$out" == *"✓ phone battery 62%, not charging (reported 4 min ago)"* ]]; expect "resilience: a phone at 62% passes (the Mac's 3% is not the phone)" $?
+phone_store 5 false 600
+out=$(GAUSS_MESH_STORE="$T/devices.json" run resilience | plain); rc=$?
+[[ "$out" != *"✗ phone battery"* && "$out" == *"– phone battery: 5% as of 10 h ago, too old to judge"* ]]; expect "resilience: a 10 h old phone report is a note, not a verdict" $?
+echo 'not json' >"$T/devices.json"
+out=$(GAUSS_MESH_STORE="$T/devices.json" run resilience | plain); rc=$?
+[[ "$out" != *"✗ phone battery"* && "$out" == *"– phone battery: no phone has reported"* ]]; expect "resilience: an unreadable store is a note" $?
 
 out=$(ARGOSTATUS="● WIFI_RISK MY ts:on" run resilience | plain)
 [[ "$out" == *"✓ network: ● WIFI_RISK MY ts:on (warning:"* ]]; expect "WIFI_RISK is a warning, not a failure" $?

@@ -22,7 +22,10 @@ const FIELD = {
   link: { label: "A link about your work (optional)", type: "url", max: 300, auto: "url", required: false },
   missionType: { label: "Mission type", type: "select", options: opts("Earth observation", "Communications", "Critical communications", "Navigation", "Science or cislunar", "Other"), required: true },
   stage: { label: "Programme stage", type: "select", options: opts("Concept or design", "In development", "Launched and operating"), required: true },
-  groundStack: { label: "Ground stack", type: "select", options: opts("Yamcs / XTCE", "Other CCSDS ground stack", "Custom", "Not sure"), required: true },
+  // "Not sure" is first so the form never nudges anyone into naming a stack they don't use.
+  groundStack: { label: "Ground stack", type: "select", options: opts("Not sure", "Yamcs / XTCE", "Other CCSDS ground stack", "Custom or in-house"), required: true },
+  logSource: { label: "What runs your onboard model", type: "select", options: opts("Not sure", "Embedded Linux module (for example NVIDIA Jetson)", "Data-centre GPU in orbit", "Vision processing unit", "No onboard AI yet"), required: true },
+  logFormat: { label: "Format of the logs you could share", type: "select", options: opts("Not sure", "CSV", "JSON or JSONL", "Yamcs or XTCE archive", "Something else"), required: true },
   dataAccess: { label: "Evidence you can share", type: "select", options: opts("Historical packet archive", "Live or near-live feed", "Agreed synthetic fixture", "Not yet"), required: true },
   plan: { label: "Package", type: "select", options: PLANS, required: true },
   timeline: { label: "Target start", type: "select", options: opts("This quarter", "Next quarter", "Later"), required: true },
@@ -42,7 +45,7 @@ export const KINDS = Object.freeze({
   gauss: {
     steps: [
       { legend: "Fit", label: "01_FIT", fields: ["name", "email", "org", "role"] },
-      { legend: "Readiness", label: "02_READINESS", fields: ["missionType", "stage", "groundStack", "dataAccess"] },
+      { legend: "Readiness", label: "02_READINESS", fields: ["missionType", "stage", "groundStack", "logSource", "logFormat", "dataAccess"] },
       { legend: "Pilot brief", label: "03_PILOT_BRIEF", fields: ["plan", "timeline", "message"] },
     ],
     labels: { email: "Work email", message: "Your highest-value outcome, and how we'd know the pilot succeeded" },
@@ -74,7 +77,7 @@ const fieldsOf = (kind) => KINDS[kind].steps.flatMap((st) => st.fields);
 
 const label = (kind, f) => KINDS[kind].labels[f] ?? FIELD[f].label;
 const SHORT = { name: "name", email: "email", org: "company", role: "role", referrer: "referral", link: "link", missionType: "mission type", stage: "programme stage",
-  groundStack: "ground stack", dataAccess: "evidence", plan: "package", timeline: "target start", message: "message", consent: "privacy agreement",
+  groundStack: "ground stack", logSource: "onboard model", logFormat: "log format", dataAccess: "evidence", plan: "package", timeline: "target start", message: "message", consent: "privacy agreement",
   interest: "what you'd like", platform: "platform", devices: "devices", note: "note", institution: "university or school", eduRole: "role", course: "course", seats: "how many people", topic: "workshop", format: "format", groupSize: "group size" };
 
 function control(kind, f, value, error) {
