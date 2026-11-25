@@ -1,6 +1,6 @@
 {
   "$comment": "Constellation requirements baseline (GAU-120). NASA SP-2016-6105 Rev 2 §6.2/§5.3. Methods: T test, A analysis, I inspection, D demonstration. T evidence = exact test names; A/I/D evidence = repo paths. Verified by `npm run verify`.",
-  "version": "1.18.0",
+  "version": "1.19.0",
   "requirements": [
     {
       "id": "REQ-ING-001",
@@ -1458,6 +1458,24 @@
       "verifiedBy": [
         "JAXA: catalog reachability is not reported as a healthy data feed (GAU-55)",
         "JAXA: a failure or an unexpected page is never a healthy feed (GAU-63)"
+      ]
+    },
+    {
+      "id": "REQ-ADP-002",
+      "title": "Read-only space-data MCP carries provenance and staleness",
+      "statement": "The space-query MCP server shall return rows only from its allowlisted adapter sources, with at most 500 rows over at most 1440 minutes, each result carrying source, fetched-at time, an OBSERVED or REPORTED label and a stale flag.",
+      "rationale": "Zone B step 1 (zone map 2026-11-26): AI tools read the agency feeds through one read-only stdio interface, so a stale or derived value is never presented as a live measurement (GAU-63 honesty rules), and upstream text is labelled as data, not instructions.",
+      "parent": "GAU-63",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "space-query MCP: query returns NOAA and ESA rows with provenance (source, fetched-at, label) and a fresh flag",
+        "space-query MCP: data older than the source's maximum age, or none at all, is flagged stale",
+        "space-query MCP: range and rows are clamped to fixed limits and the newest rows are kept",
+        "space-query MCP: unknown sources, unknown arguments and non-integer limits are refused",
+        "space-query MCP: untrusted adapter rows are sanitised and an upstream error never leaks its message",
+        "space-query MCP: JSON-RPC exposes only the two read-only tools and labels results as data",
+        "space-query MCP wiring: stdio only, no network listener in the server sources"
       ]
     },
     {
