@@ -67,6 +67,7 @@ between the two with a backend writing to it makes `git checkout` refuse or over
 | `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET` | unset | **secret: the `_SECRET`** | GitHub sign-in, as above, callback `.../github`. |
 | `SSO_ALLOWED_DOMAIN` | Lightbound's own domain | no | Single sign-on may create accounts only for this email domain: set yours if SSO is on (`backend/sso-policy.ts`). |
 | `SSO_ALLOWED_EMAILS` | empty | no | Extra individual addresses allowed through SSO. |
+| `SIGNUP_ALLOWED_EMAILS` | empty | no | Email and password sign-up is by invitation: only these exact addresses (comma list) may create an account, everyone else gets 403. Empty means sign-up is closed, so add your own address before the first sign-up (`backend/sso-policy.ts`). |
 | `GAUSS_BEDROCK_DIR` | `data/bedrock` in the checkout | no | Telemetry: `telemetry.jsonl` and `archive/`. |
 | `GAUSS_TELEMETRY_KEEP_LINES` | `40000` (minimum 25000) | no | Lines kept live, about 3 days; older lines move to `archive/` (`backend/lib/telemetry-retention.ts`). |
 | `GAUSS_TELEMETRY_ARCHIVE_HOURS` | `24` | no | Hours between archive runs; `0` turns archiving off. |
@@ -102,7 +103,8 @@ npm run dev:proxy                           # the backend entry point, despite t
 npm run preview                             # in a second terminal: web app on 127.0.0.1:8080
 ```
 
-Open http://127.0.0.1:8080 and create your account. Make yourself admin with
+Sign-up is by invitation: put your address in `SIGNUP_ALLOWED_EMAILS` in `.env` and restart the
+backend first (any other address gets 403). Then open http://127.0.0.1:8080 and create your account. Make yourself admin with
 `npm run auth:set-role -- <email> admin`. Roles build on each other: `user` (live view, own API
 keys) < `staff` < `operator` (operator console) < `admin`. New accounts start as `user`.
 

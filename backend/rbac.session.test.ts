@@ -19,6 +19,8 @@ process.env.AUTH_DB_PATH = path.join(tmp, "auth.db");
 process.env.AUTH_REQUIRED = "true";
 process.env.ALLOWED_ORIGINS = ORIGIN;
 process.env.BETTER_AUTH_SECRET = "test-only-secret-0123456789abcdef0123456789";
+// Sign-up is invite-only: invite the four test accounts created below.
+process.env.SIGNUP_ALLOWED_EMAILS = "user@example.com,staff@example.com,operator@example.com,admin@example.com";
 // POST /api/ai/nowcast/train runs `python3 <TRAINING_SCRIPT_PATH>`: an empty
 // file here, so the admin call starts no real training.
 process.env.TRAINING_SCRIPT_PATH = path.join(tmp, "noop.py");

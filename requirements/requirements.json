@@ -1059,6 +1059,24 @@
       ]
     },
     {
+      "id": "REQ-SEC-025",
+      "title": "Email sign-up by invitation only",
+      "statement": "Email and password sign-up shall create an account only for an address listed in SIGNUP_ALLOWED_EMAILS (compared without case or surrounding whitespace, empty by default), and shall answer any other address with 403 and create no account row.",
+      "rationale": "Before the backend is reachable by outside users (GAU-178 gate G5), a stranger must not be able to create a Gauss console account. A domain is not enough for password sign-up because nobody has verified the address. Existing accounts keep signing in.",
+      "parent": "GAU-178",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "email sign-up is invite-only: an invited address gets an account with the role user",
+        "email sign-up is invite-only: an address off the list gets 403 and no account row",
+        "email sign-up allowlist ignores case and surrounding whitespace",
+        "invite-only sign-up leaves existing accounts able to sign in",
+        "email sign-up: only invited addresses, ignoring case and surrounding whitespace",
+        "email sign-up is closed by default, and the SSO domain does not open it",
+        "only the email sign-up endpoint counts as email sign-up"
+      ]
+    },
+    {
       "id": "REQ-SEC-012",
       "title": "SSO limited to the Workspace domain",
       "statement": "Single sign-on shall create accounts only for addresses on the configured Workspace domain.",
