@@ -18,7 +18,7 @@ import type { RadiationDataPoint } from "@/lib/types/radiation";
 import mockSolarStormData from "@/data/mock_solar_storm.json";
 import { beltVisuals, liveDrivers, standoffIfReference } from "@/lib/physics/live-drivers";
 import { SIMULATED_STORM_TEXT } from "@/lib/physics/storm-narration";
-import { replayDrivers, type WalkthroughData } from "@/lib/walkthrough/storm-walkthrough";
+import { replayDrivers, replayScales, type WalkthroughData } from "@/lib/walkthrough/storm-walkthrough";
 import { useStormWalkthrough } from "@/lib/walkthrough/use-storm-walkthrough";
 import { StormWalkthroughPanel } from "@/components/heliophysics/StormWalkthroughPanel";
 import { useNow } from "@/hooks/useNow";
@@ -122,16 +122,18 @@ const HeliophysicsDashboard = () => {
   const openPct = fieldModel?.openFraction != null ? `${Math.round(fieldModel.openFraction * 100)}` : "—";
   const travelMin = arriving
     ? fmt(arriving.travelMin, 0)
-    : !simulateStorm && latest?.propagation.l1DelaySeconds
+    : !notLive && latest?.propagation.l1DelaySeconds
       ? fmt(latest.propagation.l1DelaySeconds / 60, 0)
       : "—";
   const etaUtc = next?.etaEarth ? utc(next.etaEarth) : null;
   const stormTier = !notLive ? latest?.alerts.stormTier : undefined;
   // The two NOAA storm streams, kept apart: radiation (S) and geomagnetic (G) (GAU-135).
-  const radiation = !notLive ? latest?.alerts.radiation : undefined;
-  const geomagnetic = !notLive ? latest?.alerts.geomagnetic : undefined;
+  // In the walkthrough they are the replay's levels at that moment, never today's.
+  const replayed = walk ? replayScales(walk.sample) : null;
+  const radiation = replayed ? replayed.radiation : !notLive ? latest?.alerts.radiation : undefined;
+  const geomagnetic = replayed ? replayed.geomagnetic : !notLive ? latest?.alerts.geomagnetic : undefined;
   // Radio blackouts (R) and the input sense-checks, with NOAA's own alerts as a cross-check (GAU-136).
-  const radioBlackout = !notLive ? latest?.alerts.radioBlackout : undefined;
+  const radioBlackout = replayed ? replayed.radioBlackout : !notLive ? latest?.alerts.radioBlackout : undefined;
   const senseChecks = !notLive ? (latest?.senseChecks ?? []) : [];
   const noaaAlerts = !notLive ? latest?.noaaAlerts : undefined;
   const driversLine = walk
@@ -225,7 +227,8 @@ const HeliophysicsDashboard = () => {
           magnetopauseCompression={visual.magnetopauseCompression}
           beltIntensity={visual.beltIntensity}
           reconnectionStrength={visual.reconnectionStrength}
-          mmsVectors={mms.vectors}
+          // Today's MMS vectors are live: never drawn into the May 2024 replay.
+          mmsVectors={walk ? undefined : mms.vectors}
           solarWindDrivers={drivers}
           smoothDrivers={!notLive && !live.propagated}
           walkthrough={walk ? { data: walk.data, orbit: walk.orbit, atMs: walk.ms, showSaa: walk.stop.showSaa } : undefined}
@@ -427,7 +430,7 @@ const HeliophysicsDashboard = () => {
                   Radiation storms (particles), geomagnetic storms (field) and radio blackouts (X-rays) are separate hazards with different effects, and any one can happen without the others.
                 </p>
 
-                {!simulateStorm && (
+                {!notLive && (
                   <>
                     <p className="brand-label mt-6">Data checks</p>
                     <dl className="mt-2">
@@ -481,15 +484,17 @@ const HeliophysicsDashboard = () => {
                     tone={densityCheck ? "caution" : "default"}
                     hint={densityNote ?? undefined}
                   />
-                  <Readout label="Measured" value={next?.observedAt ? `${utc(next.observedAt)} UTC` : "—"} hint={latest?.spacecraft} />
+                  <Readout label="Measured" value={next?.observedAt ? `${utc(next.observedAt)} UTC` : "—"} hint={walk ? (walk.sample.spacecraft ?? undefined) : latest?.spacecraft} />
                   <Readout label="Reaches Earth" value={etaUtc ? `≈ ${etaUtc} UTC` : "—"} hint={travelMin === "—" ? undefined : `~${travelMin} min at this speed`} />
-                  <Readout
-                    label="MMS reconnection confidence"
-                    value={mms.latest?.quality.confidence != null ? String(mms.latest.quality.confidence) : "—"}
-                    // Say why it's empty instead of a bare dash: feed failing, sign-in needed, or no data yet.
-                    hint={mms.error ?? (mms.status === "waiting" ? "Waiting for the MMS feed" : !mms.latest ? "No MMS data yet" : undefined)}
-                    tone={mms.error ? "caution" : "default"}
-                  />
+                  {!walk && (
+                    <Readout
+                      label="MMS reconnection confidence"
+                      value={mms.latest?.quality.confidence != null ? String(mms.latest.quality.confidence) : "—"}
+                      // Say why it's empty instead of a bare dash: feed failing, sign-in needed, or no data yet.
+                      hint={mms.error ?? (mms.status === "waiting" ? "Waiting for the MMS feed" : !mms.latest ? "No MMS data yet" : undefined)}
+                      tone={mms.error ? "caution" : "default"}
+                    />
+                  )}
                 </dl>
 
                 <p className="mt-6 text-xs leading-relaxed text-muted-foreground">

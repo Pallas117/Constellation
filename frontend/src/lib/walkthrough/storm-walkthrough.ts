@@ -8,6 +8,7 @@
 import type { SolarWindDrivers, Vec3 } from '../physics/geomagnetic.ts';
 import { shueMagnetopause, gsmToScene } from '../physics/geomagnetic.ts';
 import type { LiveDrivers } from '../physics/live-drivers.ts';
+import type { ScaleReading } from '../types/space-weather.ts';
 import { circularOrbitGei, geiToGsm, insideOutline, subSatellitePoint, RE_KM, type CircularOrbit } from '../physics/frames.ts';
 
 /* Shape of frontend/src/data/walkthrough/<id>.json (backend/replay/walkthrough.ts). */
@@ -105,6 +106,43 @@ export function replayDrivers(s: WalkthroughSample): LiveDrivers {
   };
 }
 
+const scaleLevel = (label: string): ScaleReading['level'] => {
+  const m = /^[SGR]([0-5])$/.exec(label);
+  return m ? (Number(m[1]) as ScaleReading['level']) : null;
+};
+
+/**
+ * The replayed NOAA-scale levels (S, G, R) at a moment, shaped like the live alerts so the
+ * dashboard shows the replay's levels, never today's, beside the replayed scene.
+ */
+export function replayScales(s: WalkthroughSample): {
+  radiation: ScaleReading;
+  geomagnetic: ScaleReading;
+  radioBlackout: ScaleReading;
+} {
+  const when = `Replay ${hhmm(Date.parse(s.t))} UT`;
+  return {
+    radiation: {
+      level: scaleLevel(s.S),
+      label: s.S,
+      basis: s.protons === null ? `${when}: no GOES proton reading` : `${when}: GOES ≥10 MeV protons ${n1(s.protons)} pfu`,
+      observedAt: s.t,
+    },
+    geomagnetic: {
+      level: scaleLevel(s.G),
+      label: s.G,
+      basis: s.kp === null ? `${when}: no Kp reading` : `${when}: Kp ${s.kp}`,
+      observedAt: s.t,
+    },
+    radioBlackout: {
+      level: scaleLevel(s.R),
+      label: s.R,
+      basis: s.xray === null ? `${when}: no GOES X-ray reading` : `${when}: GOES X-ray ${s.xray}`,
+      observedAt: s.t,
+    },
+  };
+}
+
 /** Magnetopause stand-off from the sample's drivers (the scene traces the same Shue model). */
 export function standoff(s: WalkthroughSample): { r0: number; extrapolated: boolean } {
   const { wind } = windAtEarth(s);
@@ -191,8 +229,10 @@ export function buildStops(data: WalkthroughData): WalkthroughStop[] {
   const sqStand = standoff(sq);
   const sqWind = windAtEarth(sq).wind;
 
+  // The model Dst minimum (the samples carry no observed Dst).
   const peak = argmax(data, (x) => -x.dst);
   const pk = s[peak];
+  const maxKp = Math.max(...s.map((x) => x.kp ?? -1));
   const g5 = s.findIndex((x) => x.G === 'G5');
   const saaAt = nextSaaPass(data, g5 >= 0 ? at(data, g5) : at(data, peak)) ?? at(data, peak);
 
@@ -232,7 +272,7 @@ export function buildStops(data: WalkthroughData): WalkthroughStop[] {
           before.speed,
         )} to ${n0(after.speed)} km/s and its density from ${n1(before.density)} to ${n1(after.density)} cm⁻³: ` +
         `the kind of shock a coronal mass ejection drives.` +
-        (arrive > 0 ? ` Propagated to Earth, it arrives at about ${hhmm(at(data, arrive))} UT.` : ''),
+        (arrive > 0 ? ` Gauss's propagation to Earth puts its arrival at about ${hhmm(at(data, arrive))} UT.` : ''),
       showSaa: false,
     },
     {
@@ -245,7 +285,7 @@ export function buildStops(data: WalkthroughData): WalkthroughStop[] {
         `The magnetopause is pushed in to about ${n1(sqStand.r0)} Earth radii` +
         (sqStand.extrapolated ? ' (extrapolated: the model was fitted to calmer wind)' : '') +
         (sqStand.r0 < GEO_RE
-          ? '. Inside 6.6, satellites in geostationary orbit find themselves outside the shield, in the solar wind itself.'
+          ? '. Inside 6.6, geostationary satellites on the dayside, near local noon, cross it into the magnetosheath: solar wind slowed and heated by the bow shock.'
           : '.'),
       showSaa: false,
     },
@@ -262,12 +302,12 @@ export function buildStops(data: WalkthroughData): WalkthroughStop[] {
     },
     {
       id: 'peak',
-      title: 'Storm peak',
+      title: 'Ring-current estimate bottoms out',
       atMs: at(data, peak),
       camera: { position: [-12, 17, 13], target: [-3, 0, 0] },
       body:
-        `${hhmm(at(data, peak))} UT, ${day(at(data, peak))}. Kp ${pk.kp ?? '—'} (${pk.G}). Gauss's ring-current estimate (${pk.dstMethod.replace(/^model: /, '').replace(/ ring-current$/, '')}) bottoms out at ${signed(pk.dst)} nT. ` +
-        `The auroral oval drawn from Kp reaches its lowest latitude.`,
+        `${hhmm(at(data, peak))} UT, ${day(at(data, peak))}. Kp ${pk.kp ?? '—'} (${pk.G}). Gauss's ring-current estimate (${pk.dstMethod.replace(/^model: /, '').replace(/ ring-current$/, '')}) bottoms out at ${signed(pk.dst)} nT: a model, not the observed Dst index.` +
+        (pk.kp !== null && pk.kp >= maxKp ? ' Kp is at its storm maximum, so the auroral oval drawn from Kp is at its lowest latitude.' : ''),
       showSaa: false,
     },
     {

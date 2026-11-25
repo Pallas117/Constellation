@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
-import { buildStops, inSaa, replayDrivers, sampleIndexAt, standoff, stopIndexAt, type WalkthroughData } from './storm-walkthrough.ts';
+import { buildStops, inSaa, replayDrivers, replayScales, sampleIndexAt, standoff, stopIndexAt, type WalkthroughData } from './storm-walkthrough.ts';
 
 const data = JSON.parse(readFileSync(new URL('../../data/walkthrough/may-2024.json', import.meta.url), 'utf8')) as WalkthroughData;
 
@@ -18,6 +18,8 @@ test('walkthrough: the shock stop quotes the measured jump, not typed numbers', 
   const shock = buildStops(data)[1];
   assert.match(shock.body, /460 to 673 km\/s/);
   assert.match(shock.body, /16:40 UT/);
+  // The arrival time is Gauss's propagation, not an observed sudden commencement.
+  assert.match(shock.body, /Gauss's propagation to Earth puts its arrival at about \d\d:\d\d UT/);
 });
 
 test('walkthrough: the squeeze reaches inside geostationary orbit and says the model is extrapolated', () => {
@@ -27,7 +29,33 @@ test('walkthrough: the squeeze reaches inside geostationary orbit and says the m
   assert.ok(r0 < 6.6);
   assert.equal(extrapolated, true);
   assert.match(sq.body, /extrapolated/);
-  assert.match(sq.body, /outside the shield/);
+  // Past the dayside magnetopause is the magnetosheath (shocked solar wind), and only near noon.
+  assert.match(sq.body, /dayside, near local noon, cross it into the magnetosheath/);
+  assert.doesNotMatch(sq.body, /solar wind itself/);
+});
+
+test('walkthrough: the peak stop names the model Dst and ties the oval to the Kp maximum', () => {
+  const pk = buildStops(data)[4];
+  const s = data.samples[sampleIndexAt(data, pk.atMs)];
+  assert.equal(pk.title, 'Ring-current estimate bottoms out');
+  assert.match(pk.body, /a model, not the observed Dst index/);
+  assert.equal(s.dst, Math.min(...data.samples.map((x) => x.dst)));
+  assert.equal(s.kp, Math.max(...data.samples.map((x) => x.kp ?? -1)));
+  assert.match(pk.body, /lowest latitude/);
+  // Below the storm's Kp maximum, the oval claim is dropped.
+  const lowered = { ...data, samples: data.samples.map((x) => (x === s ? { ...x, kp: 7 } : x)) };
+  assert.doesNotMatch(buildStops(lowered)[4].body, /lowest latitude/);
+});
+
+test('walkthrough: replayed S, G and R levels come from the sample and say they are a replay', () => {
+  const s = data.samples.find((x) => x.S === 'S2');
+  assert.ok(s);
+  const r = replayScales(s);
+  assert.deepEqual([r.radiation.level, r.radiation.label], [2, 'S2']);
+  assert.equal(r.geomagnetic.label, s.G);
+  assert.equal(r.radioBlackout.label, s.R);
+  for (const x of [r.radiation, r.geomagnetic, r.radioBlackout]) assert.match(x.basis, /^Replay \d\d:\d\d UT/);
+  assert.equal(replayScales({ ...s, S: 'S?' }).radiation.level, null);
 });
 
 test('walkthrough: the SAA stop puts the teaching satellite inside the anomaly core', () => {
