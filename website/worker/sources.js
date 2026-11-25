@@ -1,0 +1,100 @@
+// Source and licence register for the feeds the Worker caches (feeds.js) and the Constellation Brief shows (brief.js).
+// One row per source: what we call, what we keep from it, where its terms are, and when someone last read those terms.
+//
+// status is "checked" ONLY when the terms page named in `terms` was fetched and read on the `checked` date, and the
+// note says what it said. Everything else is "unverified": the source is used as its own documentation describes,
+// but nobody has confirmed reuse terms for it. Never mark a row "checked" from memory or from a secondary source.
+// `feeds` names the FEEDS entries in feeds.js each row covers, so a test can prove no cached feed is missing a row.
+export const SOURCE_REGISTER = Object.freeze([
+  {
+    id: "ll2",
+    name: "The Space Devs Launch Library 2",
+    feeds: ["launches"],
+    url: "https://ll.thespacedevs.com/2.3.0/launches/upcoming/",
+    stores: "Launch names, vehicles, providers, pads, times, status. No images or descriptions.",
+    terms: "https://thespacedevs.com/llapi",
+    checked: "2026-11-18",
+    status: "checked",
+    note: "The page says the data is free for everyone, up to 15 unauthenticated requests an hour. It states no separate reuse licence.",
+  },
+  {
+    id: "rocketlaunch",
+    name: "RocketLaunch.Live",
+    feeds: ["launches"],
+    url: "https://fdo.rocketlaunch.live/json/launches/next/5",
+    stores: "The next five launches (names, vehicles, providers, pads, times), used only when Launch Library 2 is unavailable.",
+    terms: "https://www.rocketlaunch.live/api",
+    checked: "2026-11-18",
+    status: "checked",
+    note: "The page offers the next five launches freely and asks for the credit \"Data by RocketLaunch.Live\" near the data, which each line shows.",
+  },
+  {
+    id: "noaa-swpc",
+    name: "NOAA Space Weather Prediction Center",
+    feeds: ["weather"],
+    url: "https://services.swpc.noaa.gov/products/noaa-scales.json",
+    stores: "Current storm scales (G, S, R), the latest planetary Kp value, solar-wind speed and magnetic field. No history.",
+    terms: "https://www.weather.gov/disclaimer",
+    checked: "2026-11-18",
+    status: "checked",
+    note: "The National Weather Service disclaimer, which the SWPC site links to, says its information is in the public domain unless noted, and must not be presented as endorsed by NOAA or altered and passed off as official.",
+  },
+  {
+    id: "luma",
+    name: "Constellation calendar on Luma",
+    feeds: ["events"],
+    url: "https://luma.com/constellation",
+    stores: "Event titles, start and end times, public event links. No organisers, descriptions, addresses or guests.",
+    terms: "https://luma.com/terms",
+    checked: null,
+    status: "unverified",
+    note: "Constellation's own public calendar, read through the iCal feed Luma publishes for it. Luma's terms page was read on 18 Nov 2026 and no wording about the calendar feed was found, so reuse terms are not confirmed.",
+  },
+  {
+    id: "snapi",
+    name: "Spaceflight News API",
+    feeds: ["news"],
+    url: "https://api.spaceflightnewsapi.net/v4/articles/",
+    stores: "Headlines, links, the publishing outlet's name and the publication time. No article text, summaries or images.",
+    terms: "https://spaceflightnewsapi.net/",
+    checked: null,
+    status: "unverified",
+    note: "No terms or licence page was found on the API's site on 18 Nov 2026. Each headline belongs to its outlet; the brief shows the title and links to the original.",
+  },
+  {
+    id: "ukri",
+    name: "UKRI funding opportunities",
+    feeds: ["ukri"],
+    url: "https://www.ukri.org/opportunity/feed/",
+    stores: "Call titles, links, the council's name, the posting date and a summary of up to 240 characters. The brief shows the title, link and date only.",
+    terms: "https://www.ukri.org/who-we-are/terms-of-use/",
+    checked: "2026-11-18",
+    status: "checked",
+    note: "The page says most content is under Creative Commons Attribution-NonCommercial-ShareAlike 4.0 (non-commercial, share-alike). Whether the stored summaries fit that licence is an open decision.",
+  },
+  {
+    id: "uksa",
+    name: "UK Space Agency on GOV.UK",
+    feeds: ["uksa"],
+    url: "https://www.gov.uk/government/organisations/uk-space-agency.atom",
+    stores: "Notice titles, links, document type and the update time.",
+    terms: "https://www.gov.uk/help/terms-conditions",
+    checked: "2026-11-18",
+    status: "checked",
+    note: "The page says most GOV.UK content is Crown copyright under the Open Government Licence v3.0. Contains public sector information licensed under the Open Government Licence v3.0.",
+  },
+  {
+    id: "tracker",
+    name: "Programmes we track",
+    feeds: ["programmes"],
+    url: "",
+    stores: "Programme names, organisers, deadlines, indicative amounts, eligibility notes and official links, entered by hand in Lightbound's own list.",
+    terms: "",
+    checked: null,
+    status: "unverified",
+    note: "Our own list, so it has no outside licence. Its dates and amounts are typed in by hand and each programme's own page sets its terms: always check the official page.",
+  },
+]);
+
+/** The register row for a source id (see SOURCE_REGISTER). */
+export const sourceById = (id) => SOURCE_REGISTER.find((s) => s.id === id) ?? null;
