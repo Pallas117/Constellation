@@ -86,7 +86,7 @@ Environment="OLLAMA_HOST=127.0.0.1:11434"'
   say "download"
   if ! command -v ollama >/dev/null 2>&1; then
     note "ollama is not installed: install it from https://ollama.com/download (check the script before running it), then run this again"
-  elif ollama list 2>/dev/null | awk 'NR>1{print $1}' | grep -qx "$model"; then note "$model: already pulled"
+  elif [ "$(ollama list 2>/dev/null | awk 'NR>1{print $1}' | grep -cx "$model")" != 0 ]; then note "$model: already pulled"
   elif [ "$AMODELS" = 1 ]; then printf '    run: ollama pull %s (%s)\n' "$model" "$size"; ollama pull "$model" || FAILED=1
   else note "to download ($size, needs Josh's OK): ollama pull $model   <- run only with --apply-models"; fi
 

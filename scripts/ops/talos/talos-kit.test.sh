@@ -260,7 +260,7 @@ ok=0; while read -r line; do [[ "$S1" == *"sudo: $line"* ]] || ok=1; done <"$LOG
 p="$HOME_DIR/.local/state/talos-kit/profile.txt"; has ', applied$' "$p" && has 'wrote /etc/ssh/sshd_config.d/05-gauss-ops.conf' "$p" && has 'postgresql *wrote' "$p"; expect "talos ops profile saves what it applied to profile.txt" $?
 
 n=$(sudo_n); a=$(wc -l <"$LOGS/apt"); bs --profile ops --apply-profile
-[ "$rc" = 0 ] && ! tail -n +"$((n + 1))" "$LOGS/sudo" | grep -v aa-status | grep -q . && [ "$(wc -l <"$LOGS/apt")" = "$a" ] && [[ "$out" == *"05-gauss-ops.conf: already in place"* && "$out" == *"zram swap: already active"* ]]; expect "talos ops profile re-run is idempotent: no further changes (only the read-only aa-status)" $?
+[ "$rc" = 0 ] && [ "$(tail -n +"$((n + 1))" "$LOGS/sudo" | grep -v aa-status | grep -c .)" = 0 ] && [ "$(wc -l <"$LOGS/apt")" = "$a" ] && [[ "$out" == *"05-gauss-ops.conf: already in place"* && "$out" == *"zram swap: already active"* ]]; expect "talos ops profile re-run is idempotent: no further changes (only the read-only aa-status)" $?
 
 mk_machine on-battery; SSHD_FAIL=1 bs --profile ops --apply-profile
 [ "$rc" = 7 ] && [ ! -e "$R0/etc/ssh/sshd_config.d/05-gauss-ops.conf" ] && ! grep -q 'reload ssh' "$LOGS/sudo" && [[ "$out" == *"rolled back"* ]] && [ -e "$R0/etc/systemd/journald.conf.d/50-gauss.conf" ]; expect "talos ops profile rolls the sshd drop-in back when sshd -t fails, reloads nothing, finishes the rest, exits 7" $?
@@ -288,7 +288,7 @@ PGF="$R0/etc/postgresql/17/main/conf.d/10-gauss-loopback.conf"
 pg_ports() { env -i PATH="$T/bin:$T/sys" LOGS="$LOGS" TALOS_KIT_SYSROOT="$R0" ss -ltn; }
 mk_machine on-battery; bs --profile ops --apply-profile
 [ "$rc" = 0 ] && [ "$(cat "$PGF")" = "$(printf "# Gauss, 25 Nov 2026: no network listeners; local apps use localhost or the socket.\nlisten_addresses = 'localhost'")" ] && [ "$(grep -c '^systemctl restart postgresql.service$' "$LOGS/sudo")" = 1 ] && ! grep -q 'disable.*postgresql' "$LOGS/sudo" && [ -e "$LOGS/svc/postgresql.service.enabled" ]; expect "talos ops profile writes the PostgreSQL loopback drop-in, restarts it once and never disables it" $?
-pg_ports | grep -q '127.0.0.1:5432' && ! pg_ports | grep -q '0.0.0.0:5432'; expect "talos ops profile leaves PostgreSQL on 127.0.0.1 only" $?
+[ "$(pg_ports | grep -c '127.0.0.1:5432')" != 0 ] && [ "$(pg_ports | grep -c '0.0.0.0:5432')" = 0 ]; expect "talos ops profile leaves PostgreSQL on 127.0.0.1 only" $?
 bs --profile ops --apply-profile; [ "$rc" = 0 ] && [ "$(grep -c '^systemctl restart postgresql.service$' "$LOGS/sudo")" = 1 ] && [[ "$out" == *"10-gauss-loopback.conf: already in place"* ]]; expect "talos ops profile: a second apply does not restart PostgreSQL again" $?
 mk_machine on-battery; printf "data_directory = 'x'\n" >"$R0/etc/postgresql/17/main/postgresql.conf"; bs --profile ops --apply-profile
 [ "$rc" = 0 ] && [ ! -e "$PGF" ] && ! grep -q 'restart postgresql' "$LOGS/sudo" && [[ "$out" == *"set listen_addresses = 'localhost' by hand"* ]]; expect "talos ops profile without include_dir writes no PostgreSQL drop-in, restarts nothing and warns" $?
@@ -351,14 +351,14 @@ sed -i.bak 's/7760000/16000000/' "$NR/proc/meminfo"; VRAM=8192 bs2 --profile mod
 rm -f "$T/bin/lspci"
 nw; : >"$LOGS/svc/ollama.service.present"; OLLAMA_HOST=0.0.0.0 bs2 --profile models --apply-profile
 [[ "$out" == *"not loopback"* ]] && has 'OLLAMA_HOST=127.0.0.1:11434' "$NR/etc/systemd/system/ollama.service.d/50-gauss-loopback.conf" && ! grep -q '0\.0\.0\.0' "$NR/etc/systemd/system/ollama.service.d/50-gauss-loopback.conf"; expect "talos models pins Ollama to 127.0.0.1 and warns about a 0.0.0.0 OLLAMA_HOST, never binding wider" $?
-! { grep -Ev '^ *(#|note |warn )' "$D/models-profile.sh" | grep -q '0\.0\.0\.0'; }; expect "talos models script never writes 0.0.0.0" $?
+[ "$(grep -Ev '^ *(#|note |warn )' "$D/models-profile.sh" | grep -c '0\.0\.0\.0')" = 0 ]; expect "talos models script never writes 0.0.0.0" $?
 
 nw; bs2 --profile agents --apply-profile
 [ "$rc" = 0 ] && has '^--system --create-home --home-dir /var/lib/gauss-agent --shell /usr/sbin/nologin --user-group gauss-agent$' "$LOGS/useradd" && has '^passwd -l gauss-agent$' "$LOGS/sudo" && has '^chmod 0700 /var/lib/gauss-agent$' "$LOGS/sudo"; expect "talos agents creates an unprivileged gauss-agent: nologin, password locked, home 0700" $?
-! grep -E 'usermod|sudoers|adm|(-G|--groups)' "$LOGS/useradd" "$LOGS/sudo" | grep -q gauss-agent; expect "talos agents gives gauss-agent no sudo or extra groups" $?
+[ "$(grep -E 'usermod|sudoers|adm|(-G|--groups)' "$LOGS/useradd" "$LOGS/sudo" | grep -c gauss-agent)" = 0 ]; expect "talos agents gives gauss-agent no sudo or extra groups" $?
 UF="$NR/etc/systemd/system/gauss-agent.service"; ok=0
 for k in 'ProtectSystem=strict' 'ProtectHome=true' 'NoNewPrivileges=true' 'PrivateTmp=true' 'MemoryMax=' 'LogRateLimitBurst=' 'LoadCredential=anthropic-key:/etc/gauss-agent/anthropic.key' 'ConditionPathExists=/etc/gauss-agent/anthropic.key' 'User=gauss-agent'; do has "^$k" "$UF" || { ok=1; echo "    missing $k"; }; done; [ "$ok" = 0 ]; expect "talos agent unit has the hardening keys, the credential load and the key condition" $?
-! grep -E 'enable|start' "$LOGS/systemctl" | grep -q gauss-agent && [[ "$out" == *"OFF until"* ]]; expect "talos agents installs the unit but never enables or starts it (OFF until Josh makes the key file)" $?
+[ "$(grep -E 'enable|start' "$LOGS/systemctl" | grep -c gauss-agent)" = 0 ] && [[ "$out" == *"OFF until"* ]]; expect "talos agents installs the unit but never enables or starts it (OFF until Josh makes the key file)" $?
 ! grep -Eq 'sk-ant|ANTHROPIC_API_KEY=[^$"]' "$D/agents-profile.sh" "$D/systemd/gauss-agent.service"; expect "talos agents holds no key in the kit" $?
 
 AD="$T/agentd"; RUN="$D/agent/agent-runner.sh"; rm -rf "$AD"; mkdir -p "$AD/spool" "$T/cred"; echo "do a thing" >"$AD/spool/a.task"

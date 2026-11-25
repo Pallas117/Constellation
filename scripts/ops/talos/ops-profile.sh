@@ -139,7 +139,7 @@ main() {
   # The drop-in is byte-identical to the one talos-sudo-once.sh writes, so running both restarts once.
   # Undo: remove /etc/postgresql/<ver>/main/conf.d/10-gauss-loopback.conf, then restart postgresql.
   local pgdir pgrel
-  pgdir=$(ls -d "$ROOT"/etc/postgresql/*/main 2>/dev/null | head -1 || true)
+  pgdir=$(ls -d "$ROOT"/etc/postgresql/*/main 2>/dev/null | sed -n 1p || true)
   if [ -z "$pgdir" ]; then note "postgresql: no /etc/postgresql/*/main (not installed here)"; rec postgresql "not installed"
   elif grep -Eq "^[[:space:]]*include_dir[[:space:]]*=[[:space:]]*'conf\.d'" "$pgdir/postgresql.conf" 2>/dev/null; then
     pgrel="${pgdir#"$ROOT"}/conf.d/10-gauss-loopback.conf"
@@ -442,7 +442,7 @@ PRIORITY=100' || true
     rec node "${v:-missing}: needs 26 (install steps printed)"
     note "Install Node 26 yourself from nodejs.org, checked against its SHASUMS256, into your home:"
     note "  cd /tmp && base=https://nodejs.org/dist/latest-v26.x && curl -fsSLO \"\$base/SHASUMS256.txt\""
-    note "  f=\$(grep -o \"node-v26[^ ]*-linux-$arch.tar.xz\" SHASUMS256.txt | head -1) && curl -fsSLO \"\$base/\$f\""
+    note "  f=\$(grep -o \"node-v26[^ ]*-linux-$arch.tar.xz\" SHASUMS256.txt | sed -n 1p) && curl -fsSLO \"\$base/\$f\""
     note "  grep \" \$f\\\$\" SHASUMS256.txt | sha256sum -c -"
     note "  mkdir -p ~/.local/node && tar -xJf \"\$f\" -C ~/.local/node --strip-components=1"
     note "  then add ~/.local/node/bin to PATH in ~/.zshrc"
