@@ -1090,6 +1090,18 @@ expect "gates passed: exit 0 only for a commit whose exact tree passed (1 not pa
 (cd "$LIVE" && run gates result "$P11" >/dev/null); rcq=$?; (cd "$LIVE" && run gates passed "$P11" >/dev/null); rcp=$?
 [ $rcq = 3 ] && [ $rcp = 0 ]; expect "gates passed: a passed commit queued again still counts as passed (gates result says QUEUED)" $?
 rm -f "$GQ"/*.req
+# 25 Nov: a gatebox pass writes no deploy record, so approved drafts that passed there (#328) never counted.
+PM=$(tc "$M3" pm.txt pm); TM=$(tree_of "$PM")
+(cd "$LIVE" && run gates passed "$PM" >/dev/null); rc0=$?
+printf '%s %s %s PASSED merge only, no deploy record: gatebox test passed %s\n' "2026-11-24T18:00:37Z" "$PM" "$TM" "${PM:0:7}" >>"$GR"
+out=$(cd "$LIVE" && run gates passed "$PM"); rc1=$?; (cd "$LIVE" && run gates passed --deploy "$PM" >/dev/null); rc2=$?
+[ $rc0 = 1 ] && [ $rc1 = 0 ] && [[ "$out" == *"merge only"* ]] && [ $rc2 = 1 ]
+expect "gates passed: a gatebox merge-only pass counts for merging, not with --deploy" $?
+PN=$(tc "$M3" pn.txt pn); TN=$(tree_of "$PN")
+printf '{"passed":true,"kind":"merge-only","sha":"%s","tree":"%s"}\n' "$PN" "$TN" >"$WD/gates/$TN.merge.json"
+(cd "$LIVE" && run gates passed "$PN" >/dev/null); rc3=$?; (cd "$LIVE" && run gates passed --deploy "$PN" >/dev/null); rc4=$?
+[ $rc3 = 0 ] && [ $rc4 = 1 ]; expect "gates passed: a merge-only record for the exact tree counts for merging only" $?
+rm -f "$WD/gates/$TN.merge.json"
 # 18 Nov: #160 was gated 7 times and #175 5 times in a day: each pass was held for a person, main moved,
 # and the same change was gated again with nothing able to merge it. A held pass now waits without runs
 # until its own change differs, it stops being a draft, or it is queued with --final.
