@@ -24,7 +24,7 @@ closed until `RELEASE: "full"`. See "Launch" and "Opening accounts later".
 | `/education/apply/` | A department licence request, or a review for people without a university email. |
 | `/app/` | Signed-in workspace: quote and payment (card, or an invoice where you allow it), billing state, pilot progress, space weather, Constellation membership, members' opportunities, and the staff link for the team. |
 | `/app/admin/` | For `ADMIN_EMAILS`: approve with a quote, set plan, billing, pilot step; invite Constellation members (free). |
-| `/constellation/time/` | Public time-zone planner. Pick a date and up to 8 zones to see the local hour everywhere, with the hours that suit everyone outlined. A picked hour comes with a calendar file. No data is stored. |
+| `/constellation/time/` | Public time-zone planner. Pick a date and up to 8 zones to see the local hour everywhere, with the hours that suit everyone outlined. A picked hour comes with a calendar file, names each zone's offset and says where it is an unsocial hour (22:00–07:00 local). No data is stored. |
 | `/privacy/` | What is kept, why, for how long, and how to have it deleted. |
 | `/pilot`, `/sales` | Redirects into the Gauss flow (the entry points named in the sales plan), via `public/_redirects`. |
 | `/api/launches`, `/api/launches.ics`, `/api/space-weather`, `/api/health` | JSON, a calendar feed and a health check. |
@@ -180,6 +180,11 @@ old `argo-glyph-provisional.svg` stays only while the Access login page set-up (
   organisers, descriptions, addresses or coordinates. Up to 6 upcoming and the 3 most recent show, with "Follow
   Constellation on Luma". If Luma is down, the section still shows the link and `/api/health` stays green.
   New events appear by themselves once they're posted on Luma.
+  **Times (2026-11-18):** times are UTC and say so. "Show times in" is a plain GET form (`/constellation/?tz=Asia/Kolkata#events`,
+  zones allowlisted in `worker/timezones.js`): each event then leads with that zone's own date and time, the zone and its
+  offset named, with UTC kept beside it. The Worker does the conversion with its IANA database, so clock changes are
+  handled; no script, cookie, geolocation or IP lookup, and nothing is stored. The feed's times are UTC, so UTC is the
+  shared reference (an event's own venue zone is not kept).
 - **Workshops (06):** ethics, resilience and tech leadership, "led by facilitators from the Constellation community;
   members join free". `/constellation/workshops/` is a team request form (organisation, workshop, format, group
   size, when). It lands in admin as "WORKSHOP · …", and "Mark contacted" creates no account.
@@ -330,12 +335,24 @@ animations, and anyone with reduced motion, get the final frame beside all five 
 calls it a sketch, not a model. Belt facts follow NASA Earth Observatory ("Probing the Electric Space
 Around Earth", image 78985).
 
+**Scrolling into Gauss** (landing, after the descent, `#enter`): the screen pins and a captured frame of
+the Gauss live view opens between two pairs of dark planes (a sliver first, then the whole scene). Then
+three things arrive in order: a plate naming what the live view reads before sign-in (magnetopause,
+solar wind, IMF Bz, Kp; names only, because a still has no numbers), three veiled panels for what is
+past the sign-in (Field model, Operator console, Mesh: a name and "Members only", never blurred or
+invented data), and the one door, "Sign in with Argo". Scroll-driven CSS (`view-timeline: --gate`),
+no script, no new downloads (the frame was already on the page). Without scroll-driven animations, with
+reduced motion, or on a screen under 660 px tall, all three are simply there. Copy rules, enforced by
+a test: nothing about how sign-in works, no security or cryptography claims, no readings from a still.
+The panel names must match routes that really need an account in the app (`frontend/src/Cybertiger.tsx`).
+
 ## Change things
 
 | To change | Edit |
 |---|---|
 | Hero line, door text | `public/index.html` |
 | The landing's descent (black hole → aurora → Van Allen belts) | geometry: `tools/make_descent.py` (dipole field lines, then rewrites the SVG in `public/index.html`); timing: "Descent" in `public/assets/site.css` |
+| The landing's scroll into Gauss (frame, readings plate, veiled panels, door) | copy: the `#enter` section in `public/index.html`; timing: "Live-view gate" in `public/assets/site.css` |
 | Gauss copy (keep the claim rules; the tests enforce them) | `public/gauss/index.html` |
 | Constellation copy, intel rules, join route | `public/constellation/index.html` |
 | Colours, type, layout | `public/assets/site.css` (Brand Room tokens; the tests reject off-palette colours) |
