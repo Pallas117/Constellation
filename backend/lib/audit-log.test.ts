@@ -102,7 +102,7 @@ describe("audit log", () => {
     log.append(careless);
     log.close();
     const raw = new DatabaseSync(file);
-    const columns = (raw.prepare("PRAGMA table_info(audit_log)").all() as Array<{ name: string }>).map((c) => c.name);
+    const columns = (raw.prepare("PRAGMA table_info(audit_log)").all() as unknown as Array<{ name: string }>).map((c) => c.name);
     assert.deepEqual(columns, [
       "seq",
       "time",

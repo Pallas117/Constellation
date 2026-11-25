@@ -17,3 +17,9 @@ if (!process.env.AUTH_DB_PATH) {
   process.env.AUTH_DB_PATH = path.join(dir, "auth.db");
   process.on("exit", () => fs.rmSync(dir, { recursive: true, force: true }));
 }
+
+if (!process.env.AUDIT_DB_PATH) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "gauss-audit-test-"));
+  process.env.AUDIT_DB_PATH = path.join(dir, "audit.db");
+  process.on("exit", () => fs.rmSync(dir, { recursive: true, force: true }));
+}

@@ -149,7 +149,7 @@ export class AuditLog {
 
     this.db.exec("BEGIN IMMEDIATE");
     try {
-      const last = this.db.prepare("SELECT seq, row_hash FROM audit_log ORDER BY seq DESC LIMIT 1").get() as
+      const last = this.db.prepare("SELECT seq, row_hash FROM audit_log ORDER BY seq DESC LIMIT 1").get() as unknown as
         | { seq: number; row_hash: string }
         | undefined;
       const prevHash = last?.row_hash ?? AUDIT_GENESIS_HASH;
@@ -181,7 +181,7 @@ export class AuditLog {
     let prev = AUDIT_GENESIS_HASH;
     let expectedSeq = 1;
     let rows = 0;
-    for (const raw of this.db.prepare("SELECT * FROM audit_log ORDER BY seq ASC").iterate() as Iterable<DbRow>) {
+    for (const raw of this.db.prepare("SELECT * FROM audit_log ORDER BY seq ASC").iterate() as unknown as Iterable<DbRow>) {
       const row = toRow(raw);
       rows += 1;
       const bad = (reason: string): AuditVerifyResult => ({ ok: false, rows, firstBadSeq: row.seq, reason });

@@ -3,6 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test, { after, before } from "node:test";
+import { DatabaseSync } from "node:sqlite";
 import Database from "better-sqlite3";
 import { getMigrations } from "better-auth/db/migration";
 import type { AuthRole } from "./auth.js";
@@ -22,6 +23,7 @@ process.env.BETTER_AUTH_SECRET = "test-only-secret-0123456789abcdef0123456789";
 // POST /api/ai/nowcast/train runs `python3 <TRAINING_SCRIPT_PATH>`: an empty
 // file here, so the admin call starts no real training.
 process.env.TRAINING_SCRIPT_PATH = path.join(tmp, "noop.py");
+process.env.AUDIT_DB_PATH = path.join(tmp, "audit.db");
 fs.writeFileSync(process.env.TRAINING_SCRIPT_PATH, "");
 
 // Both read the environment above when first imported.
@@ -113,6 +115,25 @@ test("real sessions: an admin route refuses operator and below and admits admin"
   const response = await call("POST", ADMIN_ROUTE, sessions.admin.cookie);
   assert.equal(response.status, 200);
   assert.equal(((await response.json()) as { started: boolean }).started, true);
+});
+
+test("real sessions: an admin action writes one audit row with ids only", async () => {
+  const response = await call("POST", ADMIN_ROUTE, sessions.admin.cookie);
+  assert.equal(response.status, 200);
+  const audit = new DatabaseSync(process.env.AUDIT_DB_PATH as string);
+  const rows = audit.prepare("SELECT * FROM audit_log WHERE action = 'nowcast.train' ORDER BY seq").all() as Array<
+    Record<string, unknown>
+  >;
+  audit.close();
+  const last = rows.at(-1);
+  assert.ok(last);
+  assert.equal(last.actor_id, sessions.admin.userId);
+  assert.equal(last.role, "admin");
+  assert.equal(last.result, "ok");
+  assert.equal(last.request_id, response.headers.get("x-request-id"));
+  // Refused callers never reach the handler, so only admin calls are recorded.
+  assert.ok(rows.every((r) => r.role === "admin"));
+  assert.equal(JSON.stringify(rows).includes(sessions.admin.email), false);
 });
 
 test("real sessions: a demotion applies to an existing session on its next request", async () => {

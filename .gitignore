@@ -63,3 +63,6 @@ shared/**/*.js
 
 # A plain `go build` in tools/argo leaves the binary here; it is never shipped from the repo.
 tools/argo/argo
+
+# Append-only audit log of admin actions (Zone E). Never commit it.
+data/audit/

@@ -54,6 +54,7 @@ import deviceRegistryRouter from "./device-registry.js";
 import { createMeshRouters } from "./mesh/router.js";
 import { enforceApiPolicy, isPublic } from "./rbac.js";
 import { CommerceStore } from "./commerce/store.js";
+import { AuditLog, ipTarget, recordAudit, type AuditResult } from "./lib/audit-log.js";
 import { createDataApiRouter, createOrgRouter, createPilotRequestHandler } from "./commerce/routers.js";
 import { EnvironmentHistory } from "./trust/environment.js";
 import { createEvidenceRouter } from "./trust/evidence-router.js";
@@ -265,6 +266,19 @@ app.use("/api/mesh", mesh.agent);
 // Paid data API: organisation API keys, plans, quotas and metering. Keys, not
 // sessions, so this also sits before session auth (backend/commerce/).
 const commerce = new CommerceStore(path.resolve(process.env.COMMERCE_DB_PATH ?? "data/commerce/commerce.db"));
+// Append-only audit trail of admin actions (Zone E), own file, never .auth.db.
+const auditLog = new AuditLog(path.resolve(process.env.AUDIT_DB_PATH ?? "data/audit/audit.db"));
+/** Ids only: the actor's user id and role, the CyberTiger request id. Never the body, email or session token. */
+function audit(req: AuthenticatedRequest, action: string, target: string | null, result: AuditResult): void {
+  recordAudit(auditLog, {
+    actorId: req.auth?.userId ?? null,
+    role: req.auth?.role ?? null,
+    action,
+    target,
+    result,
+    requestId: (req as CyberTigerRequest).security?.requestId ?? null,
+  });
+}
 app.use(
   "/api/v1",
   createDataApiRouter(commerce, {
@@ -556,6 +570,7 @@ app.post("/api/security/cybertiger/block", (req: AuthenticatedRequest, res) => {
   const input = req.body as { ip?: string; reason?: string; seconds?: number };
   const ip = (input.ip ?? "").trim();
   if (!ip) {
+    audit(req, "cybertiger.block", null, "failed");
     res.status(400).json({ error: "Missing ip" });
     return;
   }
@@ -570,6 +585,7 @@ app.post("/api/security/cybertiger/block", (req: AuthenticatedRequest, res) => {
       actorUserId: req.auth?.userId,
     },
   );
+  audit(req, "cybertiger.block", ipTarget(ip), "ok");
   res.json({ ok: true, ip, reason, seconds: Number.isFinite(seconds) && seconds > 0 ? seconds : null });
 });
 
@@ -577,6 +593,7 @@ app.post("/api/security/cybertiger/unblock", (req: AuthenticatedRequest, res) =>
   const input = req.body as { ip?: string };
   const ip = (input.ip ?? "").trim();
   if (!ip) {
+    audit(req, "cybertiger.unblock", null, "failed");
     res.status(400).json({ error: "Missing ip" });
     return;
   }
@@ -584,6 +601,7 @@ app.post("/api/security/cybertiger/unblock", (req: AuthenticatedRequest, res) =>
     actorRole: req.auth?.role,
     actorUserId: req.auth?.userId,
   });
+  audit(req, "cybertiger.unblock", ipTarget(ip), removed ? "ok" : "failed");
   res.json({ ok: removed, ip });
 });
 
@@ -619,16 +637,22 @@ app.post("/api/ai/nowcast/infer", async (req: AuthenticatedRequest, res) => {
   }
 });
 
-app.post("/api/ai/nowcast/train", async (_req, res) => {
+app.post("/api/ai/nowcast/train", async (req: AuthenticatedRequest, res) => {
   try {
     const result = await triggerTraining();
+    audit(req, "nowcast.train", "nowcast-model", result.started ? "ok" : "failed");
     if (!result.started) {
-      res.status(500).json(result);
+      // result.message carries the spawn error text (paths): keep it out of the response.
+      console.error("[nowcast] training did not start");
+      res.status(500).json({ started: false, message: "Training trigger failed" });
       return;
     }
     res.json(result);
   } catch (error) {
-    res.status(500).json({ error: error instanceof Error ? error.message : "Training trigger failed" });
+    audit(req, "nowcast.train", "nowcast-model", "failed");
+    // The message can carry the upstream ML URL: log the error name only, answer a fixed text.
+    console.error(`[nowcast] training trigger failed (${error instanceof Error ? error.name : "unknown"})`);
+    res.status(500).json({ error: "Training trigger failed" });
   }
 });
 
