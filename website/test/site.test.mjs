@@ -9,6 +9,8 @@ import { APP_CSP, SECURITY_HEADERS } from "../worker/headers.js";
 import { renderApplyForm } from "../worker/forms.js";
 import { renderPlans } from "../worker/render.js";
 import { FEATURES, SHOW_PRICES, TIERS, priceLabel } from "../worker/tiers.js";
+import { CONTACT, forRelease } from "../worker/release.js";
+import { CONTACT_PILL, SIGN_IN_PILL, configFor, configRelease, headerFor, headerPages, validate } from "../tools/release.mjs";
 
 const pub = join(dirname(fileURLToPath(import.meta.url)), "..", "public");
 const read = (f) => readFileSync(join(pub, f), "utf8");
@@ -24,6 +26,7 @@ const html = Object.fromEntries(Object.entries(PAGES).map(([route, f]) => [route
 const WRANGLER_RAW = readFileSync(join(pub, "..", "wrangler.jsonc"), "utf8");
 const WRANGLER = JSON.parse(WRANGLER_RAW.replace(/^\s*\/\/.*$/gm, "").replace(/,(\s*[}\]])/g, "$1"));
 const WORKER_ROUTES = WRANGLER.assets.run_worker_first;
+const RELEASE = WRANGLER.vars.RELEASE; // "public" on lightbound.space today; tools/release.mjs switches config and headers together
 const API_ROUTES = new Set(["/api/launches", "/api/launches.ics", "/api/space-weather", "/api/health", "/cdn-cgi/access/logout"]);
 
 function walk(dir) {
@@ -128,8 +131,9 @@ test("every page has one h1, the same main navigation and the same footer links"
   const nav = (p) => [...(p.match(/<nav aria-label="Main">([\s\S]*?)<\/nav>/)?.[1] ?? "").matchAll(/href="([^"]+)"/g)].map((m) => m[1]);
   for (const [route, page] of Object.entries(html)) {
     assert.equal((page.match(/<h1[\s>]/g) || []).length, 1, `${route}: exactly one h1`);
-    // Public pages end with Contact (the public release has no sign-in); /argo/ opens only with accounts, so it keeps Sign in.
-    const last = route.startsWith("/app/") ? "/cdn-cgi/access/logout" : route === "/argo/" ? "/app/" : "mailto:jzwnathan@lightbound.uk";
+    // Public pages end with Contact in the public release (no sign-in) and Sign in once accounts open; /argo/ opens only
+    // with accounts, so it keeps Sign in.
+    const last = route.startsWith("/app/") ? "/cdn-cgi/access/logout" : route === "/argo/" || RELEASE === "full" ? "/app/" : "mailto:jzwnathan@lightbound.uk";
     assert.deepEqual(nav(page), ["/gauss/", "/constellation/", "/turnstone/", last], `${route}: main nav ends with Contact, or sign in/out`);
     assert.match(page, /<html lang="en-GB">/);
     assert.match(page, /<a class="skip" href="#main">/);
@@ -600,7 +604,7 @@ test("production config: no Stripe secrets, no local stand-in, no test keys anyw
 });
 
 // ---- The public release (GAU-178) ----
-test("public release: the config holds only what the public pages need, and keeps the closed routes on the Worker", () => {
+test("public release: the config holds only what the public pages need, and keeps the closed routes on the Worker", { skip: RELEASE !== "public" && "config is full" }, () => {
   const [raw, config] = [WRANGLER_RAW, WRANGLER];
   assert.equal(config.vars.RELEASE, "public");
   assert.deepEqual(config.kv_namespaces.map((k) => k.binding), ["LIVE"], "no DATA namespace until accounts open");
@@ -618,7 +622,7 @@ test("public release: public pages link to sign-in only inside <!--full--> block
   for (const [route, page] of Object.entries(html)) {
     if (route.startsWith("/app/") || route === "/argo/") continue;
     const open = page.replace(/<!--full-->[\s\S]*?<!--\/full-->/g, "");
-    assert.doesNotMatch(open, /href="\/app\/|href="\/argo\//, `${route}: links into a closed area`);
+    if (RELEASE === "public") assert.doesNotMatch(open, /href="\/app\/|href="\/argo\//, `${route}: links into a closed area`);
     if (open !== page) assert.ok(WORKER_ROUTES.includes(route), `${route}: <!--full--> needs the Worker to remove it`);
   }
 });
@@ -769,4 +773,49 @@ test("wiring: /gauss/ says what a log needs, links a made-up sample that has the
 
 test("client links: /gauss/, /gauss/evidence/ and /argo/ each link to the pilot brief with a plan", () => {
   for (const path of ["/gauss/", "/gauss/evidence/", "/argo/"]) assert.match(html[path], /href="\/gauss\/apply\/\?plan=pilot"/, path);
+});
+
+// ---- Switching releases (tools/release.mjs; the flip-day runbook) ----
+test("release switch: every page header agrees with RELEASE in wrangler.jsonc", () => {
+  assert.equal(configRelease(WRANGLER_RAW), RELEASE);
+  const pill = RELEASE === "full" ? SIGN_IN_PILL : CONTACT_PILL;
+  const pages = headerPages(pub);
+  assert.ok(pages.length >= 14, "every public page, the 404 included");
+  for (const f of pages) assert.ok(readFileSync(f, "utf8").includes(pill), `${f}: header says ${RELEASE === "full" ? "Sign in" : "Contact"}`);
+});
+
+test("release switch: full adds DATA, sign-in and workspace vars and Sign in; public takes them all away again", () => {
+  const o = { data: "0123456789abcdef0123456789abcdef", team: "example.cloudflareaccess.com", aud: "ab".repeat(32), app: "https://gauss.example.test/" };
+  assert.deepEqual(validate(o), []);
+  const base = configFor(WRANGLER_RAW, "public"); // whatever the repo holds, from public
+  const fullRaw = configFor(base, "full", o);
+  const full = JSON.parse(fullRaw.replace(/^\s*\/\/.*$/gm, "").replace(/,(\s*[}\]])/g, "$1"));
+  assert.equal(full.vars.RELEASE, "full");
+  assert.deepEqual(full.kv_namespaces.map((k) => [k.binding, k.id]), [["LIVE", WRANGLER.kv_namespaces[0].id], ["DATA", o.data]]);
+  assert.deepEqual([full.vars.ACCESS_TEAM_DOMAIN, full.vars.ACCESS_AUD, full.vars.ADMIN_EMAILS, full.vars.GAUSS_APP_URL, full.vars.USER_CAP],
+    [o.team, o.aud, CONTACT, o.app, "50"]);
+  assert.doesNotMatch(fullRaw, /"STRIPE_|"ACCESS_JWKS"|"STAFF_EMAILS"/, "secrets stay Worker secrets");
+  assert.deepEqual(full.assets, WRANGLER.assets, "the Worker still sees /app, /argo/ and /api first");
+  assert.equal(configFor(fullRaw, "full", o), fullRaw, "running it twice changes nothing");
+  assert.equal(configFor(fullRaw, "public"), base, "public restores the public config exactly");
+  for (const f of headerPages(pub)) {
+    const page = readFileSync(f, "utf8");
+    const on = headerFor(page, "full");
+    assert.ok(on.includes(SIGN_IN_PILL) && !on.includes(CONTACT_PILL), `${f}: Sign in when full`);
+    assert.equal(headerFor(on, "public"), headerFor(page, "public"), `${f}: and back`);
+  }
+  // Refuses what would break sign-in or leak: wrong shapes, non-https links, anything but a Stripe Payment Link.
+  assert.equal(validate({}).length, 3, "DATA, team domain and AUD are required");
+  assert.ok(validate({ ...o, team: "evil.example" }).length);
+  assert.ok(validate({ ...o, app: "http://gauss.example.test/" }).length);
+  assert.ok(validate({ ...o, app: "javascript:alert(1)" }).length);
+  assert.ok(validate({ ...o, support: "https://evil.example/pay" }).length);
+  assert.ok(validate({ ...o, cap: "0" }).length);
+});
+
+test("release switch: if accounts aren't really open (RELEASE full without DATA), Worker pages say Contact, not a dead Sign in", () => {
+  const page = `<nav aria-label="Main"><a href="/gauss/">Gauss</a>${SIGN_IN_PILL}</nav>`;
+  assert.equal(forRelease(page, { RELEASE: "full" }), page.replace(SIGN_IN_PILL, CONTACT_PILL), "no DATA: Contact");
+  assert.equal(forRelease(page, { RELEASE: "public", DATA: {} }), page.replace(SIGN_IN_PILL, CONTACT_PILL));
+  assert.equal(forRelease(page, { RELEASE: "full", DATA: {} }), page, "really open: Sign in stays");
 });

@@ -511,15 +511,32 @@ After launch, every change is `npm run test:website`, then the deploy and smoke 
 
 ## Opening accounts later (`RELEASE: "full"`)
 
-All of it is still in the code, and the tests run it with `RELEASE: "full"`. To open it:
-1. In `wrangler.jsonc`, set `RELEASE` to `"full"`.
-   - Add the DATA namespace: `npx wrangler@4 kv namespace create DATA`, then a `{ "binding": "DATA", "id": … }` entry.
-   - Add these vars: `ACCESS_TEAM_DOMAIN`, `ACCESS_AUD`, `ADMIN_EMAILS` (`jzwnathan@lightbound.uk`),
-     `GAUSS_APP_URL`, `OPS_URL`, `SUPPORT_URL`, `USER_CAP` (`"50"`).
+All of it is still in the code, and the tests run it with `RELEASE: "full"`. To open it (the full order, with the
+preview check and rollback, is the flip-day runbook in `~/Documents/Claude outputs/`):
+1. Create the DATA namespace (`npx wrangler@4 kv namespace create DATA`) and the Access application (below), then
+   switch config and page headers together in one step (none of these values is a secret):
+   ```bash
+   node website/tools/release.mjs full --data <DATA id> --team <team>.cloudflareaccess.com --aud <AUD tag> \
+        --app https://<gauss console>/ [--ops https://<ops site>/] [--support https://buy.stripe.com/...] [--cap 50]
+   npm run test:website                        # the site tests check config and headers agree
+   ```
+   It sets `RELEASE` to `"full"`, adds the DATA binding and `ACCESS_TEAM_DOMAIN`, `ACCESS_AUD`, `ADMIN_EMAILS`,
+   `GAUSS_APP_URL`, `OPS_URL`, `SUPPORT_URL`, `USER_CAP`, and puts **Sign in** in every page header. It refuses
+   malformed ids, a non-Access team domain, a non-https console address and any support link that isn't a Stripe
+   Payment Link. `node website/tools/release.mjs public` undoes all of it exactly; `... check` says whether they agree.
 2. Set up Stripe and sign-in as below, plus the secrets in "Members' opportunities and the staff link".
-3. Put **Sign in** back in the page headers. The public release shows Contact there; Worker-run pages bring
-   back their own `<!--full-->` parts by themselves.
+3. Worker-run pages bring back their own `<!--full-->` parts by themselves. If `RELEASE` says `"full"` but DATA isn't
+   bound, the Worker stays public and puts Contact back in the headers it serves.
 4. Work through "Before going live, in dashboards" under "Plans, payment and sign-in".
+5. Check a preview, then production: `npm run smoke:website -- --full <url> <sha>` (sign-in asked for, forms open,
+   unsigned posts refused, `/api/health` says `full`).
+
+**The Gauss console (`GAUSS_APP_URL`).** A paid, unlocked account sees **Open the Gauss console** in `/app/` with
+"Sign in there with <their email>". Only an https address counts (or `http://127.0.0.1`/`localhost` in the local
+preview); anything else, or an address carrying a query, fragment or credentials, hides the button and shows "Your
+Gauss console link is coming by email." The console has its own sign-in today (better-auth): give each pilot an
+account there with the same email. Where the console lives for outside users (a Cloudflare Tunnel behind its own
+Access application, or the VPS kit in `scripts/ops/vps`) is Josh's decision, after the auth hardening PRs land.
 
 Stripe, once (do it in test mode first, then repeat with live keys):
 1. In the Dashboard, under Settings > Payment methods, enable the methods you accept. For amounts
