@@ -100,14 +100,14 @@ export function dstRows(r: DstReading | null): SpaceRow[] {
 function shared<T>(fetcher: (nowMs: number) => Promise<T>): (nowMs: number) => Promise<T> {
   let last: { at: number; value: Promise<T> } | null = null;
   return (nowMs) => {
-    if (!last || nowMs - last.at >= LIMITS.cacheMs || nowMs < last.at) {
-      const value = fetcher(nowMs);
-      last = { at: nowMs, value };
-      value.catch(() => {
-        if (last?.value === value) last = null;
-      });
-    }
-    return last.value;
+    const hit = last;
+    if (hit && nowMs - hit.at < LIMITS.cacheMs && nowMs >= hit.at) return hit.value;
+    const value = fetcher(nowMs);
+    last = { at: nowMs, value };
+    value.catch(() => {
+      if (last?.value === value) last = null; // a failed fetch is retried next call, not cached
+    });
+    return value;
   };
 }
 
@@ -139,7 +139,7 @@ export function adapterSources(): SpaceSource[] {
       id: "noaa_kp",
       agency: "NOAA SWPC",
       label: "REPORTED",
-      description: "Planetary Kp index as NOAA publishes it (1-minute estimate, or the 3-hourly value).",
+      description: "Planetary Kp index as NOAA publishes it (1-minute estimate, or the 3-hourly value). Staleness uses the 1-minute bound, so a 3-hourly fallback reads stale.",
       fields: { kp: "Kp index, 0-9 (dimensionless)", kind: "estimated-1m | planetary-3h" },
       maxAgeMs: freshnessMs("kp_estimated_1m"),
       fetchRows: async (nowMs) => kpRows(await noaa(nowMs)),
