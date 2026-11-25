@@ -169,6 +169,7 @@ func main() {
 		err = doctor(ctx, loop.Prober)
 		if err == nil {
 			doctorPowerSave(ctx, store, os.Stdout)
+			doctorNebula(ctx, realNebulaEnv(time.Now()), os.Stdout) // only where Nebula is installed
 		}
 	case "power-save": // force or inspect power-save mode (powersave.go)
 		sample := sampleHost(ctx, false)
@@ -317,6 +318,11 @@ func main() {
 		err = uninstall(store)
 	case "send", "outbox", "inbox", "sync", "keys", "mule", "link":
 		err = relayMain(cmd, os.Args[2:], cfg, store, phone, os.Stdout)
+	case "net": // Nebula mesh: process, overlay address, device certificate expiry (nebula.go); read-only
+		var code int
+		if code, err = netCmd(ctx, os.Args[2:], realNebulaEnv(time.Now()), os.Stdout); err == nil && code != 0 {
+			os.Exit(code)
+		}
 	case "posture": // read-only device security checks against docs/DEVICE_SECURITY_BASELINE.md
 		err = postureCmd(ctx, os.Args[2:], store, os.Stdout)
 	case "update": // signed releases: check (default) or apply; never automatic (update.go)
@@ -324,7 +330,7 @@ func main() {
 	case "version":
 		fmt.Println("argo", version)
 	default:
-		fmt.Fprintln(os.Stderr, "usage: argo [status|doctor|fix|report|on|off|preflight|run -- cmd|phone <handle>|test|off|imessage|sms|notify TITLE MSG|attention [replay]|egress [off|on]|thirdparty [list|check|accept|seen]|guard [admit|run]|heal [--json]|scale [--json]|watch|summary [--send]|enroll URL DEVICE|install|uninstall|version]\n       argo [send [-ttl D] DEVICE FILE|outbox|inbox|sync|keys [list|publish|trust DEVICE]|mule export|import DIR|link]")
+		fmt.Fprintln(os.Stderr, "usage: argo [status|doctor|fix|report|on|off|preflight|run -- cmd|phone <handle>|test|off|imessage|sms|notify TITLE MSG|attention [replay]|egress [off|on]|thirdparty [list|check|accept|seen]|guard [admit|run]|heal [--json]|scale [--json]|watch|summary [--send]|enroll URL DEVICE|net [status] [--json]|install|uninstall|version]\n       argo [send [-ttl D] DEVICE FILE|outbox|inbox|sync|keys [list|publish|trust DEVICE]|mule export|import DIR|link]")
 		os.Exit(2)
 	}
 	if err != nil {

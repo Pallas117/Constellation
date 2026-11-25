@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Nebula on the Mac, as a LaunchDaemon (root is needed for the utun device). Install as
+  /Library/LaunchDaemons/uk.lightbound.nebula.plist, owned root:wheel, mode 0644. node-setup.sh darwin prints
+  the sudo commands; nothing runs them for you.
+  The binary is a root-owned copy in /usr/local/libexec/lightbound, NOT Homebrew's /opt/homebrew/bin/nebula:
+  Homebrew's directory is writable by your user, and a root daemon must never run a file your user (or
+  anything running as you) can replace. After `brew upgrade nebula`, copy it again (README).
+  No secrets here.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>uk.lightbound.nebula</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/local/libexec/lightbound/nebula</string>
+    <string>-config</string>
+    <string>/etc/nebula/config.yml</string>
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>ThrottleInterval</key>
+  <integer>10</integer>
+  <key>StandardOutPath</key>
+  <string>/var/log/nebula.log</string>
+  <key>StandardErrorPath</key>
+  <string>/var/log/nebula.log</string>
+</dict>
+</plist>

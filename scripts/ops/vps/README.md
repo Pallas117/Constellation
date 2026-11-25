@@ -35,6 +35,7 @@ Honest reading, for Josh's rule "Always Free with no card charges, or not at all
 | Node.js | MIT | UNVERIFIED (from memory) |
 | Go toolchain | BSD-3-Clause | UNVERIFIED (from memory) |
 | Tailscale client | BSD-3-Clause; the coordination service is a hosted product with a free Personal plan: [pricing](https://tailscale.com/pricing) (UNVERIFIED today). Headscale is the open-source control server if that ever matters | UNVERIFIED |
+| Nebula (`--mesh nebula\|both`) | MIT ([slackhq/nebula](https://github.com/slackhq/nebula)); v1.12.0 pinned by SHA-256 in `../nebula/fetch.sh` | 25 Nov 2026 (release page; licence from Homebrew's formula metadata) |
 | Gauss, Argo | this repo | n/a |
 
 ## 3. Josh's steps
@@ -55,6 +56,8 @@ sudo bash /opt/gauss/src/scripts/ops/vps/bootstrap.sh               # pastes the
 It joins the tailnet as `gauss-hub`, installs Node and Go (checked against nodejs.org's `SHASUMS256.txt` and go.dev's sha256), builds Argo from source into `/usr/local/bin/argo`, starts the hub on 127.0.0.1, runs `tailscale serve`, enrols Argo as device `vps`, and **last** turns the firewall on (deny incoming except `tailscale0`). It prints the VPS's own key fingerprint; write it down. It is safe to re-run (for example after enabling HTTPS certificates).
 
 **D. Close the public door at Oracle too.** From now on SSH over the tailnet (`ssh <user>@gauss-hub`). Once that works, delete the public port 22 ingress rule from the VCN security list (defence in depth: `ufw` is not the only wall). Check from a machine **outside** your tailnet: `nc -vz -w 3 <public-ip> 22 443 3001` must time out on all three. (Oracle's Ubuntu images ship their own iptables rules; how they combine with `ufw` is UNVERIFIED, which is why this outside check matters.)
+
+**Nebula instead of, or beside, Tailscale** (`--mesh nebula` or `--mesh both`; the default stays `tailscale`). The VPS becomes the Nebula lighthouse and relay at overlay address 10.117.0.1. The provider firewall opens **UDP 4242 only** (and TCP 22 only for the first login). The script installs the pinned Nebula release, makes the VPS's key pair there, prints the public key and stops short of starting Nebula; sign it on the CA Mac (`../nebula/sign.sh hub 10.117.0.1 hub --pub hub.pub`), copy `hub.crt` and `ca.crt` to `/etc/nebula/host.crt` and `/etc/nebula/ca.crt`, and run the script again. ufw then allows UDP 4242 and the `nebula1` overlay (Nebula's own firewall admits only SSH from group `dev`). With `--mesh nebula` the hub stays on 127.0.0.1: `ssh -L 3001:127.0.0.1:3001 <user>@10.117.0.1`. Full runbook: [`../nebula/README.md`](../nebula/README.md).
 
 **E. Confirm fingerprints, then trust (step 5 below).** The Argo relay service stays **stopped** until you do: Argo pins any key it sees first, so trust must come from a check you made.
 

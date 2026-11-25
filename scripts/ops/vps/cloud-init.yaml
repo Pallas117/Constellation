@@ -2,6 +2,11 @@
 # Optional first-boot user-data for the VM (Ubuntu LTS). It holds NO secrets: it only
 # installs git and fetches this public repo. Josh then SSHes in once and runs
 # bootstrap.sh, pasting the Tailscale auth key at the prompt.
+#
+# Provider firewall (security list / cloud firewall), set in the provider's console, not here:
+#   --mesh tailscale (default): no inbound rule needed after bootstrap (Tailscale dials out).
+#   --mesh nebula or both: allow inbound UDP 4242 from anywhere (the Nebula lighthouse), and nothing else.
+#   TCP 22 only for the first login that runs bootstrap.sh; remove it once SSH over the mesh works.
 package_update: true
 package_upgrade: true
 packages:

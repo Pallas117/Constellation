@@ -1,0 +1,46 @@
+# Nebula on Linux (the VPS lighthouse and Talos). Based on upstream's examples/service_scripts/nebula.service
+# (v1.12.0), with its unprivileged option turned on: a `nebula` system user holding only CAP_NET_ADMIN (for
+# the tun). Install as /etc/systemd/system/nebula.service. No secrets here.
+# /etc/nebula: 0755 root; host.key 0600 owned by nebula; config.yml, ca.crt, host.crt 0644 (public; Argo reads
+# host.crt for `argo net status`). UNTESTED ON A REAL LINUX HOST (25 Nov 2026).
+[Unit]
+Description=Nebula overlay network (Lightbound mesh)
+Wants=basic.target network-online.target nss-lookup.target time-sync.target
+After=basic.target network.target network-online.target
+Before=sshd.service
+# Keep trying for as long as it takes: a laptop on a hotspot may be offline for hours.
+StartLimitIntervalSec=0
+
+[Service]
+Type=notify
+NotifyAccess=main
+SyslogIdentifier=nebula
+User=nebula
+Group=nebula
+CapabilityBoundingSet=CAP_NET_ADMIN
+AmbientCapabilities=CAP_NET_ADMIN
+ExecStartPre=/usr/local/bin/nebula -test -config /etc/nebula/config.yml
+ExecStart=/usr/local/bin/nebula -config /etc/nebula/config.yml
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=always
+RestartSec=10
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+SystemCallArchitectures=native
+RestrictAddressFamilies=AF_INET AF_INET6 AF_NETLINK AF_UNIX
+UMask=0077
+MemoryMax=256M
+TasksMax=64
+
+[Install]
+WantedBy=multi-user.target

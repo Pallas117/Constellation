@@ -1,0 +1,70 @@
+# Nebula config for Talos (Linux laptop; overlay e.g. 10.117.0.10, group gate). Install as /etc/nebula/config.yml
+# after replacing <lighthouse-public-ip> with the VPS's public address (node-setup.sh prints the command).
+# No secrets here: the private key is /etc/nebula/host.key (0600 root, made on Talos), certificates are public.
+pki:
+  ca: /etc/nebula/ca.crt
+  cert: /etc/nebula/host.crt
+  key: /etc/nebula/host.key
+  # Revocation: fingerprints of lost or stolen devices' certificates (README "Revoking a device").
+  blocklist: []
+  disconnect_invalid: true
+
+# The lighthouse's overlay address -> its public address and UDP port.
+static_host_map:
+  "10.117.0.1": ["<lighthouse-public-ip>:4242"]
+
+lighthouse:
+  am_lighthouse: false
+  interval: 60
+  hosts:
+    - "10.117.0.1"
+
+# Port 0: a random local port. Both laptops roam behind NAT, so a fixed port buys nothing.
+listen:
+  host: "::"
+  port: 0
+
+punchy:
+  punch: true
+  respond: true
+
+# When hole punching fails (hotspot NAT), go through the lighthouse's relay. It forwards sealed packets only.
+relay:
+  relays:
+    - 10.117.0.1
+  am_relay: false
+  use_relays: true
+
+tun:
+  disabled: false
+  dev: nebula1
+  drop_local_broadcast: true
+  drop_multicast: true
+  mtu: 1300
+
+logging:
+  level: info
+  format: text
+
+firewall:
+  outbound_action: drop
+  inbound_action: drop
+  conntrack:
+    tcp_timeout: 12m
+    udp_timeout: 3m
+    default_timeout: 10m
+  outbound:
+    - port: any
+      proto: any
+      host: any
+  # Deny-by-default inbound. `groups:` is AND, so "gate or dev" is two rules.
+  inbound:
+    - port: any
+      proto: icmp
+      host: any
+    - port: 22
+      proto: tcp
+      group: gate
+    - port: 22
+      proto: tcp
+      group: dev

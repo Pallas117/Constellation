@@ -30,6 +30,24 @@ fw=$(printf '%s\n' "$out" | grep -n 'ufw --force enable' | cut -d: -f1); sv=$(pr
 [[ "$out" != *"enable --now argo-relay"* ]]; expect "vps bootstrap leaves the Argo relay stopped until fingerprints are confirmed" $?
 [[ "$out" == *"sha256"* || "$out" == *"SHA-256"* ]]; expect "vps downloads of Node and Go are checked against published checksums" $?
 
+# --- bootstrap.sh --mesh nebula|both (the Nebula lighthouse, scripts/ops/nebula) ---
+[[ "$out" != *"4242"* && "$out" != *"nebula"* ]]; expect "vps default (tailscale) path is unchanged: no Nebula" $?
+nout=$(bash "$B" --mesh nebula --dry-run 2>&1); rc=$?
+[ "$rc" = 0 ] && [ "$(printf '%s\n' "$nout" | grep -c '^==> [1-9]/9 ')" = 9 ]; expect "vps bootstrap --mesh nebula --dry-run exits 0 with all nine steps" $?
+[[ "$nout" == *"fetch.sh linux-"* && "$nout" == *"nebula-cert keygen -out-key /etc/nebula/host.key"* && "$nout" == *"config/lighthouse.yml /etc/nebula/config.yml"* ]]
+expect "vps nebula: pinned release, key pair made on the VPS, lighthouse config" $?
+[[ "$nout" != *"tailscale up"* && "$nout" != *"tailscale serve"* && "$nout" != *"tailscale0"* ]]; expect "vps --mesh nebula never joins or uses Tailscale" $?
+[[ "$nout" == *"ufw allow 4242/udp"* && "$nout" == *"ufw allow in on nebula1"* && "$nout" != *"allow 22"* && "$nout" != *"OpenSSH"* ]]
+expect "vps nebula firewall opens only UDP 4242 publicly; SSH stays off the public address" $?
+fw=$(printf '%s\n' "$nout" | grep -n 'ufw --force enable' | cut -d: -f1); nb=$(printf '%s\n' "$nout" | grep -n 'enable --now nebula.service' | cut -d: -f1)
+[ -n "$fw" ] && [ -n "$nb" ] && [ "$fw" -gt "$nb" ]; expect "vps nebula firewall is enabled last, after Nebula starts" $?
+[[ "$nout" == *"hub stays on 127.0.0.1:3001"* ]]; expect "vps --mesh nebula keeps the hub on loopback (SSH tunnel over Nebula)" $?
+bout=$(bash "$B" --mesh both --dry-run 2>&1); rc=$?
+[ "$rc" = 0 ] && [[ "$bout" == *"tailscale up"* && "$bout" == *"tailscale serve"* && "$bout" == *"ufw allow in on tailscale0"* && "$bout" == *"ufw allow 4242/udp"* ]]
+expect "vps --mesh both runs Tailscale and the Nebula lighthouse side by side" $?
+bash "$B" --mesh wireguard --dry-run >/dev/null 2>&1; [ $? = 1 ]; expect "vps bootstrap refuses an unknown --mesh" $?
+grep -q 'UDP 4242' "$D/cloud-init.yaml"; expect "vps cloud-init documents the provider firewall: UDP 4242 only for Nebula" $?
+
 # --- bootstrap.sh refuses bad input ---
 bash "$B" --repo http://example.com/x.git --dry-run >/dev/null 2>&1; [ $? = 1 ]; expect "vps bootstrap refuses a non-https repo URL" $?
 bash "$B" --ref 'main;rm -rf /' --dry-run >/dev/null 2>&1; [ $? = 1 ]; expect "vps bootstrap refuses a git ref with shell characters" $?

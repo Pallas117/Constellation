@@ -1,0 +1,61 @@
+# Nebula config for the CA Mac (macOS laptop; overlay e.g. 10.117.0.50, group dev). Install as
+# /etc/nebula/config.yml after replacing <lighthouse-public-ip> (node-setup.sh prints the command).
+# No secrets here: the private key is /etc/nebula/host.key (0600 root, made on the Mac), certificates are public.
+# Note: this node key is NOT the CA key. The CA key stays in the login Keychain and Nebula never reads it.
+pki:
+  ca: /etc/nebula/ca.crt
+  cert: /etc/nebula/host.crt
+  key: /etc/nebula/host.key
+  blocklist: []
+  disconnect_invalid: true
+
+static_host_map:
+  "10.117.0.1": ["<lighthouse-public-ip>:4242"]
+
+lighthouse:
+  am_lighthouse: false
+  interval: 60
+  hosts:
+    - "10.117.0.1"
+
+listen:
+  host: "::"
+  port: 0
+
+punchy:
+  punch: true
+  respond: true
+
+relay:
+  relays:
+    - 10.117.0.1
+  am_relay: false
+  use_relays: true
+
+# macOS: no `dev` (it must be utunN; the OS picks a free one).
+tun:
+  disabled: false
+  drop_local_broadcast: true
+  drop_multicast: true
+  mtu: 1300
+
+logging:
+  level: info
+  format: text
+
+firewall:
+  outbound_action: drop
+  inbound_action: drop
+  conntrack:
+    tcp_timeout: 12m
+    udp_timeout: 3m
+    default_timeout: 10m
+  outbound:
+    - port: any
+      proto: any
+      host: any
+  # The Mac accepts nothing over the overlay except ping. It reaches out; nothing reaches in.
+  inbound:
+    - port: any
+      proto: icmp
+      host: any

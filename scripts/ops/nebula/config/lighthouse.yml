@@ -1,0 +1,65 @@
+# Nebula config for the lighthouse + relay (the cloud VPS, overlay 10.117.0.1, group hub).
+# Installed as /etc/nebula/config.yml by scripts/ops/vps/bootstrap.sh --mesh nebula|both. No secrets here:
+# the private key is /etc/nebula/host.key (0600 root, made on this machine), the certificates are public.
+# The lighthouse only answers "where is X" and relays sealed packets: it never sees overlay traffic in the clear.
+pki:
+  ca: /etc/nebula/ca.crt
+  cert: /etc/nebula/host.crt
+  key: /etc/nebula/host.key
+  # Revocation: add the fingerprint (`nebula-cert print -path <crt>`) of a lost or stolen device's certificate.
+  # An invalid entry stops Nebula from starting, so check it with `nebula -test -config /etc/nebula/config.yml`.
+  blocklist: []
+  # Drop a tunnel as soon as the other side's certificate expires or is blocked.
+  disconnect_invalid: true
+
+static_host_map: {}
+
+lighthouse:
+  am_lighthouse: true
+  interval: 60
+  # Must stay empty on a lighthouse.
+  hosts: []
+
+# The one public port: UDP 4242. Open it in the provider's firewall too (README, VPS kit).
+listen:
+  host: "::"
+  port: 4242
+
+punchy:
+  punch: true
+
+relay:
+  am_relay: true
+  use_relays: false
+
+tun:
+  disabled: false
+  dev: nebula1
+  drop_local_broadcast: true
+  drop_multicast: true
+  mtu: 1300
+
+logging:
+  level: info
+  format: text
+
+firewall:
+  outbound_action: drop
+  inbound_action: drop
+  conntrack:
+    tcp_timeout: 12m
+    udp_timeout: 3m
+    default_timeout: 10m
+  outbound:
+    - port: any
+      proto: any
+      host: any
+  # Inbound is deny-by-default. A rule's `groups:` list is AND (all groups needed), so "dev or gate" is two rules.
+  inbound:
+    - port: any
+      proto: icmp
+      host: any
+    # SSH to the VPS only over Nebula, only from laptops. sshd stays closed on the public address (ufw).
+    - port: 22
+      proto: tcp
+      group: dev
