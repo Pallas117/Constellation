@@ -1217,6 +1217,24 @@
       ]
     },
     {
+      "id": "REQ-OPS-013",
+      "title": "Ops tests on the gatebox only by an exact pass",
+      "statement": "With merge trust and the ops setting on (off by default), the gate runner shall ask the gatebox to run the ops tests only for merge-train requests, shall skip the ops tests on this Mac only when the gatebox's ops line passes and names the exact commit with no failed tests, and shall otherwise run the ops tests on this Mac; it shall never write a deploy record from the gatebox, and the gatebox's forced command shall refuse any option but ops.",
+      "rationale": "After a gatebox pass the ops step on the 8 GB Mac still waited for memory (swap above 4 GB) and held merges (25 Nov 2026).",
+      "parent": "GAU-239",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "gatebox ops: a train head whose ops tests passed on the gatebox merges with nothing run here (no deploy record)",
+        "gatebox ops: a missing tool, a failure, no commit or another commit named, or an older gauss-gate-run: the ops tests run here",
+        "gatebox ops: a request without --pr never asks for them; the full gates run here for the deploy record",
+        "gatebox ops: needs merge trust; without it the gatebox is only asked to screen",
+        "gatebox ops: run-one checks the gatebox log itself; without its pass line the request stays queued",
+        "gauss-gate-run: an option other than ops, or another repo, is refused before anything runs",
+        "gatebox: cloud-init installs the same gauss-gate-run as scripts/ops/gatebox/gauss-gate-run"
+      ]
+    },
+    {
       "id": "REQ-SEC-017",
       "title": "Device trust only by proof",
       "statement": "The API shall mark a device trusted only after a verified proof, register new devices as unverified, accept only downgrade statuses from a device owner, and reject fingerprint signals beyond 32 flat entries.",
