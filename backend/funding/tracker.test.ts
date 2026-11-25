@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { SYNTHETIC_TRACKER_CSV, TODAY } from "./fixtures/synthetic-tracker.js";
-import { linkOf, MAX_TRACKER_BYTES, MAX_TRACKER_ROWS, parseTracker, parseTrackerDate, typeOf, type TrackerSummary } from "./tracker.js";
+import { linkOf, MAX_TRACKER_BYTES, MAX_TRACKER_ROWS, parseTracker, parseTrackerDate, stageStatusOf, typeOf, type TrackerSummary } from "./tracker.js";
 
 // Synthetic data only (backend/funding/fixtures/synthetic-tracker.ts): no real tracker is read by any test.
 function summaryOf(csv: string, today = TODAY): TrackerSummary {
@@ -162,4 +162,73 @@ test("funding tracker: control characters and line breaks inside cells become sp
   const s = summaryOf('Name,Owner\n"Example\tname\u0007\nsecond line","Owner\u2028A"\n');
   assert.equal(s.rows[0].name, "Example name second line");
   assert.equal(s.rows[0].owner, "Owner A");
+});
+
+test("funding tracker: stages are closed or submitted only when every word says so; negations and doubt keep the deadline", () => {
+  const cases: Array<[string | null, "open" | "submitted" | "closed"]> = [
+    // A negation or an instruction wins: the deadline must stay visible.
+    ["Not submitted", "open"],
+    ["To be submitted", "open"],
+    ["Draft (not sent)", "open"],
+    ["Not done", "open"],
+    ["Complete application", "open"],
+    ["Lost contact - chase", "open"],
+    ["Lost contact", "open"],
+    ["Unsent", "open"],
+    ["Pending", "open"],
+    ["Submitted? not yet", "open"],
+    ["Re-submit", "open"],
+    ["Complete", "open"],
+    ["Submitted, awaiting decision", "open"],
+    // Unknown or empty stages are open.
+    [null, "open"],
+    ["", "open"],
+    ["Intro call", "open"],
+    ["Drafting", "open"],
+    // The normal positives.
+    ["Submitted", "submitted"],
+    ["submitted 3 Nov", "submitted"],
+    ["Sent", "submitted"],
+    ["Applied", "submitted"],
+    ["Application sent", "submitted"],
+    ["Closed", "closed"],
+    ["Closed - lost", "closed"],
+    ["Won", "closed"],
+    ["Lost", "closed"],
+    ["Awarded", "closed"],
+    ["Rejected", "closed"],
+    ["Withdrawn", "closed"],
+    ["DECLINED", "closed"],
+    ["Done", "closed"],
+    ["Completed", "closed"],
+    ["Not selected", "closed"],
+    ["Submitted - rejected", "closed"],
+  ];
+  for (const [stage, expected] of cases) assert.equal(stageStatusOf(stage), expected, `stage ${JSON.stringify(stage)}`);
+});
+
+test("funding tracker: a negated stage keeps its row due or overdue", () => {
+  const csv = [
+    "Name,Stage,Deadline",
+    "Row not submitted,Not submitted,2026-11-20",
+    "Row to be submitted,To be submitted,2026-11-21",
+    "Row draft,Draft (not sent),2026-11-22",
+    "Row not done,Not done,2026-11-10",
+    "Row complete application,Complete application,2026-11-11",
+    "Row lost contact,Lost contact - chase,2026-11-12",
+    "Row submitted,Submitted,2026-11-23",
+    "Row closed,Closed - lost,2026-11-13",
+    "",
+  ].join("\n");
+  const s = summaryOf(csv);
+  assert.deepEqual(s.rows.map((r) => r.closed), [false, false, false, false, false, false, false, true]);
+  assert.deepEqual(s.upcoming, [
+    { row: 2, kind: "deadline", date: "2026-11-20", days: 2 },
+    { row: 3, kind: "deadline", date: "2026-11-21", days: 3 },
+    { row: 4, kind: "deadline", date: "2026-11-22", days: 4 },
+  ]);
+  assert.deepEqual(
+    s.overdue.map((d) => d.row).sort((a, b) => a - b),
+    [5, 6, 7],
+  );
 });

@@ -62,10 +62,51 @@ const TYPE_WORDS: ReadonlyArray<[FundingType, RegExp]> = [
   ["bid", /^(bid|bids|tender|tenders|rfp|proposal|contract|procurement)$/],
 ];
 
-/** Stages that end a row: nothing about it is overdue or upcoming any more. */
-const CLOSED_STAGE = /\b(closed|won|lost|declined|rejected|withdrawn|awarded|complete|completed|done|dead|unsuccessful|not selected|funded|invested)\b/i;
-/** Stages that mean the application went in: its deadline is met, a dated next action still counts. */
-const SUBMITTED_STAGE = /\b(submitted|applied|sent)\b/i;
+/**
+ * How a free-text stage is read. "closed" ends a row (nothing about it is overdue or upcoming any
+ * more); "submitted" means the application went in (its deadline is met, a dated next action still
+ * counts); anything else is "open". A missed grant deadline costs far more than a stale one shown,
+ * so every doubt falls to "open": a negation or instruction word anywhere ("Not submitted",
+ * "To be sent", "Draft (not sent)", "Lost contact - chase", "Complete application") wins, and a
+ * stage counts as closed or submitted only when EVERY word in it is a known status word, a filler
+ * word or part of a date ("Closed - lost", "Submitted 3 Nov", "Application sent").
+ */
+export type StageStatus = "open" | "submitted" | "closed";
+/** Whole stages that are an outcome even though they start with a negation. */
+const CLOSED_WHOLE_STAGES = new Set(["not selected", "not successful", "not funded", "not awarded"]);
+const CLOSED_WORDS = new Set(["closed", "won", "lost", "declined", "rejected", "withdrawn", "awarded", "completed", "done", "dead", "unsuccessful", "funded", "invested"]);
+const SUBMITTED_WORDS = new Set(["submitted", "applied", "sent"]);
+/** Words that make any stage open, whatever else it says. */
+const OPEN_GUARD_WORDS = new Set([
+  "not", "no", "never", "yet", "draft", "drafting", "drafted", "unsent", "unsubmitted", "pending",
+  "chase", "chasing", "todo", "tbd", "tbc", "complete", "resubmit", "resend", "reapply", "planned", "plan",
+]);
+const OPEN_GUARD_PHRASES = [/\bto (be|do)\b/, /\bcomplete (the |an )?application\b/, /\bre (submit|send|apply)\b/];
+/** Words that may sit next to a status word without changing it. */
+const FILLER_WORDS = new Set(["and", "on", "application", "proposal", "bid"]);
+const MONTH_WORDS = new Set([
+  "jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "sept", "oct", "nov", "dec",
+  "january", "february", "march", "april", "june", "july", "august", "september", "october", "november", "december",
+]);
+const DATE_NUMBER = /^\d{1,4}(st|nd|rd|th)?$/;
+
+/** A stage cell -> open, submitted or closed. Unknown or mixed wording is open (the deadline stays shown). */
+export function stageStatusOf(stage: string | null | undefined): StageStatus {
+  if (stage === null || stage === undefined) return "open";
+  const normalised = stage.normalize("NFKC").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+  if (normalised === "") return "open";
+  if (CLOSED_WHOLE_STAGES.has(normalised)) return "closed";
+  if (OPEN_GUARD_PHRASES.some((p) => p.test(normalised))) return "open";
+  let closed = false;
+  let submitted = false;
+  for (const w of normalised.split(" ")) {
+    if (OPEN_GUARD_WORDS.has(w)) return "open";
+    if (CLOSED_WORDS.has(w)) closed = true;
+    else if (SUBMITTED_WORDS.has(w)) submitted = true;
+    else if (!FILLER_WORDS.has(w) && !MONTH_WORDS.has(w) && !DATE_NUMBER.test(w)) return "open";
+  }
+  return closed ? "closed" : submitted ? "submitted" : "open";
+}
 
 const MONTHS = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
 const MONTH_NAMES = ["january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november", "december"];
@@ -272,7 +313,7 @@ export function parseTracker(text: string, today: string): { ok: true; summary: 
       owner: textOf("owner"),
       link,
       lastContact: dateOf("lastContact"),
-      closed: stage !== null && CLOSED_STAGE.test(stage),
+      closed: stageStatusOf(stage) === "closed",
     });
   });
   if (beyondCap > 0) problems.push({ row: 0, field: "file", reason: `more than ${MAX_TRACKER_ROWS} rows: ${beyondCap} left out` });
@@ -289,7 +330,7 @@ export function parseTracker(text: string, today: string): { ok: true; summary: 
     stages.set(key, group);
     if (r.closed) continue;
     const due: Array<[DueItem["kind"], string | null]> = [
-      ["deadline", r.stage !== null && SUBMITTED_STAGE.test(r.stage) ? null : r.deadline],
+      ["deadline", stageStatusOf(r.stage) === "submitted" ? null : r.deadline],
       ["nextAction", r.nextActionDate],
     ];
     for (const [kind, date] of due) {
