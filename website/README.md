@@ -22,7 +22,7 @@ closed until `RELEASE: "full"`. See "Launch" and "Opening accounts later".
 | `/education/apply/` | A department licence request, or a review for people without a university email. |
 | `/app/` | Signed-in workspace: quote and payment (card, or an invoice where you allow it), billing state, pilot progress, space weather, Constellation membership, members' opportunities, and the staff link for the team. |
 | `/app/admin/` | For `ADMIN_EMAILS`: approve with a quote, set plan, billing, pilot step; invite Constellation members (free). |
-| `/constellation/time/` | Public time-zone planner. Pick a date and up to 8 zones to see the local hour everywhere, with the hours that suit everyone outlined. A picked hour comes with a calendar file. No data is stored. |
+| `/constellation/time/` | Public time-zone planner. Pick a date and up to 8 zones to see the local hour everywhere, with the hours that suit everyone outlined. A picked hour comes with a calendar file, names each zone's offset and says where it is an unsocial hour (22:00–07:00 local). No data is stored. |
 | `/privacy/` | What is kept, why, for how long, and how to have it deleted. |
 | `/pilot`, `/sales` | Redirects into the Gauss flow (the entry points named in the sales plan), via `public/_redirects`. |
 | `/api/launches`, `/api/launches.ics`, `/api/space-weather`, `/api/health` | JSON, a calendar feed and a health check. |
@@ -178,6 +178,11 @@ old `argo-glyph-provisional.svg` stays only while the Access login page set-up (
   organisers, descriptions, addresses or coordinates. Up to 6 upcoming and the 3 most recent show, with "Follow
   Constellation on Luma". If Luma is down, the section still shows the link and `/api/health` stays green.
   New events appear by themselves once they're posted on Luma.
+  **Times (2026-11-18):** times are UTC and say so. "Show times in" is a plain GET form (`/constellation/?tz=Asia/Kolkata#events`,
+  zones allowlisted in `worker/timezones.js`): each event then leads with that zone's own date and time, the zone and its
+  offset named, with UTC kept beside it. The Worker does the conversion with its IANA database, so clock changes are
+  handled; no script, cookie, geolocation or IP lookup, and nothing is stored. The feed's times are UTC, so UTC is the
+  shared reference (an event's own venue zone is not kept).
 - **Workshops (06):** ethics, resilience and tech leadership, "led by facilitators from the Constellation community;
   members join free". `/constellation/workshops/` is a team request form (organisation, workshop, format, group
   size, when). It lands in admin as "WORKSHOP · …", and "Mark contacted" creates no account.

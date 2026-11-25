@@ -19,8 +19,9 @@ mkdirSync(OUT, { recursive: true });
 // [name, path, signed in as, expected status] — the dev seeds in dev.mjs give each workspace state an account.
 const PAGES = [
   ["home", "/"], ["gauss", "/gauss/"], ["evidence", "/gauss/evidence/"], ["gauss-apply", "/gauss/apply/"],
-  ["constellation", "/constellation/"], ["const-apply", "/constellation/apply/"], ["workshops", "/constellation/workshops/"],
+  ["constellation", "/constellation/"], ["constellation-tz", "/constellation/?tz=Asia/Kolkata"], ["const-apply", "/constellation/apply/"], ["workshops", "/constellation/workshops/"],
   ["planner", "/constellation/time/?z=Europe/London&z=Asia/Kuala_Lumpur&z=America/New_York&date=2026-10-23&at=9"],
+  ["planner-late", "/constellation/time/?z=Europe/London&z=Asia/Kolkata&z=Pacific/Auckland&date=2026-11-21&at=9"],
   ["turnstone", "/turnstone/"], ["argo", "/argo/"], ["education", "/education/"], ["education-apply", "/education/apply/"],
   ["privacy", "/privacy/"], ["terms", "/terms/"], ["404", "/nope", null, 404],
   ["app-due", "/app/", "pilot@example.test"], ["app-operator", "/app/", "fleet@example.test"], ["app-member", "/app/", "member@example.test"],
