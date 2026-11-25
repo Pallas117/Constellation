@@ -23,7 +23,8 @@
 #     When a gate fails: 1. `gates why <commit>` (never start in the raw log). 2. Apply the fix it names, or find
 #     the cause. 3. `npm run -s check:changed` before re-queueing with --pr. 4. If the cause was new, add a row to
 #     GATES_CAUSES with its date, so the same failure is named next time. That list is how failures go down.
-#   scripts/ops/gauss-services.sh gates passed <commit>    exit 0 only if that commit's exact tree has a passing record (for scripts)
+#   scripts/ops/gauss-services.sh gates passed [--deploy] <commit>   exit 0 only if that commit's exact tree passed: for merging, a
+#                                                          full record or a gatebox merge-only pass; --deploy: a full record only (for scripts)
 #   scripts/ops/gauss-services.sh events [--since 2h] [--json]     timeline: watchdog, failover, deploys, alerts, boots (events.jsonl)
 #
 # Three layers (GAU-158): dev (any other checkout, foreground, own ports and data,
@@ -1373,12 +1374,33 @@ gates_after_pass() { # gates_after_pass <sha> [<pr>]: run the after-pass hook (G
   return 0
 }
 
-gates_passed() { # gates_passed <checkout-dir>|<commit>: exit 0 only if that commit's exact tree has a passing record
+gate_merge_record() { # gate_merge_record <sha> <tree>: a gatebox pass is good for merging (not deploying): <tree>.merge.json
+  local f="$GATES_DIR/$2.merge.json"
+  printf '{"passed":true,"kind":"merge-only","sha":"%s","tree":"%s","gatebox":"%s","at":"%s"}\n' "$1" "$2" "${GATEBOX:-}" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >"$f.tmp" && mv -f "$f.tmp" "$f"
+}
+
+gate_merge_ok() { # gate_merge_ok <sha> <tree>: a merge-only pass for this exact tree (its record, or the results line of a pass made before records)
+  if [ -f "$GATES_DIR/$2.merge.json" ] && python3 -Ic '
+import json, sys
+r = json.load(open(sys.argv[1]))
+sys.exit(0 if r.get("passed") is True and r.get("tree") == sys.argv[2] else 1)
+' "$GATES_DIR/$2.merge.json" "$2" 2>/dev/null; then return 0; fi
+  grep -q "^[^ ]* $1 $2 PASSED merge only" "$GATES_RESULTS" 2>/dev/null
+}
+
+gates_passed() { # gates_passed [--deploy] <checkout-dir>|<commit>: exit 0 only if that commit's exact tree passed
   # The contract for scripts such as merge-approved.sh: the record, not the wording of the latest result
   # line (18 Nov: "SKIPPED already passed" didn't match its pattern and left #172 unmerged; a commit
-  # re-queued after a pass shows QUEUED). Exit 0 passed, 1 no passing record, 2 unknown commit.
-  gates_resolve "${1:?usage: $0 gates passed <checkout-dir>|<commit>}" >/dev/null 2>&1 || { echo "Unknown commit '$1'."; return 2; }
+  # re-queued after a pass shows QUEUED). For merging, a gatebox pass (Talos ran npm ci, test, quality and
+  # build; this Mac ran test:ops) counts too: it writes no deploy record, and until 25 Nov that left every
+  # approved draft that passed on the gatebox as "no pass yet" in merge-approved.sh (#328 sat a day).
+  # --deploy: a full record only. Exit 0 passed, 1 no passing record, 2 unknown commit.
+  local deploy=0; [ "${1:-}" = --deploy ] && { deploy=1; shift; }
+  gates_resolve "${1:?usage: $0 gates passed [--deploy] <checkout-dir>|<commit>}" >/dev/null 2>&1 || { echo "Unknown commit '$1'."; return 2; }
   if gate_record "$G_TREE" >/dev/null; then gates_summary "$GATES_DIR/$G_TREE.json"; return 0; fi
+  if [ "$deploy" = 0 ] && gate_merge_ok "$G_SHA" "$G_TREE"; then
+    echo "PASSED ${G_SHA:0:7} (tree ${G_TREE:0:7}): merge only (gatebox pass, test:ops here); no deploy record"; return 0
+  fi
   echo "NOT PASSED ${G_SHA:0:7} (tree ${G_TREE:0:7}): no passing gate record"; return 1
 }
 
@@ -1571,6 +1593,7 @@ gates_ops_only() { # gates_ops_only <request> <checkout> <sha> <tree> <pr> <repo
     return 1
   fi
   gates_result "$sha" "$tree" PASSED "merge only, no deploy record: gatebox $GATEBOX passed ${sha:0:7} (npm ci, test, quality:full, build); here test:ops ${counts#gauss-services: }"
+  gate_merge_record "$sha" "$tree" # so `gates passed` (merge-approved.sh) counts it after a person approves
   [ -z "$pr" ] || train_merge "$pr" "$sha" "$tree" "$repo" || true
 }
 
@@ -2555,7 +2578,7 @@ case "${1:-}" in
       run) gates_run "${3:-}" ;;
       run-one) gates_run_one "${3:?}" "${4:-}" "${5:-}" ;;
       result) if [ "${3:-}" = status ]; then gates_status; else gates_show_result "${3:-}"; fi ;;
-      passed) gates_passed "${3:-}" ;;
+      passed) gates_passed "${@:3}" ;;
       why) gates_why "${3:-}" ;;
       queue) gates_queue ;;
       priority) gates_priority "${3:-}" "${4:-front}" ;;
