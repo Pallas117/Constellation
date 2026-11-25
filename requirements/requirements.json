@@ -494,6 +494,29 @@
       ]
     },
     {
+      "id": "REQ-SEC-007",
+      "title": "Argo session ratchet: per-request authentication keys (R&D, off by default)",
+      "statement": "The Argo session ratchet shall make a per-session root at sign-in from a hybrid ML-KEM-768 + X25519 exchange whose transcript the server signs with ML-DSA-65 and Ed25519, tag each request with a fresh message key bound to the step, method, path and declared context, accept each step once, and delete the session on any failed, replayed, too-far or malformed step, another cookie session or client address, idle or age timeout, or revocation; it shall stay off unless ARGO_SESSION_RATCHET=on. It authenticates requests and does not encrypt them.",
+      "rationale": "Josh, 2026-11-05: a login whose keys change per request and die on doubt. The protocol is invented; the primitives are standard (Node 26 built-in crypto). Unreviewed: outside review and Josh before it is switched on. Design and gaps: docs/security/argo-session-ratchet.md.",
+      "parent": "GAU-235",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "argo ratchet: derivations match the independent test vectors",
+        "argo ratchet: X25519 in Node matches RFC 7748 section 6.1",
+        "argo ratchet: seeded server keys are deterministic and both signatures are required",
+        "argo ratchet root: hybrid ML-KEM-768 + X25519 gives both sides the same chain at sign-in",
+        "argo ratchet root: a pinned client refuses other server keys, a bad signature, or another binding",
+        "argo ratchet root: malformed key shares are refused with fixed messages",
+        "argo ratchet step: each request has a fresh key, and a step is accepted once",
+        "argo ratchet step: out-of-order steps inside the window pass once; a reordered replay or a step past the window fails",
+        "argo ratchet step: a step tagged for another context, method or path fails and kills the session",
+        "argo ratchet step: a copied step from another cookie session or address fails, as does a malformed step",
+        "argo ratchet death: idle and age timeouts, revocation by token and by user, and the per-user cap",
+        "argo ratchet flag: off unless ARGO_SESSION_RATCHET=on"
+      ]
+    },
+    {
       "id": "REQ-SEC-002",
       "title": "Upstream courtesy",
       "statement": "Adapters shall poll no faster than these minimum intervals: NOAA, JAXA, LASP and GOES 60 s; ESA 10 s; SWPC products 2 min; MMS and Kyoto Dst 10 min; and after consecutive failures a source shall wait 10 s, doubling to at most 10 min, before its next attempt.",
