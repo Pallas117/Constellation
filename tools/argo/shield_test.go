@@ -37,6 +37,7 @@ func TestShieldOnOpenWiFiOffWhenProtected(t *testing.T) {
 	open, verified := shieldSnap(t, "NONE", warpOff), shieldSnap(t, "NONE", warpOn)
 	home := shieldSnap(t, "WPA2_PSK", warpOn)
 	l, fx := newLoop(t, open, verified, home)
+	l.ShieldWARP = true
 	st := l.Tick(context.Background())
 	if !st.ShieldOn || strings.Join(fx.ran, ";") != "warp-cli --accept-tos connect" {
 		t.Fatalf("open Wi-Fi: shield=%v ran=%v", st.ShieldOn, fx.ran)
@@ -58,6 +59,7 @@ func TestShieldUndoesWhenItBreaksTheConnection(t *testing.T) {
 	broken := shieldSnap(t, "NONE", warpOn)
 	broken.Tailscale.Running = false
 	l, fx := newLoop(t, open, broken, open, open)
+	l.ShieldWARP = true
 	st := l.Tick(context.Background())
 	if st.ShieldOn || strings.Join(fx.ran, ";") != "warp-cli --accept-tos connect;warp-cli --accept-tos disconnect" {
 		t.Fatalf("broken tunnel kept: shield=%v ran=%v", st.ShieldOn, fx.ran)
@@ -77,6 +79,7 @@ func TestShieldUndoesWhenItBreaksTheConnection(t *testing.T) {
 func TestShieldRespectsManualOff(t *testing.T) {
 	open, on := shieldSnap(t, "NONE", warpOff), shieldSnap(t, "NONE", warpOn)
 	l, fx := newLoop(t, open, on, open, open)
+	l.ShieldWARP = true
 	l.Tick(context.Background()) // on
 	st := l.Tick(context.Background())
 	if st.ShieldOn || !st.Networks[st.Fingerprint].NoShield {
@@ -96,6 +99,7 @@ func TestShieldSwitchesProxyModeAndPutsItBack(t *testing.T) {
 	open, verified := shieldSnap(t, "NONE", warpProxy), shieldSnap(t, "NONE", warpOn)
 	home := shieldSnap(t, "WPA2_PSK", warpOn)
 	l, fx := newLoop(t, open, verified, home)
+	l.ShieldWARP = true
 	st := l.Tick(context.Background())
 	if !st.ShieldOn || st.ShieldPrevMode != "proxy" || strings.Join(fx.ran, ";") != "warp-cli --accept-tos mode warp;warp-cli --accept-tos connect" {
 		t.Fatalf("open Wi-Fi: %+v ran=%v", st, fx.ran)
@@ -113,6 +117,7 @@ func TestShieldAlreadyConnectedInProxyStaysConnected(t *testing.T) {
 	open, verified := shieldSnap(t, "NONE", proxyOn), shieldSnap(t, "NONE", warpOn)
 	home := shieldSnap(t, "WPA2_PSK", warpOn)
 	l, fx := newLoop(t, open, verified, home)
+	l.ShieldWARP = true
 	l.Tick(context.Background())
 	l.Tick(context.Background())
 	if strings.Join(fx.ran, ";") != "warp-cli --accept-tos mode warp;warp-cli --accept-tos mode proxy" {
@@ -125,6 +130,7 @@ func TestShieldAlreadyConnectedInProxyStaysConnected(t *testing.T) {
 func TestShieldLeavesAnUnknownModeAlone(t *testing.T) {
 	p := shieldSnap(t, "NONE", Warp{Installed: true, Mode: "SomethingNew"})
 	l, fx := newLoop(t, p, p)
+	l.ShieldWARP = true
 	l.Tick(context.Background())
 	l.Tick(context.Background())
 	advice := 0
@@ -141,7 +147,48 @@ func TestShieldLeavesAnUnknownModeAlone(t *testing.T) {
 // TestShieldLeavesProtectedNetworksAlone: WPA2 Wi-Fi with WARP off: nothing runs.
 func TestShieldLeavesProtectedNetworksAlone(t *testing.T) {
 	l, fx := newLoop(t, shieldSnap(t, "WPA2_PSK", warpOff))
+	l.ShieldWARP = true
 	if st := l.Tick(context.Background()); st.ShieldOn || len(fx.ran) != 0 {
 		t.Fatalf("acted on a protected network: %v", fx.ran)
+	}
+}
+
+// TestShieldOffByDefaultAdvisesOnce (2026-11-05, security review finding 6): without
+// "wifi_shield": "warp" Argo never runs warp-cli on open Wi-Fi; it says once per network that
+// WARP would help, and puts WARP back if an earlier Argo had turned it on.
+func TestShieldOffByDefaultAdvisesOnce(t *testing.T) {
+	open := shieldSnap(t, "NONE", warpOff)
+	l, fx := newLoop(t, open, open, open)
+	st := l.Tick(context.Background())
+	if st.ShieldOn || len(fx.ran) != 0 {
+		t.Fatalf("WARP touched by default: shield=%v ran=%v", st.ShieldOn, fx.ran)
+	}
+	notes := strings.Join(fx.notes, ";")
+	if !strings.Contains(notes, "Argo: open Wi-Fi") || strings.Contains(notes, "tunnel on") {
+		t.Fatalf("notes=%s", notes)
+	}
+	if st = l.Tick(context.Background()); len(fx.notes) != 1 || len(fx.ran) != 0 {
+		t.Fatalf("second tick: notes=%v ran=%v", fx.notes, fx.ran)
+	}
+	fp := Fingerprint(open.GatewayMAC, open.PublicIP)
+	if !st.Networks[fp].ShieldAdvised {
+		t.Fatal("advice not remembered for the network")
+	}
+	// A tunnel an earlier (automatic) Argo opened is closed again, once.
+	st.ShieldOn, st.ShieldPrevMode = true, "proxy"
+	if err := l.Store.Save(st); err != nil {
+		t.Fatal(err)
+	}
+	st = l.Tick(context.Background())
+	if st.ShieldOn || strings.Join(fx.ran, ";") != "warp-cli --accept-tos disconnect;warp-cli --accept-tos mode proxy" {
+		t.Fatalf("restore: shield=%v ran=%v", st.ShieldOn, fx.ran)
+	}
+	// Already connected by hand: nothing to say.
+	byHand := shieldSnap(t, "NONE", warpOn)
+	byHand.GatewayMAC = "aa:bb:cc:dd:ee:02"
+	l2, fx2 := newLoop(t, byHand)
+	l2.Tick(context.Background())
+	if len(fx2.notes) != 0 || len(fx2.ran) != 0 {
+		t.Fatalf("WARP on by hand: notes=%v ran=%v", fx2.notes, fx2.ran)
 	}
 }
