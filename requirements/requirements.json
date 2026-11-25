@@ -1231,6 +1231,22 @@
       ]
     },
     {
+      "id": "REQ-OPS-012",
+      "title": "A stuck gate step cannot hold the merge train",
+      "statement": "The gate runner shall stop any local gate step that runs past its time limit, together with every process the step started, record the request as a timeout and continue with the next request; it shall read the gatebox addresses and trust setting again for every request; and a restart command shall stop the runner and its run without writing a result, leaving every request queued.",
+      "rationale": "One step with no limit held 16 requests for 3.5 hours, and a runner that read its settings once kept gating on the small machine after the settings named a larger one.",
+      "parent": "GAU-206",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "gates run: the gatebox addresses and trust line are read again for every request, not once per runner",
+        "gates run: a gate step past its time limit is stopped (its children too) and recorded as a timeout, and the queue goes on",
+        "gates why: a timeout is named as a known cause, with its fix",
+        "gates restart: a stuck runner and its run are stopped with no result, requests stay queued, and a dead owner's gate lock is cleared",
+        "gates restart: a gate lock whose owner is alive is kept"
+      ]
+    },
+    {
       "id": "REQ-SEC-017",
       "title": "Device trust only by proof",
       "statement": "The API shall mark a device trusted only after a verified proof, register new devices as unverified, accept only downgrade statuses from a device owner, and reject fingerprint signals beyond 32 flat entries.",
