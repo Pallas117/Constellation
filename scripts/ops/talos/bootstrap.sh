@@ -18,6 +18,12 @@
 #                         It reports what it would change and changes nothing unless also
 #   --apply-profile       is given: then it uses sudo, printing every command first.
 #   --no-bluetooth        with --profile ops: also disable bluetooth.
+#   --profile desktop|models|agents|claws   more profiles (desktop-profile.sh, models-profile.sh,
+#                         agents-profile.sh, claws-profile.sh), same rules: report only, then
+#                         --apply-profile for the sudo/user changes. Downloads need their own flag:
+#   --apply-models        with --profile models: run the printed `ollama pull` (a download)
+#   --apply-claws         with --profile claws: pull the container image and create (not start) it
+#   --claw-image REF      with --profile claws: image pinned by digest (name@sha256:...)
 #   --dry-run             print every action, change nothing (works on any OS)
 #
 # What it does, in order. Every step is safe to re-run; after a dropped connection run the same
@@ -40,7 +46,7 @@ set -euo pipefail
 main() {
   local REPO_URL="https://github.com/Pallas117/Constellation.git" # fixed: no --repo option
   local UNIT=gauss-argo.service
-  local LOGIN="" COMMIT="" DIR="$HOME/src/Constellation" INSTALL=0 DRY=0 PROFILE="" PAPPLY=0 NOBT=0
+  local LOGIN="" COMMIT="" DIR="$HOME/src/Constellation" INSTALL=0 DRY=0 PROFILE="" PAPPLY=0 NOBT=0 AMODELS=0 ACLAWS=0 CLAWIMG=""
   # Test hooks (talos-kit.test.sh): a fake / for the files that are read, and the unit directory.
   local ROOT="${TALOS_KIT_SYSROOT:-}" UNIT_DIR="${TALOS_KIT_UNIT_DIR:-/etc/systemd/system}"
   local TRIES="${TALOS_KIT_FETCH_TRIES:-5}" WAIT="${TALOS_KIT_FETCH_WAIT:-15}"
@@ -49,7 +55,7 @@ main() {
   say() { printf '==> %s\n' "$*"; }
   note() { printf '    %s\n' "$*"; }
   die() { local rc="$1"; shift; printf 'talos bootstrap: %s\n' "$*" >&2; exit "$rc"; }
-  usage() { sed -n '2,35p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
+  usage() { sed -n '2,42p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
   # run: the one place a changing command executes. A dry run only prints it.
   run() { if [ "$DRY" = 1 ]; then printf '    + %s\n' "$*"; else "$@"; fi; }
   # sudo_run: always printed first, so nothing happens as root that was not shown.
@@ -65,14 +71,20 @@ main() {
       --profile) [ $# -ge 2 ] || die 1 "--profile needs a value"; PROFILE="$2"; shift ;;
       --apply-profile) PAPPLY=1 ;;
       --no-bluetooth) NOBT=1 ;;
+      --apply-models) AMODELS=1 ;;
+      --apply-claws) ACLAWS=1 ;;
+      --claw-image) [ $# -ge 2 ] || die 1 "--claw-image needs a value"; CLAWIMG="$2"; shift ;;
       --dry-run) DRY=1 ;;
       -h|--help) usage; exit 0 ;;
       *) die 1 "unknown option: $1 (try --help)" ;;
     esac
     shift
   done
-  [ -z "$PROFILE" ] || [ "$PROFILE" = ops ] || die 1 "unknown profile: $PROFILE (the only one is ops)"
-  [ -n "$PROFILE" ] || [ "$PAPPLY$NOBT" = 00 ] || die 1 "--apply-profile and --no-bluetooth go with --profile ops"
+  case "$PROFILE" in ""|ops|desktop|models|agents|claws) ;; *) die 1 "unknown profile: $PROFILE (ops, desktop, models, agents or claws)" ;; esac
+  [ -n "$PROFILE" ] || { [ "$PAPPLY$NOBT$AMODELS$ACLAWS" = 0000 ] && [ -z "$CLAWIMG" ]; } || die 1 "--apply-profile, --no-bluetooth, --apply-models, --apply-claws and --claw-image go with --profile"
+  [ "$AMODELS" = 0 ] || [ "$PROFILE" = models ] || die 1 "--apply-models goes with --profile models"
+  [ "$ACLAWS$CLAWIMG" = 0 ] || [ "$PROFILE" = claws ] || die 1 "--apply-claws and --claw-image go with --profile claws"
+  [ "$NOBT" = 0 ] || [ "$PROFILE" = ops ] || die 1 "--no-bluetooth goes with --profile ops"
   [ -n "$LOGIN" ] || [ -n "$PROFILE" ] || die 1 "--tailnet-login is required: the Tailscale login or tailnet this machine must be on"
   [ -z "$LOGIN" ] || [[ "$LOGIN" =~ ^[A-Za-z0-9@._+-]{3,128}$ ]] || die 1 "--tailnet-login has odd characters"
   [ -z "$COMMIT" ] || [[ "$COMMIT" =~ ^[0-9a-f]{40}$ ]] || die 1 "--commit must be a full 40-character sha"
@@ -81,13 +93,17 @@ main() {
   [ "$(id -u)" != 0 ] || die 1 "do not run this as root: run it as your normal user. It asks for sudo itself, only for --install-service and --apply-profile, and prints each command first."
   # ops_profile: the profile script next to this one (after step 3, from the verified commit).
   ops_profile() {
-    local kit; kit=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+    local kit script; kit=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+    script="$PROFILE-profile.sh"
     set --
     if [ "$PAPPLY" = 1 ]; then set -- "$@" --apply; fi
     if [ "$NOBT" = 1 ]; then set -- "$@" --no-bluetooth; fi
+    if [ "$AMODELS" = 1 ]; then set -- "$@" --apply-models; fi
+    if [ "$ACLAWS" = 1 ]; then set -- "$@" --apply-claws; fi
+    if [ -n "$CLAWIMG" ]; then set -- "$@" --image "$CLAWIMG"; fi
     if [ "$DRY" = 1 ]; then set -- "$@" --dry-run; fi
-    [ -f "$kit/ops-profile.sh" ] || die 1 "no $kit/ops-profile.sh in this checkout"
-    bash "$kit/ops-profile.sh" "$@"
+    [ -f "$kit/$script" ] || die 1 "no $kit/$script in this checkout"
+    bash "$kit/$script" "$@"
   }
   if [ -z "$LOGIN" ]; then # profile only: no facts, no Tailscale, no repo, no build
     local prc=0; ops_profile || prc=$?
