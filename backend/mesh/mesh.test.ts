@@ -10,6 +10,7 @@ import {
   GUARD_CODE_TEXT,
   GUARD_LEVELS,
   MESH_CLASSES,
+  MESH_POWER_SAVE_REASONS,
   MeshStore,
   POSTURE_ITEMS,
   POSTURE_MAX_AGE_MS,
@@ -298,6 +299,14 @@ test("Gauss accepts every class Argo can report", () => {
   for (const c of argoClasses) assert.ok((MESH_CLASSES as readonly string[]).includes(c), `Gauss rejects Argo class ${c}`);
 });
 
+// The same contract for power-save reasons: an unknown one drops the whole powerSave block.
+test("Gauss accepts every power-save reason Argo can report", () => {
+  const go = readFileSync(new URL("../../tools/argo/powersave.go", import.meta.url), "utf8");
+  const reasons = [...go.matchAll(/^\s*PS\w+\s*=\s*"([a-z-]+)"/gm)].map((m) => m[1]);
+  assert.ok(reasons.includes("battery") && reasons.includes("hotspot-low"), `parsed ${reasons.join(",")}`);
+  for (const r of reasons) assert.ok((MESH_POWER_SAVE_REASONS as readonly string[]).includes(r), `Gauss rejects Argo power-save reason ${r}`);
+});
+
 const goodHost: MeshHost = { ramGB: 32, pressure: "normal", swapUsedGB: 0, diskFreeGB: 400, cpus: 12, os: "darwin" };
 const guard = (g: Partial<MeshGuard> = {}): MeshGuard => ({
   at: "2026-10-23T12:00:00Z",
@@ -342,7 +351,7 @@ test("Argo's guard block is allowlisted; unknown codes drop alone, bad values dr
 test("power-save: allowlisted reason, ranged time, off carries nothing, bad drops alone", () => {
   const since = new Date(Date.now() - 60_000).toISOString();
   assert.deepEqual(parsePowerSave({ on: true, since, reason: "no-pd", extra: "x" }), { on: true, since, reason: "no-pd" });
-  for (const reason of ["battery", "charger-short", "manual"]) assert.equal(parsePowerSave({ on: true, since, reason })!.reason, reason);
+  for (const reason of ["battery", "charger-short", "manual", "hotspot-low"]) assert.equal(parsePowerSave({ on: true, since, reason })!.reason, reason);
   assert.deepEqual(parsePowerSave({ on: false, since, reason: "battery" }), { on: false }, "off keeps no reason");
   const bad = [
     { on: "yes" }, { on: true }, { on: true, since }, { on: true, reason: "battery" },

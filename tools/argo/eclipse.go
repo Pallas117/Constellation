@@ -23,7 +23,9 @@ import (
 // runs exist; battery %, not watts, because avg_w/base_w are smoothed noise for jobs this short (gates
 // showed 5.2 W running vs 5.8 W base while the battery fell 6% in 11 min, 17 Nov). The unplugged plan
 // (`claude-heavy --unplugged 4h`) is the Unix second an outlet is expected, in
-// ~/.local/state/gauss-unplugged; each hour left (rounded up) keeps 6% more in reserve.
+// ~/.local/state/gauss-unplugged; each hour left (rounded up) keeps 6% more in reserve. Since 24 Nov
+// both are automatic (energy.go): with no manual plan, on battery, the hours come from the outlet
+// forecast, and the 6%/h is replaced by the measured base drain once there is evidence.
 //
 // Jobs up to lightJobGB still start on battery as before. The 10% floor block, battery-low,
 // battery-draining and the brownout pause are unchanged: they act before the budget.
@@ -43,6 +45,11 @@ type Eclipse struct {
 	Runs  int    // runs the cost was measured over; 0 = the default
 	PlanH int    // hours left on the unplugged plan
 	Name  string // the job's kind
+	// The plan's source and base drain (energy.go): "manual" (claude-heavy --unplugged) or
+	// "predicted" (the outlet forecast); DrainH is measured once there is evidence, else 6.
+	PlanSrc       string
+	DrainH        int
+	DrainMeasured bool
 }
 
 func (e Eclipse) fits() bool { return e.Pct >= e.Need }
@@ -59,14 +66,28 @@ func (e Eclipse) why() string {
 	}
 	s := fmt.Sprintf("%d%% reserve + %s ~%d%%/run (%s)", eclipseReservePct, name, e.Cost, src)
 	if e.PlanH > 0 {
-		s += fmt.Sprintf(" + %d h unplugged x %d%%/h", e.PlanH, eclipseBaseDrainH)
+		drain := fmt.Sprintf("%d%%/h", e.DrainH)
+		if e.DrainMeasured {
+			drain += " measured"
+		}
+		if e.PlanSrc == "predicted" {
+			s += fmt.Sprintf(" + %d h to an outlet (predicted) x %s", e.PlanH, drain)
+		} else {
+			s += fmt.Sprintf(" + %d h unplugged x %s", e.PlanH, drain)
+		}
 	}
 	return s
 }
 
-// eclipseFor is the budget for job name on this reading, or nil when the host is on AC or has no
-// battery (nothing to budget).
+// eclipseFor is the budget for job name on this reading with claude-heavy's plan alone and the
+// default drain, or nil when the host is on AC or has no battery (nothing to budget).
 func eclipseFor(cur Sample, runs []JobRun, name string, planUntil time.Time) *Eclipse {
+	return eclipseWith(cur, runs, name, manualPlan(planUntil))
+}
+
+// eclipseWith is the budget on an energy plan (energy.go): manual or predicted hours to an outlet,
+// times the measured or default base drain.
+func eclipseWith(cur Sample, runs []JobRun, name string, p EnergyPlan) *Eclipse {
 	if onAC(cur) {
 		return nil
 	}
@@ -75,8 +96,13 @@ func eclipseFor(cur Sample, runs []JobRun, name string, planUntil time.Time) *Ec
 		now = time.Now()
 	}
 	cost, n := batteryCost(runs, name)
-	h := planHours(planUntil, now)
-	return &Eclipse{Pct: cur.Batt.Pct, Need: eclipseReservePct + cost + h*eclipseBaseDrainH, Cost: cost, Runs: n, PlanH: h, Name: name}
+	h := planHours(p.Until, now)
+	drain := p.DrainH
+	if drain <= 0 {
+		drain = eclipseBaseDrainH
+	}
+	return &Eclipse{Pct: cur.Batt.Pct, Need: eclipseReservePct + cost + h*drain, Cost: cost, Runs: n, PlanH: h, Name: name,
+		PlanSrc: p.Src, DrainH: drain, DrainMeasured: p.Drain.Measured}
 }
 
 // onBatterySuffix is the name claude-heavy gave battery-admitted runs while it overrode Argo
@@ -179,15 +205,28 @@ func without(a Assessment, code string) Assessment {
 // eclipseText is the budget section of `argo guard` on battery or with a plan: what each measured job
 // needs to start on battery now.
 func eclipseText(cur Sample, runs []JobRun, planUntil time.Time) string {
+	return eclipseTextPlan(cur, runs, manualPlan(planUntil))
+}
+
+// eclipseTextPlan is eclipseText on an energy plan (manual or predicted, energy.go).
+func eclipseTextPlan(cur Sample, runs []JobRun, p EnergyPlan) string {
 	now := cur.At
 	if now.IsZero() {
 		now = time.Now()
 	}
-	h := planHours(planUntil, now)
+	h := planHours(p.Until, now)
+	drain := p.DrainH
+	if drain <= 0 {
+		drain = eclipseBaseDrainH
+	}
 	var b strings.Builder
 	if h > 0 {
-		fmt.Fprintf(&b, "\nunplugged plan: %d h left: heavy jobs on battery keep %d%% + %d h x %d%%/h = %d%% in reserve\n",
-			h, eclipseReservePct, h, eclipseBaseDrainH, eclipseReservePct+h*eclipseBaseDrainH)
+		what := "unplugged plan"
+		if p.Src == "predicted" {
+			what = fmt.Sprintf("outlet forecast (P80 of %d battery spans, `argo energy`)", p.Forecast.Spans)
+		}
+		fmt.Fprintf(&b, "\n%s: %d h left: heavy jobs on battery keep %d%% + %d h x %d%%/h = %d%% in reserve\n",
+			what, h, eclipseReservePct, h, drain, eclipseReservePct+h*drain)
 	}
 	if onAC(cur) {
 		return b.String()
@@ -201,7 +240,7 @@ func eclipseText(cur Sample, runs []JobRun, planUntil time.Time) string {
 			continue
 		}
 		seen[k] = true
-		e := eclipseFor(cur, runs, k, planUntil)
+		e := eclipseWith(cur, runs, k, p)
 		verdict := "starts"
 		if !e.fits() {
 			verdict = "waits"
@@ -210,7 +249,7 @@ func eclipseText(cur Sample, runs []JobRun, planUntil time.Time) string {
 		shown++
 	}
 	if shown == 0 {
-		e := eclipseFor(cur, nil, "", planUntil)
+		e := eclipseWith(cur, nil, "", p)
 		fmt.Fprintf(&b, "  any job                  %3d%%  (%s)\n", e.Need, e.why())
 	}
 	return b.String()

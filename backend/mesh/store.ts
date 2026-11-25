@@ -45,9 +45,10 @@ export interface MeshReport {
 
 /**
  * Argo's power-save mode (tools/argo/powersave.go): on while the power budget is negative (battery, a
- * charger that can't keep up, plain 5 V USB) or when forced by hand. since and reason are only present while on.
+ * charger that can't keep up, plain 5 V USB), on the iPhone hotspot while the phone's battery is low (hotspot-low,
+ * tools/argo/energy.go: data-using work waits too), or when forced by hand. since and reason are only present while on.
  */
-export const MESH_POWER_SAVE_REASONS = ["battery", "charger-short", "no-pd", "manual"] as const;
+export const MESH_POWER_SAVE_REASONS = ["battery", "charger-short", "no-pd", "manual", "hotspot-low"] as const;
 export interface MeshPowerSave {
   on: boolean;
   since?: string; // ISO time it started

@@ -259,16 +259,43 @@ rating is the host's level:
 |---|---|---|
 | ok | takes work | |
 | watch | light work only (jobs up to 1 GB, one mesh slot) | memory at warn, on battery, disk under 20 GB, load ≥ 1 per core, charger rated below the machine's draw |
+| risk | no new work; running work continues | memory at warn for 30 of the last 60 min, swap +1 GB in an hour at warn, swap ≥ 4 GB, battery ≤ 20% (or ≤ 25% with memory at warn, or under an hour to the floor), plugged in but still losing charge, disk under 8 GB, CPU throttled by the OS |
+| block | no work; guarded jobs are stopped | memory pressure critical, battery at the 10% floor on battery power, disk under 3 GB (swap lives on the boot volume) |
 
 On battery, a job over 1 GB is not held to light work if it fits its **eclipse budget** (`eclipse.go`, the same numbers
 as `claude-heavy`): battery % ≥ 30% reserve + the job's median battery-% drop over its last 5 runs on battery (8% until
-3 runs) + 6% for each hour left on the unplugged plan (`claude-heavy --unplugged 4h` writes the deadline to
-`~/.local/state/gauss-unplugged`). Each guarded run records battery % at its start and end in `jobs.jsonl`
-(`batt0`, `batt1`, `on_batt`); the cost is learned from those, not from `avg_w`/`base_w`, which the battery
-controller smooths over minutes. The 10% floor, low battery, battery-draining and brownout rules still act first.
-`argo guard` on battery lists what each measured job needs.
-| risk | no new work; running work continues | memory at warn for 30 of the last 60 min, swap +1 GB in an hour at warn, swap ≥ 4 GB, battery ≤ 20% (or ≤ 25% with memory at warn, or under an hour to the floor), plugged in but still losing charge, disk under 8 GB, CPU throttled by the OS |
-| block | no work; guarded jobs are stopped | memory pressure critical, battery at the 10% floor on battery power, disk under 3 GB (swap lives on the boot volume) |
+3 runs) + the base drain (6%/h until measured) for each hour left on the unplugged plan (`claude-heavy --unplugged 4h`
+writes the deadline to `~/.local/state/gauss-unplugged`). Each guarded run records battery % at its start and end in
+`jobs.jsonl` (`batt0`, `batt1`, `on_batt`); the cost is learned from those, not from `avg_w`/`base_w`, which the
+battery controller smooths over minutes. The 10% floor, low battery, battery-draining and brownout rules still act
+first. `argo guard` on battery lists what each measured job needs.
+
+**Energy autopilot** (`energy.go`, 24 Nov 2026): the hours and the drain no longer need typing in.
+- *Outlet forecast.* Argo records every AC/battery change it sees and, on macOS, reads `pmset -g log` ("Using AC" /
+  "Using Batt") once a day (about 6 s of CPU for 8 days of log). With no manual plan, on battery, the hours to the next
+  outlet are the P80 (nearest rank) of what was left of each past battery span after as long as this one has lasted,
+  over spans whose hour of day was within ±2 h of now (when there are 4+), else over all of them (3+). The plan the
+  budget uses is that P80 **capped at 2 h** (Josh, 24 Nov: "Use a 2h plan instead of the 12h cap": judith's spans are
+  heavy-tailed, mostly asleep, and a 12 h cap held every gate until AC). Under 3 spans: no forecast, the budget is as
+  before. Longer on battery than all but 2 spans seen: the 2 h cap. AC or battery under 5 min is a loose cable, not an
+  outlet. A manual `claude-heavy --unplugged` plan always wins, with its own hours (claude-heavy allows up to 24 h).
+- *Scored, not trusted.* Each battery span's forecast (the uncapped P50 and P80, and the plan applied) and its outcome
+  go to `energy.jsonl`; `argo energy` shows MAE (of the P50), how many spans ended within the P80 and within the 2 h
+  plan. Replayed walk-forward on judith's log (17-24 Nov, 14 spans, `ARGO_REPLAY_PMSET=<dump> go test -run
+  TestReplayPowerLog -v .`): 11 scored, 73% within the P80, MAE 9.7 h, as spans run from minutes to 55 h (median
+  3.2 h); 36% ended within the 2 h plan. With the measured drain and gates' measured cost (2%/run) a gate starts on
+  battery at 40% (30 + 2 + 2 h x 4 %/h). A learned model is worth trying only after 100 scored spans, and only if it
+  beats this on held-out coverage and MAE.
+- *Measured base drain.* The duration-weighted median %/h over closed battery stretches (30 min+) with no guarded job
+  and no sleep gap, kept 14 days, replaces 6%/h once there are 3 h of them; rounded up, clamped to 2-20 %/h. On judith
+  (20-24 Nov guard history, `TestReplayDrain`): 3.6 %/h over 7.8 h, so 4 %/h.
+- *Hotspot phone battery.* On the iPhone hotspot (gateway 172.20.10.1) with a fresh phone reading (30 min) at or under
+  20% and not charging, power-save enters with reason `hotspot-low` (left at 30%+ or charging): heavy work waits as in
+  any power-save, and so do the relay's background sync and the update check. Readings come from
+  `argo energy phone <pct> [charging]`; nothing on the Mac reads the phone's battery by itself yet (see `energy.go`).
+- `argo energy` shows all of it; `argo energy plan` prints `<hours> <drain %/h> <manual|predicted|none>` for scripts;
+  `argo energy import` reads the power log now. `argo doctor` prints the binary's VCS revision and warns if a newer
+  energy code has written its state. claude-heavy can follow the plan with `docs/claude-heavy-energy.patch`.
 
 The floors are the ones `gauss-services.sh` already uses (battery 10% / 20%, swap 4 GB, disk 8 GB); the trend rules are GAU-165's.
 Memory pressure is the kernel's own level on macOS; on Linux it is PSI (`/proc/pressure/memory`, our thresholds:

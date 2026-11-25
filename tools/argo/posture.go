@@ -338,7 +338,9 @@ func addPosture(report map[string]any, s Store, now time.Time) (sent func()) {
 // the update check at most daily (only once a release key is pinned). Neither
 // changes anything on the device.
 func securityTick(ctx context.Context, cfg Config, s Store, now time.Time) {
-	updateTick(ctx, cfg, s, now)
+	if !dataDeferred(s.loadPowerSave()) { // the hotspot phone is low (energy.go): the update check waits
+		updateTick(ctx, cfg, s, now)
+	}
 	c := s.loadPosture()
 	if !c.At.IsZero() && now.Sub(c.At) >= 0 && now.Sub(c.At) < postureEvery {
 		return

@@ -46,7 +46,13 @@ const (
 	PSShort   = "charger-short" // plugged in, but the charger can't carry the load
 	PSNoPD    = "no-pd"         // plain 5 V USB, no USB-C Power Delivery
 	PSManual  = "manual"        // `argo power-save on`
+	// On the iPhone hotspot with the phone's battery low (energy.go): also defers data-using work
+	// (relay sync, update check), since the phone running out ends the link too.
+	PSHotspotLow = "hotspot-low"
 )
+
+// dataDeferred says whether data-using background work should wait (the hotspot phone is low).
+func dataDeferred(p PowerSave) bool { return p.On && p.Reason == PSHotspotLow }
 
 // QuitApp is an app Argo quit and will relaunch.
 type QuitApp struct {
@@ -108,7 +114,16 @@ func powerSaveWanted(b *Battery) (bool, string) {
 
 // powerSaveStep is the pure state machine. changed is "entered", "left" or "".
 func powerSaveStep(p PowerSave, b *Battery, now time.Time) (next PowerSave, changed string) {
+	return powerSaveStepWith(p, b, false, now)
+}
+
+// powerSaveStepWith is powerSaveStep with the hotspot phone's battery (hotspotLow, energy.go),
+// which comes first: it is the one reason that also defers data.
+func powerSaveStepWith(p PowerSave, b *Battery, hotLow bool, now time.Time) (next PowerSave, changed string) {
 	want, reason := powerSaveWanted(b)
+	if hotLow {
+		want, reason = true, PSHotspotLow
+	}
 	switch p.Forced {
 	case "on":
 		want, reason = true, PSManual
@@ -265,15 +280,29 @@ func relaunchApps(ctx context.Context, fx appFx, quit []QuitApp) []QuitApp {
 // powerSaveTick runs inside guardTick with the fresh sample. It saves the state, logs each change
 // and acts on it: quit apps and text once on entering, relaunch on leaving.
 func powerSaveTick(ctx context.Context, s Store, fx appFx, phone *Phone, b *Battery, now time.Time, out io.Writer) PowerSave {
+	return powerSaveTickWith(ctx, s, fx, phone, b, false, now, out)
+}
+
+// powerSaveTickWith is powerSaveTick with the hotspot phone's battery. Switching to hotspot-low
+// texts once (its own key, at most every 6 h), also when power-save was already on for the battery.
+func powerSaveTickWith(ctx context.Context, s Store, fx appFx, phone *Phone, b *Battery, hotLow bool, now time.Time, out io.Writer) PowerSave {
 	p := s.loadPowerSave()
-	next, changed := powerSaveStep(p, b, now)
+	next, changed := powerSaveStepWith(p, b, hotLow, now)
+	toHotspot := next.Reason == PSHotspotLow && (changed == "entered" || p.Reason != PSHotspotLow)
+	if changed == "" && toHotspot {
+		fmt.Fprintf(out, "argo: power-save now for %s\n", PSHotspotLow)
+	}
+	key := "power-save"
+	if toHotspot {
+		key = "power-save-hotspot"
+	}
+	if (changed == "entered" || toHotspot) && phone != nil && shouldNotify(s, key, powerSaveTextEvery, now) {
+		phone.SendAlert(Alert{Level: AlertWarn, Key: key, Title: "Gauss: power-save on", Msg: powerSaveText(next, b)}, now)
+	}
 	switch changed {
 	case "entered":
 		next.Quit = quitIdleApps(ctx, fx, next.Quit, now)
 		fmt.Fprintf(out, "argo: power-save on (%s)\n", next.Reason)
-		if phone != nil && shouldNotify(s, "power-save", powerSaveTextEvery, now) {
-			phone.SendAlert(Alert{Level: AlertWarn, Key: "power-save", Title: "Gauss: power-save on", Msg: powerSaveText(next, b)}, now)
-		}
 	case "left":
 		next.Quit = relaunchApps(ctx, fx, next.Quit)
 		fmt.Fprintln(out, "argo: power-save off")
@@ -296,6 +325,9 @@ func powerSaveText(p PowerSave, b *Battery) string {
 		PSNoPD:    "the charger is plain USB",
 		PSManual:  "it was switched on by hand",
 	}[p.Reason]
+	if p.Reason == PSHotspotLow {
+		return "Argo is saving power because the iPhone hotspot's battery is low: heavy jobs and data syncs wait and checks run less often. Charge the phone or join Wi-Fi to end it."
+	}
 	msg := "Argo is saving power because " + why + ": heavy jobs wait and checks run less often."
 	if c := chargerWhy(chargerOf(b, defaultWorkerW)); c != "" {
 		msg += " " + c + "."
@@ -308,6 +340,9 @@ func powerSaveText(p PowerSave, b *Battery) string {
 // powerSaveGuardText is the guard finding's text.
 func powerSaveGuardText(p PowerSave, b *Battery) string {
 	t := "power-save is on (" + p.Reason + "): heavy work waits"
+	if p.Reason == PSHotspotLow {
+		return t + ", and data syncs too: the iPhone hotspot's battery is low"
+	}
 	if c := chargerWhy(chargerOf(b, defaultWorkerW)); c != "" {
 		t += ": " + c
 	}

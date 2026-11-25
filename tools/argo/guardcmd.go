@@ -107,6 +107,11 @@ func guardStep(s Store, cfg Config, cur Sample) (Assessment, GuardState) {
 	open, closed := healStep(prev.Open, a, cur.At)
 	g := GuardState{Scale: sc, Report: guardReport(a, sc, cur.At), Batt: cur.Batt, Open: open}
 	_ = s.appendHeal(closed)
+	energyNow := cur.At
+	if energyNow.IsZero() {
+		energyNow = time.Now()
+	}
+	energyTick(s, cur, hist, energyNow) // power edges, drain stretches, the outlet forecast (energy.go)
 	_ = s.appendGuard(cur, hist)
 	_ = s.saveGuard(g)
 	return a, g
@@ -130,7 +135,12 @@ func guardTick(ctx context.Context, s Store, cfg Config, phone *Phone, now time.
 		return
 	}
 	cur := sampleHost(ctx, false)
-	powerSaveTick(ctx, s, realAppFx(), phone, cur.Batt, now, os.Stderr)
+	// The hotspot phone's battery (energy.go): only a fresh recorded reading counts, never a guess.
+	var src phoneBatterySource = phoneBatteryFile(s.path("phone-battery.json"))
+	ph, ok := src.latest()
+	ps := s.loadPowerSave()
+	hotLow := hotspotLow(ph, ok, isIPhoneHotspot(s.Load().Gateway), ps.On && ps.Reason == PSHotspotLow, now)
+	powerSaveTickWith(ctx, s, realAppFx(), phone, cur.Batt, hotLow, now, os.Stderr)
 	a, _ := guardStep(s, cfg, cur)
 	if phone == nil {
 		return
@@ -196,7 +206,8 @@ const guardUsage = `usage:
   available memory after the reserve covering the job; 1.5x for a job that usually runs 15 min+).
   On battery a job over 1 GB starts only within its eclipse budget: battery % >= 30% reserve + the
   job's median battery cost over its last 5 runs on battery (8% until 3) + 6% per hour left on the
-  unplugged plan (~/.local/state/gauss-unplugged, set by claude-heavy --unplugged).`
+  unplugged plan (~/.local/state/gauss-unplugged, set by claude-heavy --unplugged), or without one the
+  outlet forecast's hours; the 6% becomes the measured base drain once there is evidence (argo energy).`
 
 // guardCmd returns the process exit code.
 func guardCmd(args []string, s Store, cfg Config, out io.Writer) (int, error) {
@@ -221,7 +232,7 @@ func guardCmd(args []string, s Store, cfg Config, out io.Writer) (int, error) {
 		}
 		fmt.Fprint(out, guardText(cur, a, g.Scale, hist, memoryUsers(ctx)))
 		fmt.Fprint(out, jobsText(s.jobRuns()))
-		fmt.Fprint(out, eclipseText(cur, s.jobRuns(), readPlan(unpluggedPath())))
+		fmt.Fprint(out, eclipseTextPlan(cur, s.jobRuns(), s.energyPlan(readPlan(unpluggedPath()), cur)))
 		return 0, nil
 	case "admit":
 		fs := flag.NewFlagSet("guard admit", flag.ContinueOnError)
@@ -338,8 +349,9 @@ func (r guardRunner) waitAdmit(name string, memGB float64, wait time.Duration) (
 		if long && a.Coping {
 			ask = ceil1(memGB * longJobExtra) // a long job at warn outlasts the reading it started on
 		}
-		// On battery, a job over the light-work cap starts within its eclipse budget (eclipse.go).
-		ok, why = admitIn(a, ask, eclipseFor(cur, runs, name, readPlan(r.planFile)))
+		// On battery, a job over the light-work cap starts within its eclipse budget (eclipse.go), on
+		// the manual plan or else the outlet forecast, with the measured base drain (energy.go).
+		ok, why = admitIn(a, ask, eclipseWith(cur, runs, name, r.store.energyPlan(readPlan(r.planFile), cur)))
 		if ok || !time.Now().Add(r.retry).Before(deadline.Add(time.Millisecond)) {
 			return ok, why, cur, a
 		}
