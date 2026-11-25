@@ -522,8 +522,9 @@ preview check and rollback, is the flip-day runbook in `~/Documents/Claude outpu
    ```
    It sets `RELEASE` to `"full"`, adds the DATA binding and `ACCESS_TEAM_DOMAIN`, `ACCESS_AUD`, `ADMIN_EMAILS`,
    `GAUSS_APP_URL`, `OPS_URL`, `SUPPORT_URL`, `USER_CAP`, and puts **Sign in** in every page header. It refuses
-   malformed ids, a non-Access team domain, a non-https console address and any support link that isn't a Stripe
-   Payment Link. `node website/tools/release.mjs public` undoes all of it exactly; `... check` says whether they agree.
+   malformed ids, a non-Access team domain, a console or staff address that isn't plain https (lower-case host, no
+   sign-in details, query or fragment: nothing secret belongs in the config, and the workspace hides such a console
+   link), a flag with no value, and any support link that isn't a Stripe Payment Link. `node website/tools/release.mjs public` undoes all of it exactly; `... check` says whether they agree.
 2. Set up Stripe and sign-in as below, plus the secrets in "Members' opportunities and the staff link".
 3. Worker-run pages bring back their own `<!--full-->` parts by themselves. If `RELEASE` says `"full"` but DATA isn't
    bound, the Worker stays public and puts Contact back in the headers it serves.

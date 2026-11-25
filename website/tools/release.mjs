@@ -35,16 +35,22 @@ export function headerPages(dir = PUB) {
 const read = () => readFileSync(CONFIG, "utf8");
 export const configRelease = (raw = read()) => raw.match(/"RELEASE":\s*"(\w+)"/)?.[1];
 
+// These links are committed in wrangler.jsonc and shown to signed-in people, so they carry no credentials, query or
+// fragment, and only characters that are safe inside the config text. They accept no more than the Worker shows
+// (consoleLink and staffCard in worker/app.js, supportLink in worker/render.js); a site test checks that they agree.
+const LINK = /^https:\/\/[a-z0-9]([a-z0-9.-]*[a-z0-9])?(:\d{1,5})?\/[A-Za-z0-9._~\/-]*$/;
+const SUPPORT_LINK = /^https:\/\/(buy|donate)\.stripe\.com\/[A-Za-z0-9_-]{6,}$/;
+
 /** Checks each value before it reaches the config. Returns a list of problems (empty = fine). */
 export function validate(o) {
   const bad = [];
   if (!/^[0-9a-f]{32}$/.test(o.data ?? "")) bad.push("--data: the DATA namespace id (32 hex characters, from `npx wrangler@4 kv namespace create DATA`)");
   if (!/^[a-z0-9-]+\.cloudflareaccess\.com$/.test(o.team ?? "")) bad.push("--team: the Zero Trust team domain, like <team>.cloudflareaccess.com");
   if (!/^[0-9a-f]{32,128}$/.test(o.aud ?? "")) bad.push("--aud: the Access application's AUD tag (hex)");
-  if (o.app && !/^https:\/\/[a-z0-9.-]+(:\d+)?\/[^\s"<>]*$/i.test(o.app)) bad.push("--app: an https address ending in a path, like https://gauss.example/");
-  if (o.ops && !/^https:\/\/[^\s"<>]+$/.test(o.ops)) bad.push("--ops: an https address");
-  if (o.support && !/^https:\/\/buy\.stripe\.com\/[A-Za-z0-9_]+$/.test(o.support)) bad.push("--support: a Stripe Payment Link (https://buy.stripe.com/...)");
-  if (o.cap && !/^[1-9]\d{0,4}$/.test(o.cap)) bad.push("--cap: a whole number of accounts");
+  if (o.app !== undefined && !LINK.test(o.app)) bad.push("--app: a plain lower-case https address ending in a path, like https://gauss.example/ (no sign-in details, query or fragment: the workspace would hide the button)");
+  if (o.ops !== undefined && !LINK.test(o.ops)) bad.push("--ops: a plain lower-case https address ending in a path, like https://ops.example/ (no sign-in details, query or fragment)");
+  if (o.support !== undefined && !SUPPORT_LINK.test(o.support)) bad.push("--support: a Stripe Payment Link (https://buy.stripe.com/... or https://donate.stripe.com/...)");
+  if (o.cap !== undefined && !/^[1-9]\d{0,4}$/.test(o.cap)) bad.push("--cap: a whole number of accounts");
   return bad;
 }
 
@@ -62,7 +68,7 @@ export function configFor(raw, release, o = {}) {
     GAUSS_APP_URL: o.app ?? "", OPS_URL: o.ops ?? "", SUPPORT_URL: o.support ?? "", USER_CAP: o.cap ?? "50",
   };
   const lines = Object.entries(vars).map(([k, v]) => `\n    "${k}": "${v}",`).join("");
-  return out.replace(/("RELEASE": "full",)/, `$1${lines}`);
+  return out.replace(/("RELEASE": "full",)/, (m) => m + lines); // a function, so no value is read as a $ pattern
 }
 
 export const pillFor = (release) => (release === "full" ? SIGN_IN_PILL : CONTACT_PILL);
@@ -74,6 +80,7 @@ function main(argv) {
   for (let i = 0; i < rest.length; i += 2) {
     const k = rest[i]?.replace(/^--/, "");
     if (!["data", "team", "aud", "app", "ops", "support", "cap"].includes(k)) { console.error(`unknown option ${rest[i]}`); return 2; }
+    if (rest[i + 1] === undefined || rest[i + 1].startsWith("--")) { console.error(`refused: ${rest[i]} needs a value`); return 2; }
     o[k] = rest[i + 1];
   }
   if (cmd === "check") {

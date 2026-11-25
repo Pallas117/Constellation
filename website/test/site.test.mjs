@@ -10,6 +10,8 @@ import { renderApplyForm } from "../worker/forms.js";
 import { renderPlans } from "../worker/render.js";
 import { FEATURES, SHOW_PRICES, TIERS, priceLabel } from "../worker/tiers.js";
 import { CONTACT, forRelease } from "../worker/release.js";
+import { consoleLink, staffCard } from "../worker/app.js";
+import { supportLink } from "../worker/render.js";
 import { CONTACT_PILL, SIGN_IN_PILL, configFor, configRelease, headerFor, headerPages, validate } from "../tools/release.mjs";
 
 const pub = join(dirname(fileURLToPath(import.meta.url)), "..", "public");
@@ -811,6 +813,34 @@ test("release switch: full adds DATA, sign-in and workspace vars and Sign in; pu
   assert.ok(validate({ ...o, app: "javascript:alert(1)" }).length);
   assert.ok(validate({ ...o, support: "https://evil.example/pay" }).length);
   assert.ok(validate({ ...o, cap: "0" }).length);
+});
+
+test("release switch: a link the switch accepts is one the Worker shows, with no credentials, query or fragment in the config", () => {
+  const o = { data: "0123456789abcdef0123456789abcdef", team: "example.cloudflareaccess.com", aud: "ab".repeat(32) };
+  const base = configFor(WRANGLER_RAW, "public");
+  for (const url of ["https://gauss.example.test/", "https://console.example.test:8443/app/"]) {
+    assert.deepEqual(validate({ ...o, app: url, ops: url }), [], url);
+    assert.equal(consoleLink(url), url, "the workspace shows the console button for it");
+    assert.ok(staffCard(url).includes(`href="${url}"`), "and the staff card");
+  }
+  // Refused: what the workspace would hide (a paid account would see "coming by email"), and what must not be committed.
+  for (const url of ["https://gauss.example.test/?token=abc", "https://gauss.example.test/#x", "https://user:pw@gauss.example.test/",
+    "https://gauss.example.test", "https://gauss.example.test/$&", "https://gauss.example.test/a\\b", "https://gauss.example.test/%22", "https://-x.example.test/", ""]) {
+    assert.equal(validate({ ...o, app: url }).length, 1, `--app ${url}`);
+    assert.equal(validate({ ...o, ops: url }).length, 1, `--ops ${url}`);
+  }
+  for (const url of ["https://buy.stripe.com/test_a-b123", "https://donate.stripe.com/abcdef12"]) {
+    assert.deepEqual(validate({ ...o, support: url }), [], url);
+    assert.equal(supportLink(url), url, "the Worker shows the support link");
+  }
+  for (const url of ["https://buy.stripe.com/abc", "https://buy.stripe.com/abcdef12?x=1", "https://buy.stripe.com.evil.example/abcdef12", ""]) {
+    assert.equal(validate({ ...o, support: url }).length, 1, `--support ${url}`);
+    assert.equal(supportLink(url), "", "and the Worker would hide it");
+  }
+  // No value is read as a replacement pattern, so the config stays valid and public still undoes it exactly.
+  const odd = configFor(base, "full", { ...o, app: "https://gauss.example.test/$&$1" });
+  assert.match(odd, /"GAUSS_APP_URL": "https:\/\/gauss\.example\.test\/\$&\$1",\n/);
+  assert.equal(configFor(odd, "public"), base);
 });
 
 test("release switch: if accounts aren't really open (RELEASE full without DATA), Worker pages say Contact, not a dead Sign in", () => {
