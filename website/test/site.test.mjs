@@ -90,9 +90,21 @@ test("landing film on phones: soft-edged hole, slogan on screen, no play button,
   assert.match(css, /\.hero \.film\{pointer-events:none\}/);
   assert.match(css, /\.hero \.film::-webkit-media-controls-start-playback-button\{display:none!important/, "no iOS play button when autoplay is blocked");
   assert.match(css, /@keyframes film-off\{to\{opacity:0;visibility:hidden\}\}/, "faded film is hidden, so phones can pause it");
-  assert.match(css, /\.hero \.poster,\.hero \.film\{animation:pull linear both,film-off linear both;animation-timeline:--hero,--descent;animation-range:contain 0% contain 100%,entry 35% entry 60%\}/,
-    "every size: the hero's hole has gone before the descent's art fades in");
-  assert.match(css, /\.descent-art\{animation:d-in linear both;animation-timeline:--descent;animation-range:entry 60% entry 100%\}/, "the art waits until entry 60%");
+  // One continuous fall (Josh, 19 Nov 2026): approach while rolling level, plunge into the shadow, out into the sky, the
+  // ring contracts into the aurora. No fade to a second black hole.
+  assert.match(css, /--dive:50% 39\.4%/, "the camera falls toward the shadow's darkest point");
+  assert.match(css, /transform-origin:var\(--dive,var\(--hole\)\)/);
+  assert.match(css, /@keyframes pull\{from\{transform:scale\(\.18\) rotate\(-9deg\);/, "the approach rolls level: orbiting in");
+  assert.match(css, /\.hero \.poster,\.hero \.film\{animation:pull linear both,plunge linear both,film-off linear both;animation-timeline:--hero,--descent,--descent;\s*animation-range:contain 0% contain 100%,entry 20% entry 76%,entry 76% entry 92%;/);
+  assert.match(css, /@keyframes plunge\{0%\{scale:1;rotate:0deg\}[^\n]*100%\{scale:10;rotate:12deg\}\}/, "deep enough that the shadow covers the screen (10x about --dive)");
+  assert.match(css, /\.d-bh image\{display:none\}/, "no second black-hole picture");
+  assert.match(css, /\.d-bh\{animation-name:d-emerge;animation-range:entry 82% contain 30%\}/);
+  assert.match(css, /@keyframes d-emerge\{0%\{transform:scale\(3\.2\);opacity:0\}[^\n]*100%\{transform:translate\(0px,-37px\) scale\(\.1014,\.0304\);opacity:0\}\}/, "ends on the aurora halo, like d-shrink");
+  // Fade layers, never the stage: an opacity on the stage cost 300-900 ms frames.
+  assert.doesNotMatch(css, /\.hero-stage\{animation/, "the stage itself is never faded");
+  assert.match(css, /\.hero-stage::after\{animation:film-off linear both;animation-timeline:--descent;animation-range:entry 76% entry 92%\}/);
+  assert.match(css, /\.descent-art\{animation:d-in linear both;animation-timeline:--descent;animation-range:entry 60% entry 100%\}/, "without timeline-scope the art waits until entry 60%");
+  assert.match(css, /\.descent-art\{animation-range:entry 80% entry 94%\}/, "with it, the art arrives as the dark opens");
   assert.doesNotMatch(css, /\.hero \.film\{animation-range:/, "one hand-off timing for all sizes");
 });
 
@@ -210,6 +222,54 @@ test("live-view gate: a labelled pre-rendered frame behind the Argo door, no scr
   assert.match(home, />03_CONTACT</, "02 is Argo's Space tech, on Earth (Josh, 18 Nov 2026)");
   assert.match(text(gate), /Argo is Gauss&rsquo;s network agent, and the way in\. Included for operators and staff; never sold\./);
   assert.doesNotMatch(text(gate), /encrypt|quantum|HPKE|Ed25519|RFC ?9173|Nadia|Turnstone/i);
+});
+
+test("landing: you scroll into Gauss: the open view named, the rest veiled, one door; honest, script-free, still without motion", () => {
+  // Josh, 18 Nov 2026: "as you scroll you could render the gauss actual to be able to see parts of before you login".
+  const home = html["/"];
+  const gate = home.match(/<section id="enter" class="live-gate"[\s\S]*?<\/section>/)?.[0] ?? "";
+  const part = (cls) => gate.match(new RegExp(`<div class="${cls}">[\\s\\S]*?\\n  </div>`))?.[0] ?? "";
+  const [open, held, card] = ["gate-open", "gate-held", "live-card"].map(part);
+  assert.ok(open && held && card, "three parts");
+  assert.ok(gate.indexOf("gate-open") < gate.indexOf("gate-held") && gate.indexOf("gate-held") < gate.indexOf("live-card"), "reading order: what is open, what is held back, the door");
+  // The frame is a real capture of the live view, shown as an image with its size set; nothing is embedded or run.
+  assert.match(gate, /<img src="\/assets\/media\/gauss-live-wide\.webp" alt="A frame from the Gauss live view: [^"]+" width="2000" height="1250" loading="lazy"/);
+  assert.match(gate, /<source media="\(max-aspect-ratio: 1\/1\)" srcset="\/assets\/media\/gauss-live-tall\.webp" width="750" height="1300">/);
+  assert.doesNotMatch(gate, /<script|<iframe|<canvas|<video|<object|<embed/);
+  // Before sign-in: the live view's own readings, by name. A still has no numbers, and the page says so.
+  assert.deepEqual([...open.matchAll(/<li>([^<]+)<\/li>/g)].map((m) => m[1]), ["Magnetopause", "Solar wind", "IMF Bz", "Kp"]);
+  assert.match(open, /<p>The Gauss live view, traced from the solar wind\.<\/p>/);
+  assert.match(open, /<p class="src">A still frame, so the numbers are left out\.<\/p>/);
+  assert.doesNotMatch(text(open), /\d/, "no readings are shown from a still");
+  // Past the sign-in: names only. No invented data behind the veils, no pictures, no links into closed areas.
+  assert.deepEqual([...held.matchAll(/<li><span class="label">([^<]+)<\/span><span class="held">Members only<\/span><\/li>/g)].map((m) => m[1]), ["Field model", "Operator console", "Argo Mesh"]);
+  assert.equal(held.match(/<li>/g).length, 3);
+  assert.doesNotMatch(held, /\d|<img|<a /, "veiled panels carry a name and nothing else");
+  // One door, and one or two quiet lines by it: what is withheld is withheld on purpose. No claims about how sign-in works.
+  assert.equal(gate.match(/<a /g).length, 1, "one call to action");
+  assert.match(card, /<p class="hush">The detail is withheld on purpose\. What lies past the sign-in is shown to members\.<\/p>/);
+  for (const rx of [/polymorphic/i, /encrypt/i, /crypto/i, /quantum/i, /\bPQC?\b/, /unbreakable/i, /military/i, /compliant/i, /certified/i, /space[- ]qualified/i,
+    /passkey|ratchet|ML-DSA|zero[- ]knowledge/i, /secure(ly)?\b/i, /stripe|card details/i, /Turnstone/i, /\bLIVE\b ·/])
+    assert.doesNotMatch(text(gate), rx, `found ${rx}`);
+  // Motion: scroll-driven CSS only, where supported and wanted, on screens tall enough to hold the door.
+  const css = read("assets/site.css");
+  const block = css.slice(css.indexOf("/* Live-view gate (landing)"), css.indexOf("/* Starfield (landing)"));
+  assert.match(block, /\n\.gate-veils\{display:none\}/, "no veils unless the scroll can part them");
+  const pinned = block.slice(block.indexOf("@supports (animation-timeline:view()){"), block.indexOf("@keyframes live-settle"));
+  assert.match(pinned, /^@supports \(animation-timeline:view\(\)\)\{\n  @media \(prefers-reduced-motion:no-preference\) and \(min-height:660px\)\{\n    \.live-gate\{height:360svh;view-timeline:--gate block\}/);
+  assert.equal(block.slice(0, block.indexOf("@supports")).match(/animation(-[a-z]+)?:/g), null, "nothing moves outside that block");
+  assert.match(pinned, /\.gate-stage\{position:sticky;top:0;height:100svh/);
+  assert.match(pinned, /\.live-card:focus-within\{opacity:1!important;transform:none!important;pointer-events:auto!important\}/, "a focused door is always visible");
+  assert.match(pinned, /@media \(max-height:759px\)\{\.live-card \.rad-field\{display:none\}\}/, "small phones: the door fits the pinned screen");
+  for (const k of ["gv-l", "gv-r", "g-in", "g-out", "g-step", "g-door", "live-settle"]) {
+    const kf = block.match(new RegExp(`@keyframes ${k}\\{[^\\n]*\\}`))[0];
+    assert.doesNotMatch(kf.replace(/transform|opacity|pointer-events/g, ""), /[a-z-]+:/, `${k} animates transform and opacity only`);
+    assert.doesNotMatch(kf, /visibility/, `${k}: never hidden from the keyboard or a screen reader`);
+  }
+  // Veils and plates: surfaces and hairlines, no glow, no blur over what is withheld, no lime.
+  const plates = block.replace(/\n\.live-card\{[^\n]*/, "");
+  assert.doesNotMatch(plates, /box-shadow|text-shadow|blur\(|filter:|--lime|CCFF00/i);
+  assert.match(html["/"].match(/<div class="gate-veils"[^>]*>/)[0], /aria-hidden="true"/, "the planes are decoration");
 });
 
 test("landing: Space tech, on Earth: what Argo does today, honest, no door into the closed /argo/", () => {
@@ -355,6 +415,8 @@ test("phones: wide tables scroll inside their box; hidden labels can't widen the
   const css = read("assets/site.css");
   assert.match(css, /\.sr\{position:absolute/);
   assert.match(css, /\.tw\{overflow-x:auto;position:relative\}/);
+  // Unsocial hours in the planner grid differ by more than colour (WCAG 1.4.1): a dotted underline, named in the legend.
+  assert.match(css, /\.planner td\.quiet\{[^}]*text-decoration:underline dotted/);
 });
 
 // ---- Budgets: beat a heavy reference site on weight, on an 8 GB laptop or a phone on a hotspot ----
