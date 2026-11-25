@@ -3,6 +3,7 @@ import fs from "node:fs";
 import http from "node:http";
 import os from "node:os";
 import path from "node:path";
+import { getMigrations } from "better-auth/db/migration";
 import test, { after, before } from "node:test";
 import type { AuthRole } from "./auth.js";
 import { API_POLICY, type Access } from "./rbac.js";
@@ -22,6 +23,8 @@ delete process.env.LOCAL_INFER_URL; // the nowcast uses the in-process heuristic
 
 const { auth } = await import("./better-auth.js");
 const { startBackend, stopBackend } = await import("./server.js");
+// The throwaway auth db (test-setup.ts) starts empty; sign-in needs its tables, as in auth-rate-limit.test.ts.
+await (await getMigrations(auth.options)).runMigrations();
 
 const ROLES: AuthRole[] = ["user", "staff", "operator", "admin"];
 let role: AuthRole | null = null;
