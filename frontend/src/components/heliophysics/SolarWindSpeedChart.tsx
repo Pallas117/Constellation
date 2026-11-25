@@ -6,6 +6,7 @@ import {
   Tooltip,
   XAxis,
   YAxis,
+  type TooltipValueType,
 } from "recharts";
 import { memo, useDeferredValue, useMemo } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -28,6 +29,12 @@ function formatTick(ts: string): string {
     .getMinutes()
     .toString()
     .padStart(2, "0")}`;
+}
+
+/** Tooltip value with its unit; recharts 3 types it as possibly missing. */
+function fixed(value: TooltipValueType | undefined, digits: number, unit: string): string {
+  const v = Number(value);
+  return Number.isFinite(v) ? `${v.toFixed(digits)} ${unit}` : `n/a ${unit}`;
 }
 
 export const SolarWindSpeedChart = memo(function SolarWindSpeedChart({
@@ -88,11 +95,18 @@ export const SolarWindSpeedChart = memo(function SolarWindSpeedChart({
                 tick={{ fontSize: 11 }}
               />
               <Tooltip
-                labelFormatter={(label) => new Date(label).toLocaleString()}
-                formatter={(value: number, name: string) => {
-                  if (name === "speed") return [`${value.toFixed(1)} km/s`, "Solar wind speed"];
-                  if (name === "density") return [`${value.toFixed(2)} p/cm3`, "Density"];
-                  return [`${value.toFixed(2)} nT`, "IMF Bz"];
+                labelFormatter={(label) =>
+                  typeof label === "string" || typeof label === "number"
+                    ? new Date(label).toLocaleString()
+                    : label
+                }
+                formatter={(
+                  value: TooltipValueType | undefined,
+                  name: string | number | undefined,
+                ) => {
+                  if (name === "speed") return [fixed(value, 1, "km/s"), "Solar wind speed"];
+                  if (name === "density") return [fixed(value, 2, "p/cm3"), "Density"];
+                  return [fixed(value, 2, "nT"), "IMF Bz"];
                 }}
               />
               <Line
