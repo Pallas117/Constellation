@@ -17,7 +17,7 @@ The gate runner (`gates run`) then sends each queued commit to the gatebox befor
 
 | Gatebox result | What the runner does |
 |---|---|
-| `gates rc=0` | runs the full gates here, as before. The ops tests and the VCRM need macOS, so the deploy record still comes from this Mac. |
+| `gates rc=0` | runs the full gates here, as before. The ops tests and the VCRM need macOS (`npm run verify` runs the bash ops tests, which use `plutil` and macOS `date`/`stat`, and needs Go, Chromium and a git checkout; the gatebox works from an archive with none of these), so the deploy record still comes from this Mac. |
 | `gates rc=N` (1–63) | records the request as `FAILED on gatebox …` with the log under `gates/logs/`. Nothing runs here and no deploy record is written. |
 | anything else: unreachable (255), busy (75), commit not on GitHub (65), fetch failed (69), killed | runs the gates here, as before |
 
