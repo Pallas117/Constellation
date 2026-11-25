@@ -92,6 +92,27 @@ distribution can break the machine; harden.sh skips it for the same reason. The 
 `sudo apt update && sudo apt full-upgrade` for you to run on a network you trust. On Debian it installs and turns
 on `unattended-upgrades`. For a custom USB image, see `image/README.md` (UNTESTED).
 
+## More profiles: desktop, models, agents, claws (25 Nov 2026)
+
+All run through the bootstrap (`bash bootstrap.sh --profile NAME ...`) or on their own, as your normal user. Same
+rules as the ops profile: no option = report only (no sudo); `--dry-run` prints and changes nothing; `--apply-profile`
+makes the changes with every sudo command printed first; re-running changes nothing already in place. Downloads
+have their own flags. **Josh reviews each before it is applied: they create users, use sudo, run containers and
+download software. Everything is UNVERIFIED on the real machine (stubs only).**
+
+Run order on Talos (each after reading its report): `--profile desktop`, `--profile models`, `--profile agents`,
+`--profile claws`; each first without `--apply-profile`.
+
+| Profile | What it does | Needs Josh's OK |
+|---|---|---|
+| `desktop` | Lightbound colours (site tokens, or marked navy/gold placeholders), GTK and terminal palette, wallpaper, panel status script (`gauss-panel-status`: Argo, battery, memory, agents, model, merge train from a file the Mac pushes to `~/.local/state/talos-kit/mac-status.txt`), LightDM greeter (sudo). | sudo for the greeter |
+| `models` | Picks the Ollama model from RAM and VRAM: CPU/nouveau `qwen2.5-coder:1.5b`; proprietary NVIDIA with 4 GB `granite-code:3b`; 6 GB VRAM and 8 GB RAM `qwen2.5-coder:7b`; Apache-2.0 only (Qwen2.5-Coder 3B is not). Pins Ollama to 127.0.0.1 with a drop-in. Prints the NVIDIA driver steps and the Secure Boot caveat, never runs them. | `--apply-models` runs the `ollama pull` (a download) |
+| `agents` | User `gauss-agent` (no sudo, locked password, nologin, home 0700), root-owned spool runner with a daily credit cap (fails closed at 0), hardened unit (`ProtectSystem=strict`, `ProtectHome`, `NoNewPrivileges`, `PrivateTmp`, `MemoryMax`, log rate limit). Installed but **off** until Josh creates the root-only key file `/etc/gauss-agent/anthropic.key` (read by systemd `LoadCredential`, never in the repo, env file or journal) and a cap. | the key, the cap, `enable --now` |
+| `claws` | User `gauss-claw`, rootless podman container per claw: `--network=none`, read-only root, capabilities dropped, limits, one scratch volume plus a read-only socket to the loopback Ollama (`gauss-claw-gw`), skills allowlist (empty), no credentials. See `CLAWS-THREAT-MODEL.md` (draft). Never starts the container. | `--apply-claws --claw-image name@sha256:...` pulls and creates (a download) |
+
+Shared helpers: `lib.sh`. UNVERIFIED: every step on real Kali and podman; the GTK/Xfce settings keys; the claw
+image's need for a socket shim; `claude` CLI on the agent user; hybrid NVIDIA driver behaviour.
+
 ## Lid, suspend and the charge limit (by hand, if you do not use the ops profile)
 
 - **Lid.** By default systemd suspends on lid close, also on mains. To keep working with the lid shut while

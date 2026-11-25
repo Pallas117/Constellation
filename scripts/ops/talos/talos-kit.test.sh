@@ -279,9 +279,93 @@ mk_machine on-battery; bs "${OK[@]}" --profile ops --dry-run
 ! { grep -Ev '^ *(#|note )' "$P" | grep -E '(curl|wget)[^|]*\| *(ba)?sh|ufw +(allow|deny|reject|limit|default|enable|disable|delete|reset)|systemctl[^|]* mask '; } >/dev/null; expect "talos ops profile never pipes a download to a shell, changes ufw rules or masks a unit" $?
 I="$D/image/README.md"; has 'UNTESTED' "$I" && has 'live-build-config' "$I" && has '--profile ops' "$I"; expect "talos image README exists, names live-build-config and the profile hook, and is marked UNTESTED" $?
 
+# --- desktop, models, agents and claws profiles (25 Nov 2026) ---
+NR="$T/nroot"; NH="$T/nhome"; NL="$T/nlogs"; SYSROOT="$NR"; HOME_DIR="$NH"; LOGS="$NL"
+for t in install find wc; do p=$(command -v "$t") && ln -sf "$p" "$T/sys/$t"; done
+stub id 'case "$1" in -u) echo "${FAKE_UID:-501}" ;; -un) echo tester ;; [a-z]*) [ -e "$LOGS/users/$1" ] ;; esac'
+stub timeout 'shift; exec "$@"'
+stub sudo 'echo "$*" >>"$LOGS/sudo"
+case "$1" in
+  install) case " $* " in *" -d "*) exit 0 ;; esac; for a in "$@"; do src="${dst:-}"; dst="$a"; done; mkdir -p "$(dirname "$dst")"; cp "$src" "$dst" ;;
+  -u) shift 2; [ "$1" != -H ] || shift; exec "$@" ;;
+  systemctl|useradd) exec "$@" ;;
+  *) exit 0 ;;
+esac'
+stub useradd 'echo "$*" >>"$LOGS/useradd"'
+stub xfconf-query 'echo "$*" >>"$LOGS/xfconf"'
+stub ollama 'echo "$*" >>"$LOGS/ollama"; case "$1" in list) echo "NAME ID SIZE" ;; esac'
+stub podman 'echo "$*" >>"$LOGS/podman"'
+stub nvidia-smi 'echo "${VRAM:-4096}"'
+nw() { # nw: a fresh fake machine for the new profiles
+  rm -rf "$NR" "$NH" "$NL"; mkdir -p "$NR/etc" "$NR/proc" "$NL/svc" "$NL/users" "$NH"
+  printf 'MemTotal:       7760000 kB\n' >"$NR/proc/meminfo"
+}
+bs2() { out=$(env -i HOME="$HOME_DIR" PATH="$T/bin:$T/sys" LOGS="$LOGS" ORIGIN="$ORIGIN" REALGIT="$REALGIT" TALOS_KIT_SYSROOT="$SYSROOT" \
+  OLLAMA_HOST="${OLLAMA_HOST:-}" VRAM="${VRAM:-4096}" "$BASH_BIN" "$B" "$@" 2>&1); rc=$?; }
+tree2() { (cd "$T" && find nroot nhome nlogs | sort; cat nlogs/* 2>/dev/null); }
+DIG="x/y@sha256:$(printf '0%.0s' $(seq 64))"
+nw; before=$(tree2)
+for pr in desktop models agents claws; do
+  bs2 --profile $pr --dry-run; r=$rc; o="$out"; bs2 --profile $pr
+  [ "$r" = 0 ] && [ "$rc" = 0 ] && [ "$(tree2)" = "$before" ] && [[ "$o" == *"would run"* || "$o" == *"would write"* ]]; expect "talos $pr profile: --dry-run and report-only print and change nothing (no sudo, no calls)" $?
+done
+bs2 --profile bogus; [ "$rc" = 1 ]; expect "talos bootstrap refuses an unknown profile" $?
+bs2 --profile ops --apply-models; [ "$rc" = 1 ]; expect "talos bootstrap refuses --apply-models outside the models profile" $?
+bs2 --profile models --apply-claws; [ "$rc" = 1 ]; expect "talos bootstrap refuses --apply-claws outside the claws profile" $?
+bs2 --apply-claws; [ "$rc" = 1 ]; expect "talos bootstrap refuses an apply flag without a profile" $?
+
+nw; bs2 --profile desktop --apply-profile
+[ "$rc" = 0 ] && has '@define-color lb_ground #' "$NH/.config/gtk-3.0/gtk.css" && has 'ColorBackground=' "$NH/.config/xfce4/terminal/terminalrc" && [ -x "$NH/.local/bin/gauss-panel-status" ] && has 'Adwaita-dark' "$LOGS/xfconf"; expect "talos desktop profile --apply writes the user-level theme, terminal palette and panel script" $?
+has 'theme-name' "$NR/etc/lightdm/lightdm-gtk-greeter.conf.d/50-gauss.conf" && has 'install -D -m 0644 -o root -g root' "$LOGS/sudo" && [[ "$out" == *"sudo: install"* ]]; expect "talos desktop profile configures the LightDM greeter with a printed sudo command" $?
+n=$(wc -l <"$LOGS/sudo"); bs2 --profile desktop --apply-profile; [ "$rc" = 0 ] && [ "$(wc -l <"$LOGS/sudo")" = "$n" ] && [[ "$out" == *"already in place"* ]]; expect "talos desktop profile is idempotent: no further sudo calls" $?
+mkdir -p "$NH/.local/state/talos-kit"; echo "3 PRs on the train" >"$NH/.local/state/talos-kit/mac-status.txt"
+o=$(env -i HOME="$NH" PATH="$T/bin:$T/sys" "$BASH_BIN" "$D/desktop/gauss-panel-status.sh" 2>&1); [[ "$o" == *"<txt>train: 3 PRs on the train"* && "$o" == *"<tool>"* ]]; expect "talos panel status line shows the pushed train status and local facts" $?
+
+nw; bs2 --profile models
+[[ "$out" == *"CODER MODEL: qwen2.5-coder:1.5b"* ]] && [ ! -e "$LOGS/ollama" ]; expect "talos models report-only: CPU/nouveau picks the 1.5B and pulls nothing" $?
+[[ "$out" == *"ollama pull qwen2.5-coder:1.5b"* && "$out" == *"Secure Boot"* && "$out" == *"nvidia-driver"* ]]; expect "talos models prints the pull command, size and the NVIDIA driver steps with the Secure Boot caveat" $?
+nw; bs2 --profile models --apply-models; [ "$rc" = 0 ] && has '^pull qwen2.5-coder:1.5b$' "$LOGS/ollama"; expect "talos models --apply-models pulls the chosen model" $?
+nw; stub lspci 'echo "01:00.0 3D controller: NVIDIA"'; VRAM=2048 bs2 --profile models; [[ "$out" == *"CODER MODEL: qwen2.5-coder:1.5b"* ]]; expect "talos models stays on the 1.5B with 2 GB VRAM" $?
+VRAM=4096 bs2 --profile models; [[ "$out" == *"CODER MODEL: granite-code:3b"* && "$out" == *"Apache-2.0"* ]]; expect "talos models picks a 3B Apache-2.0 model with 4 GB VRAM" $?
+VRAM=5000 bs2 --profile models; [[ "$out" != *"CODER MODEL: qwen2.5-coder:7b"* ]]; expect "talos models never picks a 7B under 6 GB VRAM" $?
+sed -i.bak 's/7760000/16000000/' "$NR/proc/meminfo"; VRAM=8192 bs2 --profile models; [[ "$out" == *"CODER MODEL: qwen2.5-coder:7b"* ]]; expect "talos models picks the 7B only with 6 GB VRAM or more and 8 GB RAM" $?
+rm -f "$T/bin/lspci"
+nw; : >"$LOGS/svc/ollama.service.present"; OLLAMA_HOST=0.0.0.0 bs2 --profile models --apply-profile
+[[ "$out" == *"not loopback"* ]] && has 'OLLAMA_HOST=127.0.0.1:11434' "$NR/etc/systemd/system/ollama.service.d/50-gauss-loopback.conf" && ! grep -q '0\.0\.0\.0' "$NR/etc/systemd/system/ollama.service.d/50-gauss-loopback.conf"; expect "talos models pins Ollama to 127.0.0.1 and warns about a 0.0.0.0 OLLAMA_HOST, never binding wider" $?
+! { grep -Ev '^ *(#|note |warn )' "$D/models-profile.sh" | grep -q '0\.0\.0\.0'; }; expect "talos models script never writes 0.0.0.0" $?
+
+nw; bs2 --profile agents --apply-profile
+[ "$rc" = 0 ] && has '^--system --create-home --home-dir /var/lib/gauss-agent --shell /usr/sbin/nologin --user-group gauss-agent$' "$LOGS/useradd" && has '^passwd -l gauss-agent$' "$LOGS/sudo" && has '^chmod 0700 /var/lib/gauss-agent$' "$LOGS/sudo"; expect "talos agents creates an unprivileged gauss-agent: nologin, password locked, home 0700" $?
+! grep -E 'usermod|sudoers|adm|(-G|--groups)' "$LOGS/useradd" "$LOGS/sudo" | grep -q gauss-agent; expect "talos agents gives gauss-agent no sudo or extra groups" $?
+UF="$NR/etc/systemd/system/gauss-agent.service"; ok=0
+for k in 'ProtectSystem=strict' 'ProtectHome=true' 'NoNewPrivileges=true' 'PrivateTmp=true' 'MemoryMax=' 'LogRateLimitBurst=' 'LoadCredential=anthropic-key:/etc/gauss-agent/anthropic.key' 'ConditionPathExists=/etc/gauss-agent/anthropic.key' 'User=gauss-agent'; do has "^$k" "$UF" || { ok=1; echo "    missing $k"; }; done; [ "$ok" = 0 ]; expect "talos agent unit has the hardening keys, the credential load and the key condition" $?
+! grep -E 'enable|start' "$LOGS/systemctl" | grep -q gauss-agent && [[ "$out" == *"OFF until"* ]]; expect "talos agents installs the unit but never enables or starts it (OFF until Josh makes the key file)" $?
+! grep -Eq 'sk-ant|ANTHROPIC_API_KEY=[^$"]' "$D/agents-profile.sh" "$D/systemd/gauss-agent.service"; expect "talos agents holds no key in the kit" $?
+
+AD="$T/agentd"; RUN="$D/agent/agent-runner.sh"; rm -rf "$AD"; mkdir -p "$AD/spool" "$T/cred"; echo "do a thing" >"$AD/spool/a.task"
+ag() { out=$(env -i PATH="$T/bin:$T/sys" GAUSS_AGENT_ONCE=1 GAUSS_AGENT_DIR="$AD" GAUSS_AGENT_CMD=cat CREDENTIALS_DIRECTORY="$T/cred" GAUSS_AGENT_CREDIT_CAP_USD="${CAP:-0}" "$BASH_BIN" "$RUN" 2>&1); rc=$?; }
+ag; [ -e "$AD/spool/a.task" ] && [[ "$out" == *"OFF: no credential"* ]]; expect "talos agent runner does nothing without the credential" $?
+echo SECRETKEY123 >"$T/cred/anthropic-key"; ag; [ -e "$AD/spool/a.task" ] && [[ "$out" == *"credit cap"* ]]; expect "talos agent runner does nothing with the cap unset (fail closed)" $?
+CAP=5 ag; [ ! -e "$AD/spool/a.task" ] && [ -e "$AD/done/a.task" ] && [ "$(awk -F'\t' '{s+=$2}END{print s}' "$AD/spend.tsv")" = 1 ]; expect "talos agent runner runs a queued task under the cap and records its assumed cost" $?
+[[ "$out" != *SECRETKEY123* ]] && ! grep -rq SECRETKEY123 "$AD"; expect "talos agent runner never prints or stores the key" $?
+echo "again" >"$AD/spool/b.task"; CAP=1 ag; [ -e "$AD/spool/b.task" ] && [[ "$out" == *"credit cap"* ]]; expect "talos agent runner stops once today's spend reaches the cap" $?
+
+nw; bs2 --profile claws --claw-image foo; [ "$rc" = 1 ]; expect "talos claws refuses an image not pinned by digest" $?
+bs2 --profile claws --apply-claws; [ "$rc" = 1 ]; expect "talos claws --apply-claws needs --image" $?
+nw; bs2 --profile claws --claw-image "$DIG"; [ ! -e "$LOGS/podman" ] && [[ "$out" == *"to download and create"* ]]; expect "talos claws report-only pulls and creates nothing" $?
+nw; bs2 --profile claws --apply-profile --apply-claws --claw-image "$DIG"
+[ "$rc" = 0 ] && has "^pull $DIG$" "$LOGS/podman" && has '^create ' "$LOGS/podman" && ! grep -q '^start\|^run' "$LOGS/podman"; expect "talos claws --apply-claws pulls and creates the container but never starts it" $?
+C=$(grep '^create ' "$LOGS/podman")
+[[ "$C" == *"--network=none"* && "$C" == *"--read-only"* && "$C" == *"--cap-drop=all"* && "$C" == *"no-new-privileges"* && "$C" == *"--memory 1g"* && "$C" == *"--pids-limit"* ]]; expect "talos claw container is network-less, read-only, capability-free and resource-limited" $?
+[[ "$C" != *"--network=host"* && "$C" != *"--net=host"* && "$C" != *"--privileged"* && "$C" != *"--pid=host"* && "$C" != *"--network=slirp"* && "$C" != *"$NH"* && "$C" != *"/home"* ]]; expect "talos claw container args never include host network, privileged or a home mount" $?
+bad=0; for v in $(printf '%s\n' "$C" | grep -o -- '--volume [^ ]*' | sed 's/--volume //'); do case "$v" in claw-scratch-*:/scratch:rw|/run/gauss-claw-gw:/gw:ro) ;; *) bad=1 ;; esac; done; [ "$bad" = 0 ]; expect "talos claw container mounts only its scratch volume and the gateway socket" $?
+has 'gauss-claw' "$LOGS/useradd" && has '^loginctl enable-linger gauss-claw$' "$LOGS/sudo" && has 'TCP:127.0.0.1:11434' "$NR/etc/systemd/system/gauss-claw-gw.service" && [ -f "$NR/var/lib/gauss-claw/skills-allowlist.txt" ]; expect "talos claws sets up its own user, the loopback-only gateway and an empty skills allowlist" $?
+! { grep -Ev '^ *(#|note |warn )' "$D/claws-profile.sh" | grep -E -- '--privileged|--network=host|--net=host|\$HOME|--pid=host|-v /|--volume /(home|etc|var|root)'; } >/dev/null; expect "talos claws script has no privileged, host network or HOME mount in code" $?
+[ -f "$D/CLAWS-THREAT-MODEL.md" ] && has 'DRAFT' "$D/CLAWS-THREAT-MODEL.md" && has 'network=none' "$D/CLAWS-THREAT-MODEL.md"; expect "talos claws threat model draft exists" $?
+
 # --- static checks ---
-if command -v shellcheck >/dev/null; then shellcheck -S warning "$B" "$P" "$0"; expect "talos scripts are shellcheck-clean" $?
-else bash -n "$B" && bash -n "$P" && bash -n "$0"; expect "talos scripts parse (shellcheck not installed here, UNVERIFIED lint)" $?; fi
+if command -v shellcheck >/dev/null; then shellcheck -x -S warning "$B" "$P" "$0" "$D"/desktop-profile.sh "$D"/models-profile.sh "$D"/agents-profile.sh "$D"/claws-profile.sh "$D"/lib.sh "$D"/agent/agent-runner.sh "$D"/desktop/gauss-panel-status.sh; expect "talos scripts are shellcheck-clean" $?
+else bash -n "$B" && bash -n "$P" && bash -n "$0" && for f in "$D"/desktop-profile.sh "$D"/models-profile.sh "$D"/agents-profile.sh "$D"/claws-profile.sh "$D"/lib.sh "$D"/agent/agent-runner.sh "$D"/desktop/gauss-panel-status.sh; do bash -n "$f" || exit 1; done; expect "talos scripts parse (shellcheck not installed here, UNVERIFIED lint)" $?; fi
 
 [ -z "$JUNIT" ] || junit_write talos-kit "$JUNIT"
 echo "talos-kit: $pass passed, $failed failed"
