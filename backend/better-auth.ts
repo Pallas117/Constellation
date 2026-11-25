@@ -1,6 +1,7 @@
 import { betterAuth } from "better-auth";
 import Database from "better-sqlite3";
 import { authDbPath } from "./auth-db.js";
+import { AccountBackoff, backoffHooks } from "./auth-backoff.js";
 import { isSsoCallback, ssoEmailAllowed as policyAllows, ssoPolicyFromEnv, ssoSignUpAllowed } from "./sso-policy.js";
 
 // Initialize a local SQLite db for better-auth (.auth.db; tests use a throwaway file)
@@ -27,6 +28,9 @@ export const ssoGoogleEnabled = Boolean(googleClientId && googleClientSecret);
 export const ssoGithubEnabled = Boolean(githubClientId && githubClientSecret);
 const ssoPolicy = ssoPolicyFromEnv();
 export const ssoAllowedDomain = ssoPolicy.domain;
+
+/** Per-account pause after repeated failed password sign-ins (in memory; see backend/auth-backoff.ts). */
+export const accountBackoff = new AccountBackoff();
 
 /** SSO may only create accounts for the allowed domain or listed emails (enforced here, not just hinted). */
 export function ssoEmailAllowed(email: string | null | undefined): boolean {
@@ -96,6 +100,9 @@ export const auth = betterAuth({
             },
         },
     },
+    // Failed password sign-ins are also counted per account, so guesses spread over many addresses still slow down
+    // (threat model TM-01; backend/auth-backoff.ts). SSO sign-in and callers on this machine are not paused.
+    hooks: backoffHooks(accountBackoff),
     user: {
         additionalFields: {
             // input: false stops users choosing their own role at sign-up.
