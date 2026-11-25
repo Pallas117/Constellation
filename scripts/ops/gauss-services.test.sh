@@ -922,9 +922,17 @@ expect "train: a request whose PR moved on is dropped without a run" $?
 out=$(cd "$LIVE" && run gates result "$N1"); [ $? = 0 ] && [[ "$out" == *MERGED* ]]; expect "train: gates result counts a merged run as passed" $?
 [ -z "$(ls "$GQ")" ] && [ -z "$(g worktree list | grep gauss-train)" ]; expect "train: queue drained, scratch worktrees removed" $?
 echo "OPEN train main true CLEAN" >"$GHD/pr13"; git --git-dir="$ORIGIN" update-ref refs/heads/train "$N1"
+# 25 Nov: a draft can't merge, so it is not gated: one SKIPPED line, no run, no note, no push; a plain sha enqueue still gates.
 P5=$(tc "$N1" f5.txt x); g push -q origin "$P5:refs/heads/train"; echo "OPEN train main true CLEAN" >"$GHD/pr13"
+n=$(grep -c "PASSED" "$GR"); (cd "$LIVE" && run gates enqueue "$P5" --pr 13 >/dev/null 2>&1); run gates run >/dev/null 2>&1
+[ "$(grep -c "PASSED" "$GR")" = "$n" ] && [ -z "$(ls "$GQ")" ] && [ ! -e "$WD/gates/held/13" ] && [ "$(git --git-dir="$ORIGIN" rev-parse refs/heads/train)" = "$P5" ] \
+  && [ "$(grep -c "^[^ ]* $P5 [^ ]* SKIPPED draft: mark the PR ready to gate it$" "$GR")" = 1 ]
+expect "train: a draft is not gated: one SKIPPED line, nothing run or pushed" $?
+(cd "$LIVE" && run gates enqueue "$P5" >/dev/null 2>&1); run gates run >/dev/null 2>&1
+grep -q "^[^ ]* $P5 [^ ]* PASSED" "$GR"; expect "train: a plain sha enqueue (no PR) of the same commit is still gated" $?
+echo "OPEN train main false BLOCKED" >"$GHD/pr13"
 (cd "$LIVE" && run gates enqueue "$P5" --pr 13 >/dev/null 2>&1); run gates run >/dev/null 2>&1
-grep -q "^[^ ]* $P5 [^ ]* HELD passed, not merged: draft" "$GR"; expect "train: a draft passes but isn't merged" $?
+grep -q "^[^ ]* $P5 [^ ]* HELD passed, not merged: GitHub says BLOCKED" "$GR"; expect "train: a ready PR that GitHub won't merge passes but is held" $?
 P6=$(tc "$N1" f6.txt y); printf 'sha=%s\ntree=%s\nrepo=%s\nqueued=%s\nby=t\npr=7\n' "$P6" "$(tree_of "$P6")" "$(g rev-parse --absolute-git-dir)" "$(date +%s)" \
   >"$GQ/1.000000-$(tree_of "$P1").req" # what train_sync leaves: moved to P6, still named after P1's tree
 out=$(cd "$LIVE" && run gates result "$P6" 2>&1); rc=$?
@@ -1095,16 +1103,15 @@ rm -f "$GQ"/*.req
 # until its own change differs, it stops being a draft, or it is queued with --final.
 runs_of() { grep -c "^[^ ]* [^ ]* [^ ]* PASSED" "$GR"; } # gate runs so far
 W1=$(tc "$M3" backend/auth-wait.ts a); D1=$(tc "$M3" d52.txt d); g push -q origin "$W1:refs/heads/w51" "$D1:refs/heads/d52" && g fetch -q origin
-echo "OPEN w51 main false CLEAN" >"$GHD/pr51"; echo "OPEN d52 main true CLEAN" >"$GHD/pr52"
-(cd "$LIVE" && run gates enqueue "$W1" --pr 51 >/dev/null 2>&1; run gates enqueue "$D1" --pr 52 >/dev/null 2>&1); run gates run >/dev/null 2>&1
-grep -q "^[^ ]* $W1 [^ ]* HELD passed, not merged: touches backend/auth-wait.ts" "$GR" && grep -q "^[^ ]* $D1 [^ ]* HELD passed, not merged: draft" "$GR" \
-  && grep -qx "kind=person" "$WD/gates/held/51" && grep -qx "kind=draft" "$WD/gates/held/52" && grep -qx "sha=$W1" "$WD/gates/held/51"
-expect "train: a pass held for a person or as a draft leaves a note" $?
+echo "OPEN w51 main false CLEAN" >"$GHD/pr51"; echo "OPEN d52 main false CLEAN" >"$GHD/pr52"
+(cd "$LIVE" && run gates enqueue "$W1" --pr 51 >/dev/null 2>&1); run gates run >/dev/null 2>&1
+grep -q "^[^ ]* $W1 [^ ]* HELD passed, not merged: touches backend/auth-wait.ts" "$GR" \
+  && grep -qx "kind=person" "$WD/gates/held/51" && grep -qx "sha=$W1" "$WD/gates/held/51"
+expect "train: a pass held for a person leaves a note" $?
 M4=$(tc "$M3" main.txt main-4); g push -q origin "$M4:refs/heads/main" && g fetch -q origin
-n=$(runs_of); (cd "$LIVE" && run gates enqueue "$W1" --pr 51 >/dev/null 2>&1; run gates enqueue "$D1" --pr 52 >/dev/null 2>&1); out=$(run gates run 2>&1)
-[ "$(runs_of)" = "$n" ] && [ -z "$(ls "$GQ")" ] && [ "$(git --git-dir="$ORIGIN" rev-parse refs/heads/w51)" = "$W1" ] && [ "$(git --git-dir="$ORIGIN" rev-parse refs/heads/d52)" = "$D1" ] \
-  && grep -q "^[^ ]* $W1 [^ ]* HELD PR #51 passed on ${W1:0:7} and nothing of its own has changed: not gated again while it waits (Josh merges). When it can merge: gates enqueue ${W1:0:7} --pr 51 --final" "$GR" \
-  && grep -q "^[^ ]* $D1 [^ ]* HELD PR #52 passed on ${D1:0:7} and nothing of its own has changed: not gated again while it waits (draft)" "$GR"
+n=$(runs_of); (cd "$LIVE" && run gates enqueue "$W1" --pr 51 >/dev/null 2>&1); out=$(run gates run 2>&1)
+[ "$(runs_of)" = "$n" ] && [ -z "$(ls "$GQ")" ] && [ "$(git --git-dir="$ORIGIN" rev-parse refs/heads/w51)" = "$W1" ] \
+  && grep -q "^[^ ]* $W1 [^ ]* HELD PR #51 passed on ${W1:0:7} and nothing of its own has changed: not gated again while it waits (Josh merges). When it can merge: gates enqueue ${W1:0:7} --pr 51 --final" "$GR"
 expect "train: after main moves, a PR that only waits is not gated or merged into again" $?
 out=$(cd "$LIVE" && run gates enqueue "$W1" --final 2>&1); [ $? = 2 ] && [[ "$out" == *"--final needs --pr"* ]]; expect "train: --final needs --pr" $?
 n=$(runs_of); (cd "$LIVE" && run gates enqueue "$W1" --pr 51 --final >/dev/null 2>&1); grep -qx "final=1" "$GQ"/*.req; f1=$?
@@ -1116,6 +1123,9 @@ expect "train: --final gates a waiting PR against main as it is now (still merge
 g fetch -q origin; W3=$(tc "$W2" backend/auth-wait.ts b); g push -q origin "$W3:refs/heads/w51" && g fetch -q origin
 n=$(runs_of); (cd "$LIVE" && run gates enqueue "$W3" --pr 51 >/dev/null 2>&1); run gates run >/dev/null 2>&1
 [ "$(runs_of)" = $((n + 1)) ] && grep -q "^[^ ]* $W3 [^ ]* PASSED" "$GR"; expect "train: a waiting PR whose own change differs is gated again" $?
+echo "OPEN d52 main true CLEAN" >"$GHD/pr52"; (cd "$LIVE" && run gates enqueue "$D1" --pr 52 >/dev/null 2>&1); run gates run >/dev/null 2>&1
+[ ! -e "$WD/gates/held/52" ] && [ "$(git --git-dir="$ORIGIN" rev-parse refs/heads/d52)" = "$D1" ] && grep -q "^[^ ]* $D1 [^ ]* SKIPPED draft: mark the PR ready" "$GR"
+expect "train: a draft that main moved past is skipped, not synced or gated" $?
 echo "OPEN d52 main false CLEAN" >"$GHD/pr52"; : >"$T/actions"; (cd "$LIVE" && run gates enqueue "$D1" --pr 52 >/dev/null 2>&1); run gates run >/dev/null 2>&1
 D2=$(git --git-dir="$ORIGIN" rev-parse refs/heads/d52)
 [ "$D2" != "$D1" ] && grep -qx "gh merge 52 $D2" "$T/actions" && [ ! -e "$WD/gates/held/52" ]
