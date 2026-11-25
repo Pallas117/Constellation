@@ -78,6 +78,7 @@ export const API_POLICY: ReadonlyArray<{ method: string; path: string; access: A
   { method: "GET", path: "/security/cybertiger/events", access: "admin" },
   { method: "POST", path: "/security/cybertiger/block", access: "admin" },
   { method: "POST", path: "/security/cybertiger/unblock", access: "admin" },
+  { method: "POST", path: "/security/account-backoff/unpause", access: "admin" }, // clears a sign-in pause (TM-01)
   { method: "POST", path: "/ai/nowcast/train", access: "admin" },
 ];
 

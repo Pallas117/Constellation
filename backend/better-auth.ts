@@ -101,7 +101,7 @@ export const auth = betterAuth({
         },
     },
     // Failed password sign-ins are also counted per account, so guesses spread over many addresses still slow down
-    // (threat model TM-01; backend/auth-backoff.ts). Passkey and SSO sign-in are not paused.
+    // (threat model TM-01; backend/auth-backoff.ts). SSO sign-in and callers on this machine are not paused.
     hooks: backoffHooks(accountBackoff),
     user: {
         additionalFields: {

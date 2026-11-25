@@ -46,7 +46,8 @@ import { queryLimit } from "./lib/query-limit.js";
 import { auroraMapReply, encodedReply, sendJsonList } from "./lib/json-response.js";
 import { diskFreeBytes, overall, readTpms } from "./lib/tpm.js";
 import { SPACE_OBJECT_CATALOG } from "./lib/space-object-catalog.js";
-import { auth, CLIENT_IP_HEADER, ssoAllowedDomain, ssoGithubEnabled, ssoGoogleEnabled } from "./better-auth.js";
+import { accountBackoff, auth, CLIENT_IP_HEADER, ssoAllowedDomain, ssoGithubEnabled, ssoGoogleEnabled } from "./better-auth.js";
+import { DIRECT_LOCAL_HEADER } from "./auth-backoff.js";
 import { toNodeHandler } from "better-auth/node";
 import { SelfHealerAgent } from "./cybertiger/self-healer.js";
 import { bootSwitches } from "./lib/boot-switches.js";
@@ -139,6 +140,10 @@ app.use(
 app.use("/api/auth", cyberTigerGuard);
 app.use("/api/auth", (req, _res, next) => {
   req.headers[CLIENT_IP_HEADER] = cyberTiger.extractClientIp(req);
+  // The per-account sign-in pause skips a caller on this machine (the owner at the local console), by CyberTiger's
+  // own rule. Decided here from the connection; whatever a client sent under this name is removed.
+  if (cyberTiger.isDirectLocal(req)) req.headers[DIRECT_LOCAL_HEADER] = "1";
+  else delete req.headers[DIRECT_LOCAL_HEADER];
   next();
 });
 app.all("/api/auth/*", toNodeHandler(auth));
@@ -209,6 +214,9 @@ app.get("/health", async (_req, res) => {
     tpm: { status: overall(tpms), red: tpms.filter((t) => t.status === "red").map((t) => t.id) },
   });
 });
+
+/** Longest email an admin request may name (RFC 5321 path limit is 256; 320 is the usual upper bound). */
+const MAX_EMAIL_CHARS = 320;
 
 /**
  * CyberTiger in front of every /api request, sign-in included: blocked IPs, attack signatures and the rate limit
@@ -593,6 +601,20 @@ app.post("/api/security/cybertiger/unblock", (req: AuthenticatedRequest, res) =>
     actorUserId: req.auth?.userId,
   });
   res.json({ ok: removed, ip });
+});
+
+// Admin only (API_POLICY): clears one email's failed sign-in count and pause (backend/auth-backoff.ts), so an
+// owner whose password sign-in is kept paused by someone guessing can be let back in without a restart.
+app.post("/api/security/account-backoff/unpause", (req: AuthenticatedRequest, res) => {
+  const email = (req.body as { email?: unknown } | null | undefined)?.email;
+  if (typeof email !== "string" || !email.trim() || email.length > MAX_EMAIL_CHARS) {
+    res.status(400).json({ error: "Missing or invalid email" });
+    return;
+  }
+  const cleared = accountBackoff.unpause(email);
+  // The log names who did it, never the email.
+  console.info(`[auth-backoff] unpause by ${req.auth?.userId ?? "unknown"} (${req.auth?.role ?? "unknown"}): ${cleared ? "cleared" : "nothing to clear"}`);
+  res.json({ ok: true, cleared });
 });
 
 app.post("/api/ai/nowcast/infer", async (req: AuthenticatedRequest, res) => {
