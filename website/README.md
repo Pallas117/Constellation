@@ -509,6 +509,12 @@ Settings > Domains & Routes.
 
 After launch, every change is `npm run test:website`, then the deploy and smoke check above.
 
+**Automatic redeploy (off by default):** the merge train (`scripts/ops/gauss-services.sh`) can run the deploy and smoke
+check above by itself after it merges a PR that changed only files under `website/` (not `wrangler.jsonc`) while
+`RELEASE` is `"public"`. Switch it on with `echo on > ~/gauss/policy/website-redeploy`, off by removing the file. It
+uses the Cloudflare login already on this Mac, never prints wrangler's output, and if the smoke check fails it runs
+`wrangler rollback` and texts Josh. It never changes the release mode, Access, DNS, Stripe or secrets.
+
 ## Opening accounts later (`RELEASE: "full"`)
 
 All of it is still in the code, and the tests run it with `RELEASE: "full"`. To open it:

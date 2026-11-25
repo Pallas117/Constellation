@@ -1162,7 +1162,7 @@ grep -q "ROLLBACK FAILED" "$T/log"; expect "website redeploy: a rollback that fa
 WRFAIL=1 wsite 85 website/public/f.html six
 grep -qx "gh merge 85 $WS" "$T/actions" && ! grep -q "^smoke\|^wrangler rollback" "$T/actions" && grep -q "deploy failed" "$T/log"
 expect "website redeploy: a failed deploy is texted; no smoke check, no rollback (the site is unchanged)" $?
-wsite 86 website/public/g.html seven website/worker/index.js x
+wsite 86 website/public/g.html seven docs/website-note.md x
 grep -qx "gh merge 86 $WS" "$T/actions" && ! grep -q "^wrangler\|^smoke" "$T/actions"; expect "website redeploy: a merge that also touches a file outside website/ deploys nothing" $?
 wsite 87 website/wrangler.jsonc '{ "vars": { "RELEASE": "public" }, "x": 1 }'
 grep -qx "gh merge 87 $WS" "$T/actions" && ! grep -q "^wrangler\|^smoke" "$T/actions"; expect "website redeploy: a merge that changes wrangler.jsonc (release, routes, bindings) deploys nothing" $?

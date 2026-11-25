@@ -1,6 +1,6 @@
 {
   "$comment": "Constellation requirements baseline (GAU-120). NASA SP-2016-6105 Rev 2 §6.2/§5.3. Methods: T test, A analysis, I inspection, D demonstration. T evidence = exact test names; A/I/D evidence = repo paths. Verified by `npm run verify`.",
-  "version": "1.18.0",
+  "version": "1.19.0",
   "requirements": [
     {
       "id": "REQ-ING-001",
@@ -1214,6 +1214,27 @@
         "gates why: a timeout is named as a known cause, with its fix",
         "gates restart: a stuck runner and its run are stopped with no result, requests stay queued, and a dead owner's gate lock is cleared",
         "gates restart: a gate lock whose owner is alive is kept"
+      ]
+    },
+    {
+      "id": "REQ-OPS-013",
+      "title": "Website redeploys after a website-only merge, and the smoke check is the gate",
+      "statement": "When the operator has switched it on (off by default), the merge train shall, after merging a PR that changed only files under website/ other than website/wrangler.jsonc and whose RELEASE is public, deploy that commit with the documented website deploy, run the website smoke check against the live site, and on a smoke failure roll back to the previous deployment and text the operator; it shall deploy nothing in any other case and shall not print the deploy's output.",
+      "rationale": "The live site fell 10 website commits behind main because the deploy was a manual step; a deploy must never open a closed page, change the release mode or leave a failed version live.",
+      "parent": "GAU-206",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "website redeploy: off by default (no switch file): a website-only merge deploys nothing",
+        "website redeploy: a switch that isn't 'on' deploys nothing",
+        "website redeploy: a website-only merge deploys that commit, runs the smoke check on the live site, texts, and cleans up",
+        "website redeploy: a failed smoke check rolls back to the previous deployment and texts",
+        "website redeploy: a rollback that fails is texted loudly",
+        "website redeploy: a failed deploy is texted; no smoke check, no rollback (the site is unchanged)",
+        "website redeploy: a merge that also touches a file outside website/ deploys nothing",
+        "website redeploy: a merge that changes wrangler.jsonc (release, routes, bindings) deploys nothing",
+        "website redeploy: a PR held for Josh is not merged, so nothing is deployed",
+        "website redeploy: RELEASE other than public is never deployed"
       ]
     },
     {
