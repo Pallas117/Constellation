@@ -19,18 +19,19 @@ mkdirSync(OUT, { recursive: true });
 // [name, path, signed in as, expected status] — the dev seeds in dev.mjs give each workspace state an account.
 const PAGES = [
   ["home", "/"], ["gauss", "/gauss/"], ["evidence", "/gauss/evidence/"], ["gauss-apply", "/gauss/apply/"],
-  ["constellation", "/constellation/"], ["const-apply", "/constellation/apply/"], ["workshops", "/constellation/workshops/"],
+  ["constellation", "/constellation/"], ["constellation-tz", "/constellation/?tz=Asia/Kolkata"], ["const-apply", "/constellation/apply/"], ["workshops", "/constellation/workshops/"],
   ["planner", "/constellation/time/?z=Europe/London&z=Asia/Kuala_Lumpur&z=America/New_York&date=2026-10-23&at=9"],
+  ["planner-late", "/constellation/time/?z=Europe/London&z=Asia/Kolkata&z=Pacific/Auckland&date=2026-11-21&at=9"],
   ["turnstone", "/turnstone/"], ["argo", "/argo/"], ["education", "/education/"], ["education-apply", "/education/apply/"],
   ["privacy", "/privacy/"], ["terms", "/terms/"], ["404", "/nope", null, 404],
-  ["app-due", "/app/", "pilot@example.test"], ["app-operator", "/app/", "fleet@example.test"], ["app-member", "/app/", "member@example.test"],
+  ["app-due", "/app/", "pilot@example.test"], ["app-operator", "/app/", "fleet@example.test"], ["app-member", "/app/", "member@example.test"], ["app-brief", "/app/brief/", "member@example.test"],
   ["app-staff", "/app/", "staff@example.test"], ["app-none", "/app/", "visitor@example.test"], ["app-edu", "/app/?edu=start", "audit@example.ac.uk"],
   ["admin", "/app/admin/", "jzwnathan@lightbound.uk"],
 ];
 // The public release (worker/release.js) has no sign-in to emulate, and its closed pages are checked as 404s.
 const PUBLIC = process.env.RELEASE === "public";
 const pages = PUBLIC
-  ? [...PAGES.filter(([, , who]) => !who).map(([n, p, w, s]) => (n === "argo" ? [n, p, w, 404] : [n, p, w, s])), ["app-closed", "/app/", null, 404]]
+  ? [...PAGES.filter(([, , who]) => !who).map(([n, p, w, s]) => (n === "argo" ? [n, p, w, 404] : [n, p, w, s])), ["app-closed", "/app/", null, 404], ["brief-closed", "/app/brief/", null, 404]]
   : PAGES;
 const only = process.argv[2] ? process.argv[2].split(",") : null;
 

@@ -21,8 +21,9 @@ closed until `RELEASE: "full"`. See "Launch" and "Opening accounts later".
 | `/education/` | Gauss for Education (prototype), part of Constellation's outreach (nav shows Constellation): what a class gets (four labs), the three plans (student free, staff and research monthly, department yearly), and who can join. Buttons follow `EDU_SALES`; the staff price is "Price TBC" until `EDU_STAFF_PRICE` is set. |
 | `/education/apply/` | A department licence request, or a review for people without a university email. |
 | `/app/` | Signed-in workspace: quote and payment (card, or an invoice where you allow it), billing state, pilot progress, space weather, Constellation membership, members' opportunities, and the staff link for the team. |
+| `/app/brief/` | The weekly Constellation Brief, for Constellation members and admins: launches, space weather, events, funding and headlines from the cached feeds, each line with its source and fetch time. See "The Constellation Brief". |
 | `/app/admin/` | For `ADMIN_EMAILS`: approve with a quote, set plan, billing, pilot step; invite Constellation members (free). |
-| `/constellation/time/` | Public time-zone planner. Pick a date and up to 8 zones to see the local hour everywhere, with the hours that suit everyone outlined. A picked hour comes with a calendar file. No data is stored. |
+| `/constellation/time/` | Public time-zone planner. Pick a date and up to 8 zones to see the local hour everywhere, with the hours that suit everyone outlined. A picked hour comes with a calendar file, names each zone's offset and says where it is an unsocial hour (22:00–07:00 local). No data is stored. |
 | `/privacy/` | What is kept, why, for how long, and how to have it deleted. |
 | `/pilot`, `/sales` | Redirects into the Gauss flow (the entry points named in the sales plan), via `public/_redirects`. |
 | `/api/launches`, `/api/launches.ics`, `/api/space-weather`, `/api/health` | JSON, a calendar feed and a health check. |
@@ -37,7 +38,7 @@ Flow, all in CSS:
 ## How it runs itself
 
 ```
-cron every 15 min ──► worker/feeds.js ──► KV (feed:launches, feed:weather)
+cron every 5 min ──► worker/feeds.js ──► KV (feed:launches, feed:weather)
                        │  Launch Library 2 (every 30 min)          ▲
                        │  NOAA SWPC scales, Kp, solar wind         │ read only
 visitor ──► Cloudflare ─┬─ static file (free, no Worker run) ──────┘
@@ -178,6 +179,11 @@ old `argo-glyph-provisional.svg` stays only while the Access login page set-up (
   organisers, descriptions, addresses or coordinates. Up to 6 upcoming and the 3 most recent show, with "Follow
   Constellation on Luma". If Luma is down, the section still shows the link and `/api/health` stays green.
   New events appear by themselves once they're posted on Luma.
+  **Times (2026-11-18):** times are UTC and say so. "Show times in" is a plain GET form (`/constellation/?tz=Asia/Kolkata#events`,
+  zones allowlisted in `worker/timezones.js`): each event then leads with that zone's own date and time, the zone and its
+  offset named, with UTC kept beside it. The Worker does the conversion with its IANA database, so clock changes are
+  handled; no script, cookie, geolocation or IP lookup, and nothing is stored. The feed's times are UTC, so UTC is the
+  shared reference (an event's own venue zone is not kept).
 - **Workshops (06):** ethics, resilience and tech leadership, "led by facilitators from the Constellation community;
   members join free". `/constellation/workshops/` is a team request form (organisation, workshop, format, group
   size, when). It lands in admin as "WORKSHOP · …", and "Mark contacted" creates no account.
@@ -328,12 +334,24 @@ animations, and anyone with reduced motion, get the final frame beside all five 
 calls it a sketch, not a model. Belt facts follow NASA Earth Observatory ("Probing the Electric Space
 Around Earth", image 78985).
 
+**Scrolling into Gauss** (landing, after the descent, `#enter`): the screen pins and a captured frame of
+the Gauss live view opens between two pairs of dark planes (a sliver first, then the whole scene). Then
+three things arrive in order: a plate naming what the live view reads before sign-in (magnetopause,
+solar wind, IMF Bz, Kp; names only, because a still has no numbers), three veiled panels for what is
+past the sign-in (Field model, Operator console, Mesh: a name and "Members only", never blurred or
+invented data), and the one door, "Sign in with Argo". Scroll-driven CSS (`view-timeline: --gate`),
+no script, no new downloads (the frame was already on the page). Without scroll-driven animations, with
+reduced motion, or on a screen under 660 px tall, all three are simply there. Copy rules, enforced by
+a test: nothing about how sign-in works, no security or cryptography claims, no readings from a still.
+The panel names must match routes that really need an account in the app (`frontend/src/Cybertiger.tsx`).
+
 ## Change things
 
 | To change | Edit |
 |---|---|
 | Hero line, door text | `public/index.html` |
 | The landing's descent (black hole → aurora → Van Allen belts) | geometry: `tools/make_descent.py` (dipole field lines, then rewrites the SVG in `public/index.html`); timing: "Descent" in `public/assets/site.css` |
+| The landing's scroll into Gauss (frame, readings plate, veiled panels, door) | copy: the `#enter` section in `public/index.html`; timing: "Live-view gate" in `public/assets/site.css` |
 | Gauss copy (keep the claim rules; the tests enforce them) | `public/gauss/index.html` |
 | Constellation copy, intel rules, join route | `public/constellation/index.html` |
 | Colours, type, layout | `public/assets/site.css` (Brand Room tokens; the tests reject off-palette colours) |
@@ -358,6 +376,30 @@ npm run smoke:website -- http://127.0.0.1:8788   # the deployed-site smoke check
 
 `dev.mjs` emulates Cloudflare: assets with `_headers`, trailing slashes, the 404 page and byte
 ranges; the `run_worker_first` routes from `wrangler.jsonc`; an in-memory KV; and the cron.
+
+## The Constellation Brief
+
+`/app/brief/` (`worker/brief.js`) is one page a week for Constellation members and admins. It is full-release only:
+a public release answers 404, signed-out visitors get the workspace's 401, and signed-in non-members are sent back
+to `/app/`.
+
+- **Assembled on request, from the cache only.** The page reads the seven feed records the 15-minute cron already
+  keeps in the `LIVE` namespace and builds the brief as a pure function of those records and the time
+  (`assembleBrief`). There is no new scheduler, namespace, record or upstream call, and nothing about the reader is
+  stored. The week shown is the ISO week (Monday to Sunday, UTC). Past weeks are not archived.
+- **Sections, in a fixed order:** This week in orbit (dated launches in the next 7 days), Space weather (NOAA's
+  current scales, Kp and solar wind; the cached feed has no alert history, and the page says so), Events (the Luma
+  calendar, next 14 days, in the member's saved time zone and UTC), Funding and calls (tracked deadlines in the next
+  30 days, then UKRI and UK Space Agency notices posted in the last 7 days) and Headlines (at most five).
+- **Every line** names its source, links to the source item and says when the site fetched it. Each section states
+  a confidence (confirmed, likely or unverified) with a one-line reason, as "How we share" on `/constellation/`
+  promises. A stale or offline feed is labelled on the page and lowers the section to "unverified"; its section is
+  never dropped, and stale data is never shown as current.
+- **UKRI items show title, link and posting date only** (no summary, and the feed has no closing date).
+- **Source and licence register:** `worker/sources.js`, rendered at the bottom of the brief as "Sources". A row is
+  `checked` only when someone fetched and read the terms page it names on the date it gives; otherwise it stays
+  `unverified` with a note. A test fails if a cached feed has no row. Re-read the terms pages when adding a source
+  or once a year, and update the dates.
 
 ## Members' opportunities and the staff link
 
@@ -426,7 +468,7 @@ Worker shares Cloudflare's outbound IPs with other users who use them up: the fi
 HTTP 429 on every refresh, while the same URL answered from a home connection. With `LL2_API_KEY` set (a key from
 The Space Devs' Patreon), the Worker sends `Authorization: Token <key>` to `ll.thespacedevs.com` and to no other
 host, never follows a redirect with it, and ignores a value that isn't a plain token. The key is never stored or
-logged. Setting the secret takes effect at once; the next cron run (within 15 minutes) retries the feed, and
+logged. Setting the secret takes effect at once; the next cron run (within 5 minutes) retries the feed, and
 `/api/launches` turns `live`. Without the key, the page says the launch data is offline.
 
 Each deploy, from a clean checkout of the exact commit whose gates passed (`npm run test:website`, and
@@ -440,7 +482,7 @@ npm run smoke:website -- https://lightbound-site.<account>.workers.dev $(git rev
 
 `smoke:website` checks every public page and its security headers, the 404s, the email routes, the feeds,
 and that `/api/health` names the commit you meant to deploy. The first visit after a deploy fetches the feeds
-once; after that the cron runs every 15 minutes.
+once; after that the cron runs every 5 minutes (space weather each run; the slower feeds when they are due).
 
 **Then lightbound.space** (the DNS change, so only with Josh's go-ahead):
 1. Uncomment `routes` in `wrangler.jsonc`, deploy again, and run the smoke check against `https://lightbound.space`.
