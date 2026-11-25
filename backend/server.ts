@@ -52,6 +52,7 @@ import {
   authDb,
   authSecret,
   ensureAuthSchema,
+  markSessionDuress,
   markSessionPattern,
   markUserPattern,
   newestPasskeyKey,
@@ -63,6 +64,7 @@ import {
 import { createAdminUsersRouter } from "./admin/users.js";
 import { passkeyWarnings } from "./passkey-policy.js";
 import { createPatternRouter } from "./pattern/router.js";
+import { alarmStatus, argoAlarm, createSensor, watchAccess } from "./pattern/sensor.js";
 import { createPadRequests, createPatternStore, patternPepper } from "./pattern/store.js";
 import { windowLimit } from "./rate-limit.js";
 import { toNodeHandler } from "better-auth/node";
@@ -172,6 +174,10 @@ app.use(
 const patternPepperKey = authSecret().then(patternPepper);
 patternPepperKey.catch(() => {}); // a missing secret fails each pattern request (500), not the process
 const patternStore = createPatternStore(authDb, { pepper: patternPepperKey });
+// The pattern as a sensor: probing, duress and unusual data access go to CyberTiger's log and, when
+// they matter, to Josh's phone through Argo (PATTERN_ALERTS=off|log to keep them local).
+const patternAlarm = alarmStatus();
+const patternSensor = createSensor({ alarm: argoAlarm(), log: (e) => cyberTiger.recordSensorEvent(e) });
 // Where phones open the pattern pad, e.g. the tailnet share's https origin; unset: draw on the computer only.
 const patternPadOrigin = process.env.PATTERN_PAD_ORIGIN?.trim().replace(/\/+$/, "") || null;
 
@@ -341,6 +347,17 @@ app.use(
   ),
 );
 app.use("/api", enforceApiPolicy);
+// Operator sessions that read like bulk collection rather than the console must draw the pattern again.
+app.use(
+  "/api",
+  watchAccess({
+    sensor: patternSensor,
+    clearDrawing: (token) => markSessionPattern(token, null),
+    ipOf: (req) => cyberTiger.extractClientIp(req),
+    ratePerMinute: Number(process.env.PATTERN_WATCH_RATE) || undefined,
+    breadthPer5Min: Number(process.env.PATTERN_WATCH_BREADTH) || undefined,
+  }),
+);
 
 // Admin role management; a change needs a passkey step-up (policy: backend/rbac.ts).
 app.use(
@@ -360,7 +377,10 @@ app.use(
   createPatternRouter({
     store: patternStore,
     requests: createPadRequests(),
+    sensor: patternSensor,
     markSession: markSessionPattern,
+    markDuress: markSessionDuress,
+    ipOf: (req) => cyberTiger.extractClientIp(req),
     markUser: markUserPattern,
     geometryKeyFor: newestPasskeyKey,
     required: () => operatorPatternRequired(),
@@ -858,6 +878,12 @@ export async function startBackend(options?: { host?: string; port?: number }): 
       : `[backend] passkeys off: no secure origin matches RP ID ${passkeyConfig.rpID}`,
   );
   for (const note of passkeyWarnings(passkeyConfig)) console.warn(note);
+  if (!patternAlarm.ok) {
+    // Duress and lock events still reach the CyberTiger log; only the phone alarm is missing (threat model TM-10).
+    const note = `duress and lock alarms reach no phone: ${patternAlarm.detail}. Events still go to the CyberTiger log.`;
+    console.error(`[pattern-sensor] WARNING: ${note}`);
+    cyberTiger.recordSensorEvent({ severity: "high", ip: "local", message: note });
+  }
   console.log(
     operatorPatternRequired()
       ? `[backend] operator pattern required${patternPadOrigin ? `; phones draw at ${patternPadOrigin}/pad` : "; drawing on phones is off (PATTERN_PAD_ORIGIN)"}`

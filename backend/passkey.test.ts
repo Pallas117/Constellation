@@ -272,17 +272,18 @@ test("a passkey step-up replaces the browser's previous session and revokes it",
 /** The session token inside better-auth's signed cookie ("<token>.<signature>"). */
 const tokenOf = (cookie: string | undefined) => decodeURIComponent(cookie ?? "").split(".")[0];
 
-test("a step-up keeps the operator pattern this browser already drew, and a fresh sign-in does not get it", async () => {
+test("a step-up keeps the operator pattern (and any duress mark) this browser already drew, and a fresh sign-in does not get it", async () => {
   const { db, handler, browser, testAuth, userId } = await setup();
   const device = new SoftAuthenticator();
   assert.equal((await register(browser, device)).result.status, 200);
   const drawn = new Date("2026-11-03T02:00:00Z");
   const { internalAdapter } = await testAuth.$context;
-  await internalAdapter.updateSession(tokenOf(browser.sessionToken), { patternAt: drawn } as Record<string, unknown>);
+  await internalAdapter.updateSession(tokenOf(browser.sessionToken), { patternAt: drawn, duressAt: drawn } as Record<string, unknown>);
 
   assert.equal((await passkeySignIn(browser, device)).result.status, 200);
-  const row = db.prepare("SELECT patternAt FROM session WHERE token = ?").get(tokenOf(browser.sessionToken)) as { patternAt: unknown };
+  const row = db.prepare("SELECT patternAt, duressAt FROM session WHERE token = ?").get(tokenOf(browser.sessionToken)) as { patternAt: unknown; duressAt: unknown };
   assert.equal(toMillis(row.patternAt), drawn.getTime(), "the replacement session keeps the drawing");
+  assert.equal(toMillis(row.duressAt), drawn.getTime(), "and a duress mark: a fresh touch never washes the alarm away");
 
   // Another browser signing in with the same passkey starts without one.
   const other = new Browser(handler);
