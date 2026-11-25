@@ -7,6 +7,7 @@ import {
   PARTICLE_MAX_AGE_MS,
   type GoesParticleReadout,
 } from "../adapters/goes-particles.js";
+import { fetchGlotec, freshIonosphere, getGlotecStatus } from "../adapters/glotec.js";
 import { fetchSwpcProducts, type SwpcProducts } from "../adapters/swpc-products.js";
 import { checkFieldMagnitude, checkPlasmaTracking, compareScales, expireCheck, fieldSampleProblem } from "../lib/sense-checks.js";
 import { currentKpReading, geomagneticStorm, radiationStorm, radioBlackout } from "../physics/noaa-scales.js";
@@ -40,6 +41,7 @@ import { inferAnomalyForecast } from "../ml-client/client.js";
 import type {
   CanonicalSpaceWeatherPoint,
   DerivedField,
+  IonosphereTecReading,
   IngestionTickResult,
   MMSReconVectorPoint,
   SenseCheck,
@@ -50,12 +52,19 @@ import type {
 } from "../types.js";
 
 export const TICK_MS = 5000;
+export const BACKOFF_BASE_MS = 10_000;
+export const BACKOFF_MAX_MS = 10 * 60 * 1000;
+/** Wait before the next attempt after `runs` consecutive failures: 10 s, 20 s, 40 s ... capped at 10 min. */
+export function backoffMs(runs: number): number {
+  return Math.min(BACKOFF_MAX_MS, BACKOFF_BASE_MS * 2 ** Math.max(0, runs - 1));
+}
 const NOAA_MS = 60000;
 const ESA_MS = 10000;
 const JAXA_MS = 60000;
 const MMS_MS = 10 * 60 * 1000; // archival L2 product; polling faster gains nothing
 const LASP_MS = 60000;
 const GOES_MS = 60000; // GOES publishes every 5 min; a 60 s poll keeps worst-case lag under 6 min
+const GLOTEC_MS = 5 * 60 * 1000; // GloTEC steps every 10 min; the index tail is tiny, the 2.4 MB file is fetched only for a new step
 const KYOTO_DST_MS = 10 * 60 * 1000; // hourly product
 const SWPC_PRODUCTS_MS = 2 * 60 * 1000; // NOAA scales and alerts: a cross-check, updated every few minutes
 
@@ -101,7 +110,7 @@ export function forecastWindow(
 }
 
 /** The sources a worker can fetch. */
-export const INGEST_SOURCES = ["noaa", "kyoto-dst", "goes", "swpc-products", "esa", "jaxa", "mms", "lasp"] as const;
+export const INGEST_SOURCES = ["noaa", "kyoto-dst", "goes", "glotec", "swpc-products", "esa", "jaxa", "mms", "lasp"] as const;
 export type IngestSource = (typeof INGEST_SOURCES)[number];
 
 /**
@@ -141,6 +150,9 @@ export class IngestionWorker {
   private couplingWindow: number[] = [];
   private auroraGridCache: { key: string; result: ReturnType<typeof buildAuroraGrid> } | null = null;
   private lastFetch = new Map<string, number>();
+  /** Consecutive failures per source, and when its next attempt is allowed (GAU-232 follow-up). */
+  private failures = new Map<string, number>();
+  private backoffUntil = new Map<string, number>();
 
   private noaa: NOAAReadout | null = null;
   /**
@@ -156,6 +168,7 @@ export class IngestionWorker {
   private kpReading: KpReading | null = null;
   private esa: ESAReadout | null = null;
   private goes: GoesParticleReadout | null = null;
+  private glotec: IonosphereTecReading | null = null;
   private swpcProducts: SwpcProducts | null = null;
   private kyotoDst: DstReading | null = null;
   private latestCanonical: CanonicalSpaceWeatherPoint | null = null;
@@ -257,18 +270,45 @@ export class IngestionWorker {
     return this.timing.snapshot(TICK_MS, this.lastMeasurementAt, NOAA_FRESH_MS, NOAA_MAX_AGE_MS);
   }
 
-  /** Fetch one source within its latency budget; a failure or timeout keeps the previous value. */
+  /**
+   * Fetch one source within its latency budget; a failure or timeout keeps the previous value.
+   * A source that keeps failing (a hotspot with no route, an upstream outage) backs off: the
+   * wait doubles from 10 s to 10 min, and the log gets one line per failure run, not a stack
+   * trace every cadence (the live backend wrote ~2k ESA timeouts with traces in a few hours).
+   */
   private async timedFetch<T>(stage: string, fn: () => Promise<T>): Promise<T | null> {
     try {
-      return await this.timing.time(stage, fn, STAGE_BUDGET_MS[stage]);
+      const value = await this.timing.time(stage, fn, STAGE_BUDGET_MS[stage]);
+      const runs = this.failures.get(stage) ?? 0;
+      if (runs > 0) {
+        this.failures.delete(stage);
+        this.backoffUntil.delete(stage);
+        console.warn(`[IngestionWorker] ${stage} fetch recovered after ${runs} failure(s).`);
+      }
+      return value;
     } catch (error) {
-      console.warn(`[IngestionWorker] ${stage} fetch failed; keeping previous value.`, error);
+      const runs = (this.failures.get(stage) ?? 0) + 1;
+      this.failures.set(stage, runs);
+      const waitMs = backoffMs(runs);
+      this.backoffUntil.set(stage, this.now() + waitMs);
+      if (runs === 1 || runs % 10 === 0) {
+        const reason = error instanceof Error ? error.message : String(error);
+        console.warn(
+          `[IngestionWorker] ${stage} fetch failed (${runs} in a row; next try in ${Math.round(waitMs / 1000)} s); keeping previous value: ${reason}`,
+        );
+      }
       return null;
     }
   }
 
+  /** Consecutive failures per source (tests and /health). */
+  getFailureRuns(): Record<string, number> {
+    return Object.fromEntries(this.failures);
+  }
+
   private shouldFetch(key: string, cadenceMs: number): boolean {
     const now = this.now();
+    if (now < (this.backoffUntil.get(key) ?? 0)) return false;
     const last = this.lastFetch.get(key) ?? 0;
     if (now - last >= cadenceMs) {
       this.lastFetch.set(key, now);
@@ -388,7 +428,8 @@ export class IngestionWorker {
     try {
       // Local Buffer is always the priority (Air-Gap ready)
       await this.timing.time("persist", async () => {
-        await bedrock.appendTelemetryStrict({ type: "canonical", data: point, timestamp: point.timestamp });
+        // Typed by what it is: canonical, canonical-stale (no measurement) or canonical-rejected. GAU-244.
+        await bedrock.appendCanonicalStrict(point);
         if (mmsVector) {
           await bedrock.appendTelemetryStrict({ type: "mms", data: mmsVector, timestamp: mmsVector.timestamp });
         }
@@ -437,10 +478,10 @@ export class IngestionWorker {
       ...(this.wants("lasp") ? [getMmsLaspStatus()] : []),
     ];
     if (officialOnly) {
-      return [getNoaaStatus(), getGoesStatus(), getKyotoDstStatus(), ...mms];
+      return [getNoaaStatus(), getGoesStatus(), ...(this.wants("glotec") ? [getGlotecStatus()] : []), getKyotoDstStatus(), ...mms];
     }
 
-    return [getNoaaStatus(), getGoesStatus(), getKyotoDstStatus(), getEsaStatus(), getJaxaStatus(), ...mms];
+    return [getNoaaStatus(), getGoesStatus(), ...(this.wants("glotec") ? [getGlotecStatus()] : []), getKyotoDstStatus(), getEsaStatus(), getJaxaStatus(), ...mms];
   }
 
   private async isAuroraRpcSignatureError(error: unknown): Promise<boolean> {
@@ -508,6 +549,13 @@ export class IngestionWorker {
         fetches.push(
           this.timedFetch("goes", () => fetchGoesParticles(nowMs)).then((result) => {
             if (result) this.goes = result;
+          }),
+        );
+      }
+      if (this.wants("glotec") && this.shouldFetch("glotec", GLOTEC_MS)) {
+        fetches.push(
+          this.timedFetch("glotec", () => fetchGlotec(nowMs)).then((result) => {
+            if (result) this.glotec = result;
           }),
         );
       }
@@ -634,6 +682,8 @@ export class IngestionWorker {
     // Radio blackouts (R) from GOES X-rays, and the input sense-checks (GAU-136).
     point.xray = freshXray(this.goes?.xray ?? null, nowMs);
     point.alerts.radioBlackout = radioBlackout(point.xray);
+    // GloTEC TEC over Malaysia: only within its freshness bound; older is unknown (null).
+    point.ionosphere = freshIonosphere(this.glotec, nowMs);
     point.senseChecks = this.senseChecks(point, nowMs);
     point.noaaAlerts = this.swpcProducts?.alerts ?? null;
 

@@ -1,12 +1,11 @@
-"""Constellation and Turnstone symbols, redrawn on a strict grid (refined 4 Nov 2026, Josh: "more clean and professional").
+"""Constellation, Turnstone and Argo symbols and the Gauss icon, generated on a strict grid.
 
-Both keep their identity and lose the noise that made them fall apart at small sizes:
+Constellation (refined 4 Nov 2026, Josh: "more clean and professional"):
 - Constellation: navy disc; one gold ring broken by five stars spaced exactly 72 degrees apart; three gold key stars on
   an equilateral triangle, each with one white star off it. One stroke weight per colour, one size per kind of star.
   Below 32 px use the icon: solid ring and the bold triangle only.
-- Turnstone: drawn as the right half and mirrored, so it is exactly symmetric. Wing, underwing band and the three
-  primaries share one angle family; no hairline details (they vanished under 72 px); one rock, one tide line.
-  Below 32 px use the badge: the bird in a ring.
+- Turnstone v11 (5 Nov 2026): one stroke weight, the bird implied inside its orbit ring; see turnstone_body.
+- Argo: a square sail in the wind, set by Canopus; see argo.
 
 Colours are the Brand Book tokens; the light variants use the "on light" tokens (gold-700, earth-700, signal-700).
 usage: python3 website/tools/make_marks.py      (writes website/tools/symbols/; build_assets.py and make_lockups.py
@@ -68,40 +67,87 @@ def poly(points: list[tuple[float, float]], fill: str) -> str:
     return f'<polygon points="{" ".join(f"{num(x)} {num(y)}" for x, y in points)}" fill="{fill}"/>'
 
 
-def mirrored(points: list[tuple[float, float]]) -> list[tuple[float, float]]:
-    return [(240 - x, y) for x, y in points]
+MIRROR = '<g transform="matrix(-1 0 0 1 240 0)">'  # mirror about x = 120
+
+# Turnstone wing sweeps, right side: (shoulder, control, tip). The leading feather first; each starts lower and ends
+# shorter, so the three read as one wing caught mid-beat.
+TURNSTONE_WING = [((130, 108), (156, 52), (222, 20)), ((134, 122), (164, 76), (210, 48)), ((137, 136), (168, 102), (196, 76))]  # roots tuck behind the body
 
 
-def whole(half: list[tuple[float, float]]) -> list[tuple[float, float]]:
-    """A shape on the centre line from its right half (first and last points on x = 120)."""
-    return half + mirrored(half)[::-1][1:-1]
+def both(el: str) -> list[str]:
+    """An element and its mirror image: the bird is exactly symmetric."""
+    return [el, MIRROR + el + "</g>"]
 
 
-def turnstone_body(c: dict[str, str]) -> list[str]:
-    wing = [(128, 100), (196, 38), (190, 60), (138, 112)]
-    band = [(142, 116), (192, 70), (204, 68), (152, 126)]
-    primaries = [[(196, 38), (226, 10), (200, 46)], [(194, 48), (230, 30), (196, 56)], [(192, 58), (226, 52), (192, 64)]]
-    body: list[str] = []
-    for shape, fill in [(wing, c["warm"]), (band, c["blue"])] + [(p, c["warm"]) for p in primaries]:
-        body += [poly(shape, fill), poly(mirrored(shape), fill)]
-    body.append(poly(whole([(120, 98), (132, 108), (136, 128), (126, 152), (120, 156)]), c["warm"]))
-    body.append(poly(whole([(120, 68), (128, 74), (128, 88), (120, 94)]), c["warm"]))
-    body.append(poly([(112, 78), (98, 84), (112, 84)], c["warm"]))  # the short, upturned bill
-    body.append(poly([(110, 110), (120, 122), (130, 110), (132, 120), (120, 132), (108, 120)], c["cut"]))  # breast band
-    body.append(f'<path d="M115 154 113 178M125 154 127 178M106 180H118M122 180H134" fill="none" stroke="{c["orange"]}" stroke-width="5" stroke-linecap="square"/>')
-    body.append(poly([(98, 186), (142, 186), (150, 198), (90, 198)], c["warm"]))  # the rock
-    tide = "M68 212" + "".join(f"L{78 + 10 * i} {206 if i % 2 == 0 else 212}" for i in range(11))
-    body.append(f'<path d="{tide}" fill="none" stroke="{c["blue"]}" stroke-width="4" stroke-linecap="square"/>')
-    return body
+def taper(p0: tuple[float, float], q: tuple[float, float], p1: tuple[float, float], w0: float, w1: float = 0.6) -> str:
+    """A quadratic sweep drawn as a filled shape whose width runs from w0 at p0 to w1 at p1 (a feather, not a tube)."""
+    n = 24
+    left, right = [], []
+    for i in range(n + 1):
+        t = i / n
+        x = (1 - t) ** 2 * p0[0] + 2 * (1 - t) * t * q[0] + t ** 2 * p1[0]
+        y = (1 - t) ** 2 * p0[1] + 2 * (1 - t) * t * q[1] + t ** 2 * p1[1]
+        dx = 2 * (1 - t) * (q[0] - p0[0]) + 2 * t * (p1[0] - q[0])
+        dy = 2 * (1 - t) * (q[1] - p0[1]) + 2 * t * (p1[1] - q[1])
+        length = math.hypot(dx, dy) or 1
+        half = (w0 + (w1 - w0) * t ** 0.9) / 2
+        nx, ny = -dy / length * half, dx / length * half
+        left.append((x + nx, y + ny))
+        right.append((x - nx, y - ny))
+    pts = left + right[::-1]
+    return "M" + "L".join(f"{num(x)} {num(y)}" for x, y in pts) + "Z"
+
+
+def turnstone_body(c: dict[str, str], small: bool = False) -> list[str]:
+    """Turnstone v11 (5-6 Nov 2026, Josh: "We need a more uniform structure with motion, mystique that embodies the
+    lightbound brand"; approved 6 Nov).
+
+    Built from the Lightbound mark system instead of drawn as an illustration: one stroke weight throughout, like the
+    Gauss field lines and the Constellation ring. The orbit ring is the original Turning-tide mark's tide; its Moon point is
+    replaced by the bird's own head (Josh: "make it resemble the bird a little bit more"): round, with the short upturned
+    wedge bill and the dark eye of the harlequin mask; the breast band is a chevron across the body and the orange is
+    on the short legs, as on the bird. Three nested sweeps per wing are a wingbeat caught mid-stroke, and the wingtips
+    break out of the ring: carry hope, go beyond. The body is stocky like the bird's, and only its white belly is filled: the dark breast patch
+    is the ground inside the outline, so the bird is partly implied. Where a wing crosses the ring, the ring breaks (a ground-coloured underlay drawn first). `small` is the
+    same drawing with a heavier stroke, for 32 px and below.
+    """
+    w = 10 if small else 7
+
+    def stroke(d: str, colour: str, width: float = w) -> str:
+        return f'<path d="{d}" fill="none" stroke="{colour}" stroke-width="{width}" stroke-linecap="round"/>'
+
+    wings = [f"M{sx} {sy}Q{qx} {qy} {tx} {ty}" for (sx, sy), (qx, qy), (tx, ty) in TURNSTONE_WING]
+    ring_w = 6 if small else 4  # lighter than the bird, like the Lightbound photon ring: the bird leads, the orbit recedes
+    out = [f'<circle cx="120" cy="120" r="96" fill="none" stroke="{c["blue"]}" stroke-width="{ring_w}"/>']  # the turning tide
+    for d in wings:
+        out += both(stroke(d, c["cut"], w + 16))  # one clean break in the ring across the whole wing
+    # Each sweep tapers from the shoulder to a sharp feather tip, in the bird's own colours (Josh: "Add some of the extra
+    # colours"): white leading feathers, the ruddy chestnut that names the bird (Turnstone signal orange), earth blue.
+    for (p0, q, p1), colour in zip(TURNSTONE_WING, ("warm", "orange", "blue")):
+        out += both(f'<path d="{taper(p0, q, p1, w * 1.6)}" fill="{c[colour]}"/>')
+    # The body, stocky and round-chested as on the bird. Only the white belly is filled; above the breast line the dark
+    # breast patch is left as the ground inside the outline, as the bird's black breast is.
+    out.append(f'<path d="M120 100C136 104 144 118 144 132C144 148 134 158 120 162C106 158 96 148 96 132C96 118 104 104 120 100Z" '
+               f'fill="{c["cut"]}" stroke="{c["warm"]}" stroke-width="{w - 1}"/>')  # filled with the ground: the wings tuck behind
+    out.append(f'<path d="M100 124L120 136L140 124C143 131 143 140 140 147C134 156 127 160 120 161C113 160 106 156 100 147C97 140 97 131 100 124Z" fill="{c["warm"]}"/>')
+    # The head: small and compact, sitting on the dark breast; the short bill; the dark eye of the harlequin mask.
+    out.append(f'<circle cx="120" cy="91" r="{12 if small else 11}" fill="{c["warm"]}"/>')
+    out.append(stroke("M111 92L100 89", c["warm"]))
+    if not small:
+        out.append(f'<circle cx="116.5" cy="87.5" r="2.8" fill="{c["cut"]}"/>')
+    # Short orange legs, feet spread.
+    out.append(stroke("M114 161L111 178M126 161L129 178M111 178L104 182M111 178L113 184M129 178L136 182M129 178L127 184",
+                      c["orange"], w - 2))
+    return out
 
 
 def turnstone(c: dict[str, str]) -> str:
-    return svg("4 2 232 222", turnstone_body(c))
+    return svg("12 8 216 216", turnstone_body(c))
 
 
 def turnstone_badge(c: dict[str, str]) -> str:
-    ring = f'<circle cx="120" cy="114" r="110" fill="{DARK["cut"]}" stroke="{DARK["warm"]}" stroke-width="4"/>'
-    return svg("6 0 228 228", [ring, f'<g transform="translate(120 114) scale(.74) translate(-120 -112)">', *turnstone_body(DARK), "</g>"])
+    """The mark is already a ringed emblem; at 32 px and below it is drawn with a heavier stroke."""
+    return svg("12 8 216 216", turnstone_body(DARK, small=True))
 
 
 def star4(cx: float, cy: float, r: float, waist: float, fill: str) -> str:
@@ -110,38 +156,26 @@ def star4(cx: float, cy: float, r: float, waist: float, fill: str) -> str:
     return poly(pts, fill)
 
 
-def argo(c: dict[str, str], icon: bool = False, star: bool = True) -> str:
-    """Argo: a square sail full of wind, steering by Canopus (Josh, 5 Nov: "Argo could be just a sail"; approved the same day).
+def argo(c: dict[str, str], icon: bool = False) -> str:
+    """Argo: one sail like a sweeping wind, a wing (Josh, 5-6 Nov 2026: "Argo could be just a sail", "a sail in the
+    wind", then "I think one sail", "Sail like a sweeping wind", "Wing"; approved 6 Nov).
 
     Argo is the ship of the old constellation Argo Navis; its brightest star, Canopus, has been a spacecraft's
-    reference star since Mariner 3 and 4 carried the first Canopus star trackers (1964). So the one lime element is the
-    star the sail is set by. Three panels with real gaps (no ground-coloured cuts, so it sits on any surface), each
-    wider than the last down to the belly, the foot tucked back in: the billow from straight edges only, like the
-    Turnstone; every seam dips at the mast, so the cloth reads as filled. The yard stands clear of the sail; the mast shows through the gaps. Square, so one drawing is both the
-    mark and the favicon; the icon only opens the gaps so they survive 16 px.
+    reference star since Mariner 3 and 4 carried the first Canopus star trackers (1964), so the one lime element is the
+    star across the mast. The sail is a single crescent: hoisted at the masthead, its leading edge bellied far out
+    like a wing, sharp at the head and at the clew, where the sheet runs back to the mast. It tapers the way the
+    Turnstone's wing sweeps do, so the two marks are siblings. The icon drops the sheet and thickens the mast for 16 px.
     """
-    gap = 10 if icon else 7
-    # (y, half-width) down the sail's edge: top, belly, foot. Panels split the height into thirds.
-    edge = [(52, 46), (132, 62), (172, 56)]
+    w = 6 if icon else 4
+    body = [f'<path d="M96 18V216" fill="none" stroke="{c["warm"]}" stroke-width="{w}" stroke-linecap="round"/>',  # the mast
+            f'<path d="M100 24C178 26 224 104 202 202C180 140 150 80 100 24Z" fill="{c["warm"]}"/>']  # the sail
+    if not icon:
+        body.append(f'<path d="M202 202L100 214" fill="none" stroke="{c["warm"]}" stroke-width="2.5" stroke-linecap="round"/>')  # the sheet
+    body.append(star4(54, 46, 28 if icon else 20, 6 if icon else 3.5, c["star"]))  # Canopus, across the mast
+    return svg(ARGO_ICON_BOX if icon else "28 10 204 212", body)
 
-    def half(y: float) -> float:
-        (y0, w0), (y1, w1) = (edge[0], edge[1]) if y <= edge[1][0] else (edge[1], edge[2])
-        return w0 + (w1 - w0) * (y - y0) / (y1 - y0)
 
-    cuts = [52 + (172 - 52) * k / 3 for k in range(4)]
-    body = [f'<path d="M108 24V196" fill="none" stroke="{c["warm"]}" stroke-width="7"/>',  # the mast
-            poly([(56, 34), (160, 34), (160, 42), (56, 42)], c["warm"])]  # the yard
-    sag = 12  # each seam dips at the mast: the cloth filled from behind, still drawn with straight edges
-    for i in range(3):
-        y0, y1 = cuts[i] + (gap / 2 if i else 0), cuts[i + 1] - (gap / 2 if i < 2 else 0)
-        mid = [edge[1][0]] if y0 < edge[1][0] < y1 else []
-        ys = [y0, *mid, y1]
-        right = [(108 + half(y), y) for y in ys]
-        left = [(108 - half(y), y) for y in reversed(ys)]
-        body.append(poly([(108, y0 + sag), *right, (108, y1 + sag), *left], c["warm"]))
-    if star:
-        body.append(star4(190, 46, 30 if icon else 24, 7 if icon else 5, c["star"]))
-    return svg("28 12 196 196", body)
+ARGO_ICON_BOX = "24 8 212 216"  # square-ish, centred on the sail and star, for the favicon tile
 
 
 def body_of(svg_text: str) -> str:
@@ -176,7 +210,7 @@ FILES = {
     "turnstone-badge-symbol-colour-dark.svg": turnstone_badge(DARK),
     "argo-symbol-colour-dark.svg": argo(DARK),
     "argo-symbol-colour-light.svg": argo(LIGHT),
-    "argo-icon-symbol-colour-dark.svg": tile(body_of(argo(DARK, icon=True)), "28 12 196 196"),
+    "argo-icon-symbol-colour-dark.svg": tile(body_of(argo(DARK, icon=True)), ARGO_ICON_BOX),
     "gauss-aurora-icon-colour-dark.svg": gauss_icon(),
 }
 

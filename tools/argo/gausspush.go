@@ -43,10 +43,20 @@ func gaussStatus(s Store, now time.Time) string {
 
 const minReportGap = 15 * time.Second
 
+// reportGap is the least time between reports. In power-save the mesh report cadence stretches
+// to powerSaveFactor ticks, unless the link is broken: then Gauss hears at once.
+func reportGap(saving bool, st State) time.Duration {
+	if saving && !st.Class.Blocking() {
+		return stretch(time.Minute, true)
+	}
+	return minReportGap
+}
+
 // pushToGauss reports once per check, pausing after a refused token.
 func pushToGauss(cfg Config, st State) { pushAt(cfg, st, DefaultStore(), time.Now()) }
 
 func pushAt(cfg Config, st State, s Store, now time.Time) {
+	gap := reportGap(s.loadPowerSave().On, st)
 	if r, ok := s.loadRefused(); ok && now.Sub(r.At) < refusedPause {
 		return
 	}
@@ -55,12 +65,23 @@ func pushAt(cfg Config, st State, s Store, now time.Time) {
 	// of collecting a 429 (launchd.log 2026-10-24/25).
 	last := s.path("gauss-last-report")
 	if b, err := os.ReadFile(last); err == nil {
-		if t, perr := time.Parse(time.RFC3339Nano, strings.TrimSpace(string(b))); perr == nil && now.Sub(t) >= 0 && now.Sub(t) < minReportGap {
+		if t, perr := time.Parse(time.RFC3339Nano, strings.TrimSpace(string(b))); perr == nil && now.Sub(t) >= 0 && now.Sub(t) < gap {
 			return
+		}
+	}
+	// Low signal: report less often (a class change still goes at once) and without history.
+	lastClass := s.path("gauss-last-class")
+	if gap := st.Low.ReportGap(); gap > 0 {
+		prev, _ := os.ReadFile(lastClass)
+		if b, err := os.ReadFile(last); err == nil && string(prev) == string(st.Class) {
+			if t, perr := time.Parse(time.RFC3339Nano, strings.TrimSpace(string(b))); perr == nil && now.Sub(t) >= 0 && now.Sub(t) < gap {
+				return
+			}
 		}
 	}
 	code, err := sendReport(cfg, st)
 	if err == nil {
+		_ = os.WriteFile(lastClass, []byte(st.Class), 0o600)
 		_ = os.MkdirAll(s.Dir, 0o700)
 		_ = os.WriteFile(last, []byte(now.Format(time.RFC3339Nano)), 0o600)
 	}
@@ -98,10 +119,15 @@ func sendReport(cfg Config, st State) (int, error) {
 		"breakerOpen": time.Now().Before(st.BreakerUntil), "argoVersion": version, "checkedAt": st.CheckedAt,
 		"host":     hostCapacityNow(), // sizes and pressure only, so Gauss can tell which devices can host agents
 		"platform": platformName(runtime.GOOS),
-		"net":      netReport(st.Net),                                      // scores and their reasons; no SSID, BSSID or IP
-		"link":     linkReport(DefaultStore().Incidents(), st, time.Now()), // availability from the local incident log
+		"net":      netReport(st.Net), // scores and their reasons; no SSID, BSSID or IP
+	}
+	if !st.Low.On { // no history over a weak link; Gauss keeps the last full block
+		report["link"] = linkReport(DefaultStore().Incidents(), st, time.Now()) // availability from the local incident log
 	}
 	addGuard(report, DefaultStore().loadGuard(), time.Now())
+	addLowAndLink(report, cfg, st)
+	addPowerSave(report, DefaultStore().loadPowerSave())
+	postureSent := addPosture(report, DefaultStore(), time.Now()) // item → status only, about hourly (posture.go)
 	body, _ := json.Marshal(report)
 	u.Path = "/api/mesh/report"
 	req, _ := http.NewRequest(http.MethodPost, u.String(), bytes.NewReader(body))
@@ -113,6 +139,9 @@ func sendReport(cfg Config, st State) (int, error) {
 		return 0, err
 	}
 	resp.Body.Close()
+	if resp.StatusCode < 300 {
+		postureSent()
+	}
 	countOwnEgress(DefaultStore().Dir, "gauss report", u.Host, len(body), time.Now())
 	return resp.StatusCode, nil
 }

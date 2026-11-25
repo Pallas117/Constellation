@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { buildMatrix, mergeOutcomes, parseJunit, renderMarkdown, validateBaseline, type Baseline } from "../../scripts/verify/vcrm.ts";
+import { buildMatrix, mergeOutcomes, parseGoTestJson, parseJunit, renderMarkdown, validateBaseline, type Baseline } from "../../scripts/verify/vcrm.ts";
 
 const junit = `<?xml version="1.0"?><testsuites>
   <testcase name="a passes" time="0.1" classname="test"/>
@@ -125,4 +125,23 @@ test("VCRM: node and ops reports are matched together; a name in both keeps its 
   assert.equal(all.size, node.size + 1);
   const rows = buildMatrix(base([{ verifiedBy: ["dev refuses live's ports", "c is skipped"] }]), all, () => false);
   assert.deepEqual(rows[0].problems, ['test skipped: "c is skipped"']);
+});
+
+test("VCRM: Go test JSON (tools/argo) is parsed by test name; only per-test events count (FM-20)", () => {
+  const ev = (o: object) => JSON.stringify(o);
+  const out = parseGoTestJson([
+    "# build chatter that is not JSON",
+    ev({ Action: "run", Test: "TestA" }),
+    ev({ Action: "output", Test: "TestA", Output: "ok\n" }),
+    ev({ Action: "pass", Test: "TestA" }),
+    ev({ Action: "skip", Test: "TestB" }),
+    ev({ Action: "pass", Test: "TestC" }),
+    ev({ Action: "fail", Test: "TestC" }),
+    ev({ Action: "fail", Test: "TestD/sub" }),
+    ev({ Action: "pass", Package: "gauss/argo" }),
+    "{not json",
+  ].join("\n"));
+  assert.deepEqual([...out].sort(), [["TestA", "pass"], ["TestB", "skipped"], ["TestC", "fail"], ["TestD/sub", "fail"]]);
+  const rows = buildMatrix(base([{ verifiedBy: ["TestA", "TestB"] }]), mergeOutcomes(parseJunit(junit), out), () => false);
+  assert.deepEqual(rows[0].problems, ['test skipped: "TestB"']);
 });

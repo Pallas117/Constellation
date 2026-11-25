@@ -13,11 +13,12 @@ import { RECORDED_AT, fixture, makeFetch } from "./fixtures/fetch.mjs";
 import { memoryKV } from "./fixtures/kv.mjs";
 import { makeAccess } from "./fixtures/access.mjs";
 import { accessIdentity, isAdmin, isStaff } from "../worker/auth.js";
-import { getAccount, listApplications, putAccount, saveApplication, senderOf } from "../worker/data.js";
+import { getAccount, getApplication, listApplications, putAccount, saveApplication, senderOf } from "../worker/data.js";
 import { applyEvent, createPortal, formEncode, signPayload, verifySignature } from "../worker/stripe.js";
-import { billingStatus, isAcademicEmail } from "../worker/tiers.js";
+import { TIERS, billingStatus, isAcademicEmail } from "../worker/tiers.js";
 import { APP_CSP } from "../worker/headers.js";
-import { formatIn, renderPlanner, tzOffset, zonedToUtc } from "../worker/timezones.js";
+import { eduCard } from "../worker/app.js";
+import { formatIn, isUnsocial, offsetLabel, pickedZone, renderPlanner, tzOffset, wallClock, zonedToUtc, zonePicker } from "../worker/timezones.js";
 import { listCalls, rsvp, saveCall } from "../worker/calls.js";
 import { PROGRAMMES_URL, newsJson, programmesCsv, ukriXml, uksaAtom } from "./fixtures/opportunities.mjs";
 import { collect, interestsFor, rank, tagsOf } from "../worker/opportunities.js";
@@ -79,8 +80,9 @@ test("refresh: fills KV, then leaves fresh feeds alone (LL2 allows 15 calls an h
   assert.deepEqual([first.news, first.ukri, first.uksa, first.programmes], ["updated", "updated", "updated", "not configured"]);
   assert.equal(f.calls.length, 9, "six for the public pages, three for members (news, UKRI, UKSA)");
   assert.equal((await readFeed(env, "launches")).data.length, 10);
-  assert.deepEqual(core(await refreshFeeds(env, { fetchImpl: f, now: RECORDED_AT + 10 * MIN })), { launches: "fresh", weather: "fresh", events: "fresh" });
+  assert.deepEqual(core(await refreshFeeds(env, { fetchImpl: f, now: RECORDED_AT + 2 * MIN })), { launches: "fresh", weather: "fresh", events: "fresh" });
   assert.equal(f.calls.length, 9, "no upstream calls while fresh");
+  assert.deepEqual(core(await refreshFeeds(env, { fetchImpl: f, now: RECORDED_AT + 5 * MIN })), { launches: "fresh", weather: "updated", events: "fresh" }, "space weather every 5 minutes");
   assert.deepEqual(core(await refreshFeeds(env, { fetchImpl: f, now: RECORDED_AT + 15 * MIN })), { launches: "fresh", weather: "updated", events: "fresh" });
   assert.deepEqual(core(await refreshFeeds(env, { fetchImpl: f, now: RECORDED_AT + 30 * MIN })), { launches: "updated", weather: "updated", events: "fresh" });
   const later = await refreshFeeds(env, { fetchImpl: f, now: RECORDED_AT + 180 * MIN });
@@ -158,7 +160,7 @@ test("refresh: the optional LL2 key goes to LL2 only, in its Token header, and n
 
 test("feed state: live, then stale (still shown, labelled), offline when there is nothing", () => {
   const rec = { data: [1], fetchedAt: new Date(RECORDED_AT).toISOString() };
-  assert.equal(feedState("weather", rec, RECORDED_AT + 30 * MIN).state, "live");
+  assert.equal(feedState("weather", rec, RECORDED_AT + 10 * MIN).state, "live");
   assert.equal(feedState("weather", rec, RECORDED_AT + (FEEDS.weather.staleMin + 1) * MIN).state, "stale");
   assert.equal(feedState("launches", rec, RECORDED_AT + 100 * MIN).state, "live");
   assert.equal(feedState("launches", null).state, "offline");
@@ -321,6 +323,16 @@ test("public release: each form's page asks by email instead, and carries the pa
   assert.match(await (await call("/gauss/apply/?plan=%22%3E%3Cscript%3E")).text(), /<li>Package: Pilot · \$25k–\$50k<\/li>/, "unknown package: the pilot");
 });
 
+test("client links, public release: plan and src show in the mailto subject; bad values are ignored, never echoed", async () => {
+  const page = await (await call("/gauss/apply/?plan=fleet_integration&src=acme-intro")).text();
+  assert.match(page, /subject=Gauss%20brief%20%C2%B7%20Fleet%20Integration%20%C2%B7%20src%20acme-intro&amp;/);
+  for (const bad of ["%22%3E%3Cscript%3Ex", "UPPER", "-x", "a".repeat(25), "a%20b"]) {
+    const res = await (await call(`/gauss/apply/?plan=pilot&src=${bad}`)).text();
+    assert.doesNotMatch(res, /<script|UPPER|aaaaaaaa|src%20/, `src ${bad} ignored`);
+    assert.match(res, /subject=Gauss%20brief%20%C2%B7%20Pilot&amp;/);
+  }
+});
+
 test("public release: pages offer pilots and an email route; later plans are in development; nothing links to sign-in", async () => {
   const gauss = await (await call("/gauss/")).text();
   assert.equal((gauss.match(/<span class="label">In development<\/span>/g) || []).length, 3);
@@ -390,7 +402,7 @@ const post = (path, body, headers = {}) => new Request(`https://lightbound.space
   headers: { origin: "https://lightbound.space", "content-type": "application/x-www-form-urlencoded", "cf-connecting-ip": "203.0.113.9", ...headers },
 });
 const goodGauss = { kind: "gauss", name: "Ops Example", email: "ops@example.test", org: "Example Space", role: "Mission ops",
-  missionType: "Earth observation", stage: "Launched and operating", groundStack: "Yamcs / XTCE", dataAccess: "Historical packet archive",
+  missionType: "Earth observation", stage: "Launched and operating", groundStack: "Yamcs / XTCE", logSource: "Embedded Linux module (for example NVIDIA Jetson)", logFormat: "CSV", dataAccess: "Historical packet archive",
   plan: "fleet_integration", timeline: "This quarter", message: "Two smallsats flying ONNX models; we want evidence after the May storm.", consent: "yes" };
 async function send(env, request) {
   const { ctx, settle } = context();
@@ -408,9 +420,25 @@ test("apply: a good pilot brief is stored and redirected (post/redirect/get), wi
   assert.deepEqual([app.kind, app.email, app.plan, app.status], ["gauss", "ops@example.test", "fleet_integration", "new"]);
   const stored = env.DATA.map.get(`app:${app.id}`);
   assert.equal(JSON.parse(stored.v).groundStack, "Yamcs / XTCE", "readiness answers kept");
+  assert.equal(JSON.parse(stored.v).logSource, "Embedded Linux module (for example NVIDIA Jetson)", "what runs the onboard model is kept");
+  assert.equal(JSON.parse(stored.v).logFormat, "CSV", "the log format is kept");
   assert.ok(stored.exp - Date.now() / 1000 > 179 * 86400 && stored.exp - Date.now() / 1000 <= 180 * 86400);
   assert.match(await (await send(env, new Request("https://lightbound.space/gauss/apply/?sent=1"))).text(), /we'll reply with a fixed quote/);
   assert.match(await (await send(env, new Request("https://lightbound.space/constellation/apply/?sent=1"))).text(), /Membership is free and by invitation/);
+});
+
+test("apply: the log questions are required and only known answers are accepted; none leads the answer", async () => {
+  const { env } = await appEnv();
+  for (const [field, value] of [["logSource", ""], ["logFormat", ""], ["logSource", "A thing we made up"], ["logFormat", "<b>CSV</b>"]]) {
+    const res = await send(env, post("/api/apply", { ...goodGauss, [field]: value }));
+    assert.notEqual(res.status, 303, `${field}=${JSON.stringify(value)} is refused`);
+    assert.equal((await listApplications(env)).length, 0, "nothing stored");
+  }
+  const page = await (await send(env, new Request("https://lightbound.space/gauss/apply/"))).text();
+  for (const name of ["groundStack", "logSource", "logFormat"]) {
+    const select = page.match(new RegExp(`<select id="f-${name}"[^>]*>([\\s\\S]*?)</select>`))?.[1] ?? "";
+    assert.match(select, /<option value="Not sure" selected>/, `${name}: the default is "Not sure", not a stack we'd like to hear`);
+  }
 });
 
 test("apply: bad input comes back with errors and the values escaped; nothing stored", async () => {
@@ -442,6 +470,23 @@ test("apply page: the package in the link is preselected; unknown values fall ba
   const { env } = await appEnv();
   assert.match(await (await send(env, new Request("https://lightbound.space/gauss/apply/?plan=mission_integration"))).text(), /<option value="mission_integration" selected>/);
   assert.match(await (await send(env, new Request("https://lightbound.space/gauss/apply/?plan=%22%3E%3Cscript%3E"))).text(), /<option value="pilot" selected>/);
+});
+
+test("client links: src is kept as a hidden field, stored with the application, shown to admin; bad src is dropped", async () => {
+  const { env, access } = await appEnv();
+  const page = await (await send(env, new Request("https://lightbound.space/gauss/apply/?plan=pilot&src=acme-intro"))).text();
+  assert.match(page, /<input type="hidden" name="src" value="acme-intro">/);
+  assert.doesNotMatch(await (await send(env, new Request("https://lightbound.space/gauss/apply/?src=%22%3E%3Cb%3E"))).text(), /name="src"/);
+  assert.equal((await send(env, post("/api/apply", { ...goodGauss, src: "acme-intro" }))).status, 303);
+  assert.equal((await send(env, post("/api/apply", { ...goodGauss, email: "b@example.test", src: "<b>x</b>" }))).status, 303);
+  const apps = await listApplications(env);
+  const stored = await Promise.all(apps.map((a) => getApplication(env, a.id)));
+  assert.deepEqual(stored.map((a) => a.src).sort(), ["acme-intro", undefined]);
+  const admin = await (await send(env, await as(access, "boss@example.test", "/app/admin/"))).text();
+  assert.match(admin, /from link: acme-intro/);
+  assert.match(admin, /Links to send a client/);
+  for (const t of TIERS) assert.ok(admin.includes(`<code>https://lightbound.space/gauss/apply/?plan=${t.id}</code>`), `link for ${t.id}`);
+  assert.doesNotMatch(admin, /<script/);
 });
 
 // ---- Workspace, billing and admin ----
@@ -953,6 +998,93 @@ test("planner: finds the hours that suit everyone, and a picked hour shows in ev
   assert.match(none, /No hour suits everyone\. Best: 2 of 3 zones/);
 });
 
+test("time zones: offsets are named, half-hour zones and zones behind UTC included, and follow the clock changes", () => {
+  const at = (iso) => Date.parse(iso);
+  assert.equal(offsetLabel(at("2026-11-22T12:00:00Z"), "Asia/Kuala_Lumpur"), "UTC+8", "ahead of UTC");
+  assert.equal(offsetLabel(at("2026-11-22T12:00:00Z"), "America/New_York"), "UTC−5", "behind UTC");
+  assert.equal(offsetLabel(at("2026-11-22T12:00:00Z"), "Asia/Kolkata"), "UTC+5:30", "half-hour zone");
+  assert.equal(offsetLabel(at("2026-11-22T12:00:00Z"), "UTC"), "UTC+0");
+  // The week Europe's clocks go back (Sunday 25 October 2026, 01:00 UTC): the same UTC hour is an hour earlier locally.
+  assert.equal(offsetLabel(at("2026-10-24T09:00:00Z"), "Europe/London"), "UTC+1");
+  assert.equal(offsetLabel(at("2026-10-25T00:59:00Z"), "Europe/London"), "UTC+1", "last minute of summer time");
+  assert.equal(offsetLabel(at("2026-10-25T01:00:00Z"), "Europe/London"), "UTC+0", "first minute of winter time");
+  assert.equal(wallClock(at("2026-10-24T09:00:00Z"), "Europe/London").hour, 10);
+  assert.equal(wallClock(at("2026-10-31T09:00:00Z"), "Europe/London").hour, 9);
+  // The US changes a week later (1 November 2026), so that week New York is 4, then 5, hours behind.
+  assert.equal(offsetLabel(at("2026-10-31T09:00:00Z"), "America/New_York"), "UTC−4");
+  assert.equal(offsetLabel(at("2026-11-01T09:00:00Z"), "America/New_York"), "UTC−5");
+  // The date rolls over midnight in both directions; minutes survive in a half-hour zone.
+  assert.deepEqual(wallClock(at("2026-11-21T19:00:00Z"), "Asia/Kolkata"), { year: 2026, month: 10, day: 22, weekday: 0, hour: 0, minute: 30 });
+  assert.deepEqual(wallClock(at("2026-12-31T20:00:00Z"), "Asia/Kuala_Lumpur"), { year: 2027, month: 0, day: 1, weekday: 5, hour: 4, minute: 0 }, "into the next year");
+  assert.deepEqual(wallClock(at("2026-11-22T02:00:00Z"), "America/Los_Angeles"), { year: 2026, month: 10, day: 21, weekday: 6, hour: 18, minute: 0 }, "back a day");
+  assert.deepEqual([6, 7, 21, 22, 23, 0].map(isUnsocial), [true, false, false, true, true, true], "before 07:00 and from 22:00");
+  const zone = (q) => pickedZone(new URL(`https://lightbound.space/constellation/${q}`));
+  assert.equal(zone("?tz=Asia/Kolkata"), "Asia/Kolkata");
+  for (const q of ["", "?tz=", "?tz=Mars/Olympus", "?tz=%3Cscript%3E", "?tz=constructor"]) assert.equal(zone(q), "UTC", q);
+});
+
+test("events: with no zone picked every time says UTC; with one, the zone's own date and time lead and UTC stays beside it", () => {
+  const ev = [
+    { title: "Evening call", start: "2026-11-21T19:00:00.000Z", end: "2026-11-21T20:00:00.000Z", url: "https://luma.com/evening01" },
+    { title: "Half past", start: "2026-11-28T12:30:00.000Z", end: "2026-11-28T13:30:00.000Z", url: "https://luma.com/halfpast2" },
+  ];
+  const now = Date.parse("2026-11-18T00:00:00Z");
+  const rec = { data: ev, fetchedAt: new Date(now).toISOString() };
+  // The fallback (no zone picked, an unknown zone, or the offline page): UTC, named on every time. Never a bare time.
+  for (const html of [renderEvents(rec, now), renderEvents(rec, now, "UTC"), renderEvents(rec, now, "Mars/Olympus")]) {
+    const times = [...html.matchAll(/<time datetime="[^"]+">([\s\S]*?)<\/time>/g)].map((m) => m[1]);
+    assert.equal(times.length, 2);
+    for (const t of times) assert.match(t, /^<b>[A-Z][a-z]{2} \d{1,2} [A-Z][a-z]{2} \d{4}<\/b><span>\d{2}:\d{2} UTC<\/span>$/);
+    assert.match(html, /times UTC; venues and local times are on each event page\./);
+    assert.match(html, /<option value="UTC" selected>UTC<\/option>/);
+  }
+  const kl = renderEvents(rec, now, "Asia/Kuala_Lumpur");
+  assert.match(kl, /<time datetime="2026-11-21T19:00:00.000Z"><b>Sun 22 Nov 2026<\/b><span>03:00 in Kuala Lumpur \(UTC\+8\)<\/span><span>Sat 21 Nov, 19:00 UTC<\/span><\/time>/, "the day is the day in the zone");
+  assert.match(kl, /times in Kuala Lumpur, daylight saving included, and UTC; venues are on each event page\./);
+  assert.match(kl, /<option value="Asia\/Kuala_Lumpur" selected>Kuala Lumpur \(UTC\+8\)<\/option>/);
+  const india = renderEvents(rec, now, "Asia/Kolkata");
+  assert.match(india, /<b>Sun 22 Nov 2026<\/b><span>00:30 in India \(UTC\+5:30\)<\/span><span>Sat 21 Nov, 19:00 UTC<\/span>/);
+  assert.match(india, /<b>Sat 28 Nov 2026<\/b><span>18:00 in India \(UTC\+5:30\)<\/span><span>Sat 28 Nov, 12:30 UTC<\/span>/);
+  assert.match(renderEvents(rec, now, "America/Los_Angeles"), /<b>Sat 21 Nov 2026<\/b><span>11:00 in Los Angeles \(UTC−8\)<\/span>/);
+  // Either side of a clock change the same UTC hour lands on a different local hour, and the offset shown follows it.
+  const dst = { data: [{ ...ev[0], start: "2026-10-24T09:00:00.000Z", end: "2026-10-24T10:00:00.000Z" }, { ...ev[1], start: "2026-10-31T09:00:00.000Z", end: "2026-10-31T10:00:00.000Z" }] };
+  const london = renderEvents(dst, Date.parse("2026-10-20T00:00:00Z"), "Europe/London");
+  assert.match(london, /<b>Sat 24 Oct 2026<\/b><span>10:00 in London \(UTC\+1\)<\/span>/);
+  assert.match(london, /<b>Sat 31 Oct 2026<\/b><span>09:00 in London \(UTC\+0\)<\/span>/);
+  // The picker is a plain form to our own page: no script, one labelled control, every option an allowlisted zone.
+  const picker = zonePicker("UTC", now);
+  assert.match(picker, /^<form class="inline tz-pick" method="get" action="\/constellation\/#events"><label for="ev-tz">Show times in<\/label><select id="ev-tz" name="tz">/);
+  assert.match(picker, /<option value="Asia\/Kolkata">India \(UTC\+5:30\)<\/option>/);
+  assert.doesNotMatch(kl + picker, /<script|onchange|javascript:/i);
+  assert.doesNotMatch(renderEvents({ data: [] }, now, "Asia/Kolkata"), /<form/, "no picker with nothing to show");
+});
+
+test("events route: ?tz= is allowlisted, works in both releases, and the page stays script-free", async () => {
+  const { env: full } = await appEnv();
+  const start = new Date(Date.now() + 3 * 86_400_000).toISOString().slice(0, 11) + "19:00:00.000Z";
+  await full.LIVE.put(FEEDS.events.key, JSON.stringify({ fetchedAt: new Date().toISOString(), data: [{ title: "Evening call", start, end: start.replace("T19", "T20"), url: "https://luma.com/evening01" }] }));
+  for (const RELEASE of ["public", "full"]) {
+    const get = async (q) => (await send({ ...full, RELEASE }, new Request(`https://lightbound.space/constellation/${q}`))).text();
+    const plain = await get("");
+    assert.match(plain, /<span>19:00 UTC<\/span><\/time><a href="https:\/\/luma\.com\/evening01"/, RELEASE);
+    const india = await get("?tz=Asia/Kolkata");
+    assert.match(india, /<span>00:30 in India \(UTC\+5:30\)<\/span><span>[A-Z][a-z]{2} \d{1,2} [A-Z][a-z]{2}, 19:00 UTC<\/span>/, RELEASE);
+    const odd = await get("?tz=%22%3E%3Cscript%3Ealert(1)%3C/script%3E");
+    assert.match(odd, /<span>19:00 UTC<\/span>/, "an unknown zone falls back to UTC");
+    for (const page of [plain, india, odd]) assert.doesNotMatch(page, /<script|alert\(1\)/);
+  }
+});
+
+test("planner: a picked hour names each zone's offset and says, in words, where it is an unsocial hour", () => {
+  const html = renderPlanner({ zones: ["Europe/London", "Asia/Kolkata", "Pacific/Auckland"], date: "2026-11-21", at: 9 });
+  assert.match(html, /<li><b>London<\/b> [A-Za-z]{3} 21 Nov, 09:00 \(UTC\+0\)<\/li>/);
+  assert.match(html, /<li><b>India<\/b> [A-Za-z]{3} 21 Nov, 14:30 \(UTC\+5:30\)<\/li>/);
+  assert.match(html, /<li><b>Auckland<\/b> [A-Za-z]{3} 21 Nov, 22:00 \(UTC\+13\) <span>Unsocial hour<\/span><\/li>/);
+  assert.match(html, /<p class="m">Unsocial hour \(22:00–07:00 local\) for 1 of 3: Auckland\.<\/p>/);
+  assert.match(html, /Dim with a dotted underline: unsocial hours, 22:00–07:00\./);
+  assert.doesNotMatch(renderPlanner({ zones: ["Europe/London", "Asia/Kolkata"], date: "2026-11-21", at: 9 }), /unsocial hour[<\s]/i, "no note when nobody is up late");
+});
+
 test("planner routes: the page reads its query safely; the calendar endpoint takes only a start time", async () => {
   const { env } = await appEnv();
   const page = await (await send(env, new Request("https://lightbound.space/constellation/time/?z=Europe/London&z=Asia/Kuala_Lumpur&z=%3Cscript%3E&date=2026-10-23&at=9"))).text();
@@ -1209,4 +1341,188 @@ test("canonical origin: plain HTTP and www on the custom domain redirect to http
   assert.match(body, /^Contact: mailto:jzwnathan@lightbound\.uk$/m);
   assert.match(body, /^Canonical: https:\/\/lightbound\.space\/\.well-known\/security\.txt$/m);
   assert.ok(Date.parse(SECURITY_TXT_EXPIRES) > Date.now() + 90 * 86_400_000, "security.txt expiry is at least 90 days away");
+});
+
+// ---- Offline pilot steps in the workspace ----
+test("workspace: the pilot's steps show the current step with dates, and how to send logs", async () => {
+  const { env, access } = await appEnv();
+  await putAccount(env, { email: "ops@example.test", tier: "pilot", billing: { status: "due" } }, "test");
+  let page = await (await send(env, await as(access, "ops@example.test", "/app/"))).text();
+  assert.match(page, /Now: Approved \(quote\)/, "no quote yet");
+  await putAccount(env, { email: "ops@example.test", tier: "pilot", quote: 2_800_000, approvedAt: "2026-11-03T00:00:00.000Z", billing: { status: "due" } }, "test");
+  page = await (await send(env, await as(access, "ops@example.test", "/app/"))).text();
+  assert.match(page, /<li class="done">Brief received<\/li><li class="done">Approved \(quote\) <span class="muted">· 3 Nov 2026<\/span><\/li><li class="here" aria-current="step">Paid<\/li><li class="">Logs received<\/li>/);
+  assert.doesNotMatch(page, /Stripe|securely|card details/, "no payment-method talk");
+  await putAccount(env, { email: "ops@example.test", tier: "pilot", quote: 2_800_000, approvedAt: "2026-11-03T00:00:00.000Z", billing: { status: "paid", updatedAt: "2026-11-05T00:00:00.000Z" } }, "test");
+  page = await (await send(env, await as(access, "ops@example.test", "/app/"))).text();
+  assert.match(page, /Now: Logs received/);
+  assert.match(page, /Paid <span class="muted">· 5 Nov 2026<\/span>/);
+  assert.match(page, /href="mailto:jzwnathan@lightbound\.uk\?subject=Gauss%20pilot%3A%20inference%20logs"/);
+  assert.match(page, /CSV, JSON or JSONL/);
+  assert.match(page, /href="\/gauss\/evidence\/"/);
+  assert.match(page, /There is no upload form yet/);
+  await putAccount(env, { email: "ops@example.test", tier: "pilot", quote: 2_800_000, billing: { status: "paid" }, logsAt: "2026-11-10T00:00:00.000Z", evidenceAt: "2026-11-16T00:00:00.000Z" }, "test");
+  page = await (await send(env, await as(access, "ops@example.test", "/app/"))).text();
+  assert.match(page, /Now: Evidence ready/);
+  assert.match(page, /Logs received <span class="muted">· 10 Nov 2026<\/span>/);
+  assert.match(page, /Evidence ready <span class="muted">· 16 Nov 2026<\/span>/);
+  assert.doesNotMatch(page, /Send your logs by email/, "instructions go once logs are in");
+});
+
+test("admin: sets logs received and evidence ready for an account, keeps the dates, and clears them when unticked", async () => {
+  const { env, access } = await appEnv();
+  const form = async (body) => send(env, await formPost(access, "boss@example.test", "/app/admin/account", body));
+  await form({ email: "lead@example.test", tier: "pilot", quote: "30000", action: "save" });
+  let a = await getAccount(env, "lead@example.test");
+  assert.deepEqual([typeof a.approvedAt, a.logsAt, a.evidenceAt], ["string", null, null]);
+  await form({ email: "lead@example.test", tier: "pilot", quote: "30000", logs: "yes", action: "save" });
+  a = await getAccount(env, "lead@example.test");
+  assert.equal(typeof a.logsAt, "string");
+  const first = [a.approvedAt, a.logsAt];
+  await form({ email: "lead@example.test", tier: "pilot", quote: "30000", logs: "yes", evidence: "yes", action: "save" });
+  a = await getAccount(env, "lead@example.test");
+  assert.deepEqual([a.approvedAt, a.logsAt], first, "dates stay once set");
+  assert.equal(typeof a.evidenceAt, "string");
+  const admin = await (await send(env, await as(access, "boss@example.test", "/app/admin/"))).text();
+  assert.match(admin, /name="logs" value="yes" checked> Logs received/);
+  assert.match(admin, /name="evidence" value="yes" checked> Evidence ready/);
+  await form({ email: "lead@example.test", tier: "pilot", quote: "30000", action: "save" });
+  a = await getAccount(env, "lead@example.test");
+  assert.deepEqual([a.logsAt, a.evidenceAt], [null, null]);
+  await form({ email: "lead@example.test", tier: "pilot", quote: "30000", logs: "yes", evidence: "yes", pilot: "", action: "save" });
+  const before = await getAccount(env, "lead@example.test");
+  const again = await form({ email: "lead@example.test", action: "add" });
+  assert.equal(again.status, 409, "the add form refuses an address that already has an account");
+  assert.match(await again.text(), /already has an account/);
+  assert.deepEqual(await getAccount(env, "lead@example.test"), before, "nothing is overwritten");
+  assert.match(await (await send(env, await as(access, "boss@example.test", "/app/admin/"))).text(), /name="action" value="add">Add account/);
+  assert.equal((await form({ email: "fresh@example.test", tier: "pilot", quote: "30000", action: "add" })).status, 303, "a new address is added");
+  assert.equal((await getAccount(env, "fresh@example.test")).tier, "pilot");
+  const other = await send(env, await formPost(access, "ops@example.test", "/app/admin/account", { email: "lead@example.test", logs: "yes", action: "save" }));
+  assert.equal(other.status, 403, "only admin");
+});
+
+// ---- Evidence delivery: signed packs attached by admin, downloaded only by their own account ----
+const upload = async (access, email, to, name, bytes, type = "application/octet-stream") => {
+  const fd = new FormData();
+  fd.set("email", to);
+  fd.set("file", new File([bytes], name, { type }));
+  return send(access.env.__env, await as(access, email, "/app/admin/evidence", { method: "POST", body: fd, headers: { origin: "https://lightbound.space" } }));
+};
+
+async function evidenceEnv() {
+  const { env, access } = await appEnv();
+  access.env.__env = env;
+  await putAccount(env, { email: "ops@example.test", tier: "pilot", billing: { status: "paid", paidUntil: "2099-01-01T00:00:00.000Z" } }, "test");
+  await putAccount(env, { email: "other@example.test", tier: "pilot", billing: { status: "paid", paidUntil: "2099-01-01T00:00:00.000Z" } }, "test");
+  return { env, access };
+}
+const PDF = new TextEncoder().encode("%PDF-1.7\n%test pack\n");
+const PACK = new TextEncoder().encode(JSON.stringify({ pack: "x", signature: "y" }));
+
+test("evidence: admin attaches a PDF and pack JSON; the owner lists and downloads them as attachments, nosniff", async () => {
+  const { env, access } = await evidenceEnv();
+  assert.equal((await upload(access, "boss@example.test", "ops@example.test", "../../Pack Report (v1).PDF", PDF)).headers.get("location"), "/app/admin/");
+  assert.equal((await upload(access, "boss@example.test", "ops@example.test", "pack.json", PACK)).headers.get("location"), "/app/admin/");
+  const page = await (await send(env, await as(access, "ops@example.test", "/app/"))).text();
+  assert.match(page, /Evidence pack/);
+  assert.match(page, /Pack-Report-v1\.pdf/, "the name is sanitised: no path, no spaces or brackets");
+  assert.match(page, /npm run trust:verify -- pack\.json --pdf pack\.pdf --keyring signing-keys\.json/);
+  const links = [...page.matchAll(/href="\/app\/evidence\/([a-z0-9]+)"/g)].map((m) => m[1]);
+  assert.equal(links.length, 2);
+  for (const id of links) {
+    const res = await send(env, await as(access, "ops@example.test", `/app/evidence/${id}`));
+    assert.equal(res.status, 200);
+    assert.match(res.headers.get("content-disposition"), /^attachment; filename="[A-Za-z0-9._-]+\.(pdf|json)"$/);
+    assert.equal(res.headers.get("x-content-type-options"), "nosniff");
+    assert.match(res.headers.get("content-type"), /^application\/(pdf|json)$/);
+    assert.equal(res.headers.get("cache-control"), "private, no-store");
+  }
+  const body = await (await send(env, await as(access, "ops@example.test", `/app/evidence/${links[0]}`))).arrayBuffer();
+  assert.ok(body.byteLength === PDF.length || body.byteLength === PACK.length, "the stored bytes come back whole");
+  assert.match(await (await send(env, await as(access, "boss@example.test", "/app/admin/"))).text(), /Evidence \(2\)/);
+});
+
+test("evidence: another account gets 404, signed-out gets 401, and a non-admin cannot attach", async () => {
+  const { env, access } = await evidenceEnv();
+  await upload(access, "boss@example.test", "ops@example.test", "pack.json", PACK);
+  const id = /href="\/app\/evidence\/([a-z0-9]+)"/.exec(await (await send(env, await as(access, "ops@example.test", "/app/"))).text())[1];
+  assert.equal((await send(env, await as(access, "other@example.test", `/app/evidence/${id}`))).status, 404);
+  assert.equal((await send(env, await as(access, "boss@example.test", `/app/evidence/${id}`))).status, 404, "even an admin only sees their own account's files here");
+  assert.doesNotMatch(await (await send(env, await as(access, "other@example.test", "/app/"))).text(), /Evidence pack/);
+  assert.equal((await send(env, new Request(`https://lightbound.space/app/evidence/${id}`))).status, 401);
+  assert.equal((await send(env, await as(access, "ops@example.test", "/app/evidence/..%2F..%2Facct"))).status, 404);
+  assert.equal((await upload(access, "other@example.test", "other@example.test", "pack.json", PACK)).status, 403);
+  assert.equal((await listEvidenceKeys(env)).length, 1);
+});
+const listEvidenceKeys = async (env) => (await env.DATA.list({ prefix: "evid:" })).keys;
+
+test("evidence: anything that isn't a real PDF or JSON, or is too big, is refused; the account must exist", async () => {
+  const { env, access } = await evidenceEnv();
+  const code = async (to, name, bytes) => new URL((await upload(access, "boss@example.test", to, name, bytes)).headers.get("location"), "https://x.test").searchParams.get("error");
+  assert.equal(await code("ops@example.test", "run.exe", new TextEncoder().encode("MZ")), "evidence-type");
+  assert.equal(await code("ops@example.test", "fake.pdf", new TextEncoder().encode("<html>")), "evidence-type", "name says PDF, content is not");
+  assert.equal(await code("ops@example.test", "bad.json", new TextEncoder().encode("{nope")), "evidence-type");
+  assert.equal(await code("ops@example.test", "page.html", new TextEncoder().encode("<b>x</b>")), "evidence-type");
+  assert.equal(await code("ops@example.test", "big.pdf", new Uint8Array(8 * 1024 * 1024 + 100_000).fill(1)), "evidence-size");
+  assert.equal(await code("nobody@example.test", "pack.json", PACK), "evidence-none");
+  assert.equal((await listEvidenceKeys(env)).length, 0);
+  for (let i = 0; i < 10; i++) assert.equal(await code("ops@example.test", `p${i}.json`, PACK), null);
+  assert.equal(await code("ops@example.test", "p11.json", PACK), "evidence-full");
+  assert.match(await (await send(env, await as(access, "boss@example.test", "/app/admin/?error=evidence-type"))).text(), /only a PDF or a JSON file is accepted/);
+});
+
+test("evidence: admin can remove a file, and removing the account removes its files", async () => {
+  const { env, access } = await evidenceEnv();
+  await upload(access, "boss@example.test", "ops@example.test", "a.json", PACK);
+  await upload(access, "boss@example.test", "ops@example.test", "b.json", PACK);
+  const [first] = await listEvidenceKeys(env);
+  await send(env, await formPost(access, "boss@example.test", "/app/admin/evidence/delete", { email: "ops@example.test", id: first.name.split(":").pop() }));
+  assert.equal((await listEvidenceKeys(env)).length, 1);
+  await send(env, await formPost(access, "boss@example.test", "/app/admin/account", { email: "ops@example.test", action: "delete" }));
+  assert.equal((await listEvidenceKeys(env)).length, 0);
+});
+
+const countLists = (env) => { const real = env.DATA.list.bind(env.DATA); const calls = []; env.DATA.list = async (o) => { calls.push(o?.prefix); return real(o); }; return calls; };
+
+test("evidence: an account with no files costs no list() call on /app/ or /app/admin/, and the count follows add and remove", async () => {
+  const { env, access } = await evidenceEnv();
+  const calls = countLists(env);
+  assert.equal((await send(env, await as(access, "ops@example.test", "/app/"))).status, 200);
+  assert.equal((await send(env, await as(access, "boss@example.test", "/app/admin/"))).status, 200);
+  assert.equal(calls.filter((p) => p?.startsWith("evid:")).length, 0, "evidenceCount 0: the evidence prefix is never listed");
+  await upload(access, "boss@example.test", "ops@example.test", "a.json", PACK);
+  assert.equal((await getAccount(env, "ops@example.test")).evidenceCount, 1);
+  assert.equal((await listAccountsMeta(env)).find((a) => a.email === "ops@example.test").evidenceCount, 1, "the count is in the list metadata");
+  calls.length = 0;
+  assert.match(await (await send(env, await as(access, "ops@example.test", "/app/"))).text(), /Evidence pack/);
+  assert.equal(calls.filter((p) => p?.startsWith("evid:")).length, 1, "listed once, only for the account that has files");
+  const [first] = await listEvidenceKeys(env);
+  await send(env, await formPost(access, "boss@example.test", "/app/admin/evidence/delete", { email: "ops@example.test", id: first.name.split(":").pop() }));
+  assert.equal((await getAccount(env, "ops@example.test")).evidenceCount, 0);
+});
+const listAccountsMeta = async (env) => (await env.DATA.list({ prefix: "acct:" })).keys.map((k) => ({ email: k.name.slice(5), ...k.metadata }));
+
+test("evidence: a failing list() still renders /app/ and /app/admin/ without the evidence list", async () => {
+  const { env, access } = await evidenceEnv();
+  await upload(access, "boss@example.test", "ops@example.test", "a.json", PACK);
+  const real = env.DATA.list.bind(env.DATA);
+  env.DATA.list = async (o) => { if (o?.prefix?.startsWith("evid:")) throw new Error("KV list limit exceeded"); return real(o); };
+  const app = await send(env, await as(access, "ops@example.test", "/app/"));
+  assert.equal(app.status, 200);
+  assert.doesNotMatch(await app.text(), /Evidence pack/);
+  const admin = await send(env, await as(access, "boss@example.test", "/app/admin/"));
+  assert.equal(admin.status, 200);
+  assert.match(await admin.text(), /Evidence \(0\)/);
+});
+
+test("app: a backslash after the first slash is not a linkable invoice address", () => {
+  const card = (invoiceUrl) => eduCard({}, { email: "s@example.test", edu: { plan: "department", billing: { status: "invoice_open", invoiceUrl } } }, "s@example.test");
+  for (const bad of ["/\\evil.example", "//evil.example", "javascript:alert(1)", "http://x.test/"]) assert.doesNotMatch(card(bad), /View invoice/, bad);
+  for (const good of ["https://invoice.stripe.com/i/x", "/app/"]) assert.match(card(good), /View invoice/, good);
+});
+
+test("evidence: a public release keeps every evidence route closed", async () => {
+  const closed = { ...env, RELEASE: "public" };
+  for (const [path, method] of [["/app/evidence/abcdef12", "GET"], ["/app/admin/evidence", "POST"], ["/app/admin/evidence/delete", "POST"]]) assert.equal((await send(closed, new Request(`https://lightbound.space${path}`, { method }))).status, 404, `${method} ${path}`);
 });

@@ -19,4 +19,9 @@ Workflow:
 3. Before handing back: `gofmt -l`, `go vet` (darwin and linux), `go test ./...`. If the hub changed, run `backend/mesh/*.test.ts`; if the relay changed, run `npm run test:argo-e2e`. Report the real counts.
 4. Format change: regenerate the golden bundles and say so.
 
-Report back: files changed, tests run with counts, security-relevant notes, what you measured, and open risks.
+Before handing back, run the skill's **Security self-check** (10 items) and fix what fails. The agent scorecard (`claude-agent-score`) counts every fix commit after review as rework.
+
+Report back: files changed, tests run with counts, the self-check results (pass / n/a / fixed for each item), security-relevant notes, what you measured, and open risks.
+
+## Rules
+- **Never rebuild or install `~/.local/bin/argo` from an agent or an unattended session.** macOS keys the Automation → Messages grant and Full Disk Access to the ad-hoc signature, so a rebuild silences texts until Josh clicks Allow at the Mac (5 Nov 2026). Build to /tmp for tests; Josh installs. After any rebuild: `argo phone test`.

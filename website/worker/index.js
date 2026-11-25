@@ -17,8 +17,8 @@
 import { FEEDS, configured, feedState, readFeed, refreshFeeds } from "./feeds.js";
 import { renderEduActions, renderEduPlans, renderEvents, renderConstellationDoor, renderEventIcs, renderGaussDoor, renderIcs, renderLaunches, renderPlans, renderSupport, renderWeather } from "./render.js";
 import { eduMode, eduStaffLabel } from "./tiers.js";
-import { plannerParams, renderPlanner } from "./timezones.js";
-import { handleApply, renderApplyForm, renderContact, renderSent } from "./forms.js";
+import { pickedZone, plannerParams, renderPlanner } from "./timezones.js";
+import { cleanPlan, cleanSrc, handleApply, renderApplyForm, renderContact, renderSent } from "./forms.js";
 import { handleApp } from "./app.js";
 import { handleWebhook } from "./stripe.js";
 import { withSecurity } from "./headers.js";
@@ -26,9 +26,10 @@ import { forRelease, isFull } from "./release.js";
 
 const applyPage = (kind) => () => ({
   apply: (f, t, url, env) => {
-    const plan = url.searchParams.get("plan") ?? "";
-    if (!isFull(env)) return renderContact(kind, { plan });
-    return url.searchParams.get("sent") === "1" ? renderSent(kind) : renderApplyForm(kind, { plan });
+    const plan = cleanPlan(url.searchParams.get("plan") ?? "");
+    const src = cleanSrc(url.searchParams.get("src") ?? "");
+    if (!isFull(env)) return renderContact(kind, { plan, src });
+    return url.searchParams.get("sent") === "1" ? renderSent(kind) : renderApplyForm(kind, { plan, src });
   },
 });
 const LIVE_PAGES = {
@@ -38,7 +39,7 @@ const LIVE_PAGES = {
     launches: (f, t) => renderLaunches(f.launches, t),
     weather: (f, t) => renderWeather(f.weather, t),
     "gauss-door": (f, t) => renderGaussDoor(f.weather, t),
-    events: (f, t) => renderEvents(f.events, t),
+    events: (f, t, url) => renderEvents(f.events, t, pickedZone(url)),
     support: (f, t, url, env) => renderSupport(isFull(env) ? env.SUPPORT_URL : ""),
   }),
   "/constellation/time/": () => ({ planner: (f, t, url) => renderPlanner(plannerParams(url, t)) }),

@@ -1,6 +1,7 @@
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { useL1Structures } from "@/hooks/useL1Structures";
 import { useNow } from "@/hooks/useNow";
+import { PillPlaceholder } from "@/components/ui/pill-placeholder";
 import { structureItems, structuresSummary } from "@/lib/l1-structures-summary";
 
 const CONFIDENCE_TONE = { high: "text-foreground", medium: "text-foreground", low: "text-muted-foreground" } as const;
@@ -11,9 +12,10 @@ const CONFIDENCE_TONE = { high: "text-foreground", medium: "text-foreground", lo
  * Each is a candidate with a confidence, never a confirmed event.
  */
 export function L1StructuresPill() {
-  const { data } = useL1Structures();
+  const { data, error } = useL1Structures();
   const now = useNow(60_000);
-  if (!data) return null;
+  // Loading: hold the pill's place (header stays one height). A failed feed shows nothing, as before.
+  if (!data) return error ? null : <PillPlaceholder label="L1: checking…" className="min-w-[10.5rem]" />;
 
   if (data.structures === null) {
     return (
