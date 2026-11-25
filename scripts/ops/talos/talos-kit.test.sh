@@ -185,7 +185,9 @@ has 'tailscale ping' "$R" && has 'tailscale ssh' "$R" && has 'known_hosts' "$R" 
 # --- --profile ops (ops-profile.sh) on its own fake machine ---
 P="$D/ops-profile.sh"
 stub ss 'echo "State  Recv-Q Send-Q Local Address:Port Peer Address:Port Process"
-[ ! -e "$LOGS/svc/postgresql.service.active" ] || echo "LISTEN 0 244 127.0.0.1:5432 0.0.0.0:*"
+if [ -e "$LOGS/svc/postgresql.service.active" ]; then
+  if [ -e "$TALOS_KIT_SYSROOT/etc/postgresql/17/main/conf.d/10-gauss-loopback.conf" ]; then echo "LISTEN 0 244 127.0.0.1:5432 0.0.0.0:*"; else echo "LISTEN 0 244 0.0.0.0:5432 0.0.0.0:*"; fi
+fi
 [ ! -e "$LOGS/svc/cups.service.active" ] || echo "LISTEN 0 128 127.0.0.1:631 0.0.0.0:*"
 [ ! -e "$LOGS/kdeconnectd" ] || echo "LISTEN 0 50 *:1716 *:* users:((\"kdeconnectd\",pid=900,fd=12))"'
 stub sshd 'echo "$*" >>"$LOGS/sshd"; f="$TALOS_KIT_SYSROOT/etc/ssh/sshd_config.d/05-gauss-ops.conf"
@@ -207,6 +209,7 @@ mk_machine() { # mk_machine <power fixture>: a Kali laptop with the services the
   mkdir -p "$R0/etc/ssh/sshd_config.d" "$R0/etc/ufw" "$R0/etc/default" "$R0/etc/xdg/autostart" "$R0/proc" "$R0/dev" \
     "$R0/sys/class" "$R0/sys/module/apparmor/parameters" "$LOGS/svc" "$HOME_DIR/.ssh"
   cp "$T/root/etc/os-release" "$R0/etc/"; cp "$T/root/proc/meminfo" "$R0/proc/"
+  mkdir -p "$R0/etc/postgresql/17/main"; printf "data_directory = 'x'\ninclude_dir = 'conf.d'\n" >"$R0/etc/postgresql/17/main/postgresql.conf"
   printf 'Filename\tType\tSize\tUsed\tPriority\n' >"$R0/proc/swaps"
   printf 'Include /etc/ssh/sshd_config.d/*.conf\nPort 22\n' >"$R0/etc/ssh/sshd_config"
   printf 'ENABLED=yes\n' >"$R0/etc/ufw/ufw.conf"; printf 'DEFAULT_INPUT_POLICY="DROP"\n' >"$R0/etc/default/ufw"
@@ -227,7 +230,7 @@ bs --apply-profile; r1=$rc; bs --profile dev; [ "$r1$rc" = 11 ]; expect "talos -
 before=$(ptree); bs --profile ops --dry-run
 [ "$rc" = 0 ] && [ "$(printf '%s\n' "$out" | grep -c '^==> ops [1-6]/6 ')" = 6 ]; expect "talos --profile ops --dry-run exits 0 and lists all six profile steps" $?
 [ "$(ptree)" = "$before" ] && only_reads; expect "talos --profile ops --dry-run changes nothing: no files, sudo, apt, pkill, and systemctl only reads" $?
-[[ "$out" == *"would run: sudo systemctl disable --now postgresql.service"* && "$out" == *"would write /etc/ssh/sshd_config.d/05-gauss-ops.conf"* && "$out" == *"| PermitRootLogin no"* && "$out" == *"127.0.0.1:5432"* ]]; expect "talos --profile ops --dry-run prints the sudo commands, the files it would write and the listening ports" $?
+[[ "$out" == *"would write /etc/postgresql/17/main/conf.d/10-gauss-loopback.conf"* && "$out" == *"would run: sudo systemctl restart postgresql.service"* && "$out" != *"disable --now postgresql"* && "$out" == *"0.0.0.0:5432"* && "$out" == *"would write /etc/ssh/sshd_config.d/05-gauss-ops.conf"* && "$out" == *"| PermitRootLogin no"* && "$out" == *"listen_addresses = 'localhost'"* ]]; expect "talos --profile ops --dry-run prints the sudo commands, the files it would write and the listening ports" $?
 [[ "$out" == *"bluetooth.service: kept (add --no-bluetooth"* && "$out" != *"disable --now bluetooth"* ]]; expect "talos --profile ops keeps bluetooth unless --no-bluetooth" $?
 bs --profile ops
 [ "$rc" = 0 ] && [ ! -e "$LOGS/sudo" ] && [ ! -e "$LOGS/apt" ] && [ ! -e "$LOGS/pkill" ] && only_reads && [ ! -e "$R0/etc/ssh/sshd_config.d/05-gauss-ops.conf" ] && [ ! -e "$HOME_DIR/.config/autostart" ]; expect "talos --profile ops without --apply-profile runs no sudo, apt, pkill or systemctl change" $?
@@ -235,9 +238,10 @@ has 'report only, nothing changed' "$HOME_DIR/.local/state/talos-kit/profile.txt
 
 bs --profile ops --apply-profile; S1=$out
 [ "$rc" = 0 ]; expect "talos --profile ops --apply-profile exits 0 on a fresh Kali laptop" $?
-ok=0; for u in postgresql.service cups.socket cups.service avahi-daemon.socket avahi-daemon.service; do grep -qx "systemctl disable --now $u" "$LOGS/sudo" || ok=1; done
-! grep -q bluetooth "$LOGS/sudo" || ok=1; expect "talos ops profile disables and stops postgresql, cups and avahi (sockets too), not bluetooth" $ok
-[[ "${S1%%listening TCP ports after:*}" == *"127.0.0.1:5432"* && "${S1#*listening TCP ports after:}" != *"5432"* && "${S1#*listening TCP ports after:}" != *"kdeconnectd"* ]]; expect "talos ops profile prints the listening ports before and after" $?
+ok=0; for u in cups.socket cups.service avahi-daemon.socket avahi-daemon.service; do grep -qx "systemctl disable --now $u" "$LOGS/sudo" || ok=1; done
+grep -q 'disable.*postgresql' "$LOGS/sudo" && ok=1
+! grep -q bluetooth "$LOGS/sudo" || ok=1; expect "talos ops profile disables and stops cups and avahi (sockets too), never postgresql or bluetooth" $ok
+[[ "${S1%%listening TCP ports after:*}" == *"0.0.0.0:5432"* && "${S1#*listening TCP ports after:}" == *"127.0.0.1:5432"* && "${S1#*listening TCP ports after:}" != *"0.0.0.0:5432"* && "${S1#*listening TCP ports after:}" != *"kdeconnectd"* ]]; expect "talos ops profile prints the listening ports before and after" $?
 has '^Hidden=true$' "$HOME_DIR/.config/autostart/org.kde.kdeconnect.daemon.desktop" && has "-x kdeconnectd" "$LOGS/pkill"; expect "talos ops profile turns KDE Connect off for the user without sudo" $?
 has 'RUN+=".*powerprofilesctl set power-saver"' "$R0/etc/udev/rules.d/60-gauss-power-profile.rules" && [ "$(cat "$LOGS/ppd")" = power-saver ] && has '^udevadm control --reload$' "$LOGS/sudo"; expect "talos ops profile sets power-saver on battery through power-profiles-daemon" $?
 [ "$(cat "$R0/sys/class/power_supply/BAT0/charge_control_end_threshold")" = 80 ] && has '^w /sys/class/power_supply/BAT0/charge_control_end_threshold - - - - 80$' "$R0/etc/tmpfiles.d/50-gauss-charge-limit.conf"; expect "talos ops profile sets the 80% charge limit now and at every boot" $?
@@ -253,7 +257,7 @@ has '^SystemMaxUse=200M$' "$R0/etc/systemd/journald.conf.d/50-gauss.conf" && has
 has 'zram-tools' "$LOGS/apt" && has '^PERCENT=50$' "$R0/etc/default/zramswap" && [ -e "$LOGS/svc/zramswap.service.enabled" ]; expect "talos ops profile installs zram-tools and turns on zram swap at 50% of RAM" $?
 [[ "$S1" == *"Node v26.1.0: OK"* && "$S1" == *"Go: go1.26.10"* ]]; expect "talos ops profile reports Node 26 and Go" $?
 ok=0; while read -r line; do [[ "$S1" == *"sudo: $line"* ]] || ok=1; done <"$LOGS/sudo"; expect "talos ops profile prints every sudo command it runs" $ok
-p="$HOME_DIR/.local/state/talos-kit/profile.txt"; has ', applied$' "$p" && has 'wrote /etc/ssh/sshd_config.d/05-gauss-ops.conf' "$p" && has 'postgresql.service *disabled' "$p"; expect "talos ops profile saves what it applied to profile.txt" $?
+p="$HOME_DIR/.local/state/talos-kit/profile.txt"; has ', applied$' "$p" && has 'wrote /etc/ssh/sshd_config.d/05-gauss-ops.conf' "$p" && has 'postgresql *wrote' "$p"; expect "talos ops profile saves what it applied to profile.txt" $?
 
 n=$(sudo_n); a=$(wc -l <"$LOGS/apt"); bs --profile ops --apply-profile
 [ "$rc" = 0 ] && ! tail -n +"$((n + 1))" "$LOGS/sudo" | grep -v aa-status | grep -q . && [ "$(wc -l <"$LOGS/apt")" = "$a" ] && [[ "$out" == *"05-gauss-ops.conf: already in place"* && "$out" == *"zram swap: already active"* ]]; expect "talos ops profile re-run is idempotent: no further changes (only the read-only aa-status)" $?
@@ -278,6 +282,18 @@ mk_machine on-battery; bs "${OK[@]}" --profile ops --dry-run
 [ "$rc" = 0 ] && [ "$(printf '%s\n' "$out" | grep -c '^==> [1-5]/5 ')" = 5 ] && [ "$(printf '%s\n' "$out" | grep -c '^==> ops [1-6]/6 ')" = 6 ]; expect "talos bootstrap --tailnet-login ... --profile ops runs the five steps, then the profile" $?
 ! { grep -Ev '^ *(#|note )' "$P" | grep -E '(curl|wget)[^|]*\| *(ba)?sh|ufw +(allow|deny|reject|limit|default|enable|disable|delete|reset)|systemctl[^|]* mask '; } >/dev/null; expect "talos ops profile never pipes a download to a shell, changes ufw rules or masks a unit" $?
 I="$D/image/README.md"; has 'UNTESTED' "$I" && has 'live-build-config' "$I" && has '--profile ops' "$I"; expect "talos image README exists, names live-build-config and the profile hook, and is marked UNTESTED" $?
+
+# --- PostgreSQL stays on, listens on localhost only ---
+PGF="$R0/etc/postgresql/17/main/conf.d/10-gauss-loopback.conf"
+pg_ports() { env -i PATH="$T/bin:$T/sys" LOGS="$LOGS" TALOS_KIT_SYSROOT="$R0" ss -ltn; }
+mk_machine on-battery; bs --profile ops --apply-profile
+[ "$rc" = 0 ] && [ "$(cat "$PGF")" = "$(printf "# Gauss, 25 Nov 2026: no network listeners; local apps use localhost or the socket.\nlisten_addresses = 'localhost'")" ] && [ "$(grep -c '^systemctl restart postgresql.service$' "$LOGS/sudo")" = 1 ] && ! grep -q 'disable.*postgresql' "$LOGS/sudo" && [ -e "$LOGS/svc/postgresql.service.enabled" ]; expect "talos ops profile writes the PostgreSQL loopback drop-in, restarts it once and never disables it" $?
+pg_ports | grep -q '127.0.0.1:5432' && ! pg_ports | grep -q '0.0.0.0:5432'; expect "talos ops profile leaves PostgreSQL on 127.0.0.1 only" $?
+bs --profile ops --apply-profile; [ "$rc" = 0 ] && [ "$(grep -c '^systemctl restart postgresql.service$' "$LOGS/sudo")" = 1 ] && [[ "$out" == *"10-gauss-loopback.conf: already in place"* ]]; expect "talos ops profile: a second apply does not restart PostgreSQL again" $?
+mk_machine on-battery; printf "data_directory = 'x'\n" >"$R0/etc/postgresql/17/main/postgresql.conf"; bs --profile ops --apply-profile
+[ "$rc" = 0 ] && [ ! -e "$PGF" ] && ! grep -q 'restart postgresql' "$LOGS/sudo" && [[ "$out" == *"set listen_addresses = 'localhost' by hand"* ]]; expect "talos ops profile without include_dir writes no PostgreSQL drop-in, restarts nothing and warns" $?
+mk_machine on-battery; mkdir -p "$(dirname "$PGF")"; printf "# Gauss, 25 Nov 2026: no network listeners; local apps use localhost or the socket.\nlisten_addresses = 'localhost'\n" >"$PGF"; bs --profile ops --apply-profile
+[ "$rc" = 0 ] && ! grep -q 'restart postgresql' "$LOGS/sudo" && [[ "$out" == *"already in place"* ]]; expect "talos ops profile with the identical drop-in already there does not restart PostgreSQL" $?
 
 # --- desktop, models, agents and claws profiles (25 Nov 2026) ---
 NR="$T/nroot"; NH="$T/nhome"; NL="$T/nlogs"; SYSROOT="$NR"; HOME_DIR="$NH"; LOGS="$NL"

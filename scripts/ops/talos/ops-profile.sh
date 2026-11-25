@@ -12,8 +12,10 @@
 #   --dry-run       print everything, change and save nothing (works on any OS)
 #
 # Steps. Each checks first and skips what is already in place, so it is safe to run again:
-#   1. trim services: postgresql, cups, avahi-daemon (bluetooth with --no-bluetooth) disabled and
-#      stopped; KDE Connect off for this user. Listening TCP ports printed before and after.
+#   1. trim services: cups, avahi-daemon (bluetooth with --no-bluetooth) disabled and
+#      stopped; KDE Connect off for this user. PostgreSQL is NOT disabled (local apps use it): a conf.d
+#      drop-in sets listen_addresses = 'localhost' (one restart, only when the file changed).
+#      Listening TCP ports printed before and after.
 #   2. power: power-saver on battery through TLP or power-profiles-daemon, whichever is installed
 #      (never installs one, never both); 80% charge limit where the hardware offers it; lid
 #      suspends on battery and is ignored on external power.
@@ -112,7 +114,9 @@ main() {
   say "ops 1/6 trim services"
   note "listening TCP ports now (ss -ltnp; process names only for your own processes):"
   listening
-  local u units="postgresql.service cups.socket cups.path cups.service cups-browsed.service avahi-daemon.socket avahi-daemon.service"
+  # postgresql is NOT in this list: gauss_aurora and vaultmcp use it locally. It is kept running and
+  # only stopped from listening on the network (the PostgreSQL step below).
+  local u units="cups.socket cups.path cups.service cups-browsed.service avahi-daemon.socket avahi-daemon.service"
   [ "$NOBT" = 0 ] || units="$units bluetooth.service"
   local trimmed=0
   if [ "$have_systemd" = 1 ]; then
@@ -130,6 +134,27 @@ main() {
     fi
   else
     warn "systemctl not found: services not checked"
+  fi
+  # PostgreSQL: keep the service, drop the network listener. Local apps use localhost or the socket.
+  # The drop-in is byte-identical to the one talos-sudo-once.sh writes, so running both restarts once.
+  # Undo: remove /etc/postgresql/<ver>/main/conf.d/10-gauss-loopback.conf, then restart postgresql.
+  local pgdir pgrel
+  pgdir=$(ls -d "$ROOT"/etc/postgresql/*/main 2>/dev/null | head -1 || true)
+  if [ -z "$pgdir" ]; then note "postgresql: no /etc/postgresql/*/main (not installed here)"; rec postgresql "not installed"
+  elif grep -Eq "^[[:space:]]*include_dir[[:space:]]*=[[:space:]]*'conf\.d'" "$pgdir/postgresql.conf" 2>/dev/null; then
+    pgrel="${pgdir#"$ROOT"}/conf.d/10-gauss-loopback.conf"
+    local pgnew=1
+    [ ! -f "$ROOT$pgrel" ] || ! printf '%s\n' "# Gauss, 25 Nov 2026: no network listeners; local apps use localhost or the socket.
+listen_addresses = 'localhost'" | cmp -s - "$ROOT$pgrel" || pgnew=0
+    if put_file "$pgrel" postgresql "# Gauss, 25 Nov 2026: no network listeners; local apps use localhost or the socket.
+listen_addresses = 'localhost'"; then
+      if [ "$WROTE" = 1 ] || [ "$pgnew" = 1 ]; then
+        if sudo_act systemctl restart postgresql.service; then rec "postgresql restart" "restarted"; else fail "postgresql restart" "systemctl restart failed"; fi
+      fi
+    fi
+  else
+    warn "postgresql: $pgdir/postgresql.conf has no include_dir = 'conf.d': set listen_addresses = 'localhost' by hand"
+    rec postgresql "set listen_addresses = 'localhost' by hand"
   fi
   # KDE Connect listens on the LAN (ports 1714-1764). It runs per user: no sudo needed.
   local kc_sys="$ROOT/etc/xdg/autostart/org.kde.kdeconnect.daemon.desktop"
