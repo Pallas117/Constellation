@@ -440,6 +440,12 @@ out=$(run deploy "$Bc" 2>&1); [[ "$out" == *"The fallback is serving now"* ]]; e
 run fallback off >/dev/null
 out=$(run deploy deadbeef 2>&1); [[ "$out" == *"Unknown commit 'deadbeef'"* ]]; expect "deploy refuses an unknown commit" $?
 out=$(run deploy "$D" 2>&1); [[ "$out" == *"already at ${D:0:7}"* ]]; expect "deploy: already there is a no-op" $?
+# Review of #214: with no Argo binary, argo_follow must not abort a deploy that already
+# succeeded (set -e turned the missing command's 127 into the script's exit, skipping check).
+mv "$T/bin/argo" "$T/argo.saved"; out=$(run deploy "$Bc" 2>&1); rc=$?; mv "$T/argo.saved" "$T/bin/argo"
+[ $rc = 0 ] && head_is "$Bc" && [[ "$out" == *"Argo is behind"* && "$out" == *"Deployed ${Bc:0:7}"* && "$out" == *"backend up (:3001)"* ]]
+expect "deploy with no Argo binary: completes, notes Argo, prints Deployed and runs check" $?
+main_at "$D"; run deploy "$D" >/dev/null 2>&1; main_at "$C"; head_is "$D"; expect "deploy back to the lockfile commit for the tests below" $?
 # Re-pointing the fallback checks it out first. If its install then fails, the checkout has
 # changed under the old ready record: the deploy stops and the record goes, so status says
 # "none prepared" rather than vouching for a fallback that isn't what it describes.
