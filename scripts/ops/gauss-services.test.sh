@@ -1143,7 +1143,7 @@ SMSTUB
 chmod +x "$T/bin/wr" "$T/bin/smoke"
 export GAUSS_WRANGLER="$T/bin/wr" GAUSS_WEBSITE_SMOKE="$T/bin/smoke"
 WSW="$T/home/gauss/policy/website-redeploy"; mkdir -p "$(dirname "$WSW")"
-WM=$(tc "$M3" website/wrangler.jsonc '{ "vars": { "RELEASE": "public" } }'); git --git-dir="$ORIGIN" update-ref refs/heads/main "$WM"; g fetch -q origin
+WM=$(tc "$M3" website/wrangler.jsonc '{ "vars": { "RELEASE": "public" } }'); g push -q origin "$WM:refs/heads/main" && g fetch -q origin
 wsite() { local n=$1; shift; WS=$(tc "$WM" "$@"); g push -q origin "$WS:refs/heads/ws$n" && g fetch -q origin
   echo "OPEN ws$n main false CLEAN" >"$GHD/pr$n"; (cd "$LIVE" && run gates enqueue "$WS" --pr "$n" >/dev/null 2>&1); run gates run >/dev/null 2>&1; }
 rm -f "$WSW"; wsite 80 website/public/a.html one
@@ -1168,7 +1168,7 @@ wsite 87 website/wrangler.jsonc '{ "vars": { "RELEASE": "public" }, "x": 1 }'
 grep -qx "gh merge 87 $WS" "$T/actions" && ! grep -q "^wrangler\|^smoke" "$T/actions"; expect "website redeploy: a merge that changes wrangler.jsonc (release, routes, bindings) deploys nothing" $?
 wsite 88 website/worker/auth.js y
 grep -q "^[^ ]* $WS [^ ]* HELD passed, not merged: touches" "$GR" && ! grep -q "^wrangler\|^smoke" "$T/actions"; expect "website redeploy: a PR held for Josh is not merged, so nothing is deployed" $?
-WF=$(tc "$M3" website/wrangler.jsonc '{ "vars": { "RELEASE": "full" } }'); git --git-dir="$ORIGIN" update-ref refs/heads/main "$WF"; g fetch -q origin; WM=$WF
+WF=$(tc "$M3" website/wrangler.jsonc '{ "vars": { "RELEASE": "full" } }'); g push -q -f origin "$WF:refs/heads/main" && g fetch -q origin; WM=$WF
 wsite 89 website/public/h.html eight
 grep -qx "gh merge 89 $WS" "$T/actions" && ! grep -q "^wrangler\|^smoke" "$T/actions"; expect "website redeploy: RELEASE other than public is never deployed" $?
 rm -f "$WSW" "$GQ"/*.req; unset GAUSS_WRANGLER GAUSS_WEBSITE_SMOKE

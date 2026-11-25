@@ -1778,7 +1778,7 @@ website_redeploy() { # website_redeploy <pr> <sha> <repo> <files merged>: never 
   local pr=$1 sha=$2 repo=$3 files=$4 other w out rc=0 s=0 wr
   [ "$(cat "$WEBSITE_REDEPLOY_SWITCH" 2>/dev/null)" = on ] || return 0
   other=$(printf '%s\n' "$files" | { grep -Ev -- '^website/' || true; } | sed -n 1,3p | tr '\n' ' ')
-  if [ -z "$files" ] || [ -n "$other" ] || printf '%s\n' "$files" | grep -qx 'website/wrangler.jsonc'; then
+  if [ -z "$files" ] || [ -n "$other" ] || [[ $'\n'"$files"$'\n' == *$'\nwebsite/wrangler.jsonc\n'* ]]; then
     echo "Website redeploy: PR #$pr is not website-only with the same wrangler.jsonc: not deployed."; return 0
   fi
   if ! git --git-dir="$repo" show "$sha:website/wrangler.jsonc" 2>/dev/null | grep -Eq '"RELEASE"[[:space:]]*:[[:space:]]*"public"'; then
