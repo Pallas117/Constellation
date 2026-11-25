@@ -12,8 +12,10 @@ package main
 // RFC 7489; MTA-STS: RFC 8461; TLS-RPT: RFC 8460.
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
@@ -112,7 +114,7 @@ func validateDNSSpec(s DNSSpec) error {
 		return errors.New("dns.json has no zones")
 	}
 	for _, z := range s.Zones {
-		if z.Name == "" || strings.ContainsAny(z.Name, " /:") {
+		if z.Name == "" || strings.ContainsAny(z.Name, " /:") || !validDNSName(z.Name) {
 			return fmt.Errorf("zone name %q", z.Name)
 		}
 		for _, r := range z.Records {
@@ -121,6 +123,9 @@ func validateDNSSpec(s DNSSpec) error {
 			}
 			if r.Name == "" {
 				return fmt.Errorf("%s: a %s record has no name", z.Name, r.Type)
+			}
+			if !validDNSName(dnsFQDN(z.Name, r.Name)) {
+				return fmt.Errorf("%s %s: a label is over 63 bytes or the name over 253", z.Name, r.Name)
 			}
 			n := 0
 			for _, set := range []bool{r.Value != "", len(r.Values) > 0, len(r.Stages) > 0, r.Present, r.Proxied != nil} {
@@ -133,6 +138,9 @@ func validateDNSSpec(s DNSSpec) error {
 			}
 			if r.Proxied != nil && r.Type != "A" && r.Type != "AAAA" {
 				return fmt.Errorf("%s %s: proxied applies to A and AAAA only", z.Name, r.Name)
+			}
+			if r.Proxied != nil && !*r.Proxied {
+				return fmt.Errorf("%s %s: \"proxied\": false is not checked; give the DNS-only address as value", z.Name, r.Name)
 			}
 			if r.Prefix != "" && (!r.Present || r.Type != "TXT") {
 				return fmt.Errorf("%s %s: prefix goes with present on a TXT record", z.Name, r.Name)
@@ -148,6 +156,21 @@ func validateDNSSpec(s DNSSpec) error {
 		}
 	}
 	return nil
+}
+
+// validDNSName holds a name to RFC 1035 section 2.3.4: labels of 1-63 bytes,
+// at most 253 characters in text form (255 on the wire).
+func validDNSName(name string) bool {
+	name = strings.TrimSuffix(name, ".")
+	if name == "" || len(name) > 253 {
+		return false
+	}
+	for _, l := range strings.Split(name, ".") {
+		if l == "" || len(l) > 63 {
+			return false
+		}
+	}
+	return true
 }
 
 // ---- resolvers ----
@@ -286,7 +309,21 @@ func (w wireResolver) query(ctx context.Context, fqdn string, typ uint16) ([]str
 	if err != nil {
 		return nil, false, err
 	}
+	if !sameQuestion(msg, resp) {
+		return nil, false, errors.New("dns: response question does not match the query")
+	}
 	return parseDNSResponse(resp, id, typ)
+}
+
+// sameQuestion checks the reply echoes our one question (name, type, class),
+// RFC 5452 section 9.1. Names compare ASCII case-insensitively; length octets
+// (at most 63) and the type/class bytes here never fall in the letter range.
+func sameQuestion(query, resp []byte) bool {
+	q := query[12 : len(query)-11] // header 12 bytes; the trailing OPT record is 11
+	if len(resp) < 12+len(q) || binary.BigEndian.Uint16(resp[4:]) != 1 {
+		return false
+	}
+	return bytes.EqualFold(resp[12:12+len(q)], q)
 }
 
 func dnsExchange(ctx context.Context, network, server string, msg []byte) ([]byte, error) {
@@ -385,6 +422,9 @@ func parseDNSResponse(msg []byte, id uint16, typ uint16) ([]string, bool, error)
 	}
 	if binary.BigEndian.Uint16(msg) != id {
 		return nil, false, errors.New("dns: response id mismatch")
+	}
+	if msg[2]&0x80 == 0 {
+		return nil, false, errors.New("dns: not a response (QR=0)")
 	}
 	ad := msg[3]&0x20 != 0
 	switch rcode := msg[3] & 0x0f; rcode {
@@ -627,7 +667,8 @@ func compareRecord(r DNSRecord, found []string) dnsResult {
 					keep = append(keep, f)
 				}
 			}
-			found, res.Found, res.Expected = keep, strings.Join(keep, " | "), r.Prefix+"…"
+			// Only the prefixed records belong to this entry; the plan acts on res.found.
+			found, res.found, res.Found, res.Expected = keep, keep, strings.Join(keep, " | "), r.Prefix+"…"
 		}
 		if len(found) == 0 {
 			res.Status = "missing"
@@ -664,7 +705,9 @@ func compareRecord(r DNSRecord, found []string) dnsResult {
 				cands = append(cands, strings.TrimSpace(f))
 			}
 		}
-		res.Found = strings.Join(cands, " | ")
+		// Other TXT records at this name (site verification, a different
+		// prefix) are not this entry's: the plan must never touch them.
+		res.found, res.Found = cands, strings.Join(cands, " | ")
 		switch {
 		case len(cands) == 0:
 			res.Status = "missing"
@@ -993,23 +1036,36 @@ func dnsPlanPrint(w io.Writer, rs []dnsResult) {
 			case "missing":
 				now = append(now, fmt.Sprintf("POST %s/dns_records %s", zp, cfBody("TXT", fqdn, want[0], nil)))
 			case "differs":
+				// r.found holds only this entry's records (same prefix). Keep the
+				// one that already matches a stage, else the first; delete the rest.
+				keep := 0
+				for i, f := range r.found {
+					if txtMatchesAny(*rec, want, f) {
+						keep = i
+						break
+					}
+				}
 				content := want[0]
 				if rec.Match == "tags" && len(r.found) > 0 {
-					content = mergeTags(want[0], r.found[0])
+					content = mergeTags(want[0], r.found[keep])
 				}
-				if len(r.found) > 1 {
-					for _, f := range r.found[1:] {
+				for i, f := range r.found {
+					if i != keep {
 						now = append(now, fmt.Sprintf("DELETE %s/dns_records/{record_id:TXT %s %s}   # duplicate", zp, fqdn, truncateRunes(f, 40)))
 					}
 				}
-				now = append(now, fmt.Sprintf("PATCH %s/dns_records/{record_id:TXT %s} %s", zp, fqdn, cfBody("TXT", fqdn, content, nil)))
+				if len(r.found) == 0 {
+					now = append(now, fmt.Sprintf("PATCH %s/dns_records/{record_id:TXT %s} %s", zp, fqdn, cfBody("TXT", fqdn, content, nil)))
+				} else if !txtMatchesAny(*rec, want, r.found[keep]) { // name the record by its value: other TXT share the name
+					now = append(now, fmt.Sprintf("PATCH %s/dns_records/{record_id:TXT %s %s} %s", zp, fqdn, truncateRunes(r.found[keep], 40), cfBody("TXT", fqdn, content, nil)))
+				}
 			case "ok":
 				if r.stage >= 0 && r.stage < len(want)-1 {
 					next := want[r.stage+1]
 					if rec.Match == "tags" && len(r.found) > 0 {
 						next = mergeTags(next, r.found[0])
 					}
-					later = append(later, fmt.Sprintf("PATCH %s/dns_records/{record_id:TXT %s} %s   # stage %d of %d", zp, fqdn, cfBody("TXT", fqdn, next, nil), r.stage+2, len(want)))
+					later = append(later, fmt.Sprintf("PATCH %s/dns_records/{record_id:TXT %s %s} %s   # stage %d of %d", zp, fqdn, truncateRunes(firstNonEmpty(r.found...), 40), cfBody("TXT", fqdn, next, nil), r.stage+2, len(want)))
 				}
 			}
 		default: // A, AAAA, MX, CAA sets
@@ -1049,37 +1105,105 @@ func dnsPlanPrint(w io.Writer, rs []dnsResult) {
 	}
 }
 
+// txtMatchesAny reports whether a found TXT value already satisfies a stage.
+func txtMatchesAny(rec DNSRecord, want []string, f string) bool {
+	for _, w := range want {
+		if rec.Match == "tags" {
+			if ok, _ := matchTags(w, f, rec.Require); ok {
+				return true
+			}
+		} else if strings.TrimSpace(w) == strings.TrimSpace(f) {
+			return true
+		}
+	}
+	return false
+}
+
 // ---- alert ----
 
 type dnsZoneState struct {
-	Checked time.Time `json:"checked"`
-	Drift   int       `json:"drift"`
+	Checked  time.Time `json:"checked"`
+	Drift    int       `json:"drift"`
+	Drifting []string  `json:"drifting,omitempty"` // dnsKey of each drifting check
 }
 
 const dnsAlertEvery = 24 * time.Hour
 
-// dnsAlert texts once when a zone that was clean on the previous run now
-// drifts: never on the first run, never twice for the same drift, at most
-// once per 24 h per zone, and not while Argo is paused. Values never go in
-// the text (SMS is not end-to-end encrypted); the count and zone do.
-func dnsAlert(s Store, phone *Phone, zone string, drift int, now time.Time, out io.Writer) {
+// dnsKey names one check stably across runs (type, name and a short hash of
+// the desired-state entry), so the alert state can tell a new drifting record
+// from one already reported. No record values are stored.
+func dnsKey(r dnsResult) string {
+	if r.Type == "HTTP" || r.Type == "DNSSEC" || r.rec == nil {
+		return r.Type + " " + r.Name
+	}
+	c := *r.rec
+	c.Note = ""
+	b, _ := json.Marshal(c)
+	h := sha256.Sum256(b)
+	return fmt.Sprintf("%s %s %x", r.Type, r.Name, h[:4])
+}
+
+// dnsAlert texts when a zone gains a drifting record it did not have on the
+// previous run: never on the first run, never twice for the same drift, at
+// most once per 24 h per zone, and not while Argo is paused. A run that
+// verified nothing (offline, port 53 blocked) leaves the state alone, and a
+// check that is unverified this run keeps its previous drift state, so a
+// drop-out never re-arms the alert. Values never go in the text (SMS is not
+// end-to-end encrypted); the count and zone do.
+func dnsAlert(s Store, phone *Phone, zone string, rs []dnsResult, now time.Time, out io.Writer) {
+	var drifting, unverified []string
+	definite := 0
+	for _, r := range rs {
+		switch r.Status {
+		case "missing", "differs":
+			drifting = append(drifting, dnsKey(r))
+			definite++
+		case "ok":
+			definite++
+		default:
+			unverified = append(unverified, dnsKey(r))
+		}
+	}
+	if definite == 0 {
+		return // nothing verified: no evidence either way
+	}
 	path := s.path("dns-state.json")
 	st := map[string]dnsZoneState{}
 	if b, err := os.ReadFile(path); err == nil {
 		_ = json.Unmarshal(b, &st)
 	}
 	prev, seen := st[zone]
-	st[zone] = dnsZoneState{Checked: now, Drift: drift}
+	known := map[string]bool{}
+	for _, k := range prev.Drifting {
+		known[k] = true
+	}
+	for _, k := range unverified {
+		if known[k] {
+			drifting = append(drifting, k)
+		}
+	}
+	sort.Strings(drifting)
+	drifting = slices.Compact(drifting)
+	fresh := 0
+	for _, k := range drifting {
+		if !known[k] {
+			fresh++
+		}
+	}
+	if prev.Drifting == nil && prev.Drift > 0 {
+		fresh = 0 // state written before per-record keys: treat the drift as known
+	}
+	st[zone] = dnsZoneState{Checked: now, Drift: len(drifting), Drifting: drifting}
 	b, _ := json.Marshal(st)
 	_ = os.MkdirAll(s.Dir, 0o700)
 	_ = os.WriteFile(path, b, 0o600)
-	if drift == 0 || !seen || prev.Drift > 0 || s.Disabled() {
+	if fresh == 0 || !seen || s.Disabled() {
 		return
 	}
 	if !shouldNotify(s, "dns-"+zone, dnsAlertEvery, now) {
 		return
 	}
-	msg := fmt.Sprintf("%d DNS record(s) on %s differ from the desired state. At the Mac: argo dns check --zone %s", drift, zone, zone)
+	msg := fmt.Sprintf("%d DNS record(s) on %s differ from the desired state (%d new). At the Mac: argo dns check --zone %s", len(drifting), zone, fresh, zone)
 	if phone == nil {
 		fmt.Fprintln(out, "alert:", msg)
 		return
@@ -1130,15 +1254,13 @@ func dnsCmd(args []string, s Store, phone *Phone, env dnsEnv, out io.Writer, now
 	}
 	code := dnsPrint(out, rs, *asJSON)
 	if *alert {
-		byZone := map[string]int{}
+		byZone := map[string][]dnsResult{}
 		var order []string
 		for _, r := range rs {
 			if _, ok := byZone[r.Zone]; !ok {
 				order = append(order, r.Zone)
 			}
-			if r.Status == "missing" || r.Status == "differs" {
-				byZone[r.Zone]++
-			}
+			byZone[r.Zone] = append(byZone[r.Zone], r)
 		}
 		for _, z := range order {
 			dnsAlert(s, phone, z, byZone[z], now, out)

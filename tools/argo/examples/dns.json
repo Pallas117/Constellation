@@ -48,7 +48,7 @@
           "v=spf1 include:_spf.google.com ~all",
           "v=spf1 include:_spf.google.com -all"
         ], "note": "RFC 7208. Only one v=spf1 record. ~all now; -all once DMARC reports show every sender passing"},
-        {"name": "google._domainkey", "type": "TXT", "present": true, "note": "RFC 6376. Value TBC: Google Admin > Gmail > Authenticate email > Generate (2048-bit, selector google), then Start authentication after it resolves"},
+        {"name": "google._domainkey", "type": "TXT", "present": true, "note": "RFC 6376. Any value counts: the key comes from Google Admin > Gmail > Authenticate email (2048-bit, selector google)"},
         {"name": "_dmarc", "type": "TXT", "match": "tags", "require": ["rua"], "stages": [
           "v=DMARC1; p=none",
           "v=DMARC1; p=quarantine; pct=25",

@@ -200,7 +200,7 @@ func TestDNSPlanMissingSPFAndWrongDMARC(t *testing.T) {
 	text := out.String()
 	for _, want := range []string{
 		`POST /client/v4/zones/{zone_id:lightbound.uk}/dns_records {"type":"TXT","name":"lightbound.uk","content":"v=spf1 include:_spf.google.com ~all","ttl":1}`,
-		`PATCH /client/v4/zones/{zone_id:lightbound.uk}/dns_records/{record_id:TXT _dmarc.lightbound.uk} {"type":"TXT","name":"_dmarc.lightbound.uk","content":"v=DMARC1; p=none; rua=mailto:x@y","ttl":1}`,
+		`PATCH /client/v4/zones/{zone_id:lightbound.uk}/dns_records/{record_id:TXT _dmarc.lightbound.uk v=DMARC1; p=quarantine; rua=mailto:x@y} {"type":"TXT","name":"_dmarc.lightbound.uk","content":"v=DMARC1; p=none; rua=mailto:x@y","ttl":1}`,
 		`PATCH /client/v4/zones/{zone_id:lightbound.uk}/dnssec {"status":"active"}`,
 		"Redirect Rule",
 		`{"type":"TXT","name":"google._domainkey.lightbound.uk","content":"<TBC>","ttl":1}   # TBC: Google Admin`,
@@ -237,39 +237,151 @@ func TestDNSApplyRefuses(t *testing.T) {
 	}
 }
 
+// alertRun builds one zone's results for dnsAlert: one check per status, in
+// the order of three fixed records (SPF, DMARC, DKIM).
+func alertRun(statuses ...string) []dnsResult {
+	recs := []DNSRecord{
+		{Name: "@", Type: "TXT", Value: "v=spf1 include:_spf.google.com ~all"},
+		{Name: "_dmarc", Type: "TXT", Match: "tags", Value: "v=DMARC1; p=none"},
+		{Name: "google._domainkey", Type: "TXT", Present: true},
+	}
+	var rs []dnsResult
+	for i, st := range statuses {
+		r := recs[i]
+		rs = append(rs, dnsResult{Zone: "lightbound.uk", Name: r.Name, Type: r.Type, Status: st, rec: &r, stage: -1})
+	}
+	return rs
+}
+
 func TestDNSAlertOnlyAfterACleanRun(t *testing.T) {
 	s := Store{Dir: t.TempDir()}
 	var sent []string
 	p := testPhone(t, func(_, text string) error { sent = append(sent, text); return nil })
 	at := time.Date(2026, 11, 5, 9, 0, 0, 0, time.UTC)
 	var out bytes.Buffer
+	clean, one := alertRun("ok", "ok", "ok"), alertRun("missing", "ok", "ok")
 	// First run with drift: nothing to compare with, no text.
-	dnsAlert(s, p, "lightbound.uk", 2, at, &out)
+	dnsAlert(s, p, "lightbound.uk", alertRun("missing", "differs", "ok"), at, &out)
 	if len(sent) != 0 {
 		t.Fatalf("first run alerted: %v", sent)
 	}
-	dnsAlert(s, p, "lightbound.uk", 0, at.Add(time.Hour), &out) // clean
-	dnsAlert(s, p, "lightbound.uk", 1, at.Add(2*time.Hour), &out)
+	dnsAlert(s, p, "lightbound.uk", clean, at.Add(time.Hour), &out)
+	dnsAlert(s, p, "lightbound.uk", one, at.Add(2*time.Hour), &out)
 	if len(sent) != 1 || strings.Contains(sent[0], "mailto") || !strings.Contains(sent[0], "lightbound.uk") {
 		t.Fatalf("after clean run: %v", sent)
 	}
-	dnsAlert(s, p, "lightbound.uk", 1, at.Add(3*time.Hour), &out) // still drifting: no repeat
-	dnsAlert(s, p, "lightbound.uk", 0, at.Add(4*time.Hour), &out)
-	dnsAlert(s, p, "lightbound.uk", 1, at.Add(5*time.Hour), &out) // flapped back within 24 h: deduped
+	dnsAlert(s, p, "lightbound.uk", one, at.Add(3*time.Hour), &out) // still drifting: no repeat
+	dnsAlert(s, p, "lightbound.uk", clean, at.Add(4*time.Hour), &out)
+	dnsAlert(s, p, "lightbound.uk", one, at.Add(5*time.Hour), &out) // flapped back within 24 h: deduped
 	if len(sent) != 1 {
 		t.Fatalf("dedupe: %v", sent)
 	}
-	dnsAlert(s, p, "lightbound.uk", 0, at.Add(30*time.Hour), &out)
-	dnsAlert(s, p, "lightbound.uk", 1, at.Add(31*time.Hour), &out)
+	dnsAlert(s, p, "lightbound.uk", clean, at.Add(30*time.Hour), &out)
+	dnsAlert(s, p, "lightbound.uk", one, at.Add(31*time.Hour), &out)
 	if len(sent) != 2 {
 		t.Fatalf("after 24 h: %v", sent)
 	}
 	// Paused Argo stays quiet.
 	_ = os.WriteFile(s.path("disabled"), nil, 0o600)
-	dnsAlert(s, p, "lightbound.uk", 0, at.Add(60*time.Hour), &out)
-	dnsAlert(s, p, "lightbound.uk", 1, at.Add(61*time.Hour), &out)
+	dnsAlert(s, p, "lightbound.uk", clean, at.Add(60*time.Hour), &out)
+	dnsAlert(s, p, "lightbound.uk", one, at.Add(61*time.Hour), &out)
 	if len(sent) != 2 {
 		t.Fatalf("disabled: %v", sent)
+	}
+}
+
+// A drop-out between two runs that see the same drift must not re-arm the
+// alert: an all-unverified run keeps the state, and a check unverified this run
+// keeps its previous drift. Only a new drifting record texts.
+func TestDNSAlertOfflineRunKeepsState(t *testing.T) {
+	s := Store{Dir: t.TempDir()}
+	var sent []string
+	p := testPhone(t, func(_, text string) error { sent = append(sent, text); return nil })
+	at := time.Date(2026, 11, 5, 9, 0, 0, 0, time.UTC)
+	var out bytes.Buffer
+	two := alertRun("missing", "differs", "ok")
+	dnsAlert(s, p, "lightbound.uk", alertRun("ok", "ok", "ok"), at, &out)
+	dnsAlert(s, p, "lightbound.uk", two, at.Add(time.Hour), &out)
+	if len(sent) != 1 || !strings.Contains(sent[0], "2 DNS record(s)") {
+		t.Fatalf("clean -> drift 2: %v", sent)
+	}
+	before, _ := os.ReadFile(s.path("dns-state.json"))
+	// Offline: both resolvers fail on every record, through the real check.
+	spec := DNSSpec{Zones: []DNSZone{{Name: "lightbound.uk", Records: []DNSRecord{{Name: "@", Type: "TXT", Value: "v=spf1 -all"}}}}}
+	down := errors.New("dial udp 1.1.1.1:53: connect: network is unreachable")
+	off := fakeLookup{name: "1.1.1.1", errs: map[string]error{"TXT lightbound.uk": down}}
+	offRun := dnsCheck(context.Background(), spec, "", dnsEnv{Resolvers: []dnsLookup{off, off}})
+	if offRun[0].Status != "unverified" {
+		t.Fatalf("offline run: %+v", offRun[0])
+	}
+	dnsAlert(s, p, "lightbound.uk", offRun, at.Add(30*time.Hour), &out)
+	if after, _ := os.ReadFile(s.path("dns-state.json")); !bytes.Equal(before, after) {
+		t.Fatalf("offline run rewrote the state:\n%s\n%s", before, after)
+	}
+	dnsAlert(s, p, "lightbound.uk", two, at.Add(31*time.Hour), &out)
+	if len(sent) != 1 {
+		t.Fatalf("drift 2, offline, drift 2 texted again: %v", sent)
+	}
+	// One check unverified (timeout), the other still drifting: its drift is
+	// carried, so the next full run is not "new".
+	dnsAlert(s, p, "lightbound.uk", alertRun("unverified", "differs", "ok"), at.Add(56*time.Hour), &out)
+	dnsAlert(s, p, "lightbound.uk", two, at.Add(57*time.Hour), &out)
+	if len(sent) != 1 {
+		t.Fatalf("partly unverified run re-armed the alert: %v", sent)
+	}
+	// A record that starts drifting while others already drift does text.
+	dnsAlert(s, p, "lightbound.uk", alertRun("missing", "differs", "missing"), at.Add(82*time.Hour), &out)
+	if len(sent) != 2 || !strings.Contains(sent[1], "(1 new)") {
+		t.Fatalf("new drifting record: %v", sent)
+	}
+	// State written before per-record keys (drift count only) is treated as known.
+	_ = os.WriteFile(s.path("dns-state.json"), []byte(`{"lightbound.uk":{"checked":"2026-11-01T00:00:00Z","drift":2}}`), 0o600)
+	dnsAlert(s, p, "lightbound.uk", two, at.Add(120*time.Hour), &out)
+	if len(sent) != 2 {
+		t.Fatalf("legacy state re-alerted: %v", sent)
+	}
+}
+
+// Several TXT records share @ (site verification, SPF). With two SPF records
+// the plan deletes only the extra SPF and never the verification record, and
+// the SPF that already matches is kept rather than patched.
+func TestDNSPlanTouchesOnlyItsOwnTXT(t *testing.T) {
+	spec := DNSSpec{Zones: []DNSZone{{Name: "z.example", Records: []DNSRecord{
+		{Name: "@", Type: "TXT", Present: true, Prefix: "google-site-verification="},
+		{Name: "@", Type: "TXT", Stages: []string{"v=spf1 include:_spf.google.com ~all", "v=spf1 include:_spf.google.com -all"}},
+	}}}}
+	for _, order := range [][]string{
+		{"google-site-verification=abc", "v=spf1 include:_spf.google.com ~all", "v=spf1 -all"},
+		{"v=spf1 -all", "google-site-verification=abc", "v=spf1 include:_spf.google.com ~all"},
+	} {
+		cf := fakeLookup{name: "1.1.1.1", answers: map[string][]string{"TXT z.example": order}}
+		rs := dnsCheck(context.Background(), spec, "", dnsEnv{Resolvers: []dnsLookup{cf}})
+		if rs[0].Status != "ok" || rs[1].Status != "differs" {
+			t.Fatalf("%v: statuses %s %s", order, rs[0].Status, rs[1].Status)
+		}
+		if len(rs[1].found) != 2 {
+			t.Errorf("%v: SPF entry holds %d records, want only the 2 SPF: %q", order, len(rs[1].found), rs[1].found)
+		}
+		var out bytes.Buffer
+		dnsPlanPrint(&out, rs)
+		var deletes, patches []string
+		for _, l := range strings.Split(out.String(), "\n") {
+			switch {
+			case strings.HasPrefix(l, "DELETE"):
+				deletes = append(deletes, l)
+			case strings.HasPrefix(l, "PATCH"), strings.HasPrefix(l, "POST"):
+				patches = append(patches, l)
+			}
+		}
+		if len(deletes) != 1 || !strings.Contains(deletes[0], "v=spf1 -all") {
+			t.Errorf("%v: deletes %q, want only the extra SPF", order, deletes)
+		}
+		if strings.Contains(out.String(), "google-site-verification") {
+			t.Errorf("%v: plan touches the verification record:\n%s", order, out.String())
+		}
+		if len(patches) != 0 {
+			t.Errorf("%v: the matching SPF should be kept, not changed: %q", order, patches)
+		}
 	}
 }
 
@@ -294,6 +406,14 @@ func TestDNSExampleLoadsAndValidates(t *testing.T) {
 	bad := DNSSpec{Zones: []DNSZone{{Name: "z", Records: []DNSRecord{{Name: "@", Type: "SRV", Value: "x"}}}}}
 	if err := validateDNSSpec(bad); err == nil || !strings.Contains(err.Error(), "SRV") {
 		t.Errorf("validate: %v", err)
+	}
+	long := DNSSpec{Zones: []DNSZone{{Name: "z.example", Records: []DNSRecord{{Name: strings.Repeat("a", 64), Type: "TXT", Value: "x"}}}}}
+	if err := validateDNSSpec(long); err == nil || !strings.Contains(err.Error(), "63") {
+		t.Errorf("64-byte label: %v", err)
+	}
+	notProxied := DNSSpec{Zones: []DNSZone{{Name: "z.example", Records: []DNSRecord{{Name: "@", Type: "A", Proxied: boolp(false)}}}}}
+	if err := validateDNSSpec(notProxied); err == nil || !strings.Contains(err.Error(), "proxied") {
+		t.Errorf("proxied false: %v", err)
 	}
 }
 
@@ -340,6 +460,19 @@ func TestDNSWireParse(t *testing.T) {
 	}
 	if _, _, err := parseDNSResponse(msg, 0x9999, dnsTypeA); err == nil {
 		t.Error("id mismatch accepted")
+	}
+	if _, _, err := parseDNSResponse(wireMsg(1, 0x0180, q), 1, dnsTypeTXT); err == nil {
+		t.Error("QR=0 (a query, not a response) accepted")
+	}
+	// The reply must echo our question (RFC 5452 section 9.1); case may differ.
+	query := buildDNSQuery(0x1234, "lightbound.uk", dnsTypeTXT)
+	upper := append(append([]byte{}, encodeDNSName("LightBound.UK")...), byte(dnsTypeTXT>>8), byte(dnsTypeTXT), 0, 1)
+	if !sameQuestion(query, msg) || !sameQuestion(query, wireMsg(0x1234, 0x8180, upper)) {
+		t.Error("matching question refused")
+	}
+	other := append(append([]byte{}, encodeDNSName("lightbound.uk")...), byte(dnsTypeA>>8), byte(dnsTypeA), 0, 1)
+	if sameQuestion(query, wireMsg(0x1234, 0x8180, other)) || sameQuestion(query, wireMsg(0x1234, 0x8180, append(encodeDNSName("evil.example"), 0, 16, 0, 1))) {
+		t.Error("a different question accepted")
 	}
 	// NXDOMAIN is "no records", not an error; SERVFAIL is an error.
 	if got, _, err := parseDNSResponse(wireMsg(1, 0x8183, q), 1, dnsTypeA); err != nil || len(got) != 0 {
