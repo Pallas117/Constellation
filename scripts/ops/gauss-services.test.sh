@@ -351,6 +351,7 @@ out=$(run fallback prepare "$DEV" 2>&1); [[ "$out" == *"is not the current fallb
 stub node 'if [[ " $* " == *" build "* ]]; then mkdir -p frontend/dist && touch frontend/dist/index.html; fi'
 # npm run <gate> prints what the real gates print (counts parsed by `gates record`); GATEFAIL=<gate> fails one
 stub npm 'if [ "$1" = run ]; then
+  [ "$2" = verify ] && [ -f breaks-gate.txt ] && { echo "❌ VERIFY FAILED"; exit 1; } # a commit that fails the gate by its content
   [ "$2" = verify ] && [ -n "$MOVEMAIN" ] && [ -f "$MOVEMAIN" ] && { sh "$MOVEMAIN"; rm -f "$MOVEMAIN"; } # main moves mid-run
   [ -n "$GATEENV" ] && { env | grep -E "^(ALLOWED_ORIGINS|MESH_STORE_PATH|COMMERCE_DB_PATH|GAUSS_BEDROCK_DIR|NODE_ENV)=" ; echo "PATH=$PATH"; } >>"$GATEENV"
   [ -n "$GATEORDER" ] && echo "$2" >>"$GATEORDER" # the order the gates ran in
@@ -880,7 +881,13 @@ cat >"$T/bin/gh" <<GHSTUB
 case "\$1 \$2" in
   "pr view") read -r st br base dr ms <"$GHD/pr\$3" || exit 1
     echo "\$st \$(git --git-dir="$ORIGIN" rev-parse "refs/heads/\$br") \$br \$base \$dr \$ms" ;;
-  "pr merge") echo "gh merge \$3 \${@: -1}" >>"\$ACTIONS"; exit \${GHMERGEFAIL:-0} ;;
+  "pr merge") echo "gh merge \$3 \${@: -1}" >>"\$ACTIONS"
+    if [ -f "$GHD/real" ]; then # batches: merge the head into origin's main as GitHub would
+      read -r st br base dr ms <"$GHD/pr\$3"; m=\$(git --git-dir="$ORIGIN" rev-parse refs/heads/main); h=\$(git --git-dir="$ORIGIN" rev-parse "refs/heads/\$br")
+      [ "\$h" = "\${@: -1}" ] && t=\$(git --git-dir="$ORIGIN" merge-tree --write-tree "\$m" "\$h") && c=\$(git --git-dir="$ORIGIN" commit-tree -p "\$m" -p "\$h" -m "Merge PR #\$3" "\$t") \
+        && git --git-dir="$ORIGIN" update-ref refs/heads/main "\$c" || exit 1
+    fi
+    exit \${GHMERGEFAIL:-0} ;;
   "pr list") base=\$(printf '%s\n' "\$@" | grep -A1 -x -- --base | tail -1)
     if [ -n "\$base" ]; then cat "$GHD/children-\$base" 2>/dev/null; else cat "$GHD/open" 2>/dev/null; fi ;;
   "pr edit") echo "gh retarget \$3" >>"\$ACTIONS" ;;
@@ -1168,6 +1175,42 @@ expect "train: a conflict on the requirements baseline version alone is settled 
 grep -q "^[^ ]* $RX [^ ]* CONFLICT PR #42" "$GR" && [ "$(git --git-dir="$ORIGIN" rev-parse refs/heads/reqclash)" = "$RX" ] && ! grep -q "gh merge 42" "$T/actions"
 expect "train: a requirements conflict beyond the version line still waits for a person" $?
 rm -f "$GQ"/*.req
+# Batches (25 Nov, off unless a batch size is set): ready, CLEAN train PRs outside TRAIN_HOLD share one
+# gate run on main + all of them; a fail is split in halves to find the PR that broke it. GitHub's
+# merge is real here (gh merges the head into origin's main), so the tree checks are real too.
+touch "$GHD/real"; echo 4 >"$WD/gates/batch"; : >"$T/actions"
+bq() { local s=$1 b=$2 p=$3 d=${4:-false}; g push -q origin "$s:refs/heads/$b" && g fetch -q origin; echo "OPEN $b main $d CLEAN" >"$GHD/pr$p"; (cd "$LIVE" && run gates enqueue "$s" --pr "$p" >/dev/null 2>&1); }
+B1=$(tc "$RM" b61.txt 1); B2=$(tc "$RM" b62.txt 2); B3=$(tc "$RM" b63.txt 3)
+bq "$B1" b61 61; bq "$B2" b62 62; bq "$B3" b63 63
+n=$(runs_of); run gates run >/dev/null 2>&1; MB=$(git --git-dir="$ORIGIN" rev-parse refs/heads/main)
+[ "$(runs_of)" = $((n + 1)) ] && [ "$(grep '^gh merge' "$T/actions" | tr '\n' ' ')" = "gh merge 61 $B1 gh merge 62 $B2 gh merge 63 $B3 " ] \
+  && [ "$(git --git-dir="$ORIGIN" rev-parse refs/heads/b61)" = "$B1" ] && grep -q "^[^ ]* $B3 [^ ]* MERGED PR #63 merged by the train in a batch: main + #61 #62 #63 passed" "$GR" \
+  && [ -f "$WD/gates/$(git --git-dir="$ORIGIN" rev-parse "$MB^{tree}").json" ] && [ -z "$(ls "$GQ")" ] && [ -z "$(g worktree list | grep gauss-batch)" ]
+expect "train batch: N ready PRs are gated once on main + all of them and merged in queue order on their exact heads (main = the tested tree)" $?
+: >"$T/actions"; g fetch -q origin
+F1=$(tc "$MB" b71.txt 1); F2=$(tc "$MB" b72.txt 2); F3=$(tc "$MB" breaks-gate.txt 3); F4=$(tc "$MB" b74.txt 4)
+bq "$F1" b71 71; bq "$F2" b72 72; bq "$F3" b73 73; bq "$F4" b74 74
+run gates run >/dev/null 2>&1; F4n=$(git --git-dir="$ORIGIN" rev-parse refs/heads/b74)
+grep -q "^[^ ]* $F3 [^ ]* FAILED PR #73 failed in a merge-train batch: main + #71 #72 #73 failed on [0-9a-f]*, without it passed on" "$GR" \
+  && [ "$(grep '^gh merge' "$T/actions" | tr '\n' ' ')" = "gh merge 71 $F1 gh merge 72 $F2 gh merge 74 $F4n " ] && [ "$F4n" != "$F4" ] \
+  && [ "$(grep -c "^[^ ]* [^ ]* [^ ]* FAILED " "$GR")" -ge 3 ] && [ -z "$(ls "$GQ")" ]
+expect "train batch: a failing batch is split in halves; the PR that broke it is FAILED, the passing prefix merges, the rest carry on" $?
+: >"$T/actions"; g fetch -q origin; MB=$(git --git-dir="$ORIGIN" rev-parse refs/heads/main)
+H1=$(tc "$MB" b81.txt 1); H2=$(tc "$MB" b82.txt 2); H3=$(tc "$MB" b83.txt 3); H3b=$(tc "$H3" b83.txt 3b)
+g push -q origin "$H3b:refs/heads/b83-next"; bq "$H1" b81 81; bq "$H2" b82 82; bq "$H3" b83 83
+printf 'git --git-dir="%s" update-ref refs/heads/b83 %s\n' "$ORIGIN" "$H3b" >"$T/movehead"
+MOVEMAIN="$T/movehead" run gates run >/dev/null 2>&1
+[ "$(grep '^gh merge' "$T/actions" | tr '\n' ' ')" = "gh merge 81 $H1 gh merge 82 $H2 " ] && grep -q "^[^ ]* $H3 [^ ]* HELD merge-train batch stopped: PR #83 changed on GitHub" "$GR" \
+  && grep -q "^[^ ]* $H3 [^ ]* SKIPPED PR #83 moved on to ${H3b:0:7}" "$GR" && [ -z "$(ls "$GQ")" ]
+expect "train batch: a PR whose head moved after the batch run is not merged; the rest go one by one" $?
+: >"$T/actions"; g fetch -q origin; MB=$(git --git-dir="$ORIGIN" rev-parse refs/heads/main)
+X1=$(tc "$MB" backend/auth-batch.ts a); X2=$(tc "$MB" b92.txt 2); X3=$(tc "$MB" b93.txt 3); X4=$(tc "$MB" b94.txt 4)
+bq "$X1" b91 91; bq "$X2" b92 92; bq "$X3" b93 93 true; bq "$X4" b94 94
+run gates run >/dev/null 2>&1
+grep -q "^[^ ]* $X1 [^ ]* HELD passed, not merged: touches backend/auth-batch.ts" "$GR" && grep -q "^[^ ]* $X4 [^ ]* MERGED PR #94 merged by the train in a batch: main + #92 #94 passed" "$GR" \
+  && grep -q "^[^ ]* $X3 [^ ]* MOVED merged main into PR #93" "$GR" && [[ "$(tail -1 "$GR")" == *" HELD passed, not merged: draft" ]] && ! grep -q "gh merge 9[13] " "$T/actions" && [ -z "$(ls "$GQ")" ]
+expect "train batch: a PR touching TRAIN_HOLD paths or a draft is never batched (and a batch never jumps an ineligible first request)" $?
+rm -f "$GHD/real" "$WD/gates/batch" "$GQ"/*.req; git --git-dir="$ORIGIN" update-ref refs/heads/main "$RM"; g fetch -q origin
 printf '%s 13 true CLEAN Brand refresh\n%s 21 false CLEAN Already merged head\n' "$N5" "$P8" >"$GHD/open"
 out=$(cd "$LIVE" && run gates waiting 2>&1)
 [[ "$out" == *"#13 ${N5:0:7} draft, CLEAN: Brand refresh"* ]] && [[ "$out" == *"next: mark it ready (gh pr ready 13)"* ]] && [[ "$out" != *"#21 "* ]]

@@ -1486,6 +1486,8 @@ gates_run() { # gates_run [--once]: work through the queue, oldest first, then e
       gates_result "$sha" "$tree" EXPIRED "waited over ${GATES_EXPIRE_H} h for memory or power; enqueue it again"
       rm -f "$req"; continue
     fi
+    # A batch of train PRs shares one run (off unless a batch size is set; see train_batch).
+    if [ -n "$(req_get "$req" pr)" ] && gates_batch_n >/dev/null && train_batch "$(req_get "$req" repo)"; then continue; fi
     if gate_record "$tree" >/dev/null; then # passed meanwhile (another request, or by hand)
       pr=$(req_get "$req" pr)
       if [ -z "$pr" ]; then
@@ -1764,8 +1766,17 @@ train_sync() { # train_sync <request>: merge origin/main into a train PR's head 
   [ -f "$req" ]
 }
 
+train_landed() { # train_landed <pr> <branch>: after a train merge: drop its note, move PRs stacked on it to main, text
+  local child
+  rm -f "$GATES_DIR/held/$1"
+  for child in $(gh pr list --repo "$TRAIN_REPO" --base "$2" --state open --json number -q '.[].number' 2>/dev/null); do
+    gh pr edit "$child" --repo "$TRAIN_REPO" --base main >/dev/null 2>&1 && echo "Retargeted PR #$child to main."
+  done
+  phone -key "train-merged" -every 1m "Gauss: merged #$1" "PR #$1 passed its checks and is merged into main."
+}
+
 train_merge() { # train_merge <pr> <sha> <tree> <repo>: merge a PR that just passed, if every rule holds
-  local pr=$1 sha=$2 tree=$3 repo=$4 info state head branch base draft merge i files held child why
+  local pr=$1 sha=$2 tree=$3 repo=$4 info state head branch base draft merge i files held why
   git --git-dir="$repo" fetch -q origin 2>/dev/null || true
   for i in 1 2 3; do # GitHub computes mergeability lazily: UNKNOWN right after a push
     info=$(train_pr "$pr") || return 1
@@ -1798,12 +1809,7 @@ train_merge() { # train_merge <pr> <sha> <tree> <repo>: merge a PR that just pas
   fi
   if gh pr merge "$pr" --repo "$TRAIN_REPO" --merge --match-head-commit "$sha" >/dev/null 2>&1; then
     gates_result "$sha" "$tree" MERGED "PR #$pr merged by the train after its gate passed on ${sha:0:7}"
-    rm -f "$GATES_DIR/held/$pr"
-    # PRs stacked on this one now belong on main (their next queued run merges main in).
-    for child in $(gh pr list --repo "$TRAIN_REPO" --base "$branch" --state open --json number -q '.[].number' 2>/dev/null); do
-      gh pr edit "$child" --repo "$TRAIN_REPO" --base main >/dev/null 2>&1 && echo "Retargeted PR #$child to main."
-    done
-    phone -key "train-merged" -every 1m "Gauss: merged #$pr" "PR #$pr passed its checks and is merged into main."
+    train_landed "$pr" "$branch"
     return 0
   fi
   gates_result "$sha" "$tree" HELD "passed, but gh pr merge refused it"
@@ -1842,6 +1848,109 @@ train_requeue() { # train_requeue <pr> <sha> <tree> <repo>: put a passed head ma
   f="$GATES_QUEUE/1$(python3 -Ic 'import time; print("%.6f" % time.time())')-$tree.req"
   printf 'sha=%s\ntree=%s\nrepo=%s\nnode=%s\nby=%s\nqueued=%s\npr=%s\n' "$sha" "$tree" "$repo" "$NODE" "merge-train" "$(date +%s)" "$pr" >"$f.tmp" && mv "$f.tmp" "$f"
   gates_result "$sha" "$tree" REQUEUED "PR #$pr re-queued at the front: main moved during its run"
+}
+
+# Batches (25 Nov; off unless set): every merge sent the rest of the queue round again (29 queued that
+# day), one full gate per PR. With a batch size N (GAUSS_GATES_BATCH, else the number in
+# $GATES_DIR/batch; 2-20, read each round) the train takes the first request and up to N-1 after it
+# that may share a run: open, ready (not a draft), GitHub CLEAN, based on main, head as queued, no
+# held note, nothing under TRAIN_HOLD, not marked batch=no. It merges their heads into origin/main in
+# queue order (a head that conflicts is left out and goes alone) and gates that one commit here
+# (never the gatebox: the commit is only local). Pass: each PR is merged in order with
+# --match-head-commit, and only while main + that PR is the tree the batch built for that step,
+# before and after the merge. Fail: halves find the first prefix that fails (log2 N more runs); that
+# PR is FAILED, the passing prefix before it merges, the rest stay queued. Anything unexpected stops
+# the batch and marks what is left batch=no: those go one by one, as without batches.
+gates_batch_n() { local n=${GAUSS_GATES_BATCH:-$(cat "$GATES_DIR/batch" 2>/dev/null || true)}; [[ "$n" =~ ^[0-9]+$ ]] && [ "$n" -ge 2 ] && [ "$n" -le 20 ] && echo "$n"; }
+train_batch_pick() { # train_batch_pick <repo> <n>: "<request> <pr> <sha> <branch>" (tabs) for up to n PRs; none unless the first in line qualifies
+  local repo=$1 max=$2 req pr sha files state head branch base draft merge k=0
+  while IFS= read -r req; do
+    [ "$k" -lt "$max" ] || break
+    pr=$(req_get "$req" pr); sha=$(req_get "$req" sha); state=""; files=""
+    if [ -n "$pr" ] && [ -z "$(req_get "$req" batch)" ] && [ "$(req_get "$req" repo)" = "$repo" ] && [ ! -e "$GATES_DIR/held/$pr" ] \
+       && git --git-dir="$repo" cat-file -e "$sha^{commit}" 2>/dev/null; then
+      read -r state head branch base draft merge <<<"$(train_pr "$pr" || true)"
+      files=$(git --git-dir="$repo" diff --name-only "refs/remotes/origin/main...$sha" 2>/dev/null) || state=""
+    fi
+    if [ "$state $head $base $draft $merge" = "OPEN $sha main false CLEAN" ] && ! grep -Eiq -- "$TRAIN_HOLD" <<<"$files"; then
+      printf '%s\t%s\t%s\t%s\n' "$req" "$pr" "$sha" "$branch"; k=$((k + 1))
+    elif [ "$k" = 0 ]; then return 0 # the first in line goes alone: a batch never jumps the queue
+    fi
+  done < <(ls "$GATES_QUEUE"/*.req 2>/dev/null | sort)
+}
+train_batch_gate() { # train_batch_gate <sha> <repo>: gate one batch commit here; 0 passed, 1 failed, 2 no verdict
+  local sha=$1 repo=$2 tree req rc=0 self; self="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
+  tree=$(git --git-dir="$repo" rev-parse "$sha^{tree}") || return 2
+  gate_record "$tree" >/dev/null && return 0
+  req="$GATES_DIR/batch.req" # outside the queue: run-one runs it like a gates-only request and removes it
+  printf 'sha=%s\ntree=%s\nrepo=%s\nnode=%s\nby=merge-train-batch\nqueued=%s\n' "$sha" "$tree" "$repo" "$NODE" "$(date +%s)" >"$req"
+  echo "$(date '+%F %T') batch gates ${sha:0:7} ..."
+  if [ -x "$HEAVY" ]; then "$HEAVY" --wait "$GATES_WAIT_MIN" --name gates --label "gate batch ${sha:0:7}" -- /bin/bash "$self" gates run-one "$req" || rc=$?
+  else /bin/bash "$self" gates run-one "$req" || rc=$?; fi
+  rm -f "$req"
+  gate_record "$tree" >/dev/null && return 0
+  [[ "$(tail -1 "$GATES_RESULTS")" == *" $sha "*" FAILED "* ]] && return 1
+  return 2
+}
+train_batch() { # train_batch <repo>: 0 when a batch ran (results written), 1 when the queue goes one by one this round
+  local repo=$1 n picked w x c i k lo hi mid v why state head branch base draft merge out
+  local -a R=() P=() S=() B=() C=()
+  n=$(gates_batch_n) || return 1
+  gatebox_trusted && return 1
+  git --git-dir="$repo" fetch -q origin 2>/dev/null || return 1
+  picked=$(train_batch_pick "$repo" "$n")
+  [ "$(grep -c . <<<"$picked")" -ge 2 ] || return 1
+  w=$(mktemp -d -t gauss-batch)/w
+  git --git-dir="$repo" worktree add -q --detach "$w" refs/remotes/origin/main 2>/dev/null || return 1
+  while IFS=$'\t' read -r x i k c; do # request, PR, head, branch; one merge commit per head that merges cleanly
+    if git -C "$w" merge -q --no-edit -m "Merge train batch: PR #$i" "$k" >/dev/null 2>&1; then
+      R+=("$x"); P+=("$i"); S+=("$k"); B+=("$c"); C+=("$(git -C "$w" rev-parse HEAD)")
+    else git -C "$w" merge --abort 2>/dev/null || true; fi # left out: it goes alone, where a conflict is reported
+  done <<<"$picked"
+  git --git-dir="$repo" worktree remove --force "$w" 2>/dev/null || true
+  n=${#C[@]}; [ "$n" -ge 2 ] || return 1
+  # The whole batch first; on a fail, halves: lo = longest prefix known to pass, hi = shortest known to fail.
+  lo=0; hi=$n; v=0; train_batch_gate "${C[n-1]}" "$repo" || v=$?
+  if [ "$v" = 0 ]; then lo=$n; fi
+  while [ "$v" != 2 ] && [ $((hi - lo)) -gt 1 ]; do
+    mid=$(( (lo + hi) / 2 )); v=0; train_batch_gate "${C[mid-1]}" "$repo" || v=$?
+    case $v in 0) lo=$mid ;; 1) hi=$mid ;; esac
+  done
+  if [ "$v" = 2 ]; then # no verdict (memory, network, an error): these go one by one
+    for x in "${R[@]}"; do [ -f "$x" ] && echo "batch=no" >>"$x"; done
+    gates_result "${C[n-1]}" "$(git --git-dir="$repo" rev-parse "${C[n-1]}^{tree}")" ERROR "batch of PRs$(printf ' #%s' "${P[@]}"): no verdict; they go one by one"
+    return 0
+  fi
+  if [ "$lo" -lt "$n" ]; then # the first prefix that fails ends with the PR that broke it
+    i=$((hi - 1))
+    gates_result "${S[i]}" "$(git --git-dir="$repo" rev-parse "${S[i]}^{tree}")" FAILED "PR #${P[i]} failed in a merge-train batch: main +$(printf ' #%s' "${P[@]:0:hi}") failed on ${C[i]:0:7}$([ "$lo" -gt 0 ] && echo ", without it passed on ${C[lo-1]:0:7}") (gates why ${C[i]:0:7})"
+    rm -f "${R[i]}"
+  fi
+  [ "$lo" -ge 1 ] || return 0
+  for ((i = 0; i < lo; i++)); do
+    why=""; state=""
+    read -r state head branch base draft merge <<<"$(train_pr "${P[i]}" || true)"
+    [ "$state $head $base $draft $merge" = "OPEN ${S[i]} main false CLEAN" ] || why="PR #${P[i]} changed on GitHub (${state:-unreachable} ${head:0:7} draft=$draft $merge)"
+    out=$(git --git-dir="$repo" merge-tree --write-tree refs/remotes/origin/main "${S[i]}" 2>/dev/null || true)
+    [ -n "$why" ] || [ "${out%%$'\n'*}" = "$(git --git-dir="$repo" rev-parse "${C[i]}^{tree}")" ] || why="main + PR #${P[i]} is not the tree the batch built"
+    [ -n "$why" ] || gh pr merge "${P[i]}" --repo "$TRAIN_REPO" --merge --match-head-commit "${S[i]}" >/dev/null 2>&1 || why="gh pr merge refused PR #${P[i]}"
+    if [ -z "$why" ]; then
+      git --git-dir="$repo" fetch -q origin 2>/dev/null || true
+      gates_result "${S[i]}" "$(git --git-dir="$repo" rev-parse "${S[i]}^{tree}")" MERGED "PR #${P[i]} merged by the train in a batch: main +$(printf ' #%s' "${P[@]:0:lo}") passed as ${C[lo-1]:0:7}"
+      rm -f "${R[i]}"; train_landed "${P[i]}" "${B[i]}"
+      if [ "$(git --git-dir="$repo" rev-parse refs/remotes/origin/main^{tree})" != "$(git --git-dir="$repo" rev-parse "${C[i]}^{tree}")" ]; then
+        why="main after PR #${P[i]} is not the tree the batch built"
+        phone -key "train-batch" -every 1h "Gauss: check main" "After merging PR #${P[i]} in a batch, main is not the tree the train tested. The rest go one by one."
+      fi
+    fi
+    if [ -n "$why" ]; then
+      for ((k = i; k < n; k++)); do [ -f "${R[k]}" ] && echo "batch=no" >>"${R[k]}"; done
+      gates_result "${S[i]}" "$(git --git-dir="$repo" rev-parse "${S[i]}^{tree}")" HELD "merge-train batch stopped: $why; the rest go one by one"
+      return 0
+    fi
+  done
+  gates_after_pass "${C[lo-1]}"
+  return 0
 }
 
 # Queue tooling (Josh 12 Nov, "make some tooling to improve this process"): see the queue by PR,
