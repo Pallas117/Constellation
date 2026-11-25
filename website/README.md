@@ -21,6 +21,7 @@ closed until `RELEASE: "full"`. See "Launch" and "Opening accounts later".
 | `/education/` | Gauss for Education (prototype), part of Constellation's outreach (nav shows Constellation): what a class gets (four labs), the three plans (student free, staff and research monthly, department yearly), and who can join. Buttons follow `EDU_SALES`; the staff price is "Price TBC" until `EDU_STAFF_PRICE` is set. |
 | `/education/apply/` | A department licence request, or a review for people without a university email. |
 | `/app/` | Signed-in workspace: quote and payment (card, or an invoice where you allow it), billing state, pilot progress, space weather, Constellation membership, members' opportunities, and the staff link for the team. |
+| `/app/brief/` | The weekly Constellation Brief, for Constellation members and admins: launches, space weather, events, funding and headlines from the cached feeds, each line with its source and fetch time. See "The Constellation Brief". |
 | `/app/admin/` | For `ADMIN_EMAILS`: approve with a quote, set plan, billing, pilot step; invite Constellation members (free). |
 | `/constellation/time/` | Public time-zone planner. Pick a date and up to 8 zones to see the local hour everywhere, with the hours that suit everyone outlined. A picked hour comes with a calendar file, names each zone's offset and says where it is an unsocial hour (22:00–07:00 local). No data is stored. |
 | `/privacy/` | What is kept, why, for how long, and how to have it deleted. |
@@ -375,6 +376,30 @@ npm run smoke:website -- http://127.0.0.1:8788   # the deployed-site smoke check
 
 `dev.mjs` emulates Cloudflare: assets with `_headers`, trailing slashes, the 404 page and byte
 ranges; the `run_worker_first` routes from `wrangler.jsonc`; an in-memory KV; and the cron.
+
+## The Constellation Brief
+
+`/app/brief/` (`worker/brief.js`) is one page a week for Constellation members and admins. It is full-release only:
+a public release answers 404, signed-out visitors get the workspace's 401, and signed-in non-members are sent back
+to `/app/`.
+
+- **Assembled on request, from the cache only.** The page reads the seven feed records the 15-minute cron already
+  keeps in the `LIVE` namespace and builds the brief as a pure function of those records and the time
+  (`assembleBrief`). There is no new scheduler, namespace, record or upstream call, and nothing about the reader is
+  stored. The week shown is the ISO week (Monday to Sunday, UTC). Past weeks are not archived.
+- **Sections, in a fixed order:** This week in orbit (dated launches in the next 7 days), Space weather (NOAA's
+  current scales, Kp and solar wind; the cached feed has no alert history, and the page says so), Events (the Luma
+  calendar, next 14 days, in the member's saved time zone and UTC), Funding and calls (tracked deadlines in the next
+  30 days, then UKRI and UK Space Agency notices posted in the last 7 days) and Headlines (at most five).
+- **Every line** names its source, links to the source item and says when the site fetched it. Each section states
+  a confidence (confirmed, likely or unverified) with a one-line reason, as "How we share" on `/constellation/`
+  promises. A stale or offline feed is labelled on the page and lowers the section to "unverified"; its section is
+  never dropped, and stale data is never shown as current.
+- **UKRI items show title, link and posting date only** (no summary, and the feed has no closing date).
+- **Source and licence register:** `worker/sources.js`, rendered at the bottom of the brief as "Sources". A row is
+  `checked` only when someone fetched and read the terms page it names on the date it gives; otherwise it stays
+  `unverified` with a note. A test fails if a cached feed has no row. Re-read the terms pages when adding a source
+  or once a year, and update the dates.
 
 ## Members' opportunities and the staff link
 
