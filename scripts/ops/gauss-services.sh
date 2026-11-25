@@ -6,7 +6,7 @@
 #   scripts/ops/gauss-services.sh install <checkout-dir>   build + write + load agents
 #   scripts/ops/gauss-services.sh status                   agent state + health checks
 #   scripts/ops/gauss-services.sh check                    pre-demo checklist (exit 1 if anything is off)
-#   scripts/ops/gauss-services.sh resilience               battery, memory, network and phone alerts before closing the lid (exit 1 if not)
+#   scripts/ops/gauss-services.sh resilience               battery, memory, network, phone alerts and phone battery before closing the lid (exit 1 if not)
 #   scripts/ops/gauss-services.sh balance [--dry-run]      shed optional load now when memory, battery or disk run short (the guard runs it every minute)
 #   scripts/ops/gauss-services.sh tailnet on|off           share Gauss on your tailnet only (tailscale serve)
 #   scripts/ops/gauss-services.sh awake setup|on|off       keep running with the lid closed (setup: once, asks for sudo)
@@ -131,7 +131,9 @@ GATE_LOCK="${GAUSS_GATE_LOCK:-$HOME/.local/state/gauss-gate.lock}" # shared with
 # `verify` already runs the full test suite, the ops tests and the production build
 # (scripts/verify/verify.ts), so `test` and `build` are not run again as gates of
 # their own; their record fields come from verify's log. Halves a gate run.
-GATES=(test:ops quality:full verify)
+# test:ui:gate (hermetic Playwright subset, own port 8094, never :8080) runs before verify so verify
+# merges its JUnit report (test-results/verification/ui-junit.xml) into the VCRM; ~2-4 min extra.
+GATES=(test:ops quality:full test:ui:gate verify)
 # Gate queue (2026-10-29): sessions held a `claude-heavy --wait 720 ... gates record` each for hours
 # (~1 GB of idle sessions on an 8 GB Mac), each with its own npm ci. Now a session enqueues and
 # can be archived; one detached runner works through the requests one at a time under claude-heavy
@@ -943,6 +945,16 @@ gates_python_dir() { # the directory of the first python3 that can import numpy 
   return 1
 }
 
+# Chromium for the UI gate lives in Playwright's shared cache, so installing it once serves every
+# checkout and touches none of them. GAUSS_PW_CHROMIUM overrides the executable path (tests).
+gates_browser() { # gates_browser <checkout-dir>: install Chromium once if the pinned build is missing
+  local exe
+  exe=${GAUSS_PW_CHROMIUM:-$(cd "$1" && "$NODE" -e 'console.log(require("@playwright/test").chromium.executablePath())' 2>/dev/null || true)}
+  [ -n "$exe" ] && [ -x "$exe" ] && return 0
+  echo "Chromium for the UI gate is missing: installing it once (playwright install chromium)"
+  (cd "$1" && npm exec -- playwright install chromium)
+}
+
 gates_record() { # gates_record <checkout-dir>: run the gates on a clean checkout and record the result by tree
   local dir sha tree g rc
   dir=$(cd "${1:?usage: $0 gates record <checkout-dir>}" && pwd) || return 1
@@ -960,7 +972,8 @@ gates_record() { # gates_record <checkout-dir>: run the gates on a clean checkou
     gate_lock
     echo "gate $g ..."
     local t0=$SECONDS
-    rc=0; (cd "$dir" && env "${scrub[@]}" PATH="$(dirname "$NODE")${pydir:+:$pydir}:$PATH" npm run "$g" >"$tmp/$g.log" 2>&1) || rc=$?
+    rc=0; [ "$g" = test:ui:gate ] && { (PATH="$(dirname "$NODE"):$PATH"; gates_browser "$dir") >"$tmp/$g.log" 2>&1 || rc=$?; }
+    [ $rc = 0 ] && { (cd "$dir" && env "${scrub[@]}" PATH="$(dirname "$NODE")${pydir:+:$pydir}:$PATH" npm run "$g" >>"$tmp/$g.log" 2>&1) || rc=$?; }
     if [ "$GATES_HOLD" = 1 ]; then rmdir "$GATE_LOCK" 2>/dev/null || true; fi; GATES_HOLD=0
     echo "$rc" >"$tmp/$g.rc"
     # Per-gate time in the run log (runs/<sha>.log), so the slow gate can be measured, not guessed.
@@ -986,6 +999,7 @@ r = {"sha": sha, "tree": tree, "by": by, "at": at,
      "test": {"exit": step("Test suite"), "tests": last(r"^\S* ?tests (\d+)$", v), "pass": last(r"^\S* ?pass (\d+)$", v), "fail": last(r"^\S* ?fail (\d+)$", v), "via": "verify"},
      "build": {"exit": step("Production build"), "via": "verify"},
      "quality": {"exit": rc("quality:full")},
+     "ui": {"exit": rc("test:ui:gate")},
      "verify": {"exit": rc("verify"), "vcrm": last(r"VCRM: (\d+/\d+)", v, str), "fmea": last(r"FMEA: (\d+/\d+)", v, str), "passed_at": last(r"VERIFY PASSED at (\w+)", v, str)}}
 # What failed, by name (18 Nov: a line saying 654/655 and VCRM 83/84 sent a session to the kept log to
 # learn which test; the result line now says it).
@@ -1007,7 +1021,7 @@ q = log("quality:full") if rc("quality:full") != 0 else ""
 r["failing"] = {"tests": names(r"^✖ (.+?) \(\d[\d.]*ms\)$", tail),
                 "requirements": names(r"^\s*✗ (REQ-[A-Z]+-\d+)", v),
                 "quality": names(r"^(\S+\(\d+,\d+\): error TS\d+)", q) or lint_errors(q)}
-r["passed"] = all(r[k]["exit"] == 0 for k in ("test_ops", "test", "build", "quality", "verify")) \
+r["passed"] = all(r[k]["exit"] == 0 for k in ("test_ops", "test", "build", "quality", "ui", "verify")) \
     and r["test"]["fail"] == 0 and r["test_ops"]["fail"] == 0 and sha.startswith(r["verify"]["passed_at"] or "-")
 print(json.dumps(r, ensure_ascii=False))
 ' "$tmp" "$sha" "$tree" "$(deployer)" "$(date -u +%Y-%m-%dT%H:%M:%SZ)") || return 1
@@ -1032,7 +1046,7 @@ gates_summary() { # gates_summary <record file>: one line
 import json, sys
 r = json.load(open(sys.argv[1]))
 t, o, v = r.get("test") or {}, r.get("test_ops") or {}, r.get("verify") or {}
-fails = [k for k in ("test_ops", "test", "build", "quality", "verify") if (r.get(k) or {}).get("exit") not in (0, None)]
+fails = [k for k in ("test_ops", "test", "build", "quality", "ui", "verify") if (r.get(k) or {}).get("exit") not in (0, None)]
 f = r.get("failing") or {}
 what = "; ".join("%s: %s" % (k, ", ".join(f[k])) for k in ("tests", "requirements", "quality") if f.get(k))
 print("%s %s (tree %s) by %s at %s: npm test %s/%s, test:ops %s passed, build %s, quality %s, VCRM %s, FMEA %s%s" % (
@@ -1271,10 +1285,11 @@ gates_prescreen() { # gates_prescreen <sha> <tree>: 0 the gatebox failed the com
 # GATES_CAUSES is the list of causes we have actually met: <pattern (Python regex)> TAB <cause> TAB <fix>.
 # Add a row only after a real failure was fixed, with its date; the first rows that match are shown.
 IFS= read -r -d '' GATES_CAUSES <<'CAUSES' || true # read ends at EOF with status 1: expected
+^✖ timestamps: only computeProof's epoch-ms format	the device-auth timestamps test signs with a shared nonce, and two runs in the same millisecond collide on the default timestamp, so the single-use nonce rejects the second (18 Nov, PR #309; fixed by PR #341)	if the commit has PR #341's change, re-queue (it is a flake); otherwise give each proof in the test its own nonce, never relax the nonce check
 ^✖ telemetry_descriptor\.json is the current \.proto	telemetry.proto changed without its descriptor (18 Nov, PR #309)	regenerate it with the one-liner at the top of shared/proto/telemetry.proto, commit, re-queue
 ETIMEDOUT|ECONNRESET|ECONNREFUSED|ENOTFOUND|EAI_AGAIN|ENETUNREACH|network request to	the install could not reach the package registry	nothing is wrong with the commit: re-queue it when the link is up (argo doctor)
 error TS2307: Cannot find module	a package is missing where the check ran (18 Nov: a worktree using an older checkout's modules)	if main's package.json has it, the modules there are stale (reinstall in that checkout); otherwise add the dependency
-^✖ Argo Go tests \(exit	an Argo Go test failed inside verify, which does not name it (19 Nov, PR #331: a timing test on a throttled battery run)	the test name is in test-results/verification/argo-go-test.json of the gates checkout (Action "fail"); run the Argo short suite in tools/argo to see if it is the commit or the machine
+^✖ Argo Go tests \(exit	an Argo Go test failed inside verify, which does not name it (18 Nov, PRs #315 and #331: timing tests that waited 5 s for a resume and failed on a throttled battery run; fixed by PR #340)	the test name is in test-results/verification/argo-go-test.json of the gates checkout (Action "fail"); run the Argo short suite in tools/argo to see if it is the commit or the machine
 ^\s*✗ (REQ-[A-Z]+-\d+)	a requirement has no passing test (VCRM)	npm run verify names it: fix the failing test, or map a passing test to the requirement in requirements/requirements.json
 error TS\d+	a type error	npm run -s check:changed reproduces it in seconds; fix the type (never silence the rule)
 ^\s+\d+:\d+\s+error\s	a lint error	fix the code the linter names (never disable or downgrade the rule)
@@ -2243,6 +2258,49 @@ network_item() {
   item $ok "network: $argo$note"
 }
 
+# The phone's own battery, from its last mesh report (the iOS Shortcut / Android post in tools/argo/README.md).
+# Prints the percentage, charging or not, and the report's age: never the device name or anything else from
+# the store. A phone at or under PHONE_WARN_BATTERY% and not charging fails the check: when it is the hotspot,
+# the uplink dies with it. No report, or one older than PHONE_STALE_MIN, says nothing about now: it is shown
+# as a note and does not fail the check.
+PHONE_WARN_BATTERY="${GAUSS_PHONE_WARN_BATTERY:-20}"
+PHONE_STALE_MIN="${GAUSS_PHONE_STALE_MIN:-60}"
+phone_battery_item() {
+  local store=${GAUSS_MESH_STORE:-} line
+  if [ -z "$store" ]; then
+    store=$(plutil -extract EnvironmentVariables.MESH_STORE_PATH raw -o - "$AGENTS/uk.lightbound.gauss-backend.plist" 2>/dev/null || true)
+  fi
+  line=$(python3 -Ic '
+import json, sys
+from datetime import datetime, timezone
+warn, stale = float(sys.argv[2]), float(sys.argv[3])
+best = None
+try:
+    for d in json.load(open(sys.argv[1])):
+        l = d.get("last") or {}
+        b = l.get("battery") or {}
+        if l.get("platform") not in ("ios", "android") or not isinstance(b.get("level"), (int, float)) or isinstance(b.get("level"), bool):
+            continue
+        age = (datetime.now(timezone.utc) - datetime.fromisoformat(l["receivedAt"].replace("Z", "+00:00"))).total_seconds() / 60
+        if best is None or age < best[0]:
+            best = (age, b["level"], bool(b.get("charging")))
+except Exception:
+    best = None
+if best is None:
+    print("note phone battery: no phone has reported (mesh Shortcut: tools/argo/README.md)")
+else:
+    age, level, charging = best
+    ago = "%.0f min ago" % age if age < 120 else "%.0f h ago" % (age / 60)
+    if age > stale:
+        print("note phone battery: %.0f%% as of %s, too old to judge (run the mesh Shortcut on the phone)" % (level, ago))
+    elif level <= warn and not charging:
+        print("no phone battery %.0f%%, not charging (reported %s): plug it in; if it is the hotspot, the uplink goes with it" % (level, ago))
+    else:
+        print("ok phone battery %.0f%%, %s (reported %s)" % (level, "charging" if charging else "not charging", ago))
+' "${store:-/nonexistent}" "$PHONE_WARN_BATTERY" "$PHONE_STALE_MIN" 2>/dev/null || echo "note phone battery: no phone has reported (mesh Shortcut: tools/argo/README.md)")
+  if [ "${line%% *}" = note ]; then printf '  – %s\n' "${line#* }"; else item "${line%% *}" "${line#* }"; fi
+}
+
 resilience() { # can background work survive the lid closed, the battery, memory and the network?
   local fail=0 ok batt pct level swap free
   batt=$(pmset -g batt); pct=$(grep -Eo -m1 '[0-9]+%' <<<"$batt" | tr -d % || true)
@@ -2276,6 +2334,7 @@ resilience() { # can background work survive the lid closed, the battery, memory
   else
     item ok "phone alerts: iMessage via argo notify"
   fi
+  phone_battery_item
   grep -q claude-phone-hook "$HOME/.claude/settings.json" 2>/dev/null && ok=ok || ok=no
   item $ok "Claude Code prompts forwarded to the phone$([ $ok = no ] && echo " (Notification hook missing)")"
   [ $fail = 0 ] && echo "Resilient: safe to close the lid and go." || echo "Not resilient yet: fix the ✗ items above."

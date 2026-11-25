@@ -52,5 +52,11 @@
     "cadence": "archival survey L2, published weeks behind real time",
     "source": "NASA CDAWeb HAPI, MMS FGM survey L2 field in GSM (mms[1-4]_fgm_b_gsm_srvy_l2_clean)",
     "why": "GAU-63: older than 90 d the reconnection vector would describe a different season, so the source is not reported healthy."
+  },
+  "glotec_tec": {
+    "maxAgeMin": 60,
+    "cadence": "10 min model time steps, published about 25 min after their valid time",
+    "source": "NOAA SWPC GloTEC global TEC (products/glotec/geojson_2d_urt/glotec_icao_*.geojson)",
+    "why": "Observed 18 Nov 2026: the 01:35Z step was listed at 02:01Z (about 26 min behind), so a healthy product is already ~30 min old; one hour allows three missed 10-min steps before the reading is unknown."
   }
 }

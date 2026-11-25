@@ -65,8 +65,8 @@ run() { # run <args...>: gauss-services.sh with the stubs; alerts land in $LOG
   env -i PATH="$T/bin:/usr/bin:/bin" HOME="$T/home" ARGO="$T/bin/argo" LOG="$T/log" KICKS="$T/kicks" GAUSS_PUBLIC_URL=http://127.0.0.1:8080 \
     GAUSS_SUDOERS="$T/sudoers" MLX="${MLX:-0}" MLXPORT="${MLXPORT:-8089}" ACTIONS="$T/actions" GAUSS_BALANCE="${GAUSS_BALANCE:-1}" \
     LOADED="${LOADED:-}" HEALTH="${HEALTH:-200}" HEALTH_FILE="${HEALTH_FILE:-}" GAUSS_DEPLOY_WAIT=0 DISKGB="${DISKGB:-50}" \
-    GATEFAIL="${GATEFAIL:-}" MOVEMAIN="${MOVEMAIN:-}" GAUSS_BY=test-user BOOT="${BOOT:-1000}" GAUSS_DIAG_DIRS="$T/diag" GAUSS_EVENTS_MAX_KB="${GAUSS_EVENTS_MAX_KB:-5120}" \
-    WAKE="${WAKE:-1000}" GAUSS_GATEBOX_TRUST="${GAUSS_GATEBOX_TRUST:-}" GAUSS_DEV_DRY="${GAUSS_DEV_DRY:-0}" GAUSS_GATES_START=0 HEAVYGIVEUP="${HEAVYGIVEUP:-}" NPMNET="${NPMNET:-}" GAUSS_GATEBOX="${GAUSS_GATEBOX:-}" GAUSS_GATEBOX_PROBE="${GAUSS_GATEBOX_PROBE:-true}" GAUSS_GATEBOX_WAIT_S="${GAUSS_GATEBOX_WAIT_S:-0}" GAUSS_GATEBOX_POLL_S="${GAUSS_GATEBOX_POLL_S:-1}" GAUSS_GATEBOX_TIMEOUT_S="${GAUSS_GATEBOX_TIMEOUT_S:-}" GAUSS_FLEET_MEMORY="${GAUSS_FLEET_MEMORY:-}" GAUSS_GATEBOX_KEY="$T/gatebox-key" GBRC="${GBRC:-}" GAUSS_GATES_EXPIRE_H="${GAUSS_GATES_EXPIRE_H:-72}" GAUSS_GATES_HOOK_S="${GAUSS_GATES_HOOK_S:-300}" GAUSS_DEV_API_PORT="${GAUSS_DEV_API_PORT:-3101}" \
+    GATEORDER="${GATEORDER:-}" GAUSS_PW_CHROMIUM="${GAUSS_PW_CHROMIUM:-}" GATEFAIL="${GATEFAIL:-}" MOVEMAIN="${MOVEMAIN:-}" GAUSS_BY=test-user BOOT="${BOOT:-1000}" GAUSS_DIAG_DIRS="$T/diag" GAUSS_EVENTS_MAX_KB="${GAUSS_EVENTS_MAX_KB:-5120}" \
+    WAKE="${WAKE:-1000}" GAUSS_GATEBOX_TRUST="${GAUSS_GATEBOX_TRUST:-}" GAUSS_DEV_DRY="${GAUSS_DEV_DRY:-0}" GAUSS_GATES_START=0 HEAVYGIVEUP="${HEAVYGIVEUP:-}" NPMNET="${NPMNET:-}" GAUSS_GATEBOX="${GAUSS_GATEBOX:-}" GAUSS_GATEBOX_PROBE="${GAUSS_GATEBOX_PROBE:-true}" GAUSS_GATEBOX_WAIT_S="${GAUSS_GATEBOX_WAIT_S:-0}" GAUSS_GATEBOX_POLL_S="${GAUSS_GATEBOX_POLL_S:-1}" GAUSS_MESH_STORE="${GAUSS_MESH_STORE:-}" GAUSS_GATEBOX_TIMEOUT_S="${GAUSS_GATEBOX_TIMEOUT_S:-}" GAUSS_FLEET_MEMORY="${GAUSS_FLEET_MEMORY:-}" GAUSS_GATEBOX_KEY="$T/gatebox-key" GBRC="${GBRC:-}" GAUSS_GATES_EXPIRE_H="${GAUSS_GATES_EXPIRE_H:-72}" GAUSS_GATES_HOOK_S="${GAUSS_GATES_HOOK_S:-300}" GAUSS_DEV_API_PORT="${GAUSS_DEV_API_PORT:-3101}" \
     SRC="${SRC:-AC Power}" BATT="${BATT:-80%; charging; present: true}" SD="${SD:-0}" FCC="${FCC:-}" ACW="${ACW:-}" \
     LEAKY="${LEAKY:-}" LEAKFP="${LEAKFP:-12 MB}" AVAIL="${AVAIL:-50}" GAUSS_SWAP_LAST="${SWAPLAST:-/dev/null}" \
     GATEENV="${GATEENV:-}" GATES_PYTHON="${GATES_PYTHON:-}" ${GATELEAK:+ALLOWED_ORIGINS=https://live.example MESH_STORE_PATH=/live/data/mesh/devices.json COMMERCE_DB_PATH=/live/data/commerce/commerce.db GAUSS_BEDROCK_DIR=/live/data/bedrock NODE_ENV=production} \
@@ -353,7 +353,9 @@ stub node 'if [[ " $* " == *" build "* ]]; then mkdir -p frontend/dist && touch 
 stub npm 'if [ "$1" = run ]; then
   [ "$2" = verify ] && [ -n "$MOVEMAIN" ] && [ -f "$MOVEMAIN" ] && { sh "$MOVEMAIN"; rm -f "$MOVEMAIN"; } # main moves mid-run
   [ -n "$GATEENV" ] && { env | grep -E "^(ALLOWED_ORIGINS|MESH_STORE_PATH|COMMERCE_DB_PATH|GAUSS_BEDROCK_DIR|NODE_ENV)=" ; echo "PATH=$PATH"; } >>"$GATEENV"
+  [ -n "$GATEORDER" ] && echo "$2" >>"$GATEORDER" # the order the gates ran in
   case "$2" in
+    test:ui:gate) echo "  4 passed" ;;
     test:ops) echo "gauss-services: 99 passed, 0 failed"; echo "ok  	argo	1.0s" ;;
     test|build) echo "$2 is not a gate: verify runs it" >&2; exit 9 ;;
     verify) echo "▶ Test suite"
@@ -599,6 +601,20 @@ out=$(run gates record "$GW" 2>&1); rc=$?
   && python3 -Ic 'import json,sys; r=json.load(open(sys.argv[1])); sys.exit(0 if r["passed"] and r["sha"]==sys.argv[2] and r["by"]=="test-user" and r["test_ops"]["go_ok"]==1 else 1)' "$rec" "$D"
 expect "gates record: runs the gates (test and build inside verify) and records the counts by tree" $?
 [ ! -d "$T/home/.local/state/gauss-gate.lock" ]; expect "gates record releases the shared gate lock" $?
+# UI gate (hermetic Playwright subset): runs after quality:full and before verify (verify merges its JUnit
+# report), installs Chromium once when the pinned build is missing, and a UI failure fails the record.
+GATEORDER="$T/gate-order"; rm -f "$GATEORDER"; export GATEORDER
+mkdir -p "$T/pw"; printf '#!/bin/sh\n' >"$T/pw/chromium"; chmod +x "$T/pw/chromium"
+out=$(GAUSS_PW_CHROMIUM="$T/pw/chromium" run gates record "$GW" 2>&1)
+[ "$(tr '\n' ' ' <"$GATEORDER")" = "test:ops quality:full test:ui:gate verify " ] && ! grep -q '^npm exec' "$T/actions" && python3 -Ic 'import json,sys; r=json.load(open(sys.argv[1])); sys.exit(0 if r["passed"] and r["ui"]["exit"]==0 else 1)' "$rec"
+expect "gates record: the UI gate runs after quality:full and before verify, and is in the record; an installed Chromium is not reinstalled" $?
+out=$(GAUSS_PW_CHROMIUM="$T/pw/missing" run gates record "$GW" 2>&1)
+grep -qx "npm exec -- playwright install chromium" "$T/actions" && [ "$(grep -c '^npm exec' "$T/actions")" = 1 ]
+expect "gates record: a missing Chromium is installed once, in the checkout, before the UI gate" $?
+out=$(GAUSS_PW_CHROMIUM="$T/pw/chromium" GATEFAIL=test:ui:gate run gates record "$GW" 2>&1); rc=$?
+[ $rc != 0 ] && [[ "$out" == *"FAILED (ui) ${D:0:7}"* ]]
+expect "gates record: a failing UI gate is recorded as FAILED (ui)" $?
+unset GATEORDER; GAUSS_PW_CHROMIUM="$T/pw/chromium" run gates record "$GW" >/dev/null 2>&1 # back to a passing record
 out=$(run gates); [[ "$out" == *"PASSED ${D:0:7}"* ]]; expect "gates lists the records" $?
 out=$(GATEFAIL=test run gates record "$GW" 2>&1); rc=$?
 [ $rc != 0 ] && [[ "$out" == *"FAILED (test, verify) ${D:0:7}"* ]] && ! python3 -Ic 'import json,sys; sys.exit(0 if json.load(open(sys.argv[1]))["passed"] else 1)' "$rec"
@@ -703,6 +719,17 @@ printf '%s\n' '✔ telemetry_descriptor.json is the current .proto (9.1ms)' '' '
 out=$(run gates why "$GB1")
 [[ "$out" == *"lint errors: scene/CameraTween.tsx:22"* && "$out" == *"cause: a lint error"* && "$out" != *"telemetry.proto changed"* ]]
 expect "gates why: lint errors are named by file and line, and a passing test is not blamed" $?
+# 18 Nov, PR #309: the device-auth timestamps test failed when two proofs shared a nonce in the same millisecond
+printf '%s\n' '✖ failing tests:' '' "✖ timestamps: only computeProof's epoch-ms format, within the TTL (GAU-98) (4.2ms)" >"$T/home/gatebox-out"
+(cd "$LIVE" && run gates enqueue "$GB1" >/dev/null 2>&1); GAUSS_GATEBOX=gatebox GBRC=say1 run gates run >/dev/null 2>&1
+out=$(run gates why "$GB1")
+[[ "$out" == *"cause: the device-auth timestamps test signs with a shared nonce"* && "$out" == *"PR #341"* && "$out" != *"cause: a failing test"* ]]
+expect "gates why: the device-auth shared-nonce flake is named with its PR" $?
+# 18 Nov, PR #315: Argo Go timing tests failed on a throttled battery run (fixed by PR #340)
+printf '%s\n' '✖ Argo Go tests (exit 1)' >"$T/home/gatebox-out"
+(cd "$LIVE" && run gates enqueue "$GB1" >/dev/null 2>&1); GAUSS_GATEBOX=gatebox GBRC=say1 run gates run >/dev/null 2>&1
+out=$(run gates why "$GB1")
+[[ "$out" == *"cause: an Argo Go test failed inside verify"* && "$out" == *"PR #340"* ]]; expect "gates why: the Argo timing flake names PR #340" $?
 rm -f "$T/home/gatebox-out"
 (cd "$LIVE" && run gates enqueue "$GB1" >/dev/null 2>&1); GAUSS_GATEBOX=gatebox GBRC=say1 run gates run >/dev/null 2>&1
 out=$(run gates why "$GB1")
@@ -1197,6 +1224,33 @@ expect "resilience fails on an old argo, low memory and a weak charger" $?
 [ -z "$(alerts)" ]; expect "resilience only reports; it sends no alerts" $?
 out=$(SRC="AC Power" BATT="7%; charging; 2:00 remaining present: true" run resilience | plain)
 [[ "$out" == *"✗ battery 7% on AC, charging but too low to unplug yet"* ]]; expect "resilience: low battery still fails while charging" $?
+
+# phone battery line: percentage, charging and age only; the device name never appears
+[[ "$out" == *"– phone battery: no phone has reported"* ]]; expect "resilience: no phone report is a note" $?
+phone_store() { # phone_store <level> <charging true|false> <minutes ago> [platform]
+  python3 -Ic 'import json,sys
+from datetime import datetime,timedelta,timezone
+at=(datetime.now(timezone.utc)-timedelta(minutes=float(sys.argv[3]))).isoformat().replace("+00:00","Z")
+old=(datetime.now(timezone.utc)-timedelta(minutes=1)).isoformat().replace("+00:00","Z")
+json.dump([{"name":"secret-phone","last":{"platform":sys.argv[4],"receivedAt":at,"battery":{"level":float(sys.argv[1]),"charging":sys.argv[2]=="true","lowPower":False}}},
+ {"name":"a-mac","last":{"platform":"macos","receivedAt":old,"battery":{"level":3,"charging":False,"lowPower":False}}},{"name":"never-reported"}],open(sys.argv[5],"w"))' "$1" "$2" "$3" "${4:-ios}" "$T/devices.json"
+}
+phone_store 15 false 4
+out=$(GAUSS_MESH_STORE="$T/devices.json" run resilience | plain); rc=$?
+[ $rc = 1 ] && [[ "$out" == *"✗ phone battery 15%, not charging (reported 4 min ago): plug it in"* ]]; expect "resilience: a phone at 15% and not charging fails" $?
+[[ "$out" != *secret-phone* ]]; expect "resilience: the phone's name is not printed" $?
+phone_store 15 true 4 android
+out=$(GAUSS_MESH_STORE="$T/devices.json" run resilience | plain); rc=$?
+[[ "$out" != *"✗ phone battery"* && "$out" == *"✓ phone battery 15%, charging (reported 4 min ago)"* ]]; expect "resilience: a low phone that is charging passes" $?
+phone_store 62 false 4
+out=$(GAUSS_MESH_STORE="$T/devices.json" run resilience | plain)
+[[ "$out" == *"✓ phone battery 62%, not charging (reported 4 min ago)"* ]]; expect "resilience: a phone at 62% passes (the Mac's 3% is not the phone)" $?
+phone_store 5 false 600
+out=$(GAUSS_MESH_STORE="$T/devices.json" run resilience | plain); rc=$?
+[[ "$out" != *"✗ phone battery"* && "$out" == *"– phone battery: 5% as of 10 h ago, too old to judge"* ]]; expect "resilience: a 10 h old phone report is a note, not a verdict" $?
+echo 'not json' >"$T/devices.json"
+out=$(GAUSS_MESH_STORE="$T/devices.json" run resilience | plain); rc=$?
+[[ "$out" != *"✗ phone battery"* && "$out" == *"– phone battery: no phone has reported"* ]]; expect "resilience: an unreadable store is a note" $?
 
 out=$(ARGOSTATUS="● WIFI_RISK MY ts:on" run resilience | plain)
 [[ "$out" == *"✓ network: ● WIFI_RISK MY ts:on (warning:"* ]]; expect "WIFI_RISK is a warning, not a failure" $?
