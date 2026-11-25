@@ -270,8 +270,9 @@ func assess(hist []Sample, cur Sample) Assessment {
 			a.WarnMin, cur.AvailGB, a.PagingMBMin)
 	case a.WarnMin >= int(sustainedWarn.Minutes()) && calmFor(hist, cur, recoveredAfter):
 		// The hour's tally lags: 3 Nov a gate waited 2 h at normal pressure because the warn
-		// minutes hadn't aged out. Normal and not paging for recoveredAfter is recovered; the
-		// room check in admit still decides whether a job fits.
+		// minutes hadn't aged out. Pressure normal for recoveredAfter is recovered (calmFor checks
+		// pressure only; paging now is caught by mem-paging above); the room check in admit
+		// still decides whether a job fits.
 		a.add("memory", "mem-recovered", LevelWatch, "memory was at warn for %d of the last 60 min, normal for the last %.0f min", a.WarnMin, recoveredAfter.Minutes())
 	case a.WarnMin >= int(sustainedWarn.Minutes()):
 		a.add("memory", "mem-warn-sustained", LevelRisk, "memory was at warn for %d of the last 60 min (alert at 30)", a.WarnMin)
