@@ -1,7 +1,8 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
 import { classifyResponse, startPolling, type PollOutcome } from "@/lib/api/feed-poller";
 import { useSession } from "@/lib/auth-client";
 import { apiBase } from "@/lib/api/base-url";
+import { endedSessionKey, signedInFor, subscribeSessionEnded } from "@/lib/session-gate";
 
 export function getBackendBaseUrl(): string {
   return apiBase();
@@ -144,6 +145,9 @@ export function usePolledFeed<T>({
 /** Signed-in state for choosing which feeds a page may poll. */
 export function useFeedSession(): { resolved: boolean; signedIn: boolean; userKey: string } {
   const { data, isPending } = useSession();
+  // A sign-out marks its session ended before the request leaves, so every poll stops on that tick.
+  const ended = useSyncExternalStore(subscribeSessionEnded, endedSessionKey, endedSessionKey);
+  const signedIn = signedInFor(data as Parameters<typeof signedInFor>[0], ended);
   const user = (data as { user?: { id?: string } } | null | undefined)?.user;
-  return { resolved: !isPending, signedIn: Boolean(user), userKey: user?.id ?? "anon" };
+  return { resolved: !isPending, signedIn, userKey: signedIn && user?.id ? user.id : "anon" };
 }

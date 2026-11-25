@@ -240,7 +240,7 @@ export default function PatternCheck() {
           <button
             type="button"
             className="text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
-            onClick={() => void signOut().then(() => navigate("/login", { replace: true }))}
+            onClick={() => void signOut(data).then(() => navigate("/login", { replace: true }))}
           >
             Not you? Sign out
           </button>

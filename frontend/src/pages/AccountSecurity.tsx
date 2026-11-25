@@ -10,6 +10,7 @@ import { useDocumentTitle } from "@/hooks/useDocumentTitle";
 import { refreshOperatorPattern, useOperatorPattern } from "@/hooks/useOperatorPattern";
 import { refreshOperatorGeometry, useOperatorGeometry, type PasskeyRow } from "@/hooks/useOperatorGeometry";
 import { apiBase } from "@/lib/api/base-url";
+import { markSessionEnded } from "@/lib/session-gate";
 import { addPasskey, authClient, passkeyTouch, signOut, useSession } from "@/lib/auth-client";
 import { passkeySupport, type PasskeySupport } from "@/lib/passkey-support";
 import { clearDuressRequest } from "@/lib/pattern";
@@ -188,8 +189,12 @@ function RolesCard({ selfId, hasPasskey }: { selfId: string; hasPasskey: boolean
     }
   };
 
+  // Picking a role only proposes it; the change (and the passkey touch after it) waits for a confirm.
+  const [pending, setPending] = useState<{ id: string; role: Role } | null>(null);
+
   const change = async (user: AdminUser, role: Role) => {
     setMessage(null);
+    setPending(null);
     try {
       const res = await fetchWithStepUp(
         `${apiBase()}/api/admin/users/${encodeURIComponent(user.id)}/role`,
@@ -253,7 +258,7 @@ function RolesCard({ selfId, hasPasskey }: { selfId: string; hasPasskey: boolean
                         aria-label={`Role for ${u.email ?? u.id}`}
                         value={u.role}
                         disabled={u.id === selfId || !hasPasskey}
-                        onChange={(e) => void change(u, e.target.value as Role)}
+                        onChange={(e) => setPending(e.target.value === u.role ? null : { id: u.id, role: e.target.value as Role })}
                         className="rounded-md border border-charcoal bg-black px-2 py-1 text-sm disabled:opacity-60"
                       >
                         {ROLES.map((r) => (
@@ -262,6 +267,19 @@ function RolesCard({ selfId, hasPasskey }: { selfId: string; hasPasskey: boolean
                           </option>
                         ))}
                       </select>
+                      {pending?.id === u.id && (
+                        <div role="group" aria-label={`Confirm role change for ${u.email ?? u.id}`} className="mt-2 flex flex-wrap items-center gap-2">
+                          <span className="text-xs text-muted-foreground">
+                            Make {u.email ?? u.id} {pending.role}? Your passkey is asked next.
+                          </span>
+                          <Button size="sm" onClick={() => void change(u, pending.role)}>
+                            Confirm
+                          </Button>
+                          <Button size="sm" variant="ghost" onClick={() => setPending(null)}>
+                            Cancel
+                          </Button>
+                        </div>
+                      )}
                     </td>
                   </tr>
                 ))}
@@ -308,8 +326,9 @@ const AccountSecurity = () => {
   };
 
   const end = async (everywhere: boolean) => {
+    markSessionEnded(session); // polls stop before the first revoke request
     if (everywhere) await authClient.revokeSessions().catch(() => undefined);
-    await signOut().catch(() => undefined);
+    await signOut(session).catch(() => undefined);
     navigate("/login", { replace: true, state: { signedOut: "user" } });
   };
 

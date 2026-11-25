@@ -3,7 +3,7 @@ import { AnimatePresence, motion, useAnimationControls } from "framer-motion";
 import { Delete, RotateCcw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { usePrefersReducedMotion } from "@/hooks/usePrefersReducedMotion";
-import { extendPattern, PATTERN_RULES, vertexAt } from "@/lib/pattern";
+import { extendPattern, PATTERN_RULES, shortPatternNotice, vertexAt } from "@/lib/pattern";
 import { EDGES, project, randomRotation, VERTEX_LABELS, VERTICES, type Rotation } from "@/lib/tesseract";
 
 const BOX = 400; // drawing units; the canvas scales to its container
@@ -46,6 +46,7 @@ export function PatternPad({
 }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [pattern, setPattern] = useState<number[]>([]);
+  const [notice, setNotice] = useState<string | null>(null);
   const patternRef = useRef<number[]>([]);
   const rotation = useRef<Rotation | null>(null);
   const frozen = useRef(false);
@@ -62,6 +63,7 @@ export function PatternPad({
   const commit = useCallback((next: number[]) => {
     patternRef.current = next;
     setPattern(next);
+    setNotice(null);
   }, []);
 
   useEffect(() => {
@@ -226,9 +228,13 @@ export function PatternPad({
     pointer.current.down = false;
   };
 
-  const ready = pattern.length >= PATTERN_RULES.minLength;
+  const ready = shortPatternNotice(pattern) === null;
+  // Too short is said out loud (Enter and the button both), never a silent no-op.
   const submit = () => {
-    if (ready && !busy) onSubmit(patternRef.current);
+    if (busy) return;
+    const short = shortPatternNotice(patternRef.current);
+    if (short) setNotice(short);
+    else onSubmit(patternRef.current);
   };
   const undo = () => {
     if (busy) return;
@@ -254,7 +260,7 @@ export function PatternPad({
     }
   };
 
-  const message = feedback.kind === "miss" || (feedback.kind === "ok" && feedback.message) ? feedback.message : hint;
+  const message = notice ?? (feedback.kind === "miss" || (feedback.kind === "ok" && feedback.message) ? feedback.message : hint);
 
   return (
     <div className="flex w-full flex-col items-center gap-3">
@@ -286,9 +292,10 @@ export function PatternPad({
             {pattern.length}
           </motion.span>
         </AnimatePresence>
-        <span>
-          {pattern.length < PATTERN_RULES.minLength ? `of ${PATTERN_RULES.minLength}+ vertices` : "vertices"} ·{" "}
-          {pattern.map((v) => VERTEX_LABELS[v]).join("") || "—"}
+        <span>{pattern.length < PATTERN_RULES.minLength ? `of ${PATTERN_RULES.minLength}+ vertices` : "vertices"}</span>
+        {/* Count and dots only: the letters are the secret, never printed (shoulder surfing, screenshots). */}
+        <span aria-hidden="true" className="ml-1 flex max-w-[9rem] flex-wrap gap-0.5">
+          {pattern.length === 0 ? "·" : pattern.map((_, i) => <span key={i} className="h-1.5 w-1.5 rounded-full bg-foreground" />)}
         </span>
       </div>
 
@@ -299,8 +306,8 @@ export function PatternPad({
             initial={still ? false : { opacity: 0, y: 4 }}
             animate={{ opacity: 1, y: 0 }}
             exit={still ? undefined : { opacity: 0, y: -4 }}
-            className={`max-w-sm text-center text-sm ${feedback.kind === "miss" ? "text-destructive" : "text-muted-foreground"}`}
-            role={feedback.kind === "miss" ? "alert" : undefined}
+            className={`max-w-sm text-center text-sm ${feedback.kind === "miss" && !notice ? "text-destructive" : notice ? "text-caution" : "text-muted-foreground"}`}
+            role={notice || feedback.kind === "miss" ? "alert" : undefined}
           >
             {message}
           </motion.p>
@@ -316,7 +323,7 @@ export function PatternPad({
           Clear
         </Button>
         <motion.div animate={ready && !busy && !still ? { scale: [1, 1.04, 1] } : { scale: 1 }} transition={{ duration: 0.35 }}>
-          <Button type="button" size="sm" onClick={submit} disabled={!ready || busy}>
+          <Button type="button" size="sm" onClick={submit} disabled={busy}>
             {feedback.kind === "checking" ? "Checking…" : submitLabel}
           </Button>
         </motion.div>

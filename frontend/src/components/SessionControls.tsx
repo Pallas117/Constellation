@@ -25,10 +25,10 @@ export function SessionControls() {
   const end = useCallback(
     async (reason: SignedOutReason) => {
       // The server deletes the session; the cookie goes with it.
-      await signOut().catch(() => undefined);
+      await signOut(session).catch(() => undefined);
       navigate("/login", { replace: true, state: { signedOut: reason } });
     },
-    [navigate],
+    [navigate, session],
   );
   useIdleSignOut(signedIn && hasRole(roleOf(session?.user), "operator"), () => void end("idle"));
 

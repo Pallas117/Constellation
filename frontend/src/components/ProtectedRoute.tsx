@@ -1,7 +1,9 @@
+import { useState } from "react";
 import { Navigate, useLocation } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { useOperatorPattern, refreshOperatorPattern } from "@/hooks/useOperatorPattern";
 import { useSession } from "@/lib/auth-client";
+import { showSessionWait } from "@/lib/session-gate";
 import { hasRole, roleOf, type Role } from "@/lib/roles";
 
 function Waiting({ text }: { text: string }) {
@@ -22,6 +24,10 @@ function Waiting({ text }: { text: string }) {
 export const ProtectedRoute = ({ children, minRole = "user", pattern = true }: { children: React.ReactNode; minRole?: Role; pattern?: boolean }) => {
   const { data: session, isPending } = useSession();
   const location = useLocation();
+  // better-auth flips isPending back on for background refetches; unmounting the page then would
+  // reset it (the /setup wizard went back to its first step and ate the first click).
+  const [answered, setAnswered] = useState(false);
+  if (!isPending && !answered) setAnswered(true);
 
   // better-auth's useSession data is { session, user }: the user sits beside
   // the session, not inside it, so checking session.session.user always failed.
@@ -29,7 +35,7 @@ export const ProtectedRoute = ({ children, minRole = "user", pattern = true }: {
   const gated = pattern && hasRole(minRole, "operator") && Boolean(user?.id) && hasRole(roleOf(user), minRole);
   const { status, error, loading } = useOperatorPattern(gated ? user?.id : null);
 
-  if (isPending) return <Waiting text="Checking your session…" />;
+  if (showSessionWait(isPending, answered)) return <Waiting text="Checking your session…" />;
 
   if (!user?.id) {
     return <Navigate to="/login" state={{ from: location }} replace />;
