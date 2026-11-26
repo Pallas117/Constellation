@@ -9,6 +9,10 @@ import { APP_CSP, SECURITY_HEADERS } from "../worker/headers.js";
 import { renderApplyForm } from "../worker/forms.js";
 import { renderPlans } from "../worker/render.js";
 import { FEATURES, SHOW_PRICES, TIERS, priceLabel } from "../worker/tiers.js";
+import { CONTACT, forRelease } from "../worker/release.js";
+import { consoleLink, staffCard } from "../worker/app.js";
+import { supportLink } from "../worker/render.js";
+import { CONTACT_PILL, SIGN_IN_PILL, configFor, configRelease, headerFor, headerPages, validate } from "../tools/release.mjs";
 
 const pub = join(dirname(fileURLToPath(import.meta.url)), "..", "public");
 const read = (f) => readFileSync(join(pub, f), "utf8");
@@ -24,6 +28,7 @@ const html = Object.fromEntries(Object.entries(PAGES).map(([route, f]) => [route
 const WRANGLER_RAW = readFileSync(join(pub, "..", "wrangler.jsonc"), "utf8");
 const WRANGLER = JSON.parse(WRANGLER_RAW.replace(/^\s*\/\/.*$/gm, "").replace(/,(\s*[}\]])/g, "$1"));
 const WORKER_ROUTES = WRANGLER.assets.run_worker_first;
+const RELEASE = WRANGLER.vars.RELEASE; // "public" on lightbound.space today; tools/release.mjs switches config and headers together
 const API_ROUTES = new Set(["/api/launches", "/api/launches.ics", "/api/space-weather", "/api/health", "/cdn-cgi/access/logout"]);
 
 function walk(dir) {
@@ -128,8 +133,9 @@ test("every page has one h1, the same main navigation and the same footer links"
   const nav = (p) => [...(p.match(/<nav aria-label="Main">([\s\S]*?)<\/nav>/)?.[1] ?? "").matchAll(/href="([^"]+)"/g)].map((m) => m[1]);
   for (const [route, page] of Object.entries(html)) {
     assert.equal((page.match(/<h1[\s>]/g) || []).length, 1, `${route}: exactly one h1`);
-    // Public pages end with Contact (the public release has no sign-in); /argo/ opens only with accounts, so it keeps Sign in.
-    const last = route.startsWith("/app/") ? "/cdn-cgi/access/logout" : route === "/argo/" ? "/app/" : "mailto:jzwnathan@lightbound.uk";
+    // Public pages end with Contact in the public release (no sign-in) and Sign in once accounts open; /argo/ opens only
+    // with accounts, so it keeps Sign in.
+    const last = route.startsWith("/app/") ? "/cdn-cgi/access/logout" : route === "/argo/" || RELEASE === "full" ? "/app/" : "mailto:jzwnathan@lightbound.uk";
     assert.deepEqual(nav(page), ["/gauss/", "/constellation/", "/turnstone/", last], `${route}: main nav ends with Contact, or sign in/out`);
     assert.match(page, /<html lang="en-GB">/);
     assert.match(page, /<a class="skip" href="#main">/);
@@ -222,6 +228,54 @@ test("live-view gate: a labelled pre-rendered frame behind the Argo door, no scr
   assert.match(home, />03_CONTACT</, "02 is Argo's Space tech, on Earth (Josh, 18 Nov 2026)");
   assert.match(text(gate), /Argo is Gauss&rsquo;s network agent, and the way in\. Included for operators and staff; never sold\./);
   assert.doesNotMatch(text(gate), /encrypt|quantum|HPKE|Ed25519|RFC ?9173|Nadia|Turnstone/i);
+});
+
+test("landing: you scroll into Gauss: the open view named, the rest veiled, one door; honest, script-free, still without motion", () => {
+  // Josh, 18 Nov 2026: "as you scroll you could render the gauss actual to be able to see parts of before you login".
+  const home = html["/"];
+  const gate = home.match(/<section id="enter" class="live-gate"[\s\S]*?<\/section>/)?.[0] ?? "";
+  const part = (cls) => gate.match(new RegExp(`<div class="${cls}">[\\s\\S]*?\\n  </div>`))?.[0] ?? "";
+  const [open, held, card] = ["gate-open", "gate-held", "live-card"].map(part);
+  assert.ok(open && held && card, "three parts");
+  assert.ok(gate.indexOf("gate-open") < gate.indexOf("gate-held") && gate.indexOf("gate-held") < gate.indexOf("live-card"), "reading order: what is open, what is held back, the door");
+  // The frame is a real capture of the live view, shown as an image with its size set; nothing is embedded or run.
+  assert.match(gate, /<img src="\/assets\/media\/gauss-live-wide\.webp" alt="A frame from the Gauss live view: [^"]+" width="2000" height="1250" loading="lazy"/);
+  assert.match(gate, /<source media="\(max-aspect-ratio: 1\/1\)" srcset="\/assets\/media\/gauss-live-tall\.webp" width="750" height="1300">/);
+  assert.doesNotMatch(gate, /<script|<iframe|<canvas|<video|<object|<embed/);
+  // Before sign-in: the live view's own readings, by name. A still has no numbers, and the page says so.
+  assert.deepEqual([...open.matchAll(/<li>([^<]+)<\/li>/g)].map((m) => m[1]), ["Magnetopause", "Solar wind", "IMF Bz", "Kp"]);
+  assert.match(open, /<p>The Gauss live view, traced from the solar wind\.<\/p>/);
+  assert.match(open, /<p class="src">A still frame, so the numbers are left out\.<\/p>/);
+  assert.doesNotMatch(text(open), /\d/, "no readings are shown from a still");
+  // Past the sign-in: names only. No invented data behind the veils, no pictures, no links into closed areas.
+  assert.deepEqual([...held.matchAll(/<li><span class="label">([^<]+)<\/span><span class="held">Members only<\/span><\/li>/g)].map((m) => m[1]), ["Field model", "Operator console", "Argo Mesh"]);
+  assert.equal(held.match(/<li>/g).length, 3);
+  assert.doesNotMatch(held, /\d|<img|<a /, "veiled panels carry a name and nothing else");
+  // One door, and one or two quiet lines by it: what is withheld is withheld on purpose. No claims about how sign-in works.
+  assert.equal(gate.match(/<a /g).length, 1, "one call to action");
+  assert.match(card, /<p class="hush">The detail is withheld on purpose\. What lies past the sign-in is shown to members\.<\/p>/);
+  for (const rx of [/polymorphic/i, /encrypt/i, /crypto/i, /quantum/i, /\bPQC?\b/, /unbreakable/i, /military/i, /compliant/i, /certified/i, /space[- ]qualified/i,
+    /passkey|ratchet|ML-DSA|zero[- ]knowledge/i, /secure(ly)?\b/i, /stripe|card details/i, /Turnstone/i, /\bLIVE\b ·/])
+    assert.doesNotMatch(text(gate), rx, `found ${rx}`);
+  // Motion: scroll-driven CSS only, where supported and wanted, on screens tall enough to hold the door.
+  const css = read("assets/site.css");
+  const block = css.slice(css.indexOf("/* Live-view gate (landing)"), css.indexOf("/* Starfield (landing)"));
+  assert.match(block, /\n\.gate-veils\{display:none\}/, "no veils unless the scroll can part them");
+  const pinned = block.slice(block.indexOf("@supports (animation-timeline:view()){"), block.indexOf("@keyframes live-settle"));
+  assert.match(pinned, /^@supports \(animation-timeline:view\(\)\)\{\n  @media \(prefers-reduced-motion:no-preference\) and \(min-height:660px\)\{\n    \.live-gate\{height:360svh;view-timeline:--gate block\}/);
+  assert.equal(block.slice(0, block.indexOf("@supports")).match(/animation(-[a-z]+)?:/g), null, "nothing moves outside that block");
+  assert.match(pinned, /\.gate-stage\{position:sticky;top:0;height:100svh/);
+  assert.match(pinned, /\.live-card:focus-within\{opacity:1!important;transform:none!important;pointer-events:auto!important\}/, "a focused door is always visible");
+  assert.match(pinned, /@media \(max-height:759px\)\{\.live-card \.rad-field\{display:none\}\}/, "small phones: the door fits the pinned screen");
+  for (const k of ["gv-l", "gv-r", "g-in", "g-out", "g-step", "g-door", "live-settle"]) {
+    const kf = block.match(new RegExp(`@keyframes ${k}\\{[^\\n]*\\}`))[0];
+    assert.doesNotMatch(kf.replace(/transform|opacity|pointer-events/g, ""), /[a-z-]+:/, `${k} animates transform and opacity only`);
+    assert.doesNotMatch(kf, /visibility/, `${k}: never hidden from the keyboard or a screen reader`);
+  }
+  // Veils and plates: surfaces and hairlines, no glow, no blur over what is withheld, no lime.
+  const plates = block.replace(/\n\.live-card\{[^\n]*/, "");
+  assert.doesNotMatch(plates, /box-shadow|text-shadow|blur\(|filter:|--lime|CCFF00/i);
+  assert.match(html["/"].match(/<div class="gate-veils"[^>]*>/)[0], /aria-hidden="true"/, "the planes are decoration");
 });
 
 test("landing: Space tech, on Earth: what Argo does today, honest, no door into the closed /argo/", () => {
@@ -367,6 +421,8 @@ test("phones: wide tables scroll inside their box; hidden labels can't widen the
   const css = read("assets/site.css");
   assert.match(css, /\.sr\{position:absolute/);
   assert.match(css, /\.tw\{overflow-x:auto;position:relative\}/);
+  // Unsocial hours in the planner grid differ by more than colour (WCAG 1.4.1): a dotted underline, named in the legend.
+  assert.match(css, /\.planner td\.quiet\{[^}]*text-decoration:underline dotted/);
 });
 
 // ---- Budgets: beat a heavy reference site on weight, on an 8 GB laptop or a phone on a hotspot ----
@@ -550,7 +606,7 @@ test("production config: no Stripe secrets, no local stand-in, no test keys anyw
 });
 
 // ---- The public release (GAU-178) ----
-test("public release: the config holds only what the public pages need, and keeps the closed routes on the Worker", () => {
+test("public release: the config holds only what the public pages need, and keeps the closed routes on the Worker", { skip: RELEASE !== "public" && "config is full" }, () => {
   const [raw, config] = [WRANGLER_RAW, WRANGLER];
   assert.equal(config.vars.RELEASE, "public");
   assert.deepEqual(config.kv_namespaces.map((k) => k.binding), ["LIVE"], "no DATA namespace until accounts open");
@@ -568,7 +624,7 @@ test("public release: public pages link to sign-in only inside <!--full--> block
   for (const [route, page] of Object.entries(html)) {
     if (route.startsWith("/app/") || route === "/argo/") continue;
     const open = page.replace(/<!--full-->[\s\S]*?<!--\/full-->/g, "");
-    assert.doesNotMatch(open, /href="\/app\/|href="\/argo\//, `${route}: links into a closed area`);
+    if (RELEASE === "public") assert.doesNotMatch(open, /href="\/app\/|href="\/argo\//, `${route}: links into a closed area`);
     if (open !== page) assert.ok(WORKER_ROUTES.includes(route), `${route}: <!--full--> needs the Worker to remove it`);
   }
 });
@@ -719,4 +775,77 @@ test("wiring: /gauss/ says what a log needs, links a made-up sample that has the
 
 test("client links: /gauss/, /gauss/evidence/ and /argo/ each link to the pilot brief with a plan", () => {
   for (const path of ["/gauss/", "/gauss/evidence/", "/argo/"]) assert.match(html[path], /href="\/gauss\/apply\/\?plan=pilot"/, path);
+});
+
+// ---- Switching releases (tools/release.mjs; the flip-day runbook) ----
+test("release switch: every page header agrees with RELEASE in wrangler.jsonc", () => {
+  assert.equal(configRelease(WRANGLER_RAW), RELEASE);
+  const pill = RELEASE === "full" ? SIGN_IN_PILL : CONTACT_PILL;
+  const pages = headerPages(pub);
+  assert.ok(pages.length >= 14, "every public page, the 404 included");
+  for (const f of pages) assert.ok(readFileSync(f, "utf8").includes(pill), `${f}: header says ${RELEASE === "full" ? "Sign in" : "Contact"}`);
+});
+
+test("release switch: full adds DATA, sign-in and workspace vars and Sign in; public takes them all away again", () => {
+  const o = { data: "0123456789abcdef0123456789abcdef", team: "example.cloudflareaccess.com", aud: "ab".repeat(32), app: "https://gauss.example.test/" };
+  assert.deepEqual(validate(o), []);
+  const base = configFor(WRANGLER_RAW, "public"); // whatever the repo holds, from public
+  const fullRaw = configFor(base, "full", o);
+  const full = JSON.parse(fullRaw.replace(/^\s*\/\/.*$/gm, "").replace(/,(\s*[}\]])/g, "$1"));
+  assert.equal(full.vars.RELEASE, "full");
+  assert.deepEqual(full.kv_namespaces.map((k) => [k.binding, k.id]), [["LIVE", WRANGLER.kv_namespaces[0].id], ["DATA", o.data]]);
+  assert.deepEqual([full.vars.ACCESS_TEAM_DOMAIN, full.vars.ACCESS_AUD, full.vars.ADMIN_EMAILS, full.vars.GAUSS_APP_URL, full.vars.USER_CAP],
+    [o.team, o.aud, CONTACT, o.app, "50"]);
+  assert.doesNotMatch(fullRaw, /"STRIPE_|"ACCESS_JWKS"|"STAFF_EMAILS"/, "secrets stay Worker secrets");
+  assert.deepEqual(full.assets, WRANGLER.assets, "the Worker still sees /app, /argo/ and /api first");
+  assert.equal(configFor(fullRaw, "full", o), fullRaw, "running it twice changes nothing");
+  assert.equal(configFor(fullRaw, "public"), base, "public restores the public config exactly");
+  for (const f of headerPages(pub)) {
+    const page = readFileSync(f, "utf8");
+    const on = headerFor(page, "full");
+    assert.ok(on.includes(SIGN_IN_PILL) && !on.includes(CONTACT_PILL), `${f}: Sign in when full`);
+    assert.equal(headerFor(on, "public"), headerFor(page, "public"), `${f}: and back`);
+  }
+  // Refuses what would break sign-in or leak: wrong shapes, non-https links, anything but a Stripe Payment Link.
+  assert.equal(validate({}).length, 3, "DATA, team domain and AUD are required");
+  assert.ok(validate({ ...o, team: "evil.example" }).length);
+  assert.ok(validate({ ...o, app: "http://gauss.example.test/" }).length);
+  assert.ok(validate({ ...o, app: "javascript:alert(1)" }).length);
+  assert.ok(validate({ ...o, support: "https://evil.example/pay" }).length);
+  assert.ok(validate({ ...o, cap: "0" }).length);
+});
+
+test("release switch: a link the switch accepts is one the Worker shows, with no credentials, query or fragment in the config", () => {
+  const o = { data: "0123456789abcdef0123456789abcdef", team: "example.cloudflareaccess.com", aud: "ab".repeat(32) };
+  const base = configFor(WRANGLER_RAW, "public");
+  for (const url of ["https://gauss.example.test/", "https://console.example.test:8443/app/"]) {
+    assert.deepEqual(validate({ ...o, app: url, ops: url }), [], url);
+    assert.equal(consoleLink(url), url, "the workspace shows the console button for it");
+    assert.ok(staffCard(url).includes(`href="${url}"`), "and the staff card");
+  }
+  // Refused: what the workspace would hide (a paid account would see "coming by email"), and what must not be committed.
+  for (const url of ["https://gauss.example.test/?token=abc", "https://gauss.example.test/#x", "https://user:pw@gauss.example.test/",
+    "https://gauss.example.test", "https://gauss.example.test/$&", "https://gauss.example.test/a\\b", "https://gauss.example.test/%22", "https://-x.example.test/", ""]) {
+    assert.equal(validate({ ...o, app: url }).length, 1, `--app ${url}`);
+    assert.equal(validate({ ...o, ops: url }).length, 1, `--ops ${url}`);
+  }
+  for (const url of ["https://buy.stripe.com/test_a-b123", "https://donate.stripe.com/abcdef12"]) {
+    assert.deepEqual(validate({ ...o, support: url }), [], url);
+    assert.equal(supportLink(url), url, "the Worker shows the support link");
+  }
+  for (const url of ["https://buy.stripe.com/abc", "https://buy.stripe.com/abcdef12?x=1", "https://buy.stripe.com.evil.example/abcdef12", ""]) {
+    assert.equal(validate({ ...o, support: url }).length, 1, `--support ${url}`);
+    assert.equal(supportLink(url), "", "and the Worker would hide it");
+  }
+  // No value is read as a replacement pattern, so the config stays valid and public still undoes it exactly.
+  const odd = configFor(base, "full", { ...o, app: "https://gauss.example.test/$&$1" });
+  assert.match(odd, /"GAUSS_APP_URL": "https:\/\/gauss\.example\.test\/\$&\$1",\n/);
+  assert.equal(configFor(odd, "public"), base);
+});
+
+test("release switch: if accounts aren't really open (RELEASE full without DATA), Worker pages say Contact, not a dead Sign in", () => {
+  const page = `<nav aria-label="Main"><a href="/gauss/">Gauss</a>${SIGN_IN_PILL}</nav>`;
+  assert.equal(forRelease(page, { RELEASE: "full" }), page.replace(SIGN_IN_PILL, CONTACT_PILL), "no DATA: Contact");
+  assert.equal(forRelease(page, { RELEASE: "public", DATA: {} }), page.replace(SIGN_IN_PILL, CONTACT_PILL));
+  assert.equal(forRelease(page, { RELEASE: "full", DATA: {} }), page, "really open: Sign in stays");
 });

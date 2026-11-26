@@ -67,9 +67,35 @@ export function formatIn(ms, tz) {
 }
 export const localHour = (ms, tz) => +parts(new Date(ms), tz).hour;
 
+/** The zone's distance from UTC at that instant: "UTC+8", "UTC+5:30", "UTC−5", "UTC+0". */
+export function offsetLabel(ms, tz) {
+  const min = Math.round(tzOffset(ms, tz) / 60_000);
+  const a = Math.abs(min);
+  return `UTC${min < 0 ? "\u2212" : "+"}${Math.floor(a / 60)}${a % 60 ? `:${String(a % 60).padStart(2, "0")}` : ""}`;
+}
+
+/** The zone's wall clock at that instant, as plain numbers (no locale data, so Node and Workers print the same). */
+export function wallClock(ms, tz) {
+  const d = new Date(Math.floor(ms / 1000) * 1000 + tzOffset(ms, tz));
+  return { year: d.getUTCFullYear(), month: d.getUTCMonth(), day: d.getUTCDate(), weekday: d.getUTCDay(), hour: d.getUTCHours(), minute: d.getUTCMinutes() };
+}
+
+/** Before 07:00 or from 22:00, local time. */
+export const isUnsocial = (hour) => hour >= 22 || hour < 7;
+
+/** The zone a visitor picked with ?tz= (allowlisted); UTC when none or unknown. */
+export const pickedZone = (url) => { const z = url.searchParams.get("tz") ?? ""; return isZone(z) ? z : "UTC"; };
+
+/** A plain GET form to pick that zone: no script, no cookie, nothing stored. Each option names its current offset. */
+export function zonePicker(tz, now = Date.now()) {
+  const options = ZONES.map(([z, l]) => `<option value="${esc(z)}"${z === tz ? " selected" : ""}>${esc(z === "UTC" ? l : `${l} (${offsetLabel(now, z)})`)}</option>`).join("");
+  return `<form class="inline tz-pick" method="get" action="/constellation/#events"><label for="ev-tz">Show times in</label>` +
+    `<select id="ev-tz" name="tz">${options}</select><button class="btn ghost" type="submit">Show</button></form>`;
+}
+
 // ---- The public planner (/constellation/time/) ----
 const WORK = (h) => h >= 8 && h < 20;
-const QUIET = (h) => h >= 22 || h < 7;
+const QUIET = isUnsocial;
 
 export function plannerParams(url, now = Date.now()) {
   const zones = [...new Set(url.searchParams.getAll("z").filter(isZone))].slice(0, 8);
@@ -107,9 +133,11 @@ export function renderPlanner({ zones, date, at }) {
       : "No hour falls in working hours for these zones.";
   const slot = at === null ? "" : (() => {
     const t = day0 + at * 3_600_000;
-    const list = zones.map((z) => `<li><b>${esc(zoneLabel(z))}</b> ${esc(formatIn(t, z))}</li>`).join("");
+    const late = zones.filter((z) => QUIET(localHour(t, z)));
+    const list = zones.map((z) => `<li><b>${esc(zoneLabel(z))}</b> ${esc(formatIn(t, z))} (${esc(offsetLabel(t, z))})${late.includes(z) ? " <span>Unsocial hour</span>" : ""}</li>`).join("");
+    const lateNote = late.length ? `<p class="m">Unsocial hour (22:00–07:00 local) for ${late.length} of ${zones.length}: ${esc(late.map(zoneLabel).join("; "))}.</p>` : "";
     const ics = `/api/call.ics?start=${encodeURIComponent(new Date(t).toISOString())}`;
-    return `<div class="slot" id="slot"><p class="label">PICKED_TIME</p><h2>${esc(formatIn(t, "UTC"))} UTC</h2><ul class="slot-list">${list}</ul>` +
+    return `<div class="slot" id="slot"><p class="label">PICKED_TIME</p><h2>${esc(formatIn(t, "UTC"))} UTC</h2><ul class="slot-list">${list}</ul>${lateNote}` +
       `<p class="actions"><a class="btn" href="${esc(ics)}">Add to calendar (.ics)</a></p><p class="m">Calendar apps show it in each person's own time zone. Copy this page's address to share the time.</p></div>`;
   })();
   return (
@@ -117,6 +145,6 @@ export function renderPlanner({ zones, date, at }) {
     `<fieldset class="zones"><legend>Time zones (up to 8)</legend>${checkboxes}</fieldset><p class="actions"><button class="btn" type="submit">Show</button></p></form>` +
     `<p class="lead planner-summary">${esc(summary)}</p>` +
     `<div class="tw"><table class="planner"><caption class="sr">Local hour in each zone for each UTC hour on ${esc(date)}</caption><thead><tr><th scope="col">UTC</th>${head}</tr></thead><tbody>${rows}</tbody></table></div>` +
-    `<p class="src">Shaded: 08:00–20:00 local. Dim: 22:00–07:00. Outlined: the best hours. Pick a UTC hour to see it everywhere and add it to a calendar.</p>${slot}`
+    `<p class="src">Shaded: 08:00–20:00 local. Dim with a dotted underline: unsocial hours, 22:00–07:00. Outlined: the best hours. Pick a UTC hour to see it everywhere and add it to a calendar.</p>${slot}`
   );
 }
