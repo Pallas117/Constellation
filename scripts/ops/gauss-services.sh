@@ -1780,6 +1780,11 @@ train_sync() { # train_sync <request>: merge origin/main into a train PR's head 
   if [ "$head" != "$sha" ]; then
     gates_result "$sha" "$tree" SKIPPED "PR #$pr moved on to ${head:0:7}; queue that head"; rm -f "$req"; return 1
   fi
+  # 25 Nov: 39 runs ended "HELD passed, not merged: draft": a draft can't merge, so its gate run is wasted.
+  # Not gated while it is a draft; enqueue it again (or the next train pass) once it is ready.
+  if [ "$draft" = true ]; then
+    gates_result "$sha" "$tree" SKIPPED "draft: mark the PR ready to gate it"; rm -f "$req"; return 1
+  fi
   [ "$base" = main ] || return 0 # stacked: gated as it is; it syncs once its base has merged
   train_waits "$req" "$head" "$draft" "$repo" && return 1
   git --git-dir="$repo" merge-base --is-ancestor refs/remotes/origin/main "$sha" && return 0
