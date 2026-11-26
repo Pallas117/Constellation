@@ -66,7 +66,7 @@ run() { # run <args...>: gauss-services.sh with the stubs; alerts land in $LOG
     GAUSS_SUDOERS="$T/sudoers" MLX="${MLX:-0}" MLXPORT="${MLXPORT:-8089}" ACTIONS="$T/actions" GAUSS_BALANCE="${GAUSS_BALANCE:-1}" \
     LOADED="${LOADED:-}" HEALTH="${HEALTH:-200}" HEALTH_FILE="${HEALTH_FILE:-}" GAUSS_DEPLOY_WAIT=0 DISKGB="${DISKGB:-50}" \
     GATEORDER="${GATEORDER:-}" GAUSS_PW_CHROMIUM="${GAUSS_PW_CHROMIUM:-}" GATEFAIL="${GATEFAIL:-}" MOVEMAIN="${MOVEMAIN:-}" GAUSS_BY=test-user BOOT="${BOOT:-1000}" GAUSS_DIAG_DIRS="$T/diag" GAUSS_EVENTS_MAX_KB="${GAUSS_EVENTS_MAX_KB:-5120}" \
-    WAKE="${WAKE:-1000}" GAUSS_GATEBOX_TRUST="${GAUSS_GATEBOX_TRUST:-}" GAUSS_DEV_DRY="${GAUSS_DEV_DRY:-0}" GAUSS_GATES_START=0 GATEHANG="${GATEHANG:-}" GAUSS_GATES_STEP_S="${GAUSS_GATES_STEP_S:-}" HEAVYGIVEUP="${HEAVYGIVEUP:-}" NPMNET="${NPMNET:-}" GAUSS_GATEBOX="${GAUSS_GATEBOX:-}" GAUSS_GATEBOX_PROBE="${GAUSS_GATEBOX_PROBE:-true}" GAUSS_GATEBOX_WAIT_S="${GAUSS_GATEBOX_WAIT_S:-0}" GAUSS_GATEBOX_POLL_S="${GAUSS_GATEBOX_POLL_S:-1}" GAUSS_MESH_STORE="${GAUSS_MESH_STORE:-}" GAUSS_GATEBOX_TIMEOUT_S="${GAUSS_GATEBOX_TIMEOUT_S:-}" GAUSS_FLEET_MEMORY="${GAUSS_FLEET_MEMORY:-}" GAUSS_GATEBOX_KEY="$T/gatebox-key" GBRC="${GBRC:-}" GBOPS="${GBOPS:-}" GAUSS_GATEBOX_OPS="${GAUSS_GATEBOX_OPS:-}" GAUSS_GATES_EXPIRE_H="${GAUSS_GATES_EXPIRE_H:-72}" GAUSS_GATES_HOOK_S="${GAUSS_GATES_HOOK_S:-300}" GAUSS_DEV_API_PORT="${GAUSS_DEV_API_PORT:-3101}" \
+    WAKE="${WAKE:-1000}" GAUSS_GATEBOX_TRUST="${GAUSS_GATEBOX_TRUST:-}" GAUSS_DEV_DRY="${GAUSS_DEV_DRY:-0}" GAUSS_GATES_START=0 GATEHANG="${GATEHANG:-}" GAUSS_GATES_STEP_S="${GAUSS_GATES_STEP_S:-}" HEAVYGIVEUP="${HEAVYGIVEUP:-}" GAUSS_GATES_RETRY_S=0 GAUSS_GATES_DEFER_MAX="${GAUSS_GATES_DEFER_MAX:-3}" NPMNET="${NPMNET:-}" GAUSS_GATEBOX="${GAUSS_GATEBOX:-}" GAUSS_GATEBOX_PROBE="${GAUSS_GATEBOX_PROBE:-true}" GAUSS_GATEBOX_WAIT_S="${GAUSS_GATEBOX_WAIT_S:-0}" GAUSS_GATEBOX_POLL_S="${GAUSS_GATEBOX_POLL_S:-1}" GAUSS_MESH_STORE="${GAUSS_MESH_STORE:-}" GAUSS_GATEBOX_TIMEOUT_S="${GAUSS_GATEBOX_TIMEOUT_S:-}" GAUSS_FLEET_MEMORY="${GAUSS_FLEET_MEMORY:-}" GAUSS_GATEBOX_KEY="$T/gatebox-key" GBRC="${GBRC:-}" GBOPS="${GBOPS:-}" GAUSS_GATEBOX_OPS="${GAUSS_GATEBOX_OPS:-}" GAUSS_GATES_EXPIRE_H="${GAUSS_GATES_EXPIRE_H:-72}" GAUSS_GATES_HOOK_S="${GAUSS_GATES_HOOK_S:-300}" GAUSS_DEV_API_PORT="${GAUSS_DEV_API_PORT:-3101}" \
     SRC="${SRC:-AC Power}" BATT="${BATT:-80%; charging; present: true}" SD="${SD:-0}" FCC="${FCC:-}" ACW="${ACW:-}" \
     LEAKY="${LEAKY:-}" LEAKFP="${LEAKFP:-12 MB}" AVAIL="${AVAIL:-50}" GAUSS_SWAP_LAST="${SWAPLAST:-/dev/null}" \
     GATEENV="${GATEENV:-}" GATES_PYTHON="${GATES_PYTHON:-}" ${GATELEAK:+ALLOWED_ORIGINS=https://live.example MESH_STORE_PATH=/live/data/mesh/devices.json COMMERCE_DB_PATH=/live/data/commerce/commerce.db GAUSS_BEDROCK_DIR=/live/data/bedrock NODE_ENV=production} \
@@ -642,7 +642,7 @@ expect "gates record: gates run without the services' env (live data paths, orig
 # gates enqueue/run: a session hands its gate run to the queue and can be archived; one runner
 # works through it oldest first under claude-heavy, skipping trees that already passed.
 # claude-heavy stub: takes the shared gate lock like the real one (owner = its pid), then runs the command.
-printf '%s\n' '#!/bin/bash' 'echo "heavy $*" >>"$ACTIONS"; { pwd -P 2>/dev/null || echo GONE; } >>"$ACTIONS.cwd"; [ -n "${HEAVYGIVEUP:-}" ] && exit 75' \
+printf '%s\n' '#!/bin/bash' 'echo "heavy $*" >>"$ACTIONS"; { pwd -P 2>/dev/null || echo GONE; } >>"$ACTIONS.cwd"; [ -n "${HEAVYGIVEUP:-}" ] && { [ "$HEAVYGIVEUP" != full ] || [[ "$*" == *"--name gates "* ]]; } && exit 75' \
   'while [ $# -gt 0 ] && [ "$1" != -- ]; do shift; done; [ $# -gt 0 ] && shift' \
   'L="$HOME/.local/state/gauss-gate.lock"; mkdir -p "${L%/*}"; mkdir "$L" || exit 9; echo "$$ now test" >"$L/owner"' \
   '"$@"; rc=$?; rm -rf "$L"; exit $rc' >"$T/home/.local/bin/claude-heavy"
@@ -682,9 +682,32 @@ out=$(run gates result "${E:0:9}"); [ $? = 0 ]; expect "gates result: a SHA pref
 g checkout -q --detach "$E"; echo f >"$LIVE/backend/server.ts"; g commit -qam queued-f; F=$(g rev-parse HEAD); g checkout -q --detach "$E"
 (cd "$LIVE" && run gates enqueue "$F" >/dev/null 2>&1)
 out=$(HEAVYGIVEUP=1 run gates run --once 2>&1); [[ "$out" == *"still waiting"* ]] && [ "$(ls "$GQ" | grep -c '\.req$')" = 1 ] \
-  && [ "$(tail -1 "$GR" | cut -d' ' -f2)" != "$F" ]; expect "gates run: when claude-heavy gives up, the request stays queued" $?
+  && [ "$(tail -1 "$GR" | cut -d' ' -f2,4)" = "$F DEFERRED" ] && grep -qx "deferred=1" "$GQ"/*.req
+expect "gates run: when claude-heavy gives up, the request stays queued (DEFERRED, counted once)" $?
+grep -q "^heavy --wait 30 --name gates " "$T/actions"; expect "gates run: one wait for admission is 30 min by default (GAUSS_GATES_WAIT_MIN), not 120" $?
 GAUSS_GATES_EXPIRE_H=0 run gates run >/dev/null 2>&1
 [ "$(tail -1 "$GR" | cut -d' ' -f2,4)" = "$F EXPIRED" ] && [ -z "$(ls "$GQ")" ]; expect "gates run: a request waiting past GAUSS_GATES_EXPIRE_H expires" $?
+# 26 Nov 02:03-08:15: a plain request for an old main commit could not be admitted (disk, then memory),
+# was retried first in line four times and held every PR behind it for six hours.
+sc() { g checkout -q --detach "$1"; echo "$2" >"$LIVE/backend/server.ts"; g commit -qam "$2"; g rev-parse HEAD; g checkout -q --detach "$E"; }
+S1=$(sc "$D" stale1); S2=$(sc "$S1" stale2); main_at "$S2"
+(cd "$LIVE" && run gates enqueue "$S1" >/dev/null 2>&1 && run gates enqueue "$S2" >/dev/null 2>&1); : >"$T/actions"
+run gates run >/dev/null 2>&1
+grep -q "^[^ ]* $S1 [^ ]* SKIPPED stale: main has moved past ${S1:0:7}\$" "$GR" && ! grep -q " gate queue ${S1:0:7}" "$T/actions" \
+  && grep -q "^[^ ]* $S2 [^ ]* PASSED" "$GR" && [ -z "$(ls "$GQ")" ]
+expect "gates run: a request with no PR for a commit main has moved past is skipped as stale; main's tip is gated" $?
+main_at "$D"; X1=$(sc "$E" defer1); X2=$(sc "$E" defer2)
+(cd "$LIVE" && run gates enqueue "$X1" >/dev/null 2>&1 && run gates enqueue "$X2" >/dev/null 2>&1)
+HEAVYGIVEUP=1 run gates run --once >/dev/null 2>&1
+first=$(ls "$GQ" | grep '\.req$' | sort | awk 'NR==1'); last=$(ls "$GQ" | grep '\.req$' | sort | tail -1)
+grep -q "^[^ ]* $X1 [^ ]* DEFERRED not admitted: claude-heavy gave up after 30 min" "$GR" && grep -qx "sha=$X2" "$GQ/$first" && grep -qx "sha=$X1" "$GQ/$last"
+expect "gates run: a request that is not admitted moves behind the others (DEFERRED), the next one runs" $?
+HEAVYGIVEUP=1 run gates run >/dev/null 2>&1
+[ "$(grep -c "^[^ ]* $X1 [^ ]* DEFERRED " "$GR")" = 2 ] && grep -q "^[^ ]* $X1 [^ ]* HELD not admitted 3 times" "$GR" && grep -q "^[^ ]* $X2 [^ ]* HELD not admitted 3 times" "$GR" \
+  && [ -z "$(ls "$GQ")" ] && [ "$(grep -c -- "-key train-stalled-${X1:0:7} -every 6h" "$T/log")" = 1 ] && [ "$(grep -c -- "-key train-stalled-${X2:0:7} -every 6h" "$T/log")" = 1 ]
+expect "gates run: the third deferral holds the request (HELD, out of the queue) with one text to Josh" $?
+out=$(run gates result "${X1:0:9}"); [ $? = 1 ] && [[ "$out" == *" HELD not admitted"* ]]
+expect "gates result: a request held for admission is not a pass (exit 1)" $?
 # 5 Nov 2026: an install timed out on the phone hotspot and the request was dropped as ERROR.
 g checkout -q --detach "$E"; echo net >>"$LIVE/package-lock.json"; g commit -qam lock-net; N=$(g rev-parse HEAD); g checkout -q --detach "$E"
 (cd "$LIVE" && run gates enqueue "$N" >/dev/null 2>&1)
@@ -1050,6 +1073,15 @@ expect "gauss-gate-run: an option other than ops, or another repo, is refused be
 out=$(bash "$(dirname "$SCRIPT")/gatebox/install-gate-run.sh" --dry-run 2>&1); [[ "$out" == *"+ sudo install -m 0755 -o root -g root "*"/usr/local/bin/gauss-gate-run"* ]]
 expect "install-gate-run.sh --dry-run: prints the sudo install for Josh and runs nothing" $?
 rm -f "$GQ"/*.req
+# 26 Nov: approved PRs the gatebox would pass waited six hours behind a full gate the Mac could not admit.
+O1=$(tc "$M2" o1.txt o1); (cd "$LIVE" && run gates enqueue "$O1" >/dev/null 2>&1); O2=$(tc "$M2" o2.txt o2); mo "$O2" gb-overtake 29
+: >"$T/actions"; out=$(HEAVYGIVEUP=full GBRC=say0 gbt run gates run 2>&1)
+grep -q "^heavy --wait 5 --name gates --label gate queue ${O1:0:7}" "$T/actions" && grep -qx "gh merge 29 $O2" "$T/actions" \
+  && [ "$(grep -n " $O2 [^ ]* MERGED PR #29" "$GR" | cut -d: -f1)" -lt "$(grep -n " $O1 [^ ]* HELD not admitted" "$GR" | cut -d: -f1)" ] \
+  && grep -q "^[^ ]* $O1 [^ ]* DEFERRED not admitted: claude-heavy gave up after 5 min .*0 of 3" "$GR" && [ "$(grep -c " $O1 [^ ]* DEFERRED " "$GR")" = 3 ]
+expect "gates run: a merge-only request the gatebox passed overtakes a full gate the Mac cannot admit (short wait, not counted)" $?
+[ "$(grep -c "^ssh .* $O1\$" "$T/actions")" = 1 ] && [ -z "$(ls "$GQ")" ]
+expect "gates run: a deferred request keeps the gatebox's pass of its exact commit (screened once)" $?
 # 24 Nov: the runner read the gatebox file once, at its start. The file was pointed at a new address while
 # it ran, and every later request was still gated here, on the old address's outage.
 printf '#!/bin/bash\n[ "$1" = newbox ]\n' >"$T/bin/gbnew"; chmod +x "$T/bin/gbnew"
