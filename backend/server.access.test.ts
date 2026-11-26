@@ -16,6 +16,19 @@ function withNodeEnv(value: string | undefined, fn: () => void) {
   }
 }
 
+// The dev bypass is honoured only in an explicit development or test run (backend/auth.ts authRequired), so these
+// tests say which they are, and put both settings back afterwards.
+const NODE_ENV_BEFORE = process.env.NODE_ENV;
+function devBypass(): void {
+  process.env.AUTH_REQUIRED = "false";
+  process.env.NODE_ENV = "test";
+}
+function endDevBypass(): void {
+  delete process.env.AUTH_REQUIRED;
+  if (NODE_ENV_BEFORE === undefined) delete process.env.NODE_ENV;
+  else process.env.NODE_ENV = NODE_ENV_BEFORE;
+}
+
 test("production only allows explicitly configured origins", () => {
   withNodeEnv("production", () => {
     assert.equal(isAllowedOrigin("http://127.0.0.1:5173"), true); // in default ALLOWED_ORIGINS
@@ -65,11 +78,11 @@ test("feed WebSockets: both paths connect at once and stay open; bad origin and 
   const { port } = server.address() as { port: number };
   const base = `ws://${host}:${port}`;
   t.after(async () => {
-    delete process.env.AUTH_REQUIRED;
+    endDevBypass();
     await stopBackend();
   });
 
-  process.env.AUTH_REQUIRED = "false"; // dev bypass, so the guard admits the socket
+  devBypass(); // dev bypass, so the guard admits the socket
   const streams = ["space-weather", "mms-reconnection"];
   const opened = await Promise.all(streams.map((s) => feedSocket(`${base}/ws/feed/${s}`)));
   opened.forEach((r, i) => {
@@ -93,10 +106,10 @@ test("feed WebSockets: an oversize frame closes that socket with 1009 and the ba
   const { port } = server.address() as { port: number };
   const base = `ws://${host}:${port}`;
   t.after(async () => {
-    delete process.env.AUTH_REQUIRED;
+    endDevBypass();
     await stopBackend();
   });
-  process.env.AUTH_REQUIRED = "false"; // dev bypass, so the guard admits the socket
+  devBypass(); // dev bypass, so the guard admits the socket
   const code = await new Promise<number>((resolve) => {
     const ws = new WebSocket(`${base}/ws/feed/space-weather`);
     ws.on("open", () => ws.send(Buffer.alloc(2 * 1024 * 1024)));
@@ -112,7 +125,7 @@ test("RAG endpoints require a session and never log query text", async (t) => {
   const { port } = server.address() as { port: number };
   const base = `http://${host}:${port}/api/rag`;
   t.after(async () => {
-    delete process.env.AUTH_REQUIRED;
+    endDevBypass();
     await stopBackend();
   });
 
@@ -125,7 +138,7 @@ test("RAG endpoints require a session and never log query text", async (t) => {
   assert.equal((await post("/query", { query: "x" })).status, 401);
 
   // Authenticated (dev bypass): the query runs, but its text must not reach the logs.
-  process.env.AUTH_REQUIRED = "false";
+  devBypass();
   const secret = "SECRET-OPERATOR-QUERY-7f3a";
   const logged: string[] = [];
   const originals = { log: console.log, warn: console.warn, error: console.error, info: console.info };
@@ -159,7 +172,7 @@ test("RAG endpoints are operator-only: a signed-in user gets 403, an operator do
   });
   t.after(async () => {
     api.getSession = realGetSession;
-    delete process.env.AUTH_REQUIRED;
+    endDevBypass();
     await stopBackend();
   });
   process.env.AUTH_REQUIRED = "true";
