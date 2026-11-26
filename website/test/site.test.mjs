@@ -9,6 +9,7 @@ import { APP_CSP, SECURITY_HEADERS } from "../worker/headers.js";
 import { renderApplyForm } from "../worker/forms.js";
 import { renderPlans } from "../worker/render.js";
 import { FEATURES, SHOW_PRICES, TIERS, priceLabel } from "../worker/tiers.js";
+import { SHARE_PAGES, SOCIAL, followsOn, renderFollow, renderFollowCta, renderShare, socialLinks } from "../worker/social.js";
 import { CONTACT, forRelease } from "../worker/release.js";
 import { consoleLink, staffCard } from "../worker/app.js";
 import { supportLink } from "../worker/render.js";
@@ -20,7 +21,7 @@ const size = (f) => statSync(join(pub, f)).size;
 const text = (s) => s.replace(/<!--[\s\S]*?-->/g, " ").replace(/<[^>]+>/g, " ").replace(/&#39;/g, "'").replace(/\s+/g, " ");
 const PAGES = { "/": "index.html", "/gauss/": "gauss/index.html", "/constellation/": "constellation/index.html", "/turnstone/": "turnstone/index.html", "/404": "404.html",
   "/gauss/apply/": "gauss/apply/index.html", "/constellation/apply/": "constellation/apply/index.html", "/privacy/": "privacy/index.html",
-  "/app/": "app/index.html", "/app/admin/": "app/admin/index.html", "/gauss/evidence/": "gauss/evidence/index.html",
+  "/app/": "app/index.html", "/app/admin/": "app/admin/index.html", "/gauss/evidence/": "gauss/evidence/index.html", "/gauss/storms/": "gauss/storms/index.html",
   "/constellation/time/": "constellation/time/index.html", "/argo/": "argo/index.html",
   "/education/": "education/index.html", "/education/apply/": "education/apply/index.html", "/constellation/workshops/": "constellation/workshops/index.html", "/terms/": "terms/index.html" };
 const html = Object.fromEntries(Object.entries(PAGES).map(([route, f]) => [route, read(f)]));
@@ -432,7 +433,9 @@ test("budgets: first view under 200 KB before the film; film under 300 KB; whole
   const first = firstView.reduce((n, f) => n + size(f), 0);
   assert.ok(first < 200 * 1024, `first view is ${first} bytes`);
   assert.ok(size("assets/media/blackhole-720p.mp4") < 300 * 1024, "film too big");
-  const total = walk(pub).reduce((n, f) => n + statSync(f).size, 0);
+  // Share cards (assets/media/share/) are fetched by social sites, never by a visitor's browser: they have their own cap below.
+  const shareDir = join(pub, "assets", "media", "share");
+  const total = walk(pub).filter((f) => !f.startsWith(shareDir)).reduce((n, f) => n + statSync(f).size, 0);
   assert.ok(total < 1024 * 1024, `site is ${total} bytes`);
 });
 
@@ -775,6 +778,125 @@ test("wiring: /gauss/ says what a log needs, links a made-up sample that has the
 
 test("client links: /gauss/, /gauss/evidence/ and /argo/ each link to the pilot brief with a plan", () => {
   for (const path of ["/gauss/", "/gauss/evidence/", "/argo/"]) assert.match(html[path], /href="\/gauss\/apply\/\?plan=pilot"/, path);
+});
+
+// ---- Storm story, follow strip and share links (24 Nov 2026) ----
+test("storm story: the page is in the sitemap with its own share card, and states only the observed record", () => {
+  const page = html["/gauss/storms/"];
+  const body = text(page.match(/<main[\s\S]*<\/main>/)[0]);
+  assert.match(read("sitemap.xml"), /<loc>https:\/\/lightbound\.space\/gauss\/storms\/<\/loc>/);
+  assert.match(page, /<h1 id="hero-h">The night the sky went red\.<\/h1>/);
+  // The facts come from the replay's event list, and nowhere else.
+  const events = readFileSync(join(pub, "..", "..", "backend", "replay", "events.ts"), "utf8");
+  const may = events.match(/id: "may-2024",[\s\S]*?expect: "([^"]+)"/)[1];
+  assert.equal(may, "G4 from 18–21 UT (Kp 8.67), G5 from 21–24 UT on 10 May and 00–03 UT on 11 May (Kp 9); R3 from 01:17 UT on 11 May (GOES X-ray peak X5.8 at 01:23).",
+    "the record changed: re-check every figure on /gauss/storms/ and its share card");
+  for (const fact of [/10 May · 18:00–21:00 UT G4/, /Kp 8\.67/, /10 May 21:00 – 11 May 03:00 UT G5/, /Kp 9 ?, two intervals in a row/, /R3 from 01:17/, /X5\.8 at 01:23/, /10 May 12:00 UT to 11 May 06:00 UT/])
+    assert.match(body.replace(/&ndash;/g, "–"), fact);
+  const story = text(page.match(/<ol class="storm">[\s\S]*?<\/ol>/)[0]).replace(/&ndash;/g, "–");
+  const known = new Set(["10", "11", "12:00", "18:00", "21:00", "03:00", "01:17", "01:23", "4", "5", "8.67", "9", "5.8", "3"]);
+  for (const n of story.match(/\d+(?:[.:]\d+)?/g)) assert.ok(known.has(n), `${n} is not in the observed record`);
+  assert.match(body, /Source: NOAA Space Weather Prediction Center/);
+  // The orbit part is an illustration: no real spacecraft, documented risk, never losses, no price.
+  assert.match(page, /<span class="chip sim">Illustration · not a mission record<\/span>/);
+  assert.match(body, /documented risk/);
+  assert.match(body, /Anything about a real spacecraft or operator\. This page describes none/);
+  assert.doesNotMatch(body, /\bloss(es)?\b|\blost\b|\bfail(ed|ure)s?\b|\bdamage|\bdose\b|\boutage/i);
+  assert.doesNotMatch(body, /[£$€]|\bUSD\b|\bGBP\b|\bprice/i, "no price on the page");
+  assert.match(page, /<a class="btn" href="\/gauss\/apply\/">Get your fleet&rsquo;s storm post-mortem<\/a>/);
+  assert.match(page, /<!--follow-cta-->[\s\S]*<!--\/follow-cta-->/);
+  // Its own card: 1200x630 with the headline, small enough for the site's weight budget.
+  assert.match(page, /<meta property="og:image" content="https:\/\/lightbound\.space\/assets\/media\/share\/storms\.jpg">/);
+  assert.match(page, /<meta name="twitter:title" content="The night the sky went red">/);
+  assert.match(page, /<meta name="twitter:description" content="[^"]+">/);
+  assert.match(read("../tools/share_cards.py"), /blackhole-poster\.jpg/, "built from the site's own media");
+});
+
+test("share cards: every public page names a card in assets/media/share/, 1200x630, sharp, under 250 KB each", () => {
+  const dims = (jpg) => {
+    let at = 2;
+    while (at < jpg.length) {
+      const marker = jpg[at + 1], len = jpg.readUInt16BE(at + 2);
+      if (marker === 0xc0 || marker === 0xc2) return [jpg.readUInt16BE(at + 7), jpg.readUInt16BE(at + 5)];
+      at += 2 + len;
+    }
+    return null;
+  };
+  const used = new Set();
+  for (const [route, page] of Object.entries(html)) {
+    const m = page.match(/<meta property="og:image" content="https:\/\/lightbound\.space\/assets\/media\/share\/([a-z]+)\.jpg">/);
+    if (!m) continue;
+    used.add(m[1]);
+  }
+  assert.ok(used.size >= 6, `expected 6 distinct cards, found ${[...used]}`);
+  for (const id of used) {
+    const jpg = readFileSync(join(pub, "assets", "media", "share", `${id}.jpg`));
+    assert.ok(jpg.length < 250 * 1024, `${id} card is ${jpg.length} bytes`);
+    assert.ok(jpg.length > 30 * 1024, `${id} card looks over-compressed (${jpg.length} bytes)`);
+    assert.deepEqual(dims(jpg), [1200, 630], id);
+  }
+});
+
+test("follow strip: one list drives every public page; an empty or off-host entry renders no link", () => {
+  const blank = SOCIAL.map((e) => ({ ...e, url: "" }));
+  assert.equal(renderFollow(blank), "", "nothing to follow: no strip, no label");
+  assert.equal(renderFollowCta(blank), "");
+  assert.equal(renderFollow([]), "");
+  const one = renderFollow([...blank.filter((e) => e.id !== "luma"), { id: "luma", label: "Luma", url: "https://luma.com/constellation" }]);
+  assert.equal(one, '<nav class="follow" aria-label="Follow"><span class="label">Follow</span><a href="https://luma.com/constellation" rel="me noopener">Luma</a></nav>');
+  for (const url of ["http://luma.com/constellation", "https://luma.com.example.org/constellation", "https://example.org/luma.com", "javascript:alert(1)", "//luma.com/constellation",
+    "https://luma.com/constellation?utm=1", "https://luma.com/constellation#x", "https://user@luma.com/constellation", "https://luma.com:8443/constellation", " https://luma.com/constellation", "luma.com/constellation", null, 7])
+    assert.deepEqual(socialLinks([{ id: "luma", label: "Luma", url }]), [], `${url} is dropped`);
+  assert.deepEqual(socialLinks([{ id: "mastodon", label: "Other", url: "https://luma.com/constellation" }]), [], "unknown channels are dropped");
+  assert.equal(renderFollow([{ id: "luma", label: '<b>"Luma"</b>', url: "https://luma.com/constellation" }]).includes("<b>"), false, "labels are escaped");
+  // The list today: LinkedIn, X and YouTube wait for Josh's handles; no personal accounts.
+  assert.deepEqual(SOCIAL.map((e) => e.id), ["linkedin", "x", "youtube", "instagram", "substack", "luma"]);
+  for (const id of ["linkedin", "x", "youtube"]) assert.equal(SOCIAL.find((e) => e.id === id).url, "", `${id} stays empty until Josh gives it`);
+  assert.deepEqual(socialLinks().map((e) => e.url), ["https://instagram.com/constellationcosmos", "https://lightbounduk.substack.com", "https://luma.com/constellation"]);
+  const strip = renderFollow();
+  for (const [route, page] of Object.entries(html)) {
+    const blocks = [...page.matchAll(/<!--follow-->([\s\S]*?)<!--\/follow-->/g)].map((m) => m[1]);
+    if (!followsOn(route) || !page.includes("<footer")) { assert.deepEqual(blocks, [], `${route}: no follow strip`); assert.doesNotMatch(page, /rel="me /, route); continue; }
+    assert.deepEqual(blocks, [strip], `${route}: run npm run site:social`);
+    assert.match(page, /<\/div>\n  <!--follow-->[\s\S]*?<!--\/follow-->\n<\/footer>/, `${route}: the strip closes the footer`);
+    assert.doesNotMatch(page, /jzw_nathan|joshnathan74/, `${route}: no personal accounts`);
+  }
+  assert.equal(html["/gauss/storms/"].match(/<!--follow-cta-->([\s\S]*?)<!--\/follow-cta-->/)[1], renderFollowCta(), "run npm run site:social");
+  assert.match(renderFollowCta(), /<h3 id="follow-h">Follow the next storm\.<\/h3>/);
+  assert.match(read("assets/site.css"), /\.copy-url\{[^}]*user-select:all\}/, "the address selects whole on one tap, without script");
+});
+
+test("share links: plain share URLs tagged utm_source=share on the storm story and the sample report", () => {
+  assert.deepEqual(Object.keys(SHARE_PAGES), ["/gauss/storms/", "/gauss/evidence/"]);
+  assert.equal(renderShare("/gauss/"), "", "other pages get none");
+  for (const [route, page] of Object.entries(html)) {
+    const blocks = [...page.matchAll(/<!--share-->([\s\S]*?)<!--\/share-->/g)].map((m) => m[1]);
+    assert.deepEqual(blocks, Object.hasOwn(SHARE_PAGES, route) ? [renderShare(route)] : [], `${route}: run npm run site:social`);
+    if (!blocks.length) continue;
+    const hrefs = [...blocks[0].matchAll(/<a href="([^"]+)" rel="noopener">/g)].map((m) => new URL(m[1].replace(/&amp;/g, "&")));
+    assert.deepEqual(hrefs.map((u) => u.origin + u.pathname), ["https://www.linkedin.com/sharing/share-offsite/", "https://x.com/intent/post"]);
+    const canon = page.match(/<link rel="canonical" href="([^"]+)">/)[1];
+    assert.equal(canon, `https://lightbound.space${route}`);
+    for (const [u, medium] of [[hrefs[0], "linkedin"], [hrefs[1], "x"]]) assert.equal(u.searchParams.get("url"), `${canon}?utm_source=share&utm_medium=${medium}`);
+    assert.equal(hrefs[1].searchParams.get("text"), SHARE_PAGES[route]);
+    assert.ok(blocks[0].includes(`<span class="copy-url">${canon}?utm_source=share&amp;utm_medium=copy</span>`), `${route}: the address to copy`);
+  }
+});
+
+test("follow and share add no script, frame, embed, form or third-party resource to any page", () => {
+  const allowed = /^https:\/\/(lightbound\.space|instagram\.com|lightbounduk\.substack\.com|luma\.com|www\.linkedin\.com|x\.com)\//;
+  for (const file of walk(pub).filter((f) => f.endsWith(".html"))) {
+    const page = readFileSync(file, "utf8");
+    assert.doesNotMatch(page.replace(/<script type="application\/ld\+json">[^<]*<\/script>/g, ""), /<script|<iframe|<embed|<object|<link[^>]+rel="(preconnect|dns-prefetch|prefetch)"/i, file);
+    for (const [, src] of page.matchAll(/\s(?:src|srcset|poster|action|data)="([^"]+)"/g)) assert.match(src, /^\/(?!\/)/, `${file}: ${src} is not a same-site path`);
+    for (const block of [...page.matchAll(/<!--(follow|follow-cta|share)-->([\s\S]*?)<!--\/\1-->/g)].map((m) => m[2])) {
+      assert.doesNotMatch(block, /<img|<form|<input|<button|\son\w+=|\sstyle=|\sping=/i, file);
+      for (const [, href] of block.matchAll(/href="([^"]+)"/g)) assert.match(`${href}/`, allowed, `${file}: ${href}`);
+      for (const a of block.match(/<a [^>]+>/g) ?? []) assert.match(a, /rel="(me )?noopener"/, `${file}: ${a}`);
+    }
+  }
+  for (const f of ["../worker/social.js", "../tools/sync_social.mjs"]) assert.doesNotMatch(read(f), /\bfetch\(|XMLHttpRequest|sendBeacon|document\.|window\./, `${f}: nothing runs in the browser or calls out`);
+  assert.equal(existsSync(join(pub, "assets", "social.js")), false, "the list is not shipped to browsers");
 });
 
 // ---- Switching releases (tools/release.mjs; the flip-day runbook) ----

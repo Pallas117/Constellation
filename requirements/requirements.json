@@ -1,6 +1,6 @@
 {
   "$comment": "Constellation requirements baseline (GAU-120). NASA SP-2016-6105 Rev 2 §6.2/§5.3. Methods: T test, A analysis, I inspection, D demonstration. T evidence = exact test names; A/I/D evidence = repo paths. Verified by `npm run verify`.",
-  "version": "1.18.0",
+  "version": "1.19.0",
   "requirements": [
     {
       "id": "REQ-ING-001",
@@ -1598,6 +1598,20 @@
       "owner": "Josh",
       "verifiedBy": [
         "security: strict CSP, no scripts, no inline styles or handlers, nothing loaded from elsewhere"
+      ]
+    },
+    {
+      "id": "REQ-WEB-006",
+      "title": "Follow and share links are plain links from one list",
+      "statement": "The website shall build its follow strip and share links from the one list in website/worker/social.js, render no link for an entry whose URL is empty or is not https on that channel's own host, show the strip on no signed-in, operator-only or Turnstone page, and add no script, frame, embed or third-party resource for them.",
+      "rationale": "Visitors can reach the social channels without any tracker, SDK or pixel, and a missing or mistyped handle never produces a dead or misdirected link.",
+      "parent": "GAU-228",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "follow strip: one list drives every public page; an empty or off-host entry renders no link",
+        "share links: plain share URLs tagged utm_source=share on the storm story and the sample report",
+        "follow and share add no script, frame, embed, form or third-party resource to any page"
       ]
     },
     {
