@@ -45,9 +45,11 @@ type Config struct {
 	GuardWorkerGB float64  `json:"guard_worker_gb,omitempty"` // RAM one job worker (test file, browser) holds (default 0.5)
 	InboxDir      string   `json:"inbox_dir,omitempty"`       // where received files land; default ~/Downloads/Argo
 	// WiFiShield "warp": Argo may run warp-cli itself on open or weak Wi-Fi (shield.go). Default "": advice only.
-	WiFiShield string `json:"wifi_shield,omitempty"`
-	QuietHours string `json:"quiet_hours,omitempty"` // no non-urgent texts in these hours; default 23:00-07:00, "off" for none
-	Place      string `json:"place,omitempty"`       // short label for the shared signal map (letters, digits, space, - and _); never a location
+	WiFiShield  string `json:"wifi_shield,omitempty"`
+	QuietHours  string `json:"quiet_hours,omitempty"`  // no non-urgent texts in these hours; default 23:00-07:00, "off" for none
+	Place       string `json:"place,omitempty"`        // short label for the shared signal map (letters, digits, space, - and _); never a location
+	FadingAlert string `json:"fading_alert,omitempty"` // "off": no "Wi-Fi is fading" text (range.go); status still shows it
+	LaptopAlert string `json:"laptop_alert,omitempty"` // "off": watch phones only, as before (range.go)
 }
 
 func (c Config) peers() []Peer {
@@ -99,6 +101,8 @@ func main() {
 	loop := Loop{Prober: SystemProber{ExitNodes: cfg.ExitNodes, SignalCache: store.path("signal.json")}, Store: store, Fx: realEffects{phone: phone}, AppWatch: true, Preempt: preempt, Link: systemLink}
 	loop.Tailnet = tailnetKicker(cfg)          // read-only `tailscale ping`/`netcheck` after a switch (tailnet.go)
 	loop.ShieldWARP = cfg.WiFiShield == "warp" // opt-in since 2026-11-05 (shield.go)
+	loop.NoFadeAlert = strings.EqualFold(cfg.FadingAlert, "off")
+	laptops := !strings.EqualFold(cfg.LaptopAlert, "off")
 	if phone != nil {
 		phone.PreferSMS = func() bool { return store.Load().Low.PreferSMS() }
 	}
@@ -155,7 +159,7 @@ func main() {
 		}
 		flush()
 		phase(60*time.Second, func(c context.Context) { loop.Tick(c) })
-		watchDevices(ctx, cfg.Devices, store, phone, time.Now())
+		watchDevices(ctx, cfg.Devices, laptops, store, phone, time.Now())
 		maybeSendWeekly(store, phone, time.Now())
 		return nil
 	}
@@ -164,7 +168,7 @@ func main() {
 	switch cmd {
 	case "status":
 		st := store.Load()
-		fmt.Println(statusLine(st, time.Now()) + guardStatus(store.loadGuard(), time.Now()) + powerSaveStatus(store.loadPowerSave()) + gaussStatus(store, time.Now()) + phoneStatus(store.Dir, time.Now()) + switchLine(st, time.Now()))
+		fmt.Println(statusLine(st, time.Now()) + guardStatus(store.loadGuard(), time.Now()) + powerSaveStatus(store.loadPowerSave()) + gaussStatus(store, time.Now()) + rangeStatus(store, time.Now()) + phoneStatus(store.Dir, time.Now()) + switchLine(st, time.Now()))
 	case "doctor":
 		err = doctor(ctx, loop.Prober)
 		if err == nil {
@@ -264,7 +268,7 @@ func main() {
 			fmt.Println("watch: done")
 		})
 	case "devices": // which watched tailnet devices (default: your phones) are offline
-		lines := watchDevices(ctx, cfg.Devices, store, nil, time.Now())
+		lines := watchDevices(ctx, cfg.Devices, laptops, store, nil, time.Now())
 		for _, l := range lines {
 			fmt.Println(l)
 		}
@@ -410,7 +414,7 @@ func statusLine(st State, now time.Time) string {
 	if age := now.Sub(st.CheckedAt); age > 10*time.Minute {
 		line += fmt.Sprintf(" (stale %s)", age.Round(time.Minute))
 	}
-	return line
+	return line + fadeStatus(st, now)
 }
 
 func doctor(ctx context.Context, p Prober) error {

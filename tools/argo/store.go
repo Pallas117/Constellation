@@ -59,6 +59,7 @@ type State struct {
 	Via           string         `json:"via,omitempty"`    // link the last probe used: usb, wifi, ethernet, other (wiredlink.go)
 	Advice        string         `json:"advice,omitempty"` // suggested link switch; Argo never changes settings itself
 	Clock         ClockVerdict   `json:"clock,omitempty"`  // clock cross-check (timeintegrity.go)
+	Fade          FadeAlert      `json:"fade,omitempty"`   // "Wi-Fi is fading" alert state (range.go)
 	// IncidentFP is the network the open incident belongs to; Notified says whether
 	// it was announced yet, NotifyDue when it will be if this network's usual
 	// recovery time passes first (loop.go).

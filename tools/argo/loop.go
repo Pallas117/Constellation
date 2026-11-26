@@ -156,6 +156,8 @@ type Loop struct {
 	// AppWatch turns on the app data watch (leak.go); only the real agent sets it, so tests
 	// never run lsof or nettop.
 	AppWatch bool
+	// NoFadeAlert keeps the "Wi-Fi is fading" text off (config "fading_alert": "off"); status still shows it.
+	NoFadeAlert bool
 	// Preempt delivers SIGUSR1 from a newer tick that saw the default gateway change while this
 	// run was probing (tick.go). The probe in flight is cancelled and run once more. nil: never.
 	Preempt <-chan os.Signal
@@ -246,6 +248,7 @@ func (l Loop) Tick(ctx context.Context) State {
 		lv := l.Link(ctx, st.Low.On)
 		st.Via, st.Advice = lv.Via, lv.Advice
 	}
+	l.fadeWatch(&st, snap, class, fp, now)
 	// A new network, or the link back after an outage: ask the tailnet now, not next tick.
 	if l.Tailnet != nil && snap.Online && fp != "" && !class.Blocking() && (fp != prevFP || snap.Gateway != prevGW || prev.Blocking()) {
 		chk := l.Tailnet(ctx)

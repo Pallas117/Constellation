@@ -40,40 +40,63 @@ type tailnetStatus struct {
 type deviceAlert struct {
 	Host    string
 	Offline time.Duration // 0: never seen
+	Laptop  bool          // a computer, not a phone: its own threshold and text (range.go)
 }
 
-// offlineDevices returns the watched devices that have been offline for at
-// least deviceOfflineAfter, sorted by name. Watched = the hostnames in names,
-// or (names empty) the phones owned by this Mac's tailnet user. Nothing is
-// judged while this Mac is itself off the tailnet.
+// offlineDevices returns the watched devices that have been offline long
+// enough, sorted by name; see watchedOffline.
 func offlineDevices(raw []byte, names []string, now time.Time) []deviceAlert {
+	out, _ := watchedOffline(raw, names, true, now)
+	return out
+}
+
+// watchedOffline returns the watched devices that have been offline for at
+// least their threshold, sorted by name: deviceOfflineAfter for phones,
+// laptopOfflineAfter for computers. Watched = the hostnames in names, or (names
+// empty) the phones owned by this Mac's tailnet user plus, when laptops is set,
+// that user's computers whose outage is recent (under laptopFreshFor: a machine
+// gone for days is not "just out of range"). With laptops off, a named computer
+// is treated as before: the phone threshold and reminder. judged is false when
+// nothing could be judged: bad input, or this Mac is itself off the tailnet.
+func watchedOffline(raw []byte, names []string, laptops bool, now time.Time) (out []deviceAlert, judged bool) {
 	var st tailnetStatus
 	if json.Unmarshal(raw, &st) != nil || !st.Self.Online {
-		return nil
+		return nil, false
 	}
 	want := map[string]bool{}
 	for _, n := range names {
 		want[strings.ToLower(n)] = true
 	}
-	var out []deviceAlert
 	for _, p := range st.Peer {
 		name := deviceName(p)
 		host := strings.ToLower(name)
-		phone := p.UserID == st.Self.UserID && (strings.EqualFold(p.OS, "iOS") || strings.EqualFold(p.OS, "android"))
-		if (len(want) > 0 && !want[host]) || (len(want) == 0 && !phone) || p.Online {
+		own := p.UserID == st.Self.UserID
+		phone := own && isPhoneOS(p.OS)
+		laptop := laptops && !isPhoneOS(p.OS) && (len(want) > 0 || (own && isComputerOS(p.OS)))
+		if (len(want) > 0 && !want[host]) || (len(want) == 0 && !phone && !laptop) || p.Online {
 			continue
+		}
+		after := deviceOfflineAfter
+		if laptop {
+			after = laptopOfflineAfter
+			if name = cleanHost(name); name == "" {
+				continue
+			}
 		}
 		var off time.Duration
 		if !p.LastSeen.IsZero() {
 			off = now.Sub(p.LastSeen)
-			if off < deviceOfflineAfter {
+			if off < after {
 				continue
 			}
 		}
-		out = append(out, deviceAlert{Host: name, Offline: off})
+		if laptop && len(want) == 0 && (off == 0 || off >= laptopFreshFor) {
+			continue
+		}
+		out = append(out, deviceAlert{Host: name, Offline: off, Laptop: laptop})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Host < out[j].Host })
-	return out
+	return out, true
 }
 
 // deviceName is the tailnet name (first label of DNSName), which is what the
@@ -103,22 +126,43 @@ func deviceMessage(a deviceAlert) string {
 		"(iPhone: Settings > VPN > Tailscale; Android: Always-on VPN) so it reconnects by itself.", a.Host, roughly(a.Offline))
 }
 
-// watchDevices checks once and texts at most every deviceRemindEvery per device.
-// It returns one line per offline device for `argo devices`.
-func watchDevices(ctx context.Context, names []string, s Store, phone *Phone, now time.Time) []string {
+// watchDevices checks once. A phone is texted at most every deviceRemindEvery;
+// a computer once per outage (rangeRound). laptops false keeps computers out
+// (config "laptop_alert": "off"). It returns one line per offline device for
+// `argo devices`.
+func watchDevices(ctx context.Context, names []string, laptops bool, s Store, phone *Phone, now time.Time) []string {
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	raw, err := exec.CommandContext(ctx, tailscaleCLI(), "status", "--json").Output()
 	if err != nil {
 		return nil
 	}
+	var send func(title, msg string)
+	if phone != nil {
+		send = func(title, msg string) { phone.Send(title, msg, now) }
+	}
+	return deviceRound(raw, names, laptops, s, send, now)
+}
+
+// deviceRound is watchDevices without the tailscale call, so tests can drive it
+// with a recorded status, a clock and a fake sender.
+func deviceRound(raw []byte, names []string, laptops bool, s Store, send func(title, msg string), now time.Time) []string {
+	alerts, judged := watchedOffline(raw, names, laptops, now)
+	if !judged {
+		return nil // keep what was told: this Mac being off the tailnet says nothing about the others
+	}
 	var out []string
-	for _, a := range offlineDevices(raw, names, now) {
+	for _, a := range alerts {
+		if a.Laptop {
+			out = append(out, laptopMessage(a, now))
+			continue
+		}
 		msg := deviceMessage(a)
 		out = append(out, msg)
-		if phone != nil && shouldNotify(s, "device-offline-"+strings.ToLower(a.Host), deviceRemindEvery, now) {
-			phone.Send("Argo: "+a.Host+" offline", msg, now)
+		if send != nil && shouldNotify(s, "device-offline-"+strings.ToLower(a.Host), deviceRemindEvery, now) {
+			send("Argo: "+a.Host+" offline", msg)
 		}
 	}
+	rangeRound(alerts, s, send, now)
 	return out
 }
