@@ -62,7 +62,7 @@ between the two with a backend writing to it makes `git checkout` refuse or over
 | `ALLOWED_ORIGINS` | `http://localhost:8080,http://localhost:5173,http://127.0.0.1:5173,http://127.0.0.1:8080` | no | Comma-separated origins allowed by CORS and sign-in. Include the exact URL people open. |
 | `BETTER_AUTH_URL` | unset | no | The URL people open. Read by the better-auth library, which warns when it is unset. |
 | `BETTER_AUTH_SECRET` | unset | **yes** | Long random value that signs sessions. Read by better-auth itself, not by Gauss code; required in production per better-auth's documentation (**UNVERIFIED** here). |
-| `AUTH_REQUIRED` | `true` | no | Never set `false`: that bypass makes every visitor an admin. Ignored when `NODE_ENV=production`. |
+| `AUTH_REQUIRED` | `true` | no | Never set `false` outside your own machine: that bypass makes every visitor an admin. It is honoured only when `NODE_ENV` is `development` or `test`; unset, `production` or anything else keeps sign-in required. |
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | unset | **secret: the `_SECRET`** | Google sign-in, on only when both are set. Callback: `<BETTER_AUTH_URL>/api/auth/callback/google`. |
 | `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET` | unset | **secret: the `_SECRET`** | GitHub sign-in, as above, callback `.../github`. |
 | `SSO_ALLOWED_DOMAIN` | Lightbound's own domain | no | Single sign-on may create accounts only for this email domain: set yours if SSO is on (`backend/sso-policy.ts`). |
