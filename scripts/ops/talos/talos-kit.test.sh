@@ -166,6 +166,20 @@ has '^ReadWritePaths=@HOME@/.local/state/argo @HOME@/.config/argo$' "$U"; expect
 R="$D/README.md"
 has 'tailscale ping' "$R" && has 'tailscale ssh' "$R" && has 'known_hosts' "$R" && has 'forced command' "$R" && has 'UNVERIFIED' "$R" && has '\.auth\.db' "$R" && has 'charge_control_end_threshold' "$R"; expect "talos README covers verification from the Mac, the --ssh caveat, what is unverified and what must not be copied" $?
 
+O="$D/ollama-override.conf"
+python3 - "$O" <<'PY'
+import configparser, sys
+c = configparser.ConfigParser(strict=False, interpolation=None); c.optionxform = str
+c.read(sys.argv[1])
+env = [l.strip() for l in open(sys.argv[1]) if l.startswith('Environment=')]
+want = ['Environment="OLLAMA_KEEP_ALIVE=30m"', 'Environment="OLLAMA_CONTEXT_LENGTH=8192"', 'Environment="OLLAMA_NUM_PARALLEL=1"']
+sys.exit(0 if c.sections() == ['Service'] and env == want else 1)
+PY
+expect "talos ollama drop-in parses: one [Service] section with keep-alive 30m, context 8192, one parallel request" $?
+! grep -qE '^(ExecStart|User|ExecStartPre)=|OLLAMA_HOST' "$O"; expect "talos ollama drop-in changes no command, user or listen address" $?
+has 'sudo install -m 0644 -o root -g root scripts/ops/talos/ollama-override.conf' "$R" && has 'NVIDIA driver (Josh only)' "$R" && has 'mokutil --sb-state' "$R" && has 'No script or agent reboots Talos' "$R"; expect "talos README has the Josh-run Ollama install steps and the NVIDIA driver cautions" $?
+! grep -rIEn '(^|[^#a-z])(reboot|shutdown|systemctl +(reboot|poweroff))' "$B" >/dev/null; expect "talos bootstrap never reboots" $?
+
 # --- static checks ---
 if command -v shellcheck >/dev/null; then shellcheck -S warning "$B" "$0"; expect "talos scripts are shellcheck-clean" $?
 else bash -n "$B" && bash -n "$0"; expect "talos scripts parse (shellcheck not installed here, UNVERIFIED lint)" $?; fi

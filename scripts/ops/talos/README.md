@@ -85,6 +85,36 @@ is not detected: Argo does not feed a systemd watchdog yet.
   ("plugged in but the battery is still draining": `tools/argo/README.md`, "Linux laptops on battery"), holds new
   heavy jobs at 35% and stops at 10%. It queues and waits; it does not make power.
 
+## Ollama keep-alive (Josh runs this)
+
+`ollama-override.conf` is a systemd drop-in that keeps the model loaded for 30 minutes, fixes the context at
+8192 tokens and serves one request at a time, so a repeated prompt prefix is answered from cache (measured on
+26 Nov 2026 with a 3,200-token prefix: 140.8 s to 3.5 s on Talos). Settings: <https://docs.ollama.com/faq>.
+Agents do not install it: it needs sudo.
+
+```bash
+sudo mkdir -p /etc/systemd/system/ollama.service.d
+sudo install -m 0644 -o root -g root scripts/ops/talos/ollama-override.conf /etc/systemd/system/ollama.service.d/override.conf
+sudo systemctl daemon-reload
+sudo systemctl restart ollama
+systemctl show ollama -p Environment      # must list the three OLLAMA_ values
+```
+
+Undo: `sudo rm /etc/systemd/system/ollama.service.d/override.conf`, then daemon-reload and restart. The model
+stays in RAM for 30 minutes after use: that is the cost.
+
+## NVIDIA driver (Josh only)
+
+Talos's GTX 1050 currently runs on the open NVK Vulkan driver. NVIDIA's proprietary branch 580 is the last
+for Pascal cards ([deprecation schedule](https://forums.developer.nvidia.com/t/unix-graphics-feature-deprecation-schedule/60588/13)).
+A driver change can leave the machine without a display, so:
+
+1. Do it only after a confirmed good boot on the default kernel (`uname -r` matches the GRUB default).
+2. Check Secure Boot first (`mokutil --sb-state`). If enabled, an unsigned module will not load.
+3. Install branch 580 from the distribution's packages, not a downloaded `.run` file.
+4. Reboot by hand, at the machine. No script or agent reboots Talos.
+5. Re-run the benchmark afterwards and compare with the NVK numbers above.
+
 ## Never copy to Talos without Josh's decision
 
 `.auth.db`, any `.env*`, `data/mesh/`, SSH and signing keys (including the gate key), vault contents and the vault
