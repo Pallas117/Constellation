@@ -12,7 +12,7 @@ warn() { printf '  ! %s\n' "$1"; [ -z "${2:-}" ] || printf '      fix: %s\n' "$2
 file_mode() { stat -c %a "$1" 2>/dev/null || stat -f %Lp "$1"; }
 
 echo "Toolchain"
-want=$(sed -E 's/^v?([0-9]+).*/\1/' .nvmrc | head -1)
+want=$(sed -E 's/^v?([0-9]+).*/\1/' .nvmrc | sed -n 1p)
 have=$(node -p 'process.versions.node.split(".")[0]' 2>/dev/null || echo none)
 if [ "$have" = "$want" ]; then ok "Node $(node -v) (.nvmrc wants $want)"; else bad "Node $want needed, found $have" "nvm install $want && nvm use $want"; fi
 if [ ! -d node_modules ]; then
@@ -56,7 +56,7 @@ if [ -z "$tracked" ]; then ok "No .env, .auth.db or data/mesh/ files tracked by 
 if th=$(bash scripts/check-secrets-local.sh --check 2>&1); then
   ok "TruffleHog 3 ($th)"
 else
-  bad "No TruffleHog 3, which the commit hook and npm run security:secrets need: $(echo "$th" | head -1 | sed 's/^❌ //')" "brew install trufflehog, or see docs/REMOTE_DEVELOPMENT.md"
+  bad "No TruffleHog 3, which the commit hook and npm run security:secrets need: $(echo "$th" | sed -n 1p | sed 's/^❌ //')" "brew install trufflehog, or see docs/REMOTE_DEVELOPMENT.md"
 fi
 hooks=$(git rev-parse --git-path hooks)
 if grep -q pre-commit "$hooks/pre-commit" 2>/dev/null && grep -q pre-commit "$hooks/commit-msg" 2>/dev/null; then

@@ -72,7 +72,7 @@ if [ "$ENV_ONLY" = 1 ]; then
 fi
 
 step "Node"
-want=$(sed -E 's/^v?([0-9]+).*/\1/' .nvmrc | head -1)
+want=$(sed -E 's/^v?([0-9]+).*/\1/' .nvmrc | sed -n 1p)
 have=$(node -p 'process.versions.node.split(".")[0]' 2>/dev/null || echo none)
 if [ "$have" != "$want" ]; then
   echo "Node $want is needed (.nvmrc); this shell has ${have}. Run: nvm install $want && nvm use $want" >&2

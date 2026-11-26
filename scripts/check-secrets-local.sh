@@ -19,7 +19,7 @@ if ! command -v "$TH" >/dev/null 2>&1; then
   echo "❌ TruffleHog 3 is not installed: brew install trufflehog (see docs/REMOTE_DEVELOPMENT.md)." >&2
   exit 2
 fi
-version=$("$TH" --version 2>&1 | head -1)
+version=$("$TH" --version 2>&1 | sed -n 1p)
 if ! [[ "$version" =~ ^trufflehog\ 3\. ]]; then
   echo "❌ $(command -v "$TH") is not TruffleHog 3 (it says: ${version:-nothing})." >&2
   echo "   The pip package is TruffleHog 2. Install TruffleHog 3 (brew install trufflehog) and put it first on PATH," >&2
@@ -54,7 +54,7 @@ rc=$?
 # The pattern is written with -{5}, so this line never matches itself.
 pem=()
 while IFS= read -r f; do
-  grep -A1 -E -- 'PRIVATE KEY-{5}' "$f" 2>/dev/null | grep -qE '^[A-Za-z0-9+/=]{40,}$' && pem+=("$f")
+  grep -A1 -E -- 'PRIVATE KEY-{5}' "$f" 2>/dev/null | grep -E '^[A-Za-z0-9+/=]{40,}$' >/dev/null && pem+=("$f")
 done < <(grep -l -E -- 'PRIVATE KEY-{5}' "${files[@]}" 2>/dev/null)
 if [ ${#pem[@]} -gt 0 ]; then
   printf '❌ PEM private key in: %s\n' "${pem[@]}" >&2
