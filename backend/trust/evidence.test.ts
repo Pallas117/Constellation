@@ -1,12 +1,15 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
-import { buildEvidencePack, ENVIRONMENT_NOT_SPACECRAFT, GENESIS, verifyEvidencePack, type EvidenceInputs } from "./evidence.js";
-import { renderEvidencePdf } from "./evidence-pdf.js";
+import { VERDICT_LABEL, VERDICT_NEXT_STEP, VERDICT_ORDER } from "../../shared/policy/verdict-next-step.js";
+import { buildEvidencePack, ENVIRONMENT_NOT_SPACECRAFT, GENESIS, packWording, verifyEvidencePack, type EvidenceInputs } from "./evidence.js";
+import { CURRENT_EVIDENCE_PDF_RENDERER, declaredEvidencePdfRenderer, renderEvidencePdf } from "./evidence-pdf.js";
 import { archivePath, clone, csv, mapping, NOW, packFromStoredInputs, rehashPack, rehashRecord, relink, replayed, sha, WINDOW } from "./fixtures/evidence-pack.js";
 import { ingestLog } from "./ingest.js";
 import { HELVETICA_BOLD_WIDTHS, HELVETICA_WIDTHS, textWidth, winAnsi, wrap } from "./pdf.js";
-import { buildTrustRecord, DEFAULT_POLICY, type TrustRecord } from "./record.js";
+import { checkPack } from "./pack-check.js";
+import { buildTrustRecord, DEFAULT_POLICY, wordingHits, type TrustRecord, type Verdict } from "./record.js";
+import { KEYRING_SCHEMA, type Keyring } from "./signing.js";
 
 test("evidence pack: from a log and a replayed storm, every row accounted for, and the same stored inputs give the same pack and PDF (GAU-60)", async () => {
   const a = await packFromStoredInputs();
@@ -128,4 +131,96 @@ test("PDF writer: core-14 widths, WinAnsi encoding with transliteration, and lin
     assert.ok(lines.every((l) => textWidth(l, "Helvetica", 7) <= width), `width ${width}`);
     assert.equal(lines.join("").replace(/\s/g, ""), long.replace(/\s/g, ""), "nothing lost");
   }
+});
+
+test("next step per verdict: one reviewed line for every verdict, in plain ASCII, with no claim a pack may not make (GAU-59)", async () => {
+  const verdicts: Verdict[] = ["consistent", "degraded-context", "unknown"];
+  assert.deepEqual([...VERDICT_ORDER].sort(), [...verdicts].sort(), "every verdict is ordered once");
+  for (const v of verdicts) {
+    assert.ok(VERDICT_NEXT_STEP[v].length > 40, `${v} has a next step`);
+    assert.match(VERDICT_NEXT_STEP[v], /^[\x20-\x7e]+$/, `${v} is plain ASCII, so the PDF prints it as written`);
+    assert.ok(VERDICT_LABEL[v]);
+  }
+  assert.deepEqual(wordingHits(Object.values(VERDICT_NEXT_STEP)), [], "no banned words");
+  // The default policy gives "consistent" without orbit context (record.ts verdictFor), so the line
+  // must not promise that nothing needs a second look; reword it if the default ever changes.
+  assert.equal(DEFAULT_POLICY.requireOrbitContext, false);
+  assert.doesNotMatch(VERDICT_NEXT_STEP.consistent, /nothing in the conditions/i, "consistent makes no blanket all-clear");
+  assert.match(VERDICT_NEXT_STEP.consistent, /South Atlantic Anomaly counts only where it was assessed/, "consistent says the SAA may not have been assessed");
+  assert.match(VERDICT_NEXT_STEP.unknown, /conflicting/, "unknown covers conflicting inputs, as verdictFor does");
+  const { pack } = await packFromStoredInputs();
+  assert.deepEqual(packWording({ ...pack, limitations: Object.values(VERDICT_NEXT_STEP) }), [], "no regulatory or at-the-spacecraft claims");
+});
+
+test("evidence pack PDF: the next step is printed for each verdict the pack holds, and only those (GAU-59)", async () => {
+  const { pack } = await packFromStoredInputs();
+  const firstWords = (v: Verdict) => VERDICT_NEXT_STEP[v].split(" ").slice(0, 4).join(" ");
+  const check = (p: typeof pack) => {
+    const text = renderEvidencePdf(p).toString("latin1");
+    for (const v of VERDICT_ORDER) {
+      const held = p.summary.verdicts[v] > 0;
+      assert.equal(text.includes(`(If ${VERDICT_LABEL[v]}) Tj`), held, `${v}: key printed only when held`);
+      assert.equal(text.includes(`(${firstWords(v)}`), held, `${v}: step printed only when held`);
+    }
+    return text;
+  };
+  check(pack);
+  // Every verdict at once, and none: the section follows the counts.
+  const all = clone(pack);
+  all.summary.verdicts = { consistent: 1, "degraded-context": 1, unknown: 1 };
+  assert.ok(check(all).includes("(What to do next) Tj"));
+  const none = clone(pack);
+  none.summary.verdicts = { consistent: 0, "degraded-context": 0, unknown: 0 };
+  assert.ok(!check(none).includes("(What to do next) Tj"));
+  assert.ok(!JSON.stringify(pack).includes(firstWords("consistent")), "the lines are not part of the hashed pack");
+});
+
+test("evidence pack PDF: renderer versions; a PDF made before the next steps (renderer 1) still verifies, a tampered or relabelled one fails (GAU-59)", async () => {
+  const { pack } = await packFromStoredInputs();
+  const ring: Keyring = { schema: KEYRING_SCHEMA, keys: [] };
+  const verify = (bytes: Buffer) => checkPack(pack, ring, { subject: "pack.json", keyringLabel: "test keyring", allowUnsigned: true, pdf: { bytes, label: "pack.pdf" } });
+  const latin1 = (b: Buffer) => b.toString("latin1");
+  const edit = (b: Buffer, from: string, to: string) => {
+    assert.ok(latin1(b).includes(from), `the PDF holds ${from}`);
+    return Buffer.from(latin1(b).replace(from, to), "latin1");
+  };
+
+  // Renderer 1 is the rendering every PDF had before GAU-59: /Producer "Gauss", no next steps, no version line.
+  const v1 = renderEvidencePdf(pack, 1);
+  assert.ok(latin1(v1).includes("/Producer (Gauss) /CreationDate"));
+  assert.ok(!latin1(v1).includes("(What to do next) Tj") && !latin1(v1).includes("(PDF renderer) Tj"));
+  assert.equal(declaredEvidencePdfRenderer(v1), 1, "no version declared = renderer 1");
+  const old = verify(v1);
+  assert.equal(old.ok, true, old.lines.join("\n"));
+  assert.match(old.lines.join("\n"), /pack\.pdf matches/);
+  assert.match(old.lines.join("\n"), /NOTE: pack\.pdf was made by an older Gauss \(PDF renderer version 1\) and matches that rendering/);
+
+  // The current renderer names itself and verifies without the older-Gauss note.
+  const v2 = renderEvidencePdf(pack);
+  assert.equal(CURRENT_EVIDENCE_PDF_RENDERER, 2);
+  assert.ok(latin1(v2).includes("/Producer (Gauss evidence-pdf renderer 2) /CreationDate"));
+  assert.ok(latin1(v2).includes("(What to do next) Tj") && latin1(v2).includes("(version 2) Tj"));
+  assert.equal(declaredEvidencePdfRenderer(v2), 2);
+  const current = verify(v2);
+  assert.equal(current.ok, true, current.lines.join("\n"));
+  assert.ok(!current.notes.some((n) => n.includes("older Gauss")));
+
+  // Tampering fails under either renderer (same length, so the cross-reference table stays valid).
+  for (const [renderer, good] of [[1, v1], [2, v2]] as const) {
+    const bad = verify(edit(good, `(${pack.packHash}) Tj`, `(${"0".repeat(64)}) Tj`));
+    assert.equal(bad.ok, false);
+    assert.deepEqual(bad.problems, [`pack.pdf is not the rendering of this pack (PDF renderer version ${renderer})`]);
+  }
+  // Relabelling does not help: a current PDF claiming renderer 1 is not the renderer-1 rendering, and vice versa.
+  assert.equal(verify(edit(v2, "/Producer (Gauss evidence-pdf renderer 2)", "/Producer (Gauss)")).ok, false);
+  assert.equal(verify(edit(v1, "/Producer (Gauss)", "/Producer (Gauss evidence-pdf renderer 2)")).ok, false);
+  // A version this Gauss does not have is named as such, not called a forgery.
+  const future = verify(edit(v2, "renderer 2)", "renderer 9)"));
+  assert.equal(future.ok, false);
+  assert.match(future.problems.join("\n"), /says it was made by PDF renderer version 9, which this Gauss version does not have \(it has 1, 2\); verify it with a newer Gauss/);
+  // Text drawn on a page cannot declare a version: the writer escapes "(" in page text.
+  const trick = clone(pack);
+  trick.limitations = [...trick.limitations, "/Producer (Gauss evidence-pdf renderer 2)"];
+  assert.equal(declaredEvidencePdfRenderer(renderEvidencePdf(trick, 1)), 1);
+  assert.throws(() => renderEvidencePdf(pack, 3 as never), RangeError);
 });

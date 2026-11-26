@@ -114,8 +114,12 @@ export class PdfPage {
   }
 }
 
-/** Serialise pages to PDF bytes. `id` (hex) becomes the file identifier; `created` is ISO UTC. */
-export function writePdf(pages: PdfPage[], meta: { title: string; created: string; id: string }): Buffer {
+/**
+ * Serialise pages to PDF bytes. `id` (hex) becomes the file identifier; `created` is ISO UTC;
+ * `producer` is the Info dictionary's /Producer (default "Gauss", what every PDF said before
+ * renderer versions existed, so those renderings stay byte for byte the same).
+ */
+export function writePdf(pages: PdfPage[], meta: { title: string; created: string; id: string; producer?: string }): Buffer {
   const objects: string[] = [];
   const add = (body: string) => {
     objects.push(body);
@@ -127,7 +131,7 @@ export function writePdf(pages: PdfPage[], meta: { title: string; created: strin
   const catalogId = add("");
   const pagesId = add("");
   const d = meta.created.replace(/[-:]/g, "").replace("T", "").slice(0, 14);
-  const infoId = add(`<< /Title ${literal(meta.title)} /Producer (Gauss) /CreationDate (D:${d}Z) >>`);
+  const infoId = add(`<< /Title ${literal(meta.title)} /Producer ${literal(meta.producer ?? "Gauss")} /CreationDate (D:${d}Z) >>`);
   const kids: number[] = [];
   for (const page of pages) {
     const stream = page.ops.join("\n");

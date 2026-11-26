@@ -14,7 +14,7 @@ You need three files from Gauss: the pack (`pack.json`), its PDF (`pack.pdf`) an
 npm run trust:verify -- pack.json --pdf pack.pdf --keyring signing-keys.json
 ```
 
-It recomputes every record hash, the hash chain and the pack hash, checks the wording rules, checks the signature against the keyring, and checks that the PDF is exactly the rendering of that pack. Exit code 0 means everything checks out, 1 means something does not (each problem is listed), 2 means the command was used wrongly.
+It recomputes every record hash, the hash chain and the pack hash, checks the wording rules, checks the signature against the keyring, and checks that the PDF is exactly the rendering of that pack by the PDF renderer version the PDF declares in its /Producer (none = version 1, every PDF made before GAU-59; version 2 adds a "What to do next" line per verdict). Older PDFs therefore still verify, with a NOTE that a re-render gives the current version. Exit code 0 means everything checks out, 1 means something does not (each problem is listed), 2 means the command was used wrongly.
 
 ```
 pack.json: OK. 3 records, pack hash 9f2c…; signed by key ed25519:4be1… on 2026-10-24T09:12:03.000Z (keyring signing-keys.json); pack.pdf matches

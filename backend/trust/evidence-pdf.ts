@@ -1,10 +1,43 @@
 /**
  * The PDF view of an evidence pack (PR-04, GAU-60): what a customer QA lead, insurer or
- * regulator reads. The JSON pack is the record; this renders it without adding anything, and the
- * same pack always gives the same PDF bytes.
+ * regulator reads. The JSON pack is the record; the PDF shows its contents plus fixed text that
+ * is the same for every pack (headings, the verify command and, from renderer version 2, the
+ * reviewed next step for each verdict the pack holds: shared/policy/verdict-next-step.ts). That
+ * fixed text is not hashed or signed; only the pack is. A given pack and renderer version always
+ * give the same PDF bytes.
+ *
+ * Renderer versions are kept, never edited: version 1 is the rendering before GAU-59 (no next
+ * steps, /Producer "Gauss"); version 2 adds "What to do next" and names itself in /Producer and
+ * under Integrity. `trust:verify --pdf` renders the pack with the version the PDF declares
+ * (none = 1), so PDFs issued by older Gauss versions still verify. Any change to the output is a
+ * new version.
  */
+import { VERDICT_LABEL, VERDICT_NEXT_STEP, VERDICT_ORDER } from "../../shared/policy/verdict-next-step.js";
 import type { EvidencePack } from "./evidence.js";
 import { A4, PdfPage, textWidth, wrap, writePdf, type FontName } from "./pdf.js";
+
+/** Every renderer version this Gauss can render, oldest first. */
+export const EVIDENCE_PDF_RENDERERS = [1, 2] as const;
+export type EvidencePdfRenderer = (typeof EVIDENCE_PDF_RENDERERS)[number];
+/** What new PDFs are rendered with. */
+export const CURRENT_EVIDENCE_PDF_RENDERER: EvidencePdfRenderer = 2;
+
+const PRODUCER_V2_PREFIX = "Gauss evidence-pdf renderer ";
+const producerFor = (renderer: EvidencePdfRenderer) => (renderer === 1 ? "Gauss" : `${PRODUCER_V2_PREFIX}${renderer}`);
+
+export const isEvidencePdfRenderer = (n: number): n is EvidencePdfRenderer => (EVIDENCE_PDF_RENDERERS as readonly number[]).includes(n);
+
+/**
+ * The renderer version a PDF declares in its /Producer: the number after "Gauss evidence-pdf
+ * renderer", or 1 when it names none (every PDF made before versions existed says only "Gauss").
+ * This only picks which rendering to compare with; the byte-for-byte comparison decides, so a
+ * wrong or forged declaration can only make a check fail. Text drawn on a page cannot match:
+ * the PDF writer escapes "(" in page text.
+ */
+export function declaredEvidencePdfRenderer(pdf: Buffer): number {
+  const m = /\/Producer \(Gauss evidence-pdf renderer (\d{1,6})\)/.exec(pdf.toString("latin1"));
+  return m ? Number(m[1]) : 1;
+}
 
 const MARGIN = 42;
 const WIDTH = A4.width - 2 * MARGIN;
@@ -29,7 +62,8 @@ const level = (f: { value: { label: string } | null }) => f.value?.label ?? "?";
 const saa = (v: boolean | null) => (v === null ? "?" : v ? "yes" : "no");
 const utc = (iso: string) => iso.replace("T", " ").replace(/\.\d{3}Z$|Z$/, "");
 
-export function renderEvidencePdf(pack: EvidencePack): Buffer {
+export function renderEvidencePdf(pack: EvidencePack, renderer: EvidencePdfRenderer = CURRENT_EVIDENCE_PDF_RENDERER): Buffer {
+  if (!isEvidencePdfRenderer(renderer)) throw new RangeError(`unknown evidence PDF renderer version ${String(renderer)}`);
   const pages: PdfPage[] = [];
   let page = new PdfPage();
   pages.push(page);
@@ -125,6 +159,7 @@ export function renderEvidencePdf(pack: EvidencePack): Buffer {
     keyValue("Signature", "Not signed. Compare the pack hash with a copy you trust.");
   }
   keyValue("Verify", "npm run trust:verify -- <pack.json> --pdf <pack.pdf>", "Courier");
+  if (renderer >= 2) keyValue("PDF renderer", `version ${renderer}`);
 
   heading("Inputs");
   const log = pack.inputs.log;
@@ -149,6 +184,13 @@ export function renderEvidencePdf(pack: EvidencePack): Buffer {
   keyValue("Verdicts", `${pack.summary.records} records: ${v.consistent} consistent, ${v["degraded-context"]} degraded context, ${v.unknown} unknown`);
   for (const s of pack.summary.bySpacecraft) {
     keyValue(s.spacecraftId, `${s.verdicts.consistent} consistent, ${s.verdicts["degraded-context"]} degraded context, ${s.verdicts.unknown} unknown`);
+  }
+  // Renderer 2: one reviewed next step for each verdict the pack contains (shared/policy/verdict-next-step.ts).
+  const present = renderer >= 2 ? VERDICT_ORDER.filter((verdict) => v[verdict] > 0) : [];
+  if (present.length) {
+    y -= 4;
+    paragraph("What to do next", "Helvetica-Bold", 8.5);
+    for (const verdict of present) keyValue(`If ${VERDICT_LABEL[verdict]}`, VERDICT_NEXT_STEP[verdict]);
   }
   if (pack.summary.reasons.length) {
     y -= 4;
@@ -207,5 +249,5 @@ export function renderEvidencePdf(pack: EvidencePack): Buffer {
     const n = `Page ${i + 1} of ${pages.length}`;
     pg.text(MARGIN + WIDTH - textWidth(n, "Helvetica", 7), 26, n, "Helvetica", 7, 0.45);
   });
-  return writePdf(pages, { title: `Gauss evidence pack ${pack.packId}`, created: pack.generatedAt, id: pack.packHash });
+  return writePdf(pages, { title: `Gauss evidence pack ${pack.packId}`, created: pack.generatedAt, id: pack.packHash, producer: producerFor(renderer) });
 }

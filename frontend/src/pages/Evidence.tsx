@@ -4,6 +4,7 @@ import { StatusBadge, type BadgeTone } from "@/components/brand/StatusBadge";
 import { Button } from "@/components/ui/button";
 import { useDocumentTitle } from "@/hooks/useDocumentTitle";
 import { evidenceApi, packFileText, type Analysis, type EvidenceOptions, type EvidencePack, type PackCheck, type TrustRecord } from "@/lib/api/evidence";
+import { VERDICT_LABEL, VERDICT_NEXT_STEP, VERDICT_ORDER } from "../../../shared/policy/verdict-next-step";
 
 const OWN_MAPPING = "__own__";
 const utc = (iso: string | null | undefined) => (iso ? iso.replace("T", " ").replace(/(:\d\d)(\.\d+)?Z$/, "$1 UT") : "—");
@@ -351,6 +352,29 @@ export default function Evidence() {
                   </tbody>
                 </table>
               </div>
+
+              {/* One reviewed next step per verdict present (shared/policy/verdict-next-step.ts), the same lines as the PDF. */}
+              {VERDICT_ORDER.some((v) => (pack.summary.verdicts[v] ?? 0) > 0) && (
+                <div>
+                  <p className="stat-label">What to do next</p>
+                  <ul aria-label="What to do next" className="mt-2 space-y-2 text-xs">
+                    {VERDICT_ORDER.filter((v) => (pack.summary.verdicts[v] ?? 0) > 0).map((v) => (
+                      <li key={v} className="flex flex-col gap-1 sm:flex-row sm:items-start sm:gap-3">
+                        <span className="flex shrink-0 items-center gap-2 sm:w-56">
+                          <StatusBadge tone={VERDICT_TONE[v]}>{v}</StatusBadge>
+                          <span className="font-mono tabular-nums text-muted-foreground">
+                            {pack.summary.verdicts[v]} {pack.summary.verdicts[v] === 1 ? "record" : "records"}
+                          </span>
+                        </span>
+                        <span className="text-muted-foreground">
+                          <span className="sr-only">If {VERDICT_LABEL[v]}: </span>
+                          {VERDICT_NEXT_STEP[v]}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
 
               {pack.inputs.log && pack.inputs.log.rejected.length > 0 && (
                 <div>

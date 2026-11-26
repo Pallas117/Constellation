@@ -8,7 +8,8 @@
  * the published backend/trust/signing-keys.json; a customer passes the copy Gauss gave them). An
  * unsigned pack fails unless --allow-unsigned, which checks integrity only. A pack signed before
  * its key was retired passes with a NOTE saying so; a revoked key fails. `--pdf` also checks the
- * PDF is exactly the rendering of this pack; `--hash` compares with a pack hash held elsewhere.
+ * PDF is exactly the rendering of this pack, by the renderer version the PDF declares (none = 1);
+ * `--hash` compares with a pack hash held elsewhere.
  * A file: checks its detached signature (`trust:sign -- --file`). Exit 0 only when everything
  * checks out.
  */
