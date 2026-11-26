@@ -230,6 +230,7 @@ npm test
 # - role matrix: user < staff < operator < admin
 # - no session → 401, role too low → 403, allowed role passes
 # - email sign-up cannot choose its own role
+# - email sign-up is invite-only (SIGNUP_ALLOWED_EMAILS): others get 403, no account
 ```
 
 Never point RBAC checks at the live backend (:3001): CyberTiger counts 401/403s

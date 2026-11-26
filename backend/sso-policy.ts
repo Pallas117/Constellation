@@ -43,3 +43,28 @@ export function ssoSignUpAllowed(
 ): boolean {
   return user.emailVerified === true && ssoEmailAllowed(user.email, policy);
 }
+
+// Email/password sign-up is by invitation: only the exact addresses listed in
+// SIGNUP_ALLOWED_EMAILS (comma list) may create an account. The default is an
+// empty list, so sign-up is closed. A whole domain is deliberately not enough
+// here: unlike SSO, nobody has verified that the person owns the address.
+// Existing accounts and sign-in are unaffected.
+// Local dev: put your own address in .env, e.g. SIGNUP_ALLOWED_EMAILS=dev@example.com
+
+export function signUpEmailsFromEnv(env: NodeJS.ProcessEnv = process.env): ReadonlySet<string> {
+  return new Set(
+    (env.SIGNUP_ALLOWED_EMAILS ?? "")
+      .split(",")
+      .map((e) => e.trim().toLowerCase())
+      .filter(Boolean),
+  );
+}
+
+/** Path of better-auth's email/password sign-up endpoint. */
+export function isEmailSignUp(path: string | null | undefined): boolean {
+  return typeof path === "string" && /\/sign-up\/email$/.test(path);
+}
+
+export function emailSignUpAllowed(email: unknown, invited: ReadonlySet<string>): boolean {
+  return typeof email === "string" && invited.has(email.trim().toLowerCase());
+}

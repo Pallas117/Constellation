@@ -1,7 +1,16 @@
 import { betterAuth } from "better-auth";
+import { APIError, createAuthMiddleware } from "better-auth/api";
 import Database from "better-sqlite3";
 import { authDbPath } from "./auth-db.js";
-import { isSsoCallback, ssoEmailAllowed as policyAllows, ssoPolicyFromEnv, ssoSignUpAllowed } from "./sso-policy.js";
+import {
+    emailSignUpAllowed,
+    isEmailSignUp,
+    isSsoCallback,
+    signUpEmailsFromEnv,
+    ssoEmailAllowed as policyAllows,
+    ssoPolicyFromEnv,
+    ssoSignUpAllowed,
+} from "./sso-policy.js";
 
 // Initialize a local SQLite db for better-auth (.auth.db; tests use a throwaway file)
 const sqlite = new Database(authDbPath());
@@ -27,6 +36,8 @@ export const ssoGoogleEnabled = Boolean(googleClientId && googleClientSecret);
 export const ssoGithubEnabled = Boolean(githubClientId && githubClientSecret);
 const ssoPolicy = ssoPolicyFromEnv();
 export const ssoAllowedDomain = ssoPolicy.domain;
+// Email/password sign-up is invite-only: SIGNUP_ALLOWED_EMAILS (backend/sso-policy.ts).
+const invitedEmails = signUpEmailsFromEnv();
 
 /** SSO may only create accounts for the allowed domain or listed emails (enforced here, not just hinted). */
 export function ssoEmailAllowed(email: string | null | undefined): boolean {
@@ -62,6 +73,16 @@ export const auth = betterAuth({
     emailAndPassword: {  
         enabled: true
     },
+    hooks: {
+        // Invite-only sign-up: refuse an address that is not on the list before
+        // the endpoint runs, so nothing is created. The same answer for every
+        // refused address; the address itself is neither echoed nor logged.
+        before: createAuthMiddleware(async (ctx) => {
+            if (isEmailSignUp(ctx.path) && !emailSignUpAllowed(ctx.body?.email, invitedEmails)) {
+                throw new APIError("FORBIDDEN", { message: "Sign-up is by invitation only." });
+            }
+        }),
+    },
     socialProviders: {
         ...(ssoGoogleEnabled
             ? {
@@ -87,8 +108,12 @@ export const auth = betterAuth({
                 before: async (user, ctx) => {
                     // New accounts from Google or GitHub need a provider-verified email
                     // on the allowed domain (or SSO_ALLOWED_EMAILS). Email/password
-                    // sign-up stays open and starts as "user".
+                    // sign-up is invite-only (checked again here, where the row is
+                    // written) and starts as "user".
                     if (isSsoCallback(ctx?.path) && !ssoSignUpAllowed(user, ssoPolicy)) {
+                        return false;
+                    }
+                    if (isEmailSignUp(ctx?.path) && !emailSignUpAllowed(user.email, invitedEmails)) {
                         return false;
                     }
                     return { data: user };

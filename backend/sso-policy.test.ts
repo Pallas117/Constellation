@@ -1,6 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { isSsoCallback, ssoEmailAllowed, ssoPolicyFromEnv, ssoSignUpAllowed } from "./sso-policy.js";
+import {
+  emailSignUpAllowed,
+  isEmailSignUp,
+  isSsoCallback,
+  signUpEmailsFromEnv,
+  ssoEmailAllowed,
+  ssoPolicyFromEnv,
+  ssoSignUpAllowed,
+} from "./sso-policy.js";
 
 const policy = ssoPolicyFromEnv({ SSO_ALLOWED_DOMAIN: "lightbound.uk", SSO_ALLOWED_EMAILS: " Dev@Example.com ,x@y.io" });
 
@@ -34,4 +42,32 @@ test("defaults: lightbound.uk, no extra emails", () => {
   const d = ssoPolicyFromEnv({});
   assert.equal(d.domain, "lightbound.uk");
   assert.equal(d.emails.size, 0);
+});
+
+test("email sign-up: only invited addresses, ignoring case and surrounding whitespace", () => {
+  const invited = signUpEmailsFromEnv({ SIGNUP_ALLOWED_EMAILS: " Dev@Example.com ,, x@y.io " });
+  assert.equal(invited.size, 2);
+  assert.equal(emailSignUpAllowed("dev@example.com", invited), true);
+  assert.equal(emailSignUpAllowed("  DEV@EXAMPLE.COM ", invited), true);
+  assert.equal(emailSignUpAllowed("x@y.io", invited), true);
+  assert.equal(emailSignUpAllowed("dev@example.com.evil.io", invited), false);
+  assert.equal(emailSignUpAllowed("other@example.com", invited), false);
+  assert.equal(emailSignUpAllowed("", invited), false);
+  assert.equal(emailSignUpAllowed(undefined, invited), false);
+  assert.equal(emailSignUpAllowed({ toString: () => "dev@example.com" }, invited), false);
+});
+
+test("email sign-up is closed by default, and the SSO domain does not open it", () => {
+  const closed = signUpEmailsFromEnv({ SSO_ALLOWED_DOMAIN: "lightbound.uk", SSO_ALLOWED_EMAILS: "dev@example.com" });
+  assert.equal(closed.size, 0);
+  assert.equal(emailSignUpAllowed("josh@lightbound.uk", closed), false);
+  assert.equal(emailSignUpAllowed("dev@example.com", closed), false);
+});
+
+test("only the email sign-up endpoint counts as email sign-up", () => {
+  assert.equal(isEmailSignUp("/sign-up/email"), true);
+  assert.equal(isEmailSignUp("/api/auth/sign-up/email"), true);
+  assert.equal(isEmailSignUp("/sign-in/email"), false);
+  assert.equal(isEmailSignUp("/callback/google"), false);
+  assert.equal(isEmailSignUp(undefined), false);
 });
