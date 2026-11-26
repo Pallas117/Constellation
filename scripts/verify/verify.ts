@@ -44,6 +44,7 @@ const opsJunitPath = path.join(outDir, "ops-junit.xml");
 const uiJunitPath = path.join(outDir, "ui-junit.xml");
 const UI_REPORT_MAX_MS = 2 * 60 * 60 * 1000;
 const vpsJunitPath = path.join(outDir, "vps-junit.xml");
+const authBackupJunitPath = path.join(outDir, "auth-backup-junit.xml");
 const websiteJunitPath = path.join(outDir, "website-junit.xml");
 const argoJsonPath = path.join(outDir, "argo-go-test.json");
 const skipBuild = process.argv.includes("--no-build");
@@ -58,7 +59,7 @@ function step(name: string, cmd: string, args: string[], extraEnv: Record<string
 
 mkdirSync(outDir, { recursive: true });
 // A report left by an earlier run must never stand in for a run that died before writing one.
-for (const p of [junitPath, opsJunitPath, vpsJunitPath, websiteJunitPath, argoJsonPath]) rmSync(p, { force: true });
+for (const p of [junitPath, opsJunitPath, vpsJunitPath, authBackupJunitPath, websiteJunitPath, argoJsonPath]) rmSync(p, { force: true });
 const baseline = JSON.parse(readFileSync(path.join(root, "requirements/requirements.json"), "utf8")) as Baseline;
 const results: Record<string, boolean> = {};
 
@@ -100,6 +101,8 @@ results.tests = step("Test suite", process.execPath, [
 results.opsTests = step("Ops tests (bash)", "bash", ["scripts/ops/gauss-services.test.sh"], { GAUSS_OPS_JUNIT: opsJunitPath });
 // VPS kit (REQ-OPS-011): dry runs and text checks only, so it is hermetic on any host.
 results.vpsKitTests = step("VPS kit tests (bash)", "bash", ["scripts/ops/vps/vps-kit.test.sh"], { GAUSS_OPS_JUNIT: vpsJunitPath });
+// Sign-in database backup and restore test (FMEA FM-29): throwaway databases only, needs sqlite3.
+results.authBackupTests = step("Auth backup tests (bash)", "bash", ["scripts/ops/auth-backup.test.sh"], { GAUSS_OPS_JUNIT: authBackupJunitPath });
 
 // Argo's Go suite (tools/argo, standard library only), short mode as `ARGO_SHORT=1 tools/argo/check.sh`
 // runs it, with JSON output so its tests count in the VCRM by Go test name (FMEA FM-20). A failing
@@ -127,6 +130,7 @@ const outcomes = mergeOutcomes(
   readJunit(opsJunitPath),
   readJunit(uiJunitPath),
   readJunit(vpsJunitPath),
+  readJunit(authBackupJunitPath),
   readJunit(websiteJunitPath),
   existsSync(argoJsonPath) ? parseGoTestJson(readFileSync(argoJsonPath, "utf8")) : new Map(),
 );
