@@ -8,7 +8,7 @@ Scope (export control, REG-04): signing, authentication and their key management
 
 ## Verify a pack (customers, offline)
 
-You need three files from Gauss: the pack (`pack.json`), its PDF (`pack.pdf`) and the Gauss keyring (`signing-keys.json`). Then, in a checkout of the Gauss repository at the release tag, after `npm ci` with Node 22 (no network is needed after that):
+You need three files from Gauss: the pack (`pack.json`), its PDF (`pack.pdf`) and the Gauss keyring (`signing-keys.json`). Then, in a checkout of the Gauss repository at the release tag, after `npm ci` with Node 26 (no network is needed after that):
 
 ```bash
 npm run trust:verify -- pack.json --pdf pack.pdf --keyring signing-keys.json

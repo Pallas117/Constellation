@@ -8,8 +8,8 @@ description: Design system, component inventory, react-three-fiber scene convent
 ## Stack
 React 18 + Vite (`frontend/vite.config.ts`, alias `@` → `frontend/src`), Tailwind + shadcn/ui (`frontend/src/components/ui/*`), three 0.169 + @react-three/fiber 8 + drei 9, React Router in `frontend/src/Cybertiger.tsx`.
 
-## Design language: Lightbound Brand Room
-Source of truth is the "Lightbound Brand Room" artifact (https://claude.ai/artifact/Uxvk64fWtQovS8bpeqbg4s, 9 Oct 2026). Tokens are in `frontend/src/index.css` and the Tailwind names in `tailwind.config.cjs` (the only Tailwind config; `frontend/postcss.config.js` loads it by path). The Figma library "Lightbound Brand System — Gauss Aurora UI" (https://www.figma.com/design/5VORhyyI6BQwW2HTuU5BWL) mirrors them as variables whose code syntax is the CSS token, plus the components below:
+## Design language: Lightbound Brand Book
+Source of truth, newest first: the Lightbound Brand Book, then the Design System artifact (tokens v3). The "Lightbound Brand Room" artifact (https://claude.ai/artifact/Uxvk64fWtQovS8bpeqbg4s, 9 Oct 2026) is older; where they differ the Brand Book wins. Tokens are in `frontend/src/index.css` and the Tailwind names in `tailwind.config.cjs` (the only Tailwind config; `frontend/postcss.config.js` loads it by path). The Figma library "Lightbound Brand System — Gauss Aurora UI" (https://www.figma.com/design/5VORhyyI6BQwW2HTuU5BWL) mirrors them as variables whose code syntax is the CSS token, plus the components below:
 
 | Token | Hex | Tailwind | Use |
 |---|---|---|---|
@@ -34,7 +34,7 @@ Source of truth is the "Lightbound Brand Room" artifact (https://claude.ai/artif
 - Nominal states are neutral, not lime. Toggles and switches are warm white.
 - Wrap every `GaussGlobe` in `SceneBoundary` (from `components/ErrorBoundary`) so a WebGL failure only blanks the scene.
 - Scene encoding: closed field lines warm white→Earth blue; open amber→Sun; inner belt protons amber; outer belt electrons and aurora lime; magnetopause Earth blue; reconnection hot spot Sun.
-- Note: GAU-9 mentions "Volt Green / Solar Red / Inter". The Brand Room supersedes that.
+- Note: GAU-9 mentions "Volt Green / Solar Red / Inter". The Brand Book supersedes that.
 
 ## 3D scene conventions (`frontend/src/components/scene/`)
 - 1 scene unit = 1 Earth radius. The Sun is along +x. Scene axes = GSM `(x, z, −y)`: use `gsmToScene` from `@/lib/physics/geomagnetic`.
@@ -51,7 +51,7 @@ Source of truth is the "Lightbound Brand Room" artifact (https://claude.ai/artif
 - Mobile: check 375px width; panels stack (`lg:grid-cols-[1fr_320px]` pattern).
 
 ## Verify
-1. `npm run lint` (strict tsc on the frontend, backend, e2e tests and scripts). It is clean, so any error is yours to fix.
+1. `npm run check:changed` while iterating, then `npm run quality:full` (types and ESLint, as the gate runs them). Both are clean on main, so any error is yours to fix.
 2. Run Vite on a free port (`npx vite --config frontend/vite.config.ts --port 8091 --strictPort`) and open `/heliophysics` (public) in the Browser pane. Wait ~5 s for the canvas, check console errors and take a screenshot.
 3. Data hooks must only poll routes the viewer's role can use (`access: "public"` in `API_POLICY`, backend/rbac.ts, for signed-out pages). CyberTiger counts 401/403s and auto-blocks the IP, so a 401 in the console is a bug, not noise.
 4. `npm run build` before a PR.
