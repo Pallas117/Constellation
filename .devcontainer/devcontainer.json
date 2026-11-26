@@ -1,0 +1,29 @@
+// Gauss Aurora dev container: GitHub Codespaces, or VS Code "Reopen in Container".
+// Setup and rules: docs/REMOTE_DEVELOPMENT.md. Keep every forwarded port Private.
+{
+  "name": "Gauss Aurora",
+  "build": { "dockerfile": "Dockerfile" },
+  "features": {
+    "ghcr.io/devcontainers/features/go:1": { "version": "1.26" },
+    "ghcr.io/devcontainers/features/github-cli:1": {}
+  },
+  "hostRequirements": { "memory": "8gb" },
+  // The browser isn't in the container, so it reaches the API through the app's
+  // origin: Vite forwards /api and /ws to the backend on :3001.
+  "containerEnv": { "VITE_HELIO_PROXY_URL": "same-origin" },
+  "forwardPorts": [8080, 3001],
+  "portsAttributes": {
+    "8080": { "label": "Gauss app", "protocol": "http", "onAutoForward": "notify" },
+    "3001": { "label": "Gauss API (use it through the app)", "protocol": "http", "onAutoForward": "silent" }
+  },
+  "otherPortsAttributes": { "onAutoForward": "silent" },
+  "postCreateCommand": "bash scripts/dev/setup.sh",
+  "customizations": {
+    "vscode": {
+      "extensions": ["dbaeumer.vscode-eslint", "golang.go"]
+    },
+    "codespaces": {
+      "openFiles": ["docs/REMOTE_DEVELOPMENT.md"]
+    }
+  }
+}
