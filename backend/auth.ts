@@ -1,6 +1,7 @@
 import type { IncomingMessage } from "node:http";
 import type { NextFunction, Request, Response } from "express";
 import { auth } from "./better-auth.js";
+import { SessionIdle, sessionTokenFromCookie } from "./session-idle.js";
 
 function getWebHeaders(req: Request): Headers {
   const headers = new Headers();
@@ -29,7 +30,8 @@ export interface AuthContext {
 }
 
 /** `P` types `req.params`; pass the route's params, e.g. `AuthenticatedRequest<{ id: string }>` for "/:id". */
-export type AuthenticatedRequest<P = Request["params"]> = Request<P> & { auth?: AuthContext };
+/** `sessionEnded`: this server ended the caller's session (idle sign-out); its 401 is not an attack (CyberTiger). */
+export type AuthenticatedRequest<P = Request["params"]> = Request<P> & { auth?: AuthContext; sessionEnded?: boolean };
 
 const ROLE_RANK: Record<AuthRole, number> = {
   user: 1,
@@ -114,34 +116,56 @@ export function roleFromUser(user: { role?: unknown } | null | undefined): AuthR
   return normalizeRole(user?.role) ?? "user";
 }
 
-/** Resolves the caller's identity from the better-auth session, or null. */
-async function sessionContext(req: AuthenticatedRequest): Promise<AuthContext | null> {
-  if (!authRequired()) {
-    return {
-      userId: "development",
-      email: null,
-      role: "admin",
-      rawRoles: ["admin"],
-      token: "dev-bypass",
-    };
-  }
+/** Operator and admin sessions end after 30 minutes without a request (backend/session-idle.ts). */
+export const sessionIdle = new SessionIdle();
+
+const DEV_BYPASS: AuthContext = { userId: "development", email: null, role: "admin", rawRoles: ["admin"], token: "dev-bypass" };
+
+/**
+ * The caller's identity from the better-auth session, or null. `ended` is true when this server signed that session
+ * out (idle), so callers can say so and CyberTiger doesn't count the 401 as an attack.
+ */
+async function resolveSession(headers: Headers): Promise<{ context: AuthContext | null; ended: boolean }> {
+  if (!authRequired()) return { context: { ...DEV_BYPASS, rawRoles: ["admin"] }, ended: false };
   try {
-    const sessionResponse = await auth.api.getSession({
-      headers: getWebHeaders(req)
-    });
+    const sessionResponse = await auth.api.getSession({ headers });
     if (sessionResponse && sessionResponse.session && sessionResponse.user) {
+      const role = roleFromUser(sessionResponse.user);
+      const token = sessionResponse.session.token;
+      if (token) {
+        // Ended here before (and the revoke didn't take, or this is a replay of the old cookie): still ended.
+        if (sessionIdle.wasEnded(token)) return { context: null, ended: true };
+        if (ROLE_RANK[role] >= ROLE_RANK.operator && sessionIdle.touch(token) === "idle") {
+          sessionIdle.end(token);
+          try {
+            await auth.api.revokeSession({ headers, body: { token } });
+          } catch {
+            // The ended mark above already refuses it; the row expires on its own.
+          }
+          return { context: null, ended: true };
+        }
+      }
       return {
-        userId: sessionResponse.user.id,
-        email: sessionResponse.user.email ?? null,
-        role: roleFromUser(sessionResponse.user),
-        rawRoles: [roleFromUser(sessionResponse.user)],
-        token: sessionResponse.session.token ?? "better-auth-session"
+        context: {
+          userId: sessionResponse.user.id,
+          email: sessionResponse.user.email ?? null,
+          role,
+          rawRoles: [role],
+          token: token ?? "better-auth-session",
+        },
+        ended: false,
       };
     }
-  } catch (err) {
+  } catch {
     // Ignore internal auth errors; no legacy fallback is configured.
   }
-  return null;
+  return { context: null, ended: sessionIdle.wasEnded(sessionTokenFromCookie(headers.get("cookie"))) };
+}
+
+async function sessionContext(req: AuthenticatedRequest): Promise<AuthContext | null> {
+  const { context, ended } = await resolveSession(getWebHeaders(req));
+  if (ended) req.sessionEnded = true;
+  return context;
 }
 
 export async function authenticateRequest(
@@ -151,6 +175,12 @@ export async function authenticateRequest(
 ): Promise<void> {
   const context = await sessionContext(req);
   if (!context) {
+    if (req.sessionEnded) {
+      // Tells the app to show the sign-in page rather than retry.
+      res.setHeader("x-gauss-session", "ended");
+      unauthorized(res, `Signed out after ${sessionIdle.idleMinutes} minutes without activity. Please sign in again.`);
+      return;
+    }
     unauthorized(res, "Missing active better-auth session");
     return;
   }
@@ -188,38 +218,12 @@ export function requireRole(minRole: AuthRole) {
 }
 
 export async function authenticateSocket(req: IncomingMessage): Promise<AuthContext | null> {
-  if (!authRequired()) {
-    return {
-      userId: "development",
-      email: null,
-      role: "admin",
-      rawRoles: ["admin"],
-      token: "dev-bypass",
-    };
-  }
-
   const headers = new Headers();
   for (const [key, value] of Object.entries(req.headers)) {
     if (typeof value === "string") headers.set(key, value);
     else if (Array.isArray(value)) headers.set(key, value.join(", "));
   }
-
-  try {
-    const sessionResponse = await auth.api.getSession({ headers });
-    if (sessionResponse && sessionResponse.session && sessionResponse.user) {
-      return {
-        userId: sessionResponse.user.id,
-        email: sessionResponse.user.email ?? null,
-        role: roleFromUser(sessionResponse.user),
-        rawRoles: [roleFromUser(sessionResponse.user)],
-        token: sessionResponse.session.token ?? "better-auth-session",
-      };
-    }
-  } catch {
-    return null;
-  }
-
-  return null;
+  return (await resolveSession(headers)).context;
 }
 
 export function roleSatisfies(current: AuthRole, required: AuthRole): boolean {

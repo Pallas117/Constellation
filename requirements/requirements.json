@@ -494,6 +494,32 @@
       ]
     },
     {
+      "id": "REQ-SEC-023",
+      "title": "Session lifetime and cookies are pinned",
+      "statement": "The API shall end a session after 12 hours without use, renew it at most every 15 minutes while in use, and set its cookies HttpOnly, SameSite=Lax and Path=/, and Secure when the configured sign-in URL is https.",
+      "rationale": "Threat model TM-04 (2026-11-24): lifetime and cookie attributes were library defaults. Lax, not Strict, so the return from Google or GitHub sign-in keeps its state cookie.",
+      "parent": "GAU-25",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "production pins the session lifetime and cookie attributes instead of library defaults (TM-04)",
+        "sign-in cookies: HttpOnly, SameSite=Lax, 12 h; Secure only when the configured URL is https"
+      ]
+    },
+    {
+      "id": "REQ-SEC-024",
+      "title": "Idle operator sessions end on the server",
+      "statement": "The API shall end an operator or admin session that has made no request for 30 minutes, answer its later requests with HTTP 401 and the header x-gauss-session: ended, and not count those answers toward the intrusion daemon's auto-block.",
+      "rationale": "Threat model TM-04/TM-12 (2026-11-24): idle sign-out existed only in the browser. Not counting the 401s keeps an operator's open dashboard from blocking their own address.",
+      "parent": "GAU-25",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "idle: a session quiet for more than 30 min is idle; activity keeps it alive",
+        "an operator session idle for 30 min is ended on the server; the 401s that follow don't trip CyberTiger"
+      ]
+    },
+    {
       "id": "REQ-SEC-002",
       "title": "Upstream courtesy",
       "statement": "Adapters shall poll no faster than these minimum intervals: NOAA, JAXA, LASP and GOES 60 s; ESA 10 s; SWPC products 2 min; MMS and Kyoto Dst 10 min; and after consecutive failures a source shall wait 10 s, doubling to at most 10 min, before its next attempt.",

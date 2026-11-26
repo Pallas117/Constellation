@@ -38,6 +38,11 @@ export function ssoEmailAllowed(email: string | null | undefined): boolean {
 // X-Forwarded-For from a loopback proxy) and overwrites any value a client sent.
 export const CLIENT_IP_HEADER = "x-gauss-client-ip";
 
+/** Session lifetime (seconds): ends after 12 h without use; renewed at most every 15 min while in use. */
+export const SESSION_POLICY = Object.freeze({ expiresIn: 12 * 60 * 60, updateAge: 15 * 60 });
+/** Cookie attributes pinned for every better-auth cookie (Secure follows an https BETTER_AUTH_URL, in better-auth). */
+export const COOKIE_ATTRIBUTES = Object.freeze({ httpOnly: true, sameSite: "lax" as const, path: "/" });
+
 export const auth = betterAuth({
     database: sqlite,
     trustedOrigins,
@@ -56,8 +61,18 @@ export const auth = betterAuth({
             "/reset-password": { window: 300, max: 5 },
         },
     },
+    // Session lifetime and cookie attributes are pinned here, not left to library defaults (threat model TM-04):
+    // a session ends after 12 h without use and is renewed at most every 15 min while in use. Operator and admin
+    // sessions also end after 30 min idle on the server (backend/session-idle.ts, checked in backend/auth.ts).
+    session: SESSION_POLICY,
     advanced: {
         ipAddress: { ipAddressHeaders: [CLIENT_IP_HEADER] },
+        // Secure is left to better-auth: it sets Secure (and the __Secure- prefix) when the configured base URL
+        // (BETTER_AUTH_URL) is https, or NODE_ENV=production. Plain http on the tailnet (WireGuard encrypts that
+        // link) gets no Secure, since browsers drop Secure cookies on http. A host served over https must set an
+        // https BETTER_AUTH_URL. SameSite=Lax, not Strict: Strict would drop the state cookie on the return from Google or GitHub and
+        // break SSO; better-auth also checks the Origin of every POST.
+        defaultCookieAttributes: COOKIE_ATTRIBUTES,
     },
     emailAndPassword: {  
         enabled: true

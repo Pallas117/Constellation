@@ -239,6 +239,7 @@ app.use("/api", (req: express.Request, res: express.Response, next: express.Next
       role: tracked.auth?.role,
       userId: tracked.auth?.userId,
       latencyMs: Date.now() - detail.startedAtMs,
+      sessionEnded: tracked.sessionEnded === true,
     });
   });
 
