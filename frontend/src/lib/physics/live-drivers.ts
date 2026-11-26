@@ -17,7 +17,7 @@ import type { CanonicalSpaceWeatherPoint, DensityDisagreement } from '../types/s
  * solar wind is still arriving at Earth. stale: L1 10-15 min old, nothing
  * propagated. none: nothing usable.
  */
-export type FeedMode = 'live' | 'transit' | 'stale' | 'none' | 'simulated';
+export type FeedMode = 'live' | 'transit' | 'stale' | 'none' | 'simulated' | 'replay';
 
 /** Measurements fresher than this are live (the backend's NOAA_FRESH_MS). */
 export const FRESH_MIN = 10;

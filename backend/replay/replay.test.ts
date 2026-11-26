@@ -117,3 +117,22 @@ test("replay: the stuck ACE speed in Jan 2026 is flagged and lowers confidence; 
   assert.ok(first >= "2026-01-19T18:50" && first <= "2026-01-19T19:20", `first ${first}`);
   assert.ok(last >= "2026-01-19T21:00" && last <= "2026-01-19T21:30", `last ${last}`);
 });
+
+test("replay: the storm walkthrough's data is cut from the current replay (GAU-229)", async () => {
+  const { records, summary } = await run("may-2024");
+  const file = JSON.parse(readFileSync(here("../../frontend/src/data/walkthrough/may-2024.json"), "utf8")) as {
+    inputsSha256: string;
+    recordsSha256: string;
+    stepMin: number;
+    samples: { t: string; S: string; G: string; kp: number | null }[];
+  };
+  assert.equal(file.inputsSha256, summary.inputsSha256, "inputs changed: rerun npm run replay:walkthrough");
+  assert.equal(file.recordsSha256, summary.recordsSha256, "replay output changed: rerun npm run replay:walkthrough");
+  const byTime = new Map(records.map((r) => [r.t, r]));
+  for (const s of file.samples) {
+    const r = byTime.get(s.t);
+    assert.ok(r, `no replay record at ${s.t}`);
+    assert.deepEqual([s.S, s.G, s.kp], [r.S, r.G, r.kp]);
+  }
+  assert.equal(file.samples.length, Math.floor(records.length / file.stepMin) + (records.length % file.stepMin ? 1 : 0));
+});

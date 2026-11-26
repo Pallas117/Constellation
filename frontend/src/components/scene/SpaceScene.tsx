@@ -28,6 +28,8 @@ import { MMSReconnectionVectors } from './MMSReconnectionVectors';
 import { SpaceObjectOverlay } from './SpaceObjectOverlay';
 import type { SpaceObjectCatalogEntry, SpaceObjectDetectionAlert } from '@/lib/types/space-object';
 import { SCENE_VIEWS, type SceneView, type Vec } from './scene-views';
+import { WalkthroughOverlay, type WalkthroughLayer } from './WalkthroughOverlay';
+import { CameraTween, type CameraGoalRequest } from './CameraTween';
 
 interface LayerVisibility {
   earth: boolean;
@@ -76,6 +78,10 @@ interface SpaceSceneProps {
   viewRequest?: number;
   /** Report Earth and the boundaries under the pointer (see scene-hover.ts). */
   hoverable?: boolean;
+  /** Storm walkthrough (GAU-229): replay clock, SAA outline and teaching satellite. */
+  walkthrough?: WalkthroughLayer;
+  /** Ease the camera to a goal; change `request` to send it again. */
+  cameraGoal?: CameraGoalRequest;
 }
 
 
@@ -102,12 +108,16 @@ const SceneContent = ({
   hoverable = false,
   view = 'overview',
   viewRequest = 0,
+  walkthrough,
+  cameraGoal,
   stage,
   onStageCommitted,
 }: Omit<SpaceSceneProps, 'canvasRef'> & { stage: number; onStageCommitted: (stage: number) => void }) => {
   const groupRef = useRef<THREE.Group>(null);
   // GSM frame: the dipole tilts toward/away from the Sun with season and UT.
-  const epochMs = useNow(5 * 60_000);
+  const clockMs = useNow(5 * 60_000);
+  // A replay runs on its own clock, so the dipole tilt and Sun direction match the replayed hour.
+  const epochMs = walkthrough ? walkthrough.atMs : clockMs;
   const dipoleTilt = useMemo(() => dipoleTiltRad(epochMs), [epochMs]);
   const controlsRef = useRef<ComponentRef<typeof OrbitControls>>(null);
   const { camera } = useThree();
@@ -218,6 +228,7 @@ const SceneContent = ({
   return (
     <>
       <PerspectiveCamera makeDefault position={DEFAULT_CAMERA} fov={45} />
+      <CameraTween goal={cameraGoal} controlsRef={controlsRef} />
       <OrbitControls
         ref={controlsRef}
         enablePan={false}
@@ -288,6 +299,8 @@ const SceneContent = ({
             hoverable={hoverable}
           />
         )}
+
+        {stage >= STAGE.rest && walkthrough && <WalkthroughOverlay {...walkthrough} />}
 
         {stage >= STAGE.rest && <MHDWaves visible={layers.mhdWaves !== false} />}
 
