@@ -159,6 +159,19 @@ least-invasive ladder in `loop.go` (automatic actions only; admin actions never 
 `attention.go`. Relay: `relay.go`, `hub.go`, `bundle.go`, `bpsec*.go`, `linkkeys.go`. Tests:
 `tools/argo/check.sh`. Details: `tools/argo/README.md`.
 
+### 6.1 State snapshot v0 (`scripts/ops/state-snapshot.ts`)
+A read-only command (`node scripts/ops/state-snapshot.ts [--pretty] [--out <file>]`) that prints one
+fixed-shape JSON snapshot of ops state for agents to read instead of raw logs: nodes x zones (A-H) x
+metrics, each cell `{value, mask, age_s, source}`. Sources: Argo's `state.json` and `incidents.jsonl`
+(zone F: link class, round trip, loss, jitter, privacy score, tailnet round trip, outages in 24 h), the
+gates runner's `results.log` (zone H: last result, last timed run, runs in 24 h) and the memory
+service status on 127.0.0.1 (zone A). A cell that is missing, not measured (Argo's -1) or older than its
+metric's max age has `mask: 0` and `value: null`, never a made-up 0. Zones without metrics yet are empty
+objects, so the shape never changes. Node ids are generic (`node-0`..`node-7`); which node is the local
+machine and which runs the gates comes from a local file outside the repo
+(`~/.config/gauss/state-snapshot.json` or `GAUSS_STATE_SNAPSHOT_CONFIG`). No listener, no network beyond
+loopback, no writes except stdout or `--out`; output stays under 8 KB (REQ-OPS-011).
+
 ## 7. Verification and delivery (CI)
 
 GitHub Actions are billing-locked (`.github/dependabot.yml`), so the **local gate is the CI**.

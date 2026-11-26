@@ -1262,6 +1262,20 @@
       ]
     },
     {
+      "id": "REQ-OPS-011",
+      "title": "Fixed-shape masked state snapshot",
+      "statement": "`scripts/ops/state-snapshot.ts` shall print a JSON snapshot with the same node x zone (A-H) x metric shape whatever its sources hold, each cell {value, mask, age_s, source}; a missing, unmeasured or stale (older than the metric's max age) reading shall have mask 0 and a null value; node ids shall be generic (at most 8); it shall call no host but 127.0.0.1 and the output shall stay under 8 KB.",
+      "rationale": "Agents read a small bounded snapshot instead of raw logs; masks keep stale data from looking like truth (state snapshot design, 26 Nov 2026).",
+      "parent": "GAU-TBC (state snapshot issue not yet created in Linear)",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "state snapshot: shape is constant whatever the sources hold",
+        "state snapshot: stale or unmeasured sources give mask 0 and a null value, never 0.0",
+        "state snapshot: output stays under 8 KB at the node cap, ids stay generic, memory is loopback only"
+      ]
+    },
+    {
       "id": "REQ-ION-001",
       "title": "GloTEC regional TEC summary",
       "statement": "The ingest shall summarise NOAA SWPC GloTEC as the mean, minimum and maximum TEC in TECU over grid cells centred 2-7 N and 100-119 E and the value of the cell nearest Kuala Lumpur, each carrying source \"glotec-swpc\" and the product's own model time.",
