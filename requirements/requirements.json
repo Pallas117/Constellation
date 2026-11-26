@@ -2138,6 +2138,22 @@
         "stale samples are left out and places group networks without a hash",
         "quality thresholds: loss, RTT and low-signal mode"
       ]
+    },
+    {
+      "id": "REQ-OPS-014",
+      "title": "Model dispatcher keeps sensitive data local",
+      "statement": "gauss-dispatch shall route each task to the Mac local model, the Talos model or a cloud recommendation by an ordered written rule table, shall send data that gauss-guard marks SENSITIVE (or cannot check) only to the Mac local model and never cache it, shall call only loopback endpoints, shall log route, rule and prompt sha256 without prompt text, and shall answer a repeated identical prompt from a 0600 cache with a TTL and size cap.",
+      "rationale": "Josh approved design (c) on 26 Nov 2026 (tensor-state and model-routing decision page, section 4 step 2): cheap local answers first, sensitive files never leave the Mac, and repeated questions cost nothing.",
+      "parent": "GAU-TBC (dispatcher issue not yet created in Linear)",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "dispatch rule table: first matching written rule decides",
+        "dispatch keeps SENSITIVE data on the Mac model and never caches it",
+        "dispatch: a second identical ask is a cache hit from a 0600 file",
+        "dispatch log has route, rule and prompt hash but no prompt text",
+        "dispatch cache honours TTL and size cap; endpoints stay on loopback"
+      ]
     }
   ]
 }

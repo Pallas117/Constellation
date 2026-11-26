@@ -71,6 +71,7 @@
     "trust:sign": "node --import tsx scripts/trust/sign.ts",
     "trust:verify": "node --import tsx scripts/trust/verify-pack.ts",
     "tpm": "node --import tsx scripts/ops/tpm-check.ts",
+    "dispatch": "node --import tsx scripts/ops/gauss-dispatch.ts",
     "deploy": "node --import tsx scripts/release/deploy.ts",
     "rollback": "node --import tsx scripts/release/deploy.ts --rollback",
     "perf:check": "npm run build && du -sh frontend/dist",
