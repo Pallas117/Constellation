@@ -65,7 +65,7 @@ func scanNearby(ctx context.Context) []NearNet {
 	defer os.Remove(out)
 	ctx, cancel := context.WithTimeout(ctx, scanTimeout)
 	defer cancel()
-	_ = exec.CommandContext(ctx, "open", "-W", "-g", "-a", app, "--args", "scan", "--out", out).Run()
+	_ = exec.CommandContext(ctx, toolPath("open"), "-W", "-g", "-a", app, "--args", "scan", "--out", out).Run()
 	b, err := os.ReadFile(out)
 	if err != nil {
 		return nil
