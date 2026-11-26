@@ -44,6 +44,22 @@ What does not change:
 
 What you are trusting: with this on, main can receive a commit whose test suite, type check, lint and build ran only on the gatebox (Linux arm64, Node 26), not on this Mac. Someone who controls the gatebox, or its pinned host key and the tailnet path to it, could pass a commit that fails those checks. It cannot reach live: that still needs the full gates here. Delete the second line to turn it off.
 
+### Ops tests there too (off by default)
+
+After a gatebox pass the ops step above still waits on this Mac for memory. A third line lets the gatebox run it:
+
+```bash
+printf 'gatebox\nmerge\nops\n' > "$HOME/Library/Application Support/Gauss/gatebox"
+```
+
+A merge-only request then sends `<repo> <sha> ops`. `gauss-gate-run` (this folder; cloud-init carries the same copy) runs `npm run test:ops` in a git checkout of the commit after its gates pass, if `bash git go plutil timeout npm` are all there, and prints `ops rc=N in S s on <sha>` (else `ops skipped: no <tools>`). Only `ops rc=0 ... on <exact sha>` with `0 failed` skips the ops step here; a missing tool, a failure, a line naming no or another commit, or an older `gauss-gate-run` (which ignores the word) runs the ops tests here as before. The runner checks the gatebox log again before it merges.
+
+**Today this falls back every time on a Linux gatebox:** the ops tests use macOS tools (`plutil`, BSD `stat`/`date`), so a Linux box prints `ops skipped: no plutil`. It saves the Mac's wait only once those tests are made portable (and `plutil` checked for), or on a macOS gatebox.
+
+What you additionally trust with it on: the ops tests (the merge train's own tests, the VPS kit tests, the Argo Go short suite) may pass on the gatebox alone before the train merges. Deploys are unchanged.
+
+Installing the new `gauss-gate-run` on a box that already runs (Josh, at the box): `bash scripts/ops/gatebox/install-gate-run.sh --dry-run`, then without `--dry-run` (sudo for the install only; it keeps a `.bak-<date>` copy and lists the tools it finds).
+
 On first contact the host key is pinned in `gatebox.known_hosts` (the tailnet has already authenticated the machine). If the key changes, the connection is refused and the gates run here.
 
 Oracle reclaims an Always Free VM whose CPU, network and memory all stay under 20% for 7 days. Gate traffic alone may not prevent that. Watch for reclamation notices; any keepalive is still to be decided (GAU-223, "Josh does afterwards").

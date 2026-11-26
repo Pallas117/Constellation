@@ -1,0 +1,36 @@
+#!/bin/bash
+# gauss-gate-run <owner/repo> <40-char sha> [ops]: run the gates on that exact commit, print the log,
+# exit with the gates' status. Called only via the gate user's forced SSH command.
+# "ops" (GAU-239, sent only for merge-train requests when the Mac's setting is on): after the gates pass,
+# also run test:ops in a git checkout of the commit if every tool it needs is here, then print
+# "ops rc=N in S s on <sha>", or "ops skipped: no <tools>". The exit status is still the gates' status.
+set -uo pipefail
+read -r repo sha opt _ <<<"${SSH_ORIGINAL_COMMAND:-$*}"
+case "$repo" in Pallas117/Constellation) ;; *) echo "repo not allowed: $repo"; exit 64 ;; esac
+[[ "$sha" =~ ^[0-9a-f]{40}$ ]] || { echo "need a full 40-char sha"; exit 64; }
+case "${opt:-}" in "" | ops) ;; *) echo "option not allowed: $opt"; exit 64 ;; esac
+exec 9>/home/gate/.lock; flock -w 3600 9 || { echo "busy"; exit 75; }
+mirror=/home/gate/mirror/${repo//\//_}.git
+[ -d "$mirror" ] || git clone -q --mirror "https://github.com/$repo.git" "$mirror"
+git -C "$mirror" fetch -q origin "+refs/heads/*:refs/heads/*" "+refs/pull/*/head:refs/pull/*/head" || exit 69
+git -C "$mirror" cat-file -e "$sha^{commit}" 2>/dev/null || { echo "sha not on GitHub: $sha"; exit 65; }
+work=$(mktemp -d /home/gate/work.XXXXXX); ops=""; trap 'rm -rf "$work" ${ops:+"$ops"}' EXIT
+git -C "$mirror" archive "$sha" | tar -x -C "$work"
+cd "$work" || exit 70
+echo "gates on $repo@$sha ($(nproc) cpu, $(free -g | awk '/Mem/{print $2}') GB)"
+start=$SECONDS
+npm ci --no-audit --no-fund && npm test && npm run quality:full && npm run build
+rc=$?
+echo "gates rc=$rc in $((SECONDS - start)) s on $sha"
+if [ "$rc" = 0 ] && [ "${opt:-}" = ops ]; then
+  # test:ops is bash with macOS tools (plutil, BSD stat/date) plus the Argo Go short suite, in a git checkout.
+  miss=""; for t in bash git go plutil timeout npm; do command -v "$t" >/dev/null 2>&1 || miss+=" $t"; done
+  if [ -n "$miss" ]; then echo "ops skipped: no$miss"; else
+    ops=$(mktemp -d /home/gate/ops.XXXXXX); start=$SECONDS; orc=0
+    if git clone -q --shared --no-checkout "$mirror" "$ops/c" && git -C "$ops/c" checkout -q --detach "$sha"; then
+      (cd "$ops/c" && timeout 900 npm run test:ops) || orc=$?
+    else orc=70; fi
+    echo "ops rc=$orc in $((SECONDS - start)) s on $sha"
+  fi
+fi
+exit $rc
