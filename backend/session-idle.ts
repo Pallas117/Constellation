@@ -19,7 +19,7 @@ export interface IdleOptions {
   now: () => number;
 }
 
-const DEFAULTS: IdleOptions = { idleMs: 30 * 60_000, endedTtlMs: 2 * 60 * 60_000, maxTracked: 10_000, now: Date.now };
+const DEFAULTS: IdleOptions = { idleMs: 30 * 60_000, endedTtlMs: 2 * 60 * 60_000, maxTracked: 10_000, now: () => Date.now() };
 
 export const tokenKey = (token: string): string => createHash("sha256").update(token).digest("hex");
 
