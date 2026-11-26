@@ -52,6 +52,17 @@ No encryption of data. The only thing encrypted is the signing key itself, when 
 
 UNVERIFIED (third-party, not swept): better-auth password hashing and session tokens; TLS in Node, Cloudflare and the browser; WireGuard in Tailscale. These are transport and authentication supplied by platforms and libraries.
 
+## Argo session ratchet (R&D, off by default, not mounted; REQ-SEC-007)
+
+| Primitive | Where | Purpose | Function |
+|---|---|---|---|
+| ML-KEM-768 (FIPS 203) and X25519, Node `encapsulate`/`decapsulate`/`diffieHellman` | `backend/argo-session/ratchet.ts` | Hybrid key establishment for a per-session root at sign-in | Key management for authentication |
+| HKDF-SHA-384, HMAC-SHA-384 | `backend/argo-session/ratchet.ts`, `sessions.ts` | Session root; per-request chain and message keys; request and answer tags | Authentication of requests (MAC); no data is encrypted |
+| ML-DSA-65 (FIPS 204) and Ed25519, Node `sign`/`verify` | `backend/argo-session/ratchet.ts` | Server signs the root transcript (both signatures required); per-boot keys | Authentication (digital signature) |
+| SHA-256, SHA-384 | `backend/argo-session/ratchet.ts`, `sessions.ts` | Context digest, transcript hash, cookie-token fingerprint | Integrity, identification |
+
+Authentication only: no confidentiality encryption is added. Design and gaps: [security/argo-session-ratchet.md](security/argo-session-ratchet.md).
+
 ## Pending changes that would alter this inventory
 
 - None open. PR #158 (GAU-199) added RFC 9173's contexts: the three rows above from `bpsec9173.go` and `aeskw.go`. They are a second confidentiality mechanism in Argo, not the first (the HPKE row has been on main since #153), so the REG-01 question for confidentiality encryption is unchanged by them. Classification is counsel's (GAU-65).
