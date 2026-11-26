@@ -17,6 +17,8 @@ const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "gauss-rbac-session-"));
 const ORIGIN = "http://localhost:8080"; // trusted by CORS and better-auth's origin check
 process.env.AUTH_DB_PATH = path.join(tmp, "auth.db");
 process.env.AUTH_REQUIRED = "true";
+// These tests cover role gating; the operator pattern gate (428, GAU-235) has its own tests.
+process.env.OPERATOR_PATTERN = "off";
 process.env.ALLOWED_ORIGINS = ORIGIN;
 process.env.BETTER_AUTH_SECRET = "test-only-secret-0123456789abcdef0123456789";
 // POST /api/ai/nowcast/train runs `python3 <TRAINING_SCRIPT_PATH>`: an empty
@@ -27,6 +29,8 @@ fs.writeFileSync(process.env.TRAINING_SCRIPT_PATH, "");
 // Both read the environment above when first imported.
 const { auth } = await import("./better-auth.js");
 const { startBackend, stopBackend } = await import("./server.js");
+const { STEP_UP_REQUIRED } = await import("./rbac.js");
+const { STEP_UP_MAX_AGE_MS } = await import("./passkey-policy.js");
 
 const ROLES: AuthRole[] = ["user", "staff", "operator", "admin"];
 const PASSWORD = "a-long-test-password";
@@ -48,6 +52,17 @@ function call(method: string, route: string, cookie?: string, body?: unknown) {
 /** The same UPDATE `npm run auth:set-role` runs. */
 function setRole(email: string, role: AuthRole) {
   assert.equal(db.prepare("UPDATE user SET role = ? WHERE lower(email) = lower(?)").run(role, email).changes, 1);
+}
+
+/**
+ * Stamps the user's sessions as opened by a passkey touch at `atMs` (epoch ms),
+ * as the session hook in better-auth.ts does after a verified passkey sign-in.
+ * Written straight to the throwaway database: the WebAuthn ceremony itself is
+ * covered by passkey.test.ts, and no HTTP route can set this field.
+ */
+function setPasskeyTouch(userId: string, atMs: number) {
+  const changes = db.prepare("UPDATE session SET passkeyAt = ? WHERE userId = ?").run(new Date(atMs).toISOString(), userId).changes;
+  assert.ok(changes >= 1, "no session to stamp");
 }
 
 before(async () => {
@@ -110,9 +125,22 @@ test("real sessions: an admin route refuses operator and below and admits admin"
   for (const role of ["user", "staff", "operator"] as const) {
     assert.equal((await call("POST", ADMIN_ROUTE, sessions[role].cookie)).status, 403, role);
   }
+  // The route is also stepUp (GAU-235): the right role on a password-only
+  // session is not enough, and neither is a touch older than the window.
+  const passwordOnly = await call("POST", ADMIN_ROUTE, sessions.admin.cookie);
+  assert.equal(passwordOnly.status, 428);
+  assert.equal(((await passwordOnly.json()) as { code: string }).code, STEP_UP_REQUIRED);
+  setPasskeyTouch(sessions.admin.userId, Date.now() - STEP_UP_MAX_AGE_MS - 60_000);
+  assert.equal((await call("POST", ADMIN_ROUTE, sessions.admin.cookie)).status, 428, "stale touch");
+
+  setPasskeyTouch(sessions.admin.userId, Date.now());
   const response = await call("POST", ADMIN_ROUTE, sessions.admin.cookie);
   assert.equal(response.status, 200);
   assert.equal(((await response.json()) as { started: boolean }).started, true);
+
+  // A touch never lifts a lower role over the role check.
+  setPasskeyTouch(sessions.operator.userId, Date.now());
+  assert.equal((await call("POST", ADMIN_ROUTE, sessions.operator.cookie)).status, 403, "operator with a fresh touch");
 });
 
 test("real sessions: a demotion applies to an existing session on its next request", async () => {
