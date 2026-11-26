@@ -144,7 +144,15 @@ GATES_RESULTS="$GATES_DIR/results.log" # <utc> <sha> <tree> PASSED|FAILED|SKIPPE
 GATES_RUNNER="$GATES_DIR/runner"       # held by the one runner (its pid inside)
 GATES_SRC="$GATES_DIR/runner.src"      # sha= blob= from= at=: the commit the runner's copy (runner.sh) came from
 HEAVY="${GAUSS_HEAVY:-$HOME/.local/bin/claude-heavy}"
-GATES_WAIT_MIN="${GAUSS_GATES_WAIT_MIN:-120}" # one claude-heavy wait; the runner asks again when it gives up
+# Admission (26 Nov, 02:03-08:15: an old main commit with no PR passed the gatebox, then waited 2 h for
+# claude-heavy (disk under Argo's floor, then memory), gave up, and was retried first in line four times:
+# six hours with every approved PR behind it). Now one wait is GATES_WAIT_MIN (30 min); a request that
+# is not admitted is DEFERRED behind the others, and the GATES_DEFER_MAX-th time it is HELD (it leaves
+# the queue) with one text. A full gate with train requests behind it waits only GATES_YIELD_MIN, so
+# merge-only work the gatebox passes is not stuck behind it (those short waits are not counted).
+GATES_WAIT_MIN="${GAUSS_GATES_WAIT_MIN:-30}"   # one claude-heavy wait; then the request is deferred
+GATES_YIELD_MIN="${GAUSS_GATES_YIELD_MIN:-5}"  # the wait for a full gate while train requests queue behind it
+GATES_DEFER_MAX="${GAUSS_GATES_DEFER_MAX:-3}"  # counted deferrals before a request is held
 GATES_EXPIRE_H="${GAUSS_GATES_EXPIRE_H:-72}"   # a request still waiting after this is dropped (EXPIRED)
 # After-pass hook (18 Nov): a pass the train can't merge itself (a draft, or a PR touching held paths that
 # Josh approved in ~/.claude/merge-approvals.tsv) waited up to 30 min for the merge job; meanwhile the
@@ -1103,6 +1111,34 @@ print(json.dumps(r, ensure_ascii=False))
 }
 
 req_get() { sed -n "/^$2=/{s///p;q;}" "$1"; } # req_get <request file> <key>: the first value (sed quits itself, no SIGPIPE)
+req_set() { # req_set <request file> <key> <value>: atomic rewrite (the runner only reads *.req)
+  { grep -v "^$2=" "$1"; echo "$2=$3"; } >"$1.tmp" && [ -f "$1" ] && mv -f "$1.tmp" "$1" || rm -f "$1.tmp"
+}
+
+gates_stale() { # gates_stale <request> <sha> <tree>: 0 when origin/main has moved past <sha> (an ancestor, not the tip, other tree)
+  local repo tip; repo=$(req_get "$1" repo)
+  tip=$(git --git-dir="$repo" rev-parse -q --verify refs/remotes/origin/main 2>/dev/null) || return 1
+  [ -n "$tip" ] && [ "$tip" != "$2" ] || return 1
+  [ "$(git --git-dir="$repo" rev-parse -q --verify "$tip^{tree}" 2>/dev/null)" != "$3" ] || return 1
+  git --git-dir="$repo" merge-base --is-ancestor "$2" "$tip" 2>/dev/null
+}
+
+gates_defer() { # gates_defer <request> <sha> <tree> <reason> <counted 0|1>: move it behind the others; held at GATES_DEFER_MAX
+  local req=$1 sha=$2 tree=$3 why=$4 n b
+  n=$(req_get "$req" deferred); n=${n:-0}; [ "$5" = 1 ] && n=$((n + 1))
+  if [ "$n" -ge "$GATES_DEFER_MAX" ]; then
+    # Not "HELD passed": readers (gates result, claude-check-claims) must not take this for a pass.
+    gates_result "$sha" "$tree" HELD "not admitted $n times ($why): taken out of the queue so the rest can run; enqueue it again when the Mac has room"
+    rm -f "$req"
+    phone -key "train-stalled-${sha:0:7}" -every 6h "Gauss: merge train request set aside" \
+      "Gate run ${sha:0:7} could not start $n times ($why). The train goes on without it. Fixes itself: no. To do: nothing, unless you still need that run; then queue it again."
+    return 0
+  fi
+  [ "$5" = 1 ] && req_set "$req" deferred "$n"
+  # "9<epoch>" sorts after every usual request ("17...") and after earlier moves to the back.
+  b=$(basename "$req"); mv -f "$req" "$GATES_QUEUE/9$(date +%s).$(printf '%06d' $((RANDOM)))-${b#*-}"
+  gates_result "$sha" "$tree" DEFERRED "not admitted: $why (moved behind the other requests; $n of $GATES_DEFER_MAX)"
+}
 
 gates_result() { # gates_result <sha> <tree> <STATUS> <detail>: the one line a session or the ledger reads later
   mkdir -p "$GATES_DIR"
@@ -1451,8 +1487,12 @@ gates_passed() { # gates_passed <checkout-dir>|<commit>: exit 0 only if that com
   echo "NOT PASSED ${G_SHA:0:7} (tree ${G_TREE:0:7}): no passing gate record"; return 1
 }
 
+gates_train_behind() { # gates_train_behind <request>: 0 when another queued request is on the train (has a PR)
+  local f; for f in "$GATES_QUEUE"/*.req; do [ -f "$f" ] && [ "$f" != "$1" ] && [ -n "$(req_get "$f" pr)" ] && return 0; done; return 1
+}
+
 gates_run() { # gates_run [--once]: work through the queue, oldest first, then exit; --once: stop after one wait that gave up
-  local once=${1:-} self req sha tree queued rc pid me pr repo line merge_only screened was
+  local once=${1:-} self req sha tree queued rc pid me pr repo line merge_only screened was wait_min counted
   self="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
   # Never the folder it was started from: that is a session's checkout, often a temporary worktree removed
   # while the runner lives on (4 Nov: every git call then failed with getcwd errors).
@@ -1505,15 +1545,26 @@ gates_run() { # gates_run [--once]: work through the queue, oldest first, then e
         tail -1 "$GATES_RESULTS"; gates_after_pass "$sha" "$pr"; continue
       fi
     fi
+    # A plain request (no PR) for a commit main has already moved past gates nothing anyone will deploy
+    # or merge (26 Nov: an old main commit held the train for six hours): drop it with one line.
+    if [ -z "$(req_get "$req" pr)" ] && gates_stale "$req" "$sha" "$tree"; then
+      gates_result "$sha" "$tree" SKIPPED "stale: main has moved past ${sha:0:7}"
+      rm -f "$req"; tail -1 "$GATES_RESULTS"; continue
+    fi
     merge_only=0
     if gatebox_trusted && [ -n "$(req_get "$req" pr)" ]; then
       # Merge main in first, so the gatebox screens the head that would land (run-one checks it again).
       if ! train_sync "$req"; then tail -1 "$GATES_RESULTS"; continue; fi
       sha=$(req_get "$req" sha); tree=$(req_get "$req" tree); merge_only=1
     fi
-    screened=0; gates_prescreen "$sha" "$tree" || screened=$?
-    if [ "$screened" = 0 ]; then rm -f "$req"; tail -1 "$GATES_RESULTS"; continue; fi
-    rc=0; pr=$(req_get "$req" pr)
+    # A deferred request keeps the gatebox's pass of this exact commit: no second screen when it comes back.
+    if [ "$(req_get "$req" screened)" = "$sha" ]; then screened=2
+    else
+      screened=0; gates_prescreen "$sha" "$tree" || screened=$?
+      if [ "$screened" = 0 ]; then rm -f "$req"; tail -1 "$GATES_RESULTS"; continue; fi
+      [ "$screened" = 2 ] && req_set "$req" screened "$sha"
+    fi
+    rc=0; pr=$(req_get "$req" pr); wait_min=$GATES_WAIT_MIN; counted=1
     if [ "$merge_only" = 1 ] && [ "$screened" = 2 ]; then
       echo "$(date '+%F %T') ops tests ${sha:0:7} (merge only: the gatebox passed the rest) ..."
       if [ -x "$HEAVY" ]; then
@@ -1523,8 +1574,11 @@ gates_run() { # gates_run [--once]: work through the queue, oldest first, then e
       fi
     else
       echo "$(date '+%F %T') gates ${sha:0:7} ..."
+      # Train requests behind a full gate (the gatebox may pass them for a merge-only run): wait briefly,
+      # and on a give-up let them go first; this short wait is not counted towards holding it.
+      if gatebox_trusted && gates_train_behind "$req"; then wait_min=$GATES_YIELD_MIN; counted=0; fi
       if [ -x "$HEAVY" ]; then
-        "$HEAVY" --wait "$GATES_WAIT_MIN" --name gates --label "gate queue ${sha:0:7}" -- /bin/bash "$self" gates run-one "$req" || rc=$?
+        "$HEAVY" --wait "$wait_min" --name gates --label "gate queue ${sha:0:7}" -- /bin/bash "$self" gates run-one "$req" || rc=$?
       else
         /bin/bash "$self" gates run-one "$req" || rc=$?
       fi
@@ -1534,10 +1588,14 @@ gates_run() { # gates_run [--once]: work through the queue, oldest first, then e
       [ "$once" = --once ] && return 0
       continue
     fi
-    if [ "$rc" = 75 ] && [ -f "$req" ]; then # claude-heavy gave up waiting; the request stays first in line
-      echo "$(date '+%F %T') ${sha:0:7} still waiting for memory or power; asking again."
+    if [ "$rc" = 75 ] && [ -f "$req" ]; then # claude-heavy gave up waiting: the others go first (never the same one again at once)
+      echo "$(date '+%F %T') ${sha:0:7} still waiting for memory or power; deferring it behind the other requests."
+      gates_defer "$req" "$sha" "$tree" "claude-heavy gave up after ${wait_min} min (memory, power, disk or Argo's guard)" "$counted"
+      tail -1 "$GATES_RESULTS"
       [ "$once" = --once ] && return 0
-      sleep "${GAUSS_GATES_RETRY_S:-60}"; continue
+      # Alone in the queue: pause before asking again (claude-heavy's own wait already spaced the tries).
+      [ "$(ls "$GATES_QUEUE" 2>/dev/null | grep -c '\.req$')" -ne 1 ] || sleep "${GAUSS_GATES_RETRY_S:-60}"
+      continue
     fi
     if [ "$rc" = 76 ] && [ -f "$req" ]; then # the install lost the network: same request, after a pause
       echo "$(date '+%F %T') ${sha:0:7} install lost the network; trying again in ${GAUSS_GATES_NET_RETRY_S:-600} s."
@@ -1824,6 +1882,8 @@ gates_show_result() { # gates_show_result <checkout-dir>|<commit>: the latest li
   line=$(awk -v t="$tree" 'index($2, t) == 1 || index($3, t) == 1' "$GATES_RESULTS" 2>/dev/null | tail -1)
   [ -n "$line" ] || { echo "No gate result or request for $arg."; return 1; }
   echo "$line"
+  # A HELD line is a pass waiting for a person, except "HELD not admitted": that run never started.
+  [[ "$line" == *" HELD not admitted "* ]] && return 1
   case $(echo "$line" | cut -d' ' -f4) in PASSED|MERGED|HELD) return 0 ;; SKIPPED) [[ "$line" == *" already passed: "* ]] ;; *) return 1 ;; esac
 }
 

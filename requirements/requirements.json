@@ -1,6 +1,6 @@
 {
   "$comment": "Constellation requirements baseline (GAU-120). NASA SP-2016-6105 Rev 2 §6.2/§5.3. Methods: T test, A analysis, I inspection, D demonstration. T evidence = exact test names; A/I/D evidence = repo paths. Verified by `npm run verify`.",
-  "version": "1.18.0",
+  "version": "1.19.0",
   "requirements": [
     {
       "id": "REQ-ING-001",
@@ -1214,6 +1214,24 @@
         "gates why: a timeout is named as a known cause, with its fix",
         "gates restart: a stuck runner and its run are stopped with no result, requests stay queued, and a dead owner's gate lock is cleared",
         "gates restart: a gate lock whose owner is alive is kept"
+      ]
+    },
+    {
+      "id": "REQ-OPS-013",
+      "title": "A request the Mac cannot admit cannot hold the merge train",
+      "statement": "The gate runner shall drop a request without a PR whose commit main has moved past, with one SKIPPED line; when a request cannot be admitted to run it shall move it behind the other requests with a DEFERRED line instead of retrying it at once, and take it out of the queue with a HELD line and one text after the third such deferral; a full local gate with train requests behind it shall wait only briefly so merge-only work the gatebox passed goes first; and one wait for admission shall default to 30 minutes.",
+      "rationale": "26 Nov 02:03-08:15: a plain request for an old main commit could not be admitted (disk, then memory), was retried first in line four times, and every approved PR behind it waited six hours.",
+      "parent": "GAU-206",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "gates run: a request with no PR for a commit main has moved past is skipped as stale; main's tip is gated",
+        "gates run: a request that is not admitted moves behind the others (DEFERRED), the next one runs",
+        "gates run: the third deferral holds the request (HELD, out of the queue) with one text to Josh",
+        "gates result: a request held for admission is not a pass (exit 1)",
+        "gates run: a merge-only request the gatebox passed overtakes a full gate the Mac cannot admit (short wait, not counted)",
+        "gates run: a deferred request keeps the gatebox's pass of its exact commit (screened once)",
+        "gates run: one wait for admission is 30 min by default (GAUSS_GATES_WAIT_MIN), not 120"
       ]
     },
     {
