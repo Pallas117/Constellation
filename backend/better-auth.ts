@@ -5,11 +5,10 @@ import { authDbPath } from "./auth-db.js";
 import {
     emailSignUpAllowed,
     isEmailSignUp,
-    isSsoCallback,
     signUpEmailsFromEnv,
     ssoEmailAllowed as policyAllows,
     ssoPolicyFromEnv,
-    ssoSignUpAllowed,
+    userCreateAllowed,
 } from "./sso-policy.js";
 
 // Initialize a local SQLite db for better-auth (.auth.db; tests use a throwaway file)
@@ -106,14 +105,13 @@ export const auth = betterAuth({
         user: {
             create: {
                 before: async (user, ctx) => {
-                    // New accounts from Google or GitHub need a provider-verified email
-                    // on the allowed domain (or SSO_ALLOWED_EMAILS). Email/password
-                    // sign-up is invite-only (checked again here, where the row is
-                    // written) and starts as "user".
-                    if (isSsoCallback(ctx?.path) && !ssoSignUpAllowed(user, ssoPolicy)) {
-                        return false;
-                    }
-                    if (isEmailSignUp(ctx?.path) && !emailSignUpAllowed(user.email, invitedEmails)) {
+                    // Deny by default (backend/sso-policy.ts userCreateAllowed): a
+                    // row is written only by a Google/GitHub callback with a
+                    // provider-verified email on the SSO policy, or by an invited
+                    // email/password sign-up (checked again here, where the row is
+                    // written). Any other route, e.g. /sign-in/social with an
+                    // idToken, is refused. New accounts start as "user".
+                    if (!userCreateAllowed(user, ctx, ssoPolicy, invitedEmails)) {
                         return false;
                     }
                     return { data: user };

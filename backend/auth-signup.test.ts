@@ -153,3 +153,32 @@ test("invite-only sign-up leaves existing accounts able to sign in", async () =>
   assert.equal((await post(testAuth, "/sign-up/email", { ...legacy, name: "Legacy" })).status, 403);
   assert.equal(userCount(db), 1);
 });
+
+test("the user.create hook refuses an uninvited sign-up on its own, without the before-hook", async () => {
+  // Production's databaseHooks only: no hooks.before middleware, so the
+  // refusal below comes from user.create, where the row is written.
+  const db = new Database(":memory:");
+  const hookOnly = betterAuth({
+    database: db,
+    baseURL: BASE_URL,
+    secret: SECRET,
+    trustedOrigins: [BASE_URL],
+    emailAndPassword: { enabled: true },
+    user: auth.options.user,
+    databaseHooks: auth.options.databaseHooks,
+  });
+  await (await getMigrations(hookOnly.options)).runMigrations();
+
+  for (const email of ["stranger@example.com", "invited+x@example.com", "someone@lightbound.uk"]) {
+    const response = await post(hookOnly, "/sign-up/email", { email, password: PASSWORD, name: "Stranger" });
+    assert.equal(response.ok, false, email);
+    assert.equal((await response.text()).includes(email), false, "the refusal does not echo the address");
+  }
+  assert.equal(userCount(db), 0);
+  assert.equal((db.prepare("SELECT count(*) AS n FROM account").get() as { n: number }).n, 0);
+
+  // The invited address still gets its account through the hook alone.
+  const invited = await post(hookOnly, "/sign-up/email", { email: "invited@example.com", password: PASSWORD, name: "Invited" });
+  assert.equal(invited.status, 200);
+  assert.equal(userCount(db), 1);
+});

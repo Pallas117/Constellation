@@ -231,6 +231,9 @@ npm test
 # - no session → 401, role too low → 403, allowed role passes
 # - email sign-up cannot choose its own role
 # - email sign-up is invite-only (SIGNUP_ALLOWED_EMAILS): others get 403, no account
+# - account creation is deny-by-default: only an SSO callback passing the SSO policy or an
+#   invited email sign-up writes a user row (any other route, e.g. /sign-in/social with an
+#   idToken, is refused); allowlists match printable-ASCII addresses only
 ```
 
 Never point RBAC checks at the live backend (:3001): CyberTiger counts 401/403s

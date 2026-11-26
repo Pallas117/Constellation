@@ -8,6 +8,7 @@ import {
   ssoEmailAllowed,
   ssoPolicyFromEnv,
   ssoSignUpAllowed,
+  userCreateAllowed,
 } from "./sso-policy.js";
 
 const policy = ssoPolicyFromEnv({ SSO_ALLOWED_DOMAIN: "lightbound.uk", SSO_ALLOWED_EMAILS: " Dev@Example.com ,x@y.io" });
@@ -34,8 +35,19 @@ test("sign-up needs a provider-verified email", () => {
 test("only Google and GitHub callbacks count as SSO", () => {
   assert.equal(isSsoCallback("/callback/google"), true);
   assert.equal(isSsoCallback("/api/auth/callback/github"), true);
+  assert.equal(isSsoCallback("/callback/google-evil"), false);
   assert.equal(isSsoCallback("/sign-up/email"), false);
   assert.equal(isSsoCallback(undefined), false);
+});
+
+test("the route template /callback/:id counts as SSO only for google and github", () => {
+  // better-auth passes hooks the template as ctx.path and the provider in params.id.
+  assert.equal(isSsoCallback("/callback/:id", { id: "google" }), true);
+  assert.equal(isSsoCallback("/callback/:id", { id: "github" }), true);
+  assert.equal(isSsoCallback("/callback/:id", { id: "gitlab" }), false);
+  assert.equal(isSsoCallback("/callback/:id", {}), false);
+  assert.equal(isSsoCallback("/callback/:id", undefined), false);
+  assert.equal(isSsoCallback("/callback/:id", { id: ["google"] }), false);
 });
 
 test("defaults: lightbound.uk, no extra emails", () => {
@@ -70,4 +82,47 @@ test("only the email sign-up endpoint counts as email sign-up", () => {
   assert.equal(isEmailSignUp("/sign-in/email"), false);
   assert.equal(isEmailSignUp("/callback/google"), false);
   assert.equal(isEmailSignUp(undefined), false);
+});
+
+test("plus-addressing, full-width at-sign and Kelvin-sign K do not widen the invite list", () => {
+  const invited = signUpEmailsFromEnv({ SIGNUP_ALLOWED_EMAILS: "invited@example.com,kim@example.com" });
+  assert.equal(emailSignUpAllowed("invited+x@example.com", invited), false);
+  assert.equal(emailSignUpAllowed("invited\uFF20example.com", invited), false);
+  // U+212A KELVIN SIGN lower-cases to "k" in JavaScript; refused, not folded.
+  assert.equal(emailSignUpAllowed("\u212Aim@example.com", invited), false);
+  assert.equal(emailSignUpAllowed("invited@example.com\u200B", invited), false);
+  assert.equal(emailSignUpAllowed("kim@example.com", invited), true);
+});
+
+test("plus-addressing, full-width at-sign and Kelvin-sign K do not widen the SSO list", () => {
+  assert.equal(ssoEmailAllowed("dev+x@example.com", policy), false);
+  assert.equal(ssoEmailAllowed("someone\uFF20lightbound.uk", policy), false);
+  assert.equal(ssoEmailAllowed("someone@lightbound.u\u212A", policy), false);
+  assert.equal(ssoEmailAllowed("someone@lightbound.uk", policy), true);
+});
+
+test("user.create is deny-by-default: an unknown path is refused", () => {
+  const invited = signUpEmailsFromEnv({ SIGNUP_ALLOWED_EMAILS: "invited@example.com" });
+  const domainUser = { email: "josh@lightbound.uk", emailVerified: true };
+  const invitedUser = { email: "invited@example.com", emailVerified: false };
+  // Allowed: an SSO callback passing the policy, an invited email sign-up.
+  assert.equal(userCreateAllowed(domainUser, { path: "/callback/:id", params: { id: "google" } }, policy, invited), true);
+  assert.equal(userCreateAllowed(invitedUser, { path: "/sign-up/email" }, policy, invited), true);
+  // Refused: the right user on any other route, or with no endpoint context.
+  for (const ctx of [
+    { path: "/sign-in/social" }, // better-auth creates the user here when given an idToken
+    { path: "/oauth2/callback/:providerId", params: { providerId: "google" } },
+    { path: "/admin/create-user" },
+    { path: "/callback/:id", params: { id: "gitlab" } },
+    { path: undefined },
+    null,
+    undefined,
+  ]) {
+    assert.equal(userCreateAllowed(domainUser, ctx, policy, invited), false, JSON.stringify(ctx));
+    assert.equal(userCreateAllowed(invitedUser, ctx, policy, invited), false, JSON.stringify(ctx));
+  }
+  // The allowed routes still apply their own list.
+  assert.equal(userCreateAllowed({ email: "x@gmail.com", emailVerified: true }, { path: "/callback/:id", params: { id: "google" } }, policy, invited), false);
+  assert.equal(userCreateAllowed({ email: "josh@lightbound.uk", emailVerified: false }, { path: "/callback/:id", params: { id: "github" } }, policy, invited), false);
+  assert.equal(userCreateAllowed({ email: "josh@lightbound.uk", emailVerified: true }, { path: "/sign-up/email" }, policy, invited), false);
 });

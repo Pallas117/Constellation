@@ -105,7 +105,9 @@ npm run preview                             # in a second terminal: web app on 1
 
 Sign-up is by invitation: put your address in `SIGNUP_ALLOWED_EMAILS` in `.env` and restart the
 backend first (any other address gets 403). Then open http://127.0.0.1:8080 and create your account. Make yourself admin with
-`npm run auth:set-role -- <email> admin`. Roles build on each other: `user` (live view, own API
+`npm run auth:set-role -- <email> admin`. No other route creates an account: the user-creation hook refuses anything but an invited
+email sign-up or an SSO callback on `SSO_ALLOWED_DOMAIN`/`SSO_ALLOWED_EMAILS` (`backend/sso-policy.ts`), and
+`auth:set-role` only changes an existing account. Roles build on each other: `user` (live view, own API
 keys) < `staff` < `operator` (operator console) < `admin`. New accounts start as `user`.
 
 To keep it running, put both commands under your process supervisor (systemd, launchd) as an

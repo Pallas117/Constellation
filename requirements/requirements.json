@@ -1077,6 +1077,23 @@
       ]
     },
     {
+      "id": "REQ-SEC-026",
+      "title": "Account creation denied by default",
+      "statement": "The backend shall write a new user row only from a Google or GitHub OAuth callback whose provider-verified email passes the SSO policy, or from an invited email and password sign-up, and shall refuse user creation from every other route or from no route at all. Allowlist matching shall accept only printable-ASCII addresses, so plus-addressing, a full-width at-sign or a Kelvin-sign K cannot match a listed address or domain.",
+      "rationale": "better-auth can create users outside the two checked routes (e.g. /sign-in/social with an idToken, or routes a plugin adds), and it passes hooks the callback route template /callback/:id rather than /callback/google, which left the SSO check unmatched. Denying by default closes both. Found in the PR #359 review (i2).",
+      "parent": "GAU-178",
+      "method": "T",
+      "owner": "Josh",
+      "verifiedBy": [
+        "user.create is deny-by-default: an unknown path is refused",
+        "the route template /callback/:id counts as SSO only for google and github",
+        "only Google and GitHub callbacks count as SSO",
+        "plus-addressing, full-width at-sign and Kelvin-sign K do not widen the invite list",
+        "plus-addressing, full-width at-sign and Kelvin-sign K do not widen the SSO list",
+        "the user.create hook refuses an uninvited sign-up on its own, without the before-hook"
+      ]
+    },
+    {
       "id": "REQ-SEC-012",
       "title": "SSO limited to the Workspace domain",
       "statement": "Single sign-on shall create accounts only for addresses on the configured Workspace domain.",
