@@ -206,12 +206,27 @@ GATEBOX_TIMEOUT_S="${GAUSS_GATEBOX_TIMEOUT_S:-1200}"
 # merge it under its usual rules. It writes NO deploy record: `deploy` still needs the full gates on
 # this Mac (the VCRM is checked here). Anything else (no --pr, gatebox unreachable, a pass line that
 # does not name the commit) runs the full gates here, as before. Off by default.
-gatebox_load() { # gatebox_load: set GATEBOX (addresses) and GATEBOX_TRUST from the environment or $WATCH_DIR/gatebox, as they are now
+# Ops tests on the gatebox too (GAU-239, 25 Nov: after a gatebox pass the ops step here still waited for
+# memory, swap > 4 GB). With "ops" as well (GAUSS_GATEBOX_OPS, or the third line of $WATCH_DIR/gatebox), a
+# merge-only request asks the gatebox for "<repo> <sha> ops": after its gates it runs test:ops in a git
+# checkout of the commit when it has every tool, and prints "ops rc=N in S s on <sha>". Only rc=0 naming
+# this commit, with "0 failed", skips the ops step here; anything else (an older gauss-gate-run, "ops
+# skipped: no <tool>", a failure there) runs the ops tests here as before. Needs "merge"; off by default.
+gatebox_load() { # gatebox_load: set GATEBOX (addresses), GATEBOX_TRUST and GATEBOX_OPS from the environment or $WATCH_DIR/gatebox, as they are now
   GATEBOX="${GAUSS_GATEBOX:-$(head -1 "$WATCH_DIR/gatebox" 2>/dev/null || true)}"
   GATEBOX_TRUST="${GAUSS_GATEBOX_TRUST:-$(sed -n 2p "$WATCH_DIR/gatebox" 2>/dev/null || true)}"
+  GATEBOX_OPS="${GAUSS_GATEBOX_OPS:-$(sed -n 3p "$WATCH_DIR/gatebox" 2>/dev/null || true)}"
 }
 gatebox_load
 gatebox_trusted() { [ -n "$GATEBOX" ] && [ "$GATEBOX_TRUST" = merge ]; }
+gatebox_ops() { gatebox_trusted && [ "$GATEBOX_OPS" = ops ]; }
+gatebox_ops_ok() { # gatebox_ops_ok <sha> <log>: 0 when the gatebox's ops tests passed on that exact commit; prints their count
+  local last counts
+  last=$(grep -E '^ops (rc=|skipped)' "$2" 2>/dev/null | tail -1)
+  counts=$(grep -Eo 'gauss-services: [0-9]+ passed, [0-9]+ failed' "$2" 2>/dev/null | tail -1)
+  [[ "$last" == "ops rc=0 "*" on $1" && "$counts" == *", 0 failed" ]] || return 1
+  echo "${counts#gauss-services: }"
+}
 # Several addresses (19 Nov: Talos on a fixed LAN IP dropped off when it changed network, and every gate
 # fell back to this Mac: 85 min on battery, paused by Argo on an 8 W charger, against ~3 min on Talos).
 # The first line may list the same machine's addresses, space separated, e.g. its LAN IP, its .local
@@ -1347,8 +1362,9 @@ gates_restart() {
   gates_start
 }
 
-gates_prescreen() { # gates_prescreen <sha> <tree>: 0 the gatebox failed the commit (result written); 2 it passed that exact commit; 1 it said nothing: gate it here
-  local sha=$1 tree=$2 log rc=0 last h first="" host
+gates_prescreen() { # gates_prescreen <sha> <tree> [ops]: 0 the gatebox failed the commit (result written); 2 it passed that exact commit; 1 it said nothing: gate it here
+  local sha=$1 tree=$2 ops=${3:-} log rc=0 last h first="" host n
+  GATEBOX_OPS_PASSED="" # set to the commit when the gatebox also passed its ops tests ("ops")
   [ -n "$GATEBOX" ] || return 1
   for h in $GATEBOX; do # every address must be a plain host name or IP before any reaches ssh
     [[ "$h" =~ ^[A-Za-z0-9][A-Za-z0-9.-]*$ ]] || { echo "gatebox: not a host name: $h; gating here"; return 1; }
@@ -1363,13 +1379,20 @@ gates_prescreen() { # gates_prescreen <sha> <tree>: 0 the gatebox failed the com
   # macOS has no timeout(1): perl sets the alarm and execs ssh, which SIGALRM then ends (exit 142).
   perl -e 'alarm shift; exec @ARGV' "$GATEBOX_TIMEOUT_S" ssh -i "$GATEBOX_KEY" -o IdentitiesOnly=yes -o BatchMode=yes -o ConnectTimeout=15 -o ServerAliveInterval=30 \
     -o ServerAliveCountMax=4 -o StrictHostKeyChecking=accept-new -o "UserKnownHostsFile=\"$GATEBOX_HOSTS\"" -o HostKeyAlias="$first" \
-    "gate@$host" "$GATEBOX_REPO $sha" >"$log" 2>&1 </dev/null || rc=$?
+    "gate@$host" "$GATEBOX_REPO $sha${ops:+ ops}" >"$log" 2>&1 </dev/null || rc=$?
   last=$(grep -E '^gates rc=' "$log" | tail -1)
   # gauss-gate-run prints "gates rc=N in S s on <sha>" after the gates; without that line (ssh 255, busy 75,
   # sha not on GitHub 65, fetch 69, a killed run) the gatebox said nothing about the commit.
   if [ "$rc" = 0 ] && [[ "$last" == "gates rc=0 "* ]]; then
     # A pass counts for merging only when the line names this commit (gauss-gate-run prints "... on <sha>").
-    if [[ "$last" == *" on $sha" ]]; then echo "$(date '+%F %T') gatebox passed ${sha:0:7} ($last)"; return 2; fi
+    if [[ "$last" == *" on $sha" ]]; then
+      echo "$(date '+%F %T') gatebox passed ${sha:0:7} ($last)"
+      if [ "$ops" = ops ]; then
+        if n=$(gatebox_ops_ok "$sha" "$log"); then GATEBOX_OPS_PASSED=$sha; echo "$(date '+%F %T') gatebox ops tests passed ${sha:0:7} ($n)"
+        else n=$(grep -E '^ops (rc=|skipped)' "$log" | tail -1); echo "$(date '+%F %T') gatebox ops tests: ${n:-no ops line (an older gauss-gate-run?)}; ops tests here"; fi
+      fi
+      return 2
+    fi
     echo "$(date '+%F %T') gatebox passed ${sha:0:7} ($last), without naming the commit; full gates here next"; return 1
   fi
   if [ "$rc" -ge 1 ] && [ "$rc" -le 63 ] && [[ "$last" == "gates rc=$rc "* ]]; then
@@ -1558,14 +1581,19 @@ gates_run() { # gates_run [--once]: work through the queue, oldest first, then e
       sha=$(req_get "$req" sha); tree=$(req_get "$req" tree); merge_only=1
     fi
     # A deferred request keeps the gatebox's pass of this exact commit: no second screen when it comes back.
+    # (Its ops pass is not remembered, so a deferred merge-only request runs the ops tests here: more, never less.)
     if [ "$(req_get "$req" screened)" = "$sha" ]; then screened=2
     else
-      screened=0; gates_prescreen "$sha" "$tree" || screened=$?
+      screened=0; gates_prescreen "$sha" "$tree" "$([ "$merge_only" = 1 ] && gatebox_ops && echo ops)" || screened=$?
       if [ "$screened" = 0 ]; then rm -f "$req"; tail -1 "$GATES_RESULTS"; continue; fi
       [ "$screened" = 2 ] && req_set "$req" screened "$sha"
     fi
     rc=0; pr=$(req_get "$req" pr); wait_min=$GATES_WAIT_MIN; counted=1
-    if [ "$merge_only" = 1 ] && [ "$screened" = 2 ]; then
+    if [ "$merge_only" = 1 ] && [ "$screened" = 2 ] && [ "${GATEBOX_OPS_PASSED:-}" = "$sha" ]; then
+      # Nothing to run here, so no claude-heavy wait: run-one checks the gatebox log again and merges.
+      echo "$(date '+%F %T') ${sha:0:7}: merge only, the gatebox ran the ops tests too; nothing runs here"
+      /bin/bash "$self" gates run-one "$req" --gatebox-passed "$sha" ops || rc=$?
+    elif [ "$merge_only" = 1 ] && [ "$screened" = 2 ]; then
       echo "$(date '+%F %T') ops tests ${sha:0:7} (merge only: the gatebox passed the rest) ..."
       if [ -x "$HEAVY" ]; then
         "$HEAVY" --wait "$GATES_WAIT_MIN" --max-level 2 --name gates-ops --label "ops gate ${sha:0:7}" -- /bin/bash "$self" gates run-one "$req" --gatebox-passed "$sha" || rc=$?
@@ -1617,8 +1645,8 @@ gates_run() { # gates_run [--once]: work through the queue, oldest first, then e
 }
 
 gates_run_one() { # gates_run_one <request>: check out, install if the lockfile changed, gates_record, write the result
-  local req=$1 passed=${3:-} sha tree repo node by co lock out rc=0 line status
-  [ "${2:-}" = --gatebox-passed ] || passed=""
+  local req=$1 passed=${3:-} box=${4:-} sha tree repo node by co lock out rc=0 line status
+  [ "${2:-}" = --gatebox-passed ] || { passed=""; box=""; }
   # Withdrawn while claude-heavy waited (a session re-queued a new head): nothing to run.
   [ -f "$req" ] || { echo "Request $(basename "$req") was withdrawn; skipping."; return 0; }
   local pr; pr=$(req_get "$req" pr)
@@ -1635,6 +1663,7 @@ gates_run_one() { # gates_run_one <request>: check out, install if the lockfile 
   sha=$(req_get "$req" sha); tree=$(req_get "$req" tree); repo=$(req_get "$req" repo); node=$(req_get "$req" node); by=$(req_get "$req" by)
   # Merge only: the gatebox vouched for one commit. If main moved since, that is no longer the head.
   if [ -n "$passed" ] && [ "$sha" != "$passed" ]; then return 77; fi
+  if [ -n "$passed" ] && [ "$box" = ops ]; then gates_ops_only "$req" "" "$sha" "$tree" "$pr" "$repo" box; return; fi
   [ -n "$node" ] && [ -x "$node" ] && NODE=$node # the Node the session queued with (.nvmrc: Node 26)
   co=${GAUSS_GATES_CHECKOUT:-$(dirname "$repo").worktrees/gates}
   gates_fail() { gates_result "$sha" "$tree" ERROR "$1"; rm -f "$req"; return 1; }
@@ -1700,6 +1729,16 @@ gates_ops_only() { # gates_ops_only <request> <checkout> <sha> <tree> <pr> <repo
   # After a gatebox pass on this exact commit (GAU-239). No install: the ops tests are bash and Go.
   # The result is for merging only; no deploy record ($GATES_DIR/<tree>.json) is written.
   local req=$1 co=$2 sha=$3 tree=$4 pr=$5 repo=$6 rc=0 hold=0 log counts
+  if [ "${7:-}" = box ]; then # the gatebox ran test:ops too: use it only if its log still says so for this commit
+    log="$GATES_DIR/logs/gatebox-${sha:0:12}.log"
+    if counts=$(gatebox_ops_ok "$sha" "$log"); then
+      rm -f "$req"
+      gates_result "$sha" "$tree" PASSED "merge only, no deploy record: gatebox $GATEBOX passed ${sha:0:7} (npm ci, test, quality:full, build, test:ops $counts); nothing ran here"
+      [ -z "$pr" ] || train_merge "$pr" "$sha" "$tree" "$repo" || true
+      return
+    fi
+    return 77 # the log no longer vouches for it: the request stays queued and is screened again
+  fi
   log="$GATES_DIR/runs/$sha.ops.log"
   # Under claude-heavy the gate lock is already ours; gate_lock would also wait for normal memory
   # pressure, which a small job does not need.
@@ -1981,7 +2020,8 @@ gates_status() {
     echo "queued: $(req_get "$f" sha | cut -c1-7) by $(req_get "$f" by) since $(date -r "$(req_get "$f" queued)" '+%F %H:%M')"
   done
   [ $n -gt 0 ] || echo "queue: empty"
-  if gatebox_trusted; then echo "gatebox: $GATEBOX screens each request first; a pass lets the train merge after the ops tests here (no deploy record)"
+  if gatebox_ops; then echo "gatebox: $GATEBOX screens each request first; a pass lets the train merge after the ops tests, there when it has the tools, else here (no deploy record)"
+  elif gatebox_trusted; then echo "gatebox: $GATEBOX screens each request first; a pass lets the train merge after the ops tests here (no deploy record)"
   elif [ -n "$GATEBOX" ]; then echo "gatebox: $GATEBOX screens each request first"; else echo "gatebox: off (all gates run here)"; fi
   tail -5 "$GATES_RESULTS" 2>/dev/null || true
 }
@@ -2702,7 +2742,7 @@ case "${1:-}" in
       record) gates_record "${3:-}" ;;
       enqueue) gates_enqueue "${@:3}" ;;
       run) gates_run "${3:-}" ;;
-      run-one) gates_run_one "${3:?}" "${4:-}" "${5:-}" ;;
+      run-one) gates_run_one "${3:?}" "${4:-}" "${5:-}" "${6:-}" ;;
       result) if [ "${3:-}" = status ]; then gates_status; else gates_show_result "${3:-}"; fi ;;
       passed) gates_passed "${3:-}" ;;
       why) gates_why "${3:-}" ;;
