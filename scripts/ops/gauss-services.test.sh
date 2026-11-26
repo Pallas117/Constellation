@@ -66,7 +66,7 @@ run() { # run <args...>: gauss-services.sh with the stubs; alerts land in $LOG
     GAUSS_SUDOERS="$T/sudoers" MLX="${MLX:-0}" MLXPORT="${MLXPORT:-8089}" ACTIONS="$T/actions" GAUSS_BALANCE="${GAUSS_BALANCE:-1}" \
     LOADED="${LOADED:-}" HEALTH="${HEALTH:-200}" HEALTH_FILE="${HEALTH_FILE:-}" GAUSS_DEPLOY_WAIT=0 DISKGB="${DISKGB:-50}" \
     GATEORDER="${GATEORDER:-}" GAUSS_PW_CHROMIUM="${GAUSS_PW_CHROMIUM:-}" GATEFAIL="${GATEFAIL:-}" MOVEMAIN="${MOVEMAIN:-}" GAUSS_BY=test-user BOOT="${BOOT:-1000}" GAUSS_DIAG_DIRS="$T/diag" GAUSS_EVENTS_MAX_KB="${GAUSS_EVENTS_MAX_KB:-5120}" \
-    WAKE="${WAKE:-1000}" GAUSS_GATEBOX_TRUST="${GAUSS_GATEBOX_TRUST:-}" GAUSS_DEV_DRY="${GAUSS_DEV_DRY:-0}" GAUSS_GATES_START=0 GATEHANG="${GATEHANG:-}" GAUSS_GATES_STEP_S="${GAUSS_GATES_STEP_S:-}" HEAVYGIVEUP="${HEAVYGIVEUP:-}" NPMNET="${NPMNET:-}" GAUSS_GATEBOX="${GAUSS_GATEBOX:-}" GAUSS_GATEBOX_PROBE="${GAUSS_GATEBOX_PROBE:-true}" GAUSS_GATEBOX_WAIT_S="${GAUSS_GATEBOX_WAIT_S:-0}" GAUSS_GATEBOX_POLL_S="${GAUSS_GATEBOX_POLL_S:-1}" GAUSS_MESH_STORE="${GAUSS_MESH_STORE:-}" GAUSS_GATEBOX_TIMEOUT_S="${GAUSS_GATEBOX_TIMEOUT_S:-}" GAUSS_FLEET_MEMORY="${GAUSS_FLEET_MEMORY:-}" GAUSS_GATEBOX_KEY="$T/gatebox-key" GBRC="${GBRC:-}" GAUSS_GATES_EXPIRE_H="${GAUSS_GATES_EXPIRE_H:-72}" GAUSS_GATES_HOOK_S="${GAUSS_GATES_HOOK_S:-300}" GAUSS_DEV_API_PORT="${GAUSS_DEV_API_PORT:-3101}" \
+    WAKE="${WAKE:-1000}" GAUSS_GATEBOX_TRUST="${GAUSS_GATEBOX_TRUST:-}" GAUSS_DEV_DRY="${GAUSS_DEV_DRY:-0}" GAUSS_GATES_START=0 GATEHANG="${GATEHANG:-}" GAUSS_GATES_STEP_S="${GAUSS_GATES_STEP_S:-}" HEAVYGIVEUP="${HEAVYGIVEUP:-}" NPMNET="${NPMNET:-}" GAUSS_GATEBOX="${GAUSS_GATEBOX:-}" GAUSS_GATEBOX_PROBE="${GAUSS_GATEBOX_PROBE:-true}" GAUSS_GATEBOX_WAIT_S="${GAUSS_GATEBOX_WAIT_S:-0}" GAUSS_GATEBOX_POLL_S="${GAUSS_GATEBOX_POLL_S:-1}" GAUSS_MESH_STORE="${GAUSS_MESH_STORE:-}" GAUSS_GATEBOX_TIMEOUT_S="${GAUSS_GATEBOX_TIMEOUT_S:-}" GAUSS_FLEET_MEMORY="${GAUSS_FLEET_MEMORY:-}" GAUSS_GATEBOX_KEY="$T/gatebox-key" GBRC="${GBRC:-}" GBOPS="${GBOPS:-}" GAUSS_GATEBOX_OPS="${GAUSS_GATEBOX_OPS:-}" GAUSS_GATES_EXPIRE_H="${GAUSS_GATES_EXPIRE_H:-72}" GAUSS_GATES_HOOK_S="${GAUSS_GATES_HOOK_S:-300}" GAUSS_DEV_API_PORT="${GAUSS_DEV_API_PORT:-3101}" \
     SRC="${SRC:-AC Power}" BATT="${BATT:-80%; charging; present: true}" SD="${SD:-0}" FCC="${FCC:-}" ACW="${ACW:-}" \
     LEAKY="${LEAKY:-}" LEAKFP="${LEAKFP:-12 MB}" AVAIL="${AVAIL:-50}" GAUSS_SWAP_LAST="${SWAPLAST:-/dev/null}" \
     GATEENV="${GATEENV:-}" GATES_PYTHON="${GATES_PYTHON:-}" ${GATELEAK:+ALLOWED_ORIGINS=https://live.example MESH_STORE_PATH=/live/data/mesh/devices.json COMMERCE_DB_PATH=/live/data/commerce/commerce.db GAUSS_BEDROCK_DIR=/live/data/bedrock NODE_ENV=production} \
@@ -694,7 +694,10 @@ rm -f "$(grep -l "sha=$N" "$GQ"/*.req)"
 # Gatebox (GAU-223): the Oracle VM screens each request first over the tailnet. GBRC is the stub's
 # exit code; "say" adds the "gates rc=N in S s on <sha>" line gauss-gate-run prints after the gates ran
 # ("anon" leaves the commit out of it, as an older gauss-gate-run would).
-stub ssh 'echo "ssh $*" >>"$ACTIONS"; a=${@: -1}; case "$GBRC" in hang) sleep 5; exit 0 ;; say*) r=${GBRC#say}; [ -f "$HOME/gatebox-out" ] && cat "$HOME/gatebox-out"; echo "gates rc=$r in 90 s on ${a##* }"; exit "$r" ;; anon*) r=${GBRC#anon}; echo "gates rc=$r in 90 s"; exit "$r" ;; *) echo "ssh: connect to host gatebox port 22: Operation timed out" >&2; exit "${GBRC:-255}" ;; esac'
+# With "ops" asked (GBOPS): pass, fail, skip (a tool missing), anon (no commit named), other (another commit); unset = an older gauss-gate-run.
+stub ssh 'echo "ssh $*" >>"$ACTIONS"; a=${@: -1}; read -r _ s o _ <<<"$a"; case "$GBRC" in hang) sleep 5; exit 0 ;; say*) r=${GBRC#say}; [ -f "$HOME/gatebox-out" ] && cat "$HOME/gatebox-out"; echo "gates rc=$r in 90 s on $s"
+  if [ "$r" = 0 ] && [ "$o" = ops ]; then case "$GBOPS" in pass) echo "gauss-services: 7 passed, 0 failed"; echo "ops rc=0 in 60 s on $s" ;; fail) echo "gauss-services: 6 passed, 1 failed"; echo "ops rc=1 in 60 s on $s" ;;
+    skip) echo "ops skipped: no plutil" ;; anon) echo "gauss-services: 7 passed, 0 failed"; echo "ops rc=0 in 60 s" ;; other) echo "gauss-services: 7 passed, 0 failed"; echo "ops rc=0 in 60 s on 0000000000000000000000000000000000000000" ;; esac; fi; exit "$r" ;; anon*) r=${GBRC#anon}; echo "gates rc=$r in 90 s"; exit "$r" ;; *) echo "ssh: connect to host gatebox port 22: Operation timed out" >&2; exit "${GBRC:-255}" ;; esac'
 : >"$T/gatebox-key"
 g checkout -q --detach "$E"; echo gb1 >"$LIVE/backend/server.ts"; g commit -qam gb1; GB1=$(g rev-parse HEAD); g checkout -q --detach "$E"
 (cd "$LIVE" && run gates enqueue "$GB1" >/dev/null 2>&1)
@@ -1010,6 +1013,50 @@ grep -q "^heavy --wait [0-9]* --name gates " "$T/actions" && [ -f "$WD/gates/$(t
 expect "merge only: off by default; a gatebox pass alone still gets the full gates here" $?
 out=$(gbt run gates result status 2>&1); [[ "$out" == *"a pass lets the train merge after the ops tests here (no deploy record)"* ]]
 expect "gates result status: says when a gatebox pass is trusted for merging" $?
+# Ops tests on the gatebox too (GAU-239, 25 Nov): with "ops" a merge-only request asks for them there; only a
+# pass that names the commit with 0 failed skips the ops step here (and its wait for memory).
+gbo() { GAUSS_GATEBOX_OPS=ops gbt "$@"; }
+O1=$(tc "$M2" o1.txt o1); mo "$O1" gbo-ok 71
+out=$(GBRC=say0 GBOPS=pass gbo run gates run 2>&1)
+grep -q "^ssh .*gate@gatebox Pallas117/Constellation $O1 ops\$" "$T/actions" && ! grep -q '^heavy ' "$T/actions" && [ ! -f "$WD/gates/runs/$O1.ops.log" ] \
+  && grep -q "^[^ ]* $O1 [^ ]* PASSED merge only, no deploy record: gatebox gatebox passed ${O1:0:7} (npm ci, test, quality:full, build, test:ops 7 passed, 0 failed); nothing ran here" "$GR" \
+  && grep -qx "gh merge 71 $O1" "$T/actions" && [ ! -f "$WD/gates/$(tree_of "$O1").json" ] && [ -z "$(ls "$GQ")" ]
+expect "gatebox ops: a train head whose ops tests passed on the gatebox merges with nothing run here (no deploy record)" $?
+ok=0; for case in skip fail anon other none; do
+  Ox=$(tc "$M2" "ox-$case.txt" "ox-$case"); mo "$Ox" "gbo-$case" 72
+  out=$(GBRC=say0 GBOPS=$([ "$case" = none ] || echo "$case") gbo run gates run 2>&1)
+  grep -q "^heavy --wait [0-9]* --max-level 2 --name gates-ops .* --gatebox-passed $Ox\$" "$T/actions" && [[ "$out" == *"gatebox ops tests: "*"; ops tests here"* ]] \
+    && grep -q "^[^ ]* $Ox [^ ]* PASSED merge only, no deploy record: .*; here test:ops 99 passed, 0 failed" "$GR" || { echo "  case $case"; ok=1; }
+done; [ $ok = 0 ]
+expect "gatebox ops: a missing tool, a failure, no commit or another commit named, or an older gauss-gate-run: the ops tests run here" $?
+O3=$(tc "$M2" o3.txt o3); (cd "$LIVE" && run gates enqueue "$O3" >/dev/null 2>&1)
+out=$(GBRC=say0 GBOPS=pass gbo run gates run 2>&1)
+grep -q "^ssh .* $O3\$" "$T/actions" && grep -q "^heavy --wait [0-9]* --name gates " "$T/actions" && [ -f "$WD/gates/$(tree_of "$O3").json" ]
+expect "gatebox ops: a request without --pr never asks for them; the full gates run here for the deploy record" $?
+O4=$(tc "$M2" o4.txt o4); (cd "$LIVE" && run gates enqueue "$O4" >/dev/null 2>&1)
+out=$(GBRC=say0 GBOPS=pass GAUSS_GATEBOX=gatebox GAUSS_GATEBOX_OPS=ops run gates run 2>&1)
+grep -q "^ssh .* $O4\$" "$T/actions" && grep -q "^heavy --wait [0-9]* --name gates " "$T/actions"
+expect "gatebox ops: needs merge trust; without it the gatebox is only asked to screen" $?
+O5=$(tc "$M2" o5.txt o5); mo "$O5" gbo-nolog 73; req=$(ls "$GQ"/*.req)
+gbo run gates run-one "$req" --gatebox-passed "$O5" ops >/dev/null 2>&1; rc=$?
+[ $rc = 77 ] && [ -f "$req" ] && ! grep -q " $O5 " "$GR" && ! grep -q "gh merge 73" "$T/actions"
+expect "gatebox ops: run-one checks the gatebox log itself; without its pass line the request stays queued" $?
+rm -f "$GQ"/*.req
+printf 'gatebox\nmerge\nops\n' >"$WD/gatebox"; out=$(run gates result status 2>&1); rm -f "$WD/gatebox"
+[[ "$out" == *"after the ops tests, there when it has the tools, else here (no deploy record)"* ]]
+expect "gates result status: the third line of the gatebox file turns on the ops tests there" $?
+# The forced command on the gatebox: one copy in the repo, the same in cloud-init; it refuses unknown options.
+GR_RUN="$(dirname "$SCRIPT")/gatebox/gauss-gate-run"
+python3 -Ic 'import sys; y=open(sys.argv[1]).read(); f=open(sys.argv[2]).read()
+emb="".join(l[6:] if l.strip() else "\n" for l in y.split("    content: |\n", 3)[3].split("\nruncmd:")[0].splitlines(True))
+sys.exit(0 if emb.rstrip("\n") == f.rstrip("\n") else 1)' "$(dirname "$SCRIPT")/gatebox/cloud-init.yaml" "$GR_RUN" && bash -n "$GR_RUN"
+expect "gatebox: cloud-init installs the same gauss-gate-run as scripts/ops/gatebox/gauss-gate-run" $?
+out=$(SSH_ORIGINAL_COMMAND="Pallas117/Constellation $O1 rm" bash "$GR_RUN" 2>&1); rc=$?
+out2=$(SSH_ORIGINAL_COMMAND="Other/repo $O1 ops" bash "$GR_RUN" 2>&1); rc2=$?
+[ $rc = 64 ] && [[ "$out" == "option not allowed: rm" ]] && [ $rc2 = 64 ] && [[ "$out2" == "repo not allowed: Other/repo" ]]
+expect "gauss-gate-run: an option other than ops, or another repo, is refused before anything runs" $?
+out=$(bash "$(dirname "$SCRIPT")/gatebox/install-gate-run.sh" --dry-run 2>&1); [[ "$out" == *"+ sudo install -m 0755 -o root -g root "*"/usr/local/bin/gauss-gate-run"* ]]
+expect "install-gate-run.sh --dry-run: prints the sudo install for Josh and runs nothing" $?
 rm -f "$GQ"/*.req
 # 24 Nov: the runner read the gatebox file once, at its start. The file was pointed at a new address while
 # it ran, and every later request was still gated here, on the old address's outage.
