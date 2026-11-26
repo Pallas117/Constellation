@@ -22,6 +22,7 @@ const MeshDashboard = lazy(() => import("./pages/MeshDashboard"));
 const ApiKeys = lazy(() => import("./pages/ApiKeys"));
 const Evidence = lazy(() => import("./pages/Evidence"));
 const LogWiring = lazy(() => import("./pages/LogWiring"));
+const FundingTracker = lazy(() => import("./pages/FundingTracker"));
 
 const queryClient = new QueryClient();
 
@@ -88,6 +89,14 @@ function AppRoutes() {
             element={
               <ProtectedRoute minRole="operator">
                 <Evidence />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/operator/funding"
+            element={
+              <ProtectedRoute minRole="admin">
+                <FundingTracker />
               </ProtectedRoute>
             }
           />

@@ -74,11 +74,13 @@ export const API_POLICY: ReadonlyArray<{ method: string; path: string; access: A
   { method: "POST", path: "/device/swap/rebalance", access: "operator" },
   { method: "POST", path: "/device/:id/quality", access: "operator" },
 
-  // Admins: security controls and model training
+  // Admins: security controls, model training and the private funding tracker view
   { method: "GET", path: "/security/cybertiger/events", access: "admin" },
   { method: "POST", path: "/security/cybertiger/block", access: "admin" },
   { method: "POST", path: "/security/cybertiger/unblock", access: "admin" },
   { method: "POST", path: "/ai/nowcast/train", access: "admin" },
+  // Funding tracker view: a read of a local CSV export, GET only (backend/funding/router.ts)
+  { method: "GET", path: "/admin/funding", access: "admin" },
 ];
 
 function matches(pattern: string, path: string): boolean {
