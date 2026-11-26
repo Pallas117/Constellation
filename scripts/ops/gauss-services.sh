@@ -24,6 +24,7 @@
 #     the cause. 3. `npm run -s check:changed` before re-queueing with --pr. 4. If the cause was new, add a row to
 #     GATES_CAUSES with its date, so the same failure is named next time. That list is how failures go down.
 #   scripts/ops/gauss-services.sh gates passed <commit>    exit 0 only if that commit's exact tree has a passing record (for scripts)
+#   scripts/ops/gauss-services.sh gates restart            stop a stuck runner and its run without a result (requests stay queued), clear a dead owner's gate lock, start a fresh runner
 #   scripts/ops/gauss-services.sh events [--since 2h] [--json]     timeline: watchdog, failover, deploys, alerts, boots (events.jsonl)
 #
 # Three layers (GAU-158): dev (any other checkout, foreground, own ports and data,
@@ -153,13 +154,37 @@ GATES_EXPIRE_H="${GAUSS_GATES_EXPIRE_H:-72}"   # a request still waiting after t
 # rules stay in the hook (and each merge there still needs the pass on the exact head, main in it, CLEAN).
 GATES_HOOK="${GAUSS_GATES_HOOK:-$GATES_DIR/hooks/after-pass}"
 GATES_HOOK_S="${GAUSS_GATES_HOOK_S:-300}"
+# Step limits (25 Nov: one verify sat at 0% CPU for 3.5 h with no limit and held 16 requests). Every local
+# gate step runs in its own process group and is stopped, children too, when it passes its limit: exit 142,
+# "timeout" in the result, and the queue moves on. Defaults from the 73 runs in the run logs on 25 Nov:
+# test:ops median 271 s (90% within 310), verify 311 s (460), quality:full 21 s (longest 60): about three
+# times the usual, rounded up. The install and the UI gate have no timings yet, so theirs are loose.
+# GAUSS_GATES_STEP_S sets one limit for every step (a throttled day on battery, or the tests).
+GATES_STEP_S="${GAUSS_GATES_STEP_S:-}"
+gates_step_s() { # gates_step_s <step>: its time limit in seconds
+  if [ -n "$GATES_STEP_S" ]; then echo "$GATES_STEP_S"; return; fi
+  case $1 in
+    install) echo 1800 ;; native) echo 600 ;; test:ops) echo 900 ;; quality:full) echo 300 ;;
+    test:ui:gate) echo 900 ;; verify) echo 1500 ;; *) echo 1800 ;;
+  esac
+}
+limited() { # limited <seconds> <command...>: run it in its own process group; past the limit the whole group is killed (exit 142)
+  # macOS has no timeout(1). No stdin (a background group must not read the terminal). A signal to this
+  # process (Ctrl-C on a run by hand) ends the group too, so nothing is left running.
+  perl -e '$t = shift; $p = fork; die "fork: $!" unless defined $p;
+    if (!$p) { setpgrp(0, 0); exec @ARGV or exit 127 }
+    $SIG{ALRM} = sub { kill "TERM", -$p; sleep 1; kill "KILL", -$p; exit 142 }; alarm $t;
+    $SIG{INT} = $SIG{TERM} = $SIG{HUP} = sub { kill "TERM", -$p; sleep 1; kill "KILL", -$p; exit 143 };
+    waitpid($p, 0); exit($? & 127 ? 128 + ($? & 127) : $? >> 8)' "$@" </dev/null
+}
 # Gatebox (GAU-207 sizing, GAU-223): an Oracle Always Free VM on the tailnet runs the Linux-portable
 # gates (npm ci, npm test, quality:full, build) on the exact commit, fetched from public GitHub, through
 # the gate user's forced command (scripts/ops/gatebox/cloud-init.yaml). The ops tests and the VCRM need
 # macOS, so a deploy record still comes from this Mac; the gatebox screens first, so a commit that fails
 # there is FAILED without taking this Mac's memory (16 of 70 guarded gate runs failed, 29 Oct-5 Nov,
 # `argo scale`). Off unless a host is set: GAUSS_GATEBOX or one line in $WATCH_DIR/gatebox (a tailnet name).
-GATEBOX="${GAUSS_GATEBOX:-$(head -1 "$WATCH_DIR/gatebox" 2>/dev/null || true)}"
+# gatebox_load reads both lines; the runner calls it again for every request (24 Nov: a runner started
+# with the old address kept gating on this Mac for hours after the file named the new one).
 GATEBOX_KEY="${GAUSS_GATEBOX_KEY:-$HOME/.ssh/gauss-gate}"
 GATEBOX_HOSTS="$WATCH_DIR/gatebox.known_hosts" # the gatebox's host key, pinned on first contact over the tailnet
 GATEBOX_REPO="Pallas117/Constellation"         # the only repo gauss-gate-run accepts
@@ -173,8 +198,27 @@ GATEBOX_TIMEOUT_S="${GAUSS_GATEBOX_TIMEOUT_S:-1200}"
 # merge it under its usual rules. It writes NO deploy record: `deploy` still needs the full gates on
 # this Mac (the VCRM is checked here). Anything else (no --pr, gatebox unreachable, a pass line that
 # does not name the commit) runs the full gates here, as before. Off by default.
-GATEBOX_TRUST="${GAUSS_GATEBOX_TRUST:-$(sed -n 2p "$WATCH_DIR/gatebox" 2>/dev/null || true)}"
+# Ops tests on the gatebox too (GAU-239, 25 Nov: after a gatebox pass the ops step here still waited for
+# memory, swap > 4 GB). With "ops" as well (GAUSS_GATEBOX_OPS, or the third line of $WATCH_DIR/gatebox), a
+# merge-only request asks the gatebox for "<repo> <sha> ops": after its gates it runs test:ops in a git
+# checkout of the commit when it has every tool, and prints "ops rc=N in S s on <sha>". Only rc=0 naming
+# this commit, with "0 failed", skips the ops step here; anything else (an older gauss-gate-run, "ops
+# skipped: no <tool>", a failure there) runs the ops tests here as before. Needs "merge"; off by default.
+gatebox_load() { # gatebox_load: set GATEBOX (addresses), GATEBOX_TRUST and GATEBOX_OPS from the environment or $WATCH_DIR/gatebox, as they are now
+  GATEBOX="${GAUSS_GATEBOX:-$(head -1 "$WATCH_DIR/gatebox" 2>/dev/null || true)}"
+  GATEBOX_TRUST="${GAUSS_GATEBOX_TRUST:-$(sed -n 2p "$WATCH_DIR/gatebox" 2>/dev/null || true)}"
+  GATEBOX_OPS="${GAUSS_GATEBOX_OPS:-$(sed -n 3p "$WATCH_DIR/gatebox" 2>/dev/null || true)}"
+}
+gatebox_load
 gatebox_trusted() { [ -n "$GATEBOX" ] && [ "$GATEBOX_TRUST" = merge ]; }
+gatebox_ops() { gatebox_trusted && [ "$GATEBOX_OPS" = ops ]; }
+gatebox_ops_ok() { # gatebox_ops_ok <sha> <log>: 0 when the gatebox's ops tests passed on that exact commit; prints their count
+  local last counts
+  last=$(grep -E '^ops (rc=|skipped)' "$2" 2>/dev/null | tail -1)
+  counts=$(grep -Eo 'gauss-services: [0-9]+ passed, [0-9]+ failed' "$2" 2>/dev/null | tail -1)
+  [[ "$last" == "ops rc=0 "*" on $1" && "$counts" == *", 0 failed" ]] || return 1
+  echo "${counts#gauss-services: }"
+}
 # Several addresses (19 Nov: Talos on a fixed LAN IP dropped off when it changed network, and every gate
 # fell back to this Mac: 85 min on battery, paused by Argo on an 8 W charger, against ~3 min on Talos).
 # The first line may list the same machine's addresses, space separated, e.g. its LAN IP, its .local
@@ -952,8 +996,10 @@ gates_browser() { # gates_browser <checkout-dir>: install Chromium once if the p
   exe=${GAUSS_PW_CHROMIUM:-$(cd "$1" && "$NODE" -e 'console.log(require("@playwright/test").chromium.executablePath())' 2>/dev/null || true)}
   [ -n "$exe" ] && [ -x "$exe" ] && return 0
   echo "Chromium for the UI gate is missing: installing it once (playwright install chromium)"
-  (cd "$1" && npm exec -- playwright install chromium)
+  (cd "$1" && limited "$(gates_step_s install)" npm exec -- playwright install chromium)
 }
+
+gates_timeout_line() { echo "gate step $1: timeout after $(gates_step_s "$1") s (stopped, with everything it started)"; }
 
 gates_record() { # gates_record <checkout-dir>: run the gates on a clean checkout and record the result by tree
   local dir sha tree g rc
@@ -973,7 +1019,9 @@ gates_record() { # gates_record <checkout-dir>: run the gates on a clean checkou
     echo "gate $g ..."
     local t0=$SECONDS
     rc=0; [ "$g" = test:ui:gate ] && { (PATH="$(dirname "$NODE"):$PATH"; gates_browser "$dir") >"$tmp/$g.log" 2>&1 || rc=$?; }
-    [ $rc = 0 ] && { (cd "$dir" && env "${scrub[@]}" PATH="$(dirname "$NODE")${pydir:+:$pydir}:$PATH" npm run "$g" >>"$tmp/$g.log" 2>&1) || rc=$?; }
+    [ $rc = 0 ] && { (cd "$dir" && limited "$(gates_step_s "$g")" env "${scrub[@]}" PATH="$(dirname "$NODE")${pydir:+:$pydir}:$PATH" npm run "$g" >>"$tmp/$g.log" 2>&1) || rc=$?; }
+    # Past its limit (the step's or the Chromium install's): named in the kept log, so `gates why` says so.
+    if [ $rc = 142 ]; then gates_timeout_line "$g" | tee -a "$tmp/$g.log"; fi
     if [ "$GATES_HOLD" = 1 ]; then rmdir "$GATE_LOCK" 2>/dev/null || true; fi; GATES_HOLD=0
     echo "$rc" >"$tmp/$g.rc"
     # Per-gate time in the run log (runs/<sha>.log), so the slow gate can be measured, not guessed.
@@ -1046,7 +1094,8 @@ gates_summary() { # gates_summary <record file>: one line
 import json, sys
 r = json.load(open(sys.argv[1]))
 t, o, v = r.get("test") or {}, r.get("test_ops") or {}, r.get("verify") or {}
-fails = [k for k in ("test_ops", "test", "build", "quality", "ui", "verify") if (r.get(k) or {}).get("exit") not in (0, None)]
+fails = [k + (" timeout" if (r.get(k) or {}).get("exit") == 142 and k not in ("test", "build") else "")
+         for k in ("test_ops", "test", "build", "quality", "ui", "verify") if (r.get(k) or {}).get("exit") not in (0, None)]
 f = r.get("failing") or {}
 what = "; ".join("%s: %s" % (k, ", ".join(f[k])) for k in ("tests", "requirements", "quality") if f.get(k))
 print("%s %s (tree %s) by %s at %s: npm test %s/%s, test:ops %s passed, build %s, quality %s, VCRM %s, FMEA %s%s" % (
@@ -1240,8 +1289,46 @@ gates_start() { # start the one runner, detached from this session (own session 
   echo "Gate runner started (log: $LOGS/gates-runner.log)."
 }
 
-gates_prescreen() { # gates_prescreen <sha> <tree>: 0 the gatebox failed the commit (result written); 2 it passed that exact commit; 1 it said nothing: gate it here
-  local sha=$1 tree=$2 log rc=0 last h first="" host
+proc_tree() { # proc_tree <pid>: that process and everything it started, parents first (the real ps: tests stub ps)
+  /bin/ps -axo pid=,ppid= | awk -v root="$1" '{ pp[$1] = $2; id[NR] = $1 }
+    END { want[root] = 1; print root
+      do { more = 0; for (i = 1; i <= NR; i++) if (!want[id[i]] && want[pp[id[i]]]) { want[id[i]] = 1; print id[i]; more = 1 } } while (more) }'
+}
+
+# gates restart (25 Nov): a runner stuck in a hung step was stopped by hand, and stopping its step first made
+# it write a result and drop the request. This stops the runner and its whole run without a result, so every
+# request stays queued; clears the shared gate lock when the process that owns it is gone; starts a runner.
+gates_restart() {
+  local p pids="" k owner n
+  if p=$(gates_runner_pid); then
+    for k in $(proc_tree "$p"); do [ "$k" = "$$" ] && { echo "gates restart can't run from inside the runner's own run." >&2; return 1; }; done
+    # Frozen first, parents before children, so nothing in the run sees a child die and writes a result
+    # for it; then killed. The second look catches a process started in between.
+    for k in $(proc_tree "$p"); do kill -STOP "$k" 2>/dev/null || true; done
+    pids=$(proc_tree "$p")
+    for k in $pids; do kill -STOP "$k" 2>/dev/null || true; done
+    for k in $pids; do kill -KILL "$k" 2>/dev/null || true; done
+    echo "Stopped the gate runner (pid $p) and its run ($(wc -w <<<"$pids" | tr -d ' ') processes); no result written."
+    event gates-restart gates "runner $p and its run stopped by hand; requests stay queued" pid:="$p"
+  else
+    echo "No gate runner was working."
+  fi
+  rm -rf "$GATES_RUNNER"
+  if [ -d "$GATE_LOCK" ]; then
+    owner=$(awk '{print $1}' "$GATE_LOCK/owner" 2>/dev/null || true)
+    if [[ "$owner" =~ ^[0-9]+$ ]] && ! kill -0 "$owner" 2>/dev/null; then
+      rm -rf "$GATE_LOCK"; echo "Cleared the gate lock: its owner (pid $owner) is gone."
+    elif [ -n "$owner" ]; then echo "Gate lock kept: its owner (pid $owner) is alive."
+    else echo "Gate lock kept: it names no owner (a gate run by hand?). If nothing is gating: rmdir \"$GATE_LOCK\""; fi
+  fi
+  n=$(ls "$GATES_QUEUE" 2>/dev/null | grep -c '\.req$' || true)
+  echo "$n in the queue."
+  gates_start
+}
+
+gates_prescreen() { # gates_prescreen <sha> <tree> [ops]: 0 the gatebox failed the commit (result written); 2 it passed that exact commit; 1 it said nothing: gate it here
+  local sha=$1 tree=$2 ops=${3:-} log rc=0 last h first="" host n
+  GATEBOX_OPS_PASSED="" # set to the commit when the gatebox also passed its ops tests ("ops")
   [ -n "$GATEBOX" ] || return 1
   for h in $GATEBOX; do # every address must be a plain host name or IP before any reaches ssh
     [[ "$h" =~ ^[A-Za-z0-9][A-Za-z0-9.-]*$ ]] || { echo "gatebox: not a host name: $h; gating here"; return 1; }
@@ -1255,14 +1342,21 @@ gates_prescreen() { # gates_prescreen <sha> <tree>: 0 the gatebox failed the com
   # already authenticated the machine); a changed key is refused, and the run falls back to this Mac.
   # macOS has no timeout(1): perl sets the alarm and execs ssh, which SIGALRM then ends (exit 142).
   perl -e 'alarm shift; exec @ARGV' "$GATEBOX_TIMEOUT_S" ssh -i "$GATEBOX_KEY" -o IdentitiesOnly=yes -o BatchMode=yes -o ConnectTimeout=15 -o ServerAliveInterval=30 \
-    -o ServerAliveCountMax=4 -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile="$GATEBOX_HOSTS" -o HostKeyAlias="$first" \
-    "gate@$host" "$GATEBOX_REPO $sha" >"$log" 2>&1 </dev/null || rc=$?
+    -o ServerAliveCountMax=4 -o StrictHostKeyChecking=accept-new -o "UserKnownHostsFile=\"$GATEBOX_HOSTS\"" -o HostKeyAlias="$first" \
+    "gate@$host" "$GATEBOX_REPO $sha${ops:+ ops}" >"$log" 2>&1 </dev/null || rc=$?
   last=$(grep -E '^gates rc=' "$log" | tail -1)
   # gauss-gate-run prints "gates rc=N in S s on <sha>" after the gates; without that line (ssh 255, busy 75,
   # sha not on GitHub 65, fetch 69, a killed run) the gatebox said nothing about the commit.
   if [ "$rc" = 0 ] && [[ "$last" == "gates rc=0 "* ]]; then
     # A pass counts for merging only when the line names this commit (gauss-gate-run prints "... on <sha>").
-    if [[ "$last" == *" on $sha" ]]; then echo "$(date '+%F %T') gatebox passed ${sha:0:7} ($last)"; return 2; fi
+    if [[ "$last" == *" on $sha" ]]; then
+      echo "$(date '+%F %T') gatebox passed ${sha:0:7} ($last)"
+      if [ "$ops" = ops ]; then
+        if n=$(gatebox_ops_ok "$sha" "$log"); then GATEBOX_OPS_PASSED=$sha; echo "$(date '+%F %T') gatebox ops tests passed ${sha:0:7} ($n)"
+        else n=$(grep -E '^ops (rc=|skipped)' "$log" | tail -1); echo "$(date '+%F %T') gatebox ops tests: ${n:-no ops line (an older gauss-gate-run?)}; ops tests here"; fi
+      fi
+      return 2
+    fi
     echo "$(date '+%F %T') gatebox passed ${sha:0:7} ($last), without naming the commit; full gates here next"; return 1
   fi
   if [ "$rc" -ge 1 ] && [ "$rc" -le 63 ] && [[ "$last" == "gates rc=$rc "* ]]; then
@@ -1285,6 +1379,7 @@ gates_prescreen() { # gates_prescreen <sha> <tree>: 0 the gatebox failed the com
 # GATES_CAUSES is the list of causes we have actually met: <pattern (Python regex)> TAB <cause> TAB <fix>.
 # Add a row only after a real failure was fixed, with its date; the first rows that match are shown.
 IFS= read -r -d '' GATES_CAUSES <<'CAUSES' || true # read ends at EOF with status 1: expected
+^gate step \S+: timeout after	timeout: a gate step ran past its time limit and was stopped (25 Nov, PR #347: verify sat at 0% CPU for 3.5 h with no limit and held 16 requests)	usually the machine, not the commit: re-queue it once; if the same step times out again, run that step alone in a checkout of the commit to find what waits (a test that never ends, a prompt, the network); on a slow day on battery set GAUSS_GATES_STEP_S=<seconds> for the runner
 ^✖ timestamps: only computeProof's epoch-ms format	the device-auth timestamps test signs with a shared nonce, and two runs in the same millisecond collide on the default timestamp, so the single-use nonce rejects the second (18 Nov, PR #309; fixed by PR #341)	if the commit has PR #341's change, re-queue (it is a flake); otherwise give each proof in the test its own nonce, never relax the nonce check
 ^✖ telemetry_descriptor\.json is the current \.proto	telemetry.proto changed without its descriptor (18 Nov, PR #309)	regenerate it with the one-liner at the top of shared/proto/telemetry.proto, commit, re-queue
 ETIMEDOUT|ECONNRESET|ECONNREFUSED|ENOTFOUND|EAI_AGAIN|ENETUNREACH|network request to	the install could not reach the package registry	nothing is wrong with the commit: re-queue it when the link is up (argo doctor)
@@ -1347,7 +1442,7 @@ gates_why() { # gates_why <commit>: the last failure of that commit, what failed
   if [ -z "$line" ]; then echo "No failed gate on record for $want (see: gates result $want)."; return 3; fi
   read -r _ sha tree _ detail <<<"$line"
   f=$(grep -o "log $GATES_DIR/logs/[^ ;)]*" <<<"$detail" | cut -d' ' -f2- || true); [ -n "$f" ] && [ -f "$f" ] && logs+=("$f")
-  for f in "$GATES_DIR/logs/$tree"/*.log "$GATES_DIR/runs/$sha.install.log"; do [ -f "$f" ] && logs+=("$f"); done
+  for f in "$GATES_DIR/logs/$tree"/*.log "$GATES_DIR/runs/$sha.install.log" "$GATES_DIR/runs/$sha.ops.log"; do [ -f "$f" ] && logs+=("$f"); done
   pr=$(awk -v s="$sha" '$4 == "MOVED" && index($0, "gating " substr(s, 1, 7)) { for (i = 5; i <= NF; i++) if ($i ~ /^#[0-9]+:?$/) p = $i } END { gsub(/[#:]/, "", p); print p }' "$GATES_RESULTS" 2>/dev/null || true)
   echo "Why ${sha:0:7} failed${pr:+ (PR #$pr)}:"
   echo "  result: ${detail%%; log *}"
@@ -1361,12 +1456,9 @@ gates_after_pass() { # gates_after_pass <sha> [<pr>]: run the after-pass hook (G
   local rc=0 out
   echo "$(date '+%F %T') after-pass hook for ${1:0:7}${2:+ (PR #$2)} ..."
   out=$(mktemp -t gauss-hook) || return 0
-  # Its own process group, killed whole after GATES_HOOK_S (macOS has no timeout(1)); output to a file, not
-  # a pipe, so a child that outlives it (a hung gh) can't hold the queue. No terminal, no stdin.
-  perl -e '$t = shift; $p = fork; die "fork: $!" unless defined $p;
-    if (!$p) { setpgrp(0, 0); exec @ARGV or exit 127 }
-    $SIG{ALRM} = sub { kill "TERM", -$p; sleep 1; kill "KILL", -$p; exit 142 }; alarm $t;
-    waitpid($p, 0); exit($? & 127 ? 128 + ($? & 127) : $? >> 8)' "$GATES_HOOK_S" "$GATES_HOOK" "$1" ${2:+"$2"} </dev/null >"$out" 2>&1 || rc=$?
+  # Its own process group, killed whole after GATES_HOOK_S (limited); output to a file, not a pipe, so a
+  # child that outlives it (a hung gh) can't hold the queue.
+  limited "$GATES_HOOK_S" "$GATES_HOOK" "$1" ${2:+"$2"} >"$out" 2>&1 || rc=$?
   sed 's/^/  hook: /' "$out"; rm -f "$out"
   if [ "$rc" = 142 ]; then echo "$(date '+%F %T') after-pass hook stopped after ${GATES_HOOK_S} s"
   elif [ "$rc" != 0 ]; then echo "$(date '+%F %T') after-pass hook exited $rc"; fi
@@ -1383,7 +1475,7 @@ gates_passed() { # gates_passed <checkout-dir>|<commit>: exit 0 only if that com
 }
 
 gates_run() { # gates_run [--once]: work through the queue, oldest first, then exit; --once: stop after one wait that gave up
-  local once=${1:-} self req sha tree queued rc pid me pr repo line merge_only screened
+  local once=${1:-} self req sha tree queued rc pid me pr repo line merge_only screened was
   self="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
   # Never the folder it was started from: that is a session's checkout, often a temporary worktree removed
   # while the runner lives on (4 Nov: every git call then failed with getcwd errors).
@@ -1406,6 +1498,13 @@ gates_run() { # gates_run [--once]: work through the queue, oldest first, then e
       exec /bin/bash "$self" gates run $once
     fi
     sha=$(req_get "$req" sha); tree=$(req_get "$req" tree); queued=$(req_get "$req" queued)
+    # The gatebox addresses and trust line as they are now, not as they were when this runner started.
+    # A new address list is a new machine as far as the outage wait goes.
+    was="$GATEBOX|$GATEBOX_TRUST"; gatebox_load
+    if [ "$GATEBOX|$GATEBOX_TRUST" != "$was" ]; then
+      echo "$(date '+%F %T') gatebox settings changed: ${GATEBOX:-off}${GATEBOX_TRUST:+ (trust: $GATEBOX_TRUST)}"
+      rm -f "$GATES_DIR/gatebox.down"
+    fi
     if [ $(( $(date +%s) - ${queued:-0} )) -ge $(( GATES_EXPIRE_H * 3600 )) ]; then
       gates_result "$sha" "$tree" EXPIRED "waited over ${GATES_EXPIRE_H} h for memory or power; enqueue it again"
       rm -f "$req"; continue
@@ -1435,10 +1534,14 @@ gates_run() { # gates_run [--once]: work through the queue, oldest first, then e
       if ! train_sync "$req"; then tail -1 "$GATES_RESULTS"; continue; fi
       sha=$(req_get "$req" sha); tree=$(req_get "$req" tree); merge_only=1
     fi
-    screened=0; gates_prescreen "$sha" "$tree" || screened=$?
+    screened=0; gates_prescreen "$sha" "$tree" "$([ "$merge_only" = 1 ] && gatebox_ops && echo ops)" || screened=$?
     if [ "$screened" = 0 ]; then rm -f "$req"; tail -1 "$GATES_RESULTS"; continue; fi
     rc=0; pr=$(req_get "$req" pr)
-    if [ "$merge_only" = 1 ] && [ "$screened" = 2 ]; then
+    if [ "$merge_only" = 1 ] && [ "$screened" = 2 ] && [ "$GATEBOX_OPS_PASSED" = "$sha" ]; then
+      # Nothing to run here, so no claude-heavy wait: run-one checks the gatebox log again and merges.
+      echo "$(date '+%F %T') ${sha:0:7}: merge only, the gatebox ran the ops tests too; nothing runs here"
+      /bin/bash "$self" gates run-one "$req" --gatebox-passed "$sha" ops || rc=$?
+    elif [ "$merge_only" = 1 ] && [ "$screened" = 2 ]; then
       echo "$(date '+%F %T') ops tests ${sha:0:7} (merge only: the gatebox passed the rest) ..."
       if [ -x "$HEAVY" ]; then
         "$HEAVY" --wait "$GATES_WAIT_MIN" --max-level 2 --name gates-ops --label "ops gate ${sha:0:7}" -- /bin/bash "$self" gates run-one "$req" --gatebox-passed "$sha" || rc=$?
@@ -1483,8 +1586,8 @@ gates_run() { # gates_run [--once]: work through the queue, oldest first, then e
 }
 
 gates_run_one() { # gates_run_one <request>: check out, install if the lockfile changed, gates_record, write the result
-  local req=$1 passed=${3:-} sha tree repo node by co lock out rc=0 line status
-  [ "${2:-}" = --gatebox-passed ] || passed=""
+  local req=$1 passed=${3:-} box=${4:-} sha tree repo node by co lock out rc=0 line status
+  [ "${2:-}" = --gatebox-passed ] || { passed=""; box=""; }
   # Withdrawn while claude-heavy waited (a session re-queued a new head): nothing to run.
   [ -f "$req" ] || { echo "Request $(basename "$req") was withdrawn; skipping."; return 0; }
   local pr; pr=$(req_get "$req" pr)
@@ -1501,6 +1604,7 @@ gates_run_one() { # gates_run_one <request>: check out, install if the lockfile 
   sha=$(req_get "$req" sha); tree=$(req_get "$req" tree); repo=$(req_get "$req" repo); node=$(req_get "$req" node); by=$(req_get "$req" by)
   # Merge only: the gatebox vouched for one commit. If main moved since, that is no longer the head.
   if [ -n "$passed" ] && [ "$sha" != "$passed" ]; then return 77; fi
+  if [ -n "$passed" ] && [ "$box" = ops ]; then gates_ops_only "$req" "" "$sha" "$tree" "$pr" "$repo" box; return; fi
   [ -n "$node" ] && [ -x "$node" ] && NODE=$node # the Node the session queued with (.nvmrc: Node 26)
   co=${GAUSS_GATES_CHECKOUT:-$(dirname "$repo").worktrees/gates}
   gates_fail() { gates_result "$sha" "$tree" ERROR "$1"; rm -f "$req"; return 1; }
@@ -1518,7 +1622,13 @@ gates_run_one() { # gates_run_one <request>: check out, install if the lockfile 
   [ -f "$co/package-lock.json" ] && lock=$(install_key "$co") || { gates_fail "no package-lock.json at ${sha:0:7}"; return 1; }
   if [ "$(cat "$co/node_modules/.gauss-lock" 2>/dev/null)" != "$lock" ]; then
     echo "Installing dependencies in $co ..."
-    if ! (cd "$co" && PATH="$(dirname "$NODE"):$PATH" npm ci --no-audit --no-fund >"$GATES_DIR/runs/$sha.install.log" 2>&1); then
+    local irc=0
+    (cd "$co" && PATH="$(dirname "$NODE"):$PATH" limited "$(gates_step_s install)" npm ci --no-audit --no-fund >"$GATES_DIR/runs/$sha.install.log" 2>&1) || irc=$?
+    if [ "$irc" = 142 ]; then
+      gates_timeout_line install >>"$GATES_DIR/runs/$sha.install.log"
+      gates_fail "npm ci: timeout after $(gates_step_s install) s (log: $GATES_DIR/runs/$sha.install.log)"; return 1
+    fi
+    if [ "$irc" != 0 ]; then
       # A dropped download (5 Nov 2026: read ETIMEDOUT on the phone hotspot) isn't the commit's fault:
       # the request stays first in line and the runner tries again later.
       if grep -Eq 'ETIMEDOUT|ECONNRESET|ECONNREFUSED|ENOTFOUND|EAI_AGAIN|ENETUNREACH|network request to' "$GATES_DIR/runs/$sha.install.log"; then
@@ -1538,8 +1648,10 @@ gates_run_one() { # gates_run_one <request>: check out, install if the lockfile 
       echo "Rebuilding the native kernel in $co ..."
       # npm's own bundled node-gyp (what the install uses), run by this Node so the addon matches its ABI.
       local gyp; gyp=$(PATH="$(dirname "$NODE"):$PATH"; p=$(command -v npm) && echo "$(dirname "$(readlink -f "$p")")/../node_modules/node-gyp/bin/node-gyp.js")
-      (cd "$co" && PATH="$(dirname "$NODE"):$PATH" "$NODE" "$gyp" rebuild >"$GATES_DIR/runs/$sha.native.log" 2>&1) \
-        || { gates_fail "native build failed (log: $GATES_DIR/runs/$sha.native.log)"; return 1; }
+      local nrc=0
+      (cd "$co" && PATH="$(dirname "$NODE"):$PATH" limited "$(gates_step_s native)" "$NODE" "$gyp" rebuild >"$GATES_DIR/runs/$sha.native.log" 2>&1) || nrc=$?
+      [ "$nrc" != 142 ] || { gates_fail "native build: timeout after $(gates_step_s native) s (log: $GATES_DIR/runs/$sha.native.log)"; return 1; }
+      [ "$nrc" = 0 ] || { gates_fail "native build failed (log: $GATES_DIR/runs/$sha.native.log)"; return 1; }
       echo "$native" >"$co/build/.gauss-native"
     fi
   fi
@@ -1558,14 +1670,29 @@ gates_ops_only() { # gates_ops_only <request> <checkout> <sha> <tree> <pr> <repo
   # After a gatebox pass on this exact commit (GAU-239). No install: the ops tests are bash and Go.
   # The result is for merging only; no deploy record ($GATES_DIR/<tree>.json) is written.
   local req=$1 co=$2 sha=$3 tree=$4 pr=$5 repo=$6 rc=0 hold=0 log counts
+  if [ "${7:-}" = box ]; then # the gatebox ran test:ops too: use it only if its log still says so for this commit
+    log="$GATES_DIR/logs/gatebox-${sha:0:12}.log"
+    if counts=$(gatebox_ops_ok "$sha" "$log"); then
+      rm -f "$req"
+      gates_result "$sha" "$tree" PASSED "merge only, no deploy record: gatebox $GATEBOX passed ${sha:0:7} (npm ci, test, quality:full, build, test:ops $counts); nothing ran here"
+      [ -z "$pr" ] || train_merge "$pr" "$sha" "$tree" "$repo" || true
+      return
+    fi
+    return 77 # the log no longer vouches for it: the request stays queued and is screened again
+  fi
   log="$GATES_DIR/runs/$sha.ops.log"
   # Under claude-heavy the gate lock is already ours; gate_lock would also wait for normal memory
   # pressure, which a small job does not need.
   if ! gate_lock_ours; then gate_lock; hold=$GATES_HOLD; fi
-  (cd "$co" && PATH="$(dirname "$NODE"):$PATH" npm run test:ops >"$log" 2>&1) || rc=$?
+  (cd "$co" && PATH="$(dirname "$NODE"):$PATH" limited "$(gates_step_s test:ops)" npm run test:ops >"$log" 2>&1) || rc=$?
   if [ "$hold" = 1 ]; then rmdir "$GATE_LOCK" 2>/dev/null || true; fi
   counts=$(grep -Eo 'gauss-services: [0-9]+ passed, [0-9]+ failed' "$log" | tail -1 || true)
   rm -f "$req"
+  if [ "$rc" = 142 ]; then
+    gates_timeout_line test:ops >>"$log"
+    gates_result "$sha" "$tree" FAILED "test:ops here: timeout after $(gates_step_s test:ops) s, after a gatebox pass; log $log"
+    return 1
+  fi
   if [ "$rc" != 0 ] || [[ "$counts" != *", 0 failed" ]]; then
     gates_result "$sha" "$tree" FAILED "test:ops here (exit $rc${counts:+; $counts}) after a gatebox pass; log $log"
     return 1
@@ -1652,6 +1779,11 @@ train_sync() { # train_sync <request>: merge origin/main into a train PR's head 
   if [ "$state" != OPEN ]; then gates_result "$sha" "$tree" SKIPPED "PR #$pr is ${state:-gone}"; rm -f "$req" "$GATES_DIR/held/$pr"; return 1; fi
   if [ "$head" != "$sha" ]; then
     gates_result "$sha" "$tree" SKIPPED "PR #$pr moved on to ${head:0:7}; queue that head"; rm -f "$req"; return 1
+  fi
+  # 25 Nov: 39 runs ended "HELD passed, not merged: draft": a draft can't merge, so its gate run is wasted.
+  # Not gated while it is a draft; enqueue it again (or the next train pass) once it is ready.
+  if [ "$draft" = true ]; then
+    gates_result "$sha" "$tree" SKIPPED "draft: mark the PR ready to gate it"; rm -f "$req"; return 1
   fi
   [ "$base" = main ] || return 0 # stacked: gated as it is; it syncs once its base has merged
   train_waits "$req" "$head" "$draft" "$repo" && return 1
@@ -1832,7 +1964,8 @@ gates_status() {
     echo "queued: $(req_get "$f" sha | cut -c1-7) by $(req_get "$f" by) since $(date -r "$(req_get "$f" queued)" '+%F %H:%M')"
   done
   [ $n -gt 0 ] || echo "queue: empty"
-  if gatebox_trusted; then echo "gatebox: $GATEBOX screens each request first; a pass lets the train merge after the ops tests here (no deploy record)"
+  if gatebox_ops; then echo "gatebox: $GATEBOX screens each request first; a pass lets the train merge after the ops tests, there when it has the tools, else here (no deploy record)"
+  elif gatebox_trusted; then echo "gatebox: $GATEBOX screens each request first; a pass lets the train merge after the ops tests here (no deploy record)"
   elif [ -n "$GATEBOX" ]; then echo "gatebox: $GATEBOX screens each request first"; else echo "gatebox: off (all gates run here)"; fi
   tail -5 "$GATES_RESULTS" 2>/dev/null || true
 }
@@ -2553,10 +2686,11 @@ case "${1:-}" in
       record) gates_record "${3:-}" ;;
       enqueue) gates_enqueue "${@:3}" ;;
       run) gates_run "${3:-}" ;;
-      run-one) gates_run_one "${3:?}" "${4:-}" "${5:-}" ;;
+      run-one) gates_run_one "${3:?}" "${4:-}" "${5:-}" "${6:-}" ;;
       result) if [ "${3:-}" = status ]; then gates_status; else gates_show_result "${3:-}"; fi ;;
       passed) gates_passed "${3:-}" ;;
       why) gates_why "${3:-}" ;;
+      restart) gates_restart ;;
       queue) gates_queue ;;
       priority) gates_priority "${3:-}" "${4:-front}" ;;
       waiting) gates_waiting ;;
@@ -2584,7 +2718,7 @@ case "${1:-}" in
     echo "Gauss services removed. Logs kept in $LOGS."
     ;;
   *)
-    sed -n '2,21p' "$0"
+    sed -n '2,28p' "$0"
     exit 2
     ;;
 esac

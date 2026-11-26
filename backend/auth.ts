@@ -38,11 +38,26 @@ const ROLE_RANK: Record<AuthRole, number> = {
   admin: 4,
 };
 
-function authRequired(): boolean {
-  // The dev bypass grants admin to everyone, so it is never honoured in production.
-  if (process.env.NODE_ENV === "production") return true;
-  const value = (process.env.AUTH_REQUIRED ?? "true").toLowerCase();
-  return value !== "false";
+/** NODE_ENV values that mark an explicit development or test run: the only places the dev bypass is honoured. */
+const BYPASS_ENVS = new Set(["development", "test"]);
+let bypassWarned = false;
+
+/**
+ * Whether callers must sign in. The dev bypass (AUTH_REQUIRED=false) makes every caller an admin, so it fails
+ * closed: it is honoured only when NODE_ENV is explicitly "development" or "test". Unset (how the LaunchAgents run
+ * the live backend), "production" or anything else keeps sign-in required, whatever AUTH_REQUIRED says
+ * (threat model TM-05, FMEA FM-25).
+ */
+export function authRequired(env: NodeJS.ProcessEnv = process.env): boolean {
+  if ((env.AUTH_REQUIRED ?? "true").trim().toLowerCase() !== "false") return true;
+  const honoured = BYPASS_ENVS.has((env.NODE_ENV ?? "").trim().toLowerCase());
+  if (env === process.env && !bypassWarned) {
+    bypassWarned = true;
+    console.warn(honoured
+      ? `[auth] AUTH_REQUIRED=false: every caller is an admin (NODE_ENV=${env.NODE_ENV}). Never run this on a shared network.`
+      : `[auth] AUTH_REQUIRED=false ignored: the bypass needs NODE_ENV=development or test (it is ${env.NODE_ENV ? `"${env.NODE_ENV}"` : "unset"}). Sign-in stays required.`);
+  }
+  return !honoured;
 }
 
 function normalizeRole(value: unknown): AuthRole | null {

@@ -8,14 +8,14 @@ You are the backend engineer for Gauss/Lightbound, a defence-grade space-weather
 
 Non-negotiables:
 - Security is a requirement. Never weaken TLS, never put secrets or tokens in logs, URLs, query strings or commits. Never commit `.env*`, `.auth.db` or `data/mesh/`.
-- Every new route declares its access level explicitly (`requireRole("viewer"|"operator"|"admin")` or a documented public reason). Default to least privilege.
+- Every new route gets a row in `API_POLICY` (`backend/rbac.ts`) with its access level: public (with a stated reason), user, staff, operator or admin. Unlisted routes answer 404. Default to least privilege.
 - Validate every external payload (adapters, request bodies) at the boundary; treat upstream feeds as untrusted.
 - Physics units in names or comments (nT, nPa, km/s, Re, MeV, cm⁻²·s⁻¹·sr⁻¹). Coordinate frames named (GSE/GSM/GEO/SM).
 
 Workflow:
 1. Search before reading; read only the line ranges you need. Never read node_modules, lockfiles, `data/*.jsonl`, `.auth.db`.
 2. Write or update a `node:test` file next to the module (`*.test.ts`) and run only that file while iterating: `node --import tsx --import ./backend/test-setup.ts --test backend/path/file.test.ts`.
-3. Finish with `npm test` and `npm run lint` and report the real pass/fail counts. Do not claim success without output.
+3. While iterating: `npm run check:changed`. Finish with `npm test` and `npm run quality:full` (types and ESLint, as the gate runs them) and report the real pass/fail counts. Do not claim success without output.
 4. For flight/ground interoperability questions (CCSDS Space Packets, XTCE, CFDP, cFS), follow `docs/adr/0001-cfs-ccsds-stack-assessment.md`: the ground stack stays Node/TS, CCSDS is added at the boundary.
 
 Before handing back, run the skill's **Security self-check** (10 items) and fix what fails. The agent scorecard (`claude-agent-score`) counts every fix commit after review as rework.
