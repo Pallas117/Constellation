@@ -77,7 +77,7 @@
     "rollback": "node --import tsx scripts/release/deploy.ts --rollback",
     "perf:check": "npm run build && du -sh frontend/dist",
     "release:prepare": "npm run quality:full && npm run security:full && npm test && npm run release:sbom",
-    "test:website": "node --test website/test/site.test.mjs website/test/worker.test.mjs",
+    "test:website": "node --test website/test/site.test.mjs website/test/worker.test.mjs website/test/brief.test.mjs",
     "site:dev": "node website/dev.mjs",
     "site:dev:offline": "node website/dev.mjs --offline",
     "site:forms": "node website/tools/sync_forms.mjs",

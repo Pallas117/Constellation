@@ -8,7 +8,7 @@ const requirements: EnvRequirement[] = [
   { key: "PROXY_PORT", required: false, description: "Backend HTTP port (default 3001)" },
   { key: "PROXY_HOST", required: false, description: "Backend bind host (default 127.0.0.1)" },
   { key: "ALLOWED_ORIGINS", required: false, description: "CSV list for CORS allowlist" },
-  { key: "AUTH_REQUIRED", required: false, description: "Set false only for local bypass" },
+  { key: "AUTH_REQUIRED", required: false, description: "Set false only for a local bypass; honoured only with NODE_ENV=development or test" },
   { key: "CYBERTIGER_ENABLED", required: false, description: "Enable/disable CyberTiger daemon" },
   { key: "CYBERTIGER_RATE_LIMIT_WINDOW_MS", required: false, description: "Rate limit window in ms" },
   { key: "CYBERTIGER_RATE_LIMIT_MAX", required: false, description: "Max requests per IP per window" },
