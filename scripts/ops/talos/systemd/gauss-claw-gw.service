@@ -1,0 +1,36 @@
+# The ONLY door out of a claw container: a unix socket that forwards to the loopback Ollama
+# (127.0.0.1:11434) and nothing else. claws-profile.sh installs it as
+# /etc/systemd/system/gauss-claw-gw.service. Claw containers run with --network=none, so they have no
+# LAN, tailnet or internet; they reach the model only through this socket (mounted read-only).
+# UNTESTED ON A REAL LINUX HOST (25 Nov 2026).
+[Unit]
+Description=Gauss claw gateway (unix socket to loopback Ollama only)
+After=network.target
+
+[Service]
+Type=simple
+User=gauss-claw
+Group=gauss-claw
+RuntimeDirectory=gauss-claw-gw
+RuntimeDirectoryMode=0750
+ExecStart=/usr/bin/socat UNIX-LISTEN:/run/gauss-claw-gw/ollama.sock,fork,mode=0600 TCP:127.0.0.1:11434
+Restart=on-failure
+RestartSec=10
+NoNewPrivileges=true
+CapabilityBoundingSet=
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_UNIX
+RestrictNamespaces=true
+LockPersonality=true
+UMask=0077
+MemoryMax=128M
+TasksMax=64
+
+[Install]
+WantedBy=multi-user.target
