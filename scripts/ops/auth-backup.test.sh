@@ -32,7 +32,7 @@ section "auth backup: a checked, private copy with a counts-only manifest"
 out=$("$S" backup --db "$db" --dir "$dir" 2>&1); rc=$?
 [ $rc -eq 0 ] && ok || bad "backup exit $rc: $out"
 expect "backup line" '^auth-backup: ok auth-[0-9TZ]+\.db users=3 admins=1 operators=1 fewpasskeys=-' "$out"
-f=$(ls "$dir"/auth-*.db | head -1)
+f=$(ls "$dir"/auth-*.db | sed -n 1p)
 [ "$(stat -f %Lp "$f" 2>/dev/null || stat -c %a "$f")" = 600 ] && ok || bad "copy is not 0600"
 [ "$(stat -f %Lp "$dir" 2>/dev/null || stat -c %a "$dir")" = 700 ] && ok || bad "folder is not 0700"
 expect "manifest" '"users":"3","admins":"1","operators":"1","fewpasskeys":"-"' "$(cat "$dir/manifest.jsonl")"
@@ -77,11 +77,11 @@ expect "no admin" 'WARN: no admin account' "$out"
 
 # 6. Restore keeps the old file aside and never deletes it.
 section "auth backup: restore keeps the old database aside and refuses a bad file"
-newest=$(ls -1t "$dir"/auth-*.db | head -1)
+newest=$(ls -1t "$dir"/auth-*.db | sed -n 1p)
 sqlite3 "$db" "INSERT INTO user VALUES ('u4','late@example.test','user');"
 out=$("$S" restore "$newest" --db "$db" 2>&1); rc=$?
 [ $rc -eq 0 ] && ok || bad "restore exit $rc: $out"
-aside=$(ls "$t/live"/.auth.db.before-restore-* 2>/dev/null | head -1)
+aside=$(ls "$t/live"/.auth.db.before-restore-* 2>/dev/null | sed -n 1p)
 [ -n "$aside" ] && [ "$(sqlite3 "$aside" 'SELECT count(*) FROM user;')" = 4 ] && ok || bad "old database not kept aside"
 [ "$(sqlite3 "$db" 'SELECT count(*) FROM user;')" = 3 ] && ok || bad "restored database has the backup's rows"
 out=$("$S" restore "$t/corrupt.db" --db "$db" 2>&1); rc=$?

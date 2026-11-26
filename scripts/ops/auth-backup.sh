@@ -38,7 +38,7 @@ q() { "$SQLITE" -batch -noheader "$1" "$2"; } # q <db> <sql>
 check() {
   local f=$1 ok tables role_col
   [ -s "$f" ] || { echo "empty or missing"; return 1; }
-  ok=$(q "$f" "PRAGMA integrity_check;" 2>&1 | head -1) || { echo "unreadable: $ok"; return 1; }
+  ok=$(q "$f" "PRAGMA integrity_check;" 2>&1 | sed -n 1p) || { echo "unreadable: $ok"; return 1; }
   [ "$ok" = ok ] || { echo "integrity_check: $ok"; return 1; }
   tables=$(q "$f" "SELECT group_concat(name, ' ') FROM sqlite_master WHERE type='table' AND name IN ('user','session','account');")
   for t in user session account; do
@@ -57,7 +57,7 @@ check() {
   echo "users=$users admins=$admins operators=$operators fewpasskeys=$few"
 }
 
-newest() { ls -1t "$dir"/auth-*.db 2>/dev/null | head -1; }
+newest() { ls -1t "$dir"/auth-*.db 2>/dev/null | sed -n 1p; }
 
 cmd=${1:-}; [ -n "$cmd" ] || usage; shift
 file=""
@@ -85,8 +85,8 @@ case $cmd in
     # Keep the newest $keep copies (ours only).
     ls -1t "$dir"/auth-*.db 2>/dev/null | tail -n +"$((keep + 1))" | while IFS= read -r old; do rm -f -- "$old"; done
     printf '{"at":"%s","file":"%s","bytes":%s,%s}\n' "$(date -u +%FT%TZ)" "$(basename "$out")" "$(wc -c < "$out" | tr -d ' ')" \
-      "$(echo "$summary" | head -1 | sed -E 's/([a-z]+)=([0-9-]+)/"\1":"\2"/g; s/ /,/g')" >> "$dir/manifest.jsonl"
-    echo "auth-backup: ok $(basename "$out") $(echo "$summary" | head -1) (kept $(ls -1 "$dir"/auth-*.db | wc -l | tr -d ' '))"
+      "$(echo "$summary" | sed -n 1p | sed -E 's/([a-z]+)=([0-9-]+)/"\1":"\2"/g; s/ /,/g')" >> "$dir/manifest.jsonl"
+    echo "auth-backup: ok $(basename "$out") $(echo "$summary" | sed -n 1p) (kept $(ls -1 "$dir"/auth-*.db | wc -l | tr -d ' '))"
     ;;
   verify)
     src=${file:-$(newest)}
@@ -94,7 +94,7 @@ case $cmd in
     work=$(mktemp -d); trap 'rm -rf "$work"' EXIT
     cp "$src" "$work/restore-test.db"
     if ! summary=$(check "$work/restore-test.db"); then fail "restore test of $(basename "$src"): $summary"; fi
-    line=$(echo "$summary" | head -1)
+    line=$(echo "$summary" | sed -n 1p)
     age_h=$(( ( $(date +%s) - $(stat -f %m "$src" 2>/dev/null || stat -c %Y "$src") ) / 3600 ))
     note=""
     case $line in *fewpasskeys=-*) ;; *fewpasskeys=0*) ;; *) note="; WARN: $(sed -E 's/.*fewpasskeys=([0-9]+).*/\1/' <<<"$line") admin/operator account(s) have fewer than two passkeys" ;; esac
@@ -112,7 +112,7 @@ case $cmd in
       echo "auth-backup: kept the old database as $aside"
     fi
     cp "$file" "$db" && chmod 600 "$db"
-    echo "auth-backup: restored $(basename "$file") to $db ($(echo "$summary" | head -1)). Start the backend, check /health and sign in."
+    echo "auth-backup: restored $(basename "$file") to $db ($(echo "$summary" | sed -n 1p)). Start the backend, check /health and sign in."
     ;;
   *) usage ;;
 esac
