@@ -66,7 +66,7 @@ run() { # run <args...>: gauss-services.sh with the stubs; alerts land in $LOG
     GAUSS_SUDOERS="$T/sudoers" MLX="${MLX:-0}" MLXPORT="${MLXPORT:-8089}" ACTIONS="$T/actions" GAUSS_BALANCE="${GAUSS_BALANCE:-1}" \
     LOADED="${LOADED:-}" HEALTH="${HEALTH:-200}" HEALTH_FILE="${HEALTH_FILE:-}" GAUSS_DEPLOY_WAIT=0 DISKGB="${DISKGB:-50}" \
     GATEORDER="${GATEORDER:-}" GAUSS_PW_CHROMIUM="${GAUSS_PW_CHROMIUM:-}" GATEFAIL="${GATEFAIL:-}" MOVEMAIN="${MOVEMAIN:-}" GAUSS_BY=test-user BOOT="${BOOT:-1000}" GAUSS_DIAG_DIRS="$T/diag" GAUSS_EVENTS_MAX_KB="${GAUSS_EVENTS_MAX_KB:-5120}" \
-    WAKE="${WAKE:-1000}" GAUSS_GATEBOX_TRUST="${GAUSS_GATEBOX_TRUST:-}" GAUSS_DEV_DRY="${GAUSS_DEV_DRY:-0}" GAUSS_GATES_START=0 HEAVYGIVEUP="${HEAVYGIVEUP:-}" NPMNET="${NPMNET:-}" GAUSS_GATEBOX="${GAUSS_GATEBOX:-}" GAUSS_GATEBOX_PROBE="${GAUSS_GATEBOX_PROBE:-true}" GAUSS_GATEBOX_WAIT_S="${GAUSS_GATEBOX_WAIT_S:-0}" GAUSS_GATEBOX_POLL_S="${GAUSS_GATEBOX_POLL_S:-1}" GAUSS_MESH_STORE="${GAUSS_MESH_STORE:-}" GAUSS_GATEBOX_TIMEOUT_S="${GAUSS_GATEBOX_TIMEOUT_S:-}" GAUSS_FLEET_MEMORY="${GAUSS_FLEET_MEMORY:-}" GAUSS_GATEBOX_KEY="$T/gatebox-key" GBRC="${GBRC:-}" GAUSS_GATES_EXPIRE_H="${GAUSS_GATES_EXPIRE_H:-72}" GAUSS_GATES_HOOK_S="${GAUSS_GATES_HOOK_S:-300}" GAUSS_DEV_API_PORT="${GAUSS_DEV_API_PORT:-3101}" \
+    WAKE="${WAKE:-1000}" GAUSS_GATEBOX_TRUST="${GAUSS_GATEBOX_TRUST:-}" GAUSS_DEV_DRY="${GAUSS_DEV_DRY:-0}" GAUSS_GATES_START=0 GATEHANG="${GATEHANG:-}" GAUSS_GATES_STEP_S="${GAUSS_GATES_STEP_S:-}" HEAVYGIVEUP="${HEAVYGIVEUP:-}" NPMNET="${NPMNET:-}" GAUSS_GATEBOX="${GAUSS_GATEBOX:-}" GAUSS_GATEBOX_PROBE="${GAUSS_GATEBOX_PROBE:-true}" GAUSS_GATEBOX_WAIT_S="${GAUSS_GATEBOX_WAIT_S:-0}" GAUSS_GATEBOX_POLL_S="${GAUSS_GATEBOX_POLL_S:-1}" GAUSS_MESH_STORE="${GAUSS_MESH_STORE:-}" GAUSS_GATEBOX_TIMEOUT_S="${GAUSS_GATEBOX_TIMEOUT_S:-}" GAUSS_FLEET_MEMORY="${GAUSS_FLEET_MEMORY:-}" GAUSS_GATEBOX_KEY="$T/gatebox-key" GBRC="${GBRC:-}" GAUSS_GATES_EXPIRE_H="${GAUSS_GATES_EXPIRE_H:-72}" GAUSS_GATES_HOOK_S="${GAUSS_GATES_HOOK_S:-300}" GAUSS_DEV_API_PORT="${GAUSS_DEV_API_PORT:-3101}" \
     SRC="${SRC:-AC Power}" BATT="${BATT:-80%; charging; present: true}" SD="${SD:-0}" FCC="${FCC:-}" ACW="${ACW:-}" \
     LEAKY="${LEAKY:-}" LEAKFP="${LEAKFP:-12 MB}" AVAIL="${AVAIL:-50}" GAUSS_SWAP_LAST="${SWAPLAST:-/dev/null}" \
     GATEENV="${GATEENV:-}" GATES_PYTHON="${GATES_PYTHON:-}" ${GATELEAK:+ALLOWED_ORIGINS=https://live.example MESH_STORE_PATH=/live/data/mesh/devices.json COMMERCE_DB_PATH=/live/data/commerce/commerce.db GAUSS_BEDROCK_DIR=/live/data/bedrock NODE_ENV=production} \
@@ -354,6 +354,7 @@ stub npm 'if [ "$1" = run ]; then
   [ "$2" = verify ] && [ -n "$MOVEMAIN" ] && [ -f "$MOVEMAIN" ] && { sh "$MOVEMAIN"; rm -f "$MOVEMAIN"; } # main moves mid-run
   [ -n "$GATEENV" ] && { env | grep -E "^(ALLOWED_ORIGINS|MESH_STORE_PATH|COMMERCE_DB_PATH|GAUSS_BEDROCK_DIR|NODE_ENV)=" ; echo "PATH=$PATH"; } >>"$GATEENV"
   [ -n "$GATEORDER" ] && echo "$2" >>"$GATEORDER" # the order the gates ran in
+  [ -n "$GATEHANG" ] && [ -f "$GATEHANG" ] && [ "$2" = verify ] && { rm -f "$GATEHANG"; sleep 60 & echo $! >"$GATEHANG.pid"; wait; } # hangs once
   case "$2" in
     test:ui:gate) echo "  4 passed" ;;
     test:ops) echo "gauss-services: 99 passed, 0 failed"; echo "ok  	argo	1.0s" ;;
@@ -1002,6 +1003,42 @@ expect "merge only: off by default; a gatebox pass alone still gets the full gat
 out=$(gbt run gates result status 2>&1); [[ "$out" == *"a pass lets the train merge after the ops tests here (no deploy record)"* ]]
 expect "gates result status: says when a gatebox pass is trusted for merging" $?
 rm -f "$GQ"/*.req
+# 24 Nov: the runner read the gatebox file once, at its start. The file was pointed at a new address while
+# it ran, and every later request was still gated here, on the old address's outage.
+printf '#!/bin/bash\n[ "$1" = newbox ]\n' >"$T/bin/gbnew"; chmod +x "$T/bin/gbnew"
+R1=$(tc "$M2" r1.txt r1); (cd "$LIVE" && run gates enqueue "$R1" >/dev/null 2>&1); R2=$(tc "$M2" r2.txt r2); mo "$R2" gb-fresh 61
+echo oldbox >"$WD/gatebox"; rm -f "$WD/gates/gatebox.down"
+printf 'printf "newbox\\nmerge\\n" >"%s"\n' "$WD/gatebox" >"$T/switch-gatebox" # run by the npm stub during the first request
+out=$(MOVEMAIN="$T/switch-gatebox" GAUSS_GATEBOX_PROBE="$T/bin/gbnew" GBRC=say0 run gates run 2>&1)
+[[ "$out" == *"gatebox (oldbox) "*"gating here"*"gatebox settings changed: newbox (trust: merge)"* ]] && grep -q "^[^ ]* $R1 [^ ]* PASSED ${R1:0:7}" "$GR" \
+  && ! grep -q '^ssh .*gate@oldbox' "$T/actions" && grep -q '^ssh .*gate@newbox Pallas117/Constellation' "$T/actions" \
+  && grep -q "PASSED merge only, no deploy record: gatebox newbox passed" "$GR" && grep -q "MERGED PR #61" "$GR" && [ -z "$(ls "$GQ")" ]
+expect "gates run: the gatebox addresses and trust line are read again for every request, not once per runner" $?
+rm -f "$WD/gatebox" "$WD/gates/gatebox.down"
+# 25 Nov: a verify step sat at 0% CPU for 3.5 h with no limit and held 16 requests.
+H1=$(tc "$M2" h1.txt h1); H2=$(tc "$M2" h2.txt h2)
+(cd "$LIVE" && run gates enqueue "$H1" >/dev/null 2>&1; run gates enqueue "$H2" >/dev/null 2>&1)
+: >"$T/hang"; t0=$SECONDS; out=$(GATEHANG="$T/hang" GAUSS_GATES_STEP_S=3 run gates run 2>&1)
+[ $((SECONDS - t0)) -lt 40 ] && grep -q "^[^ ]* $H1 [^ ]* FAILED (.*verify timeout)" "$GR" && ! kill -0 "$(cat "$T/hang.pid")" 2>/dev/null \
+  && grep -q "^[^ ]* $H2 [^ ]* PASSED" "$GR" && [ -z "$(ls "$GQ")" ] && [ ! -d "$T/home/.local/state/gauss-gate.lock" ]
+expect "gates run: a gate step past its time limit is stopped (its children too) and recorded as a timeout, and the queue goes on" $?
+out=$(run gates why "$H1" 2>&1); [[ "$out" == *"cause: timeout: a gate step ran past its time limit"* && "$out" == *"fix:   usually the machine, not the commit"* ]]
+expect "gates why: a timeout is named as a known cause, with its fix" $?
+# gates restart: a stuck runner is stopped with its run, and nothing it was doing gets a result.
+K1=$(tc "$M2" k1.txt k1); (cd "$LIVE" && run gates enqueue "$K1" >/dev/null 2>&1)
+rm -f "$T/stuck-kid"; bash -c 'sleep 300 & echo $! >"$1"; wait' _ "$T/stuck-kid" & stuck=$!; disown
+for _ in 1 2 3 4 5 6 7 8 9 10; do [ -s "$T/stuck-kid" ] && break; sleep 0.2; done
+mkdir -p "$WD/gates/runner"; echo "$stuck" >"$WD/gates/runner/pid"
+GL="$T/home/.local/state/gauss-gate.lock"; mkdir -p "$GL"; echo "999999 now test" >"$GL/owner" # no such process
+n=$(wc -l <"$GR"); out=$(cd "$LIVE" && run gates restart 2>&1); rc=$?; sleep 0.2
+[ $rc = 0 ] && ! kill -0 "$stuck" 2>/dev/null && ! kill -0 "$(cat "$T/stuck-kid")" 2>/dev/null && [ "$(wc -l <"$GR")" = "$n" ] \
+  && grep -q "sha=$K1" "$GQ"/*.req && [ ! -d "$GL" ] && [ ! -d "$WD/gates/runner" ] \
+  && [[ "$out" == *"no result written"*"Cleared the gate lock"*"1 in the queue"* ]]
+expect "gates restart: a stuck runner and its run are stopped with no result, requests stay queued, and a dead owner's gate lock is cleared" $?
+mkdir -p "$GL"; echo "$$ now test" >"$GL/owner"; out=$(cd "$LIVE" && run gates restart 2>&1)
+[ -d "$GL" ] && [[ "$out" == *"No gate runner was working"*"Gate lock kept: its owner (pid $$) is alive"* ]] && grep -q "sha=$K1" "$GQ"/*.req
+expect "gates restart: a gate lock whose owner is alive is kept" $?
+rm -rf "$GL"; run gates run >/dev/null 2>&1 # K1 runs now, so the queue is empty for the tests below
 # 12 Nov: merging one PR moved main under the next one's run; it sat HELD until a person re-queued it.
 M3=$(tc "$M2" main.txt main-3); g push -q origin "$M3:refs/heads/side"; g push -q origin "$M2:refs/heads/main"; g fetch -q origin
 P7=$(tc "$M2" f7.txt f7); g push -q origin "$P7:refs/heads/req7" && g fetch -q origin; echo "OPEN req7 main false CLEAN" >"$GHD/pr21"
